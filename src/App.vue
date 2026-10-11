@@ -88,7 +88,7 @@ const {
   openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
   exportWorkspace, openImport, importWorkspace, closeDetail: closeDetailNow, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
-  handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings,
+  handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError,
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
@@ -103,12 +103,7 @@ function saveSelectedLeadDocument(document: Omit<DocumentInput, "leadId">) { ret
 const editItemNow = createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)
 async function editItem(item: Parameters<typeof editItemNow>[0]) { if (!rejectionEditor.value || await rejectionEditor.value.flush()) editItemNow(item) }
 
-const settingsSaveError = ref("")
-async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) {
-  settingsSaveError.value = ""
-  if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false
-  else settingsSaveError.value = notice.value
-}
+async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) { if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false }
 const cardAgeFor = useCardAges(() => activeBoard.value?.cardAgingPolicy)
 const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvatars(app.workspace)
 </script>
