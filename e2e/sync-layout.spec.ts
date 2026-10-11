@@ -28,6 +28,8 @@ for (const width of [1280, 390]) {
     await dialog.getByRole("tab", { name: "Participants", exact: true }).click()
     await dialog.getByRole("tab", { name: "Advanced", exact: true }).click()
     const succession = dialog.getByRole("region", { name: "Ownership succession" })
+    await expect(dialog.getByRole("heading", { name: "Ownership succession", exact: true })).toHaveCount(1)
+    await expect(dialog.getByLabel("Recovery participant", { exact: true })).toHaveCount(0)
     await expect(succession.getByText("No recovery policy.", { exact: true })).toBeVisible()
     await expect(succession.locator(".sync-helper-text")).toHaveText("Owner: name a successor or enable editor quorum.")
     await dialog.getByRole("tab", { name: "Advanced", exact: true }).click()

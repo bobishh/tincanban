@@ -308,8 +308,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             </div>
           </section>
         <section v-if="hasMesh" class="sync-advanced">
-          <h3>Ownership succession</h3>
-          <label v-if="canManageMesh">Participant<select v-model="selectedMemberId" aria-label="Recovery participant"><option value="">Choose participant</option><option v-for="member in peopleMembers" :key="member.personId" :value="member.personId">{{ member.name }}</option></select></label>
           <OwnershipRecoveryPanel :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
             :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
             @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
