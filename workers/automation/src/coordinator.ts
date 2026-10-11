@@ -58,6 +58,7 @@ const controlPollMs = 15_000;
 /** Serializes durable intake, replay protection and classification for one integration. */
 export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   private mutationQueue: Promise<unknown> = Promise.resolve();
+  private loadedReplica?: { serialized: string; storageSecret: string; personId: string; deviceId: string; replica: AutomationReplica };
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
     ctx.storage.sql.exec(`
@@ -159,7 +160,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       const serialized = await this.loadReplicaState(this.env.EVENT_STORAGE_SECRET!);
       if (!serialized) return null;
       const profile = await this.getIdentityProfile(registration.integrationId, this.env.IDENTITY_STORAGE_SECRET!);
-      const replica = await AutomationReplica.restore(serialized, profile, value => this.saveReplicaState(this.env.EVENT_STORAGE_SECRET!, value));
+      const replica = await this.restoreReplica(serialized, profile, this.env.EVENT_STORAGE_SECRET!);
       const payload = replica.observationForRuntime(origin, nonce);
       return { publicKey: profile.identity.publicKey, certificates: [profile.certificate],
         signed: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId) };
@@ -242,7 +243,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
           canonicalizeJson(state.definition ?? null) !== canonicalizeJson(packet.definition ?? null)) {
           throw new Error("Existing automation identity cannot be rebound; create a new instance");
         }
-        replica = await AutomationReplica.restore(existing, profile, persist);
+        replica = await this.restoreReplica(existing, profile, storageSecret);
         if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be reactivated");
       } else replica = await AutomationReplica.activate({ ...packet, persist }, profile, origin);
       if (origin) replica.observationForRuntime(origin, crypto.randomUUID());
@@ -262,6 +263,8 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   }
 
   async saveReplicaState(secret: string, serialized: string): Promise<void> {
+    // A failed write must not leave a mutated in-memory replica reusable under old durable evidence.
+    this.loadedReplica = undefined;
     const encrypted = await encryptReplicaValue(secret, this.ctx.id.name ?? "", "state", serialized);
     const generation = crypto.randomUUID();
     const chunkSize = 900_000;
@@ -484,8 +487,19 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     const serialized = await this.loadReplicaState(secret);
     if (!serialized) return null;
     const profile = await this.getIdentityProfile(this.ctx.id.name ?? "", identitySecret);
-    const replica = await AutomationReplica.restore(serialized, profile, next => this.saveReplicaState(secret, next));
+    const replica = await this.restoreReplica(serialized, profile, secret);
     await replica.sync();
+    return replica;
+  }
+
+  private async restoreReplica(serialized: string, profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>,
+    storageSecret: string): Promise<AutomationReplica> {
+    // Always read and decrypt durable evidence first. Only an exact match may reuse its verification.
+    const cached = this.loadedReplica;
+    if (cached?.serialized === serialized && cached.storageSecret === storageSecret &&
+      cached.personId === profile.identity.personId && cached.deviceId === profile.device.deviceId) return cached.replica;
+    const replica = await AutomationReplica.restore(serialized, profile, value => this.saveReplicaState(storageSecret, value));
+    this.loadedReplica = { serialized, storageSecret, personId: profile.identity.personId, deviceId: profile.device.deviceId, replica };
     return replica;
   }
 

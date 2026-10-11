@@ -3,7 +3,7 @@ import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
-import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
+import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, type LocalProfile } from "../../../src/domain/identity";
 import type { SignedEnvelope } from "../../../src/domain/identity";
@@ -137,6 +137,7 @@ export class AutomationReplica {
   private definition?: SignedEnvelope<AutomationDefinition>;
   private tombstoned: boolean;
   private running: Promise<unknown> = Promise.resolve();
+  private admissionCache?: { key: string; result: WorkspaceAdmissionResult };
 
   private constructor(
     private readonly profile: LocalProfile,
@@ -458,20 +459,30 @@ export class AutomationReplica {
 
   private async revalidate() {
     this.assertActive();
-    const bytes = decodeBlindBytes(this.rawDocument);
-    const admission = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: bytes,
+    return this.admission();
+  }
+
+  private admission(document?: Automerge.Doc<WorkspaceDocumentV2>): WorkspaceAdmissionResult {
+    // Historical admission ignores receiver time. Live grant expiry is checked
+    // separately; every document, proof or authority change invalidates this cache.
+    const key = canonicalizeJson([this.rawDocument, this.authorizations, this.authority]);
+    if (this.admissionCache?.key === key) return this.admissionCache.result;
+    const input = { workspaceId: this.workspaceId,
       authorization: { version: 1, records: this.authorizations, authority: this.authority },
-      knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never);
-    return admission;
+      knownAuthority: this.authority, now: Date.now() } as const;
+    const result = document
+      ? computeWorkspaceDocumentAdmission(input, WasmStateCore as never, document)
+      : computeWorkspaceAdmission({ ...input, remote: decodeBlindBytes(this.rawDocument) }, WasmStateCore as never);
+    this.admissionCache = { key, result };
+    return result;
   }
 
   private admittedDocument(): Automerge.Doc<WorkspaceDocumentV2> {
+    this.assertActive();
     const bytes = decodeBlindBytes(this.rawDocument);
     const document = Automerge.load<WorkspaceDocumentV2>(bytes, { actor: actorIdForProfile(this.profile) });
     try {
-      const admission = computeWorkspaceDocumentAdmission({ workspaceId: this.workspaceId,
-        authorization: { version: 1, records: this.authorizations, authority: this.authority },
-        knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never, document);
+      const admission = this.admission(document);
       assertFullyAdmitted(admission, bytes);
       return document;
     } catch (error) { Automerge.free(document); throw error; }

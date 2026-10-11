@@ -4,7 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import type { WorkerEnv } from "../src/index";
 import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
-import { initSync } from "@meta-uber/mesh-transport/wasm";
+import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
 import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
 import { createWorkspaceDoc } from "../../../src/domain/seeds";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
@@ -54,6 +54,19 @@ it("Given an owner-signed type contract, when activated and restored, then only 
   const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {});
   expect(restored.definitionForRuntime()).toMatchObject({ type: "job-intake", typeVersion: 1, parameters: { sources: ["website"] } });
   expect(restored.allowsSource("email")).toBe(false);
+});
+
+it("Given already verified workspace evidence, when controls are read repeatedly with no CPU budget for revalidation, then observations remain available but expired grants fail", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => { throw new Error("Admission CPU budget exhausted"); });
+  try {
+    expect(replica.controlForRuntime().state).toBe("active");
+    expect(replica.observationForRuntime("https://automation.example.test", "unchanged-evidence").state).toBe("active");
+    vi.useFakeTimers();
+    vi.setSystemTime(data.packet.grant.payload.automation!.expiresAt + 1);
+    expect(() => replica.controlForRuntime()).toThrow(/expired/);
+  } finally { admission.mockRestore(); vi.useRealTimers(); }
 });
 
 it("Given a signed workspace with over 312k text operations, when automation activates, restores and creates a lead, then its controls remain admitted within the policy memory budget", async () => {
@@ -232,6 +245,37 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
       await ctx.storage.deleteAlarm();
     });
     Automerge.free(document); Automerge.free(paused.value.newDoc);
+  } finally { sync.mockRestore(); }
+});
+
+it("Given a verified durable replica, when unchanged controls are polled, then admission is reused until stored evidence changes", async () => {
+  const id = `poll-cache-${crypto.randomUUID()}`;
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(id);
+  const identitySecret = "test-only-identity-secret-at-least-thirty-two-bytes";
+  const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
+  const identity = await stub.provisionIdentity(id, identitySecret);
+  const data = await typedFixture(identity.identity.personId);
+  const registration = { integrationId: id, workspaceId: data.packet.workspaceId, ownerPersonId: data.owner.identity.personId };
+  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
+  try {
+    await stub.enrollOwner(registration, identitySecret);
+    await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
+    await runInDurableObject(stub, async (instance, ctx) => {
+      Reflect.set(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
+      const restore = vi.spyOn(AutomationReplica, "restore");
+      try {
+        const first = await instance.observeOwner(registration, "first", "https://automation.example.test");
+        const second = await instance.observeOwner(registration, "second", "https://automation.example.test");
+        expect(first?.signed.payload.nonce).toBe("first");
+        expect(second?.signed.payload.nonce).toBe("second");
+        expect(restore).toHaveBeenCalledTimes(1);
+        const state = JSON.parse((await instance.loadReplicaState(storageSecret))!);
+        state.authorizations = [];
+        await instance.saveReplicaState(storageSecret, JSON.stringify(state));
+        await expect(instance.observeOwner(registration, "changed", "https://automation.example.test")).rejects.toThrow();
+        expect(restore).toHaveBeenCalledTimes(2);
+      } finally { restore.mockRestore(); await ctx.storage.deleteAlarm(); }
+    });
   } finally { sync.mockRestore(); }
 });
 
