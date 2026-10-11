@@ -28,9 +28,11 @@ export const cardAgingPolicySchema = z.strictObject({
     "Aging thresholds must increase from watch to aged to overdue",
   ),
 })
+export const employeeProfileSchema = z.strictObject({ stack: z.string().max(4000), work_profile: z.string().max(8000) })
 export const priorityPolicySchema = z.strictObject({
   version: z.literal(1),
-  evaluator: z.literal("weighted-rules-v1"),
+  evaluator: z.enum(["weighted-rules-v1", "job-fit-v1"]),
+  assessmentFieldId: id.optional(),
   sort: z.enum(["fit_desc", "fit_asc", "manual"]).optional(),
   priorityFieldId: id,
   fitFieldId: id.nullable(),
@@ -42,6 +44,7 @@ const boardSchema = z.strictObject({
   preset: z.strictObject({ key: z.enum(["job-search", "blank"]), version: z.literal(1), bindings: z.record(z.string(), z.string()) }).nullable(),
   cardStageButtons: z.array(z.strictObject({ columnId: id, label: z.string().min(1).optional() })).optional(),
   priorityPolicy: priorityPolicySchema.nullable().optional(),
+  employee_profile: employeeProfileSchema.optional(),
   cardAgingPolicy: cardAgingPolicySchema.optional(),
   archiveColumnId: id.nullable().optional(),
 })

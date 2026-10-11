@@ -45,7 +45,7 @@ function validateBoard(value: unknown, doc: WorkspaceDocumentV2 | undefined, err
   const result = validateBoardSchemaDraft(value, doc)
   errors.push(...result.errors.map(error => ({ path: `/board${error.path}`, message: error.message })))
   if (!isRecord(value)) return
-  rejectUnknown(value, ["boardId", "boardTitle", "entityName", "columns", "cardStageButtons", "fields", "priorityPolicy", "cardAgingPolicy"], "/board", errors)
+  rejectUnknown(value, ["boardId", "boardTitle", "entityName", "columns", "cardStageButtons", "fields", "priorityPolicy", "employee_profile", "cardAgingPolicy"], "/board", errors)
   const boardId = value.boardId
   if (typeof boardId !== "string" || !boardId) {
     errors.push({ path: "/board/boardId", message: "boardId is required" })

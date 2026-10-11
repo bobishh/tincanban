@@ -15,6 +15,7 @@ import type {
   Heads,
   WorkspaceDocumentV2,
 } from "../domain/model";
+import { emptyEmployeeProfile } from "../domain/jobPriority";
 import { createDefaultPriorityPolicy } from "../domain/priority";
 import {
   diffBoardSchema,
@@ -152,12 +153,12 @@ function confirmEntityChanges() {
 function updateWorkspaceJson(value: string) {
   workspaceJson.value = value;
   try {
-    const parsed = JSON.parse(value);
-    workspaceSettings.value = parsed;
-    workspaceErrors.value = validateWorkspaceSettingsDraft(
-      parsed,
-      props.doc,
-    ).errors;
+    const parsed: unknown = JSON.parse(value);
+    workspaceErrors.value = validateWorkspaceSettingsDraft(parsed, props.doc).errors;
+    if (workspaceErrors.value.length) return;
+    const settings = parsed as WorkspaceSettingsDraft;
+    settings.board.employee_profile ??= emptyEmployeeProfile();
+    workspaceSettings.value = settings;
   } catch (error) {
     workspaceErrors.value = [invalidJsonError(error)];
   }
@@ -206,7 +207,7 @@ function removePriorityRule(index: number) {
 
 function savePriorityRules() {
   priorityErrors.value = [];
-  if (priorityPolicy.value && !priorityPolicy.value.rules.length) {
+  if (priorityPolicy.value?.evaluator === "weighted-rules-v1" && !priorityPolicy.value.rules.length) {
     priorityErrors.value = ["Add at least one priority rule"];
     return;
   }
@@ -214,7 +215,7 @@ function savePriorityRules() {
   const errors = validateWorkspaceSettingsDraft(
     workspaceSettings.value,
     props.doc,
-  ).errors.filter((error) => error.path.startsWith("/board/priorityPolicy"));
+  ).errors.filter((error) => error.path.startsWith("/board/priorityPolicy") || error.path.startsWith("/board/employee_profile"));
   if (errors.length) {
     priorityErrors.value = errors.map((error) => error.message);
     return;
@@ -340,7 +341,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
           </div>
           <div v-else :id="`${settingsId}-priority-panel`" role="tabpanel" :aria-labelledby="`${settingsId}-priority-tab`">
             <p class="dialog-copy">Priority rules apply to {{ board.title }}.</p>
-            <SchemaPrioritySection :criterion-fields="criterionFields" :errors="priorityErrors" :policy="priorityPolicy"
+            <SchemaPrioritySection :employee-profile="workspaceSettings.board.employee_profile!" :criterion-fields="criterionFields" :errors="priorityErrors" :policy="priorityPolicy"
               :priority-options="priorityOptions" :read-only="readOnly" @add-rule="addPriorityRule" @disable="disableAutomaticPriority"
               @enable="enableAutomaticPriority" @remove-rule="removePriorityRule" @save="savePriorityRules" />
           </div>

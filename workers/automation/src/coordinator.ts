@@ -426,7 +426,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET, row.event_id, row.payload);
       const emailCandidates = event.source === "email" ? replica?.candidates() : undefined;
       const definition = replica?.definitionForRuntime();
-      const result = await (definition ? runRegisteredAutomation(definition, event, this.env.AI) : runPipeline(event, this.env.AI));
+      const result = await (definition ? runRegisteredAutomation(definition, event, this.env.AI, replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime()) : runPipeline(event, this.env.AI, undefined, replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime()));
       const action = await this.applyScopedDecision(row.event_id, event, result, emailCandidates, replica);
       this.saveResult(row.event_id, action ? "applied" : "review", attempt,
         action ? { ...result, status: "applied", reason: action.message, action } : result);

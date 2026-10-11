@@ -379,3 +379,49 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
     expect(JSON.parse(restored.serialize()).pending).toBeUndefined();
   });
 });
+
+it("Given owner employee_profile and job priority settings, when intake is authored and restored, then profile and complete Clef assessment produce the same board priority", async () => {
+  const { projectWorkspaceSettings } = await import("../../../src/domain/workspaceSettings");
+  const { createDefaultPriorityPolicy, projectItemPriority } = await import("../../../src/domain/priority");
+  const { classifyOpportunity } = await import("../src/clef");
+  const { hasEntityKind, isItem } = await import("../../../src/domain/model");
+  const data = await fixture();
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+  const board = document.entities[data.packet.bindings.boardId];
+  if (!hasEntityKind(board, "board")) throw new Error("Missing board");
+  const settings = projectWorkspaceSettings(document, board.id);
+  const profile = { stack: "Ruby, PostgreSQL", work_profile: "Senior Software Engineer, Product Engineer, AI / Founding Engineer" };
+  settings.board.employee_profile = profile;
+  settings.board.priorityPolicy = createDefaultPriorityPolicy(board, Object.values(document.entities).filter(entity => hasEntityKind(entity, "field")));
+  const updated = await executeCommand(document, { kind: "updateWorkspaceSettings", settings }, data.owner);
+  if (!updated.ok) throw new Error(updated.error.message);
+  data.packet.initial = await ownerSnapshot(updated.value.newDoc, data.owner, data.packet);
+  Automerge.free(document); Automerge.free(updated.value.newDoc);
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  expect(replica.employeeProfileForRuntime()).toEqual(profile);
+  const decision = await classifyOpportunity({ run: async (_model, input) => {
+    const request = input as { state: { employee_profile: unknown }; questions: Record<string, { criteria: Record<string, string> }> };
+    expect(request.state.employee_profile).toEqual(profile);
+    return { answers: Object.fromEntries(Object.entries(request.questions).map(([key, question]) => {
+      const choice = key === "job_opportunity" ? "yes" : key === "role_type" ? "backend" : key === "seniority" ? "senior" : "strong";
+      return [key, { type: "choice", choice, confidence: 1,
+        probabilities: Object.fromEntries(Object.keys(question.criteria).map(label => [label, label === choice ? 1 : 0])) }];
+    })) };
+  } }, "Senior product vacancy", replica.employeeProfileForRuntime(), replica.priorityBandsForRuntime());
+  const created = await replica.createLead("assessed-intake", { company: "Acme", role: "Senior engineer",
+    message: "Long vacancy ".repeat(1000), sourceText: "Long extraction ".repeat(1000) }, decision);
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {});
+  expect(restored.employeeProfileForRuntime()).toEqual(profile);
+  const stored = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(JSON.parse(restored.serialize()).rawDocument));
+  try {
+    const storedBoard = stored.entities[data.packet.bindings.boardId];
+    const item = stored.entities[created.cardId];
+    if (!hasEntityKind(storedBoard, "board") || !isItem(item)) throw new Error("Missing authored item");
+    expect(projectItemPriority(storedBoard, item).values).toMatchObject({
+      [storedBoard.priorityPolicy!.priorityFieldId]: decision.priority.optionId,
+      [storedBoard.priorityPolicy!.fitFieldId!]: decision.priority.score,
+    });
+    expect(decision.priority.score).toBe(10);
+    expect(JSON.parse(String(item.values[data.packet.bindings.fieldIds.sourceText!])).decision.assessment).toEqual(decision.assessment);
+  } finally { Automerge.free(stored); }
+});

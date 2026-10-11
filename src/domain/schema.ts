@@ -1,8 +1,9 @@
+import { emptyEmployeeProfile } from "./jobPriority"
 import type { Board, CardAgingPolicy, Column, FieldDefinition, PriorityPolicy, WorkspaceDocumentV2 } from "./model"
 import { getAncestryPath, getChildren, compareRanks } from "./ancestry"
 import { isArchiveColumn } from "./archive"
 import { isItemArchived } from "./archive"
-import { cardAgingPolicySchema, priorityPolicySchema } from "./entitySchemas"
+import { cardAgingPolicySchema, employeeProfileSchema, priorityPolicySchema } from "./entitySchemas"
 import { validatePriorityPolicy } from "./priority"
 import { entityKind, hasEntityKind, isItem } from "./model"
 import { cardStageButtons, type CardStageButton } from "./cardStageButtons"
@@ -10,7 +11,7 @@ import { cardStageButtons, type CardStageButton } from "./cardStageButtons"
 type BoardSchemaColumn = { id?: string; title: string; archive?: true; collapsible?: boolean }
 type BoardSchemaSelectOption = { id?: string; title: string }
 type BoardSchemaField = { id?: string; title: string; valueType: "text" | "number" | "boolean" | "select" | "url" | "date" | "datetime"; required: boolean; min?: number | null; max?: number | null; options?: BoardSchemaSelectOption[] }
-export type BoardSchemaDraft = { boardId: string; boardTitle: string; entityName: string; columns: BoardSchemaColumn[]; fields: BoardSchemaField[]; cardStageButtons?: CardStageButton[]; priorityPolicy?: PriorityPolicy | null; cardAgingPolicy?: CardAgingPolicy }
+export type BoardSchemaDraft = { boardId: string; boardTitle: string; entityName: string; columns: BoardSchemaColumn[]; fields: BoardSchemaField[]; cardStageButtons?: CardStageButton[]; priorityPolicy?: PriorityPolicy | null; employee_profile?: Board["employee_profile"]; cardAgingPolicy?: CardAgingPolicy }
 export type SchemaValidationError = { path: string; message: string }
 export type SchemaValidationResult = { valid: boolean; errors: SchemaValidationError[] }
 export type SchemaDiff = {
@@ -31,6 +32,7 @@ export function projectBoardSchema(doc: WorkspaceDocumentV2, boardId: string): B
     columns,
     cardStageButtons: cardStageButtons(board, childEntities<Column>(doc, boardId, "column")),
     fields,
+    employee_profile: { ...(board?.employee_profile ?? emptyEmployeeProfile()) },
     priorityPolicy: board?.priorityPolicy
       ? { ...JSON.parse(JSON.stringify(board.priorityPolicy)), sort: board.priorityPolicy.sort ?? "fit_desc" }
       : null,
@@ -54,6 +56,10 @@ export function validateBoardSchemaDraft(draft: unknown, doc?: WorkspaceDocument
   const errors: SchemaValidationError[] = []
   requiredText(draft.boardTitle, "/boardTitle", "Board title is required", errors)
   requiredText(draft.entityName, "/entityName", "Entity name is required", errors)
+  if (draft.employee_profile !== undefined) {
+    const parsed = employeeProfileSchema.safeParse(draft.employee_profile)
+    if (!parsed.success) errors.push(...parsed.error.issues.map(issue => ({ path: `/employee_profile/${issue.path.join("/")}`, message: issue.message })))
+  }
   validateColumns(draft.columns, errors)
   validateArchiveRoleRemoval(draft, doc, errors)
   validateArchiveColumnContents(draft.columns, doc, errors)
@@ -166,6 +172,7 @@ function validatePolicy(draft: Record<string, unknown>, doc: WorkspaceDocumentV2
   if (!Array.isArray(draft.fields)) return
   const ids = new Set(draft.fields.map(value => record(value) && typeof value.id === "string" ? value.id : ""))
   parsed.data.rules.forEach((rule, index) => { if (!ids.has(rule.fieldId)) errors.push({ path: `/priorityPolicy/rules/${index}/fieldId`, message: "Rule field must remain on this board" }) })
+  if (parsed.data.assessmentFieldId && !ids.has(parsed.data.assessmentFieldId)) errors.push({ path: "/priorityPolicy/assessmentFieldId", message: "Assessment field must remain on this board" })
   if (!ids.has(parsed.data.priorityFieldId)) errors.push({ path: "/priorityPolicy/priorityFieldId", message: "Priority output field must remain on this board" })
   if (parsed.data.fitFieldId && !ids.has(parsed.data.fitFieldId)) errors.push({ path: "/priorityPolicy/fitFieldId", message: "Fit output field must remain on this board" })
 }

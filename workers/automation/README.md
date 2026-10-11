@@ -4,6 +4,25 @@ This Worker accepts bounded job submissions and forwarded email, stores each eve
 
 The public event response means **durably queued**. After a signed owner automation grant and fully admitted encrypted snapshot are activated, clear Clef decisions can create a Lead or move a uniquely matched application to Interview or Rejected. Each action is authored as an Automerge change, admitted against the current signed causal authority, persisted before Rusty upload, and reported as applied only after the signed upload receipt succeeds. Email matching uses a pre-classification snapshot; moves require a valid original `Date` header at least as new as the card workflow and reject concurrent workflow changes. Rejected applications never move backward. Ambiguous matches, uncertain classifications, expired grants, stale workflows, and unavailable proof stay in review or retry. Clef cannot authorize writes. The Worker never falls back to an Editor grant.
 
+## Job priority
+
+Opportunity policy `lead-clef-v2` asks Clef for company recognition, company
+stability, stack match and work profile match alongside relevance, role and
+seniority. The owner-configured board `employee_profile` is read from the admitted
+replica after synchronization and passed as structured context. Intake cannot
+supply or override this profile. Company evaluations require supplied evidence;
+no current financial facts are invented from a company name.
+
+Each assessment choice retains its probability map. A winner below 0.7 or a
+margin below 0.2 becomes unknown; unknown earns no points. Strong/partial/weak
+map to 10/5/0. Shared weights are 20/20/30/30 percent. Decisions contain the score
+and selected board priority option ID (default P0/P1/P2/P3 bands without a job
+policy). The structured assessment and compared profile are stored intact in
+Source text, with human source text separately bounded. Board projection uses the
+same evaluator; profile changes invalidate stale stack/work points. No additional
+write permissions are granted, and priority never bypasses relevance/authority
+checks. These changes require both frontend and Worker rollout.
+
 ## Local setup
 
 Use Node.js 22+ and pnpm. Install within this directory so the local `allowBuilds` policy permits only the `esbuild` and `workerd` build scripts used by the test runtime.

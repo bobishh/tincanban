@@ -77,3 +77,17 @@ describe("priority order", () => {
       .toEqual([onsite, remote])
   })
 })
+
+it("Given persisted Clef assessment and current employee profile, when projecting and sorting, then uses the shared score and board thresholds", () => {
+  const profile = { stack: "Ruby", work_profile: "Senior product engineer" }
+  const assessment = { version: 1, employee_profile: profile, scores: { companyRecognition: 10, companyStability: 5, stackFit: 10, workFit: 5 } }
+  const jobPolicy: PriorityPolicy = { ...policy, evaluator: "job-fit-v1", assessmentFieldId: "source", rules: [], bands: [
+    { optionId: "p0", minScore: 7 }, { optionId: "p3", minScore: 0 },
+  ] }
+  const board = { priorityPolicy: jobPolicy, employee_profile: profile } as Board
+  const scored = { id: "scored", values: { source: JSON.stringify({ decision: { assessment } }) } } as unknown as Item
+  const missing = { id: "missing", values: { mode: "remote" } } as unknown as Item
+  expect(projectItemPriority(board, scored).values).toMatchObject({ fit: 7.5, priority: "p0" })
+  expect(orderItemsByPriority(board, [missing, scored]).map(item => item.id)).toEqual(["scored", "missing"])
+  expect(projectItemPriority({ ...board, employee_profile: { ...profile, stack: "Java" } }, scored).values.fit).toBe(3)
+})

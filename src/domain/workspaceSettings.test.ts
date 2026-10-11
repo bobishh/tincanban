@@ -126,6 +126,7 @@ describe("workspace settings transaction", () => {
     if (!hasEntityKind(board, "board")) throw new Error("board missing")
     const fields = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "field"))
     settings.board.priorityPolicy = createDefaultPriorityPolicy(board, fields)
+    settings.board.employee_profile = { stack: "Rust", work_profile: "Backend IC" }
 
     const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings }, profile)
     if (!result.ok) throw new Error(JSON.stringify(result.error))
@@ -133,11 +134,13 @@ describe("workspace settings transaction", () => {
     if (!result.ok) return
     expect(projectWorkspaceSettings(result.value.newDoc).board.priorityPolicy).toMatchObject({
       version: 1,
-      evaluator: "weighted-rules-v1",
+      evaluator: "job-fit-v1",
       sort: "fit_desc",
-      rules: expect.arrayContaining([expect.objectContaining({ weight: 8 })]),
+      assessmentFieldId: board.preset!.bindings["field.sourceText"],
+      rules: [],
     })
 
+    expect(projectWorkspaceSettings(result.value.newDoc).board.employee_profile).toEqual({ stack: "Rust", work_profile: "Backend IC" })
     const reordered = projectWorkspaceSettings(result.value.newDoc)
     reordered.board.priorityPolicy!.sort = "fit_asc"
     const reorderedResult = await executeCommand(result.value.newDoc, { kind: "updateWorkspaceSettings", settings: reordered }, profile)
@@ -146,10 +149,10 @@ describe("workspace settings transaction", () => {
     expect(projectWorkspaceSettings(reorderedResult.value.newDoc).board.priorityPolicy?.sort).toBe("fit_asc")
 
     const invalid = projectWorkspaceSettings(reorderedResult.value.newDoc)
-    invalid.board.priorityPolicy!.rules[0].fieldId = "missing"
+    invalid.board.priorityPolicy!.assessmentFieldId = "missing"
     expect(validateWorkspaceSettingsDraft(invalid, result.value.newDoc).errors).toContainEqual({
-      path: "/board/priorityPolicy/rules/0/fieldId",
-      message: "Rule field must be active on this board",
+      path: "/board/priorityPolicy/assessmentFieldId",
+      message: "Job assessment requires an active text field on this board",
     })
   })
 

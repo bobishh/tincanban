@@ -4,7 +4,10 @@ import { classifyOpportunity, classifyApplicationEvent } from '../src/clef.ts';
 
 const roleProbabilities = { backend: 1, frontend: 0, fullstack: 0, platform_devops: 0, data_ai: 0, mobile: 0, engineering_management: 0, other_unknown: 0 };
 const seniorityProbabilities = { intern_junior: 0, middle: 0, senior: 1, staff_principal: 0, lead_manager: 0, unknown: 0 };
-const ai = (answers: unknown) => ({ run: async () => ({ model: 'clef-flash', answers }) });
+const unknownAssessments = Object.fromEntries(['company_recognition', 'company_stability', 'stack_fit', 'work_fit'].map(key => [key, {
+  type: 'choice', choice: 'unknown', confidence: 1, probabilities: { strong: 0, partial: 0, weak: 0, unknown: 1 },
+}]));
+const ai = (answers: unknown) => ({ run: async () => ({ model: 'clef-flash', answers: { ...unknownAssessments, ...(answers as object) } }) });
 
 test('Given complete Clef probability maps, when classifying a vacancy, then preserves every distribution', async () => {
   const distributions = {
@@ -49,4 +52,38 @@ test('Given a confident rejection, when classifying, then returns a rejection an
   }), 'We will not be proceeding.');
   assert.equal(result.event, 'rejection');
   assert.deepEqual(result.distributions.application_event.probabilities, probabilities);
+});
+
+test('Given employee_profile, when Clef assesses intake, then compares stack and work and returns shared weighted priority', async () => {
+  const profile = { stack: 'Rust, TypeScript', work_profile: 'Principal distributed systems engineer' };
+  const result = await classifyOpportunity({ run: async (_model, input) => {
+    const request = input as { state: { employee_profile: unknown }; questions: Record<string, unknown> };
+    assert.deepEqual(request.state.employee_profile, profile);
+    assert.ok(request.questions.company_stability);
+    return { answers: {
+      job_opportunity: { type: 'choice', choice: 'yes', confidence: 1, probabilities: { yes: 1, no: 0, uncertain: 0 } },
+      role_type: { type: 'choice', choice: 'backend', confidence: 1, probabilities: roleProbabilities },
+      seniority: { type: 'choice', choice: 'senior', confidence: 1, probabilities: seniorityProbabilities },
+      ...Object.fromEntries(['company_recognition', 'company_stability', 'stack_fit', 'work_fit'].map(key => [key, {
+        type: 'choice', choice: 'strong', confidence: 1, probabilities: { strong: 1, partial: 0, weak: 0, unknown: 0 },
+      }])),
+    } };
+  } }, 'A real vacancy', profile);
+  assert.equal(result.priority.score, 10);
+  assert.equal(result.priority.optionId, 'p0');
+  assert.deepEqual(result.assessment.employee_profile, profile);
+});
+
+test('Given uncertain fit evidence and no employee profile, when assessing, then uncertainty contributes no points', async () => {
+  const uncertain = { type: 'choice', choice: 'strong', confidence: 0.3,
+    probabilities: { strong: 0.55, partial: 0.3, weak: 0.1, unknown: 0.05 } };
+  const result = await classifyOpportunity(ai({
+    job_opportunity: { type: 'choice', choice: 'yes', confidence: 1, probabilities: { yes: 1, no: 0, uncertain: 0 } },
+    role_type: { type: 'choice', choice: 'backend', confidence: 1, probabilities: roleProbabilities },
+    seniority: { type: 'choice', choice: 'senior', confidence: 1, probabilities: seniorityProbabilities },
+    company_stability: uncertain,
+    stack_fit: { ...uncertain, confidence: 1, probabilities: { strong: 1, partial: 0, weak: 0, unknown: 0 } },
+  }), 'vacancy');
+  assert.equal(result.assessment.scores.companyStability, null);
+  assert.equal(result.priority.score, 0);
 });

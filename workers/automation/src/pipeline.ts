@@ -1,3 +1,4 @@
+import type { EmployeeProfile } from "../../../src/domain/jobPriority";
 import { classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification, type DecisionAi, type OpportunityClassification } from "./clef";
 import type { ForwardedMail } from "./email";
 import { extractJobPage, type JobPageFetcher, type JobPageResult } from "./extraction";
@@ -16,15 +17,17 @@ export type AutomationPipelineResult = {
 };
 
 /** Classifies durable intake. It deliberately has no mutation/publisher port until a scoped signer is provisioned. */
-export async function runPipeline(event: AutomationEvent, ai: DecisionAi, fetcher: JobPageFetcher = fetch): Promise<AutomationPipelineResult> {
+export async function runPipeline(event: AutomationEvent, ai: DecisionAi, fetcher: JobPageFetcher = fetch, employeeProfile?: EmployeeProfile, bands?: Array<{ optionId: string; minScore: number }>): Promise<AutomationPipelineResult> {
   if (event.source === "email") return processMail(event, ai);
-  return processWebsite(event, ai, fetcher);
+  return processWebsite(event, ai, fetcher, employeeProfile, bands);
 }
 
 async function processWebsite(
   event: Extract<AutomationEvent, { source: "website" }>,
   ai: DecisionAi,
   fetcher: JobPageFetcher,
+  employeeProfile?: EmployeeProfile,
+  bands?: Array<{ optionId: string; minScore: number }>,
 ): Promise<AutomationPipelineResult> {
   const submission = event.submission;
   const extraction = submission.jobUrl ? await extractJobPage(submission.jobUrl, {
@@ -45,7 +48,7 @@ async function processWebsite(
       `Extracted body: ${extraction.body}`,
     ] : []),
   ].join("\n");
-  const decision = await classifyOpportunity(ai, state);
+  const decision = await classifyOpportunity(ai, state, employeeProfile, bands);
   const source = { type: "website" as const, receivedAt: event.receivedAt, ...(extraction ? { jobUrl: extraction.finalUrl } : {}) };
   if (decision.relevance !== "yes") {
     return {

@@ -15,6 +15,9 @@ const testAi = {
         confidence: 0.96, probabilities } } };
     }
     return { answers: {
+      ...Object.fromEntries(['company_recognition', 'company_stability', 'stack_fit', 'work_fit'].map(key => [key, {
+        type: 'choice', choice: 'unknown', confidence: 1, probabilities: { strong: 0, partial: 0, weak: 0, unknown: 1 },
+      }])),
       job_opportunity: { type: "choice", choice: "yes", confidence: 0.96,
         probabilities: { yes: 0.96, no: 0.02, uncertain: 0.02 } },
       role_type: { type: "choice", choice: "backend", confidence: 0.96,

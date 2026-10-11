@@ -302,6 +302,9 @@ describe("automation Worker", () => {
       mobile: 0, engineering_management: 0, other_unknown: 0 };
     const seniorityProbabilities = { intern_junior: 0, middle: 0, senior: 1, staff_principal: 0, lead_manager: 0, unknown: 0 };
     const ai = { run: async () => ({ answers: {
+      ...Object.fromEntries(['company_recognition', 'company_stability', 'stack_fit', 'work_fit'].map(key => [key, {
+        type: 'choice', choice: 'unknown', confidence: 1, probabilities: { strong: 0, partial: 0, weak: 0, unknown: 1 },
+      }])),
       job_opportunity: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0, uncertain: 0 } },
       role_type: { type: "choice", choice: "backend", confidence: 1, probabilities: roleProbabilities },
       seniority: { type: "choice", choice: "senior", confidence: 1, probabilities: seniorityProbabilities },

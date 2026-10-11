@@ -23,8 +23,9 @@ browser	e2e/archive-layout.spec.ts	144	no	Folded board motion	Given a folded boa
 browser	e2e/archive-layout.spec.ts	204	no		Given a board taller than the viewport, when Rejected and Archive fold, then their labels and counts remain visible near the board top
 browser	e2e/archive-layout.spec.ts	240	no		Given an open column, when folded and unfolded, then its striped header turns and stretches into a full-height spine
 browser	e2e/archive-role-settings.spec.ts	4	no		Given an Archive column, when role moves in column settings, then Archive role stays independent from collapse
-browser	e2e/automatic-priority.spec.ts	26	no	Automatic priority from workspace preferences	Given weighted work-mode rules, when leads are created, then fit and priority are derived without manual fields
-browser	e2e/automatic-priority.spec.ts	54	no	Automatic priority from workspace preferences	Given automatic priority with no criteria, when saving, then settings stay open with an actionable error
+browser	e2e/automatic-priority.spec.ts	27	no	Automatic priority from workspace preferences	Given weighted work-mode rules, when leads are created, then fit and priority are derived without manual fields
+browser	e2e/automatic-priority.spec.ts	71	no	Automatic priority from workspace preferences	Given automatic priority with no criteria, when saving, then settings stay open with an actionable error
+browser	e2e/automatic-priority.spec.ts	102	no		Given job match priority, when employee_profile is saved, then profile persists and missing assessments receive no remote bonus
 browser	e2e/automation-production.spec.ts	36	no	production automation proof	Given the production owner UI, when owner connects Rusty and approves the Worker, then private signed scope is exported
 browser	e2e/automation-production.spec.ts	108	no	production automation proof	Given exact owner-approved Worker routing, when real Clef classifies website intake, then a Lead syncs to Rusty and reopens in the owner UI
 browser	e2e/automation-worker.spec.ts	14	no		Given an owner-approved blind workspace, when Worker intake and forwarded mail run, then real clients see one scoped Lead and safe status moves
@@ -618,6 +619,10 @@ app-unit	src/domain/itemLifecycleConcurrency.test.ts	83	no	item lifecycle/workfl
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	91	no	item lifecycle/workflow Automerge concurrency	merges a cross-column move with a same-column reorder without splitting workflow placement
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	112	no	item lifecycle/workflow Automerge concurrency	updates nested item workflow when a parent item moves across columns
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	140	no	item lifecycle/workflow Automerge concurrency	merges concurrent moves with workflow tracking final placement and preserving lifecycle fields
+app-unit	src/domain/jobPriority.test.ts	9	no		Given a stable known company and matching employee profile, when evaluated, then scores company 40% and fit 60%
+app-unit	src/domain/jobPriority.test.ts	13	no		Given missing evidence or profile, when evaluated, then awards no unsupported fit points
+app-unit	src/domain/jobPriority.test.ts	19	no		Given changed employee profile, when reading an older assessment, then drops stale comparison points
+app-unit	src/domain/jobPriority.test.ts	23	no		Given persisted intake evidence, when reading, then accepts complete assessments and rejects truncated or invalid data
 app-unit	src/domain/memberProfileConcurrency.test.ts	24	no	member avatar CRDT concurrency	merges distinct first profile writes from a legacy document without losing either person
 app-unit	src/domain/memberProfiles.test.ts	28	no	member avatar profile command	writes small avatar data and timestamp as one CRDT profile value
 app-unit	src/domain/memberProfiles.test.ts	41	no	member avatar profile command	rejects invalid avatar data and removing a missing photo
@@ -648,6 +653,7 @@ app-unit	src/domain/priority.test.ts	46	no	priority projection	returns source it
 app-unit	src/domain/priority.test.ts	51	no	priority projection	keeps configured preset Notes rules working when text Notes fold into Description
 app-unit	src/domain/priority.test.ts	65	no	priority order	orders highest fit first by default and keeps equal scores stable
 app-unit	src/domain/priority.test.ts	73	no	priority order	supports lowest-fit and manual order
+app-unit	src/domain/priority.test.ts	81	no		Given persisted Clef assessment and current employee profile, when projecting and sorting, then uses the shared score and board thresholds
 app-unit	src/domain/proofs.test.ts	28	no	Cryptographic proofs, authority, and certificate chains (Requirement 2.2)	Given grants for two workspaces, when one leaves the mesh, then only that workspace grants are removed
 app-unit	src/domain/proofs.test.ts	42	no	Cryptographic proofs, authority, and certificate chains (Requirement 2.2)	canonicalizes JSON according to RFC 8785 and rejects non-finite numbers
 app-unit	src/domain/proofs.test.ts	52	no	Cryptographic proofs, authority, and certificate chains (Requirement 2.2)	verifies signatures and detects tampering
@@ -686,7 +692,7 @@ app-unit	src/domain/workspaceSettings.test.ts	67	no	workspace settings transacti
 app-unit	src/domain/workspaceSettings.test.ts	86	no	workspace settings transaction	applies the archive role and rejects duplicate archive columns
 app-unit	src/domain/workspaceSettings.test.ts	105	no	workspace settings transaction	stores board archive reference for a newly added schema column without an ID
 app-unit	src/domain/workspaceSettings.test.ts	122	no	workspace settings transaction	stores declarative priority rules in the board CRDT and rejects dangling criteria
-app-unit	src/domain/workspaceSettings.test.ts	156	yes	workspace settings transaction	Given stage buttons with $name, when applying settings, then precise error is returned and source remains unchanged
+app-unit	src/domain/workspaceSettings.test.ts	159	yes	workspace settings transaction	Given stage buttons with $name, when applying settings, then precise error is returned and source remains unchanged
 app-unit	src/filters.test.ts	12	no	schema-driven board filters	keeps every item with defaults
 app-unit	src/filters.test.ts	16	no	schema-driven board filters	intersects column, stable select option, boolean, numeric, and date filters
 app-unit	src/iroh.test.ts	14	no	Iroh persistent node secret support	keeps verbose Iroh connection logging disabled unless a caller explicitly enables it
@@ -1702,11 +1708,13 @@ meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	949	no
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	955	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 8. keyId utility	rejects non-string or invalid length public keys
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	962	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 9. owner-authoritative revocation	accepts an owner-signed monotonic tombstone
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	969	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 9. owner-authoritative revocation	rejects a tombstone signed by another identity
-worker-unit	workers/automation/tests/clef.test.ts	9	no		Given complete Clef probability maps, when classifying a vacancy, then preserves every distribution
-worker-unit	workers/automation/tests/clef.test.ts	20	no		Given a valid Clef distribution and a lower independent confidence score, when classifying, then accepts the distribution without equating the two values
-worker-unit	workers/automation/tests/clef.test.ts	30	no		Given malformed Clef probabilities, when classifying, then leaves event retryable by throwing
-worker-unit	workers/automation/tests/clef.test.ts	38	no		Given uncertain application-event distribution, when classifying, then requests review
-worker-unit	workers/automation/tests/clef.test.ts	45	no		Given a confident rejection, when classifying, then returns a rejection and keeps full probabilities
+worker-unit	workers/automation/tests/clef.test.ts	12	no		Given complete Clef probability maps, when classifying a vacancy, then preserves every distribution
+worker-unit	workers/automation/tests/clef.test.ts	23	no		Given a valid Clef distribution and a lower independent confidence score, when classifying, then accepts the distribution without equating the two values
+worker-unit	workers/automation/tests/clef.test.ts	33	no		Given malformed Clef probabilities, when classifying, then leaves event retryable by throwing
+worker-unit	workers/automation/tests/clef.test.ts	41	no		Given uncertain application-event distribution, when classifying, then requests review
+worker-unit	workers/automation/tests/clef.test.ts	48	no		Given a confident rejection, when classifying, then returns a rejection and keeps full probabilities
+worker-unit	workers/automation/tests/clef.test.ts	57	no		Given employee_profile, when Clef assesses intake, then compares stack and work and returns shared weighted priority
+worker-unit	workers/automation/tests/clef.test.ts	77	no		Given uncertain fit evidence and no employee profile, when assessing, then uncertainty contributes no points
 worker-unit	workers/automation/tests/email.test.ts	5	no		Given a unique exact thread reference, when correlated, then selects the existing application
 worker-unit	workers/automation/tests/email.test.ts	13	no		Given two roles at one company and no role clue, when correlated, then requires review
 worker-unit	workers/automation/tests/email.test.ts	24	no		Given HTML-only forwarded MIME, when parsed, then extracts quoted source URL and thread headers
@@ -1729,6 +1737,7 @@ worker-unit	workers/automation/tests/replica.runtime.test.ts	279	no	AutomationRe
 worker-unit	workers/automation/tests/replica.runtime.test.ts	287	no	AutomationReplica in workerd with the compiled Rust policy	Given durable save fails after authoring, when the same event retries, then rejected memory state is rolled back
 worker-unit	workers/automation/tests/replica.runtime.test.ts	304	no	AutomationReplica in workerd with the compiled Rust policy	Given a human moves a card after capture, when synced status automation acts on the stale workflow, then it requires review
 worker-unit	workers/automation/tests/replica.runtime.test.ts	354	no	AutomationReplica in workerd with the compiled Rust policy	Given a pending encrypted upload, when the Worker restarts, then it persists before upload and retries the same ciphertext
+worker-unit	workers/automation/tests/replica.runtime.test.ts	383	no		Given owner employee_profile and job priority settings, when intake is authored and restored, then profile and complete Clef assessment produce the same board priority
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	51	no	automation Worker	Given encrypted replica state larger than 2 MiB, When its chunks are committed, Then all chunks and generation pointer change in one synchronous transaction
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	83	no	automation Worker	Given serialized replica state larger than 2 MiB, When saved and loaded by the Durable Object, Then the full state survives encryption and chunking
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	92	no	automation Worker	Given the Worker is running, When health is checked, Then it reports ready
@@ -1745,5 +1754,5 @@ worker-unit	workers/automation/tests/runtime.runtime.test.ts	234	no	automation W
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	262	no	automation Worker	Given forwarded mail without Message-ID, When the same MIME bytes arrive again, Then the digest deduplicates retries
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	284	no	automation Worker	Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	300	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	322	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	343	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	325	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	346	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance

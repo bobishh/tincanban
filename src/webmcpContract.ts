@@ -154,13 +154,21 @@ export const workspaceSettingsSchema = {
             additionalProperties: false,
           },
         },
+        employee_profile: {
+          type: "object",
+          description: "Shared employee profile compared with vacancies by approved job intake automation.",
+          properties: { stack: { type: "string", maxLength: 4000 }, work_profile: { type: "string", maxLength: 8000 } },
+          required: ["stack", "work_profile"],
+          additionalProperties: false,
+        },
         priorityPolicy: {
           type: ["object", "null"],
           description:
-            "Declarative automatic priority policy. Rules are data evaluated by weighted-rules-v1; executable code is never stored.",
+            "Declarative automatic priority policy. job-fit-v1 reads a Clef assessment from assessmentFieldId; weighted-rules-v1 evaluates custom rules.",
           properties: {
             version: { type: "number", const: 1 },
-            evaluator: { type: "string", const: "weighted-rules-v1" },
+            evaluator: { type: "string", enum: ["weighted-rules-v1", "job-fit-v1"] },
+            assessmentFieldId: { type: "string" },
             sort: {
               type: "string",
               enum: ["fit_desc", "fit_asc", "manual"],

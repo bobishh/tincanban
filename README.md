@@ -150,10 +150,27 @@ Hetzner/DNS configuration: [production architecture](../hetzner_playground/docs/
 
 - **Identity:** display name, one profile photo across workspaces, encrypted identity recovery, device diagnostic consent.
 - **Workspace:** shared document templates,
-  priority rules for the named board, and collapsed advanced JSON configuration.
+  priority rules and `employee_profile` for the named board, and collapsed advanced JSON configuration.
 - **Connections:** shortcuts to the single Participants/devices, Rusty storage and
   Backups views. Ownership succession belongs to Participants; workspace import
   and export belong to Backups.
+
+**Workspace → Priority rules** supports job match priority: company recognition
+20%, company stability 20%, stack match 30%, and work profile match 30%. Each
+criterion contributes 10 for strong evidence, 5 for partial evidence, or 0 for
+an explicit mismatch; missing or uncertain evidence earns no points. Default
+bands are P0 ≥ 8, P1 ≥ 6, P2 ≥ 3, P3 otherwise; thresholds and card order remain
+editable. Remote work alone adds no bonus.
+
+Enter your stack and work profile, or import a JSON file containing
+`{"employee_profile":{"stack":"…","work_profile":"…"}}`, then save. This profile
+is shared with board participants and approved automations. Clef compares incoming
+website vacancies with the latest admitted board profile and saves the assessment
+in Source text. The board and intake use the same formula and configured bands.
+Changing either profile field invalidates earlier stack/work comparisons while
+retaining company scores. Existing/manual cards without assessments start at 0;
+there is no automatic reclassification of historical cards. Existing weighted
+rules stay active until **Use job match priority** is selected and saved.
 
 Removing a participant explicitly revokes all their devices in that workspace.
 Removing a single device remains a separate action. Both disclose their scope.

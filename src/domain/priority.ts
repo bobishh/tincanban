@@ -1,5 +1,6 @@
 import { hasEntityKind } from "./model"
 import type { Board, FieldDefinition, FieldValue, PriorityPolicy, PriorityRule, Item, WorkspaceDocumentV2 } from "./model"
+import { defaultJobBands, evaluateJobAssessment, priorityOptionForScore, readJobAssessment, type EmployeeProfile } from "./jobPriority"
 import { compareRanks } from "./ancestry"
 
 export type PriorityEvaluation = {
@@ -19,17 +20,18 @@ function matches(rule: PriorityRule, value: FieldValue | undefined): boolean {
   }
 }
 
-export function evaluatePriority(policy: PriorityPolicy, values: Record<string, FieldValue>): PriorityEvaluation {
+export function evaluatePriority(policy: PriorityPolicy, values: Record<string, FieldValue>, profile?: EmployeeProfile): PriorityEvaluation {
   const matched = policy.rules.filter(rule => matches(rule, values[rule.fieldId]))
-  const score = Math.round(Math.max(0, Math.min(10, matched.reduce((sum, rule) => sum + rule.weight, 0))) * 10) / 10
-  const band = [...policy.bands].sort((a, b) => b.minScore - a.minScore).find(item => score >= item.minScore)
-  return { score, optionId: band?.optionId ?? null, matchedRuleIds: matched.map(rule => rule.id) }
+  const score = policy.evaluator === "job-fit-v1"
+    ? evaluateJobAssessment(readJobAssessment(values[policy.assessmentFieldId ?? ""]), profile)
+    : Math.round(Math.max(0, Math.min(10, matched.reduce((sum, rule) => sum + rule.weight, 0))) * 10) / 10
+  return { score, optionId: priorityOptionForScore(score, policy.bands), matchedRuleIds: matched.map(rule => rule.id) }
 }
 
 export function projectItemPriority(board: Board | null | undefined, item: Item, notesFieldId?: string): Item {
   const policy = board?.priorityPolicy
   if (!policy) return item
-  const evaluation = evaluatePriority(policy, priorityValues(item, notesFieldId))
+  const evaluation = evaluatePriority(policy, priorityValues(item, notesFieldId), board?.employee_profile)
   return {
     ...item,
     values: {
@@ -45,7 +47,7 @@ export function orderItemsByPriority(board: Board | null | undefined, items: Ite
   const order = policy?.sort ?? "fit_desc"
   if (!policy || order === "manual") return items
   const direction = order === "fit_desc" ? -1 : 1
-  return items.map((item, index) => ({ item, index, score: evaluatePriority(policy, priorityValues(item, notesFieldId)).score }))
+  return items.map((item, index) => ({ item, index, score: evaluatePriority(policy, priorityValues(item, notesFieldId), board?.employee_profile).score }))
     .sort((a, b) => direction * (a.score - b.score) || a.index - b.index)
     .map(item => item.item)
 }
@@ -61,30 +63,19 @@ export function createDefaultPriorityPolicy(board: Board, fields: FieldDefinitio
   const bindings = board.preset?.bindings ?? {}
   const priorityFieldId = bindings["field.priority"]
   const fitFieldId = bindings["field.fitScore"] ?? null
-  const workModeFieldId = bindings["field.workMode"]
-  if (!priorityFieldId || !workModeFieldId) return null
-
-  const weights: Array<[string, number]> = [
-    ["remote", 8],
-    ["hybrid", 5],
-    ["unknown", 2],
-    ["onsite", 0],
-  ]
-  const rules = weights.flatMap(([name, weight]) => {
-    const value = bindings[`option.workMode.${name}`]
-    return value ? [{ id: crypto.randomUUID(), fieldId: workModeFieldId, operator: "equals" as const, value, weight }] : []
-  })
+  const assessmentFieldId = bindings["field.sourceText"]
+  if (!priorityFieldId || !assessmentFieldId) return null
   const priority = fields.find(field => field.id === priorityFieldId && field.valueType === "select")
   if (!priority || priority.valueType !== "select") return null
   const byTitle = new Map(Object.values(priority.options)
     .filter(option => !option.archivedAt)
     .sort((a, b) => compareRanks(a.rank, b.rank))
     .map(option => [option.title.toLowerCase(), option.id]))
-  const bands = [["p0", 8], ["p1", 6], ["p2", 3], ["p3", 0]].flatMap(([name, minScore]) => {
+  const bands = defaultJobBands.flatMap(({ optionId: name, minScore }) => {
     const optionId = byTitle.get(String(name)) ?? bindings[`option.priority.${name}`]
     return optionId ? [{ optionId, minScore: Number(minScore) }] : []
   })
-  return { version: 1, evaluator: "weighted-rules-v1", sort: "fit_desc", priorityFieldId, fitFieldId, rules, bands }
+  return { version: 1, evaluator: "job-fit-v1", sort: "fit_desc", priorityFieldId, fitFieldId, assessmentFieldId, rules: [], bands }
 }
 
 export function validatePriorityPolicy(
@@ -94,7 +85,12 @@ export function validatePriorityPolicy(
 ): Array<{ path: string; message: string }> {
   if (!policy) return []
   const errors: Array<{ path: string; message: string }> = []
-  if (!policy.rules.length) errors.push({ path: "/priorityPolicy/rules", message: "Add at least one priority rule" })
+  if (policy.evaluator === "job-fit-v1") {
+    const field = doc?.entities[policy.assessmentFieldId ?? ""]
+    if (!policy.assessmentFieldId || doc && (!hasEntityKind(field, "field") || field.valueType !== "text" || field.archivedAt || field.placement.parentId !== boardId)) errors.push({ path: "/priorityPolicy/assessmentFieldId", message: "Job assessment requires an active text field on this board" })
+    if (policy.rules.length) errors.push({ path: "/priorityPolicy/rules", message: "Job match priority uses the four assessment criteria" })
+  }
+  if (policy.evaluator === "weighted-rules-v1" && !policy.rules.length) errors.push({ path: "/priorityPolicy/rules", message: "Add at least one priority rule" })
   if (!policy.bands.length) errors.push({ path: "/priorityPolicy/bands", message: "Add at least one priority band" })
   const ids = new Set<string>()
   policy.rules.forEach((rule, index) => validatePriorityRule(rule, index, ids, policy, doc, boardId, errors))

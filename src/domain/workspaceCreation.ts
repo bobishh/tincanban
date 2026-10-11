@@ -38,6 +38,7 @@ export function createWorkspaceDocFromDraft(id: string, title: string, ownerPers
     priorityPolicy: null,
     cardAgingPolicy: draft.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } },
   }
+  if (draft.employee_profile) board.employee_profile = { ...draft.employee_profile }
   if (draft.priorityPolicy) board.priorityPolicy = draft.priorityPolicy
   entities[boardId] = board
   return { kind: "workspace", formatVersion: 3, id, title: title.trim(), archivedAt: null, ownerPersonId, entities, migration: null }

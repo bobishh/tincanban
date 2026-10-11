@@ -27,11 +27,6 @@
       "count": 1
     }
   },
-  "src/components/SchemaEditorDialog.vue": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
   "src/components/WorkspacesDialog.vue": {
     "@typescript-eslint/no-unsafe-assignment": {
       "count": 1

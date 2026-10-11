@@ -47,6 +47,7 @@ export function applyBoardSchemaSettings(draft: WorkspaceDocumentV2, boardId: st
   board.title = schema.boardTitle.trim()
   board.entityName = schema.entityName.trim()
   if (schema.cardStageButtons) board.cardStageButtons = schema.cardStageButtons.map(button => ({ columnId: button.columnId, ...(button.label ? { label: button.label.trim() } : {}) }))
+  if (schema.employee_profile) board.employee_profile = { ...schema.employee_profile }
   if (schema.priorityPolicy) board.priorityPolicy = JSON.parse(JSON.stringify(schema.priorityPolicy))
   else delete board.priorityPolicy
   board.cardAgingPolicy = JSON.parse(JSON.stringify(schema.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } }))

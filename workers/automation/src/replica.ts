@@ -1,3 +1,4 @@
+import { emptyEmployeeProfile, type EmployeeProfile } from "../../../src/domain/jobPriority";
 import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
@@ -321,6 +322,23 @@ export class AutomationReplica {
     } finally { Automerge.free(document); }
   }
 
+  employeeProfileForRuntime(): EmployeeProfile {
+    const document = this.admittedDocument();
+    try {
+      const board = document.entities[this.bindings.boardId];
+      return hasEntityKind(board, "board") && board.employee_profile ? { ...board.employee_profile } : emptyEmployeeProfile();
+    } finally { Automerge.free(document); }
+  }
+
+  priorityBandsForRuntime(): Array<{ optionId: string; minScore: number }> | undefined {
+    const document = this.admittedDocument();
+    try {
+      const board = document.entities[this.bindings.boardId];
+      return hasEntityKind(board, "board") && board.priorityPolicy?.evaluator === "job-fit-v1"
+        ? board.priorityPolicy.bands.map(band => ({ ...band })) : undefined;
+    } finally { Automerge.free(document); }
+  }
+
   bindingsForRuntime(): AutomationGrantScope["columns"] { return { ...this.bindings.columns }; }
 
   definitionForRuntime(): AutomationDefinition | undefined {
@@ -497,9 +515,9 @@ export class AutomationReplica {
     if (this.bindings.fieldIds.roleType && normalized.roleType) values[this.bindings.fieldIds.roleType] = normalized.roleType.slice(0, 256);
     if (this.bindings.fieldIds.seniority && normalized.seniority) values[this.bindings.fieldIds.seniority] = normalized.seniority.slice(0, 256);
     const source = JSON.stringify({ eventId, receivedAt: normalized.receivedAt, contact: normalized.contact,
-      message: normalized.message, sourceText: normalized.sourceText, decision });
+      message: normalized.message?.slice(0, 2000), sourceText: normalized.sourceText?.slice(0, 2000), decision });
     if (this.bindings.fieldIds.notes && normalized.message) values[this.bindings.fieldIds.notes] = normalized.message.slice(0, 8_000);
-    if (this.bindings.fieldIds.sourceText) values[this.bindings.fieldIds.sourceText] = source.slice(0, 8_000);
+    if (this.bindings.fieldIds.sourceText) values[this.bindings.fieldIds.sourceText] = source;
     for (const fieldId of Object.keys(values)) {
       if (!scope.fieldIds.includes(fieldId)) throw new Error("Automation field binding exceeds the signed grant scope");
     }
