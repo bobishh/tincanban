@@ -21,7 +21,8 @@ second device and keep working across both.
 - Work locally, then synchronize with another online device.
 - On reload, a full-screen loader stays visible until the saved board and fonts
   have rendered. The board then fades into view-only mode while local checks run.
-  A compact indicator below the filters shows the current stage without blinking;
+  The same three dots appear in sequence on the startup screen and beside the
+  compact status below the filters. The status shows the current stage;
   its space stays reserved after checks finish. Editing becomes
   available after history and access checks succeed; failed checks preserve the
   saved view and show a retry message.
