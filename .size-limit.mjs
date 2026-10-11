@@ -10,7 +10,8 @@ export default [
   // Include the synchronous startup status/loader; anonymous-reader budget stays separate.
   { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.75 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },
-  { name: "public reader CSS", path: publicStartup.css, limit: "10.5 kB" },
+  // Shared keyboard focus frames add 24 bytes to the previous public CSS budget.
+  { name: "public reader CSS", path: publicStartup.css, limit: "10.6 kB" },
   { name: "Markdown renderer (loaded on demand)", path: "dist/assets/MarkdownContent-*.js", limit: "40 kB" },
   { name: "Markdown styles (loaded on demand)", path: "dist/assets/MarkdownContent-*.css", limit: "1 kB" },
   { name: "Automerge WebAssembly", path: "dist/assets/automerge-*.wasm", limit: "1.1 MB" },
