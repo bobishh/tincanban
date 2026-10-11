@@ -29,6 +29,30 @@ async function openAvatarSettings(page: import("@playwright/test").Page) {
   await expect(page.getByRole("region", { name: "Identity photo" })).toBeVisible()
 }
 
+test("Given photo settings, when the crop window cannot load, then reload recovery is visible and a reselected photo survives saving", async ({ page }) => {
+  await openAvatarSettings(page)
+  const cropModule = "**/src/components/AvatarCropDialog.vue*"
+  await page.route(cropModule, route => route.abort())
+  await page.getByLabel("Choose photo").setInputFiles({
+    name: "portrait.png", mimeType: "image/png", buffer: await portraitFixture(page),
+  })
+  const photo = page.getByRole("region", { name: "Identity photo" })
+  await expect(photo.getByRole("alert")).toContainText("Photo editor could not load")
+  await expect(photo.getByRole("button", { name: "Reload app", exact: true })).toBeVisible()
+  await page.unroute(cropModule)
+  await photo.getByRole("button", { name: "Reload app", exact: true }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByLabel("Choose photo").setInputFiles({
+    name: "portrait.png", mimeType: "image/png", buffer: await portraitFixture(page),
+  })
+  const crop = page.getByRole("dialog", { name: "Crop profile photo" })
+  await crop.getByRole("button", { name: "Save photo", exact: true }).click()
+  await expect(photo.getByRole("img", { name: "Your profile photo" })).toBeVisible()
+  await page.reload()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await expect(page.getByRole("img", { name: "Your profile photo" })).toBeVisible()
+})
+
 test("Given identity photo settings, when one crop is saved and another workspace opens, then the same photo appears immediately and survives reload", async ({ page }) => {
   await openAvatarSettings(page)
   await page.getByLabel("Choose photo").setInputFiles({

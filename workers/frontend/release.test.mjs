@@ -1,6 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRelease, retainedAsset } from './release.mjs';
+import { checkRelease, retainedAsset, retentionCandidates } from './release.mjs';
+
+test('Given several deployments while a tab stays open, when retaining assets, then keep its chunks for seven days without renewing their expiry', () => {
+  const now = Date.parse('2026-10-11T18:00:00Z');
+  const hash = 'a'.repeat(64);
+  const previous = {
+    files: { 'assets/current-Abc12345.js': hash, 'index.html': hash },
+    retained: { 'assets/old-Abc12345.css': hash, 'assets/expired-Abc12345.js': hash },
+    retainedUntil: { 'assets/old-Abc12345.css': now + 1000, 'assets/expired-Abc12345.js': now - 1 },
+  };
+  const candidates = retentionCandidates(previous, now);
+  assert.deepEqual(candidates, [
+    ['assets/old-Abc12345.css', hash, now + 1000],
+    ['assets/current-Abc12345.js', hash, now + 7 * 24 * 60 * 60 * 1000],
+  ]);
+  assert.equal(retentionCandidates({ retained: { '../private': hash }, files: {} }, now).length, 0);
+});
 
 test('Given a repeated release tag, when CI publishes, then deploy the exact uploaded version rather than resolving the tag', async () => {
   const { readFileSync } = await import('node:fs');

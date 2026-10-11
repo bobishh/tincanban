@@ -25,8 +25,9 @@ upload/deploy preserve the existing Custom Domain; this config deliberately owns
 no DNS or routes. Rusty and automation are separate releases.
 
 The release manifest records the checked build. Before publishing, the adapter
-retains fingerprinted chunks from the previous build, checks their SHA-256, and
-records them separately; one previous generation survives for open tabs. The
+retains fingerprinted chunks from previous builds, checks their SHA-256, and
+records them separately with a seven-day expiry. Later deployments preserve that
+expiry rather than dropping chunks after one generation or extending it forever. The
 bootstrap manifest contains public hashes from the pre-CI production release.
 Old HTML never replaces new HTML. Older tabs may eventually need reload; browser
 board data stays on the same origin.

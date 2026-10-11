@@ -24,5 +24,6 @@
 - [x] 4.7 Pass profile command, visitor security, merge-preservation, type, lint, and OpenSpec checks (prior verify/build passed; current `npm run quality` passed with avatar sources unchanged).
 
 ## 5. Production participant preview follow-up
-- [ ] 5.1 Trace Bo's missing saved photo in the Sync participant row, including its original device/workspace, profile persistence and peer delivery. The row already consumes shared `avatarData`; the inspected owner Identity view currently has no saved photo. Do not substitute a different image or treat fallback rendering as proof that photo persistence succeeded.
+- [x] 5.1 Diagnose the silent photo selection failure: stale crop imports requested removed CSS chunks (production 404). A blocked crop import reproduces the failure; reload recovery and reselect/save now pass. Bo's photo is visible in the supplied 19:46 participant screenshot. Keep old build chunks for seven days and expose crop-loading errors.
 - [ ] 5.2 Verify the intended photo in the participant row after reload and on another device; verify fallback after removal or unavailable profile data.
+- [x] 5.3 Wrap participant names and device counts without clipping; verify long names and complete device counts at 1280, 390 and 320 pixels.

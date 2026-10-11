@@ -6,6 +6,16 @@ import { pathToFileURL } from 'node:url';
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const safePath = (path) => typeof path === 'string' && !path.startsWith('/') && path.split('/').every((part) => part && part !== '.' && part !== '..');
 export const retainedAsset = (path) => /^assets\/[\w.-]+-[\w-]{8,}\.(?:js|css|wasm)$/.test(path);
+export function retentionCandidates(previous, now = Date.now()) {
+  const expiry = now + 7 * 24 * 60 * 60 * 1000;
+  const entries = Object.entries({ ...previous.retained, ...previous.files });
+  if (entries.length > 2000) throw new Error('Previous manifest too large');
+  return entries.flatMap(([path, hash]) => {
+    const until = previous.files?.[path] ? expiry : previous.retainedUntil?.[path] ?? expiry;
+    return retainedAsset(path) && /^[a-f0-9]{64}$/.test(hash) && Number.isFinite(until) && until > now
+      ? [[path, hash, Math.min(until, expiry)]] : [];
+  });
+}
 export function uploadedVersion(output) {
   const uploads = output.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
     .filter((entry) => entry.type === 'version-upload');
@@ -51,20 +61,19 @@ async function main() {
     const response = await get(`${origin}/release.json`);
     const previous = response.status === 404 ? JSON.parse(readFileSync(new URL('./bootstrap-assets.json', import.meta.url))) : await response.json();
     if (!response.ok && response.status !== 404) throw new Error('Cannot read previous release');
-    const entries = Object.entries(previous.files ?? {});
-    if (entries.length > 2000) throw new Error('Previous manifest too large');
-    // Keep chunks from the previous build, not its already-retained older chunks.
     const retained = {};
-    for (const [path, hash] of entries) {
-      if (!retainedAsset(path) || !/^[a-f0-9]{64}$/.test(hash) || existsSync(join(directory, path))) continue;
+    const retainedUntil = {};
+    for (const [path, hash, until] of retentionCandidates(previous)) {
+      if (existsSync(join(directory, path))) continue;
       const asset = await get(`${origin}/${path}`);
       if (!asset.ok) throw new Error(`Previous chunk unavailable: ${path}`);
       const bytes = Buffer.from(await asset.arrayBuffer());
       if (digest(bytes) !== hash) throw new Error(`Previous chunk checksum mismatch: ${path}`);
       writeFileSync(join(directory, path), bytes);
       retained[path] = hash;
+      retainedUntil[path] = until;
     }
-    writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained }));
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained, retainedUntil }));
     console.log(`Retained ${Object.keys(retained).length} previous chunks`);
   } else if (command === 'smoke') {
     let lastError;

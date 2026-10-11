@@ -1,11 +1,11 @@
 .sync-workspace-list { display: grid; gap: 8px; max-height: 220px; margin: 16px 0; overflow-y: auto; }
 .mesh-member-list { display: grid; gap: 8px; max-height: 300px; margin: 16px 0; padding: 3px 5px 5px 3px; overflow-y: auto; overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
-.mesh-member { width: 100%; min-height: 58px; display: grid; grid-template-columns: 32px 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px; border: 2px solid var(--line); color: var(--ink); text-align: left; }
+.mesh-member { width: 100%; min-width: 0; min-height: 58px; display: grid; grid-template-columns: 32px 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px; border: 2px solid var(--line); color: var(--ink); text-align: left; }
 .mesh-member:not(:disabled) { cursor: pointer; }
 .mesh-member:disabled { opacity: 1; }
 .mesh-member:focus { outline: none; }
-.mesh-member-name { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
-.mesh-member-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mesh-member-name { min-width: 0; display: grid; gap: 4px; }
+.mesh-member-name strong, .mesh-member-name small { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .mesh-member-name small, .mesh-member-role { color: var(--muted); font: 700 .8rem/1.2 var(--site-font-sans); letter-spacing: .06em; text-transform: uppercase; }
 .mesh-member-help { margin: -8px 0 12px; color: var(--muted); font-size: .8rem; }
 .mesh-member-action { display: grid; gap: 10px; padding: 14px; border: 2px solid var(--line); }

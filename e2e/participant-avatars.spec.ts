@@ -12,6 +12,29 @@ async function settings(page: Page) {
   return page.getByRole("dialog", { name: "Settings", exact: true })
 }
 
+test("Given a long participant name, when the participant list narrows, then name and device count remain readable inside the row", async ({ page }) => {
+  await page.goto("/")
+  await ensureJobSearchWorkspace(page)
+  const profile = await settings(page)
+  await profile.getByRole("textbox", { name: "Name", exact: true }).fill("ParticipantWithAnUnbrokenNameThatNeedsToWrap")
+  await profile.getByRole("button", { name: "Save name", exact: true }).click()
+  await expect(profile.getByRole("button", { name: "Save name", exact: true })).toBeEnabled()
+  await profile.getByRole("tab", { name: "Connections", exact: true }).click()
+  await profile.getByRole("button", { name: "Participants and devices", exact: true }).click()
+  const row = page.getByRole("dialog", { name: "Device sync" }).locator(".mesh-member").first()
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 })
+    await expect(row.locator("small")).toContainText("known device")
+    expect(await row.evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      return [...element.querySelectorAll<HTMLElement>("strong, small, .mesh-member-role")].every(text => {
+        const textBounds = text.getBoundingClientRect()
+        return text.scrollWidth <= text.clientWidth + 1 && textBounds.left >= bounds.left && textBounds.right <= bounds.right
+      }) && element.scrollWidth <= element.clientWidth + 1
+    })).toBe(true)
+  }
+})
+
 for (const width of [1280, 390]) {
   test(`Given a ${width}px workspace, when an author renames and reloads, then their chat and participant avatar stays stable`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 })
