@@ -71,6 +71,9 @@ function validateArchiveRoleRemoval(draft: Record<string, unknown>, doc: Workspa
   if (!doc || !Array.isArray(draft.columns) || draft.columns.some(entry => record(entry) && entry.archive === true)) return
   const boardId = draft.boardId
   if (typeof boardId !== "string") return
+  const board = doc.entities[boardId]
+  if (!hasEntityKind(board, "board") || !Object.values(doc.entities).some(entity =>
+    hasEntityKind(entity, "column") && entity.placement.parentId === boardId && isArchiveColumn(entity, board))) return
   const hasArchivedItems = Object.values(doc.entities).some(entity => isItem(entity) && isItemArchived(entity) && getAncestryPath(doc.entities, entity.id).path.includes(boardId))
   if (hasArchivedItems) errors.push({ path: "/columns", message: "Archive role cannot be removed while archived items exist" })
 }

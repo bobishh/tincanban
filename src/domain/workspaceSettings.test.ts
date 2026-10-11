@@ -100,6 +100,28 @@ describe("workspace settings transaction", () => {
     })
   })
 
+  it("Given a board without an Archive role and archived items, when employee settings are saved, then existing archive semantics are preserved", async () => {
+    const initial = projectWorkspaceSettings(doc);
+    doc = Automerge.change(doc, mutable => {
+      const board = mutable.entities[initial.board.boardId];
+      if (!hasEntityKind(board, "board")) throw new Error("Expected board");
+      board.archiveColumnId = null;
+      mutable.entities["archived-card"] = {
+        id: "archived-card", title: "Archived application", body: "", values: {},
+        placement: { parentId: initial.board.columns[0].id!, rank: "0/1" },
+        createdAt: "2026-10-11T00:00:00.000Z", updatedAt: "2026-10-11T00:00:00.000Z",
+        lifecycle: JSON.stringify({ state: "archived", changedAt: "2026-10-11T00:00:00.000Z" }),
+      };
+    });
+    const settings = projectWorkspaceSettings(doc);
+    settings.board.employee_profile = { stack: "Ruby, Rails", work_profile: "Senior Software Engineer" };
+    const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings }, profile);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(projectWorkspaceSettings(result.value.newDoc).board.employee_profile).toEqual(settings.board.employee_profile);
+    expect(result.value.newDoc.entities["archived-card"]).toEqual(doc.entities["archived-card"]);
+  });
+
   it("applies the archive role and rejects duplicate archive columns", async () => {
     const settings = projectWorkspaceSettings(doc)
     settings.board.columns[0].title = "Cold storage"

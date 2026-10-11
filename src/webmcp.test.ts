@@ -74,6 +74,17 @@ describe("generic WebMCP tools", () => {
     expect(sendChatMessage).toHaveBeenCalledWith("Vacancy audit complete")
   })
 
+  it("Given workspace entities, when their summary is requested, then stable IDs and kinds are discoverable without entity contents", async () => {
+    await registerWebMcp({ getActiveDoc: tincanban.getActiveDoc }, mockContext)
+    const doc = tincanban.getActiveDoc()!
+    const result = registeredTools.get("get_workspace").execute({})
+    expect(result.entities).toHaveLength(Object.keys(doc.entities).length)
+    const board = tincanban.activeBoard.value!
+    expect(result.entities).toContainEqual({ id: board.id, kind: "board", title: board.title })
+    expect(result.entities.every((entity: object) => Object.keys(entity).sort().join() === "id,kind,title")).toBe(true)
+    expect(tincanban.getActiveDoc()).toBe(doc)
+  })
+
   it("reads lifecycle evidence without changing workspace data or allowing write inputs", async () => {
     clearMeshTrace()
     meshTrace("session.closed", { connectionId: "in-7", cause: "heartbeat failed" })

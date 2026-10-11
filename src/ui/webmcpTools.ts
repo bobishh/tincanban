@@ -1,4 +1,4 @@
-import { hasEntityKind } from "../domain/model"
+import { entityKind, hasEntityKind } from "../domain/model"
 import { registerUtilityTools } from "./webmcpUtilityTools"
 import * as Automerge from "@automerge/automerge/slim"
 import { isItem, type Item, type Board, type FieldValue } from "../domain/model"
@@ -183,6 +183,7 @@ async function registerReadTools(store: ToolStore, register: RegisterTool): Prom
         title: doc.title,
         boardId: board?.id,
         entityCount: Object.keys(doc.entities).length,
+        entities: Object.values(doc.entities).map(entity => ({ id: entity.id, kind: entityKind(entity), title: entity.title })),
       }
     },
   })
