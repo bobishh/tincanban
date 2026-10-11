@@ -310,7 +310,7 @@ textarea) {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  :is(.button, .icon-button, .column-add-button):hover:not(:disabled) {
+  :is(.button, .icon-button, .column-add-button):hover:not(:disabled):not(.reference-result) {
     transform: rotate(-2.5deg);
   }
 
@@ -319,7 +319,7 @@ textarea) {
   }
 }
 
-:is(.button, .icon-button, .column-add-button):active:not(:disabled) {
+:is(.button, .icon-button, .column-add-button):active:not(:disabled):not(.reference-result) {
   transform: rotate(-.5deg);
 }
 

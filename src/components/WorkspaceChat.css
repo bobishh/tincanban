@@ -110,9 +110,9 @@
   flex-direction: column;
   gap: 16px;
   padding: 14px 10px;
+  border: 2px solid var(--line);
   scrollbar-gutter: stable;
   overscroll-behavior: contain;
-  mask-image: linear-gradient(to bottom, transparent, black 10px, black calc(100% - 10px), transparent);
   box-sizing: border-box;
 }
 

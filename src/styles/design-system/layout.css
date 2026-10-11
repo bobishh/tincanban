@@ -169,6 +169,7 @@ dialog::backdrop { background: rgb(23 23 23 / 72%); }
 .reference-search { display: grid; gap: 4px; }
 .reference-types { display: flex; flex-wrap: wrap; gap: 6px; }
 .reference-search-hint { margin: 0; }
-.reference-results { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; padding: 3px; }
+.reference-results { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; padding: 12px; border: 2px solid var(--line); scrollbar-gutter: stable; overscroll-behavior: contain; }
 .reference-result { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 8px; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.reference-result:hover:not(:disabled) span { text-decoration: underline; text-underline-offset: 3px; }
 .reference-result small { align-self: start; }
