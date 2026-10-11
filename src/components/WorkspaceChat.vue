@@ -389,7 +389,6 @@ function formatDisplayTime(createdAt: string): string {
 .draft-reference { display: inline-flex; align-items: center; }
 .reference-chips button { white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .reply-quote { margin: 6px 0; padding: 4px 8px; border-left: 2px solid var(--muted); color: var(--muted); overflow-wrap: anywhere; }
-.is-linked-message { outline: 3px solid var(--blue); outline-offset: -3px; }
 .mention-picker { margin-block: 6px; }
 .mention-picker button { display: inline-flex; align-items: center; gap: 4px; }
 .chat-composer-form { display: grid; gap: 6px; }

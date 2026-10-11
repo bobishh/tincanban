@@ -260,6 +260,16 @@ textarea) {
   --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#own");
 }
 
+/* A linked message keeps its ink frame and gains a quiet paper highlight. */
+.chat-message-item.is-linked-message {
+  --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#soft");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#soft");
+  --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#soft");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#soft");
+  --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#soft");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#soft");
+}
+
 :where(.button,
 .icon-button,
 .dialog,

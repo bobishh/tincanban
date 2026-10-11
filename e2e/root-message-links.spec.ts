@@ -1,7 +1,8 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-test("Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings", async ({ page }) => {
+for (const width of [390, 1440]) test(`Given a root message with replies at ${width}px, when its copied local link reloads, then its paper highlight reveals the root and its siblings without blue frames`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 900 })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
@@ -30,6 +31,17 @@ test("Given a root message with replies, when its copied local link reloads, the
   await expect(discussion.locator(`[data-message-id="${rootId}"]`)).toHaveClass(/is-linked-message/)
   await expect(discussion.getByText("First root reply", { exact: true })).toBeVisible()
   await expect(discussion.locator(".chat-message-item")).toHaveCount(2)
+  const linked = discussion.locator(`[data-message-id="${rootId}"]`)
+  await expect(discussion).toHaveCSS("border-top-color", "rgb(23, 23, 23)")
+  await expect(linked).toHaveCSS("border-image-source", /ink-surface.*#soft/)
+  await expect(discussion.locator(".chat-message-item").last()).not.toHaveCSS("border-image-source", /#soft/)
+  await expect(linked).not.toHaveCSS("outline-color", "rgb(31, 111, 235)")
+  await page.keyboard.press("Tab")
+  await discussion.locator(".spatial-titlebar").focus()
+  await expect(discussion.locator(".spatial-titlebar")).toHaveCSS("outline-color", "rgb(23, 107, 77)")
+  await expect(discussion.locator(".spatial-titlebar")).toHaveCSS("outline-style", "solid")
+  await expect(discussion).toHaveCSS("border-top-color", "rgb(23, 23, 23)")
+  await discussion.screenshot({ path: info.outputPath(`paper-message-${width}.png`) })
   // Closing an unrelated window must preserve the conversation link.
   await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).focus()
   await page.keyboard.press("Enter")

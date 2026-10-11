@@ -112,7 +112,6 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 
 <style scoped>
 .spatial-window { container: detail-window / inline-size; padding: 0; max-width: none; max-height: none; position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 0; min-height: 0; background: var(--panel, white); color: var(--ink, #171717); border: 2px solid var(--line, #171717); box-shadow: 6px 6px 0 var(--ink, #171717); overflow: hidden; }
-.spatial-window:focus-within { border-color: var(--blue, #165be0); }
 .spatial-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 12px; min-height: 52px; border-bottom: 2px solid var(--line, #171717); background: var(--soft, #eee); touch-action: none; user-select: none; cursor: grab; }
 .spatial-heading { flex: 1; min-width: 0; padding-block: 6px; line-height: 1.5; overflow-wrap: anywhere; }
 .spatial-controls { display: flex; flex: none; gap: 4px; }

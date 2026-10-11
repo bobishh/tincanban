@@ -8,6 +8,9 @@ Rusty imports `index.css` in full from a pinned tincanban revision. Match import
 - `controls.css`: shared buttons and fields. Single-value selects use paper menus through
   `appearance: base-select` where supported; other browsers keep a system picker
   with the shared field styling. Multiple/listbox selects keep native behavior.
+  Links, disclosure summaries and custom keyboard targets use the same green
+  focus color rather than browser-default blue outlines. Window frames stay ink
+  colored; messages opened by local links use a soft paper highlight.
 - `layout.css`: shared shell, forms and dialogs, including native dialog backdrop.
 - `chrome.css`: header and responsive chrome.
 - Header uses `--paper`, matching the page background; its border supplies separation without an extra neutral color.
