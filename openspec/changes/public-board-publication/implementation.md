@@ -139,16 +139,15 @@ private client confirms that owner role. Transferring private workspace ownershi
 does not silently transfer management of an existing public copy. Withdraw or
 manage that publication explicitly. Downloaded copies cannot be recalled.
 
-Frontend CI does not deploy the sibling Rusty service. The initial fixture,
-`d811e9d2d8b2de26c3b852506ea991cb674a654b`, predates this API. The follow-up
-release publishes compatible revision `0c46dde69c4a383c91ff4f5e47d7faa6c369a52c`
-on Rusty's `codex/public-board-publication` branch and pins it in frontend CI.
-Rusty's remote main has since adopted a different architecture; this release
-extends the currently deployed blind baseline without replacing that main.
-The release checkout contains only the publication change and passes all 21
-native tests. CI now checks that native suite, actual Keeper lifecycle in
-Chromium/WebKit and the compiled anonymous reader, in addition to core/mobile
-mocked scenarios. Frontend releases still require every Verify job to succeed.
+Frontend CI does not deploy the sibling Rusty service. The earlier CI pin,
+`d811e9d2d8b2de26c3b852506ea991cb674a654b`, predates this API. The publication
+protocol is consolidated into Rusty's authoritative blind-storage `main`,
+preserving its current service history without maintaining a parallel feature
+branch. Frontend CI pins an immutable compatible commit from that `main` and
+builds/tests its native binary. The compatible release passes all 21 native
+tests. CI also checks actual Keeper lifecycle in Chromium/WebKit and the compiled
+anonymous reader, in addition to core/mobile mocked scenarios. Frontend releases
+still require every Verify job to succeed.
 
 Kamal owns the native release at `ingest.meta-uber-engineer.dev`. Build and pull
 the immutable image before stopping the old writer, then back up the stopped
