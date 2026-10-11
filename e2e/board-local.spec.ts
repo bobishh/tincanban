@@ -14,7 +14,7 @@ async function addLead(page: import("@playwright/test").Page, input: { company: 
   await page.getByRole("button", { name: "Close detail" }).click()
 }
 
-for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) test(`Given local runtime is still loading at ${viewport.width}px, when tincanban opens, then a compact stage status leaves the shell visible until cards arrive`, async ({ page }) => {
+for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) test(`Given local runtime is still loading at ${viewport.width}px, when tincanban opens, then the startup cover stays visible until cards arrive`, async ({ page }) => {
   await page.setViewportSize(viewport)
   await page.addInitScript(() => {
     const instantiateStreaming = WebAssembly.instantiateStreaming.bind(WebAssembly)
@@ -30,10 +30,11 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
   const status = page.getByRole("status", { name: "Board status" })
   await expect(status).toBeVisible()
   await expect(status).toContainText("Starting local checks")
-  await expect(page.locator(".topbar")).toBeVisible()
+  await expect(page.locator(".topbar")).toBeHidden()
   await expect(page.locator(".topbar")).toHaveAttribute("inert", "")
   await expect(page.locator(".boot-placeholder")).toHaveCount(0)
-  expect((await status.boundingBox())!.height).toBeLessThan(64)
+  await expect(status).toHaveClass(/startup-screen/)
+  expect((await status.boundingBox())!.height).toBeGreaterThan(64)
   await page.evaluate(() => window.dispatchEvent(new Event("match:release-automerge")))
   await expect(page.getByRole("region", { name: "Untitled" })).toBeVisible()
   await expect(status).toHaveCount(0)

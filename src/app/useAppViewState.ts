@@ -9,9 +9,8 @@ export function useAppViewState(app: ReturnType<typeof useAppController>) {
   const boardPainted = ref(false)
   let cancelled = false
   onBeforeUnmount(() => { cancelled = true })
-  watch(app.ui.state.boardRef, async board => {
+  watch(app.ui.state.boardRef, board => {
     if (!board || boardPainted.value) return
-    await document.fonts.ready
     // Vue has committed the board; give the browser a complete layout/paint cycle.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       if (!cancelled) boardPainted.value = true

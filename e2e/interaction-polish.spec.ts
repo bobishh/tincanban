@@ -108,7 +108,7 @@ test("Given a filtered mobile board, when no cards match, then result count and 
   await expect(page.getByRole("button", { name: "Open Visible again", exact: true })).toBeVisible()
 })
 
-test("Given slow startup, when data is not ready, then compact progress keeps the shell visible and controls wait for checks", async ({ page }) => {
+test("Given slow startup, when data is not ready, then the full loader keeps controls hidden until checks finish", async ({ page }) => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })
   await page.route(/automerge.*\.wasm/, async route => {
@@ -119,7 +119,8 @@ test("Given slow startup, when data is not ready, then compact progress keeps th
   const status = page.getByRole("status", { name: "Board status" })
   await expect(status).toContainText("Starting local checks")
   await expect(page.locator(".boot-placeholder")).toHaveCount(0)
-  await expect(page.locator(".topbar")).toBeVisible()
+  await expect(status).toHaveClass(/startup-screen/)
+  await expect(page.locator(".topbar")).toBeHidden()
   await expect(page.locator(".topbar")).toHaveAttribute("inert", "")
   release()
   await expect(status).toHaveCount(0)
@@ -167,19 +168,17 @@ test("Given a pending save, when the user tries to edit or submit again, then th
   await expect(page.getByRole("button", { name: "Open One durable card", exact: true })).toHaveCount(1)
 })
 
-test("Given fast startup, when data arrives before the progress delay, then no loading indicator flashes", async ({ page }) => {
+test("Given fast startup, when the first board paint completes, then the loader yields to ready controls", async ({ page }) => {
   await page.clock.install()
   await page.clock.pauseAt(new Date())
-  await page.addInitScript(() => {
-    ;(window as any).__TINCANBAN_SAW_LOADING__ = false
-    new MutationObserver(() => {
-      if (document.querySelector(".loading-indicator")) (window as any).__TINCANBAN_SAW_LOADING__ = true
-    }).observe(document, { childList: true, subtree: true })
-  })
   await page.goto("/")
+  await page.locator(".board").waitFor({ state: "attached" })
+  await expect(page.locator(".startup-screen")).toBeVisible()
+  await expect(page.locator(".toolbar")).toBeHidden()
+  await page.clock.runFor(400)
   await expect(page.getByRole("region", { name: "Untitled", exact: true })).toBeVisible()
-  await page.clock.runFor(250)
-  expect(await page.evaluate(() => (window as any).__TINCANBAN_SAW_LOADING__)).toBe(false)
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+  await expect(page.locator(".startup-screen")).toHaveCount(0)
 })
 
 test("Given a desktop scrollbar, when settings open, reject a draft, and close, then header and logo keep their positions", async ({ page }) => {
@@ -187,6 +186,7 @@ test("Given a desktop scrollbar, when settings open, reject a draft, and close, 
   await page.goto("/")
   await expect(page.getByRole("region", { name: "Untitled", exact: true })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
+  await expect(page.getByRole("status", { name: "Board status" })).toHaveCount(0)
   // Headless macOS uses overlay scrollbars. Exercise the space occupied by a classic scrollbar.
   await page.addStyleTag({ content: 'html { scrollbar-gutter: stable; } ::-webkit-scrollbar { width: 18px; } html[style*="overflow: hidden"] { scrollbar-gutter: auto; }' })
   expect(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true)

@@ -517,7 +517,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
 <style>
 .startup-concealed { visibility: hidden; }
 .startup-revealed { animation: startup-reveal 320ms ease-out; }
-.startup-status-slot { min-height: 48px; }
+.startup-status-slot { min-height: 56px; }
 .startup-cover-enter-active, .startup-cover-leave-active { transition: opacity 320ms ease; }
 .startup-cover-enter-from, .startup-cover-leave-to { opacity: 0; }
 .startup-cover-leave-active { pointer-events: none; }

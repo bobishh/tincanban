@@ -226,6 +226,8 @@ test("Given a joined workspace with local data, when an editor leaves the mesh, 
     await expect(guest.getByLabel("Mesh empty")).toBeVisible({ timeout: 20_000 })
     await expect(guestDialog.getByText(/^Reconnect:/)).toHaveCount(0)
     await expect(guestDialog.getByRole("alert")).toHaveCount(0)
+    await expect(guestDialog.getByRole("button", { name: "Leave mesh" })).toHaveCount(0)
+    await guestDialog.getByRole("tab", { name: "Participants" }).click()
     const localMembers = guestDialog.getByRole("list", { name: "Mesh members" }).getByRole("button")
     await expect(localMembers).toHaveCount(1)
     await expect(localMembers).toContainText("You")

@@ -45,7 +45,7 @@ test.describe("Automatic priority from workspace preferences", () => {
       weight: option.title === "Remote" ? 8 : option.title === "Hybrid" ? 5 : option.title === "Unknown" ? 2 : 0,
     }))
     await json.fill(JSON.stringify(draft))
-    await settings.getByText("Advanced configuration", { exact: true }).click()
+    await settings.getByRole("tab", { name: "Priority rules" }).click()
     await expect(settings.getByRole("group", { name: "Weighted criteria" })).toContainText("Work mode")
     await expect(settings.getByLabel("Card order")).toHaveValue("fit_desc")
     await settings.getByRole("button", { name: "Save priority rules" }).click()
@@ -89,7 +89,7 @@ test.describe("Automatic priority from workspace preferences", () => {
       weight: option.title === "Remote" ? 8 : option.title === "Hybrid" ? 5 : option.title === "Unknown" ? 2 : 0,
     }))
     await json.fill(JSON.stringify(draft))
-    await settings.getByText("Advanced configuration", { exact: true }).click()
+    await settings.getByRole("tab", { name: "Priority rules" }).click()
     const removeRules = settings.getByRole("button", { name: /Remove .* rule/ })
     while (await removeRules.count()) await removeRules.first().click()
     await settings.getByRole("button", { name: "Save priority rules" }).click()

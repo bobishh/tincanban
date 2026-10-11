@@ -32,6 +32,7 @@ async function textSelection(page: Page) {
 }
 
 async function settleBoard(page: Page) {
+  await expect(page.getByRole("status", { name: "Board status" })).toHaveCount(0)
   await page.locator(".board").evaluate(element => Promise.all(element.getAnimations({ subtree: true })
     .filter(animation => animation.effect?.getComputedTiming().iterations !== Infinity)
     .map(animation => animation.finished.catch(() => {}))))
@@ -332,13 +333,14 @@ test.describe("Trello-like board dragging", () => {
     }
 
     await test.step("Hover and drop into an empty column", async () => {
+      await settleBoard(page)
       await page.evaluate(() => window.scrollTo(0, 0))
       const target = page.getByRole("region", { name: "Doing", exact: true }).locator(".card-stack")
       await expect(target.getByText("No items", { exact: true })).toBeVisible()
-      const source = await page.getByRole("button", { name: "Open Third", exact: true }).boundingBox()
+      const source = await page.locator('.lead-card[data-item-id]:has-text("Third")').boundingBox()
       const box = await target.boundingBox()
       if (!source || !box) throw new Error("Missing drag bounds")
-      await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+      await page.mouse.move(source.x + 4, source.y + 4)
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2, box.y + 28, { steps: 20 })
       await expect(target.locator(".empty-column")).toBeVisible()
@@ -357,7 +359,7 @@ test.describe("Trello-like board dragging", () => {
       const source = await page.locator('.lead-card[data-item-id]:has-text("Third")').boundingBox()
       const target = await page.locator('.lead-card[data-item-id]:has-text("First")').boundingBox()
       if (!source || !target) throw new Error("Card drag target missing")
-      await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
+      await page.mouse.move(source.x + 4, source.y + 4)
       await page.mouse.down()
       await page.mouse.move(target.x + target.width / 2, target.y + 5, { steps: 16 })
       await page.mouse.up()
@@ -371,7 +373,7 @@ test.describe("Trello-like board dragging", () => {
       const third = await page.locator('.lead-card[data-item-id]:has-text("Third")').boundingBox()
       const first = await page.locator('.lead-card[data-item-id]:has-text("First")').boundingBox()
       if (!third || !first) throw new Error("Same-column drag target missing")
-      await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2)
+      await page.mouse.move(first.x + 4, first.y + 4)
       await page.mouse.down()
       await page.mouse.move(third.x + third.width / 2, third.y + 5, { steps: 16 })
       await page.mouse.up()
