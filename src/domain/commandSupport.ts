@@ -70,6 +70,9 @@ function applyColumns(draft: WorkspaceDocumentV2, boardId: string, schema: Board
     const target = draft.entities[id]
     if (hasEntityKind(target, "column")) updateColumn(target, column.title, collapsible, index, nowIso)
     else draft.entities[id] = createColumn(id, boardId, column.title, collapsible, index, nowIso)
+    const updated = draft.entities[id] as Column
+    if (column.color === undefined) delete updated.color
+    else updated.color = column.color
     changedIds.push(id)
   })
   board.archiveColumnId = archiveColumnId

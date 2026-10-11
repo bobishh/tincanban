@@ -8,7 +8,7 @@ import { validatePriorityPolicy } from "./priority"
 import { entityKind, hasEntityKind, isItem } from "./model"
 import { cardStageButtons, type CardStageButton } from "./cardStageButtons"
 
-type BoardSchemaColumn = { id?: string; title: string; archive?: true; collapsible?: boolean }
+type BoardSchemaColumn = { id?: string; title: string; color?: string; archive?: true; collapsible?: boolean }
 type BoardSchemaSelectOption = { id?: string; title: string }
 type BoardSchemaField = { id?: string; title: string; valueType: "text" | "number" | "boolean" | "select" | "url" | "date" | "datetime"; required: boolean; min?: number | null; max?: number | null; options?: BoardSchemaSelectOption[] }
 export type BoardSchemaDraft = { boardId: string; boardTitle: string; entityName: string; columns: BoardSchemaColumn[]; fields: BoardSchemaField[]; cardStageButtons?: CardStageButton[]; priorityPolicy?: PriorityPolicy | null; employee_profile?: Board["employee_profile"]; cardAgingPolicy?: CardAgingPolicy }
@@ -23,7 +23,7 @@ export type SchemaDiff = {
 
 export function projectBoardSchema(doc: WorkspaceDocumentV2, boardId: string): BoardSchemaDraft {
   const board = doc.entities[boardId] as Board | undefined
-  const columns = childEntities<Column>(doc, boardId, "column").map(column => ({ id: column.id, title: column.title, ...(isArchiveColumn(column, board) ? { archive: true as const } : {}), ...(column.collapsible !== undefined ? { collapsible: column.collapsible } : {}) }))
+  const columns = childEntities<Column>(doc, boardId, "column").map(column => ({ id: column.id, title: column.title, ...(column.color ? { color: column.color } : {}), ...(isArchiveColumn(column, board) ? { archive: true as const } : {}), ...(column.collapsible !== undefined ? { collapsible: column.collapsible } : {}) }))
   const fields = childEntities<FieldDefinition>(doc, boardId, "field").map(projectField)
   return {
     boardId,
@@ -108,8 +108,9 @@ function validateColumns(value: unknown, errors: SchemaValidationError[]): void 
 function validateColumn(value: unknown, index: number, archive: boolean, errors: SchemaValidationError[]): boolean {
   const path = `/columns/${index}`
   if (!record(value)) { errors.push({ path, message: "Column definition must be an object" }); return archive }
-  Object.keys(value).filter(key => !["id", "title", "archive", "collapsible"].includes(key)).forEach(key => errors.push({ path: `${path}/${key}`, message: "Unknown column setting" }))
+  Object.keys(value).filter(key => !["id", "title", "archive", "collapsible", "color"].includes(key)).forEach(key => errors.push({ path: `${path}/${key}`, message: "Unknown column setting" }))
   requiredText(value.title, `${path}/title`, "Column title is required", errors)
+  if (value.color !== undefined && (typeof value.color !== "string" || !/^#[0-9a-fA-F]{6}$/.test(value.color))) errors.push({ path: `${path}/color`, message: "Color must be a six-digit hex value" })
   if (value.archive !== undefined && value.archive !== true) errors.push({ path: `${path}/archive`, message: "archive must be true when present" })
   if (value.collapsible !== undefined && typeof value.collapsible !== "boolean") errors.push({ path: `${path}/collapsible`, message: "collapsible must be boolean" })
   if (archive && value.archive === true) errors.push({ path: `${path}/archive`, message: "Only one archive column is allowed" })

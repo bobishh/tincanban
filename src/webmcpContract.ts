@@ -88,6 +88,7 @@ export const workspaceSettingsSchema = {
                   "Keep returned IDs when editing. Omit only for new columns.",
               },
               title: { type: "string" },
+              color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Optional column accent color. Omit for a unique default." },
               archive: {
                 type: "boolean",
                 enum: [true],

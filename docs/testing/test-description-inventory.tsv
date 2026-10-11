@@ -101,6 +101,7 @@ browser	e2e/collapsible-sync.spec.ts	27	no		Given paired desktop and mobile peer
 browser	e2e/column-add-and-notice.spec.ts	5	no	Column add actions and overlay notices	Given a job board, when adding from Applied, then the form starts in Applied and no add action occupies the header
 browser	e2e/column-add-and-notice.spec.ts	18	no	Column add actions and overlay notices	Given a successful action, when its notice appears, then it overlays content and disappears
 browser	e2e/column-add-and-notice.spec.ts	33	no	Column add actions and overlay notices	Given a blank board, when adding inside Doing, then the item form is scoped to Doing
+browser	e2e/column-colors.spec.ts	3	no		Given a blank board, when colors are configured in JSON, then unique defaults and saved colors survive reload and mobile
 browser	e2e/column-fold-motion.spec.ts	7	no		Given a wide board, when a column folds and opens, then its width and visible title move continuously
 browser	e2e/component-layout.spec.ts	27	no	Component layout audit	Given a wide desktop, when all job columns fit, then the board uses available width without horizontal scrolling
 browser	e2e/component-layout.spec.ts	41	no	Component layout audit	Given desktop viewport, when recent dialogs open, then spacing and geometry stay consistent
@@ -573,6 +574,8 @@ app-unit	src/domain/automationProtocol.test.ts	15	no		Given signed activation, w
 app-unit	src/domain/automationProtocol.test.ts	25	no		Given a Worker acknowledgement, when its identity, nonce or freshness differs, then the UI cannot confirm execution state
 app-unit	src/domain/avatarData.test.ts	9	no	member avatar image bounds	accepts bounded 128 by 128 WebP and JPEG data
 app-unit	src/domain/avatarData.test.ts	14	no	member avatar image bounds	rejects malformed bytes, mismatched dimensions, and oversized payloads
+app-unit	src/domain/columnColors.test.ts	5	no	column colors	Given unconfigured columns, when reordered, then defaults remain unique and stable
+app-unit	src/domain/columnColors.test.ts	11	no	column colors	Given explicit colors, when defaults allocate, then configured colors are reserved
 app-unit	src/domain/commands.test.ts	38	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	executes createItem and patchItem, produces native metadata, and signs a change proof
 app-unit	src/domain/commands.test.ts	93	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	binds editor grant provenance into the signed Automerge message
 app-unit	src/domain/commands.test.ts	105	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rebases reviewed field deltas onto latest authorized fields and records the source hash
@@ -687,12 +690,13 @@ app-unit	src/domain/workspaceMigration.test.ts	107	no	workspace format migration
 app-unit	src/domain/workspaceMigration.test.ts	129	no	workspace format migration	Given mixed archive fields, when migrating, then current archive state wins over stale deleted
 app-unit	src/domain/workspaceMigration.test.ts	145	no	workspace format migration	Given a legacy format 3 document, when owner migrates, then archive flags and item archiveAt become scalar transitions
 app-unit	src/domain/workspaceSettings.test.ts	29	no	workspace settings transaction	applies workspace, board, fields, columns, and document templates in one CRDT change
-app-unit	src/domain/workspaceSettings.test.ts	54	no	workspace settings transaction	rejects invalid paths and stale heads without changing the document
-app-unit	src/domain/workspaceSettings.test.ts	67	no	workspace settings transaction	rejects changing an existing field type
-app-unit	src/domain/workspaceSettings.test.ts	86	no	workspace settings transaction	applies the archive role and rejects duplicate archive columns
-app-unit	src/domain/workspaceSettings.test.ts	105	no	workspace settings transaction	stores board archive reference for a newly added schema column without an ID
-app-unit	src/domain/workspaceSettings.test.ts	122	no	workspace settings transaction	stores declarative priority rules in the board CRDT and rejects dangling criteria
-app-unit	src/domain/workspaceSettings.test.ts	159	yes	workspace settings transaction	Given stage buttons with $name, when applying settings, then precise error is returned and source remains unchanged
+app-unit	src/domain/workspaceSettings.test.ts	54	no	workspace settings transaction	Given column colors in JSON, when settings apply, then colors persist and omission restores defaults
+app-unit	src/domain/workspaceSettings.test.ts	71	no	workspace settings transaction	rejects invalid paths and stale heads without changing the document
+app-unit	src/domain/workspaceSettings.test.ts	84	no	workspace settings transaction	rejects changing an existing field type
+app-unit	src/domain/workspaceSettings.test.ts	103	no	workspace settings transaction	applies the archive role and rejects duplicate archive columns
+app-unit	src/domain/workspaceSettings.test.ts	122	no	workspace settings transaction	stores board archive reference for a newly added schema column without an ID
+app-unit	src/domain/workspaceSettings.test.ts	139	no	workspace settings transaction	stores declarative priority rules in the board CRDT and rejects dangling criteria
+app-unit	src/domain/workspaceSettings.test.ts	176	yes	workspace settings transaction	Given stage buttons with $name, when applying settings, then precise error is returned and source remains unchanged
 app-unit	src/filters.test.ts	12	no	schema-driven board filters	keeps every item with defaults
 app-unit	src/filters.test.ts	16	no	schema-driven board filters	intersects column, stable select option, boolean, numeric, and date filters
 app-unit	src/iroh.test.ts	14	no	Iroh persistent node secret support	keeps verbose Iroh connection logging disabled unless a caller explicitly enables it

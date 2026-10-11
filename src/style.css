@@ -75,9 +75,9 @@
 .column-header > .column-title, .column-header > .column-actions { position: relative; }
 .column-title { display: flex; align-items: center; gap: 8px; }
 .column-title h2 { margin: 0; font-size: .8rem; line-height: 1; letter-spacing: .08em; text-transform: uppercase; }
-.column-dot { width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--green); }
-.column-applied { --column-hatch-color: var(--blue); }.column-applied .column-dot { background: var(--blue); }.column-interview { --column-hatch-color: #a98cff; }.column-interview .column-dot { background: #a98cff; }.column-rejected { --column-hatch-color: var(--muted); }.column-rejected .column-dot { background: var(--muted); }.column-offer { --column-hatch-color: var(--green); }.column-offer .column-dot { background: var(--yellow); }.column-archived .column-header, .bin-column-open .column-header { color: var(--ink); background: var(--panel); --column-hatch-mask: url("/assets/column-hatch.svg?v=1"); }
-.column-archived .column-dot, .bin-column-open .column-dot { border-color: currentColor; background: var(--muted); }
+.column-dot { width: 10px; height: 10px; border: 2px solid var(--ink); border-radius: 50%; background: var(--column-hatch-color, var(--green)); }
+.column-archived .column-header, .bin-column-open .column-header { color: var(--ink); background: var(--panel); --column-hatch-mask: url("/assets/column-hatch.svg?v=1"); }
+.column-archived .column-dot, .bin-column-open .column-dot { border-color: currentColor; }
 .column-archived .column-header .count, .bin-column-open .column-header .count { border-color: currentColor; }
 .count { min-width: 25px; height: 25px; display: grid; place-items: center; border: 2px solid var(--ink); border-radius: 50%; font: 700 .8rem/1 var(--site-font-sans); }
 .card-stack { position: relative; flex: 1; min-height: 96px; display: grid; align-content: start; }
@@ -402,7 +402,7 @@
   .column-header { order: 0; }
 }
 @media (max-width: 560px) {
-  .board-single-column > .column { --column-hatch-color: var(--yellow); --column-hatch-opacity: .58; flex: 0 0 100%; }
+  .board-single-column > .column { --column-hatch-opacity: .58; flex: 0 0 100%; }
 }
 @media (max-width: 560px) {
   .mobile-column-switcher { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 12px 16px 0; padding: 7px 8px; border: 2px solid var(--line); background: var(--soft); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }

@@ -51,6 +51,23 @@ describe("workspace settings transaction", () => {
     expect(projected.documentTemplates[0]).toMatchObject({ title: "Review", markdown: "# {{title}}" })
   })
 
+  it("Given column colors in JSON, when settings apply, then colors persist and omission restores defaults", async () => {
+    const settings = projectWorkspaceSettings(doc)
+    settings.board.columns[0].color = "#123abc"
+    expect(validateWorkspaceSettingsDraft(settings, doc).valid).toBe(true)
+    const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings }, profile)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const saved = projectWorkspaceSettings(result.value.newDoc)
+    expect(saved.board.columns[0].color).toBe("#123abc")
+    saved.board.columns[0].color = "yellow"
+    expect(validateWorkspaceSettingsDraft(saved, result.value.newDoc).errors).toContainEqual({ path: "/board/columns/0/color", message: "Color must be a six-digit hex value" })
+    delete saved.board.columns[0].color
+    const cleared = await executeCommand(result.value.newDoc, { kind: "updateWorkspaceSettings", settings: saved }, profile)
+    expect(cleared.ok).toBe(true)
+    if (cleared.ok) expect(projectWorkspaceSettings(cleared.value.newDoc).board.columns[0]).not.toHaveProperty("color")
+  })
+
   it("rejects invalid paths and stale heads without changing the document", async () => {
     const settings = projectWorkspaceSettings(doc)
     settings.board.entityName = ""

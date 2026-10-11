@@ -51,6 +51,7 @@ const boardSchema = z.strictObject({
 const columnSchema = z.strictObject({
   ...common,
   kind: z.literal("column"),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   archive: z.literal(true).optional(),
   collapsible: z.boolean().optional(),
 })

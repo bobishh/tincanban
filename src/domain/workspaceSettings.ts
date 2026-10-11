@@ -71,7 +71,7 @@ function validateEntityReferences(values: unknown, kind: "column" | "field", boa
   const ids = new Set<string>()
   values.forEach((value, index) => {
     if (!isRecord(value)) return
-    rejectUnknown(value, kind === "column" ? ["id", "title", "archive", "collapsible"] : ["id", "title", "valueType", "required", "min", "max", "options"], `/board/${name}/${index}`, errors)
+    rejectUnknown(value, kind === "column" ? ["id", "title", "archive", "collapsible", "color"] : ["id", "title", "valueType", "required", "min", "max", "options"], `/board/${name}/${index}`, errors)
     if (typeof value.id !== "string") return
     if (ids.has(value.id)) errors.push({ path: `/board/${name}/${index}/id`, message: `${kind === "column" ? "Column" : "Field"} id is duplicated` })
     ids.add(value.id)

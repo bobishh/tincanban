@@ -7,6 +7,7 @@ export function createWorkspaceDocFromDraft(id: string, title: string, ownerPers
   const columns = draft.columns.map((definition, index): Column => ({
     id: definition.id ?? crypto.randomUUID(), kind: "column", title: definition.title.trim(),
     placement: { parentId: boardId, rank: `${index}/1` }, archivedAt: null, createdAt: nowIso, updatedAt: nowIso,
+    ...(definition.color ? { color: definition.color } : {}),
     ...(definition.collapsible !== undefined ? { collapsible: definition.collapsible } : {}),
   }))
   columns.forEach(column => { entities[column.id] = column })

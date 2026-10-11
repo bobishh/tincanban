@@ -1,3 +1,4 @@
+import { columnColors } from "../domain/columnColors"
 import { computed, nextTick, watch } from "vue"
 import type { useAppCore } from "./useAppCore"
 import { useBoardDragController } from "./useBoardDrag"
@@ -37,6 +38,8 @@ function useBoardPresentation(core: AppBoardContext) {
     const column = tincanban.genericColumns.value.find(candidate => candidate.id === columnId) ?? { id: columnId }
     return (effectiveColumnStatus(column, tincanban.activeBoard.value ?? undefined, status) as LeadStatus | undefined) ?? null
   }
+  const colors = computed(() => columnColors(tincanban.genericColumns.value))
+  const columnColor = (id: string) => colors.value.get(id)
   const itemFormColumns = computed(() => tincanban.genericColumns.value.filter(column => !isArchiveColumn(column)).map(column => ({ ...column, formValue: tincanban.isBlankBoard.value ? column.id : columnStatus(column.id) ?? column.id })))
   const itemFormParentValue = computed(() => tincanban.isBlankBoard.value ? itemFormParentId.value : columnStatus(itemFormParentId.value) ?? itemFormParentId.value)
   const computedItemFieldIds = computed(() => {
@@ -145,7 +148,7 @@ function useBoardPresentation(core: AppBoardContext) {
     highlightTimer = setTimeout(() => { movedItemId.value = null; movedColumnId.value = null }, 700)
   }
   const clearHighlightTimer = () => { if (highlightTimer) clearTimeout(highlightTimer) }
-  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, itemFormOptionValues, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, updateMobileColumnIndex, resetBoardScroll, moveMobileColumn, highlightMoved, clearHighlightTimer }
+  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, itemFormOptionValues, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, columnColor, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, updateMobileColumnIndex, resetBoardScroll, moveMobileColumn, highlightMoved, clearHighlightTimer }
 }
 
 function searchableItemTextById(

@@ -9,6 +9,10 @@ second device and keep working across both.
 ## What you can do
 
 - Create a blank board or a job-search pipeline; edit cards, columns, and fields.
+- Columns receive distinct default accent colors, stable across reordering and
+  filtering. Set `board.columns[].color` to a six-digit hex value (for example
+  `"#66b3ff"`) in Workspace settings JSON to override; omit it to restore defaults.
+  Explicit colors may repeat.
 - Attach documents, preview supported files, and download attachments.
 - Render Markdown in card bodies, notes, chat, documents, and template previews.
   Task lists use `- [ ]` / `- [x]`. Editors can toggle tasks in cards, notes,

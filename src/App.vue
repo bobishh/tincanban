@@ -69,7 +69,7 @@ const { toggleMobileMenu, closeMobileMenu } = uiControls
 const {
   workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue,
   computedItemFieldIds, itemFormOptionValues, visibleItems, hasFilters, workspacePresenceSummary,
-  visibleColumns, clearFilters, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, expandFilteredCards, columnStatus, itemsForColumn,
+  visibleColumns, clearFilters, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, expandFilteredCards, columnColor, columnStatus, itemsForColumn,
   updateMobileColumnIndex, moveMobileColumn, selectedItem, subitemsForSelectedItem,
   selectedItemHistory, editingItem, candidateParentsForMove,
 } = app.board
@@ -211,6 +211,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
         :key="column.id"
         class="column"
         :data-column-id="column.id"
+        :style="{ '--column-hatch-color': columnColor(column.id) }"
         role="region"
         :aria-label="column.title"
         :class="[columnStatus(column.id) ? `column-${columnStatus(column.id)}` : '', { 'bin-column': isArchiveColumn(column), 'bin-column-open': isArchiveColumn(column) && !isColumnCollapsed(column), 'column-foldable': column.collapsible, 'column-collapsed': isColumnCollapsed(column), 'column-moved': movedColumnId === column.id }]"
