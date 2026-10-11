@@ -38,7 +38,6 @@ import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySetti
 
 const app = useAppController()
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
-const showPublicBoardControls = ref(false)
 const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage, startupCoverVisible } = useAppViewState(app)
 const conversations = useObjectConversations(app)
 const [showIdentityRecovery, showSettings] = [ref(false), ref(false)]
@@ -163,8 +162,6 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <LeadFilters v-model="filters" :columns="genericColumns" :fields="boardFields" />
       <div class="toolbar-meta">
         <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
-        <button v-if="uiReady && confirmedRole === 'owner' && activeBoard && getActiveDoc() && !showPublicBoardControls" type="button" class="button button-quiet button-small" @click="showPublicBoardControls = true">Publish board</button>
-        <PublicBoardControls v-if="uiReady && showPublicBoardControls && activeBoard && getActiveDoc()" initially-open :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
       </div>
     </section>
 
@@ -315,6 +312,9 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <template #connections>
         <WorkspaceConnectionsPanel :workspace="app.workspace" :workspace-title="activeWorkspace.title" :workspace-id="activeWorkspace.id"
           :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" @open="openConnections" />
+      </template>
+      <template #publication>
+        <PublicBoardControls v-if="uiReady && confirmedRole === 'owner'" :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
       </template>
     </SchemaEditorDialog>
     <ModalLayer v-else-if="showSettings" @close="showSettings = false">

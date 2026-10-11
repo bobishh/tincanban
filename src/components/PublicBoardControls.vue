@@ -2,9 +2,9 @@
 import { computed, ref, watch } from "vue"
 import type { Board, WorkspaceDocumentV2 } from "../domain/model"
 
-const props = defineProps<{ board: Board; workspaceId: string; document: WorkspaceDocumentV2; sourceVersion: number; owner: boolean; initiallyOpen?: boolean }>()
+const props = defineProps<{ board: Board; workspaceId: string; document: WorkspaceDocumentV2; sourceVersion: number; owner: boolean }>()
 const origin = ((import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined) ?? "").trim()
-const open = ref(props.initiallyOpen ?? false)
+const open = ref(false)
 const checked = ref(false)
 const revision = ref(0)
 const hash = ref("")
@@ -126,5 +126,5 @@ async function unpublish() {
 </template>
 
 <style scoped>
-.public-board-controls{position:relative;display:flex;justify-content:flex-end;padding:4px 10px}.publication-panel{position:absolute;z-index:20;top:100%;right:8px;width:min(460px,calc(100vw - 32px));display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px;background:var(--surface-raised,#fff);border:1px solid var(--line-subtle,#d8dce2);border-radius:var(--radius-panel,8px);box-shadow:var(--shadow-panel,0 8px 24px #0002)}.publication-panel p{flex-basis:100%;margin:0}.publication-panel a{color:var(--link,#245f9e)}
+.public-board-controls{display:grid;gap:12px}.public-board-controls>button{justify-self:start}.publication-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 0;border-top:1px solid var(--soft);overflow-wrap:anywhere}.publication-panel p{flex-basis:100%;margin:0}.publication-panel a{color:var(--link,#245f9e)}
 </style>

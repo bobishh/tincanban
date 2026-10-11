@@ -73,10 +73,23 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     child = undefined
   }
   let anonymousContext: Awaited<ReturnType<typeof browser.newContext>> | undefined
+  // Given a selected board, when its owner opens Workspace settings, then
+  // publication controls live there and never in the board toolbar.
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  const openPublication = async () => {
+    await expect(page.getByRole("button", { name: "Publish board", exact: true })).toHaveCount(0)
+    if (await page.getByRole("button", { name: "Menu", exact: true }).isVisible()) {
+      await page.getByRole("button", { name: "Menu", exact: true }).click()
+      await page.getByRole("dialog").getByRole("button", { name: "Settings", exact: true }).click()
+    } else await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
+    await expect(settings).toContainText("Board: Public release fixture")
+    await settings.getByRole("button", { name: "Publish board", exact: true }).click()
+    return settings.getByRole("region", { name: "Public board publication" })
+  }
   try {
     await start()
-    await page.getByRole("button", { name: "Publish board" }).click()
-    const panel = page.getByRole("region", { name: "Public board publication" })
+    let panel = await openPublication()
     await panel.getByRole("button", { name: "Check publication" }).click()
     await expect(panel).toContainText("This board is not public.")
     page.on("dialog", dialog => dialog.accept())
@@ -84,6 +97,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(panel).toContainText("Public revision 1", { timeout: 30_000 })
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)
+    await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
 
     anonymousContext = await browser.newContext({ acceptDownloads: true })
     const reader = await anonymousContext.newPage()
@@ -112,6 +126,8 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await editor.getByRole("button", { name: "Save changes" }).click()
     if (await editDetail.count()) await editDetail.getByRole("button", { name: "Close detail" }).click()
     await page.waitForTimeout(150)
+    await page.setViewportSize({ width: 390, height: 844 })
+    panel = await openPublication()
     await panel.getByRole("button", { name: "Check publication" }).click()
     await expect(panel).toContainText("Public revision 1")
     await panel.getByRole("button", { name: "Check for local changes" }).click()
@@ -141,6 +157,9 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await panel.getByRole("button", { name: "Refresh" }).click()
     await panel.getByRole("button", { name: "Check for local changes" }).click()
     await expect(panel.getByRole("alert")).toContainText("unavailable", { timeout: 30_000 })
+    const bounds = await panel.boundingBox()
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390)
     await panel.getByRole("button", { name: "Update", exact: true }).click()
     await expect(panel.getByRole("alert")).toContainText("unavailable", { timeout: 30_000 })
     await reader.reload()

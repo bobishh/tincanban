@@ -327,6 +327,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
         <div v-else :id="`${settingsId}-workspace-panel`" class="schema-tab-content" role="tabpanel" :aria-labelledby="`${settingsId}-workspace-tab`">
           <p class="dialog-copy">Workspace: <strong>{{ doc.title }}</strong> · Board: <strong>{{ board.title }}</strong></p>
           <p v-if="readOnly" class="dialog-copy">Workspace configuration is read-only for your role.</p>
+          <slot name="publication" />
           <nav class="schema-tabs schema-workspace-tabs" role="tablist" aria-label="Workspace configuration" @keydown="navigateWorkspace">
             <button :id="`${settingsId}-templates-tab`" class="schema-tab-btn" :class="{ active: workspaceTab === 'templates' }" type="button" role="tab"
               :aria-selected="workspaceTab === 'templates'" :tabindex="workspaceTab === 'templates' ? 0 : -1"

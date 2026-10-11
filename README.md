@@ -82,7 +82,7 @@ See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
 
 ### Public board links
 
-Owners can open **Publish board** in a selected board's view to review and publish
+Owners can open **Settings → Workspace → Publish board** to review and publish
 that board's public copy. The public link is `/boards/<board-id>`. It shows active
 columns, fields and cards, selected-board/card discussion messages with display
 labels, and board/card attachments. Viewers can search, read and download; they
