@@ -12,7 +12,9 @@ import "./style.css"
 
 const publicBoardRoute = /^\/boards(?:\/|$)/u.test(window.location.pathname)
 const publicBoardId = window.location.pathname.match(/^\/boards\/([^/]+)\/?$/u)?.[1] ?? ""
-if (publicBoardRoute) {
+if (window.location.pathname === "/service-login") {
+  void import("./app/ServiceLoginApp.vue").then(({ default: ServiceLoginApp }) => createApp(ServiceLoginApp as Component).mount("#app"))
+} else if (publicBoardRoute) {
   void import("./public/PublicBoardApp.vue").then(({ default: PublicBoardApp }) => createApp(PublicBoardApp as Component, { boardId: publicBoardId }).mount("#app"))
 } else {
   void Promise.all([import("./App.vue"), import("./sync/startupDiagnostics")]).then(([appModule, diagnostics]) => {

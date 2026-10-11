@@ -381,3 +381,15 @@ The standalone `../mesh-lighthouse` service now runs protocol 2 opaque storage. 
 Private access files contain reading keys and storage tokens; transfer them privately to devices already authorized for the board. Settings are local to the identity on this device. Local disconnection does not revoke other storage credentials. Old plaintext Keeper volumes fail closed and require a fresh storage directory plus explicit client migration; old Keeper board grants must be revoked separately. Setup, quotas, storage-token revocation, and container configuration: [Rusty README](../mesh-lighthouse/README.md).
 
 Cloudflare Worker + Clef ingestion uses an independent identity and an exact owner-signed Automation grant. **Settings → Connections → Automations** enrolls the Worker by owner signature and privately sends its activation packet; its workspace-wide reading scope is disclosed before approval. The real production Worker has created a synthetic Lead through live Clef and blind Rusty. Interview/Rejected transitions are verified locally; Gmail forwarding and a real received email are still pending. See [implementation evidence and rollout limits](openspec/changes/blind-keeper-and-scoped-automation/implementation.md) and the [Worker setup](workers/automation/README.md).
+
+### TinSink log sign-in
+
+TinSink can open `/service-login` to request explicit identity approval for one
+project and workspace. The approval page shows the service origin and requested
+scope before signing. Only a device with locally saved signed workspace authority
+can approve; the server independently checks its certificate chain and role.
+Owners and editors can read logs; visitors and automation cannot. Approval shares
+public rights proofs, never documents, transport secrets or private keys. Global
+TinSink administration and event write keys remain separate. Owners synchronize
+the workspace before approving; editor access needs fresh owner confirmation in
+TinSink and expires after 15 minutes without renewal.
