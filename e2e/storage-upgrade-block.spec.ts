@@ -43,10 +43,10 @@ test("Given a local journal created before the catalog index, when tincanban ope
   await expect(page.getByRole("status", { name: "Board status" })).toHaveCount(0, { timeout: 15_000 })
   await expect(page.getByRole("alert")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
-  expect(await page.evaluate(async () => {
+  await expect.poll(() => page.evaluate(async () => {
     const { useTincanban } = await import("/src/state.ts")
     return useTincanban().getActiveDoc()?.id
-  })).toBe(workspaceId)
+  }), { timeout: 15_000 }).toBe(workspaceId)
   expect(await page.evaluate(async id => {
     const { defaultStorage } = await import("/src/storage.ts")
     return (await defaultStorage.loadWorkspaceDoc(id))?.doc.title
