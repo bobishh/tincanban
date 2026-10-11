@@ -11,6 +11,19 @@ test('Given a repeated release tag, when CI publishes, then deploy the exact upl
   assert.doesNotMatch(workflow, /--version-tag/);
 });
 
+test('Given a sealed build with Vite hidden manifest, when CI uploads dist, then include hidden files for deployment', async () => {
+  const { readFileSync } = await import('node:fs');
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  const artifactName = 'name: tincanban-frontend-${{ github.sha }}';
+  const artifactIndex = workflow.indexOf(artifactName);
+  assert.notEqual(artifactIndex, -1, 'frontend artifact upload step must exist');
+  const uploadStepStart = workflow.lastIndexOf('      - uses: actions/upload-artifact@v6', artifactIndex);
+  const nextStepStart = workflow.indexOf('\n      - ', artifactIndex);
+  const uploadStep = workflow.slice(uploadStepStart, nextStepStart < 0 ? undefined : nextStepStart);
+  assert.match(uploadStep, /path:\s*dist\//);
+  assert.match(uploadStep, /include-hidden-files:\s*true/);
+});
+
 test('Given structured upload output, when selecting the version, then require exactly one successful version UUID', async () => {
   const { uploadedVersion } = await import('./release.mjs');
   const versionId = 'e7cb6b89-34e9-4103-8729-d8b55a88e901';
