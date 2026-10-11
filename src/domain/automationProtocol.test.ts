@@ -38,3 +38,18 @@ it("Given a Worker acknowledgement, when its identity, nonce or freshness differ
   await expect(verifyAutomationObservation(proof, expected, Date.now() + 120_000)).rejects.toThrow()
   await expect(verifyAutomationObservation({ ...proof, signed: { ...proof.signed, payload: { ...payload, state: "active" } } }, expected)).rejects.toThrow()
 })
+it("Given an owner enrolled on another device, when enrollment is signed, then the full certificate chain authorizes it", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  resetIdentityStorageForTest()
+  const device = await bootstrapIdentity("Second device")
+  const { createDelegatedCertificate, certHashDefault } = await import("./proofs")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, device.device.deviceId, device.device.publicKey, await certHashDefault(owner.certificate))
+  const delegated = { ...device, identity: owner.identity, certificate }
+  await expect(createAutomationOwnerRequest(delegated, { action: "enroll", origin: "https://worker.example.test",
+    workspaceId: "workspace", integrationId: crypto.randomUUID(), bodyHash: null })).rejects.toThrow("Device trust chain is incomplete")
+  const request = await createAutomationOwnerRequest(delegated, { action: "enroll", origin: "https://worker.example.test",
+    workspaceId: "workspace", integrationId: crypto.randomUUID(), bodyHash: null }, [owner.certificate])
+  expect(request.certificates).toHaveLength(2)
+  await expect(verifyAutomationOwnerRequest(request, "https://worker.example.test", [owner.identity.personId])).resolves.toMatchObject({ personId: owner.identity.personId })
+})

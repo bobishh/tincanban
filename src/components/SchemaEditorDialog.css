@@ -414,5 +414,3 @@
 .schema-tabs > .schema-tab-btn { flex: 1; padding-inline: 8px; }
 .schema-workspace-tabs { margin-top: 4px; }
 .schema-tab-content > div > .schema-tab-content,
-.schema-advanced > .schema-tab-content { overflow: visible; padding-inline: 0; }
-.schema-advanced > summary { cursor: pointer; padding-block: 12px; }

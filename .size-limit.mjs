@@ -7,7 +7,8 @@ const publicStartup = startupBudgetFiles(manifest, "public")
 
 export default [
   { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "235 kB" },
-  { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.5 kB" },
+  // Include the synchronous startup status/loader; anonymous-reader budget stays separate.
+  { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.75 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },
   { name: "public reader CSS", path: publicStartup.css, limit: "10.5 kB" },
   { name: "Markdown renderer (loaded on demand)", path: "dist/assets/MarkdownContent-*.js", limit: "40 kB" },

@@ -7,17 +7,18 @@ const context = { project: "tincanban", sessionId: "session", deviceId: "device"
 
 describe("safe failure diagnostics", () => {
   it.each([
-    [new MeshNetworkError("private network endpoint"), "MeshNetworkError"],
-    [new MeshTerminalError("private authority value"), "MeshTerminalError"],
-    [Object.assign(new Error("private record"), { name: "WorkspaceChangeRejected" }), "WorkspaceChangeRejected"],
-    [new DOMException("private storage contents", "QuotaExceededError"), "QuotaExceededError"],
-    [new AggregateError([new MeshNetworkError("private route one"), new MeshNetworkError("private route two")]), "MeshNetworkError"],
-    [new AggregateError([new MeshNetworkError("private route"), new MeshTerminalError("private authority")]), "AggregateError"],
+    [new MeshNetworkError("private network endpoint"), "mesh_network_error"],
+    [new MeshTerminalError("private authority value"), "mesh_terminal_error"],
+    [Object.assign(new Error("private record"), { name: "WorkspaceChangeRejected" }), "workspace_change_rejected"],
+    [new DOMException("private storage contents", "QuotaExceededError"), "quota_exceeded_error"],
+    [new AggregateError([new MeshNetworkError("private route one"), new MeshNetworkError("private route two")]), "mesh_network_error"],
+    [new AggregateError([new MeshNetworkError("private route"), new MeshTerminalError("private authority")]), "aggregate_error"],
   ])("Given a typed failure, When telemetry encodes it, Then its code survives without private error content", async (error, code) => {
     const event = await diagnosticEvent("workspace.frame.rejected", {
       error, reason: String(error),
     }, context)
     expect(event.attrs.error_code).toBe(code)
+    expect(event.attrs.error_code).toMatch(/^[a-z][a-z0-9_.-]*$/)
     expect(JSON.stringify(event)).not.toContain("private")
   })
 

@@ -9,9 +9,15 @@
     <link rel="icon" href="/favicon.png?v=8" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.svg?v=9" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=8" />
+    <style>
+      .startup-screen { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: #f3f0e8; color: #6b675f; font: 600 18px/1.4 system-ui, sans-serif; }
+      .startup-screen .startup-status-mark { box-sizing: border-box; width: 72px; height: 72px; border: 5px solid #e9e5db; border-top-color: #1f6feb; border-radius: 50%; animation: startup-spin 1.2s linear infinite; }
+      @keyframes startup-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .startup-screen .startup-status-mark { animation: none; } }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app"><div class="boot-placeholder startup-screen" role="status" aria-label="Board status"><span class="startup-status-mark" aria-hidden="true"></span><span>Starting local checks…</span></div></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

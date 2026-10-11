@@ -85,6 +85,7 @@ for (const width of [360, 390, 430]) {
     await page.setViewportSize({ width, height: 844 })
     await page.goto("/")
     await ensureJobSearchWorkspace(page)
+    await expect(page.getByRole("region", { name: "Lead", exact: true }).locator(".lead-card, .empty-column").first()).toBeVisible()
     const values = await page.getByRole("region", { name: "Job search", exact: true }).evaluate((board) => {
       const column = board.querySelector<HTMLElement>(".column:not(.bin-column)")!
       const add = column.querySelector<HTMLElement>(".column-add-button")!

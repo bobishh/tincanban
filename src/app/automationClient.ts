@@ -1,3 +1,4 @@
+import { defaultProofStore } from "../domain/proofs"
 import { automationBodyHash, createAutomationOwnerRequest, verifyAutomationObservation } from "../domain/automationProtocol"
 import { isAutomationOrigin } from "../domain/automationLifecycle"
 import { automationTypes } from "../domain/automationContract"
@@ -43,7 +44,7 @@ export async function enrollAutomation(profile: LocalProfile, origin: string, wo
     !capabilities.types?.some(value => value.type === automationTypes[0].type && value.version === automationTypes[0].version)) {
     throw new Error("Worker does not support owner enrollment for this automation type")
   }
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "enroll", origin, workspaceId, integrationId, bodyHash: null })
+  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "enroll", origin, workspaceId, integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
   const identity = await requestJson(origin, `/v2/integrations/${integrationId}/identity`, { ownerRequest }) as AutomationWorkerIdentity
   if (identity.origin !== origin || identity.integrationId !== integrationId) throw new Error("Worker identity belongs to another origin or instance")
   return identity
@@ -52,13 +53,13 @@ export async function enrollAutomation(profile: LocalProfile, origin: string, wo
 export async function activateAutomation(profile: LocalProfile, identity: AutomationWorkerIdentity, workspaceId: string, packet: unknown): Promise<void> {
   if (!identity.integrationId) throw new Error("Worker instance is missing")
   const ownerRequest = await createAutomationOwnerRequest(profile, { action: "activate", origin: identity.origin, workspaceId,
-    integrationId: identity.integrationId, bodyHash: await automationBodyHash(packet) })
+    integrationId: identity.integrationId, bodyHash: await automationBodyHash(packet) }, await defaultProofStore.listCertificates())
   await requestJson(identity.origin, `/v2/integrations/${identity.integrationId}/activation`, { ownerRequest, packet }, "PUT")
 }
 
 export async function observeAutomation(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string; personId: string; grantId: string }) {
   const ownerRequest = await createAutomationOwnerRequest(profile, { action: "observe", origin: input.origin,
-    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null })
+    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
   const receipt = await requestJson(input.origin, `/v2/integrations/${input.integrationId}/observation`, { ownerRequest })
   return verifyAutomationObservation(receipt, { ...input, nonce: ownerRequest.signed.payload.nonce })
 }

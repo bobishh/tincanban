@@ -1,4 +1,4 @@
-import { computed } from "vue"
+import { computed, onBeforeUnmount, ref, watch } from "vue"
 import type { useAppController } from "./useAppController"
 import { createLazySyncDialog } from "./syncDialogStatus"
 
@@ -6,7 +6,19 @@ export function useAppViewState(app: ReturnType<typeof useAppController>) {
   const { activeWorkspace, ready, startupStage, docVersion, getActiveDoc } = app.workspace
   const { sync } = app.collaboration.device
   const { confirmedRole, workspaceRoleStatus } = app.collaboration.permissions
+  const boardPainted = ref(false)
+  let cancelled = false
+  onBeforeUnmount(() => { cancelled = true })
+  watch(app.ui.state.boardRef, async board => {
+    if (!board || boardPainted.value) return
+    await document.fonts.ready
+    // Vue has committed the board; give the browser a complete layout/paint cycle.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!cancelled) boardPainted.value = true
+    }))
+  }, { flush: "post" })
   return {
+    startupCoverVisible: computed(() => !boardPainted.value && !app.ui.state.startupError.value),
     SyncDialog: createLazySyncDialog(sync.dismiss),
     reviewCausalChange: (hash: string) => app.workspace.reviewCausalChange(hash),
     dismissCausalChange: (hash: string) => app.workspace.dismissCausalChange(hash),

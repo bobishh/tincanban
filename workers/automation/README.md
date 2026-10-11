@@ -134,7 +134,7 @@ New intake returns HTTP 202 after the Durable Object has stored the event. Clef 
 
 ## Production deployment
 
-The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready"}`. Its `workers.dev` route and preview URLs are disabled. Browser CORS is limited to `https://match.meta-uber-engineer.dev`.
+The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready"}`. Its `workers.dev` route and preview URLs are disabled. Browser CORS allows `https://match.meta-uber-engineer.dev` and the public intake form at `https://meta-uber-engineer.dev`.
 
 Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. The production proof activated one exact owner-approved scope and applied a synthetic Lead through Clef; no applicant or email content was used. Future integrations must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
 

@@ -64,7 +64,7 @@ it("Given a startup failure, When the stage throws, Then diagnostics identify th
   vi.stubGlobal("fetch", vi.fn(async (_url, options) => { bodies.push(JSON.parse(options.body)); return Response.json({ accepted: 1 }) }))
   const { diagnoseStartupStep } = await import("./startupDiagnostics")
   await expect(diagnoseStartupStep("policy-wasm", () => { throw new TypeError("private-token-in-message") })).rejects.toThrow("private-token-in-message")
-  expect(bodies.at(-1)!.events[0]).toMatchObject({ event: "startup.phase.failed", status: "error", attrs: { stage: "policy-wasm", error_code: "TypeError" } })
+  expect(bodies.at(-1)!.events[0]).toMatchObject({ event: "startup.phase.failed", status: "error", attrs: { stage: "policy-wasm", error_code: "type_error" } })
   expect(JSON.stringify(bodies)).not.toContain("private-token")
 })
 

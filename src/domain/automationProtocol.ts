@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile } from "./identity"
-import { validateCertificateChain } from "./proofs"
+import { certHashDefault, validateCertificateChain } from "./proofs"
 import type { DeviceCertificate } from "./model"
 import { isAutomationOrigin } from "./automationLifecycle"
 
@@ -18,7 +18,7 @@ const observationPayload = z.strictObject({
   nonce: z.string().uuid(), issuedAt: z.number().int().positive(), state: z.enum(["active", "paused", "deleted"]),
   heads: z.array(z.string().uuid()).min(1).max(128),
 })
-const proof = z.object({ publicKey: z.string().max(128), certificates: z.array(z.unknown()).min(1).max(16),
+const proof = z.object({ publicKey: z.string().max(128), certificates: z.array(z.unknown()).min(1).max(32),
   signed: z.object({ signerKeyId: identifier, signature: z.string().max(128), payload: z.object({ kind: z.string() }).passthrough() }) })
 export type AutomationOwnerPayload = z.infer<typeof ownerPayload>
 export type AutomationObservation = z.infer<typeof observationPayload>
@@ -28,12 +28,30 @@ export async function automationBodyHash(value: unknown): Promise<string> {
 }
 
 export async function createAutomationOwnerRequest(profile: LocalProfile,
-  input: Pick<AutomationOwnerPayload, "action" | "origin" | "workspaceId" | "integrationId" | "bodyHash">) {
+  input: Pick<AutomationOwnerPayload, "action" | "origin" | "workspaceId" | "integrationId" | "bodyHash">, certificatePool: readonly DeviceCertificate[] = []) {
   const now = Date.now()
   const payload = ownerPayload.parse({ ...input, kind: "automation-owner-request", version: 1,
     personId: profile.identity.personId, nonce: crypto.randomUUID(), issuedAt: now, expiresAt: now + 60_000 })
-  return { publicKey: profile.identity.publicKey, certificates: [profile.certificate],
+  const certificates = await ownerCertificateChain(profile.certificate, certificatePool)
+  return { publicKey: profile.identity.publicKey, certificates,
     signed: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId) }
+}
+
+async function ownerCertificateChain(leaf: DeviceCertificate, pool: readonly DeviceCertificate[]): Promise<DeviceCertificate[]> {
+  const byHash = new Map(await Promise.all(pool.map(async certificate => [await certHashDefault(certificate), certificate] as const)))
+  const chain: DeviceCertificate[] = []
+  const visited = new Set<string>()
+  let current = leaf
+  for (;;) {
+    const hash = await certHashDefault(current)
+    if (visited.has(hash) || chain.length >= 32) throw new Error("Device certificate chain is invalid")
+    visited.add(hash)
+    chain.push(current)
+    if (current.payload.issuerCertificateHash === null) return chain
+    const issuer = byHash.get(current.payload.issuerCertificateHash)
+    if (!issuer) throw new Error("Device trust chain is incomplete. Reconnect this device before adding automation.")
+    current = issuer
+  }
 }
 
 export async function verifyAutomationOwnerRequest(value: unknown, origin: string, owners: readonly string[], now = Date.now()) {

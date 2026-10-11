@@ -21,6 +21,7 @@ import CardStageStrip from "./components/CardStageStrip.vue"
 import AutosaveTextarea from "./components/AutosaveTextarea.vue"
 import MobileDrawer from "./components/MobileDrawer.vue"
 import SaveState from "./components/SaveState.vue"
+import StartupStatus from "./components/StartupStatus.vue"
 import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import QuickNoteForm from "./components/QuickNoteForm.vue"
@@ -33,12 +34,12 @@ import { createNarrativeEditHandler } from "./app/narrativeEditor"
 import { useColumnCollapse } from "./app/useColumnCollapse"
 import { useAppViewState } from "./app/useAppViewState"
 import { useMemberAvatars } from "./app/useMemberAvatars"
-import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, StartupStatus, startOfflineDetailPreload, WorkspaceConnectionsPanel, IdentityPhotoPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, startOfflineDetailPreload, WorkspaceConnectionsPanel, IdentityPhotoPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
 const showPublicBoardControls = ref(false)
-const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage } = useAppViewState(app)
+const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage, startupCoverVisible } = useAppViewState(app)
 const conversations = useObjectConversations(app)
 const [showIdentityRecovery, showSettings] = [ref(false), ref(false)]
 const syncInitialTab = ref<"Participants" | "Rusty" | "Backups">("Participants")
@@ -109,7 +110,10 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
 </script>
 
 <template>
-  <TincanbanPageLayout :busy="!uiReady && !startupError">
+  <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
+    <StartupStatus v-if="startupCoverVisible" expanded :message="startupMessage" :view-only="false" :error="null" />
+  </Transition>
+  <TincanbanPageLayout :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || undefined" :busy="!uiReady && !startupError">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
         <span class="brand-presence">
@@ -146,7 +150,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       </div>
     </template>
 
-    <CausalChangeReview :changes="causalReview" :error="causalReviewError"
+    <CausalChangeReview v-if="causalReview.length || causalReviewError" :changes="causalReview" :error="causalReviewError"
       :can-review="uiReady && canEditItems" :review-change="reviewCausalChange"
       :dismiss-change="dismissCausalChange" :restore-change="restoreCausalChange" />
 
@@ -164,7 +168,11 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       </div>
     </section>
 
-    <StartupStatus v-if="!uiReady || startupError" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
+    <div class="startup-status-slot">
+      <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
+        <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
+      </Transition>
+    </div>
 
     <template v-if="boardVisible">
     <MobileDrawer
@@ -505,3 +513,13 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
   </TincanbanPageLayout>
   <BuildFooter />
 </template>
+
+<style>
+.startup-concealed { visibility: hidden; }
+.startup-revealed { animation: startup-reveal 320ms ease-out; }
+.startup-status-slot { min-height: 48px; }
+.startup-cover-enter-active, .startup-cover-leave-active { transition: opacity 320ms ease; }
+.startup-cover-enter-from, .startup-cover-leave-to { opacity: 0; }
+.startup-cover-leave-active { pointer-events: none; }
+@keyframes startup-reveal { from { opacity: 0; } to { opacity: 1; } }
+</style>

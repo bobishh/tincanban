@@ -12,7 +12,7 @@ function diagnosticId(value: unknown, limit = 160): string {
 }
 const stringAttrs: Record<string, [string, number]> = {
   phase: ["phase", 64], transport: ["transport", 64], mode: ["mode", 64], connectionId: ["connection_id", 160], peerId: ["peer_id", 160],
-  kind: ["frame_kind", 64], recovery: ["recovery", 64], errorCode: ["error_code", 64], changeId: ["change_id", 160],
+  kind: ["frame_kind", 64], recovery: ["recovery", 64], changeId: ["change_id", 160],
   stage: ["stage", 64],
   browser: ["browser", 32], platform: ["platform", 32],
 }
@@ -20,7 +20,10 @@ const numberAttrs: Record<string, string> = { attempt: "attempt", bytes: "bytes"
   previousEpoch: "previous_epoch", currentEpoch: "current_epoch", admitted: "admitted", pending: "pending", quarantined: "quarantined", operationCount: "operation_count" }
 function attributes(detail: Record<string, unknown>): TelemetryAttrs {
   const attrs: TelemetryAttrs = {}
-  if (detail.error !== undefined) attrs.error_code = diagnosticErrorCode(detail.error)
+  if (detail.error !== undefined) attrs.error_code = intakeErrorCode(diagnosticErrorCode(detail.error))
+  // Opaque IDs retain case; intake error codes use lowercase identifiers.
+  const errorCode = diagnosticId(detail.errorCode, 64)
+  if (errorCode) attrs.error_code = intakeErrorCode(errorCode)
   for (const [key, [target, limit]] of Object.entries(stringAttrs)) { const value = diagnosticId(detail[key], limit); if (value) attrs[target] = value }
   for (const [key, target] of Object.entries(numberAttrs)) {
     const value = detail[key]
@@ -29,6 +32,10 @@ function attributes(detail: Record<string, unknown>): TelemetryAttrs {
   if (Array.isArray(detail.heads)) attrs.heads = detail.heads.slice(0, 32).map(value => diagnosticId(value)).filter(Boolean)
   if (Array.isArray(detail.changedFields)) attrs.changed_fields = detail.changedFields.slice(0, 32).map(value => diagnosticId(value, 64)).filter(Boolean)
   return attrs
+}
+function intakeErrorCode(value: string): string {
+  const code = value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()
+  return code.length <= 64 && /^[a-z][a-z0-9_.-]*$/.test(code) && !code.endsWith(".") && !code.includes("..") ? code : "unknown_error"
 }
 export async function entityTraceId(project: string, workspace: string, type: string, id: string): Promise<string> {
   if (!id) return ""

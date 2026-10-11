@@ -19,8 +19,10 @@ second device and keep working across both.
   editable documents, and template drafts; visitors and immutable chat/file
   previews remain read-only.
 - Work locally, then synchronize with another online device.
-- On reload, the saved board appears in view-only mode while local checks run.
-  A compact status below the filters shows the current stage. Editing becomes
+- On reload, a full-screen loader stays visible until the saved board and fonts
+  have rendered. The board then fades into view-only mode while local checks run.
+  A compact indicator below the filters shows the current stage without blinking;
+  its space stays reserved after checks finish. Editing becomes
   available after history and access checks succeed; failed checks preserve the
   saved view and show a retry message.
 - Share selected boards with an editor or a read-only visitor.
@@ -154,9 +156,9 @@ Hetzner/DNS configuration: [production architecture](../hetzner_playground/docs/
 
 - **Identity:** display name, one profile photo across workspaces, encrypted identity recovery, device diagnostic consent.
 - **Workspace:** shared document templates,
-  priority rules and `employee_profile` for the named board, and collapsed advanced JSON configuration.
+  priority rules and `employee_profile` for the named board, and a separate Advanced configuration tab for JSON.
 - **Connections:** shortcuts to the single Participants/devices, Rusty storage and
-  Backups views. Ownership succession belongs to Participants; workspace import
+  Backups views. Ownership succession and connection diagnostics belong to Sync → Advanced; workspace import
   and export belong to Backups.
 
 **Workspace → Priority rules** supports job match priority: company recognition

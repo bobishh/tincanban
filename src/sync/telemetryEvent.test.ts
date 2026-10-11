@@ -3,6 +3,10 @@ import { diagnosticEvent, entityTraceId } from "./telemetryEvent"
 
 const context = { project: "match", sessionId: "session-a", deviceId: "device-a", timestamp: 1_791_381_600_000, level: "info" }
 describe("telemetry event contract", () => {
+  it("Given a startup error type, When encoded for intake, Then the error code is a lowercase identifier", async () => {
+    const event = await diagnosticEvent("startup.phase.failed", { errorCode: "TypeError" }, { ...context, level: "warn" })
+    expect(event.attrs.error_code).toBe("type_error")
+  })
   it("Given an authority race, When diagnostics reach Cloudflare, Then stage and changed field names survive without authority values", async () => {
     const event = await diagnosticEvent("workspace.admission.authority-changed", {
       stage: "admit-history", changedFields: ["updatedAt", "catalog"], previousEpoch: 1, currentEpoch: 1,

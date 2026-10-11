@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 
-for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then saved cards stay readable beneath a stage status and edits wait for confirmed access`, async ({ page }, info) => {
+for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then a full loader reveals saved cards before compact checks and edits wait for confirmed access`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 })
   await page.goto("/")
   await createJobSearchWorkspace(page, "Saved board")
@@ -39,25 +39,20 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await page.reload({ waitUntil: "domcontentloaded" })
   const card = page.locator('[data-item-id="saved-preview-card"]')
   const status = page.getByRole("status", { name: "Board status" })
+  await expect(page.locator(".boot-placeholder")).toHaveCount(0)
   await expect(status).toContainText("Starting local checks")
+  await expect(status).toHaveClass(/startup-screen/)
+  await expect(page.locator(".toolbar")).not.toBeVisible()
+  await expect(card).not.toBeVisible()
   const indicator = status.locator(".startup-status-mark")
-  await expect(indicator).toHaveText("•••")
-  expect(await indicator.evaluate(element => {
-    const animations = element.getAnimations({ subtree: true })
-    animations.forEach(animation => animation.pause())
-    return [100, 600, 1100, 1600].map(time => {
-      animations.forEach(animation => { animation.currentTime = time })
-      return [...element.children].filter(dot => getComputedStyle(dot).opacity === "1").length
-    })
-  })).toEqual([1, 2, 3, 0])
+  const animation = await indicator.evaluate(element => getComputedStyle(element).animationTimingFunction)
+  expect(animation).toBe("linear")
   await page.emulateMedia({ reducedMotion: "reduce" })
   expect(await indicator.evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0)
-  expect(await indicator.evaluate(element => [...element.children].every(dot => getComputedStyle(dot).opacity === "1"))).toBe(true)
   await page.emulateMedia({ reducedMotion: "no-preference" })
-  await expect(page.locator(".toolbar")).toBeVisible()
-  const initialStatus = await status.boundingBox()
   await page.evaluate(() => window.dispatchEvent(new Event("tincanban:finish-runtime")))
   await expect(card).toBeVisible()
+  await expect(page.locator(".startup-screen")).toHaveCount(0)
   await expect(card).toContainText("Saved engineer")
   await expect(page.getByText("Unverified replacement", { exact: true })).toHaveCount(0)
   await expect(status).toContainText("Checking saved changes")
@@ -67,7 +62,7 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await expect(page.locator('.brand [data-role-stamp="visitor"]')).toHaveCount(0)
   const toolbar = await page.locator(".toolbar").boundingBox()
   const strip = await status.boundingBox()
-  expect(Math.abs(strip!.y - initialStatus!.y)).toBeLessThan(2)
+  await expect(status).not.toHaveClass(/startup-screen/)
   expect(strip!.y).toBeGreaterThanOrEqual(toolbar!.y + toolbar!.height - 1)
   expect(strip!.height).toBeLessThan(64)
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Saved engineer")
@@ -76,6 +71,8 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeDisabled()
   await page.getByRole("button", { name: "Close detail" }).click()
   await page.screenshot({ path: info.outputPath(`preview-${width}.png`) })
+  const boardPosition = await page.locator(".board").boundingBox()
+  const pendingToolbar = await page.locator(".toolbar").boundingBox()
   await page.evaluate(() => window.dispatchEvent(new Event("tincanban:finish-history-check")))
   if (fail) {
     await expect(page.getByRole("alert", { name: "Board status" })).toContainText("Saved board is view only")
@@ -85,6 +82,11 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   } else {
     await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()
     await expect(status).toHaveCount(0)
+    const settledPosition = await page.locator(".board").boundingBox()
+    const settledToolbar = await page.locator(".toolbar").boundingBox()
+    const pendingGap = boardPosition!.y - pendingToolbar!.y - pendingToolbar!.height
+    const settledGap = settledPosition!.y - settledToolbar!.y - settledToolbar!.height
+    expect(Math.abs(settledGap - pendingGap)).toBeLessThan(2)
     await expect(page.locator('.brand [data-role-stamp="owner"]')).toBeVisible()
     await expect(card).toContainText("Saved engineer")
     await expect(page.getByText("Unverified replacement", { exact: true })).toHaveCount(0)
