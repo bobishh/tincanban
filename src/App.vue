@@ -26,7 +26,8 @@ import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import QuickNoteForm from "./components/QuickNoteForm.vue"
 import BuildFooter from "./components/BuildFooter.vue"
 import { saveIdentityName } from "./app/identityName"
-import { onBeforeUnmount, ref } from "vue"
+import { defineAsyncComponent, onBeforeUnmount, ref } from "vue"
+import type { Component } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
 import { createNarrativeEditHandler } from "./app/narrativeEditor"
 import { useColumnCollapse } from "./app/useColumnCollapse"
@@ -35,6 +36,8 @@ import { useMemberAvatars } from "./app/useMemberAvatars"
 import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, StartupStatus, startOfflineDetailPreload, WorkspaceConnectionsPanel, IdentityPhotoPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
+const showPublicBoardControls = ref(false)
 const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage } = useAppViewState(app)
 const conversations = useObjectConversations(app)
 const [showIdentityRecovery, showSettings] = [ref(false), ref(false)]
@@ -47,7 +50,7 @@ function openConnections(tab: "Participants" | "Rusty" | "Backups") {
 const editingFoldSnapshot = ref<NarrativeFoldSources | undefined>()
 const stopSyncForIdentityRestore = () => app.collaboration.device.sync.shutdown()
 const restoredIdentity = () => window.location.reload()
-const { workspace, ready, saveState, availableWorkspaces, archivedWorkspaces, causalReview, causalReviewError, activeWorkspace, activeBoard, isBlankBoard, genericColumns, boardFields, getActiveDoc, documentsFor } = app.workspace
+const { workspace, ready, saveState, availableWorkspaces, archivedWorkspaces, causalReview, causalReviewError, activeWorkspace, activeBoard, docVersion, isBlankBoard, genericColumns, boardFields, getActiveDoc, documentsFor } = app.workspace
 onBeforeUnmount(startOfflineDetailPreload(() => ready.value))
 const { state: ui, controls: uiControls } = app.ui
 const { isCollapsed: isColumnCollapsed, toggle: toggleColumnCollapse } = useColumnCollapse(() => activeWorkspace.id, () => hasFilters.value)
@@ -156,6 +159,8 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <LeadFilters v-model="filters" :columns="genericColumns" :fields="boardFields" />
       <div class="toolbar-meta">
         <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
+        <button v-if="uiReady && confirmedRole === 'owner' && activeBoard && getActiveDoc() && !showPublicBoardControls" type="button" class="button button-quiet button-small" @click="showPublicBoardControls = true">Publish board</button>
+        <PublicBoardControls v-if="uiReady && showPublicBoardControls && activeBoard && getActiveDoc()" initially-open :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
       </div>
     </section>
 

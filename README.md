@@ -20,6 +20,9 @@ second device and keep working across both.
   available after history and access checks succeed; failed checks preserve the
   saved view and show a retry message.
 - Share selected boards with an editor or a read-only visitor.
+- Publish a selected board as a read-only public link. Public copies include active
+  cards, fields, selected-board/card discussions and attached files; viewers need no
+  account or workspace invitation. Updates and withdrawal are explicit.
 - Inspect item history and restore an earlier version without erasing history.
 - Cards with saved messages show a count on their permanent chat icon. Open the
   thread with the latest saved activity from the icon; empty cards offer a new
@@ -70,6 +73,41 @@ storage. Its service key signs storage receipts; it receives no readable board
 invitation, content key, or Editor/Visitor application grant. Board history and
 chat are encrypted by clients, which still verify authorizations before merging.
 See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
+
+### Public board links
+
+Owners can open **Publish board** in a selected board's view to review and publish
+that board's public copy. The public link is `/boards/<board-id>`. It shows active
+columns, fields and cards, selected-board/card discussion messages with display
+labels, and board/card attachments. Viewers can search, read and download; they
+cannot edit, comment, enroll, or join the mesh. A public copy is a separate snapshot:
+private edits do not change it until the owner chooses **Update**. **Unpublish**
+blocks new snapshot and file reads; it cannot recall copies already downloaded.
+
+Set the public frontend build variable `VITE_PUBLIC_BOARD_ORIGIN` to the compatible
+Rusty HTTPS origin. Configure Rusty with its existing `RUSTY_TRUSTED_OWNER` root and
+controller-device allowlist, plus the exact frontend CORS origin. Missing config or
+Keeper capability disables publication with a clear error. Publication sends the
+selected projection and separate file copies to Rusty; it never sends private access
+keys, storage tokens, local file paths, or other boards. The Rusty service can
+authorize its configured publication controller, but cannot inspect the encrypted
+workspace to independently prove current board ownership. Workspace owners should
+publish only through a client that confirms current owner rights. Rusty publication
+storage and its binary require a separate compatible service rollout; frontend CI
+does not deploy Rusty.
+
+Optional public-view events use the existing diagnostics endpoint and consent. They
+contain an ephemeral page session and public board entity ID, with viewer device and
+workspace identifiers empty. No board title, card, discussion, field or file content
+is sent. Leave `VITE_PUBLIC_BOARD_ORIGIN` empty to disable public board service calls.
+
+Run `npm run test:e2e:public-board` for the isolated Chromium and WebKit flow against
+a temporary local Rusty, including restart, file download and withdrawal. Run
+`TINCANBAN_PUBLIC_E2E_PREVIEW=1 node scripts/public-board-e2e.mjs` to build with an
+isolated loopback public origin and exercise the compiled anonymous-reader mock
+scenarios in both browsers. The real owner-to-Rusty integration uses Vite's local
+development server because its fixture reads private app state. Run
+`cargo test --locked` from `../mesh-lighthouse` for native protocol and storage tests.
 
 Readable protocol 1 services are no longer configurable in the application UI.
 Existing deployments and grants require explicit migration to a fresh storage

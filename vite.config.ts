@@ -12,6 +12,18 @@ function buildCommit() {
 }
 
 export default defineConfig(({ command }) => ({
+  build: {
+    manifest: true,
+    minify: "terser",
+    terserOptions: { compress: { passes: 2, unsafe: false } },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("/node_modules/vue/") || id.includes("/node_modules/@vue/") || id.includes("/node_modules/zod/")) return "framework"
+        },
+      },
+    },
+  },
   worker: { format: "es" },
   server: process.env.TINCANBAN_E2E_NO_HMR === "1" ? { hmr: false, watch: { ignored: ["**/*"] } } : undefined,
   define: {

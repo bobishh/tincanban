@@ -2,6 +2,19 @@
 module.exports = {
   forbidden: [
     {
+      name: "public-reader-stays-anonymous",
+      severity: "error",
+      comment: "Public viewing must not transitively initialize private identity, storage, policy, or mesh.",
+      from: {
+        path: "^src/public/(?:PublicBoardApp[.]vue|publicSchema[.]ts|publicReader[^/]*[.]ts|publicAnalytics[^/]*[.]ts)$",
+        pathNot: "[.](?:test|spec)[.]ts$",
+      },
+      to: {
+        reachable: true,
+        path: "^src/(?:App[.]vue|app/|chat/|attachments[.]ts|storage[^/]*[.]ts|domain/(?:identity|permissions|proofs|model)[.]ts|public/(?:publicProjection|publicClient|publicationClient|PublicationDialog)[.]|sync/(?!telemetryConfig[.]ts|telemetryEvent[.]ts))|^(?:vendor/meta-mesh/|(?:node_modules/)?(?:@automerge/|@meta-uber/mesh-))",
+      },
+    },
+    {
       name: "no-circular",
       severity: "error",
       comment: "Cycles hide initialization order and couple unrelated changes.",

@@ -1,10 +1,12 @@
 layer	file	line	parameterized	scope	description
-app-rust	crates/tincanban-authority/src/lib.rs	293	no		editor_content_allowed_but_owner_and_structure_changes_denied
-app-rust	crates/tincanban-authority/src/lib.rs	306	no		item_parent_must_exist_even_for_owner
-app-rust	crates/tincanban-authority/src/lib.rs	317	no		validates_each_admitted_automerge_change_at_its_own_heads
-app-rust	crates/tincanban-authority/src/lib.rs	352	no		prepares_signed_owner_authority_for_a_tincanban_document
-app-rust	crates/tincanban-lighthouse/src/join.rs	380	no		failed_join_preserves_existing_http_inbox
-app-rust	crates/tincanban-lighthouse/src/lib.rs	646	no		signed_document_survives_restart_but_unsigned_change_never_replaces_it
+app-rust	crates/tincanban-authority/src/lib.rs	481	no		editor_content_allowed_but_owner_and_structure_changes_denied
+app-rust	crates/tincanban-authority/src/lib.rs	494	no		item_parent_must_exist_even_for_owner
+app-rust	crates/tincanban-authority/src/lib.rs	505	no		validates_each_admitted_automerge_change_at_its_own_heads
+app-rust	crates/tincanban-authority/src/lib.rs	540	no		prepares_signed_owner_authority_for_a_tincanban_document
+app-rust	crates/tincanban-authority/src/lib.rs	596	no		verifies_original_owner_signed_editor_grant_and_rejects_foreign_scope
+app-rust	crates/tincanban-authority/src/lib.rs	657	no		retains_unsigned_history_but_returns_only_the_verified_projection
+app-rust	crates/tincanban-lighthouse/src/join.rs	395	no		failed_join_preserves_existing_http_inbox
+app-rust	crates/tincanban-lighthouse/src/lib.rs	660	no		signed_document_survives_restart_but_unsigned_change_never_replaces_it
 browser	e2e/access-policy-local.spec.ts	6	no		Given multiple workspaces, when active content changes, then inactive access loads wait for workspace invalidation
 browser	e2e/agent-guide.spec.ts	4	no	Agent guide	Given current tincanban, when an agent opens the guide, then workspace and MCP instructions match the live contract
 browser	e2e/agent-guide.spec.ts	40	no	Agent guide	Given invalid or stale settings, when an agent follows recovery guidance, then validation and conflict behavior is explicit
@@ -26,6 +28,7 @@ browser	e2e/automatic-priority.spec.ts	54	no	Automatic priority from workspace p
 browser	e2e/automation-production.spec.ts	36	no	production automation proof	Given the production owner UI, when owner connects Rusty and approves the Worker, then private signed scope is exported
 browser	e2e/automation-production.spec.ts	108	no	production automation proof	Given exact owner-approved Worker routing, when real Clef classifies website intake, then a Lead syncs to Rusty and reopens in the owner UI
 browser	e2e/automation-worker.spec.ts	14	no		Given an owner-approved blind workspace, when Worker intake and forwarded mail run, then real clients see one scoped Lead and safe status moves
+browser	e2e/automation-worker.spec.ts	443	no		Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit
 browser	e2e/avatar-crop-responsive.spec.ts	18	no		Given a narrow mobile viewport, when cropping a wide photo, then preview scale matches saved square bounds
 browser	e2e/board-breakpoint.spec.ts	4	no		Given a 640px board, when resizing to a phone, then compact columns become a navigable single column only at 560px
 browser	e2e/board-discovery.spec.ts	4	no		Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear
@@ -57,7 +60,7 @@ browser	e2e/brand-layout.spec.ts	42	no		Given owner board, when its can logo ope
 browser	e2e/browser-native.spec.ts	9	no		Given a signed editor and native Rust peer, when they sync and revoke access, then documents converge and further access is denied
 browser	e2e/card-aging.spec.ts	3	no		idle cards age while the page stays open and editing restores freshness
 browser	e2e/card-aging.spec.ts	30	no		aging threshold changes are explained before applying
-browser	e2e/card-discuss-layout.spec.ts	5	yes		Given ${width}px board and fit score, when Discuss appears on hover or focus then score stays readable and unsent draft survives closing
+browser	e2e/card-discuss-layout.spec.ts	5	yes		Given ${width}px board and fit score, when Discuss appears on hover or focus then score stays readable and only saved messages add a count on the icon
 browser	e2e/card-drop-zone.spec.ts	8	yes		Given a tall source and ${targetHasCard ? "short" : "empty"} destination, when dropping near the column bottom, then card moves and survives reload
 browser	e2e/card-drop-zone.spec.ts	35	no		Given storage failure, when dropping near an empty column bottom, then card returns and retry moves it
 browser	e2e/card-drop-zone.spec.ts	48	no		Given 55 detailed leads, when a card drops into blank column space, then pointer response and main-thread work stay below 200ms
@@ -108,9 +111,9 @@ browser	e2e/conversation-windows.spec.ts	93	no		Given narrow touch screen and un
 browser	e2e/conversation-windows.spec.ts	116	no		Given generic description, when keyboard Discuss targets its field then message retains field anchor
 browser	e2e/conversation-windows.spec.ts	128	no		Given tablet touch window, when titlebar and corner gestures move resize and cancel then content keeps native touch behavior
 browser	e2e/conversation-windows.spec.ts	166	no		Given workspace A windows and separate B item, when switching back then A content and geometry restore without B leakage
-browser	e2e/custom-avatar.spec.ts	32	no		Given workspace photo settings, when saved and another workspace opens, then the photo survives reload only in its workspace
-browser	e2e/custom-avatar.spec.ts	82	no		Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry
-browser	e2e/custom-avatar.spec.ts	101	no		Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile
+browser	e2e/custom-avatar.spec.ts	32	no		Given identity photo settings, when one crop is saved and another workspace opens, then the same photo appears immediately and survives reload
+browser	e2e/custom-avatar.spec.ts	89	no		Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry
+browser	e2e/custom-avatar.spec.ts	107	no		Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile
 browser	e2e/datetime-field.spec.ts	14	no	Datetime field type	Given a board with a datetime field, supports datetime input, validation, card rendering, and persistence across reload
 browser	e2e/datetime-field.spec.ts	91	no	Datetime field type	Given schema visual editor, allows selecting datetime as field type
 browser	e2e/detail-prose-width.spec.ts	31	no		Given a Lead detail window, when its container maximizes and then narrows, then properties reflow beside narrative only while space allows
@@ -128,26 +131,28 @@ browser	e2e/discussion-entry-points.spec.ts	123	no		Given window controls, when 
 browser	e2e/document-editing.spec.ts	23	no		Given a generic card, when Edit is selected, then its visible fields can be changed from the detail view
 browser	e2e/document-editing.spec.ts	39	no		Given a real file attachment, when it is reopened, then tincanban can preview and download its persisted bytes
 browser	e2e/document-editing.spec.ts	73	no		Given document controls fail to load, when item detail opens, then pending and error states preserve board access
-browser	e2e/durable-mesh.spec.ts	151	no		Given paired browsers, when a lead changes, then the peer receives the durable board update
-browser	e2e/durable-mesh.spec.ts	169	no		Given a legacy local device without metadata, when Sync opens in a known browser, then it shows the current browser and OS
-browser	e2e/durable-mesh.spec.ts	197	no		Given a joined workspace with local data, when an editor leaves the mesh, then its copy remains and rejoining requires merge confirmation
-browser	e2e/durable-mesh.spec.ts	243	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
-browser	e2e/durable-mesh.spec.ts	309	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
-browser	e2e/durable-mesh.spec.ts	342	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
-browser	e2e/durable-mesh.spec.ts	380	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
-browser	e2e/durable-mesh.spec.ts	427	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
-browser	e2e/durable-mesh.spec.ts	480	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
-browser	e2e/durable-mesh.spec.ts	568	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
-browser	e2e/durable-mesh.spec.ts	644	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
-browser	e2e/durable-mesh.spec.ts	668	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
-browser	e2e/durable-mesh.spec.ts	717	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
-browser	e2e/durable-mesh.spec.ts	764	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
-browser	e2e/durable-mesh.spec.ts	826	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
-browser	e2e/durable-mesh.spec.ts	848	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
-browser	e2e/durable-mesh.spec.ts	884	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
-browser	e2e/durable-mesh.spec.ts	958	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
-browser	e2e/durable-mesh.spec.ts	989	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
-browser	e2e/durable-mesh.spec.ts	1051	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
+browser	e2e/durable-mesh.spec.ts	156	no		Given paired browsers, when a lead changes, then the peer receives the durable board update
+browser	e2e/durable-mesh.spec.ts	174	no		Given a legacy local device without metadata, when Sync opens in a known browser, then it shows the current browser and OS
+browser	e2e/durable-mesh.spec.ts	202	no		Given a joined workspace with local data, when an editor leaves the mesh, then its copy remains and rejoining requires merge confirmation
+browser	e2e/durable-mesh.spec.ts	251	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
+browser	e2e/durable-mesh.spec.ts	317	no		Given a current-owner revocation bound to quarantined history, when repair retries after reload, then owner access returns and revoked peer leaves roster
+browser	e2e/durable-mesh.spec.ts	458	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
+browser	e2e/durable-mesh.spec.ts	491	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
+browser	e2e/durable-mesh.spec.ts	529	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
+browser	e2e/durable-mesh.spec.ts	576	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
+browser	e2e/durable-mesh.spec.ts	629	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
+browser	e2e/durable-mesh.spec.ts	717	no		Given a mobile peer with 32 leads and 9 applied cards, when desktop moves cards while it is offline, then both persist 23 leads and 12 applied without reloading to sync
+browser	e2e/durable-mesh.spec.ts	784	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
+browser	e2e/durable-mesh.spec.ts	860	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
+browser	e2e/durable-mesh.spec.ts	884	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
+browser	e2e/durable-mesh.spec.ts	933	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
+browser	e2e/durable-mesh.spec.ts	980	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
+browser	e2e/durable-mesh.spec.ts	1042	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
+browser	e2e/durable-mesh.spec.ts	1064	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
+browser	e2e/durable-mesh.spec.ts	1100	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
+browser	e2e/durable-mesh.spec.ts	1175	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
+browser	e2e/durable-mesh.spec.ts	1206	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
+browser	e2e/durable-mesh.spec.ts	1371	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
 browser	e2e/favicon.spec.ts	32	no		Given a ready board with no peers, when its tab opens, then tincanban favicon matches empty mesh without blinking
 browser	e2e/favicon.spec.ts	42	no		Given app startup fails, when its tab opens, then tincanban icon still loads
 browser	e2e/favicon.spec.ts	49	no		Given favicon animation cannot load, when the board opens, then the static icon and local board remain available
@@ -160,6 +165,7 @@ browser	e2e/filtered-board-layout.spec.ts	199	yes		Given a card being dragged, w
 browser	e2e/footer-animation.spec.ts	3	yes		Given workspace permissions ${unavailable ? "fail" : "load"}, when footer animation replays, then it completes without blocking controls
 browser	e2e/history-restore.spec.ts	30	no		Given a moved item, when restore fails then retries, then current placement is preserved until durable compensation succeeds
 browser	e2e/inline-add.spec.ts	15	yes		Given two cards at ${width}px, when hovering their gap, then add appears there and failed insertion retries in place
+browser	e2e/inline-add.spec.ts	66	no		Given the item dialog chunk fails to load, when dismissed and reloaded, then the item flow recovers
 browser	e2e/interaction-polish.spec.ts	14	no		Given mobile navigation, when settings open and close, then focus stays in the dialog and returns to Menu
 browser	e2e/interaction-polish.spec.ts	30	no		Given an empty form, when Escape is pressed, then it closes; a dirty draft survives a backdrop click
 browser	e2e/interaction-polish.spec.ts	48	no		Given nested schema dialogs, when the preview closes, then focus returns to its parent before the parent closes
@@ -172,6 +178,15 @@ browser	e2e/interaction-polish.spec.ts	170	no		Given fast startup, when data arr
 browser	e2e/interaction-polish.spec.ts	185	no		Given a desktop scrollbar, when settings open, reject a draft, and close, then header and logo keep their positions
 browser	e2e/job-search-rejected.spec.ts	5	no	Job Search Rejected Column & Retrospective Notes (Gate F)	Given a Job search board with a lead, when moved to Rejected and a retrospective note is added, it persists across reload
 browser	e2e/job-search-rejected.spec.ts	56	no	Job Search Rejected Column & Retrospective Notes (Gate F)	Given a lead created directly in Rejected status, optional rejection reason is saved upon creation
+browser	e2e/keeper-integration-settings.spec.ts	2	no		Given signed Rusty status confirms settings support, when owner opens the editor, then no unavailable warning appears
+browser	e2e/keeper-integration-settings.spec.ts	11	no		Given an active Rusty integration, when owner disables future boards, then current access remains active
+browser	e2e/keeper-integration-settings.spec.ts	25	no		Given an active Rusty integration, when settings save hits a stale revision, then old scopes stay visible and retry remains available
+browser	e2e/keeper-integration-settings.spec.ts	38	no		Given future boards are off, when owner enables them, then policy-only request asks both sides to approve without rejoining current boards
+browser	e2e/keeper-integration-settings.spec.ts	55	no		Given the last board scope is gone, when owner reloads keeper list, then settings and manual board approval remain available
+browser	e2e/keeper-integration-settings.spec.ts	80	no		Given old Rusty lacks signed settings capability, when owner opens keeper, then settings stay unavailable but new-board pairing works
+browser	e2e/keeper-integration-settings.spec.ts	95	no		Given a saved unresolved cancellation outbox, when owner opens keeper list, then no history row resurfaces and adding remains available
+browser	e2e/keeper-integration-settings.spec.ts	122	no		Given a saved active keeper, when verified removal succeeds, then row stays absent after reload
+browser	e2e/keeper-integration-settings.spec.ts	145	yes		Given saved protocol 1 integration ${scenario.mode}, when Sync opens, then current Rusty settings remain usable
 browser	e2e/keeper-join.spec.ts	68	no		Given a tincanban invitation, when native lighthouse joins and restarts, then it exchanges board changes both ways
 browser	e2e/keeper-join.spec.ts	139	no		Given owner and editor share a fresh board, when owner closes, then editor syncs with lighthouse
 browser	e2e/markdown.spec.ts	3	no		Markdown descriptions and templates render consistently without executing HTML
@@ -198,6 +213,7 @@ browser	e2e/mobile-overlay-safe-area.spec.ts	28	no		Given mobile board with safe
 browser	e2e/mobile-overlay-safe-area.spec.ts	52	no		Given scrolled mobile board, when a visible Add item opens and closes, then scroll position returns
 browser	e2e/mobile-overlay-safe-area.spec.ts	69	no		Given invalid mobile pairing link, when error opens, then backdrop covers safe area and Dismiss returns to board
 browser	e2e/mobile-overlay-safe-area.spec.ts	81	no		Given mobile chat with safe insets, when viewport shrinks and message sends, then composer stays reachable and message appears
+browser	e2e/modal-background-state.spec.ts	4	yes		Given background inert=${initial}, When its requested state becomes ${pending} during a dialog, Then closing restores the latest state
 browser	e2e/object-discussions.spec.ts	29	no		Given an offline discussion with an incompatible known peer, when sending, then signed context saves locally and survives reload
 browser	e2e/object-discussions.spec.ts	58	yes		Given an item at ${width}px, when Discuss sends and replies, then one message lives in item discussion and global chat
 browser	e2e/object-discussions.spec.ts	91	no		Given selected item text, when Discuss sends then a quote returns to its exact source
@@ -208,14 +224,19 @@ browser	e2e/object-discussions.spec.ts	193	no		Given a quoted passage changed af
 browser	e2e/object-discussions.spec.ts	219	no		Given a pending discussion send, when its window closes and reopens then completion keeps one message
 browser	e2e/paper-and-technical-type.spec.ts	11	no		Given paper buttons and cards, when hovered, then rotation is visible and clicking still opens the card
 browser	e2e/paper-and-technical-type.spec.ts	34	no		Given archive, when expanded and collapsed, then open archive keeps strokes and folded columns retain their category colors and closed borders
-browser	e2e/paper-and-technical-type.spec.ts	83	no		Given mesh devices or an offline board and recovery words, when viewed or restore fails, then technical text remains readable in Fira Code
+browser	e2e/paper-and-technical-type.spec.ts	83	no		Given local device details and recovery words, when viewed or restore fails, then technical text remains readable in Fira Code
 browser	e2e/paper-controls-chat.spec.ts	5	yes		Given a ${width}px board, when a select opens and a long chat message scrolls, then paper controls and complete message frames remain usable
 browser	e2e/participant-avatars.spec.ts	16	yes		Given a ${width}px workspace, when an author renames and reloads, then their chat and participant avatar stays stable
 browser	e2e/participant-avatars.spec.ts	49	no		Given slow signing, when a message is pending then fails, then its avatar stays stable and retry preserves attribution
 browser	e2e/participant-avatars.spec.ts	75	no		Given two signed participants share a name, when one profile disappears offline, then names stay distinct and their retained avatar stays stable
+browser	e2e/personal-root-map-lock.spec.ts	3	no		Given two tabs, when root writes overlap, then the shared map keeps both changes
+browser	e2e/personal-root-map-lock.spec.ts	73	no		Given one owner cache, when tabs add and remove keepers concurrently, then unrelated keeper rows survive
 browser	e2e/policy-transport-startup.spec.ts	24	no		Given persisted authorized local data, when transport assets are unavailable, then the board opens and local edits survive reload without transport requests
 browser	e2e/policy-transport-startup.spec.ts	43	no		Given unavailable transport, when invitation creation fails, then local edits remain usable and retry can create an invitation
 browser	e2e/policy-transport-startup.spec.ts	62	no		Given unavailable policy WASM, when startup runs, then local access stays blocked with an explicit runtime error
+browser	e2e/public-board-keeper.spec.ts	8	no		Given an owner publishes a board, when Keeper restarts and the owner withdraws it, then anonymous readers get only the active snapshot and file bytes
+browser	e2e/public-board.spec.ts	37	yes		Given an anonymous reader at ${width}px, When a published board is reloaded, Then board content is readable without private startup
+browser	e2e/public-board.spec.ts	77	no		Given a public route, When the service is pending, unavailable, or returns invalid data, Then errors are retryable without private startup
 browser	e2e/quick-note.spec.ts	18	no		Given an item overview, when a quick note is added, then it appears immediately and survives reload
 browser	e2e/quick-note.spec.ts	36	no		Given quick-note persistence fails, when retry succeeds, then the draft stays and one note is saved
 browser	e2e/quick-note.spec.ts	53	no		Given a Job search lead, when a quick note is added, then it appends to its Description
@@ -253,7 +274,7 @@ browser	e2e/scoped-sync.spec.ts	542	no		Given existing data under another identi
 browser	e2e/scoped-sync.spec.ts	615	no		Given a delegated owner device, when it grants an editor access twice, then the editor verifies both grants
 browser	e2e/search-responsiveness.spec.ts	7	no		Given 55 detailed leads, when search narrows then has no matches, then keyboard stays responsive and clearing restores cards without writes
 browser	e2e/settings-scope.spec.ts	3	yes		Given Settings at ${width}px, when switching scope, then profile, workspace and connections stay separate
-browser	e2e/settings-scope.spec.ts	38	no		Given a job-search workspace, when keyboard moves between settings and board sections, then focus and visible content follow selection
+browser	e2e/settings-scope.spec.ts	37	no		Given a job-search workspace, when keyboard moves between settings and board sections, then focus and visible content follow selection
 browser	e2e/spatial-window-loading.spec.ts	4	no		Given a new lead, when its detail module is still loading then a pending status precedes the window
 browser	e2e/startup-diagnostics.spec.ts	3	no		Given an intake withholding every acknowledgement, When a mobile board opens and reloads, Then the board becomes usable before any acknowledgement
 browser	e2e/startup-diagnostics.spec.ts	25	yes		Given startup debug and intake ${status}, When a mobile page reloads, Then phase checkpoints identify startup and the board stays usable
@@ -305,8 +326,8 @@ browser	e2e/workspace-roles.spec.ts	6	yes		Given an owner and pending guest, whe
 browser	e2e/workspace-roles.spec.ts	101	no		Given a pending access request, when the owner declines, then no shared workspace arrives
 browser	e2e/workspace-roles.spec.ts	120	no		Given another browser uses the owner's identity, when it opens an editor invite, then tincanban explains the identity conflict before approval
 browser	e2e/workspace-roles.spec.ts	144	no		Given snapshot preparation fails, when an editor is approved, then both devices see one terminal cause
-browser	e2e/workspace-schema-migration.spec.ts	46	no		Given an older signed board, when owner reloads and invites a visitor, then card reaches visitor
-browser	e2e/workspace-schema-migration.spec.ts	79	no		Given malformed older board, when owner reloads, then migration stops and stored copy remains
+browser	e2e/workspace-schema-migration.spec.ts	48	no		Given an older signed board, when owner reloads and invites a visitor, then card reaches visitor
+browser	e2e/workspace-schema-migration.spec.ts	81	no		Given malformed older board, when owner reloads, then migration stops and stored copy remains
 browser	e2e/workspace-settings-json.spec.ts	13	no		Given a blank workspace, when invalid settings are repaired, then one apply persists all configuration
 browser	e2e/workspace-sync-data.spec.ts	17	no		Given a workspace attachment, when another peer opens it, then verified bytes transfer over the authenticated mesh session
 browser	e2e/workspace-sync-data.spec.ts	74	no		Given independent devices without a signaling API, when a workspace invitation is accepted, then saved cards arrive and edits sync both ways
@@ -331,11 +352,22 @@ browser	e2e/workspaces.spec.ts	280	no	Workspaces and Generic Board UI (Outer Sce
 browser	e2e/workspaces.spec.ts	318	no	Workspaces and Generic Board UI (Outer Scenarios)	Given a parent item and a subitem, when the subitem is moved to another parent, then the hierarchy updates correctly
 browser	e2e/workspaces.spec.ts	365	no	Workspaces and Generic Board UI (Outer Scenarios)	Gate A evidence: Reading board with Author field and nested item alongside Job search, with reload and export
 app-unit	src/app/automation.test.ts	8	no		Given owner and job board, when approving Worker, then grants only bound columns and fields
+app-unit	src/app/automation.test.ts	40	no		Given an existing paused automation, when activation export retries, then it reuses the public approval and cannot resurrect a deleted instance
 app-unit	src/app/commitBoardDrop.test.ts	40	no	board drop commits	ignores missing targets and inactive boards
 app-unit	src/app/commitBoardDrop.test.ts	50	no	board drop commits	archives active cards and exposes undo only after accepted commit
 app-unit	src/app/commitBoardDrop.test.ts	59	no	board drop commits	restores archived cards when dropped into active workflow
 app-unit	src/app/commitBoardDrop.test.ts	68	no	board drop commits	skips already archived cards dropped on archive and unchanged visible positions
 app-unit	src/app/commitBoardDrop.test.ts	80	no	board drop commits	reorders columns and reports move failures without announcing success
+app-unit	src/app/identityPhoto.test.ts	8	no		Given one identity, when its photo changes or is removed, then durable identity metadata carries one newer value for every workspace
+app-unit	src/app/identityPhoto.test.ts	18	no		Given failed identity persistence or another person's catalog, when saving, then previous photo remains intact
+app-unit	src/app/keeperReferences.test.ts	47	no	keeper integration availability	marks service available only when fresh signed integration matches saved scope and policy
+app-unit	src/app/keeperReferences.test.ts	60	yes	keeper integration availability	needs review when signed %s differs from saved integration
+app-unit	src/app/keeperReferences.test.ts	72	no	keeper integration availability	distinguishes transport failure from invalid or missing signed state
+app-unit	src/app/keeperReferences.test.ts	81	no	keeper integration availability	returns saved integration immediately, then reports HTTP/native availability separately
+app-unit	src/app/keeperReferences.test.ts	107	no	keeper integration availability	marks multiple active integrations for one keeper for review without probing either as authoritative
+app-unit	src/app/keeperReferences.test.ts	126	no	keeper integration availability	delivers each availability result without waiting for slower service probes
+app-unit	src/app/keeperWithdrawalUi.test.ts	5	no	keeper withdrawal status transition	Given a saved cancellation intent, When status reports approved, Then retry stays pending and provisioning stays blocked
+app-unit	src/app/keeperWithdrawalUi.test.ts	11	no	keeper withdrawal status transition	Given a saved cancellation intent, When signed status confirms cancellation, Then cancellation is terminal
 app-unit	src/app/messageNavigation.test.ts	37	no	authorized local message navigation	ignores unrelated permission errors while revealing an authorized target
 app-unit	src/app/messageNavigation.test.ts	45	no	authorized local message navigation	dismisses only the destination and preserves path query and history state
 app-unit	src/app/messageNavigation.test.ts	56	no	authorized local message navigation	cancels pending navigation when its destination closes
@@ -385,6 +417,10 @@ app-unit	src/chat/context.test.ts	26	no	context bounds and conversation projecti
 app-unit	src/chat/context.test.ts	43	no	context bounds and conversation projection	accepts missing parent, resolves later, isolates inconsistent roots and cycles
 app-unit	src/chat/context.test.ts	57	no	safe quote resolution	verifies captured range and relocates unique contextual match
 app-unit	src/chat/context.test.ts	61	no	safe quote resolution	never guesses ambiguous, missing, or deleted source
+app-unit	src/chat/itemDiscussions.test.ts	11	no		Given saved card messages and a reply without references, When messages are indexed, Then each card has a unique saved count
+app-unit	src/chat/itemDiscussions.test.ts	20	no		Given drafts, failed sends and references to other boards or workspaces, When indexed, Then no discussion badge is counted
+app-unit	src/chat/itemDiscussions.test.ts	29	no		Given one message references multiple cards, When indexed, Then each referenced card has a count
+app-unit	src/chat/itemDiscussions.test.ts	34	no		Given several card threads and an invalid reply, When indexed out of order, Then the latest valid saved message selects its thread
 app-unit	src/chat/messageReference.test.ts	8	no	message references	round-trips a versioned canonical target while preserving deployment path and query
 app-unit	src/chat/messageReference.test.ts	16	yes	message references	leaves unrelated routing fragment %j alone
 app-unit	src/chat/messageReference.test.ts	20	yes	message references	rejects malformed/unsupported reference %j
@@ -494,6 +530,9 @@ app-unit	src/chat/storeIntegration.test.ts	29	no	ChatStore transaction rules	Giv
 app-unit	src/chat/storeIntegration.test.ts	42	no	ChatStore transaction rules	Given two batches exceeding 4 MiB, when merged, then older messages are pruned and cannot return
 app-unit	src/chat/storeIntegration.test.ts	57	no	ChatStore transaction rules	Given a read cursor, when older and newer cursors arrive, then stored progress only advances
 app-unit	src/crdt.test.ts	15	no	workspace CRDT	Given unchanged persisted state, when reconciliation merges it without adopting its result, then the active document remains writable
+app-unit	src/crdtHistory.test.ts	13	no		matches full historical views across branches, conflicts, deletion and entity-map replacement
+app-unit	src/crdtHistory.test.ts	31	no		reads entity keys containing slashes as keys rather than materialization paths
+app-unit	src/crdtHistory.test.ts	41	no		materializes repeated preview heads once per document reader
 app-unit	src/domain/admission.test.ts	29	no	Trusted-document admission and missing-proof queue (Requirement 2.3)	admits verified change when complete proof and certificate chain exist
 app-unit	src/domain/admission.test.ts	72	no	Trusted-document admission and missing-proof queue (Requirement 2.3)	rejects forged or unauthorized changes
 app-unit	src/domain/admission.test.ts	101	no	Trusted-document admission and missing-proof queue (Requirement 2.3)	holds changes with missing proofs in pending queue and admits when proof arrives
@@ -519,34 +558,46 @@ app-unit	src/domain/archive.test.ts	94	no	item lifecycle and workflow records	re
 app-unit	src/domain/archive.test.ts	107	no	item lifecycle and workflow records	rejects missing archive references and multiple legacy archive markers
 app-unit	src/domain/archive.test.ts	123	no	item lifecycle and workflow records	rejects timestamp and ancestry conflicts in serialized transitions
 app-unit	src/domain/archive.test.ts	142	no	item lifecycle and workflow records	migration preserves explicit null archive selection while clearing legacy marker
+app-unit	src/domain/automationApproval.test.ts	14	no		Given public approval metadata, when restored, then it retains the exact signed grant and contains no storage credentials
+app-unit	src/domain/automationApproval.test.ts	19	no		Given mismatched grant, signer or board, when restoring public approval, then type authority cannot be rebound
+app-unit	src/domain/automationContract.test.ts	11	no		Given the supported type registry, when creating a definition, then its version, parameters, rights and scope are explicit
+app-unit	src/domain/automationContract.test.ts	16	yes		Given unsupported automation data %j, when validated, then it is rejected before execution
+app-unit	src/domain/automationContract.test.ts	28	no		Given a parsed definition, when callers mutate their input, then the validated contract does not change
+app-unit	src/domain/automationLifecycle.test.ts	44	no		Given an owner workspace, when an automation is added, paused, resumed and deleted, then controls persist in CRDT and deletion cannot resume
+app-unit	src/domain/automationLifecycle.test.ts	59	no		Given concurrent owner devices, when pause races with resume or deletion, then pause wins until explicitly resolved and deletion remains terminal
+app-unit	src/domain/automationLifecycle.test.ts	72	no		Given an automation control record, when editor, visitor or Worker changes it, then admission rejects that transition
+app-unit	src/domain/automationLifecycle.test.ts	83	no		Given an existing instance or unrelated board scope, when creating an automation, then collision and invalid bindings are rejected
+app-unit	src/domain/automationProtocol.test.ts	6	no		Given an approved owner, when enrollment is signed, then origin, workspace and instance are bound without an operator token
+app-unit	src/domain/automationProtocol.test.ts	15	no		Given signed activation, when its body or freshness changes, then proof cannot authorize the altered request
+app-unit	src/domain/automationProtocol.test.ts	25	no		Given a Worker acknowledgement, when its identity, nonce or freshness differs, then the UI cannot confirm execution state
 app-unit	src/domain/avatarData.test.ts	9	no	member avatar image bounds	accepts bounded 128 by 128 WebP and JPEG data
 app-unit	src/domain/avatarData.test.ts	14	no	member avatar image bounds	rejects malformed bytes, mismatched dimensions, and oversized payloads
-app-unit	src/domain/commands.test.ts	33	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	executes createItem and patchItem, produces native metadata, and signs a change proof
-app-unit	src/domain/commands.test.ts	88	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	binds editor grant provenance into the signed Automerge message
-app-unit	src/domain/commands.test.ts	100	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rebases reviewed field deltas onto latest authorized fields and records the source hash
-app-unit	src/domain/commands.test.ts	118	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	records column-status changes as activity, but does not reset activity when reordering
-app-unit	src/domain/commands.test.ts	140	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	preserves independent offline title and value edits when merged
-app-unit	src/domain/commands.test.ts	191	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	folds preset Notes and inline note documents into Description atomically
-app-unit	src/domain/commands.test.ts	220	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects stale narrative sources without retiring note content and validates required Notes through Description
-app-unit	src/domain/commands.test.ts	253	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	restores any recorded item version through a new compensating change
-app-unit	src/domain/commands.test.ts	277	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	restores selected causal version after concurrent branch merge without snapshotting full history
-app-unit	src/domain/commands.test.ts	304	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects invalid commands and cycle-creating moves without mutating document
-app-unit	src/domain/commands.test.ts	358	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	handles overlapping same-tab submissions via the publication queue sequentially
-app-unit	src/domain/commands.test.ts	384	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	creates and patches field options on select fields
-app-unit	src/domain/commands.test.ts	440	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	validates datetime field values when creating and patching items
-app-unit	src/domain/commands.test.ts	493	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	records workspace archive time and clears it on restore
-app-unit	src/domain/commands.test.ts	512	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	handles createBoard by adding a new board entity
-app-unit	src/domain/commands.test.ts	529	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	allows one archive column per board through createColumn
-app-unit	src/domain/commands.test.ts	551	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	keeps Archive as an item state instead of a placement target
-app-unit	src/domain/commands.test.ts	566	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	prevents removing the board's designated archive column
-app-unit	src/domain/commands.test.ts	577	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	keeps item lifecycle and workflow values paired with timestamps
-app-unit	src/domain/commands.test.ts	606	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects createWorkspace on existing workspace document
+app-unit	src/domain/commands.test.ts	38	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	executes createItem and patchItem, produces native metadata, and signs a change proof
+app-unit	src/domain/commands.test.ts	93	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	binds editor grant provenance into the signed Automerge message
+app-unit	src/domain/commands.test.ts	105	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rebases reviewed field deltas onto latest authorized fields and records the source hash
+app-unit	src/domain/commands.test.ts	123	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	records column-status changes as activity, but does not reset activity when reordering
+app-unit	src/domain/commands.test.ts	145	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	preserves independent offline title and value edits when merged
+app-unit	src/domain/commands.test.ts	196	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	folds preset Notes and inline note documents into Description atomically
+app-unit	src/domain/commands.test.ts	225	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects stale narrative sources without retiring note content and validates required Notes through Description
+app-unit	src/domain/commands.test.ts	258	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	restores any recorded item version through a new compensating change
+app-unit	src/domain/commands.test.ts	285	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	restores selected causal version after concurrent branch merge without snapshotting full history
+app-unit	src/domain/commands.test.ts	312	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects invalid commands and cycle-creating moves without mutating document
+app-unit	src/domain/commands.test.ts	366	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	handles overlapping same-tab submissions via the publication queue sequentially
+app-unit	src/domain/commands.test.ts	392	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	creates and patches field options on select fields
+app-unit	src/domain/commands.test.ts	448	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	validates datetime field values when creating and patching items
+app-unit	src/domain/commands.test.ts	501	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	records workspace archive time and clears it on restore
+app-unit	src/domain/commands.test.ts	520	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	handles createBoard by adding a new board entity
+app-unit	src/domain/commands.test.ts	537	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	allows one archive column per board through createColumn
+app-unit	src/domain/commands.test.ts	559	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	keeps Archive as an item state instead of a placement target
+app-unit	src/domain/commands.test.ts	574	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	prevents removing the board's designated archive column
+app-unit	src/domain/commands.test.ts	585	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	keeps item lifecycle and workflow values paired with timestamps
+app-unit	src/domain/commands.test.ts	614	no	Transaction wrapper, commands, and publication queue (Requirement 1.6)	rejects createWorkspace on existing workspace document
 app-unit	src/domain/fields.test.ts	21	no	Field validation and lifecycle (Requirement 1.5)	validates text, url, date, boolean, number with bounds
 app-unit	src/domain/fields.test.ts	65	no	Field validation and lifecycle (Requirement 1.5)	validates select options by ID (not label) and handles option lifecycle
 app-unit	src/domain/fields.test.ts	98	no	Field validation and lifecycle (Requirement 1.5)	ensures soft-archived required fields stop blocking item edits but preserve values
 app-unit	src/domain/fields.test.ts	121	no	Field validation and lifecycle (Requirement 1.5)	rejects field type changes non-destructively
 app-unit	src/domain/history.test.ts	24	no	Native history projection and attribution (Requirement 2.4)	projects history from document changes with author attribution
-app-unit	src/domain/history.test.ts	51	no	Native history projection and attribution (Requirement 2.4)	labels changes without metadata as Legacy / imported
+app-unit	src/domain/history.test.ts	51	no	Native history projection and attribution (Requirement 2.4)	labels changes without metadata as Imported
 app-unit	src/domain/history.test.ts	63	no	Native history projection and attribution (Requirement 2.4)	filters history for a specific entity ID
 app-unit	src/domain/history.test.ts	102	no		preserves A/J author attribution when changes are relayed through peer K
 app-unit	src/domain/history.test.ts	133	no		ensures timestamps never decide CRDT conflicts
@@ -566,10 +617,11 @@ app-unit	src/domain/itemLifecycleConcurrency.test.ts	64	no	item lifecycle/workfl
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	83	no	item lifecycle/workflow Automerge concurrency	lets explicit null suppress a legacy archive marker
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	91	no	item lifecycle/workflow Automerge concurrency	merges a cross-column move with a same-column reorder without splitting workflow placement
 app-unit	src/domain/itemLifecycleConcurrency.test.ts	112	no	item lifecycle/workflow Automerge concurrency	updates nested item workflow when a parent item moves across columns
-app-unit	src/domain/itemLifecycleConcurrency.test.ts	132	no	item lifecycle/workflow Automerge concurrency	merges concurrent moves with workflow tracking final placement and preserving lifecycle fields
+app-unit	src/domain/itemLifecycleConcurrency.test.ts	140	no	item lifecycle/workflow Automerge concurrency	merges concurrent moves with workflow tracking final placement and preserving lifecycle fields
 app-unit	src/domain/memberProfileConcurrency.test.ts	24	no	member avatar CRDT concurrency	merges distinct first profile writes from a legacy document without losing either person
 app-unit	src/domain/memberProfiles.test.ts	28	no	member avatar profile command	writes small avatar data and timestamp as one CRDT profile value
 app-unit	src/domain/memberProfiles.test.ts	41	no	member avatar profile command	rejects invalid avatar data and removing a missing photo
+app-unit	src/domain/memberProfiles.test.ts	49	no		Given identity photo removal, when projected to a new workspace, then its timestamped tombstone prevents an old photo from returning
 app-unit	src/domain/model.test.ts	20	no	model runtime types and validators (Requirement 1.1)	validates Board entity and rejects unknown keys
 app-unit	src/domain/model.test.ts	47	no	model runtime types and validators (Requirement 1.1)	validates Column archive role
 app-unit	src/domain/model.test.ts	64	no	model runtime types and validators (Requirement 1.1)	validates Item entity and custom values map
@@ -649,6 +701,29 @@ app-unit	src/iroh.test.ts	131	no	Iroh gossip and blobs support in match	Given th
 app-unit	src/iroh.test.ts	138	no	Iroh gossip and blobs support in match	WasmBlobEngine creates content-addressed blob with ticket and verifies payload
 app-unit	src/iroh.test.ts	165	no	Iroh gossip and blobs support in match	WasmGossipEngine joins workspace topic and broadcasts deduplicated messages
 app-unit	src/iroh.test.ts	208	no	policy initialization recovery	Given unavailable WebAssembly, when initialization fails, then concurrent callers share failure and a later retry installs policy
+app-unit	src/public/publicAnalytics.test.ts	10	no	public board analytics	sends one content-free view event with empty private identities
+app-unit	src/public/publicAnalytics.test.ts	22	no	public board analytics	sends nothing when diagnostics are opted out
+app-unit	src/public/publicAnalytics.test.ts	30	no	public board analytics	sends nothing for errors-only diagnostics or a zero sample rate
+app-unit	src/public/publicAnalytics.test.ts	41	no	public board analytics	does not redraw a sampled-out view after an unavailable page retries
+app-unit	src/public/publicAnalytics.test.ts	53	no	public board analytics	does not block public rendering when the intake is unavailable
+app-unit	src/public/publicProjection.test.ts	41	no	public board projection	publishes only selected active board structure and nested cards in stable order
+app-unit	src/public/publicProjection.test.ts	51	no	public board projection	publishes only anchored discussion threads with opaque IDs and safe references
+app-unit	src/public/publicProjection.test.ts	64	no	public board projection	rejects malformed, cross-linked and oversized public snapshots
+app-unit	src/public/publicProjection.test.ts	76	no	public board projection	publishes authorized file bytes and both artifact files, while rejecting local paths and unavailable blobs
+app-unit	src/public/publicProjectionSafety.test.ts	37	no	publication boundary regressions	Given archived fields, options and designated archive column, When publishing, Then neither their identifiers nor content escape
+app-unit	src/public/publicProjectionSafety.test.ts	45	no	publication boundary regressions	Given a restored card retaining an old timestamp, When publishing, Then canonical active lifecycle includes its current content
+app-unit	src/public/publicProjectionSafety.test.ts	50	yes	publication boundary regressions	Given a discussion anchored to card %s, When publishing, Then its thread stays attached to the public card
+app-unit	src/public/publicProjectionSafety.test.ts	56	no	publication boundary regressions	Given only private or archived discussion anchors, When publishing, Then no thread body is disclosed
+app-unit	src/public/publicProjectionSafety.test.ts	60	no	publication boundary regressions	Given a selected-board snapshot, When the source changes, Then captured content stays independent and unrelated metadata is absent
+app-unit	src/public/publicProjectionSafety.test.ts	70	no	publication boundary regressions	Given an attachment stage failure, When creating a publication, Then later files are not uploaded and no complete plan is returned
+app-unit	src/public/publicProjectionSafety.test.ts	77	no	publication boundary regressions	Given a blob filename containing a private source path, When publishing, Then the manifest exposes only its basename
+app-unit	src/public/publicProjectionSafety.test.ts	86	no	publication boundary regressions	Given attachment retrieval throws after peer discovery, When publishing, Then failure identifies the file and recovery action
+app-unit	src/public/publicationClient.test.ts	70	no	publication client signed state and receipts	Given a signed controller challenge, When withdrawing and republishing, Then the confirmed revision survives an anonymous 404
+app-unit	src/public/publicationClient.test.ts	77	no	publication client signed state and receipts	Given a signed public status, When its anonymous content hash changes, Then integrity checking rejects the response
+app-unit	src/public/publicationClient.test.ts	83	yes	publication client signed state and receipts	Given a signed challenge with wrong %s, When publishing, Then no mutation is sent
+app-unit	src/public/publicationClient.test.ts	88	no	publication client signed state and receipts	Given a challenge signed by a different key, When publishing, Then no mutation is sent
+app-unit	src/public/publicationClient.test.ts	93	yes	publication client signed state and receipts	Given a signed receipt with wrong %s, When publishing, Then success is rejected
+app-unit	src/public/publicationClient.test.ts	98	no	publication client signed state and receipts	Given an exact receipt signed by a different key, When publishing, Then success is rejected
 app-unit	src/state.test.ts	37	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked
 app-unit	src/state.test.ts	62	no	Repository-backed state and projections (Requirement 1.8)	rejects an invalid configured workspace before durable or active-state changes
 app-unit	src/state.test.ts	86	no	Repository-backed state and projections (Requirement 1.8)	Given a format 2 owner board, when tincanban starts, then migration is signed and durable
@@ -668,33 +743,40 @@ app-unit	src/state.test.ts	356	no	Repository-backed state and projections (Requi
 app-unit	src/state.test.ts	365	no	Repository-backed state and projections (Requirement 1.8)	does not allow a peer to replace the owner used to authorize chat
 app-unit	src/state.test.ts	378	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
 app-unit	src/state.test.ts	387	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
+app-unit	src/stateCausalReview.test.ts	16	no	quarantined review resolution	requires the exact review clone to be admitted before hiding the source
 app-unit	src/statePersonalRootScope.test.ts	14	no	identity-scoped local workspace catalog	shows root-entitled workspaces, including invited visitor refs, but hides another identity's local docs
 app-unit	src/statePersonalRootScope.test.ts	38	no	identity-scoped local workspace catalog	fails closed when legacy root omits its workspace map
 app-unit	src/statePersonalRootScope.test.ts	54	no	identity-scoped local workspace catalog	repairs polluted genesis refs without dropping invited or unavailable refs
 app-unit	src/stateProjection.test.ts	23	no	legacy projection archive authority	uses current archive role for legacy status mapping and lifecycle for archived state
 app-unit	src/stateProjection.test.ts	38	no	legacy projection archive authority	does not infer archive state from the former preset binding after role is cleared
-app-unit	src/stateSyncActions.test.ts	21	no	readWorkspaceDoc	returns active authoritative document without touching storage
-app-unit	src/stateSyncActions.test.ts	28	no	readWorkspaceDoc	loads inactive workspace document without serializing it
-app-unit	src/stateSyncActions.test.ts	37	no	recordVerifiedOwnerWorkspace	adds only an owned verified workspace to personal-root catalog
-app-unit	src/stateSyncActions.test.ts	57	no	recordVerifiedOwnerWorkspace	rejects foreign-owned documents without changing personal-root entitlements
-app-unit	src/storage.test.ts	30	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
-app-unit	src/storage.test.ts	42	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
-app-unit	src/storage.test.ts	56	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
-app-unit	src/storage.test.ts	85	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
-app-unit	src/storage.test.ts	96	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
-app-unit	src/storage.test.ts	135	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
-app-unit	src/storage.test.ts	147	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
-app-unit	src/storage.test.ts	155	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
-app-unit	src/storage.test.ts	177	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
-app-unit	src/storage.test.ts	186	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
-app-unit	src/storage.test.ts	226	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
-app-unit	src/storage.test.ts	245	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
-app-unit	src/storage.test.ts	270	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
-app-unit	src/storage.test.ts	299	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
-app-unit	src/storage.test.ts	332	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
-app-unit	src/storage.test.ts	366	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
-app-unit	src/storage.test.ts	398	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
-app-unit	src/storage.test.ts	439	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
+app-unit	src/stateSyncActions.test.ts	22	no	readWorkspaceDoc	returns active authoritative document without touching storage
+app-unit	src/stateSyncActions.test.ts	29	no	readWorkspaceDoc	loads inactive workspace document without serializing it
+app-unit	src/stateSyncActions.test.ts	37	no		Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause
+app-unit	src/stateSyncActions.test.ts	47	no	recordVerifiedOwnerWorkspace	adds only an owned verified workspace to personal-root catalog
+app-unit	src/stateSyncActions.test.ts	68	no	recordVerifiedOwnerWorkspace	rejects foreign-owned documents without changing personal-root entitlements
+app-unit	src/storage.test.ts	33	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
+app-unit	src/storage.test.ts	48	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
+app-unit	src/storage.test.ts	75	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
+app-unit	src/storage.test.ts	89	no	personal root map writes	does not persist a root when its mutation rejects
+app-unit	src/storage.test.ts	109	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
+app-unit	src/storage.test.ts	121	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
+app-unit	src/storage.test.ts	135	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
+app-unit	src/storage.test.ts	164	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
+app-unit	src/storage.test.ts	175	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
+app-unit	src/storage.test.ts	214	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
+app-unit	src/storage.test.ts	226	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
+app-unit	src/storage.test.ts	234	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
+app-unit	src/storage.test.ts	256	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
+app-unit	src/storage.test.ts	265	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
+app-unit	src/storage.test.ts	305	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
+app-unit	src/storage.test.ts	324	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
+app-unit	src/storage.test.ts	349	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
+app-unit	src/storage.test.ts	378	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
+app-unit	src/storage.test.ts	411	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
+app-unit	src/storage.test.ts	445	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
+app-unit	src/storage.test.ts	477	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
+app-unit	src/storage.test.ts	518	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
+app-unit	src/storageCatalog.test.ts	17	no		checks ancestor and merged branch heads using metadata without expanding text operations
 app-unit	src/sync/authorityFingerprint.test.ts	25	no	workspace authority fingerprint	ignores peer-independent timestamps and transport secrets, and sorts stored records
 app-unit	src/sync/authorityFingerprint.test.ts	39	yes	workspace authority fingerprint	changes when %s changes
 app-unit	src/sync/authorityFingerprint.test.ts	54	no	workspace authority fingerprint	tracks stored-ledger changes and conflicts with the credential
@@ -704,34 +786,42 @@ app-unit	src/sync/blindEnvelope.test.ts	7	no	blind encrypted replication	round-t
 app-unit	src/sync/blindReplication.test.ts	6	no		Given encrypted signed history, when admission fails, replication never advances its durable cursor
 app-unit	src/sync/blindReplication.test.ts	29	no		Given an uncertain durable receipt, when uploading retries, the same immutable ciphertext is reused
 app-unit	src/sync/blindReplication.test.ts	49	no		Given an inventory exceeding one bounded pass, when syncing, then completion is not reported until backlog drains
-app-unit	src/sync/changeAuthorization.test.ts	60	no		exports the same fresh authorization evidence from a hydrated document without consuming it
-app-unit	src/sync/changeAuthorization.test.ts	66	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
-app-unit	src/sync/changeAuthorization.test.ts	118	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
-app-unit	src/sync/changeAuthorization.test.ts	127	no		quarantines an unsigned received branch without materializing it in the authorized projection
-app-unit	src/sync/changeAuthorization.test.ts	150	no		admits a visitor's signed change only for their own avatar profile
-app-unit	src/sync/changeAuthorization.test.ts	157	no		defaults an omitted optional departures list before calling Rust
-app-unit	src/sync/changeAuthorization.test.ts	165	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
-app-unit	src/sync/changeAuthorization.test.ts	186	no		admits a valid editor bundle when optional departures are omitted
-app-unit	src/sync/changeAuthorization.test.ts	193	no		rejects malformed present departures evidence before Rust
-app-unit	src/sync/changeAuthorization.test.ts	199	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
-app-unit	src/sync/changeAuthorization.test.ts	204	no		accepts an owner-root grant and rejects a forged root grant
-app-unit	src/sync/changeAuthorization.test.ts	222	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
-app-unit	src/sync/changeAuthorization.test.ts	254	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
-app-unit	src/sync/changeAuthorization.test.ts	289	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
-app-unit	src/sync/changeAuthorization.test.ts	332	no		reports a proof change only once when the same authorization is replayed
-app-unit	src/sync/changeAuthorization.test.ts	337	no		keeps a later local owner boundary when admitting a peer's older history
-app-unit	src/sync/changeAuthorization.test.ts	370	no		does not persist a proof while validating an incoming workspace
-app-unit	src/sync/changeAuthorization.test.ts	375	no		reports a proof change once when a replay enriches certificates around the same change signature
-app-unit	src/sync/changeAuthorization.test.ts	385	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
-app-unit	src/sync/changeAuthorization.test.ts	402	no		accepts an editor changing only workspace title casing
-app-unit	src/sync/changeAuthorization.test.ts	409	no		rejects editor board-structure changes through the same policy used for local commands
-app-unit	src/sync/changeAuthorization.test.ts	414	no		rejects a valid signature over a different change hash
-app-unit	src/sync/changeAuthorization.test.ts	421	no		rejects a forged owner-issued role
-app-unit	src/sync/changeAuthorization.test.ts	427	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
-app-unit	src/sync/changeAuthorization.test.ts	442	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
-app-unit	src/sync/changeAuthorization.test.ts	459	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
-app-unit	src/sync/changeAuthorization.test.ts	473	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
-app-unit	src/sync/changeAuthorization.test.ts	484	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
+app-unit	src/sync/changeAuthorization.test.ts	97	no		exports the same fresh authorization evidence from a hydrated document without consuming it
+app-unit	src/sync/changeAuthorization.test.ts	103	no		reports admission phase costs without changing the authorized result
+app-unit	src/sync/changeAuthorization.test.ts	113	no		Given one raw document used as local and remote, When reclassifying it, Then avoid a full clone and keep the caller document usable
+app-unit	src/sync/changeAuthorization.test.ts	126	no		Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again
+app-unit	src/sync/changeAuthorization.test.ts	155	no		admits a signed owner bootstrap with long text without expanding it into text patches
+app-unit	src/sync/changeAuthorization.test.ts	169	no		checks a signed item edit without materializing unrelated whole-document historical views
+app-unit	src/sync/changeAuthorization.test.ts	179	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
+app-unit	src/sync/changeAuthorization.test.ts	231	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
+app-unit	src/sync/changeAuthorization.test.ts	240	no		quarantines an unsigned received branch without materializing it in the authorized projection
+app-unit	src/sync/changeAuthorization.test.ts	263	no		admits a visitor's signed change only for their own avatar profile
+app-unit	src/sync/changeAuthorization.test.ts	270	no		defaults an omitted optional departures list before calling Rust
+app-unit	src/sync/changeAuthorization.test.ts	278	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
+app-unit	src/sync/changeAuthorization.test.ts	299	no		admits a valid editor bundle when optional departures are omitted
+app-unit	src/sync/changeAuthorization.test.ts	306	no		rejects malformed present departures evidence before Rust
+app-unit	src/sync/changeAuthorization.test.ts	312	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
+app-unit	src/sync/changeAuthorization.test.ts	317	no		accepts an owner-root grant and rejects a forged root grant
+app-unit	src/sync/changeAuthorization.test.ts	335	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
+app-unit	src/sync/changeAuthorization.test.ts	367	no		repairs a current-owner signed revocation bound only to quarantined raw history
+app-unit	src/sync/changeAuthorization.test.ts	397	no		does not repair a missing boundary with a foreign-owner signature
+app-unit	src/sync/changeAuthorization.test.ts	416	no		does not repair owner boundaries from a revoked owner device
+app-unit	src/sync/changeAuthorization.test.ts	435	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
+app-unit	src/sync/changeAuthorization.test.ts	470	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
+app-unit	src/sync/changeAuthorization.test.ts	513	no		reports a proof change only once when the same authorization is replayed
+app-unit	src/sync/changeAuthorization.test.ts	518	no		keeps a later local owner boundary when admitting a peer's older history
+app-unit	src/sync/changeAuthorization.test.ts	551	no		does not persist a proof while validating an incoming workspace
+app-unit	src/sync/changeAuthorization.test.ts	556	no		reports a proof change once when a replay enriches certificates around the same change signature
+app-unit	src/sync/changeAuthorization.test.ts	566	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
+app-unit	src/sync/changeAuthorization.test.ts	583	no		accepts an editor changing only workspace title casing
+app-unit	src/sync/changeAuthorization.test.ts	590	no		rejects editor board-structure changes through the same policy used for local commands
+app-unit	src/sync/changeAuthorization.test.ts	595	no		rejects a valid signature over a different change hash
+app-unit	src/sync/changeAuthorization.test.ts	602	no		rejects a forged owner-issued role
+app-unit	src/sync/changeAuthorization.test.ts	608	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
+app-unit	src/sync/changeAuthorization.test.ts	623	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
+app-unit	src/sync/changeAuthorization.test.ts	640	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
+app-unit	src/sync/changeAuthorization.test.ts	654	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
+app-unit	src/sync/changeAuthorization.test.ts	672	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
 app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds incomplete snapshots and reassembles out-of-order parts exactly
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
@@ -750,61 +840,78 @@ app-unit	src/sync/deviceSyncEnrollmentHost.test.ts	85	no	device enrollment host 
 app-unit	src/sync/deviceSyncEnrollmentHost.test.ts	114	no	device enrollment host admission	does not wait for another connection after a verified guest has authenticated
 app-unit	src/sync/deviceSyncEnrollmentHost.test.ts	141	no	device enrollment host admission	claims only one request when two guests authenticate concurrently
 app-unit	src/sync/deviceSyncEnrollmentHost.test.ts	168	no	device enrollment host admission	closes the listener when a replacement run cancels a pending admission
+app-unit	src/sync/deviceSyncHost.test.ts	21	no	workspace host endpoint identity	Given an owned workspace, when keeper and regular hosts restart, then invites keep the durable instance endpoint
 app-unit	src/sync/deviceSyncJoinApproval.test.ts	6	no	owner-connection join decisions	binds opt-in to one pending request even when same identity has concurrent requests
 app-unit	src/sync/deviceSyncJoinApproval.test.ts	24	no	owner-connection join decisions	cancels pending requests without granting owner-connection permission
-app-unit	src/sync/deviceSyncKeeper.test.ts	54	no	keeper removal	revokes every owned board locally and keeps policy while Rusty confirmation is unavailable
-app-unit	src/sync/deviceSyncKeeper.test.ts	75	no	keeper removal	keeps owner policy when any board cannot be revoked
-app-unit	src/sync/deviceSyncKeeper.test.ts	87	no	keeper removal	revokes only locally owned legacy boards and finishes removal without a Rusty address
-app-unit	src/sync/deviceSyncKeeper.test.ts	114	no	keeper removal	recovers missing legacy board lists from available owned boards and disables future access
+app-unit	src/sync/deviceSyncKeeper.test.ts	58	no	keeper removal	does not issue an approved policy-only update when target cleanup starts before provision
+app-unit	src/sync/deviceSyncKeeper.test.ts	87	no	keeper removal	revokes every owned board locally and keeps policy while Rusty confirmation is unavailable
+app-unit	src/sync/deviceSyncKeeper.test.ts	115	no	keeper removal	rejects a stale saved grant epoch before changing access or contacting Rusty
+app-unit	src/sync/deviceSyncKeeper.test.ts	137	no	keeper removal	does not let a late removal receipt replace a newer active integration or delete its keeper row
+app-unit	src/sync/deviceSyncKeeper.test.ts	172	no	keeper removal	preserves same-revision removal intent against a late active status write
+app-unit	src/sync/deviceSyncKeeper.test.ts	187	no	keeper removal	does not let terminal cleanup delete a keeper cache row activated after its root receipt
+app-unit	src/sync/deviceSyncKeeper.test.ts	231	no	keeper removal	does not let a delayed partial-removal receipt replace a different canonical integration cache
+app-unit	src/sync/deviceSyncKeeper.test.ts	258	no	keeper removal	does not revoke a legacy descriptor locally when no saved grant generation exists
+app-unit	src/sync/deviceSyncKeeper.test.ts	273	no	keeper removal	keeps owner policy when any board cannot be revoked
+app-unit	src/sync/deviceSyncKeeper.test.ts	285	no	keeper removal	revokes only locally owned legacy boards and finishes removal without a Rusty address
+app-unit	src/sync/deviceSyncKeeper.test.ts	317	no	keeper removal	recovers missing legacy board lists from available owned boards and disables future access
+app-unit	src/sync/deviceSyncKeeper.test.ts	337	no	keeper removal	retries local keeper cleanup after a verified removal receipt survives restart
+app-unit	src/sync/deviceSyncKeeper.test.ts	376	no	keeper removal	uses completed generation when active receipt list is empty during cleanup retry
+app-unit	src/sync/deviceSyncKeeper.test.ts	400	no	keeper removal	retries every locally saved settings revocation with same signed request hash after a partial failure
 app-unit	src/sync/deviceSyncLiveRecovery.test.ts	6	no	live session recovery	keeps a terminal admission cause visible when durable mesh handoff fails
-app-unit	src/sync/durableMesh.test.ts	20	no	DurableMesh peer catalog gossip	Given mesh stops during a dial, when route selection aborts, then cancellation does not become a reconnect error
-app-unit	src/sync/durableMesh.test.ts	39	no	DurableMesh peer catalog gossip	clears a rejected workspace diagnostic only when its peer session is removed
-app-unit	src/sync/durableMesh.test.ts	63	no	DurableMesh peer catalog gossip	skips empty revocation planning only when no stored revocations exist
-app-unit	src/sync/durableMesh.test.ts	82	no	DurableMesh peer catalog gossip	still enforces stored revocations when the incoming list is empty
-app-unit	src/sync/durableMesh.test.ts	109	no	DurableMesh peer catalog gossip	applies a fresh incoming revocation when the stored list is empty
-app-unit	src/sync/durableMesh.test.ts	138	no	DurableMesh peer catalog gossip	rejects a removed person's stale grant but accepts their newly approved generation
-app-unit	src/sync/durableMesh.test.ts	144	no	DurableMesh peer catalog gossip	ignores an empty old envelope field but rejects obsolete authority evidence
-app-unit	src/sync/durableMesh.test.ts	153	no	DurableMesh peer catalog gossip	Given Iroh has no route metadata, when Promise.any rejects, then it remains a network failure
-app-unit	src/sync/durableMesh.test.ts	159	no	DurableMesh peer catalog gossip	Given a peer without iroh gossip, when capabilities are checked, then the handshake fails closed
-app-unit	src/sync/durableMesh.test.ts	171	no	DurableMesh peer catalog gossip	Given stored mesh trust belongs to another transient identity, when startup filters credentials, then it preserves trust for recovery
-app-unit	src/sync/durableMesh.test.ts	188	no	DurableMesh peer catalog gossip	Given an identity-mismatched credential has peers, when scheduling routes, then it never dials that workspace
-app-unit	src/sync/durableMesh.test.ts	204	no	DurableMesh peer catalog gossip	explains a missing recovery policy separately from editor eligibility
-app-unit	src/sync/durableMesh.test.ts	212	no	DurableMesh peer catalog gossip	refuses to start ownership transfer to a peer without durable receipt support
-app-unit	src/sync/durableMesh.test.ts	226	no	DurableMesh peer catalog gossip	does not offer a new owner workspace to a same-person session without the v2 offer capability
-app-unit	src/sync/durableMesh.test.ts	252	no	DurableMesh peer catalog gossip	activates a newly created owner workspace in the current route catalog
-app-unit	src/sync/durableMesh.test.ts	270	no	DurableMesh peer catalog gossip	offers a new owner workspace over the renamed frame only after v2 negotiation
-app-unit	src/sync/durableMesh.test.ts	299	no	DurableMesh peer catalog gossip	shares one owner-workspace offer when concurrent sessions see the same missing scope
-app-unit	src/sync/durableMesh.test.ts	325	no	DurableMesh peer catalog gossip	does not trust a stale peer record to offer an owner workspace to another person
-app-unit	src/sync/durableMesh.test.ts	350	no	DurableMesh peer catalog gossip	does not report a cancelled losing route as an invalid peer or penalize its health
-app-unit	src/sync/durableMesh.test.ts	363	no	DurableMesh peer catalog gossip	Given an incoming session wins a dial race, when the losing outgoing route fails, then connected UI stays healthy
-app-unit	src/sync/durableMesh.test.ts	394	no	DurableMesh peer catalog gossip	returns invitation-node ownership after installing the mesh session and keeps its workspace feed until close
-app-unit	src/sync/durableMesh.test.ts	423	no	DurableMesh peer catalog gossip	Given every route reaches an offline device, when dialing exhausts network routes, then UI stays in reconnecting state
-app-unit	src/sync/durableMesh.test.ts	447	no	DurableMesh peer catalog gossip	skips signed keeper routes for browser-originated dials while keeping browser routes
-app-unit	src/sync/durableMesh.test.ts	464	no	DurableMesh peer catalog gossip	Given publish loses its stream, when the session is evicted, then UI reconnects without a persistent sync error
-app-unit	src/sync/durableMesh.test.ts	481	no	DurableMesh peer catalog gossip	Given one workspace publishes slowly, when that scope changes repeatedly, then unrelated scopes stay idle and requests coalesce
-app-unit	src/sync/durableMesh.test.ts	508	no	DurableMesh peer catalog gossip	Given simultaneous same-peer handshakes, when credentials load concurrently, then only one session owns the receive loop
-app-unit	src/sync/durableMesh.test.ts	522	no	DurableMesh peer catalog gossip	Given chat changed while its mesh session was offline, when a replacement session becomes current, then it replays the local chat
-app-unit	src/sync/durableMesh.test.ts	543	no	DurableMesh peer catalog gossip	accepts independent sibling instances without replacing their connections or sharing Automerge state
-app-unit	src/sync/durableMesh.test.ts	565	no	DurableMesh peer catalog gossip	Given a session whose receive loop hangs, when publish fails and a replacement connects, then stale cleanup cannot evict the replacement
-app-unit	src/sync/durableMesh.test.ts	627	no	DurableMesh peer catalog gossip	Given an established session drops, when its receive loop fails, then reconnect is backed off
-app-unit	src/sync/durableMesh.test.ts	658	no	DurableMesh peer catalog gossip	Given a live session while Iroh gossip has no neighbour yet, when the workspace changes, then direct sync still publishes
-app-unit	src/sync/durableMesh.test.ts	679	no	DurableMesh peer catalog gossip	Given a newer browser instance closed, when an older live instance has no session, then it still dials the known peer
-app-unit	src/sync/durableMesh.test.ts	712	no	DurableMesh peer catalog gossip	Given a signed route lease expired, when reconnect scans the catalog, then it keeps probing that bootstrap route
-app-unit	src/sync/durableMesh.test.ts	739	no	DurableMesh peer catalog gossip	Given two different same-epoch recovery claims, when projected, then conflict pauses automatic recovery
-app-unit	src/sync/durableMesh.test.ts	759	no	DurableMesh peer catalog gossip	Given an owner signs two successors for one epoch, when replicas meet, then authority stays put and writes freeze
-app-unit	src/sync/durableMesh.test.ts	793	no	DurableMesh peer catalog gossip	Given partitioned replicas accepted different successors, when their transfer logs meet, then neither authority replaces the other
-app-unit	src/sync/durableMesh.test.ts	840	no	DurableMesh peer catalog gossip	Given a stored peer with an invalid grant, when the mesh validates its catalog, then it removes the poisoned peer before dialing
-app-unit	src/sync/durableMesh.test.ts	874	no	DurableMesh peer catalog gossip	Given this device changed identity, when its own advertisement refreshes, then the stale record is replaced instead of merged
-app-unit	src/sync/durableMesh.test.ts	916	no	DurableMesh peer catalog gossip	Given a workspace guest enrolls as an owner device, when enrollment is approved, then its old peer aliases are removed
-app-unit	src/sync/durableMesh.test.ts	956	no	DurableMesh peer catalog gossip	Given one invalid peer record, when a catalog merges, then later valid peers still import
-app-unit	src/sync/durableMesh.test.ts	986	no	DurableMesh peer catalog gossip	traces a slow catalog effect without changing merge order
-app-unit	src/sync/durableMesh.test.ts	1013	no	DurableMesh peer catalog gossip	rejects a valid scope ledger that conflicts with the Rust-planned ownership transfer before persisting it
-app-unit	src/sync/durableMesh.test.ts	1043	no	DurableMesh peer catalog gossip	exports a signed scope ledger through Rust catalog validation and imports its merged copy
-app-unit	src/sync/durableMesh.test.ts	1098	no	DurableMesh peer catalog gossip	atomically persists accepted succession with a scope bridge and full revocation history
-app-unit	src/sync/durableMesh.test.ts	1141	no	DurableMesh peer catalog gossip	Given an enrolled owner device, when it opens an existing workspace, then its certificate can verify new grants
-app-unit	src/sync/durableMesh.test.ts	1199	no	durable runtime cleanup	reports a failed diagnostic notification without an unhandled rejection
-app-unit	src/sync/durableMesh.test.ts	1211	yes	durable runtime cleanup	closes detached resources even when %s cleanup fails
-app-unit	src/sync/durableMesh.test.ts	1233	yes	durable node supervision	restarts when its acceptor ends (rejects: %s) and cancels that run's dial loop
+app-unit	src/sync/durableMesh.test.ts	20	no	DurableMesh peer catalog gossip	Given unchanged rights, When handshakes overlap and timestamps refresh, Then history is reclassified once until rights change
+app-unit	src/sync/durableMesh.test.ts	48	no	DurableMesh peer catalog gossip	Given mesh stops during a dial, when route selection aborts, then cancellation does not become a reconnect error
+app-unit	src/sync/durableMesh.test.ts	67	no	DurableMesh peer catalog gossip	clears a rejected workspace diagnostic only when its peer session is removed
+app-unit	src/sync/durableMesh.test.ts	91	no	DurableMesh peer catalog gossip	skips empty revocation planning only when no stored revocations exist
+app-unit	src/sync/durableMesh.test.ts	110	no	DurableMesh peer catalog gossip	still enforces stored revocations when the incoming list is empty
+app-unit	src/sync/durableMesh.test.ts	137	no	DurableMesh peer catalog gossip	applies a fresh incoming revocation when the stored list is empty
+app-unit	src/sync/durableMesh.test.ts	166	no	DurableMesh peer catalog gossip	rejects a removed person's stale grant but accepts their newly approved generation
+app-unit	src/sync/durableMesh.test.ts	172	no	DurableMesh peer catalog gossip	ignores an empty old envelope field but rejects obsolete authority evidence
+app-unit	src/sync/durableMesh.test.ts	181	no	DurableMesh peer catalog gossip	Given Iroh has no route metadata, when Promise.any rejects, then it remains a network failure
+app-unit	src/sync/durableMesh.test.ts	187	no	DurableMesh peer catalog gossip	Given a peer without iroh gossip, when capabilities are checked, then the handshake fails closed
+app-unit	src/sync/durableMesh.test.ts	199	no	DurableMesh peer catalog gossip	Given stored mesh trust belongs to another transient identity, when startup filters credentials, then it preserves trust for recovery
+app-unit	src/sync/durableMesh.test.ts	216	no	DurableMesh peer catalog gossip	Given an identity-mismatched credential has peers, when scheduling routes, then it never dials that workspace
+app-unit	src/sync/durableMesh.test.ts	232	no	DurableMesh peer catalog gossip	explains a missing recovery policy separately from editor eligibility
+app-unit	src/sync/durableMesh.test.ts	240	no	DurableMesh peer catalog gossip	refuses to start ownership transfer to a peer without durable receipt support
+app-unit	src/sync/durableMesh.test.ts	254	no	DurableMesh peer catalog gossip	does not offer a new owner workspace to a same-person session without the v2 offer capability
+app-unit	src/sync/durableMesh.test.ts	280	no	DurableMesh peer catalog gossip	activates a newly created owner workspace in the current route catalog
+app-unit	src/sync/durableMesh.test.ts	298	no	DurableMesh peer catalog gossip	offers a new owner workspace over the renamed frame only after v2 negotiation
+app-unit	src/sync/durableMesh.test.ts	327	no	DurableMesh peer catalog gossip	shares one owner-workspace offer when concurrent sessions see the same missing scope
+app-unit	src/sync/durableMesh.test.ts	353	no	DurableMesh peer catalog gossip	does not trust a stale peer record to offer an owner workspace to another person
+app-unit	src/sync/durableMesh.test.ts	378	no	DurableMesh peer catalog gossip	does not report a cancelled losing route as an invalid peer or penalize its health
+app-unit	src/sync/durableMesh.test.ts	391	no	DurableMesh peer catalog gossip	Given an incoming session wins a dial race, when the losing outgoing route fails, then connected UI stays healthy
+app-unit	src/sync/durableMesh.test.ts	422	no	DurableMesh peer catalog gossip	returns invitation-node ownership after installing the mesh session and keeps its workspace feed until close
+app-unit	src/sync/durableMesh.test.ts	451	no	DurableMesh peer catalog gossip	Given every route reaches an offline device, when dialing exhausts network routes, then UI stays in reconnecting state
+app-unit	src/sync/durableMesh.test.ts	475	no	DurableMesh peer catalog gossip	skips signed keeper routes for browser-originated dials while keeping browser routes
+app-unit	src/sync/durableMesh.test.ts	492	no	DurableMesh peer catalog gossip	Given publish loses its stream, when the session is evicted, then UI reconnects without a persistent sync error
+app-unit	src/sync/durableMesh.test.ts	509	no	DurableMesh peer catalog gossip	Given one workspace publishes slowly, when that scope changes repeatedly, then unrelated scopes stay idle and requests coalesce
+app-unit	src/sync/durableMesh.test.ts	536	no	DurableMesh peer catalog gossip	Given simultaneous same-peer handshakes, when credentials load concurrently, then only one session owns the receive loop
+app-unit	src/sync/durableMesh.test.ts	550	no	DurableMesh peer catalog gossip	Given chat changed while its mesh session was offline, when a replacement session becomes current, then it replays the local chat
+app-unit	src/sync/durableMesh.test.ts	571	no	DurableMesh peer catalog gossip	accepts independent sibling instances without replacing their connections or sharing Automerge state
+app-unit	src/sync/durableMesh.test.ts	593	no	DurableMesh peer catalog gossip	Given a session whose receive loop hangs, when publish fails and a replacement connects, then stale cleanup cannot evict the replacement
+app-unit	src/sync/durableMesh.test.ts	655	no	DurableMesh peer catalog gossip	Given an established session drops, when its receive loop fails, then reconnect is backed off
+app-unit	src/sync/durableMesh.test.ts	686	no	DurableMesh peer catalog gossip	Given a live session while Iroh gossip has no neighbour yet, when the workspace changes, then direct sync still publishes
+app-unit	src/sync/durableMesh.test.ts	707	no	DurableMesh peer catalog gossip	Given a newer browser instance closed, when an older live instance has no session, then it still dials the known peer
+app-unit	src/sync/durableMesh.test.ts	740	no	DurableMesh peer catalog gossip	Given a signed route lease expired, when reconnect scans the catalog, then it keeps probing that bootstrap route
+app-unit	src/sync/durableMesh.test.ts	767	no	DurableMesh peer catalog gossip	Given two different same-epoch recovery claims, when projected, then conflict pauses automatic recovery
+app-unit	src/sync/durableMesh.test.ts	787	no	DurableMesh peer catalog gossip	Given an owner signs two successors for one epoch, when replicas meet, then authority stays put and writes freeze
+app-unit	src/sync/durableMesh.test.ts	821	no	DurableMesh peer catalog gossip	Given partitioned replicas accepted different successors, when their transfer logs meet, then neither authority replaces the other
+app-unit	src/sync/durableMesh.test.ts	868	no	DurableMesh peer catalog gossip	Given a stored peer with an invalid grant, when the mesh validates its catalog, then it removes the poisoned peer before dialing
+app-unit	src/sync/durableMesh.test.ts	902	no	DurableMesh peer catalog gossip	Given this device changed identity, when its own advertisement refreshes, then the stale record is replaced instead of merged
+app-unit	src/sync/durableMesh.test.ts	944	no	DurableMesh peer catalog gossip	Given a workspace guest enrolls as an owner device, when enrollment is approved, then its old peer aliases are removed
+app-unit	src/sync/durableMesh.test.ts	984	no	DurableMesh peer catalog gossip	Given one invalid peer record, when a catalog merges, then later valid peers still import
+app-unit	src/sync/durableMesh.test.ts	1014	no	DurableMesh peer catalog gossip	traces a slow catalog effect without changing merge order
+app-unit	src/sync/durableMesh.test.ts	1041	no	DurableMesh peer catalog gossip	rejects a valid scope ledger that conflicts with the Rust-planned ownership transfer before persisting it
+app-unit	src/sync/durableMesh.test.ts	1071	no	DurableMesh peer catalog gossip	exports a signed scope ledger through Rust catalog validation and imports its merged copy
+app-unit	src/sync/durableMesh.test.ts	1126	no	DurableMesh peer catalog gossip	atomically persists accepted succession with a scope bridge and full revocation history
+app-unit	src/sync/durableMesh.test.ts	1169	no	DurableMesh peer catalog gossip	Given an enrolled owner device, when it opens an existing workspace, then its certificate can verify new grants
+app-unit	src/sync/durableMesh.test.ts	1227	no	durable runtime cleanup	reports a failed diagnostic notification without an unhandled rejection
+app-unit	src/sync/durableMesh.test.ts	1239	yes	durable runtime cleanup	closes detached resources even when %s cleanup fails
+app-unit	src/sync/durableMesh.test.ts	1261	yes	durable node supervision	restarts when its acceptor ends (rejects: %s) and cancels that run's dial loop
+app-unit	src/sync/durableMeshCredentials.test.ts	36	no	owner keeper offer policy	uses the single live integration despite a removed legacy reference with a larger revision
+app-unit	src/sync/durableMeshCredentials.test.ts	47	no	owner keeper offer policy	fails closed when multiple live integration references share one service identity
+app-unit	src/sync/durableMeshCredentials.test.ts	56	no	owner keeper offer policy	does not fall back to cached owner policy when every durable reference is removed
+app-unit	src/sync/durableMeshCredentials.test.ts	64	no	owner keeper offer policy	blocks new grants while a settings operation has unresolved policy
+app-unit	src/sync/durableMeshCredentials.test.ts	74	no	owner keeper offer policy	preserves legacy cache behavior when no durable integration reference exists
 app-unit	src/sync/durableMeshStartup.test.ts	5	yes	durable mesh transport demand	Given $label, when startup checks network demand, then transport demand is $expected
 app-unit	src/sync/enrollment.test.ts	33	no	device enrollment boundary	rejects replacement of another identity without explicit consent before writing anything
 app-unit	src/sync/enrollment.test.ts	41	no	device enrollment boundary	preserves an existing target identity's local root entries during enrollment
@@ -816,6 +923,9 @@ app-unit	src/sync/enrollment.test.ts	89	no	device enrollment boundary	carries th
 app-unit	src/sync/enrollment.test.ts	96	no	device enrollment boundary	rejects forged or replayed approvals before changing local identity
 app-unit	src/sync/enrollment.test.ts	105	no	device enrollment boundary	keeps the current identity when approval cannot be saved
 app-unit	src/sync/enrollment.test.ts	112	no	device enrollment boundary	lets an enrolled device issue a verifiable delegated certificate for another device
+app-unit	src/sync/failureDiagnostic.test.ts	9	yes	safe failure diagnostics	Given a typed failure, When telemetry encodes it, Then its code survives without private error content
+app-unit	src/sync/failureDiagnostic.test.ts	24	no	safe failure diagnostics	Given a wrapped network failure, When classified, Then the underlying type remains visible
+app-unit	src/sync/failureDiagnostic.test.ts	29	no	safe failure diagnostics	Given an unknown or cyclic failure, When classified, Then no dynamic name or content is exposed
 app-unit	src/sync/invitations.test.ts	16	no	InvitationService (Requirements 3.2 - 3.4)	handles atomic single-target claim and same-target resume
 app-unit	src/sync/invitations.test.ts	39	no	InvitationService (Requirements 3.2 - 3.4)	handles cancellation and expiration
 app-unit	src/sync/invitations.test.ts	54	no	InvitationService (Requirements 3.2 - 3.4)	derives deterministic short transcript authentication codes
@@ -825,52 +935,112 @@ app-unit	src/sync/invitations.test.ts	111	no	InvitationService (Requirements 3.2
 app-unit	src/sync/invitations.test.ts	146	no	InvitationService (Requirements 3.2 - 3.4)	fails grant-set approval explicitly if issuer lacks ownership authority for any workspace
 app-unit	src/sync/keeperCommitReceipt.test.ts	5	no		accepts a bounded commit receipt for the exact offered boards and frozen snapshot
 app-unit	src/sync/keeperCommitReceipt.test.ts	16	no		rejects another snapshot, substituted boards, unsupported version and unbounded payload
-app-unit	src/sync/keeperIntegrationStatus.test.ts	51	no	keeper integration status	accepts Rusty's explicit null for an absent pending operation
-app-unit	src/sync/keeperIntegrationStatus.test.ts	57	no	keeper integration status	accepts an omitted pending operation for compatible service responses
-app-unit	src/sync/keeperIntegrationStatus.test.ts	64	no	keeper integration status	rejects malformed pending operations instead of treating them as absent
-app-unit	src/sync/keeperIntegrationStatus.test.ts	69	no	keeper integration status	parses a unique future-board baseline and rejects ambiguous signed policy
-app-unit	src/sync/keeperIntegrationStatus.test.ts	78	no	keeper integration status	keeps exact pending removal scope discoverable after local access is revoked
-app-unit	src/sync/keeperIntegrationStatus.test.ts	100	no	keeper integration status	accepts a fresh higher grant epoch while retaining completed removal history
-app-unit	src/sync/keeperIntegrationStatus.test.ts	116	no	keeper integration status	rejects a pending removal whose tombstone belongs to another operation
-app-unit	src/sync/keeperPairing.test.ts	74	no	keeper controller boundary	signs service-bound requests with owner certificates and bounded timestamps
-app-unit	src/sync/keeperPairing.test.ts	81	yes	keeper controller boundary	rejects invalid request lifetime %j
-app-unit	src/sync/keeperPairing.test.ts	84	no	keeper controller boundary	verifies actual service signature and rejects tampered payload
-app-unit	src/sync/keeperPairing.test.ts	90	yes	keeper controller boundary	rejects malformed or foreign envelopes %j
-app-unit	src/sync/keeperPairing.test.ts	93	no	keeper controller boundary	rejects wrong response kind and untrusted certificate chain
-app-unit	src/sync/keeperPairing.test.ts	101	no	keeper pairing	offers owner scopes and binds signed challenge to transcript
-app-unit	src/sync/keeperPairing.test.ts	109	yes	keeper pairing	rejects invalid baseline $baseline before HTTP
-app-unit	src/sync/keeperPairing.test.ts	113	no	keeper pairing	rejects absent boards and missing ownership proof
-app-unit	src/sync/keeperPairing.test.ts	120	yes	keeper pairing	rejects unsafe pairing response %j
-app-unit	src/sync/keeperPairing.test.ts	124	no	keeper pairing	rejects signed challenge for another origin
-app-unit	src/sync/keeperPairing.test.ts	128	yes	keeper pairing	sends explicit owner decision %s
-app-unit	src/sync/keeperPairing.test.ts	134	yes	keeper pairing	accepts signed %s status
-app-unit	src/sync/keeperPairing.test.ts	138	no	keeper pairing	rejects status from another integration
-app-unit	src/sync/keeperPairing.test.ts	142	yes	keeper pairing	rejects unsafe provisioning %s %j
-app-unit	src/sync/keeperPairing.test.ts	152	no	keeper pairing	retries identical signed provision after transport failure and accepts durable activation
-app-unit	src/sync/keeperPairing.test.ts	162	no	keeper pairing	rejects provisioning response for another pairing
-app-unit	src/sync/keeperPairing.test.ts	166	yes	keeper pairing	surfaces failed or invalid HTTP responses
-app-unit	src/sync/keeperPairing.test.ts	179	no	keeper integration confirmation	persists only verified exact board and future-board policy
-app-unit	src/sync/keeperPairing.test.ts	188	no	keeper integration confirmation	rejects replayed controller response
-app-unit	src/sync/keeperPairing.test.ts	192	no	keeper integration confirmation	rejects mismatched approved baseline before persisting
-app-unit	src/sync/keeperPairing.test.ts	198	no	keeper integration confirmation	keeps unavailable status confirmation pending
-app-unit	src/sync/keeperPairing.test.ts	220	yes	keeper removal receipts	accepts exact signed %s receipt
-app-unit	src/sync/keeperPairing.test.ts	224	yes	keeper removal receipts	rejects unsafe removal receipt %j
-app-unit	src/sync/keeperPairing.test.ts	234	no	keeper removal receipts	rejects invalid removal and changed persisted operation before HTTP
-app-unit	src/sync/keeperRevocation.test.ts	17	no	keeper revocation projection	Given an active keeper, when owner revokes access, then persisted peer state hides it after reload
+app-unit	src/sync/keeperGrantEpoch.test.ts	14	no	keeper owner grant generation	Given restored local grant history behind Rusty's signed tombstone, when issuing a new board grant, then advances beyond service floor
+app-unit	src/sync/keeperGrantEpoch.test.ts	31	no	keeper owner grant generation	Given a lost provisioning reply, when rechecking the same pairing, then excludes its own active scope but retains its tombstone fence
+app-unit	src/sync/keeperGrantEpoch.test.ts	48	no	keeper owner grant generation	Given an invalid epoch, when combining local and service history, then rejects it
+app-unit	src/sync/keeperGrantEpoch.test.ts	55	no	keeper owner grant generation	Given an approved update to same integration, when rechecking its floor, then omits only its active scopes
+app-unit	src/sync/keeperIntegrationSelection.test.ts	17	no	keeper integration selection	derives Rusty's stable owner/service integration ID
+app-unit	src/sync/keeperIntegrationSelection.test.ts	22	no	keeper integration selection	selects canonical live integration beside terminal legacy history
+app-unit	src/sync/keeperIntegrationSelection.test.ts	36	no	keeper integration selection	treats a lone retired legacy integration as history, not rebind target
+app-unit	src/sync/keeperIntegrationSelection.test.ts	45	no	keeper integration selection	fails closed on duplicate canonical rows or unfinished legacy tombstones
+app-unit	src/sync/keeperIntegrationSelection.test.ts	55	no	keeper integration selection	never ignores active, pending, or future-enabled legacy rows
+app-unit	src/sync/keeperIntegrationSelection.test.ts	69	no	keeper integration selection	ignores removed references only when one live target exists and rejects ambiguity
+app-unit	src/sync/keeperIntegrationSettingsApi.test.ts	57	no	signed keeper integration settings API	sends revision-bound intent and accepts exact signed cleanup receipt
+app-unit	src/sync/keeperIntegrationSettingsApi.test.ts	73	no	signed keeper integration settings API	rejects malformed or duplicate board requests before sending them
+app-unit	src/sync/keeperIntegrationSettingsApi.test.ts	83	no	signed keeper integration settings API	rejects receipts that change saved intent, exact boards, or cleanup outcome
+app-unit	src/sync/keeperIntegrationSettingsApi.test.ts	98	no	signed keeper integration settings API	rejects malformed signed scope and baseline details
+app-unit	src/sync/keeperIntegrationStatus.test.ts	51	no	keeper integration status	fails closed when a service omits or malforms signed settings capability
+app-unit	src/sync/keeperIntegrationStatus.test.ts	59	no	keeper integration status	accepts Rusty's explicit null for an absent pending operation
+app-unit	src/sync/keeperIntegrationStatus.test.ts	65	no	keeper integration status	accepts an omitted pending operation for compatible service responses
+app-unit	src/sync/keeperIntegrationStatus.test.ts	72	no	keeper integration status	rejects malformed pending operations instead of treating them as absent
+app-unit	src/sync/keeperIntegrationStatus.test.ts	77	no	keeper integration status	parses a unique future-board baseline and rejects ambiguous signed policy
+app-unit	src/sync/keeperIntegrationStatus.test.ts	86	no	keeper integration status	keeps exact pending removal scope discoverable after local access is revoked
+app-unit	src/sync/keeperIntegrationStatus.test.ts	108	no	keeper integration status	accepts a fresh higher grant epoch while retaining completed removal history
+app-unit	src/sync/keeperIntegrationStatus.test.ts	124	no	keeper integration status	rejects a pending removal whose tombstone belongs to another operation
+app-unit	src/sync/keeperIntegrationStatus.test.ts	143	no	keeper integration status	blocks grant refresh for a pending target integration even when policy-only request has no boards
+app-unit	src/sync/keeperIntegrationStatus.test.ts	155	no	keeper integration status	blocks overlapping pending scopes but allows another integration's unrelated cleanup
+app-unit	src/sync/keeperOriginAdmission.test.ts	25	no	owner-origin admission status	accepts signed approval only for exact owner, device, scopes and policy
+app-unit	src/sync/keeperOriginAdmission.test.ts	29	yes	owner-origin admission status	rejects %s
+app-unit	src/sync/keeperOriginAdmission.test.ts	45	no	owner-origin admission status	leaves saved legacy pairings without a signed origin on their manual path
+app-unit	src/sync/keeperOriginAdmission.test.ts	50	no	owner-origin admission status	does not enable origin admission for old descriptors
+app-unit	src/sync/keeperOrphanResolution.test.ts	19	no	keeper orphan status reconciliation	accepts exact clean status for a pairing with no saved issued grants
+app-unit	src/sync/keeperOrphanResolution.test.ts	23	no	keeper orphan status reconciliation	requires signed tombstone at or beyond every explicit locally saved epoch
+app-unit	src/sync/keeperOrphanResolution.test.ts	34	no	keeper orphan status reconciliation	keeps ambiguous identity, stale revision, active scope, pending operation, and unlinked tombstone blocked
+app-unit	src/sync/keeperOrphanResolution.test.ts	48	no	keeper orphan status reconciliation	rejects missing or mismatched signed owner grant fields instead of defaulting epoch
+app-unit	src/sync/keeperOrphanResolution.test.ts	57	no	keeper orphan status reconciliation	requires grant signature and device certificate chain from the exact owner
+app-unit	src/sync/keeperPairing.test.ts	84	no	keeper controller boundary	signs service-bound requests with owner certificates and bounded timestamps
+app-unit	src/sync/keeperPairing.test.ts	91	yes	keeper controller boundary	rejects invalid request lifetime %j
+app-unit	src/sync/keeperPairing.test.ts	94	no	keeper controller boundary	verifies actual service signature and rejects tampered payload
+app-unit	src/sync/keeperPairing.test.ts	100	yes	keeper controller boundary	rejects malformed or foreign envelopes %j
+app-unit	src/sync/keeperPairing.test.ts	103	no	keeper controller boundary	rejects wrong response kind and untrusted certificate chain
+app-unit	src/sync/keeperPairing.test.ts	111	no	keeper pairing	offers owner scopes and binds signed challenge to transcript
+app-unit	src/sync/keeperPairing.test.ts	125	no	keeper pairing	Given an existing service integration, when another owned board is selected, then approval binds the exact revision and board delta
+app-unit	src/sync/keeperPairing.test.ts	133	no	keeper pairing	Given an active board, when selected again, then no duplicate pairing offer is sent
+app-unit	src/sync/keeperPairing.test.ts	138	no	keeper pairing	Given canonical cleanup pending on another board, when adding access, then service cleanup blocks the offer
+app-unit	src/sync/keeperPairing.test.ts	145	no	keeper pairing	Given existing access with future boards off, when owner approves only policy, then no workspace invitation is delivered
+app-unit	src/sync/keeperPairing.test.ts	158	yes	keeper pairing	rejects unsafe policy-only approval: %s
+app-unit	src/sync/keeperPairing.test.ts	166	no	keeper pairing	Given prior removal floors, when refreshing, then local higher epochs survive and the target active grant is excluded
+app-unit	src/sync/keeperPairing.test.ts	173	yes	keeper pairing	rejects inconsistent policy-only scope before delivery: %s
+app-unit	src/sync/keeperPairing.test.ts	180	yes	keeper pairing	rejects invalid baseline $baseline before HTTP
+app-unit	src/sync/keeperPairing.test.ts	184	no	keeper pairing	rejects absent boards and missing ownership proof
+app-unit	src/sync/keeperPairing.test.ts	191	no	keeper pairing	Given durable authority absent, when a valid credential remains, then only its owned board is eligible
+app-unit	src/sync/keeperPairing.test.ts	199	no	keeper pairing	Given forged or mismatched genesis authority, when selecting a board, then owner pairing is rejected
+app-unit	src/sync/keeperPairing.test.ts	209	yes	keeper pairing	rejects unsafe pairing response %j
+app-unit	src/sync/keeperPairing.test.ts	213	no	keeper pairing	rejects signed challenge for another origin
+app-unit	src/sync/keeperPairing.test.ts	217	yes	keeper pairing	sends explicit owner decision %s
+app-unit	src/sync/keeperPairing.test.ts	223	yes	keeper pairing	accepts signed %s status
+app-unit	src/sync/keeperPairing.test.ts	227	no	keeper pairing	rejects status from another integration
+app-unit	src/sync/keeperPairing.test.ts	231	yes	keeper pairing	rejects unsafe provisioning %s %j
+app-unit	src/sync/keeperPairing.test.ts	241	no	keeper pairing	Given a durable active scope, when a positive grant epoch is confirmed, then activation succeeds
+app-unit	src/sync/keeperPairing.test.ts	246	no	keeper pairing	Given join failure without details, when provisioning is queried, then retry explains missing service evidence
+app-unit	src/sync/keeperPairing.test.ts	251	no	keeper pairing	Given an HTTP failure without a service message, when requesting status, then the response code is preserved
+app-unit	src/sync/keeperPairing.test.ts	255	no	keeper pairing	retries identical signed provision after transport failure and accepts durable activation
+app-unit	src/sync/keeperPairing.test.ts	265	no	keeper pairing	rejects provisioning response for another pairing
+app-unit	src/sync/keeperPairing.test.ts	269	yes	keeper pairing	surfaces failed or invalid HTTP responses
+app-unit	src/sync/keeperPairing.test.ts	282	no	keeper integration confirmation	persists only verified exact board and future-board policy
+app-unit	src/sync/keeperPairing.test.ts	291	no	keeper integration confirmation	rejects replayed controller response
+app-unit	src/sync/keeperPairing.test.ts	295	no	keeper integration confirmation	rejects mismatched approved baseline before persisting
+app-unit	src/sync/keeperPairing.test.ts	301	no	keeper integration confirmation	keeps unavailable status confirmation pending
+app-unit	src/sync/keeperPairing.test.ts	323	yes	keeper removal receipts	accepts exact signed %s receipt
+app-unit	src/sync/keeperPairing.test.ts	327	yes	keeper removal receipts	rejects unsafe removal receipt %j
+app-unit	src/sync/keeperPairing.test.ts	337	no	keeper removal receipts	rejects invalid removal and changed persisted operation before HTTP
+app-unit	src/sync/keeperPairingWithdrawal.test.ts	72	no	keeper pairing cancellation	persists proof, revokes exact issued grants, and waits for signed cleanup
+app-unit	src/sync/keeperPairingWithdrawal.test.ts	88	no	keeper pairing cancellation	uses the target integration revision, not max revision from unrelated history
+app-unit	src/sync/keeperPairingWithdrawal.test.ts	99	no	keeper pairing cancellation	keeps intent pending when Rusty has not proved a grant epoch or cleanup
+app-unit	src/sync/keeperPairingWithdrawal.test.ts	117	no	keeper pairing cancellation	rejects cleanup for another operation, an unapproved board, or a newer board grant
+app-unit	src/sync/keeperPolicyUpdate.test.ts	43	no	future-board policy approval	requests policy-only owner and operator approval with complete owned-board baseline
+app-unit	src/sync/keeperPolicyUpdate.test.ts	51	no	future-board policy approval	requires saved active integration and rejects pending or already-enabled service state
+app-unit	src/sync/keeperPolicyUpdate.test.ts	63	no	future-board policy approval	rejects multiple live saved references before discovering or changing settings
+app-unit	src/sync/keeperPolicyUpdate.test.ts	73	no	future-board policy approval	uses canonical live row when signed status also contains terminal legacy history
+app-unit	src/sync/keeperRevocation.test.ts	20	no	keeper revocation projection	revokes a verified issued grant when no peer row was persisted, but rejects a newer proof-store grant
+app-unit	src/sync/keeperRevocation.test.ts	64	no	keeper revocation projection	binds a keeper revocation to admitted heads when raw history contains a quarantined branch
+app-unit	src/sync/keeperRevocation.test.ts	116	no	keeper revocation projection	Given an active keeper, when owner revokes access, then persisted peer state hides it after reload
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	88	no	signed keeper pairing withdrawal API	accepts a bound pending status and returns verified provisioned scopes
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	105	no	signed keeper pairing withdrawal API	accepts non-cancellation status without a withdrawal and omits false provisioning
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	112	no	signed keeper pairing withdrawal API	rejects status belonging to another service pairing or origin
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	119	no	signed keeper pairing withdrawal API	rejects unsupported, malformed, or differently bound cancellation states
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	128	no	signed keeper pairing withdrawal API	rejects status/withdrawal disagreement and active scopes in terminal cancellation
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	136	no	signed keeper pairing withdrawal API	signs exact approved grant proofs and accepts a matching pending receipt
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	152	no	signed keeper pairing withdrawal API	rejects duplicate or unapproved grant proofs before sending a request
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	160	no	signed keeper pairing withdrawal API	rejects a receipt for another operation, hash, pairing, or non-cancellation state
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	173	no	signed keeper pairing withdrawal API	completes only the exact approved scope set and binds the receipt hash
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	188	no	signed keeper pairing withdrawal API	rejects incomplete, duplicate, or extra completion scope proofs before sending
+app-unit	src/sync/lighthousePairingWithdrawalApi.test.ts	198	no	signed keeper pairing withdrawal API	rejects completion receipts that mismatch cancellation state or original request hash
 app-unit	src/sync/localAdmissionReuse.test.ts	15	no	local admission document reuse	reuses handle only when all admitted changes produce same heads
 app-unit	src/sync/localAdmissionReuse.test.ts	20	yes	local admission document reuse	keeps authorized projection path for %s changes
 app-unit	src/sync/localAdmissionReuse.test.ts	28	no	local admission document reuse	keeps authorized projection path when admission omitted a known change
 app-unit	src/sync/localAdmissionReuse.test.ts	33	no	local admission document reuse	keeps newly admitted history when its head is absent from the local candidate
-app-unit	src/sync/memberAccess.test.ts	43	no	member access	promotes a visitor with a signed owner grant and preserves promotion on a stale announcement
-app-unit	src/sync/memberAccess.test.ts	52	no	member access	removes only the chosen device and refuses its old signed advertisement on reconnect
-app-unit	src/sync/memberAccess.test.ts	60	no	member access	Given a removed device, when a join is checked before owner approval, then its signed key is rejected without writes
-app-unit	src/sync/memberAccess.test.ts	78	no	member access	refuses expanding confirmed removal to an unauthorized workspace before writing
-app-unit	src/sync/memberAccess.test.ts	85	no	member access	accepts a self-issued device removal but rejects a stranger, a changed scope, or a forged signature
-app-unit	src/sync/memberAccess.test.ts	99	no	leaving membership	requires the owner to transfer ownership before leaving
-app-unit	src/sync/memberAccess.test.ts	107	no		a signed departure removes person membership until a newer owner-approved grant
-app-unit	src/sync/memberAccess.test.ts	123	no		requires removal-aware peers before accepting a session, even before the first removal
-app-unit	src/sync/memberAccess.test.ts	131	no		limits removal of another person's device to owned boards, while own devices include editor boards
-app-unit	src/sync/memberAccess.test.ts	147	no		retains removals for both identities when the same device key was enrolled into another person
+app-unit	src/sync/memberAccess.test.ts	46	no	member access	promotes a visitor with a signed owner grant and preserves promotion on a stale announcement
+app-unit	src/sync/memberAccess.test.ts	55	no	member access	Given a promotion, when publication needs the workspace lock, then durable rights commit before publication
+app-unit	src/sync/memberAccess.test.ts	65	no	member access	removes only the chosen device and refuses its old signed advertisement on reconnect
+app-unit	src/sync/memberAccess.test.ts	73	no	member access	Given a removed device, when a join is checked before owner approval, then its signed key is rejected without writes
+app-unit	src/sync/memberAccess.test.ts	91	no	member access	refuses expanding confirmed removal to an unauthorized workspace before writing
+app-unit	src/sync/memberAccess.test.ts	98	no	member access	accepts a self-issued device removal but rejects a stranger, a changed scope, or a forged signature
+app-unit	src/sync/memberAccess.test.ts	112	no	leaving membership	requires the owner to transfer ownership before leaving
+app-unit	src/sync/memberAccess.test.ts	120	no		a signed departure removes person membership until a newer owner-approved grant
+app-unit	src/sync/memberAccess.test.ts	136	no		requires removal-aware peers before accepting a session, even before the first removal
+app-unit	src/sync/memberAccess.test.ts	144	no		limits removal of another person's device to owned boards, while own devices include editor boards
+app-unit	src/sync/memberAccess.test.ts	160	no		retains removals for both identities when the same device key was enrolled into another person
 app-unit	src/sync/meshInstanceLease.test.ts	15	no	mesh transport instance lease	Given multiple tabs, when slots are acquired and one closes, then each live tab is unique and freed endpoint identity is reused
 app-unit	src/sync/meshInstanceLease.test.ts	31	no	mesh transport instance lease	Given Web Locks are unavailable, when one tab reloads, then its session instance identity stays stable
 app-unit	src/sync/meshInstanceLease.test.ts	39	no	mesh transport instance lease	Given an old Match tab is open, when tincanban starts with its own identity, then old transport locks do not consume its slots
@@ -881,12 +1051,15 @@ app-unit	src/sync/meshTrace.test.ts	27	no	mesh trace	writes routine mesh detail 
 app-unit	src/sync/meshTrace.test.ts	36	no	mesh trace	Given a connection lifecycle, when events are traced, then ordered correlation data remains inspectable
 app-unit	src/sync/meshTrace.test.ts	51	no	mesh trace	Given more than the trace limit, when inspected, then only the newest bounded events remain
 app-unit	src/sync/offlineRetry.test.ts	5	no	offline retry cadence	uses 1s, 2s, 5s, then stays at 10s
-app-unit	src/sync/ownerKeeper.test.ts	6	no	identity-scoped owner-keeper policy	reconciles repeated activation receipts without downgrading an existing editor
-app-unit	src/sync/ownerKeeper.test.ts	16	no	identity-scoped owner-keeper policy	reloads policy for its owner identity and updates one keeper idempotently
-app-unit	src/sync/ownerKeeper.test.ts	27	no	identity-scoped owner-keeper policy	ignores malformed local policy records
-app-unit	src/sync/ownerKeeper.test.ts	36	no	identity-scoped owner-keeper policy	retains pairing details when future-board enrollment updates the role
-app-unit	src/sync/ownerKeeper.test.ts	45	no	identity-scoped owner-keeper policy	offers only scopes created after the approved baseline when future boards are enabled
-app-unit	src/sync/ownerKeeper.test.ts	53	no	identity-scoped owner-keeper policy	removes one keeper only for its owner
+app-unit	src/sync/ownerKeeper.test.ts	30	no	identity-scoped owner-keeper policy	reconciles repeated activation receipts without downgrading an existing editor
+app-unit	src/sync/ownerKeeper.test.ts	40	no	identity-scoped owner-keeper policy	reloads policy for its owner identity and updates one keeper idempotently
+app-unit	src/sync/ownerKeeper.test.ts	51	no	identity-scoped owner-keeper policy	ignores malformed local policy records
+app-unit	src/sync/ownerKeeper.test.ts	60	no	identity-scoped owner-keeper policy	retains pairing details when future-board enrollment updates the role
+app-unit	src/sync/ownerKeeper.test.ts	69	no	identity-scoped owner-keeper policy	offers only scopes created after the approved baseline when future boards are enabled
+app-unit	src/sync/ownerKeeper.test.ts	77	no	identity-scoped owner-keeper policy	removes one keeper only for its owner
+app-unit	src/sync/ownerKeeper.test.ts	88	no	identity-scoped owner-keeper policy	serializes concurrent keeper additions and removal on the owner cache key
+app-unit	src/sync/ownerKeeper.test.ts	109	no	identity-scoped owner-keeper policy	preserves a newer same-integration cache row from stale activation and removal receipts
+app-unit	src/sync/ownerKeeper.test.ts	125	no	identity-scoped owner-keeper policy	clears equal-revision and legacy cache rows after a verified terminal receipt
 app-unit	src/sync/ownerOfferProofs.test.ts	76	no		Given approved future-board offer, pages bypass current scope and ACK waits for durable admission
 app-unit	src/sync/ownerOfferProofs.test.ts	102	yes		Given %s owner proof page, no durable write or ACK
 app-unit	src/sync/ownerOfferProofs.test.ts	121	no		Given unapproved connection or changed manifest, dispatcher never serves arbitrary scope
@@ -902,20 +1075,23 @@ app-unit	src/sync/startupDiagnostics.test.ts	28	no		Given errors-only telemetry 
 app-unit	src/sync/startupDiagnostics.test.ts	45	no		Given an intake awaiting acknowledgement, When startup runs, Then local work completes while both checkpoints remain in flight
 app-unit	src/sync/startupDiagnostics.test.ts	62	no		Given a startup failure, When the stage throws, Then diagnostics identify the stage and error type without transmitting raw error content
 app-unit	src/sync/startupDiagnostics.test.ts	71	yes		Given %s diagnostics, When startup runs, Then diagnostics cannot prevent local work
-app-unit	src/sync/telemetry.test.ts	37	no	bounded telemetry delivery	Given an in-flight batch, when device opts out and back in, then old request aborts and old events are discarded
-app-unit	src/sync/telemetry.test.ts	63	no	bounded telemetry delivery	Given large attribute lists, when delivered, then every request fits the byte and event limits
-app-unit	src/sync/telemetry.test.ts	82	no	bounded telemetry delivery	Given default settings on production hostname, when traced, then no fetch is scheduled
-app-unit	src/sync/telemetry.test.ts	92	no	bounded telemetry delivery	Given temporary failure, when retried, then event IDs remain stable and confirmed receipt clears queue
-app-unit	src/sync/telemetry.test.ts	109	no	bounded telemetry delivery	Given permanent 404, when delivery fails, then retries halt until device opts out
-app-unit	src/sync/telemetry.test.ts	122	no	bounded telemetry delivery	Given offline collection beyond capacity, when events age out, then memory stays bounded and expired events are dropped
+app-unit	src/sync/telemetry.test.ts	37	no	bounded telemetry delivery	Given errors-only diagnostics, When many workspaces fail, Then the hourly budget caps delivery at thirty events
+app-unit	src/sync/telemetry.test.ts	48	no	bounded telemetry delivery	Given errors-only diagnostics, When sync repeats or succeeds, Then only one failure per five minutes is sent
+app-unit	src/sync/telemetry.test.ts	64	no	bounded telemetry delivery	Given an in-flight batch, when device opts out and back in, then old request aborts and old events are discarded
+app-unit	src/sync/telemetry.test.ts	90	no	bounded telemetry delivery	Given large attribute lists, when delivered, then every request fits the byte and event limits
+app-unit	src/sync/telemetry.test.ts	109	no	bounded telemetry delivery	Given default settings on production hostname, when traced, then no fetch is scheduled
+app-unit	src/sync/telemetry.test.ts	119	no	bounded telemetry delivery	Given temporary failure, when retried, then event IDs remain stable and confirmed receipt clears queue
+app-unit	src/sync/telemetry.test.ts	136	no	bounded telemetry delivery	Given permanent 404, when delivery fails, then retries halt until device opts out
+app-unit	src/sync/telemetry.test.ts	149	no	bounded telemetry delivery	Given offline collection beyond capacity, when events age out, then memory stays bounded and expired events are dropped
 app-unit	src/sync/telemetryConfig.test.ts	18	no	deployment telemetry configuration and device consent	Given application deployment configuration, when loaded, then sampling and batching come from the build
 app-unit	src/sync/telemetryConfig.test.ts	22	no	deployment telemetry configuration and device consent	Given legacy device configuration pointing elsewhere, when upgraded, then only explicit disablement survives
 app-unit	src/sync/telemetryConfig.test.ts	27	no	deployment telemetry configuration and device consent	Given no deployed collector key, when device opts in, then sending cannot be enabled locally
 app-unit	src/sync/telemetryConfig.test.ts	35	no	deployment telemetry configuration and device consent	Given a configured application, when this device opts out and reloads, then only the consent flag is stored
 app-unit	src/sync/telemetryConfig.test.ts	45	yes	deployment telemetry configuration and device consent	Given invalid deployment value %s=%s, when loaded, then collection fails closed
 app-unit	src/sync/telemetryConfig.test.ts	55	no	deployment telemetry configuration and device consent	Given unavailable local storage, when opting out, then the failure is reported without claiming consent was saved
-app-unit	src/sync/telemetryEvent.test.ts	6	no	telemetry event contract	Given the same signed entity on two devices, when recorded, then trace correlation survives differing sessions
-app-unit	src/sync/telemetryEvent.test.ts	19	no	telemetry event contract	Given diagnostic detail containing content and secrets, when encoded, then only typed allowed fields remain
+app-unit	src/sync/telemetryEvent.test.ts	6	no	telemetry event contract	Given an authority race, When diagnostics reach Cloudflare, Then stage and changed field names survive without authority values
+app-unit	src/sync/telemetryEvent.test.ts	14	no	telemetry event contract	Given the same signed entity on two devices, when recorded, then trace correlation survives differing sessions
+app-unit	src/sync/telemetryEvent.test.ts	27	no	telemetry event contract	Given diagnostic detail containing content and secrets, when encoded, then only typed allowed fields remain
 app-unit	src/sync/useDeviceSync.test.ts	16	no	device sync errors	explains a archived local copy without blaming another open tab
 app-unit	src/sync/useDeviceSync.test.ts	23	no	device sync errors	preserves the bounded root cause for live-session diagnostics
 app-unit	src/sync/useDeviceSync.test.ts	29	no	device sync errors	Given a CRDT merge failure, when pairing reports it, then the UI does not blame the QR code
@@ -941,9 +1117,12 @@ app-unit	src/sync/workspaceAdmissionClient.test.ts	71	no		rejects a stalled work
 app-unit	src/sync/workspaceAdmissionClient.test.ts	97	no		keeps the initialized worker after a policy rejection so later valid admission can complete
 app-unit	src/sync/workspaceAdmissionClient.test.ts	113	no		starts the worker before an admission is requested and waits for runtime readiness
 app-unit	src/sync/workspaceAdmissionClient.test.ts	129	no		retries worker initialization after connectivity returns
-app-unit	src/sync/workspaceAdmissionGuard.test.ts	23	no		rejects a worker result when durable authority changed while admission was pending
-app-unit	src/sync/workspaceAdmissionPaths.test.ts	15	no	workspace admission operation paths	attributes root Text updates and entity edits to exact paths
-app-unit	src/sync/workspaceAdmissionPaths.test.ts	38	no	workspace admission operation paths	uses slow-path for ambiguous root entity-map replacement and unknown object ids
+app-unit	src/sync/workspaceAdmissionGuard.test.ts	27	no		Given identical raw history and rights, When repeated packets arrive, Then admission reuses its result but new evidence or history is checked again
+app-unit	src/sync/workspaceAdmissionGuard.test.ts	57	no		Given unchanged workspace rights, When a timestamp refresh overlaps admission, Then synchronization accepts the result
+app-unit	src/sync/workspaceAdmissionGuard.test.ts	76	no		rejects a worker result when durable authority changed while admission was pending
+app-unit	src/sync/workspaceAdmissionPaths.test.ts	15	no	workspace admission operation paths	Given long text history, When indexing admission, Then retain distinct object targets instead of character operations and preserve exact paths
+app-unit	src/sync/workspaceAdmissionPaths.test.ts	34	no	workspace admission operation paths	attributes root Text updates and entity edits to exact paths
+app-unit	src/sync/workspaceAdmissionPaths.test.ts	57	no	workspace admission operation paths	uses slow-path for ambiguous root entity-map replacement and unknown object ids
 app-unit	src/sync/workspaceChangeProofStore.test.ts	4	no		repairs a stored proof that predates owner authority fields when the proof is replayed
 app-unit	src/sync/workspaceChangeProofStore.test.ts	23	no		retains distinct signed grant provenance variants for one change proof
 app-unit	src/sync/workspaceJoinProtocol.test.ts	73	no	Rust workspace join state machine in browser stream adapter	Given a keeper commit remains pending, when an offer is accepted, then bounded receipt reaches host only after commit
@@ -957,30 +1136,31 @@ app-unit	src/sync/workspaceJoinProtocol.test.ts	208	no	Rust workspace join state
 app-unit	src/sync/workspaceJoinProtocol.test.ts	227	no	Rust workspace join state machine in browser stream adapter	Given mesh resume fails before adoption, when retryable, then Rust returns retry after rollback
 app-unit	src/sync/workspaceJoinProtocol.test.ts	241	no	Rust workspace join state machine in browser stream adapter	Given mesh resumed, when confirmation stream fails, then Rust preserves adopted ownership
 app-unit	src/sync/workspaceJoinProtocol.test.ts	257	no	Rust workspace join state machine in browser stream adapter	Given the receiver already consumed handoff request, when host sends ready, then it does not read the stream again
-app-unit	src/sync/workspaceSet.test.ts	21	no	Confirmed ownership delivery	waits for a matching receipt instead of treating a sent frame as a durable save
-app-unit	src/sync/workspaceSet.test.ts	35	no	Confirmed ownership delivery	rejects a receipt for different contents
-app-unit	src/sync/workspaceSet.test.ts	41	no	Confirmed ownership delivery	acknowledges only after the document and ownership metadata have been persisted
-app-unit	src/sync/workspaceSet.test.ts	61	no	workspace invitation scope	keeps the failure reason visible when the board has a long title
-app-unit	src/sync/workspaceSet.test.ts	71	no	workspace invitation scope	identifies the exact workspace when a multi-workspace snapshot member fails
-app-unit	src/sync/workspaceSet.test.ts	90	yes	workspace invitation scope	rejects a mismatched or incomplete set before any document is saved: %j
-app-unit	src/sync/workspaceSet.test.ts	101	no	workspace invitation scope	Given a failing sync section, when a snapshot is received, then diagnostics identify its stage
-app-unit	src/sync/workspaceSet.test.ts	111	no	workspace invitation scope	Given workspace validation rejects a snapshot, when the join reports the failure, then its safe schema path is retained
-app-unit	src/sync/workspaceSet.test.ts	125	no	workspace invitation scope	validates every invited workspace before persisting any of them
-app-unit	src/sync/workspaceSet.test.ts	143	no	live mesh heartbeat	requires an authenticated acknowledgement from the remote peer
-app-unit	src/sync/workspaceSet.test.ts	164	no	live mesh heartbeat	Given a joined peer requests durable handoff, when live sync receives it, then control reaches the host without parsing it as data
-app-unit	src/sync/workspaceSet.test.ts	190	no	incremental workspace control plane	Given control history exceeds 256 KiB, when published, then bounded frames deliver the complete state once
-app-unit	src/sync/workspaceSet.test.ts	220	no	incremental workspace control plane	Given an authorization-only update, when a control frame arrives, then it merges the proof without a document change
-app-unit	src/sync/workspaceSet.test.ts	246	no	incremental workspace control plane	Given an authorization-only update, when the session publishes, then it sends the proof in a control frame
-app-unit	src/sync/workspaceSet.test.ts	268	no	incremental workspace control plane	Given ownership state changes, when a control frame arrives, then it merges without a full workspace document
-app-unit	src/sync/workspaceSet.test.ts	293	no	incremental workspace control plane	Given two owner devices, when a workspace offer arrives, then it is persisted before acknowledgement
-app-unit	src/sync/workspaceSet.test.ts	321	no	incremental workspace control plane	requires a matching receipt when publishing an owner workspace
-app-unit	src/sync/workspaceSet.test.ts	334	no	rejected document isolation	Given blocked persistence, when authenticated heartbeat arrives, then liveness replies before any durable receipt
-app-unit	src/sync/workspaceSet.test.ts	361	no	rejected document isolation	keeps the peer session alive when one application control frame cannot be stored
-app-unit	src/sync/workspaceSet.test.ts	389	no	rejected document isolation	keeps heartbeat and control alive after a rejected document and can accept a later corrected frame
-app-unit	src/sync/workspaceSet.test.ts	471	no	paged initial snapshot transport	Given 20,001 records, fetches bounded pages before any validation or document publication
-app-unit	src/sync/workspaceSet.test.ts	487	no	paged initial snapshot transport	Given lost response, retry reuses saved pages; corrupt saved page forces bounded refetch
-app-unit	src/sync/workspaceSet.test.ts	503	no	paged initial snapshot transport	Given durable local coverage, manifest resolves without network; authority still passes validation
-app-unit	src/sync/workspaceSet.test.ts	512	no	paged initial snapshot transport	Given initial durable batch, emits receipt only after all pages and durable merge
+app-unit	src/sync/workspaceSet.test.ts	23	no	Confirmed ownership delivery	waits for a matching receipt instead of treating a sent frame as a durable save
+app-unit	src/sync/workspaceSet.test.ts	37	no	Confirmed ownership delivery	rejects a receipt for different contents
+app-unit	src/sync/workspaceSet.test.ts	43	no	Confirmed ownership delivery	acknowledges only after the document and ownership metadata have been persisted
+app-unit	src/sync/workspaceSet.test.ts	63	no	workspace invitation scope	keeps the failure reason visible when the board has a long title
+app-unit	src/sync/workspaceSet.test.ts	73	no	workspace invitation scope	identifies the exact workspace when a multi-workspace snapshot member fails
+app-unit	src/sync/workspaceSet.test.ts	92	yes	workspace invitation scope	rejects a mismatched or incomplete set before any document is saved: %j
+app-unit	src/sync/workspaceSet.test.ts	103	no	workspace invitation scope	Given a failing sync section, when a snapshot is received, then diagnostics identify its stage
+app-unit	src/sync/workspaceSet.test.ts	113	no	workspace invitation scope	Given workspace validation rejects a snapshot, when the join reports the failure, then its safe schema path is retained
+app-unit	src/sync/workspaceSet.test.ts	127	no	workspace invitation scope	validates every invited workspace before persisting any of them
+app-unit	src/sync/workspaceSet.test.ts	145	no	live mesh heartbeat	requires an authenticated acknowledgement from the remote peer
+app-unit	src/sync/workspaceSet.test.ts	166	no	live mesh heartbeat	Given a joined peer requests durable handoff, when live sync receives it, then control reaches the host without parsing it as data
+app-unit	src/sync/workspaceSet.test.ts	192	no	incremental workspace control plane	Given control history exceeds 256 KiB, when published, then bounded frames deliver the complete state once
+app-unit	src/sync/workspaceSet.test.ts	222	no	incremental workspace control plane	Given an authorization-only update, when a control frame arrives, then it merges the proof without a document change
+app-unit	src/sync/workspaceSet.test.ts	248	no	incremental workspace control plane	Given an authorization-only update, when the session publishes, then it sends the proof in a control frame
+app-unit	src/sync/workspaceSet.test.ts	270	no	incremental workspace control plane	Given ownership state changes, when a control frame arrives, then it merges without a full workspace document
+app-unit	src/sync/workspaceSet.test.ts	295	no	incremental workspace control plane	Given two owner devices, when a workspace offer arrives, then it is persisted before acknowledgement
+app-unit	src/sync/workspaceSet.test.ts	323	no	incremental workspace control plane	requires a matching receipt when publishing an owner workspace
+app-unit	src/sync/workspaceSet.test.ts	336	no	rejected document isolation	Given an interrupted incoming stream, When the frame fails, Then its trace identifies a network failure
+app-unit	src/sync/workspaceSet.test.ts	364	no	rejected document isolation	Given blocked persistence, when authenticated heartbeat arrives, then liveness replies before any durable receipt
+app-unit	src/sync/workspaceSet.test.ts	391	no	rejected document isolation	keeps the peer session alive when one application control frame cannot be stored
+app-unit	src/sync/workspaceSet.test.ts	419	no	rejected document isolation	keeps heartbeat and control alive after a rejected document and can accept a later corrected frame
+app-unit	src/sync/workspaceSet.test.ts	501	no	paged initial snapshot transport	Given 20,001 records, fetches bounded pages before any validation or document publication
+app-unit	src/sync/workspaceSet.test.ts	517	no	paged initial snapshot transport	Given lost response, retry reuses saved pages; corrupt saved page forces bounded refetch
+app-unit	src/sync/workspaceSet.test.ts	533	no	paged initial snapshot transport	Given durable local coverage, manifest resolves without network; authority still passes validation
+app-unit	src/sync/workspaceSet.test.ts	542	no	paged initial snapshot transport	Given initial durable batch, emits receipt only after all pages and durable merge
 app-unit	src/ui/cardNotePreview.test.ts	5	no	card note search previews	keeps complete short notes unchanged without a search query
 app-unit	src/ui/cardNotePreview.test.ts	11	no	card note search previews	keeps an early search match in a bounded preview
 app-unit	src/ui/cardNotePreview.test.ts	20	no	card note search previews	moves the excerpt to a late match and keeps nearby context
@@ -989,11 +1169,16 @@ app-unit	src/ui/cardNotePreview.test.ts	39	no	card note search previews	bounds l
 app-unit	src/ui/deviceInfo.test.ts	5	no	device user-agent description	Given a reported Chrome UA, when described, then browser and OS are explicitly best-effort
 app-unit	src/ui/deviceInfo.test.ts	9	no	device user-agent description	Given no usable UA, when described, then the UI reports unknown rather than guessing
 app-unit	src/ui/deviceInfo.test.ts	15	no		recognizes the explicit keeper client marker, not a display name
+app-unit	src/ui/keeperStatus.test.ts	21	no	keeper status projection	keeps service availability distinct from board connectivity
+app-unit	src/ui/keeperStatus.test.ts	27	no	keeper status projection	shows review, unreachable, and unknown service states without claiming a live peer
 app-unit	src/ui/markdown.test.ts	5	no	shared Markdown rendering	renders structured content and preserves ordinary note line breaks
 app-unit	src/ui/markdown.test.ts	16	no	shared Markdown rendering	keeps untrusted HTML and executable links out of generated markup
 app-unit	src/ui/markdown.test.ts	24	no	shared Markdown rendering	renders card previews without nested interactive elements
 app-unit	src/ui/markdown.test.ts	32	no	shared Markdown rendering	indexes editable tasks and updates only the selected source marker
 app-unit	src/ui/markdown.test.ts	41	no	shared Markdown rendering	keeps cached output separate for preview and interactive-task modes
+app-unit	src/ui/uiCopyPolicy.test.ts	78	yes	Application UI copy policy	Given application source %s, When copy is checked, Then no legacy terminology can ship
+app-unit	src/ui/uiCopyPolicy.test.ts	83	yes	Application UI copy policy	Given forbidden copy %s, When inspected, Then the policy rejects it
+app-unit	src/ui/uiCopyPolicy.test.ts	107	no	Application UI copy policy	Given internal migration names, When inspected, Then comments and protocol identifiers remain allowed
 app-unit	src/ui/windowManager.test.ts	5	no	local window layouts	keeps oversized and displaced windows reachable after viewport shrink
 app-unit	src/ui/windowManager.test.ts	9	no	local window layouts	keeps minimum-size windows inside the viewport
 app-unit	src/ui/windowManager.test.ts	13	no	local window layouts	reduces margins when viewport height becomes tiny
@@ -1021,28 +1206,29 @@ meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority_command.rs	3
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority_command.rs	383	no		promotion_requires_owner_and_active_membership
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority_flow.rs	54	no		ownership_flow_selects_only_verified_target_facts_then_requires_receipt
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority_flow.rs	78	no		ownership_flow_rejects_stale_or_revoked_recipient_before_callbacks
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1140	no		batch_admission_rejects_everything_when_one_signature_is_invalid
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1167	no		admits_a_current_owner_change_authorization
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1192	no		admits_an_editor_with_a_current_owner_grant
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1228	no		revocation_boundary_keeps_old_history_denies_new_hashes_and_allows_newer_grant
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1319	no		departure_boundary_preserves_old_history_and_denies_new_changes
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1370	no		device_revocation_preserves_boundary_history_and_denies_later_device_changes
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1427	no		rejects_revocation_boundary_missing_from_document
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1465	no		rejects_a_visitor_even_with_a_valid_visitor_grant
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1500	no		limits_a_historical_owner_to_its_transfer_boundary
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1546	no		rejects_conflicting_or_missing_ownership_boundaries
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1594	no		admits_a_monotonic_transfer_epoch_after_access_epoch_changes
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1632	no		verified_transition_selects_signed_owner_after_access_epoch_gap
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1663	no		verified_transition_stalls_conflicts_and_rejects_forgery_or_revocation
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1730	no		rejects_an_absent_authority_context
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1759	no		rejects_legacy_break_glass_claims_at_the_snapshot_boundary
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1767	no		rejects_a_chain_that_does_not_match_the_trusted_current_owner
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1787	no		owner_root_and_certified_device_can_issue_scoped_grants
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1859	no		legacy_grant_without_access_epoch_keeps_its_signed_json_shape
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1901	no		explicit_access_epoch_one_is_not_dropped_from_signed_json
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1921	no		automation_grants_require_exact_bounded_scope_and_preserve_legacy_shape
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	2006	no		automation_candidate_uses_scope_expiry_and_existing_epoch_identity_checks
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	2063	no		null_access_epoch_is_not_accepted_as_a_valid_grant
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	989	no		given_workspace_access_when_validating_authority_then_loads_document_graph_once
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1197	no		batch_admission_rejects_everything_when_one_signature_is_invalid
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1224	no		admits_a_current_owner_change_authorization
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1249	no		admits_an_editor_with_a_current_owner_grant
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1285	no		revocation_boundary_keeps_old_history_denies_new_hashes_and_allows_newer_grant
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1376	no		departure_boundary_preserves_old_history_and_denies_new_changes
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1427	no		device_revocation_preserves_boundary_history_and_denies_later_device_changes
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1484	no		rejects_revocation_boundary_missing_from_document
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1522	no		rejects_a_visitor_even_with_a_valid_visitor_grant
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1557	no		limits_a_historical_owner_to_its_transfer_boundary
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1603	no		rejects_conflicting_or_missing_ownership_boundaries
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1651	no		admits_a_monotonic_transfer_epoch_after_access_epoch_changes
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1689	no		verified_transition_selects_signed_owner_after_access_epoch_gap
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1720	no		verified_transition_stalls_conflicts_and_rejects_forgery_or_revocation
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1787	no		rejects_an_absent_authority_context
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1816	no		rejects_legacy_break_glass_claims_at_the_snapshot_boundary
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1824	no		rejects_a_chain_that_does_not_match_the_trusted_current_owner
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1844	no		owner_root_and_certified_device_can_issue_scoped_grants
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1916	no		legacy_grant_without_access_epoch_keeps_its_signed_json_shape
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1958	no		explicit_access_epoch_one_is_not_dropped_from_signed_json
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	1978	no		automation_grants_require_exact_bounded_scope_and_preserve_legacy_shape
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	2063	no		automation_candidate_uses_scope_expiry_and_existing_epoch_identity_checks
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authorization.rs	2120	no		null_access_epoch_is_not_accepted_as_a_valid_grant
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/automerge.rs	318	no		rust_automerge_engines_converge_and_reject_wrong_recipient
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/automerge.rs	360	no		rejected_document_admission_does_not_advance_rust_sync_state
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/automerge.rs	415	no		concurrent_initial_messages_converge
@@ -1067,6 +1253,7 @@ meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/causal_admission/tests
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/causal_admission/tests.rs	1043	no		pending_raw_change_with_missing_dependency_is_retained_pending
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/causal_admission/tests.rs	1081	no		admitted_order_matches_layer_scan_for_dags_and_rejects_cycles
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/causal_admission/tests.rs	1177	no		admitted_order_handles_twenty_thousand_change_chain
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/causal_admission/tests.rs	1205	no		identity_photo_removal_accepts_a_timestamped_null_avatar_but_not_other_payloads
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/change_admission_flow.rs	211	no		unsigned_error_preserves_match_diagnostic_shape
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/change_admission_flow.rs	224	no		unrelated_or_malformed_record_is_not_selected_for_verification
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/change_admission_flow.rs	241	no		owner_proof_wins_duplicate_hash_and_unsigned_changes_are_reported
@@ -1135,17 +1322,19 @@ meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/pairing.rs	790	no		wor
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/pairing.rs	817	no		workspace_handoff_success_authenticates_each_stage_once
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/persistence.rs	144	no		admission_is_idempotent_and_rejects_collisions
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/persistence.rs	163	no		outbox_claim_only_moves_after_expiry
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	757	no		stored_duplicate_proofs_merge_certificate_sidecars_without_weakening_admission
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	805	no		stored_duplicate_proofs_reject_signed_scalar_and_certificate_conflicts
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	853	no		signed_initial_and_incremental_history_benchmark
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1054	no		initial_history_exceeds_legacy_record_limit_but_every_record_travels_in_bounded_pages
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1081	no		byte_limit_rejection_requires_pages_and_authority_overhead_is_bounded
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1101	no		request_is_derived_from_actual_candidate_and_source_rejects_claimed_unknown_hash
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1115	no		restart_reuses_stable_request_and_revalidates_saved_page_before_continuing
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1152	no		changed_authority_or_wrong_request_page_cannot_advance_transfer
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1169	no		frozen_source_avoids_reloading_and_proof_only_additions_change_identity
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1208	no		standalone_transfer_cannot_complete_or_publish_before_last_page
-meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1240	no		request_hash_batch_shrinks_to_include_large_authority_evidence
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	900	no		stored_duplicate_proofs_merge_certificate_sidecars_without_weakening_admission
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	976	no		stored_duplicate_proofs_reject_signed_scalar_and_certificate_conflicts
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1014	no		rejected_legacy_page_does_not_poison_retry_identity_state
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1049	no		grant_provenance_variants_survive_bounded_proof_roundtrip_and_admission
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1244	no		signed_initial_and_incremental_history_benchmark
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1443	no		initial_history_exceeds_legacy_record_limit_but_every_record_travels_in_bounded_pages
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1468	no		byte_limit_rejection_requires_pages_and_authority_overhead_is_bounded
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1486	no		request_is_derived_from_actual_candidate_and_source_rejects_claimed_unknown_hash
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1498	no		restart_reuses_stable_request_and_revalidates_saved_page_before_continuing
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1535	no		changed_authority_or_wrong_request_page_cannot_advance_transfer
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1550	no		frozen_source_avoids_reloading_and_proof_only_additions_change_identity
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1583	no		standalone_transfer_cannot_complete_or_publish_before_last_page
+meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/proof_transfer.rs	1611	no		request_hash_batch_shrinks_to_include_large_authority_evidence
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/recovery.rs	412	no		recovery_envelope_matches_webcrypto_golden_vector
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/recovery.rs	443	no		passphrase_envelope_round_trips_and_binds_person_id
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/recovery.rs	465	no		legacy_recovery_requires_four_eff_long_words
@@ -1343,31 +1532,33 @@ meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	434	n
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	450	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	Given a legacy endpoint upgrades its signed instance, when the catalog merges it, then the stale endpoint alias disappears
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	466	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	manages node secret and peer catalog end-to-end with zero localStorage usage
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	556	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	keeps device removals and a newer local grant when a stale tab saves credentials
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	571	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	persists a collapsed multi-step ownership chain that returns to its original owner
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	584	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	keeps an unacknowledged ownership proposal across reload and clears it only with the committed transfer
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	602	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	refuses a second tab's different ownership proposal while the original receipt is unresolved
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	613	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	Given multiple workspace credentials, when one workspace leaves the mesh, then routes and active credentials are removed but signed authority survives
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	643	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Validation: Strong field & secret constraints	validates 32-byte node secret strictly
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	659	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Validation: Strong field & secret constraints	validates peer record fields strictly
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	714	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	rejects merge across mismatched workspaces or devices
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	722	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	newer incoming record updates endpoint and lastSeen
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	736	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	stale incoming record does not downgrade lastSeen or endpoint
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	748	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	preserves revocation against stale unrevoked sync
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	765	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	takes earlier revocation timestamp if both have revokedAt
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	781	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	resolves role conflict deterministically (owner priority on tie)
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	802	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > IndexedDB error handling & absence	rejects immediately when indexedDB is undefined without using localStorage
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	821	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > IndexedDB error handling & absence	exports default peerStore singleton
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	828	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Node Secret Persistence and Custom Secret Setting	allows explicitly setting a 32-byte node secret and persists across instances
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	845	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Node Secret Persistence and Custom Secret Setting	rejects invalid node secrets when setting
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	854	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	supports mergePeers batch processing
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	897	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	supports 32-byte Uint8Array binary transport secrets
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	919	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	unrevokes a peer when incoming explicitly specifies revokedAt: null with a newer timestamp
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	942	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	handles clearPeers with and without workspaceId, and clearAll
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	980	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one instance renews with skewed wall time, when peer routes merge, then sequence selects the new route
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	995	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given equal route sequences disagree, when merged in either order, then canonical route bytes win without wall-clock authority
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1011	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one device has active and expired routes, when exposed as a replica, then membership and both routes remain distinct
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1026	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given stored transport instances, when device replicas are listed, then routes stay grouped under one durable device
-meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1043	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one browser instance, when advertisements renew, then its sequence increases durably
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	571	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	atomically replaces only the expected revocation generation and keeps stale tabs from restoring old boundaries
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	600	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	rejects stale, foreign-target, or non-advancing revocation boundary repair requests
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	621	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	persists a collapsed multi-step ownership chain that returns to its original owner
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	634	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	keeps an unacknowledged ownership proposal across reload and clears it only with the committed transfer
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	652	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	refuses a second tab's different ownership proposal while the original receipt is unresolved
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	663	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Outer BDD Integration: Complete peer lifecycle & persistent secret	Given multiple workspace credentials, when one workspace leaves the mesh, then routes and active credentials are removed but signed authority survives
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	693	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Validation: Strong field & secret constraints	validates 32-byte node secret strictly
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	709	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Validation: Strong field & secret constraints	validates peer record fields strictly
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	764	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	rejects merge across mismatched workspaces or devices
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	772	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	newer incoming record updates endpoint and lastSeen
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	786	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	stale incoming record does not downgrade lastSeen or endpoint
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	798	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	preserves revocation against stale unrevoked sync
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	815	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	takes earlier revocation timestamp if both have revokedAt
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	831	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Deterministic merge / upsert logic	resolves role conflict deterministically (owner priority on tie)
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	852	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > IndexedDB error handling & absence	rejects immediately when indexedDB is undefined without using localStorage
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	871	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > IndexedDB error handling & absence	exports default peerStore singleton
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	878	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Node Secret Persistence and Custom Secret Setting	allows explicitly setting a 32-byte node secret and persists across instances
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	895	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Node Secret Persistence and Custom Secret Setting	rejects invalid node secrets when setting
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	904	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	supports mergePeers batch processing
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	947	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	supports 32-byte Uint8Array binary transport secrets
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	969	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	unrevokes a peer when incoming explicitly specifies revokedAt: null with a newer timestamp
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	992	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	handles clearPeers with and without workspaceId, and clearAll
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1030	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one instance renews with skewed wall time, when peer routes merge, then sequence selects the new route
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1045	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given equal route sequences disagree, when merged in either order, then canonical route bytes win without wall-clock authority
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1061	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one device has active and expired routes, when exposed as a replica, then membership and both routes remain distinct
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1076	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given stored transport instances, when device replicas are listed, then routes stay grouped under one durable device
+meta-mesh-unit	vendor/meta-mesh/packages/mesh-peer-store/src/index.test.ts	1093	no	Peer Catalog & Node Secret Module (src/sync/peerStore.ts) > Multi-peer operations: mergePeers, binary secrets, unrevoking	Given one browser instance, when advertisements renew, then its sequence increases durably
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-replication/src/automerge.test.ts	14	no	Automerge document lifecycle	Given one stored document, when UI snapshots read it repeatedly, then WASM loads it once
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-replication/src/automerge.test.ts	31	no	Automerge document lifecycle	Given replacement bytes, when cached, then the cache owns a separately loaded document
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-replication/src/automerge.test.ts	86	no	Automerge anti-entropy	Given one device has a document, when a fresh remote session bootstraps, then both replicas reach equal heads
@@ -1526,25 +1717,33 @@ worker-unit	workers/automation/tests/intake.test.ts	5	no		Given bounded legacy f
 worker-unit	workers/automation/tests/intake.test.ts	15	no		Given oversized form content, when parsed, then rejects it
 worker-unit	workers/automation/tests/intake.test.ts	19	no		Given a chat-only website intake, when jobUrl is omitted, then it remains valid
 worker-unit	workers/automation/tests/intake.test.ts	24	no		Given a valid challenge, when verified for its integration, then returns a nonce for durable single-use tracking
-worker-unit	workers/automation/tests/replica.runtime.test.ts	88	no	AutomationReplica in workerd with the compiled Rust policy	Given an owner-authorized snapshot, when a lead and application update are applied, then signed scope admits the same cards
-worker-unit	workers/automation/tests/replica.runtime.test.ts	109	no	AutomationReplica in workerd with the compiled Rust policy	Given malformed chat records, when activating an owner snapshot, then it rejects before persistence
-worker-unit	workers/automation/tests/replica.runtime.test.ts	117	no	AutomationReplica in workerd with the compiled Rust policy	Given durable save fails after authoring, when the same event retries, then rejected memory state is rolled back
-worker-unit	workers/automation/tests/replica.runtime.test.ts	134	no	AutomationReplica in workerd with the compiled Rust policy	Given a human moves a card after capture, when synced status automation acts on the stale workflow, then it requires review
-worker-unit	workers/automation/tests/replica.runtime.test.ts	184	no	AutomationReplica in workerd with the compiled Rust policy	Given a pending encrypted upload, when the Worker restarts, then it persists before upload and retries the same ciphertext
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	49	no	automation Worker	Given encrypted replica state larger than 2 MiB, When its chunks are committed, Then all chunks and generation pointer change in one synchronous transaction
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	81	no	automation Worker	Given serialized replica state larger than 2 MiB, When saved and loaded by the Durable Object, Then the full state survives encryption and chunking
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	90	no	automation Worker	Given the Worker is running, When health is checked, Then it reports ready
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	97	no	automation Worker	Given the configured browser origin, When activation preflight is requested, Then bearer and PUT are allowed
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	106	no	automation Worker	Given a configured integration, When a challenge is requested, Then it returns a signed prompt
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	119	no	automation Worker	Given operator authorization, When automation identity is provisioned twice, Then its public certificate is stable
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	137	no	automation Worker	Given an operator but no approved integration scope, When provisioning the Worker identity, Then it returns only the public identity needed for owner approval
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	150	no	automation Worker	Given no operator authorization, When an unconfigured identity is requested, Then it returns unauthorized
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	155	no	automation Worker	Given a provisioned public identity but no approved scope, When challenge and intake are requested, Then both remain unavailable
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	167	no	automation Worker	Given operator authorization, When activation omits its signed scope packet, Then it rejects before storing a replica
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	176	no	automation Worker	Given a valid challenge, When website intake is retried, Then it stores one durable event
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	222	no	automation Worker	Given an expired integration, When intake is requested, Then it rejects before consuming the challenge
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	232	no	automation Worker	Given an approved forwarder and recipient, When forwarded email arrives, Then it is durably queued for that integration
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	260	no	automation Worker	Given forwarded mail without Message-ID, When the same MIME bytes arrive again, Then the digest deduplicates retries
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	282	no	automation Worker	Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	298	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	320	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
+worker-unit	workers/automation/tests/replica.runtime.test.ts	48	no		Given an owner-signed type contract, when activated and restored, then only its registered event sources can execute
+worker-unit	workers/automation/tests/replica.runtime.test.ts	58	no		Given a modified type contract, when activated, then scope, signature and unsupported types are rejected
+worker-unit	workers/automation/tests/replica.runtime.test.ts	67	no		Given a version-2 activation missing its contract, when activated, then no legacy default is substituted
+worker-unit	workers/automation/tests/replica.runtime.test.ts	72	no		Given typed activation without its CRDT controls, when activated or restored without the contract, then execution cannot fall back to legacy behavior
+worker-unit	workers/automation/tests/replica.runtime.test.ts	82	no		Given owner controls delivered through encrypted Rusty, when paused, resumed and deleted, then execution stops, resumes and remains deleted after restart and old snapshot replay
+worker-unit	workers/automation/tests/replica.runtime.test.ts	182	no		Given a paused durable automation and queued event, when alarm fires, then queue stays pending without attempts and control polling continues even with an empty queue
+worker-unit	workers/automation/tests/replica.runtime.test.ts	217	no		Given an existing paused or deleted instance, when old activation is replayed, then it preserves pause and rejects resurrection
+worker-unit	workers/automation/tests/replica.runtime.test.ts	258	no	AutomationReplica in workerd with the compiled Rust policy	Given an owner-authorized snapshot, when a lead and application update are applied, then signed scope admits the same cards
+worker-unit	workers/automation/tests/replica.runtime.test.ts	279	no	AutomationReplica in workerd with the compiled Rust policy	Given malformed chat records, when activating an owner snapshot, then it rejects before persistence
+worker-unit	workers/automation/tests/replica.runtime.test.ts	287	no	AutomationReplica in workerd with the compiled Rust policy	Given durable save fails after authoring, when the same event retries, then rejected memory state is rolled back
+worker-unit	workers/automation/tests/replica.runtime.test.ts	304	no	AutomationReplica in workerd with the compiled Rust policy	Given a human moves a card after capture, when synced status automation acts on the stale workflow, then it requires review
+worker-unit	workers/automation/tests/replica.runtime.test.ts	354	no	AutomationReplica in workerd with the compiled Rust policy	Given a pending encrypted upload, when the Worker restarts, then it persists before upload and retries the same ciphertext
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	51	no	automation Worker	Given encrypted replica state larger than 2 MiB, When its chunks are committed, Then all chunks and generation pointer change in one synchronous transaction
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	83	no	automation Worker	Given serialized replica state larger than 2 MiB, When saved and loaded by the Durable Object, Then the full state survives encryption and chunking
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	92	no	automation Worker	Given the Worker is running, When health is checked, Then it reports ready
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	99	no	automation Worker	Given the configured browser origin, When activation preflight is requested, Then bearer and PUT are allowed
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	108	no	automation Worker	Given a configured integration, When a challenge is requested, Then it returns a signed prompt
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	121	no	automation Worker	Given operator authorization, When automation identity is provisioned twice, Then its public certificate is stable
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	139	no	automation Worker	Given an operator but no approved integration scope, When provisioning the Worker identity, Then it returns only the public identity needed for owner approval
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	152	no	automation Worker	Given no operator authorization, When an unconfigured identity is requested, Then it returns unauthorized
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	157	no	automation Worker	Given a provisioned public identity but no approved scope, When challenge and intake are requested, Then both remain unavailable
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	169	no	automation Worker	Given operator authorization, When activation omits its signed scope packet, Then it rejects before storing a replica
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	178	no	automation Worker	Given a valid challenge, When website intake is retried, Then it stores one durable event
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	224	no	automation Worker	Given an expired integration, When intake is requested, Then it rejects before consuming the challenge
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	234	no	automation Worker	Given an approved forwarder and recipient, When forwarded email arrives, Then it is durably queued for that integration
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	262	no	automation Worker	Given forwarded mail without Message-ID, When the same MIME bytes arrive again, Then the digest deduplicates retries
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	284	no	automation Worker	Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	300	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	322	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	343	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance

@@ -33,8 +33,8 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   projects: [
-    { name: "core", testIgnore: [...networkSpecs, "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/rusty-connection.spec.ts"] },
-    { name: "mobile-webkit", testMatch: ["**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts"], use: { browserName: "webkit" } },
+    { name: "core", testIgnore: [...networkSpecs, "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/rusty-connection.spec.ts", "**/public-board-keeper.spec.ts"] },
+    { name: "mobile-webkit", testMatch: ["**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts", "**/public-board.spec.ts"], use: { browserName: "webkit" } },
     ...groupedNetworkSpecs.map(spec => ({
       name: spec.match(/([^/]+)\.spec\.ts$/)?.[1] ?? spec,
       testMatch: spec,
@@ -51,6 +51,6 @@ export default defineConfig({
     reuseExistingServer: false,
     // Tests intercept diagnostic intake; never depend on a developer's .env
     // or send fixture events to a production service.
-    env: { VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "", VITE_SYNC_TELEMETRY_LEVEL: "all", VITE_SYNC_TELEMETRY_SAMPLE_RATE: "1", VITE_SYNC_TELEMETRY_BATCH_SIZE: "50" },
+    env: { VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "", VITE_SYNC_TELEMETRY_LEVEL: "all", VITE_SYNC_TELEMETRY_SAMPLE_RATE: "1", VITE_SYNC_TELEMETRY_BATCH_SIZE: "50", VITE_PUBLIC_BOARD_ORIGIN: "http://127.0.0.1:47839" },
   },
 })

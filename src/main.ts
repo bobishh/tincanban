@@ -1,6 +1,4 @@
-import { createApp } from "vue"
-import App from "./App.vue"
-import { beginStartupDiagnostics, diagnoseStartupStep } from "./sync/startupDiagnostics"
+import { createApp, type Component } from "vue"
 import "./vendor/site-foundation.css"
 import "./styles/design-system/tokens.css"
 import "./styles/design-system/reset.css"
@@ -12,6 +10,14 @@ import "./styles/design-system/icons.css"
 import "../public/assets/primitive.css"
 import "./style.css"
 
-void beginStartupDiagnostics().then(() => diagnoseStartupStep("mount-ui", () => createApp(App).mount("#app")))
-
-void import("./vendor/berlin-tower.js").catch(() => {})
+const publicBoardRoute = /^\/boards(?:\/|$)/u.test(window.location.pathname)
+const publicBoardId = window.location.pathname.match(/^\/boards\/([^/]+)\/?$/u)?.[1] ?? ""
+if (publicBoardRoute) {
+  void import("./public/PublicBoardApp.vue").then(({ default: PublicBoardApp }) => createApp(PublicBoardApp as Component, { boardId: publicBoardId }).mount("#app"))
+} else {
+  void Promise.all([import("./App.vue"), import("./sync/startupDiagnostics")]).then(([appModule, diagnostics]) => {
+    const privateApp = appModule as unknown as { default: Component }
+    return diagnostics.beginStartupDiagnostics().then(() => diagnostics.diagnoseStartupStep("mount-ui", () => createApp(privateApp.default).mount("#app")))
+  })
+  void import("./vendor/berlin-tower.js").catch(() => {})
+}
