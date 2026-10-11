@@ -18,12 +18,25 @@ export async function executeCommand(
   doc: Automerge.Doc<WorkspaceDocumentV2>, command: Command, profile: LocalProfile, actorId?: string,
   authorityGrantHash?: string
 ): Promise<ExecuteResult> {
+  return executeCommandInternal(doc, command, profile, true, actorId, authorityGrantHash)
+}
+
+/** Consumes a private document handle. Caller must release it once, including on failure. */
+export async function executeOwnedCommand(
+  doc: Automerge.Doc<WorkspaceDocumentV2>, command: Command, profile: LocalProfile, actorId?: string,
+  authorityGrantHash?: string,
+): Promise<ExecuteResult> {
+  return executeCommandInternal(doc, command, profile, false, actorId, authorityGrantHash)
+}
+
+async function executeCommandInternal(doc: Automerge.Doc<WorkspaceDocumentV2>, command: Command, profile: LocalProfile,
+  copy: boolean, actorId?: string, authorityGrantHash?: string): Promise<ExecuteResult> {
   const transactionId = crypto.randomUUID()
   const beforeHeads = Automerge.getHeads(doc).sort()
   const prepared = prepareCommand(doc, command, new Date().toISOString(), beforeHeads, profile.identity.personId)
   if (!prepared.ok) return prepared
   const metadata = commandMetadata(transactionId, command.kind, prepared.value.changedEntityIds, profile, authorityGrantHash)
-  const newDoc = Automerge.change(Automerge.clone(doc), { message: JSON.stringify(metadata) }, draft => prepared.value.apply(draft))
+  const newDoc = Automerge.change(copy ? Automerge.clone(doc) : doc, { message: JSON.stringify(metadata) }, draft => prepared.value.apply(draft))
   const changeBytes = Automerge.getLastLocalChange(newDoc)
   if (!changeBytes) return err("storage_failed", "Automerge produced no change")
   return completeCommand(newDoc, changeBytes, transactionId, beforeHeads, prepared.value.changedEntityIds, profile, actorId)

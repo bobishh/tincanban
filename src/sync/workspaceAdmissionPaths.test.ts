@@ -3,7 +3,12 @@ import { readFile } from "node:fs/promises"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { createWorkspaceDoc } from "../domain/seeds"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import { indexOperationParents, touchedPathsForChange, indexAdmissionOperations } from "./workspaceAdmissionCore"
+import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, indexOperationParents, touchedPathsForChange, indexAdmissionOperations } from "./workspaceAdmissionCore"
+
+vi.mock("@automerge/automerge/slim", async importOriginal => {
+  const original = await importOriginal<typeof Automerge>()
+  return { ...original, decodeChange: vi.fn(original.decodeChange) }
+})
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -64,4 +69,39 @@ describe("workspace admission operation paths", () => {
     expect(touchedPathsForChange(rootReplacement, objectParents)).toBeUndefined()
     expect(touchedPathsForChange(unknownObject, objectParents)).toBeUndefined()
   })
+})
+
+
+it("Given large authorized text history, When expanded operations exceed available memory, Then admission preserves heads and still rejects a visitor rename", async () => {
+  const base = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("bounded-history", "Board", "owner", "blank"))
+  const doc = Automerge.change(base, draft => { draft.title = "x".repeat(40_000) })
+  const bytes = Automerge.save(doc)
+  const changes = Automerge.getChangesMetaSince(doc, [])
+  const owner = { personId: "owner", publicKey: "public-key", certificates: [] }
+  const authority = { genesisOwner: owner, currentOwner: owner, genesisEpoch: 1, currentEpoch: 1,
+    ownershipTransfers: [], successionClaims: [], revocations: [], deviceRevocations: [], departures: [] }
+  let visitorRename = false
+  const policy = {
+    authorizationRecordPages: () => [],
+    prepareWriteEvidence: () => authority,
+    evaluateCausalAdmission: () => ({ decisions: changes.map(change => ({ hash: change.hash,
+      status: { type: "admitted", role: visitorRename && Automerge.getHeads(doc).includes(change.hash) ? "visitor" : "owner" } })),
+      verifiedAuthorizations: [], authorizedDocument: bytes }),
+  }
+  const { decodeChange: decodeOriginal } = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
+  const largeChange = Automerge.getBackend(doc).getChangeByHash(Automerge.getHeads(doc)[0]!)!
+  const decode = vi.spyOn(Automerge, "decodeChange").mockImplementation(bytes => {
+    if (bytes.length === largeChange.length && bytes.every((byte, index) => byte === largeChange[index])) {
+      throw new Error("Expanded operations exceed memory budget")
+    }
+    return decodeOriginal(bytes)
+  })
+  try {
+    const input = { workspaceId: doc.id, remote: bytes, authorization: { version: 1 as const, records: [], authority }, knownAuthority: null, now: 1 }
+    const admitted = computeWorkspaceDocumentAdmission(input, policy as never, doc)
+    expect(admitted.authorizedHeads).toEqual(Automerge.getHeads(doc))
+    expect(admitted.admittedHashes).toHaveLength(changes.length)
+    visitorRename = true
+    expect(() => computeWorkspaceAdmission(input, policy as never)).toThrow(/Only owners and editors can rename/)
+  } finally { decode.mockRestore(); Automerge.free(doc) }
 })

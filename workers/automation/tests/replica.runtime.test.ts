@@ -4,6 +4,7 @@ import { runInDurableObject } from "cloudflare:test";
 import type { WorkerEnv } from "../src/index";
 import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
+import { initSync } from "@meta-uber/mesh-transport/wasm";
 import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
 import { createWorkspaceDoc } from "../../../src/domain/seeds";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
@@ -54,6 +55,26 @@ it("Given an owner-signed type contract, when activated and restored, then only 
   expect(restored.definitionForRuntime()).toMatchObject({ type: "job-intake", typeVersion: 1, parameters: { sources: ["website"] } });
   expect(restored.allowsSource("email")).toBe(false);
 });
+
+it("Given a signed workspace with over 312k text operations, when automation activates, restores and creates a lead, then its controls remain admitted within the policy memory budget", async () => {
+  const data = await typedFixture();
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+  const added = await executeCommand(document, { kind: "createItem", parentId: data.packet.bindings.columns.lead,
+    title: "Large source", body: "Source text. ".repeat(26_100), values: {
+      [data.packet.bindings.fieldIds.company]: "Example", [data.packet.bindings.fieldIds.role]: "Engineer",
+    } }, data.owner);
+  if (!added.ok) throw new Error(added.error.message);
+  expect(Automerge.stats(added.value.newDoc).numOps).toBeGreaterThan(312_000);
+  data.packet.initial = await ownerSnapshot(added.value.newDoc, data.owner, data.packet);
+  Automerge.free(document); Automerge.free(added.value.newDoc);
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  expect(replica.controlForRuntime().state).toBe("active");
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {});
+  expect(restored.controlForRuntime().state).toBe("active");
+  const created = await restored.createLead("large-workspace-intake", { company: "Example", role: "Senior engineer" }, {});
+  expect(restored.candidates().find(candidate => candidate.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.lead);
+  expect(initSync().memory.buffer.byteLength).toBeLessThanOrEqual(64 * 1024 * 1024);
+}, 60_000);
 
 it("Given a modified type contract, when activated, then scope, signature and unsupported types are rejected", async () => {
   const data = await typedFixture();

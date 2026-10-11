@@ -71,6 +71,7 @@ export function computeWorkspaceAdmission(input: WorkspaceAdmissionInput, policy
   try {
     local = input.local ? Automerge.load<WorkspaceDocumentV2>(input.local) : undefined
     if (remote.id !== input.workspaceId || (local && local.id !== input.workspaceId)) throw new Error("Admission workspace mismatch")
+    if (!local) return computeWorkspaceDocumentAdmission(input, policy, remote, performance.now() - started)
     return admitDocuments(input, policy, local, remote, performance.now() - started)
   } finally {
     if (local) Automerge.free(local)
@@ -78,7 +79,14 @@ export function computeWorkspaceAdmission(input: WorkspaceAdmissionInput, policy
   }
 }
 
-function admitDocuments(input: WorkspaceAdmissionInput, policy: AdmissionPolicy,
+/** Check a caller-owned private document without allocating another history. */
+export function computeWorkspaceDocumentAdmission(input: Omit<WorkspaceAdmissionInput, "local" | "remote">,
+  policy: AdmissionPolicy, document: Automerge.Doc<WorkspaceDocumentV2>, loadMs = 0): WorkspaceAdmissionResult {
+  if (document.id !== input.workspaceId) throw new Error("Admission workspace mismatch")
+  return admitDocuments(input, policy, undefined, document, loadMs)
+}
+
+function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">, policy: AdmissionPolicy,
   local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>, loadMs: number): WorkspaceAdmissionResult {
   let phaseStarted = performance.now()
   const bundle = input.authorization
@@ -107,7 +115,22 @@ function admitDocuments(input: WorkspaceAdmissionInput, policy: AdmissionPolicy,
   const policyMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
   const changesByHash = new Map(Automerge.getChangesMetaSince(merged, []).map(change => [change.hash, change]))
-  const { targetsByHash, objectParents, operationCount } = indexAdmissionOperations(Automerge.getAllChanges(merged))
+  const operationCount = Automerge.stats(merged).numOps
+  // Expanding a large text history duplicates every operation in JavaScript.
+  // The full before/after permission check below needs no expanded history.
+  const boundedChanges = [...changesByHash.values()].filter(change => change.maxOp - change.startOp + 1 <= 32_768)
+    .map(change => Automerge.getBackend(merged).getChangeByHash(change.hash)!)
+  const { targetsByHash, objectParents } = indexAdmissionOperations(boundedChanges)
+  // Existing map IDs retain their original parent even if their large creation
+  // change was omitted. Missing/deleted objects still use the full check.
+  const entitiesId = Automerge.getObjectId(merged.entities)
+  if (entitiesId) {
+    objectParents.set(entitiesId, { parentId: "_root", key: "entities" })
+    for (const [id, entity] of Object.entries(merged.entities)) {
+      const objectId = Automerge.getObjectId(entity)
+      if (objectId) objectParents.set(objectId, { parentId: entitiesId, key: id })
+    }
+  }
   const actorByHash = new Map<string, string>()
   for (const authorization of plan.verifiedAuthorizations) {
     for (const hash of authorization.signed.payload.hashes) actorByHash.set(hash, authorization.signed.payload.personId)
@@ -138,10 +161,14 @@ function admitDocuments(input: WorkspaceAdmissionInput, policy: AdmissionPolicy,
       ownerCertificates: original.ownerCertificates } : verified
   })
   const authorizedDocument = new Uint8Array(plan.authorizedDocument)
-  const authorized = Automerge.load<WorkspaceDocumentV2>(authorizedDocument)
   let authorizedHeads: string[]
-  try { authorizedHeads = Automerge.getHeads(authorized) }
-  finally { Automerge.free(authorized) }
+  if (!quarantinedHashes.length && !pendingHashes.length && plan.decisions.length === changesByHash.size) {
+    authorizedHeads = Automerge.getHeads(merged)
+  } else {
+    const authorized = Automerge.load<WorkspaceDocumentV2>(authorizedDocument)
+    try { authorizedHeads = Automerge.getHeads(authorized) }
+    finally { Automerge.free(authorized) }
+  }
   return { profile: { loadMs, prepareMs, policyMs, indexMs, transitionsMs, resultMs: performance.now() - phaseStarted,
       changeCount: changesByHash.size, proofCount: incomingRecords.length, snapshotBytes: rawBytes.byteLength,
       operationCount },

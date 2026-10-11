@@ -3,8 +3,8 @@ import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
-import { computeWorkspaceAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
-import { executeCommand } from "../../../src/domain/commands";
+import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
+import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, type LocalProfile } from "../../../src/domain/identity";
 import type { SignedEnvelope } from "../../../src/domain/identity";
 import { parseAutomationDefinition, type AutomationDefinition } from "../../../src/domain/automationContract";
@@ -235,7 +235,7 @@ export class AutomationReplica {
           return { cardId, duplicate: true };
         }
         const values = this.leadValues(normalized, decision, eventId);
-        const result = await executeCommand(document, { kind: "createItem", id: cardId,
+        const result = await executeOwnedCommand(document, { kind: "createItem", id: cardId,
           parentId: this.bindings.columns.lead, title: `${requiredText(normalized.company, "company")} — ${requiredText(normalized.role, "role")}`,
           body: normalized.message?.slice(0, 8_000) ?? "", values }, this.profile, actorIdForProfile(this.profile), await this.grantHash());
         if (!result.ok) throw new Error(`Lead creation rejected: ${result.error.message}`);
@@ -243,8 +243,7 @@ export class AutomationReplica {
         const previousAuthorizations = this.authorizations;
         const previousApplied = this.applied;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-        try { await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash); }
-        finally { Automerge.free(result.value.newDoc); }
+        await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
         this.applied[eventId] = { kind: "lead", cardId };
         try { await this.persistState(); }
         catch (error) {
@@ -284,15 +283,14 @@ export class AutomationReplica {
           currentWorkflow.columnId !== expectedWorkflow.columnId) {
           throw new Error("Application workflow changed; event requires review");
         }
-        const result = await executeCommand(document, { kind: "moveEntity", entityId: cardId, parentId: columnId },
+        const result = await executeOwnedCommand(document, { kind: "moveEntity", entityId: cardId, parentId: columnId },
           this.profile, actorIdForProfile(this.profile), await this.grantHash());
         if (!result.ok) throw new Error(`Application move rejected: ${result.error.message}`);
         const previousRaw = this.rawDocument;
         const previousAuthorizations = this.authorizations;
         const previousApplied = this.applied;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-        try { await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash); }
-        finally { Automerge.free(result.value.newDoc); }
+        await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
         this.applied[eventId] = { kind: "move", cardId, columnId };
         try { await this.persistState(); }
         catch (error) {
@@ -469,42 +467,40 @@ export class AutomationReplica {
 
   private admittedDocument(): Automerge.Doc<WorkspaceDocumentV2> {
     const bytes = decodeBlindBytes(this.rawDocument);
-    const admission = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: bytes,
-      authorization: { version: 1, records: this.authorizations, authority: this.authority },
-      knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never);
-    if (admission.quarantinedHashes.length || admission.pendingHashes.length) throw new Error("Workspace is not fully admitted");
-    return Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument, { actor: actorIdForProfile(this.profile) });
-  }
-
-  private async acceptAuthoredDocument(document: Automerge.Doc<WorkspaceDocumentV2>, changeHash: string): Promise<void> {
-    const current = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(this.rawDocument));
+    const document = Automerge.load<WorkspaceDocumentV2>(bytes, { actor: actorIdForProfile(this.profile) });
     try {
-      const newChanges = Automerge.getChanges(current, document);
-      if (newChanges.length !== 1 || Automerge.decodeChange(newChanges[0]!).hash !== changeHash) {
-        throw new Error("Automation authoring produced unexpected Automerge history");
-      }
-      const signed = await signEnvelope(this.profile.privateKeys.devicePrivateKey, {
-        kind: "workspace-changes" as const, version: 1 as const, workspaceId: this.workspaceId,
-        hashes: [changeHash], personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId,
-      }, this.profile.device.deviceId);
-      const nextAuthorizations = mergeAuthorizationRecords(this.authorizations, [{ signed,
-        publicKey: this.profile.identity.publicKey, certificates: [this.profile.certificate], grant: this.grant,
-        ownerPublicKey: this.authority.currentOwner.publicKey,
-        ownerCertificates: this.authority.currentOwner.certificates }]);
-      const merged = Automerge.merge(current, document);
-      const candidateRaw = encodeBlindBytes(Automerge.save(merged));
-      const result = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: decodeBlindBytes(candidateRaw),
-        authorization: { version: 1, records: nextAuthorizations, authority: this.authority },
-        knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never);
-      if (result.quarantinedHashes.includes(changeHash) || result.pendingHashes.includes(changeHash) || !result.admittedHashes.includes(changeHash)) {
-        const decision = result.decisions.find(value => value.hash === changeHash);
-        throw new Error(`Rust rejected the scoped automation change: ${JSON.stringify(decision?.status ?? "missing-admission")}`);
-      }
-      this.authorizations = nextAuthorizations;
-      this.rawDocument = candidateRaw;
-    } finally { Automerge.free(current); }
+      const admission = computeWorkspaceDocumentAdmission({ workspaceId: this.workspaceId,
+        authorization: { version: 1, records: this.authorizations, authority: this.authority },
+        knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never, document);
+      assertFullyAdmitted(admission, bytes);
+      return document;
+    } catch (error) { Automerge.free(document); throw error; }
   }
 
+  private async acceptAuthoredDocument(document: Automerge.Doc<WorkspaceDocumentV2>, changeHash: string, beforeHeads: string[]): Promise<void> {
+    const newChanges = Automerge.getChangesMetaSince(document, beforeHeads);
+    if (newChanges.length !== 1 || newChanges[0]!.hash !== changeHash) {
+      throw new Error("Automation authoring produced unexpected Automerge history");
+    }
+    const signed = await signEnvelope(this.profile.privateKeys.devicePrivateKey, {
+      kind: "workspace-changes" as const, version: 1 as const, workspaceId: this.workspaceId,
+      hashes: [changeHash], personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId,
+    }, this.profile.device.deviceId);
+    const nextAuthorizations = mergeAuthorizationRecords(this.authorizations, [{ signed,
+      publicKey: this.profile.identity.publicKey, certificates: [this.profile.certificate], grant: this.grant,
+      ownerPublicKey: this.authority.currentOwner.publicKey,
+      ownerCertificates: this.authority.currentOwner.certificates }]);
+    const candidateRaw = encodeBlindBytes(Automerge.save(document));
+    const result = computeWorkspaceDocumentAdmission({ workspaceId: this.workspaceId,
+      authorization: { version: 1, records: nextAuthorizations, authority: this.authority },
+      knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never, document);
+    if (result.quarantinedHashes.includes(changeHash) || result.pendingHashes.includes(changeHash) || !result.admittedHashes.includes(changeHash)) {
+      const decision = result.decisions.find(value => value.hash === changeHash);
+      throw new Error(`Rust rejected the scoped automation change: ${JSON.stringify(decision?.status ?? "missing-admission")}`);
+    }
+    this.authorizations = nextAuthorizations;
+    this.rawDocument = candidateRaw;
+  }
   private leadValues(normalized: NormalizedLead, decision: unknown, eventId: string): Record<string, string> {
     const scope = this.grant.payload.automation!;
     const values: Record<string, string> = {
@@ -704,14 +700,8 @@ function opaqueChatSignature(value: unknown): string {
 
 function mergeDocuments(leftBytes: Uint8Array, rightBytes: Uint8Array, actorId: string): Uint8Array {
   const left = Automerge.load<WorkspaceDocumentV2>(leftBytes, { actor: actorId });
-  const right = Automerge.load<WorkspaceDocumentV2>(rightBytes, { actor: actorId });
-  const merged = Automerge.merge(left, right);
-  try { return Automerge.save(merged); }
-  finally {
-    // merge returns a view over left's handle, so release the handle only once.
-    Automerge.free(left);
-    if (right !== left) Automerge.free(right);
-  }
+  try { return Automerge.save(Automerge.loadIncremental(left, rightBytes)); }
+  finally { Automerge.free(left); }
 }
 
 function assertFullyAdmitted(admission: ReturnType<typeof computeWorkspaceAdmission>, source: Uint8Array): void {

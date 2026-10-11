@@ -8,6 +8,7 @@ import { createWorkspaceDoc } from "./seeds"
 import {
   createCommandQueue,
   executeCommand,
+  executeOwnedCommand,
   executeReviewedWorkspaceChange,
   type Command,
 } from "./commands"
@@ -33,6 +34,18 @@ describe("Transaction wrapper, commands, and publication queue (Requirement 1.6)
     profile = await bootstrapIdentity("Alice Developer")
     const rawWs = createWorkspaceDoc("ws_test", "Test Board", profile.identity.personId, "job-search")
     initialDoc = Automerge.from<WorkspaceDocumentV2>(rawWs)
+  })
+
+  it("Given a privately owned document, When authoring a command, Then its existing handle carries the signed change and no longer accepts the old view", async () => {
+    const heads = Automerge.getHeads(initialDoc)
+    const result = await executeOwnedCommand(initialDoc, { kind: "renameWorkspace", title: "Private worker copy" }, profile)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.newDoc.title).toBe("Private worker copy")
+    expect(result.value.receipt.beforeHeads).toEqual(heads)
+    expect(result.value.proof).toBeTruthy()
+    expect(() => Automerge.change(initialDoc, draft => { draft.title = "Stale view" })).toThrow()
+    Automerge.free(result.value.newDoc)
   })
 
   it("executes createItem and patchItem, produces native metadata, and signs a change proof", async () => {
