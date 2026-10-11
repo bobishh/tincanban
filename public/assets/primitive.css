@@ -157,7 +157,8 @@ textarea) {
   --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#panel");
 }
 
-:where(.drawer-header) {
+/* Linked messages share the drawer's quiet paper highlight. */
+:where(.drawer-header, .chat-message-item.is-linked-message) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#soft");
   --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#soft");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#soft");
@@ -251,23 +252,13 @@ textarea) {
   --ink-focus-2: url("/assets/ink-focus-2.svg?v=2#overdue");
 }
 
-.chat-message-item.is-own {
+.chat-message-item.is-own:not(.is-linked-message) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#own");
   --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#own");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#own");
   --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#own");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#own");
   --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#own");
-}
-
-/* A linked message keeps its ink frame and gains a quiet paper highlight. */
-.chat-message-item.is-linked-message {
-  --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#soft");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#soft");
-  --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#soft");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#soft");
-  --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#soft");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#soft");
 }
 
 :where(.button,
