@@ -22,3 +22,7 @@
 - [x] 4.5 Render shared profile photos in settings, participant lists, and workspace chat with deterministic fallback.
 - [x] 4.6 Pass custom-avatar real-route happy path and failure/retry browser scenarios, including peer projection (3/3 focused cases passed).
 - [x] 4.7 Pass profile command, visitor security, merge-preservation, type, lint, and OpenSpec checks (prior verify/build passed; current `npm run quality` passed with avatar sources unchanged).
+
+## 5. Production participant preview follow-up
+- [ ] 5.1 Trace Bo's missing saved photo in the Sync participant row, including its original device/workspace, profile persistence and peer delivery. The row already consumes shared `avatarData`; the inspected owner Identity view currently has no saved photo. Do not substitute a different image or treat fallback rendering as proof that photo persistence succeeded.
+- [ ] 5.2 Verify the intended photo in the participant row after reload and on another device; verify fallback after removal or unavailable profile data.
