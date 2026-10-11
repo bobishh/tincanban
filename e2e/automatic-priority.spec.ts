@@ -99,6 +99,23 @@ test.describe("Automatic priority from workspace preferences", () => {
   })
 })
 
+test("Given an employee profile draft, when persistence fails, then Settings shows the error and the same draft can retry", async ({ page }) => {
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Retry profile")
+  const settings = await openPriorityRules(page)
+  await settings.getByLabel("Employee stack").fill("Ruby, Rails")
+  await settings.getByRole("button", { name: "Enable automatic priority" }).click()
+  await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
+  await settings.getByRole("button", { name: "Save priority rules" }).click()
+  await expect(settings.getByRole("alert")).toContainText("Storage failure injected")
+  await expect(settings.getByLabel("Employee stack")).toHaveValue("Ruby, Rails")
+  await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
+  await settings.getByRole("button", { name: "Save priority rules" }).click()
+  await expect(settings).toHaveCount(0)
+  await page.reload()
+  await expect((await openPriorityRules(page)).getByLabel("Employee stack")).toHaveValue("Ruby, Rails")
+})
+
 test("Given job match priority, when employee_profile is saved, then profile persists and missing assessments receive no remote bonus", async ({ page }) => {
   await page.goto("/")
   await createJobSearchWorkspace(page, "Profile jobs")

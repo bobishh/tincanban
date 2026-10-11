@@ -40,6 +40,7 @@ const props = defineProps<{
   fields: FieldDefinition[];
   templates: Template[];
   heads?: Heads;
+  saveError?: string;
   mode: "entity" | "templates";
 }>();
 
@@ -325,6 +326,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
           <slot name="connections" />
         </div>
         <div v-else :id="`${settingsId}-workspace-panel`" class="schema-tab-content" role="tabpanel" :aria-labelledby="`${settingsId}-workspace-tab`">
+          <p v-if="saveError" class="schema-error-banner" role="alert">{{ saveError }}</p>
           <p class="dialog-copy">Workspace: <strong>{{ doc.title }}</strong> · Board: <strong>{{ board.title }}</strong></p>
           <p v-if="readOnly" class="dialog-copy">Workspace configuration is read-only for your role.</p>
           <slot name="publication" />

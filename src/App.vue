@@ -103,7 +103,12 @@ function saveSelectedLeadDocument(document: Omit<DocumentInput, "leadId">) { ret
 const editItemNow = createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)
 async function editItem(item: Parameters<typeof editItemNow>[0]) { if (!rejectionEditor.value || await rejectionEditor.value.flush()) editItemNow(item) }
 
-async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) { if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false }
+const settingsSaveError = ref("")
+async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) {
+  settingsSaveError.value = ""
+  if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false
+  else settingsSaveError.value = notice.value
+}
 const cardAgeFor = useCardAges(() => activeBoard.value?.cardAgingPolicy)
 const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvatars(app.workspace)
 </script>
@@ -299,8 +304,9 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :fields="boardFields"
       :templates="workspace.templates"
       :heads="currentDocHeads"
+      :save-error="settingsSaveError"
       mode="templates"
-      @close="showSettings = false"
+      @close="showSettings = false; settingsSaveError = ''"
       @save-template="handleSaveTemplate"
       @apply-workspace-settings="applyWorkspaceSettings"
     >
