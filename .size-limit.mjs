@@ -6,7 +6,8 @@ const privateStartup = startupBudgetFiles(manifest, "private")
 const publicStartup = startupBudgetFiles(manifest, "public")
 
 export default [
-  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "235 kB" },
+  // Service approval shares identity modules; consolidated chunks add less than 1 kB.
+  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "236 kB" },
   // Include the synchronous startup status/loader; anonymous-reader budget stays separate.
   { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.75 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },

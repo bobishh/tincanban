@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import type { DeviceCertificate } from "../domain/model"
+import { bootstrapIdentity, signEnvelope } from "../domain/identity"
+import { defaultProofStore } from "../domain/proofs"
+import { peerStore } from "../sync/peerStore"
 import { parseServiceLoginRequest, serviceLoginPayload, type ServiceLoginRequest } from "./serviceLogin"
 
 const request = ref<ServiceLoginRequest>()
@@ -16,7 +19,6 @@ onMounted(async () => {
     if (!window.opener) throw new Error("Open sign-in from TinSink in the same browser.")
     const { initializePolicyBrowserRuntime } = await import("../iroh")
     await initializePolicyBrowserRuntime()
-    const { bootstrapIdentity } = await import("../domain/identity")
     identityName.value = (await bootstrapIdentity()).identity.displayName
     ready.value = true
   } catch (e) { error.value = e instanceof Error ? e.message : "Identity unavailable" }
@@ -29,9 +31,6 @@ async function approve() {
   pending.value = true
   error.value = ""
   try {
-    const [{ bootstrapIdentity, signEnvelope }, { defaultProofStore }, { peerStore }] = await Promise.all([
-      import("../domain/identity"), import("../domain/proofs"), import("../sync/peerStore"),
-    ])
     const profile = await bootstrapIdentity()
     const authority = await peerStore.getWorkspaceAuthority(request.value.workspace)
     if (!authority?.scopeAuthoritySnapshot) throw new Error("Workspace rights unavailable on this device. Open and synchronize workspace first.")
