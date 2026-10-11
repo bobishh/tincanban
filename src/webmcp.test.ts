@@ -126,6 +126,9 @@ describe("generic WebMCP tools", () => {
       activeWorkspace: tincanban.activeWorkspace,
     }, mockContext)
 
+    const columnsSchema = registeredTools.get("apply_workspace_settings").inputSchema.properties.settings.properties.board.properties.columns.items.properties
+    expect(columnsSchema).toHaveProperty("collapsible")
+    expect(columnsSchema).toHaveProperty("color")
     const read = await registeredTools.get("get_workspace_settings").execute({})
     read.settings.workspace.title = "Agent workspace"
     read.settings.board.entityName = "record"

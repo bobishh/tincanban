@@ -88,6 +88,7 @@ export const workspaceSettingsSchema = {
                   "Keep returned IDs when editing. Omit only for new columns.",
               },
               title: { type: "string" },
+              collapsible: { type: "boolean", description: "Optional. Allows this column to collapse." },
               color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Optional column accent color. Omit for a unique default." },
               archive: {
                 type: "boolean",
