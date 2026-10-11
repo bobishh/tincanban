@@ -8,13 +8,17 @@ export function useAppViewState(app: ReturnType<typeof useAppController>) {
   const { confirmedRole, workspaceRoleStatus } = app.collaboration.permissions
   const boardPainted = ref(false)
   let cancelled = false
-  onBeforeUnmount(() => { cancelled = true })
+  let revealTimer: ReturnType<typeof setTimeout> | undefined
+  onBeforeUnmount(() => { cancelled = true; clearTimeout(revealTimer) })
   watch(app.ui.state.boardRef, board => {
     if (!board || boardPainted.value) return
-    // Vue has committed the board; give the browser a complete layout/paint cycle.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    const reveal = () => {
+      clearTimeout(revealTimer)
       if (!cancelled) boardPainted.value = true
-    }))
+    }
+    // Prefer a complete paint cycle; suspended frames must not trap the cover.
+    revealTimer = setTimeout(reveal, 250)
+    requestAnimationFrame(() => requestAnimationFrame(reveal))
   }, { flush: "post" })
   return {
     startupCoverVisible: computed(() => !boardPainted.value && !app.ui.state.startupError.value),
