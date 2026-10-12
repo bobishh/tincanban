@@ -104,13 +104,17 @@ async function exclusive<T>(workspaceId: string, action: () => Promise<T>): Prom
   return navigator.locks.request(`tincanban-chat-write:${workspaceId}`, action)
 }
 
-export async function ensureChatProfile(workspaceId: string) {
+export async function ensureChatProfile(workspaceId: string, options: { updateName?: boolean } = {}) {
   return exclusive(workspaceId, async () => {
     const profile = await bootstrapIdentity()
     const own = (await loadChat(workspaceId)).profiles.find(p => p.personId === profile.identity.personId)
-    if (own?.name === profile.identity.displayName) return own
+    // Background synchronization adopts the admitted shared profile; local names are not rename commands.
+    if (own && (!options.updateName || own.name === profile.identity.displayName)) return own
     const value = member(await signed(workspaceId, "chat-profile", profile.identity.displayName, (own?.revision ?? 0) + 1))
     await chatStore.putProfile(value)
+    meshTrace("chat.profile.updated", { workspaceId, entityType: "profile", entityId: value.personId,
+      recordId: (value.record as ChatRecord).signed.payload.id, phase: own ? "explicit_rename" : "initial",
+      bytes: new TextEncoder().encode(JSON.stringify(value.record)).byteLength })
     publish({ workspaceId, added: [], remote: false, history: true })
     return value
   })

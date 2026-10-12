@@ -12,5 +12,5 @@ export async function saveIdentityName(name: string, workspaceId: string, refres
   await refreshIdentity()
   const workspaces = await defaultStorage.listWorkspaces()
   const ids = [workspaceId, ...workspaces.map(workspace => workspace.id)].filter((id, index, all) => id && all.indexOf(id) === index)
-  await Promise.allSettled(ids.map(id => ensureChatProfile(id)))
+  await Promise.allSettled(ids.map(id => ensureChatProfile(id, { updateName: true })))
 }
