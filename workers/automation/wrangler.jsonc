@@ -8,9 +8,6 @@
     "nodejs_compat"
   ],
   "workers_dev": false,
-  "limits": {
-    "cpu_ms": 180000
-  },
   "routes": [
     {
       "pattern": "automation.meta-uber-engineer.dev",

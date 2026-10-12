@@ -120,6 +120,20 @@ it("Given an explicitly signed Applied binding, when a new confirmed application
   Automerge.free(doc);
 });
 
+it("Given a newly authored and admitted Lead, when its controls and candidates are read with no budget for duplicate admission, then verified results remain available and expired grants still fail", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const created = await replica.createLead("admitted-lead", { company: "Example GmbH", role: "Senior Engineer" }, {});
+  const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => { throw new Error("Duplicate admission exhausted CPU budget"); });
+  try {
+    expect(replica.controlForRuntime().state).toBe("active");
+    expect(replica.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.lead);
+    vi.useFakeTimers();
+    vi.setSystemTime(data.packet.grant.payload.automation!.expiresAt + 1);
+    expect(() => replica.controlForRuntime()).toThrow(/expired/);
+  } finally { admission.mockRestore(); vi.useRealTimers(); }
+});
+
 it("Given already verified workspace evidence, when controls are read repeatedly with no CPU budget for revalidation, then observations remain available but expired grants fail", async () => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);

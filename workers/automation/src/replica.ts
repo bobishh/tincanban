@@ -562,6 +562,7 @@ export class AutomationReplica {
     }
     this.authorizations = nextAuthorizations;
     this.rawDocument = candidateRaw;
+    this.admissionCache = { key: canonicalizeJson([this.rawDocument, this.authorizations, this.authority]), result };
   }
   private leadValues(normalized: NormalizedLead, decision: unknown, eventId: string): Record<string, string> {
     const scope = this.grant.payload.automation!;

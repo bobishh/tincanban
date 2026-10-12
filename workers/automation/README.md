@@ -113,9 +113,11 @@ instance, workspace, grant, nonce, freshness and exact desired heads before show
 confirmed state. Network failure, expired grant and unsynced controls stay pending.
 Pause/resume/remove write only CRDT; no HTTP pause switch competes with the owner
 record. Durable alarms poll controls every 15 seconds even with an empty queue.
-New intake rearms overdue alarms after exhausted platform retries. Production
-allows up to 180 seconds of CPU per invocation for admitting existing board
-history; the default 30-second limit reset the real workspace during admission.
+New intake rearms overdue alarms after exhausted platform retries. Admission of
+an authored change is reused for its exact document, proofs and authority; control
+reads do not repeat that expensive verification. Changed evidence invalidates
+the cache, and live grant expiry is still checked. Production retains the Free
+plan's default CPU limit.
 Pause preserves queued events without spending retries or AI calls. Removal is a
 terminal tombstone; retries and stale snapshots cannot resurrect execution.
 
