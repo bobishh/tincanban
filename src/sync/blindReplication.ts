@@ -1,5 +1,6 @@
 import { blindHash, inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
+import { canonicalizeJson } from "../domain/identity"
 
 export type BlindReplicaConfig = BlindAccess & { workspaceId: string; keyEpoch: number; contentKey: string; cursor: number; lastUploaded: string; removalPending?: boolean }
 export type BlindReplicaStore = {
@@ -16,6 +17,7 @@ const maximumPlaintextBytes = 16 * 1024 * 1024 - 16
 
 /** Rusty supplies opaque bytes. Only the existing signed causal admission may merge them. */
 export class BlindReplica {
+  private receivedHash: string | undefined
   private pending: { hash: string; object: Awaited<ReturnType<typeof encryptBlindObject>> } | undefined
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
     private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject }) {}
@@ -38,6 +40,7 @@ export class BlindReplica {
         const next = { ...this.config, cursor: entry.sequence }
         await this.store.persist(next)
         this.config.cursor = next.cursor
+        this.receivedHash = await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot)))
       }
       if (!inventory.hasMore) return true
     }
@@ -48,10 +51,17 @@ export class BlindReplica {
     const bytes = await this.store.read(this.config.workspaceId)
     const snapshot: Snapshot = { version: 1, workspaceId: this.config.workspaceId, document: encodeBlindBytes(bytes),
       authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
-    const plaintext = new TextEncoder().encode(JSON.stringify(snapshot))
+    const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot))
     if (plaintext.length > maximumPlaintextBytes) throw new Error("Workspace snapshot exceeds Rusty object limit")
     const hash = await blindHash(plaintext)
     if (hash === this.config.lastUploaded) return
+    if (hash === this.receivedHash) {
+      // Already durable and admitted; do not echo remote state as fresh ciphertext.
+      await this.store.persist({ ...this.config, lastUploaded: hash })
+      this.config.lastUploaded = hash
+      this.pending = undefined
+      return
+    }
     if (this.pending?.hash !== hash) this.pending = { hash, object: await encryptBlindObject(this.config.scopeId, this.config.keyEpoch, decodeBlindBytes(this.config.contentKey), plaintext) }
     // Transport validates the signed durable receipt before acknowledging anything locally.
     await this.transport.upload(this.config, this.pending.object)

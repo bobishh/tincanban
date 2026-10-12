@@ -49,6 +49,15 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     const [scope] = await readdir(join(directory, "scopes"))
     const files = await readdir(join(directory, "scopes", scope!, "objects"))
     expect(files.length).toBeGreaterThan(0)
+    // Given unchanged board and chat, repeated polling must not append full copies.
+    const syncButton = panel.getByRole("button", { name: "Sync now", exact: true })
+    await expect(syncButton).toBeEnabled()
+    for (let pass = 0; pass < 3; pass++) {
+      await syncButton.click()
+      await expect(syncButton).toBeDisabled()
+      await expect(syncButton).toBeEnabled()
+    }
+    expect(await readdir(join(directory, "scopes", scope!, "objects"))).toHaveLength(files.length)
     const object = JSON.parse(await readFile(join(directory, "scopes", scope!, "objects", files[0]!), "utf8"))
     expect(Object.keys(object.object).sort()).toEqual(["ciphertext", "keyEpoch", "nonce", "scopeId", "version"])
     expect(JSON.stringify(object)).not.toContain("Preserved Jobs")

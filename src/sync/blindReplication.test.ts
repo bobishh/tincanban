@@ -3,6 +3,29 @@ import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { encryptBlindObject, encodeBlindBytes } from "./blindEnvelope"
 import { type BlindReceipt, blindObjectId } from "./blindClient"
 
+test("Given a durable remote snapshot, when a fresh client admits it unchanged, then it does not upload another encrypted copy", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const snapshot = { version: 1, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([1])), authorization: { signed: true }, chat: null }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(snapshot)))
+  const id = await blindObjectId(object)
+  let bytes = new Uint8Array([1])
+  let uploads = 0
+  const replica = new BlindReplica(config, {
+    read: async () => bytes, authorization: async () => snapshot.authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async () => ({ objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false }),
+    download: async () => object, upload: async () => { uploads++; return {} as BlindReceipt } })
+  await replica.sync()
+  expect(uploads).toBe(0)
+  expect(config.lastUploaded).not.toBe("")
+  bytes = new Uint8Array([2])
+  await replica.push()
+  expect(uploads).toBe(1)
+  await replica.push()
+  expect(uploads).toBe(1)
+})
+
 test("Given encrypted signed history, when admission fails, replication never advances its durable cursor", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32))
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
