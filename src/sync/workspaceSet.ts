@@ -10,6 +10,7 @@ import { meshTrace } from "./meshTrace"
 import { safeDiagnostic } from "./safeDiagnostic"
 import { readProofPage, writeProofPage, clearProofPages } from "./proofPageCache"
 import { workspaceProofTransfer, exportWorkspaceProofs } from "./workspaceProofTransfer"
+import { createProofTransferRestarter } from "./proofTransferRestart"
 import { serveOwnerOfferProofs } from "./ownerOfferProofs"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import type { DuplexStream, SyncConnection } from "./transport"
@@ -336,6 +337,7 @@ export function liveAutomergeWorkspaceSync(
   options: LiveWorkspaceOptions = {},
 ): LiveWorkspaceSync {
   let stopped = false
+  const restartProofTransfer = createProofTransferRestarter(connection, { workspaceId, peerId: remoteDeviceId })
   let lastRejection: string | undefined
   let heartbeatQueue = Promise.resolve()
   const liveness = createLiveWorkspaceSession(workspaceId, secret)
@@ -441,6 +443,7 @@ export function liveAutomergeWorkspaceSync(
         () => scope.receive(stream, frame), frame.byteLength)
     }
     catch (error) {
+      await restartProofTransfer(error)
       if (!(error instanceof WorkspaceChangeRejected)) throw error
       if (lastRejection !== error.message) onDocumentRejected?.(error)
       lastRejection = error.message

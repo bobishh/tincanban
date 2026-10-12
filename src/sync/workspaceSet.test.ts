@@ -189,6 +189,34 @@ describe("live mesh heartbeat", () => {
 })
 
 describe("incremental workspace control plane", () => {
+  it.each([
+    ["Authorization records changed; restart document sync", true],
+    ["Authorization authority changed; restart document sync", true],
+    ["No document awaiting authorization pages", true],
+    ["Invalid authorization signature", false],
+  ])("Given proof transfer fails with %s, then session restart is %s", async (message, restart) => {
+    const bytes = Automerge.save(Automerge.from({ id: "workspace" }))
+    let accepted = false
+    let rejectAccept: ((error: Error) => void) | undefined
+    const connection: SyncConnection = {
+      openStream: vi.fn(),
+      acceptStream: async () => {
+        if (accepted) return new Promise((_, reject) => { rejectAccept = reject })
+        accepted = true
+        return { send: vi.fn(async () => {}), closeSend: vi.fn(async () => {}), read: async () => encodePairingFrame("mesh-control-sync", "secret",
+          new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: "workspace", authorization: [] }))) }
+      },
+      close: vi.fn(async () => { rejectAccept?.(new Error("Connection closed")) }),
+    }
+    const merge = vi.fn(async () => { throw new Error(message) })
+    const session = liveAutomergeWorkspaceSync(connection, "secret", { read: async () => bytes, merge, activate: vi.fn() }, "workspace", "local", "remote")
+    void session.done.catch(() => {})
+    await vi.waitFor(() => expect(merge).toHaveBeenCalled())
+    if (restart) await vi.waitFor(() => expect(connection.close).toHaveBeenCalled())
+    else expect(connection.close).not.toHaveBeenCalled()
+    await session.close()
+  })
+
   it("Given control history exceeds 256 KiB, when published, then bounded frames deliver the complete state once", async () => {
     const sent: Uint8Array[] = []
     const authorization = [{ hash: "history", signature: "s".repeat(300_000) }]

@@ -79,7 +79,6 @@ async function certifiedDeviceChain(leaf: DeviceCertificate, getCertificate: (ha
       <template v-if="request">
         <p>Service: <strong>{{ request.origin }}</strong></p>
         <p v-if="identityName">Identity: <strong>{{ identityName }}</strong></p>
-        <p>Sign in with this identity. TinSink discovers your boards from signed owner and editor permissions. Visitors and automation cannot read logs.</p>
       </template>
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-else-if="!ready" role="status">Loading identity…</p>
