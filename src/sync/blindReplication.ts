@@ -74,6 +74,7 @@ export class BlindReplica {
   async push(): Promise<void> {
     const { snapshot, plaintext, hash } = await this.snapshot()
     if (hash === this.config.lastUploaded) {
+      this.previousParts ??= await this.parts(snapshot)
       this.observe("mesh.rusty.upload.skipped", { phase: "unchanged", bytes: plaintext.length })
       return
     }

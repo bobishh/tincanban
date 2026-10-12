@@ -222,3 +222,39 @@ async function checkpointFixture() {
   })
   return state
 }
+
+test("Given a reloaded client with an unchanged durable snapshot, subsequent encoding churn skips upload while real document, authority and chat changes retain their diagnosis", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let bytes = new Uint8Array([1]), revision = "heads-1", authority = { signed: "authority-1" }
+  let chat: unknown = null, uploads = 0, revisionReads = 0
+  const events: Array<{ event: string; detail: Record<string, unknown> }> = []
+  const store = {
+    read: async () => bytes, authorization: async () => authority, readChat: async () => chat,
+    documentRevision: async () => { revisionReads++; return revision }, diagnostic: (event: string, detail: Record<string, unknown>) => events.push({ event, detail }),
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }
+  const transport = { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected read") }, upload: async () => { uploads++; return {} as BlindReceipt } }
+  await new BlindReplica(config, store, transport).push()
+  events.length = 0
+  const reloaded = new BlindReplica(config, store, transport)
+  await reloaded.push()
+  expect(uploads).toBe(1)
+  expect(events.at(-1)?.detail.phase).toBe("unchanged")
+  await reloaded.push()
+  expect(revisionReads).toBe(2)
+  bytes = new Uint8Array([2])
+  await reloaded.push()
+  expect(uploads).toBe(1)
+  expect(events.at(-1)?.detail.phase).toBe("encoding_unchanged_state")
+  bytes = new Uint8Array([3]); revision = "heads-2"
+  await reloaded.push()
+  authority = { signed: "authority-2" }
+  await reloaded.push()
+  chat = { messages: ["private chat content"] }
+  await reloaded.push()
+  const completed = events.filter(value => value.event === "mesh.rusty.upload.completed")
+  expect(completed.map(value => value.detail.changedFields)).toEqual([["document"], ["authority"], ["chat"]])
+  expect(completed.every(value => value.detail.phase === "changed")).toBe(true)
+  expect(uploads).toBe(4)
+  expect(JSON.stringify(events)).not.toContain("private chat content")
+})
