@@ -26,6 +26,23 @@ test("Given a durable remote snapshot, when a fresh client admits it unchanged, 
   expect(uploads).toBe(1)
 })
 
+test("Given unchanged document heads, when binary encoding differs, diagnostics distinguish encoding churn from chat or authority changes", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let bytes = new Uint8Array([1]); let chat: unknown = null
+  const events: Array<{ event: string; detail: Record<string, unknown> }> = []
+  const replica = new BlindReplica(config, {
+    read: async () => bytes, authorization: async () => ({ signed: true }), readChat: async () => chat,
+    documentRevision: async () => "same-logical-heads", diagnostic: (event, detail) => events.push({ event, detail }),
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: async () => ({} as BlindReceipt) })
+  await replica.push(); bytes = new Uint8Array([2]); await replica.push()
+  expect(events.filter(value => value.event.endsWith("completed")).at(-1)?.detail.changedFields).toEqual(["encoding"])
+  chat = { message: "private chat content" }; await replica.push()
+  expect(events.filter(value => value.event.endsWith("completed")).at(-1)?.detail.changedFields).toEqual(["chat"])
+  expect(JSON.stringify(events)).not.toContain("private chat content")
+  expect(JSON.stringify(events)).not.toContain(config.contentKey)
+})
+
 test("Given encrypted signed history, when admission fails, replication never advances its durable cursor", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32))
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }

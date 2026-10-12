@@ -10,14 +10,26 @@ export type BlindReplicaStore = {
   readChat: (id: string) => Promise<unknown>
   mergeChat: (id: string, chat: unknown) => Promise<void>
   persist: (config: BlindReplicaConfig) => Promise<void>
+  documentRevision?: (bytes: Uint8Array) => Promise<string>
+  diagnostic?: (event: string, detail: Record<string, unknown>) => void
 }
 type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject; upload: typeof uploadBlindObject }
 type Snapshot = { version: 1; workspaceId: string; document: string; authorization: unknown; chat: unknown }
 const maximumPlaintextBytes = 16 * 1024 * 1024 - 16
+type ContentParts = { document: string; authority: string; chat: string; revision?: string }
+function changedParts(parts: ContentParts, previous?: ContentParts): string[] {
+  if (!previous) return []
+  const changed: string[] = (["document", "authority", "chat"] as const).filter(key => parts[key] !== previous[key])
+  if (changed.includes("document") && previous.revision !== undefined && parts.revision === previous.revision) changed[changed.indexOf("document")] = "encoding"
+  return changed
+}
+function uploadPhase(retry: boolean, known: boolean): string { return retry ? "retry" : known ? "changed" : "initial" }
 
 /** Rusty supplies opaque bytes. Only the existing signed causal admission may merge them. */
 export class BlindReplica {
   private receivedHash: string | undefined
+  private previousParts: ContentParts | undefined
+  private receivedParts: ContentParts | undefined
   private pending: { hash: string; object: Awaited<ReturnType<typeof encryptBlindObject>> } | undefined
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
     private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject }) {}
@@ -41,6 +53,7 @@ export class BlindReplica {
         await this.store.persist(next)
         this.config.cursor = next.cursor
         this.receivedHash = await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot)))
+        this.receivedParts = await this.parts(snapshot)
       }
       if (!inventory.hasMore) return true
     }
@@ -60,15 +73,41 @@ export class BlindReplica {
       await this.store.persist({ ...this.config, lastUploaded: hash })
       this.config.lastUploaded = hash
       this.pending = undefined
+      this.previousParts = this.receivedParts
+      this.observe("mesh.rusty.upload.skipped", { phase: "remote_already_stored", bytes: plaintext.length })
       return
     }
+    const parts = await this.parts(snapshot)
+    const previous = this.previousParts ?? this.receivedParts
+    const changedFields = changedParts(parts, previous)
+    const retry = this.pending?.hash === hash
+    const phase = uploadPhase(retry, previous !== undefined)
     if (this.pending?.hash !== hash) this.pending = { hash, object: await encryptBlindObject(this.config.scopeId, this.config.keyEpoch, decodeBlindBytes(this.config.contentKey), plaintext) }
     // Transport validates the signed durable receipt before acknowledging anything locally.
-    await this.transport.upload(this.config, this.pending.object)
+    this.observe("mesh.rusty.upload.started", { phase, changedFields, bytes: plaintext.length })
+    try { await this.transport.upload(this.config, this.pending.object) }
+    catch (error) { this.observe("mesh.rusty.upload.failed", { phase: "delivery", bytes: plaintext.length }); throw error }
     const next = { ...this.config, lastUploaded: hash }
     await this.store.persist(next)
     this.config.lastUploaded = hash
     this.pending = undefined
+    this.previousParts = parts
+    this.observe("mesh.rusty.upload.completed", { phase, changedFields, bytes: plaintext.length })
+  }
+
+  private async parts(snapshot: Snapshot): Promise<ContentParts> {
+    const [document, authority, chat, revision] = await Promise.all([
+      blindHash(new TextEncoder().encode(snapshot.document)),
+      blindHash(new TextEncoder().encode(canonicalizeJson(snapshot.authorization))),
+      blindHash(new TextEncoder().encode(canonicalizeJson(snapshot.chat))),
+      this.store.documentRevision?.(decodeBlindBytes(snapshot.document)).catch(() => undefined),
+    ])
+    return { document, authority, chat, ...(revision !== undefined ? { revision } : {}) }
+  }
+
+  private observe(event: string, detail: Record<string, unknown>) {
+    try { this.store.diagnostic?.(event, { workspaceId: this.config.workspaceId, entityType: "scope", entityId: this.config.scopeId, component: "rusty", operation: "upload", ...detail }) }
+    catch { /* Diagnostic failures must not affect durable replication. */ }
   }
 
   async sync(): Promise<boolean> { const caughtUp = await this.pull(); await this.push(); return caughtUp }

@@ -4,6 +4,7 @@ import type { LocalProfile } from "../domain/identity"
 import { readLocal, writeLocal } from "../localDb"
 import { exportAuthorizationBundle } from "./changeAuthorization"
 import { exportChat, receiveChat, subscribeChat } from "../chat/service"
+import { meshTrace } from "./meshTrace"
 import { blindOrigin, discoverBlindKeeper } from "./blindClient"
 import { decodeBlindBytes, encodeBlindBytes } from "./blindEnvelope"
 import type { BlindReplica, BlindReplicaConfig } from "./blindReplication"
@@ -156,6 +157,12 @@ async function createReplica(config: BlindReplicaConfig, tincanban: ReturnType<t
     merge: async (id, bytes, authorization) => { ensureIdentity(); await tincanban.mergeAuthorizedWorkspace(id, bytes, authorization) },
     readChat: async id => { ensureIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },
     mergeChat: async (id, chat) => { ensureIdentity(); await receiveChat(id, chat, true) },
+    documentRevision: async bytes => {
+      const Automerge = await import("@automerge/automerge/slim")
+      const doc = Automerge.load(bytes)
+      try { return Automerge.getHeads(doc).sort().join(",") } finally { Automerge.free(doc) }
+    },
+    diagnostic: (event, detail) => meshTrace(event, detail, event.endsWith("failed") ? "warn" : "info"),
     persist,
   })
 }
