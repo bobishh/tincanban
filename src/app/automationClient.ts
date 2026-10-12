@@ -71,7 +71,7 @@ export type AutomationEmailSetup = {
 }
 
 export async function readAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }): Promise<AutomationEmailSetup> {
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "observe", origin: input.origin,
+  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "email", origin: input.origin,
     workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
   return await requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ownerRequest }) as AutomationEmailSetup
 }

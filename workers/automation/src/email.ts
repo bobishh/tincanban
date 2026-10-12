@@ -221,6 +221,7 @@ function readForwardedHeaders(text: string): { subject?: string } {
   return { subject: fields.subject };
 }
 
-function isForwardingConfirmation(subject: string, text: string): boolean {
+export function isForwardingConfirmation(subject: string, text: string): boolean {
+  if (/\b(?:gmail\s+)?forwarding\s+(?:confirmation|verification)\b/i.test(subject)) return true;
   return /(?:confirm|verify).{0,80}(?:forward(?:ing)? address|email address|mail routing)|(?:forward(?:ing)? address|email address).{0,80}(?:confirm|verify)/i.test(`${subject}\n${text.slice(0, 2_000)}`);
 }

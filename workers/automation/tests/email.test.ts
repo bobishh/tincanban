@@ -51,3 +51,12 @@ test('Given an original message forwarded as RFC822 attachment, when parsed, the
   assert.equal(mail.messageId, '<wrapper@example.test>');
   assert.equal(Date.parse(mail.date!), Date.parse('2026-10-11T09:03:28Z'));
 });
+
+test('Given a Gmail forwarding verification message, when parsed, then marks it for owner confirmation without treating it as an application', async () => {
+  const raw = ['From: forwarding-noreply@google.com', 'Subject: Gmail Forwarding Confirmation - Receive Mail from owner@example.test',
+    'Content-Type: text/plain', '', 'owner@example.test has requested to automatically forward mail to your email address.',
+    '', 'Confirmation code: 123456789', 'Click the link below to confirm the request:',
+    'https://mail.google.com/mail/vf-example-code'].join('\r\n');
+  const mail = await parseForwardedMail(new TextEncoder().encode(raw));
+  assert.equal(mail.confirmation, true);
+});

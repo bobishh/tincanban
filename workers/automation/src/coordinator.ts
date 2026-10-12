@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from "./pipeline";
 import type { WorkerEnv, AutomationIntegration } from "./index";
-import { correlateApplication } from "./email";
+import { correlateApplication, isForwardingConfirmation } from "./email";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, signEnvelope } from "../../../src/domain/identity";
@@ -361,7 +361,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     let confirmation: { eventId: string; url: string } | null = null;
     for (const row of rows) {
       const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET!, row.event_id, row.payload);
-      if (event.source !== "email" || !event.message.confirmation) continue;
+      if (event.source !== "email" || !isForwardingConfirmation(event.message.subject, event.message.text)) continue;
       const url = event.message.urls.find(value => {
         try { const parsed = new URL(value); return parsed.protocol === "https:" && parsed.hostname === "mail.google.com" && parsed.pathname.startsWith("/mail/"); }
         catch { return false; }

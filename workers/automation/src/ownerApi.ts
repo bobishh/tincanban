@@ -24,7 +24,7 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
   let intent;
   try { intent = await verifyAutomationOwnerRequest(input.ownerRequest, url.origin, owners); }
   catch { return json({ error: "Owner signature is unauthorized, expired or invalid" }, 401, cors); }
-  const action = operation === "identity" ? "enroll" : operation === "activation" ? "activate" : "observe";
+  const action = operation === "identity" ? "enroll" : operation === "activation" ? "activate" : operation === "email" ? "email" : "observe";
   if (intent.action !== action || intent.integrationId !== match[1] ||
     (action !== "activate" && intent.bodyHash !== null)) return json({ error: "Owner request does not match this operation" }, 400, cors);
   const coordinator = env.AUTOMATION.getByName(intent.integrationId);

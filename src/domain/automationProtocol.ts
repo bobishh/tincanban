@@ -7,7 +7,7 @@ import { isAutomationOrigin } from "./automationLifecycle"
 const identifier = z.string().min(1).max(256)
 const ownerPayload = z.strictObject({
   kind: z.literal("automation-owner-request"), version: z.literal(1),
-  action: z.enum(["enroll", "activate", "observe"]),
+  action: z.enum(["enroll", "activate", "observe", "email"]),
   origin: z.string().refine(isAutomationOrigin), integrationId: z.string().uuid(), workspaceId: identifier,
   personId: identifier, nonce: z.string().uuid(), issuedAt: z.number().int().positive(), expiresAt: z.number().int().positive(),
   bodyHash: z.string().regex(/^[A-Za-z0-9_-]{43}$/).nullable(),

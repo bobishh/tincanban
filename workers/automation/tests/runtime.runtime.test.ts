@@ -403,3 +403,16 @@ it("Given deployment-approved owners, when browser enrollment is signed, then id
   expect(conflict.headers.get("access-control-allow-origin")).toBe("https://app.example.test");
   expect((await enroll(owner, "another-workspace")).status).toBe(409);
 });
+
+it("Given a signed public status observation, when replayed against private email setup, then rejects it before reading routing secrets", async () => {
+  const owner = await profileFromIdentitySeedForDevice(new Uint8Array(32).fill(77), "Owner", new Uint8Array(32).fill(78));
+  const integrationId = crypto.randomUUID();
+  const origin = "https://automation.test";
+  const ownerRequest = await createAutomationOwnerRequest(owner, { action: "observe", origin, integrationId, workspaceId: "workspace", bodyHash: null });
+  const context = createExecutionContext();
+  const response = await worker.fetch(new Request(`${origin}/v2/integrations/${integrationId}/email`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ownerRequest }),
+  }), { ...testEnv, AUTOMATION_OWNER_IDS: owner.identity.personId }, context);
+  await waitOnExecutionContext(context);
+  expect(response.status).toBe(400);
+});
