@@ -38,7 +38,18 @@ test("Given a mobile board with over 312k signed operations, When cold loading a
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
   expect(await page.evaluate(() => (window as Window & { __policyWorkers?: string[] }).__policyWorkers))
     .toEqual(["workspace-admission"])
-  await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
+  // Current admission reuses the saved projection without a write. Exercise
+  // failed persistence only when an older policy requires reclassification.
+  await page.evaluate(async () => {
+    const app = (await import("/src/state.ts")).useTincanban()
+    const storage = (await import("/src/storage.ts")).defaultStorage
+    const A = await import("/@id/@automerge/automerge/slim")
+    const doc = app.getActiveDoc()!
+    const evidence = (await storage.loadCausalEvidence(doc.id))!
+    evidence.admissionCheckpoint!.policy = "previous-policy"
+    await storage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, evidence)
+    ;(window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true
+  })
   const failure = await page.evaluate(async workspaceId => {
     const { useTincanban } = await import("/src/state.ts")
     try { await useTincanban().reclassifyWorkspace(workspaceId); return "unexpected success" }

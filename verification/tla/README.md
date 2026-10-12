@@ -108,6 +108,18 @@ quarantined source and expects bootstrap availability to fail. This two-change
 abstraction does not model Automerge dependencies or the actual admission
 classifier; the browser regression must verify those.
 
+## Startup admission and scope shutdown
+
+`SavedAdmission` binds local admission reuse to six finite dimensions: raw history,
+proofs, authority, projection heads, decisions and policy. Classification and atomic
+commit are assumptions backed by implementation tests. Mutants omit authority,
+ignore a race, accept remote checkpoint trust or publish local marker renewal.
+`ScopeShutdown` distinguishes callback self-drain from drain under a mutation lock.
+Under weak fairness for serviceable callbacks, closing eventually frees the scope;
+its two unsafe variants must violate this temporal property. Neither model provides
+a wall-clock bound or proves JavaScript refinement. Production mapping and actual
+entry-point regression tests: [architecture fitness](../../docs/architecture-fitness.md).
+
 ## Run
 
 Requirements: Java, Python 3, official

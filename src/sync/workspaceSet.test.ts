@@ -12,6 +12,7 @@ import { createLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
 import { initializeAutomerge } from "../crdt"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
+import { withWorkspaceMutation } from "../workspaceMutation"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -491,6 +492,48 @@ describe("rejected document isolation", () => {
   })
 })
 
+
+describe("scope shutdown fitness", () => {
+  it("Given a queued current-peer control receive, When its callback disconnects that session, Then receive finishes and scope cleanup drains outside the callback", async () => {
+    const frame = encodePairingFrame("mesh-control-sync", "secret", new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: "workspace", mesh: { epoch: 2 } })))
+    let accepted = false
+    let finished = false
+    const stream = { read: async () => frame, send: vi.fn(), closeSend: vi.fn() }
+    let endAccept!: () => void
+    const disconnected = new Promise<never>((_, reject) => { endAccept = () => reject(new Error("Disconnected")) })
+    const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return stream } return disconnected },
+      close: vi.fn(async () => endAccept()), openStream: vi.fn() }
+    const session = liveAutomergeWorkspaceSync(connection, "secret", { read: vi.fn(), merge: vi.fn(), activate: vi.fn(),
+      mergeMesh: async () => { await session.close(); finished = true } }, "workspace", "local", "remote")
+    await vi.waitFor(() => expect(finished).toBe(true))
+    await session.done
+    expect(connection.close).toHaveBeenCalledOnce()
+    await session.close()
+    expect(connection.close).toHaveBeenCalledOnce()
+  })
+
+  it("Given receive waits for the revocation mutation lock, When that lock owner disconnects the session, Then the lock releases before scope drain", async () => {
+    const frame = encodePairingFrame("mesh-control-sync", "secret", new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: "workspace", mesh: { epoch: 2 } })))
+    let entered!: () => void
+    const waitingForLock = new Promise<void>(resolve => { entered = resolve })
+    let endAccept!: () => void
+    const disconnected = new Promise<never>((_, reject) => { endAccept = () => reject(new Error("Disconnected")) })
+    let accepted = false
+    let finished = false
+    const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return { read: async () => frame, send: vi.fn(), closeSend: vi.fn() } } return disconnected },
+      close: vi.fn(async () => endAccept()), openStream: vi.fn() }
+    const session = await withWorkspaceMutation("workspace", async () => {
+      const current = liveAutomergeWorkspaceSync(connection, "secret", { read: vi.fn(), merge: vi.fn(), activate: vi.fn(),
+        mergeMesh: async () => { entered(); await withWorkspaceMutation("workspace", async () => { finished = true }) } }, "workspace", "local", "remote")
+      await waitingForLock
+      await current.close()
+      return current
+    })
+    await session.done
+    expect(finished).toBe(true)
+    expect(connection.close).toHaveBeenCalledOnce()
+  })
+})
 
 describe("paged initial snapshot transport", () => {
   async function fixture() {

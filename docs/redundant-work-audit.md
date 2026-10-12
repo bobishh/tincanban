@@ -9,8 +9,10 @@ Unchanged reload previously replayed complete admission and committed its result
 This change reuses a locally committed checkpoint bound to raw bytes, normalized
 proof/authority inputs, projection heads, decisions and the frontend build. Missing
 or changed bindings still require admission. An identical snapshot/evidence replay
-also avoids journal and catalog writes. Those two changes do not implement
-incremental admission for new edits or fix every sync queue cycle below.
+also avoids journal and catalog writes. Follow-up changes separate local checkpoint renewal from shared-change notifications
+and disconnect sessions without waiting on their own queued callback. Real control
+receive and mutation-lock regression tests cover both audited close cycles.
+Incremental admission for new edits remains unimplemented.
 
 ## Production evidence
 

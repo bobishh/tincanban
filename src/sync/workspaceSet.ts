@@ -1,6 +1,7 @@
 import { BrowserMeshScopeSync, createLiveWorkspaceSession, type RustLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
 import { inspectPairingFrame } from "@meta-uber/mesh-pairing"
 import { createBackgroundMeshScope, validateBackgroundScopeDocument } from "./meshScopeClient"
+import { createScopeShutdown } from "./scopeShutdown"
 import { HandoffConfirmationInbox } from "./handoffConfirmation"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { WorkspaceChangeRejected } from "./changeAuthorization"
@@ -450,6 +451,10 @@ export function liveAutomergeWorkspaceSync(
     }
   }
   const incomingContext = { isStopped: () => stopped, liveness, receive, workspaceId, remoteDeviceId }
+  const shutdown = createScopeShutdown(scope, connection, () => { stopped = true }, () => { liveness.free?.() },
+    error => meshTrace("workspace.scope.close.failed", {
+      workspaceId, peerId: remoteDeviceId, reason: error instanceof Error ? error.message : String(error),
+    }, "warn", error))
   const done = (async () => {
     try {
       while (!stopped) {
@@ -463,7 +468,7 @@ export function liveAutomergeWorkspaceSync(
         if (frameHandlers.size >= 32) await Promise.race(frameHandlers)
       }
     } catch (error) { if (!stopped) throw error }
-  })()
+  })().finally(() => shutdown.drain())
   return {
     done,
     async reconcile() {
@@ -482,11 +487,7 @@ export function liveAutomergeWorkspaceSync(
       heartbeatQueue = enqueueHeartbeat(heartbeatQueue, () => stopped, connection, secret)
       return heartbeatQueue
     },
-    async close() {
-      stopped = true
-      try { await connection.close() }
-      finally { liveness.free?.(); await scope.close() }
-    },
+    close: shutdown.close,
   }
 }
 

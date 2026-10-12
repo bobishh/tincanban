@@ -26,7 +26,7 @@ export function snapshotCausalEvidence(
   return cloneCausalEvidence({ ...incoming, dismissedHashes, resolvedReviews }) ?? undefined
 }
 
-/** Compare all durable evidence fields to decide whether the snapshot changed. */
+/** Compare shared evidence; local admission bookkeeping is not a replicated change. */
 export function causalEvidenceChanged(
   previous: StoredCausalEvidence | undefined,
   current: StoredCausalEvidence | undefined,
@@ -36,7 +36,6 @@ export function causalEvidenceChanged(
   return !sameBytes(previous.bytes, current.bytes) ||
     canonicalizeJson(previous.decisions) !== canonicalizeJson(current.decisions) ||
     canonicalizeJson(previous.authorizationEvidence ?? []) !== canonicalizeJson(current.authorizationEvidence ?? []) ||
-    canonicalizeJson(previous.admissionCheckpoint) !== canonicalizeJson(current.admissionCheckpoint) ||
     canonicalizeJson(previous.dismissedHashes ?? []) !== canonicalizeJson(current.dismissedHashes ?? []) ||
     canonicalizeJson(previous.resolvedReviews ?? []) !== canonicalizeJson(current.resolvedReviews ?? [])
 }

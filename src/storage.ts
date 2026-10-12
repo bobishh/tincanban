@@ -314,8 +314,9 @@ export class WorkspaceStorage {
     const previousProofs = await records(workspaceId)
     let proofChanged = false
     const causalChanged = causalEvidenceChanged(previous?.causalEvidence, snapshot.causalEvidence)
+    const checkpointChanged = canonicalizeJson(previous?.causalEvidence?.admissionCheckpoint) !== canonicalizeJson(snapshot.causalEvidence?.admissionCheckpoint)
     const incomingProofChanged = canonicalizeJson(previousProofs) !== canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
-    if (committed && !command && !causalChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
+    if (committed && !command && !causalChanged && !checkpointChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
       return this.reuseCommittedWorkspace(workspaceId, committed, doc)
     }
     const addCommand = (journal: ReturnType<typeof readLocalJournal>) => {
@@ -354,7 +355,7 @@ export class WorkspaceStorage {
         const next = mergeAuthorizationRecords(existing, authorizations)
         proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
         onPhase?.("transaction-write")
-        if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged)
+        if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged || checkpointChanged)
           snapshotStore.put(snapshot)
         if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
         if (command) {

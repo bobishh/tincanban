@@ -8,6 +8,14 @@ import subprocess
 import tempfile
 
 MODELS = [
+    ("SavedAdmission", "SavedAdmission", None),
+    ("SavedAdmissionIgnoresAuthority", "SavedAdmission", "Invariant ReuseRequiresLocalExactAdmission is violated"),
+    ("SavedAdmissionIgnoresRace", "SavedAdmission", "Invariant ReadyUsesCurrentContext is violated"),
+    ("SavedAdmissionTrustsRemote", "SavedAdmission", "Invariant ReuseRequiresLocalExactAdmission is violated"),
+    ("SavedAdmissionPublishesMarker", "SavedAdmission", "Invariant MarkerRenewalIsSilent is violated"),
+    ("ScopeShutdown", "ScopeShutdown", None),
+    ("ScopeShutdownSelfDrain", "ScopeShutdown", "Temporal properties were violated"),
+    ("ScopeShutdownLockDrain", "ScopeShutdown", "Temporal properties were violated"),
     ("WorkspaceFixed", "WorkspaceCommit", None),
     ("WorkspaceBaselineBranches", "WorkspaceCommit", "Invariant SuccessfulCommitRetained is violated"),
     ("WorkspaceBaselineProof", "WorkspaceCommit", "Invariant ProofCoverage is violated"),

@@ -256,6 +256,9 @@ Only contributors changing the Rust runtime need its [WASM build instructions](v
 
 ## Verify changes
 
+[Architecture fitness checks](docs/architecture-fitness.md) bind startup/sync contracts
+to real implementation regressions and bounded TLA+ counterexample checks.
+
 ```sh
 npm run verify:meta-mesh
 npm run quality

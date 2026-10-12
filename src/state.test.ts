@@ -16,6 +16,7 @@ import { executeCommand } from "./domain/commands"
 import { peerStore } from "./sync/peerStore"
 import * as causalAdmission from "./stateCausalAdmission"
 import * as changeAuthorization from "./sync/changeAuthorization"
+import { createSyncActions } from "./stateSyncActions"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -48,6 +49,24 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(admission).not.toHaveBeenCalled()
       expect(commit).not.toHaveBeenCalled()
     } finally { admission.mockRestore(); commit.mockRestore() }
+  })
+
+  it("Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Unchanged data", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!
+    const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
+    evidence.admissionCheckpoint!.policy = "previous-policy"
+    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    const publish = vi.fn()
+    const unsubscribe = app.subscribeLocalChanges(publish)
+    try {
+      await createSyncActions().reclassifyWorkspace(doc.id)
+      expect((await defaultStorage.loadCausalEvidence(doc.id))!.admissionCheckpoint!.policy).not.toBe("previous-policy")
+      expect(publish).not.toHaveBeenCalled()
+      await app.createLeadAsync({ company: "Real change", role: "Engineer", status: "lead" })
+      expect(publish).toHaveBeenCalledOnce()
+    } finally { unsubscribe() }
   })
 
   it.each(["missing", "policy", "raw", "decisions"])("Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing", async changed => {

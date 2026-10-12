@@ -55,3 +55,17 @@ test("Given favicon animation cannot load, when the board opens, then the static
   await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute("href", "/favicon.svg?v=9")
   await faviconLoads(page, [105, 219, 124])
 })
+
+test("Given a malformed optional favicon, when startup and later motion changes render it, then the board stays editable without runtime errors", async ({ page }) => {
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/favicon.svg?v=9", route => route.request().resourceType() === "fetch"
+    ? route.fulfill({ status: 200, contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" />' }) : route.continue())
+  await page.goto("/")
+  await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
+  await expect(page.locator('.can-role-stamp[data-role-stamp="owner"]')).toBeVisible()
+  await expect(page.locator('link[rel="icon"][type="image/svg+xml"]')).toHaveAttribute("href", "/favicon.svg?v=9")
+  await page.emulateMedia({ reducedMotion: "reduce" })
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())))
+  expect(errors).toEqual([])
+})

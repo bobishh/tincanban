@@ -21,7 +21,15 @@ export function useMeshFavicon(presence: Readonly<Ref<Presence>>, accessRole: Re
     stopBlink()
     if (!source) return
     let frames = cache.get(accessRole.value)
-    if (!frames) { frames = presenceFrames(source, accessRole.value); cache.set(accessRole.value, frames) }
+    try {
+      if (!frames) { frames = presenceFrames(source, accessRole.value); cache.set(accessRole.value, frames) }
+    } catch {
+      // Optional decoration must not break later role or connection updates.
+      source = undefined
+      cache.clear()
+      if (original) paint(original)
+      return
+    }
     paint(frames[presence.value])
     if (presence.value !== "reconnecting" || motion?.matches) return
     let dim = false
