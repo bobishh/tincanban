@@ -141,6 +141,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-resize:disabled { visibility: hidden; }
 @media (max-width: 600px) {
   .spatial-window {
+    transition: none;
     left: max(6px, var(--safe-left)) !important;
     top: max(6px, var(--safe-top)) !important;
     width: calc(100vw - max(6px, var(--safe-left)) - max(6px, var(--safe-right))) !important;
