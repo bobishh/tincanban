@@ -14,7 +14,7 @@ type PolicyReceipt = {
   revision: number; revoked: boolean; challengeId: string; authorizationHash: string;
 }
 
-async function certificateChain(profile: LocalProfile): Promise<DeviceCertificate[]> {
+export async function rustyCertificateChain(profile: LocalProfile): Promise<DeviceCertificate[]> {
   const pool = await defaultProofStore.listCertificates()
   const byHash = new Map(await Promise.all(pool.map(async cert => [await certHashDefault(cert), cert] as const)))
   const chain: DeviceCertificate[] = []
@@ -53,7 +53,7 @@ function validChallengeTiming(payload: Challenge, now: number): boolean {
 export async function approveRustyScope(access: BlindAccess, profile: LocalProfile, revoked = false): Promise<number> {
   const publicOrigin = blindOrigin(access.origin)
   const serviceId = await blindHash(decodeBlindBytes(access.servicePublicKey))
-  const controller = { identity: profile.identity, deviceId: profile.device.deviceId, certificates: await certificateChain(profile) }
+  const controller = { identity: profile.identity, deviceId: profile.device.deviceId, certificates: await rustyCertificateChain(profile) }
   const { challenge } = await readBlindJson<{ challenge: SignedEnvelope<Challenge> }>(await fetchBlind(`${publicOrigin}/v2/enrollment/challenge`, {
     method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ version: 1, scopeId: access.scopeId, ...controller }),

@@ -1,5 +1,6 @@
 import { blindHash, inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
+import type { BlindCheckpointRequest, submitBlindCheckpoint } from "./blindCheckpoint"
 import { canonicalizeJson } from "../domain/identity"
 
 export type BlindReplicaConfig = BlindAccess & { workspaceId: string; keyEpoch: number; contentKey: string; cursor: number; lastUploaded: string; removalPending?: boolean }
@@ -11,9 +12,11 @@ export type BlindReplicaStore = {
   mergeChat: (id: string, chat: unknown) => Promise<void>
   persist: (config: BlindReplicaConfig) => Promise<void>
   documentRevision?: (bytes: Uint8Array) => Promise<string>
+  checkpointAllowed?: (request?: BlindCheckpointRequest) => Promise<boolean>
+  prepareCheckpoint?: (bytes: Uint8Array, object: Awaited<ReturnType<typeof encryptBlindObject>>, expectedSequence: number) => Promise<BlindCheckpointRequest | undefined>
   diagnostic?: (event: string, detail: Record<string, unknown>) => void
 }
-type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject; upload: typeof uploadBlindObject }
+type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject; upload: typeof uploadBlindObject; checkpoint?: typeof submitBlindCheckpoint }
 type Snapshot = { version: 1; workspaceId: string; document: string; authorization: unknown; chat: unknown }
 const maximumPlaintextBytes = 16 * 1024 * 1024 - 16
 type ContentParts = { document: string; authority: string; chat: string; revision?: string }
@@ -30,9 +33,13 @@ export class BlindReplica {
   private receivedHash: string | undefined
   private previousParts: ContentParts | undefined
   private receivedParts: ContentParts | undefined
+  private retainedObjects = 0
+  private checkpointSequence = 0
+  private checkpointPending: { hash: string; parts: ContentParts; bytes: number; request: BlindCheckpointRequest } | undefined
   private pending: { hash: string; object: Awaited<ReturnType<typeof encryptBlindObject>> } | undefined
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
-    private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject }) {}
+    private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject,
+      checkpoint: async (access, request) => (await import("./blindCheckpoint")).submitBlindCheckpoint(access, request) }) {}
 
   async pull(): Promise<boolean> {
     // Bound each pass; continue large inventories on the next scheduled pass.
@@ -55,18 +62,17 @@ export class BlindReplica {
         this.receivedHash = await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot)))
         this.receivedParts = await this.parts(snapshot)
       }
-      if (!inventory.hasMore) return true
+      if (!inventory.hasMore) {
+        this.retainedObjects = inventory.objectCount ?? 0
+        this.checkpointSequence = inventory.maxSequence ?? this.config.cursor
+        return true
+      }
     }
     return false
   }
 
   async push(): Promise<void> {
-    const bytes = await this.store.read(this.config.workspaceId)
-    const snapshot: Snapshot = { version: 1, workspaceId: this.config.workspaceId, document: encodeBlindBytes(bytes),
-      authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
-    const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot))
-    if (plaintext.length > maximumPlaintextBytes) throw new Error("Workspace snapshot exceeds Rusty object limit")
-    const hash = await blindHash(plaintext)
+    const { snapshot, plaintext, hash } = await this.snapshot()
     if (hash === this.config.lastUploaded) {
       this.observe("mesh.rusty.upload.skipped", { phase: "unchanged", bytes: plaintext.length })
       return
@@ -98,6 +104,67 @@ export class BlindReplica {
     this.observe("mesh.rusty.upload.completed", { phase, changedFields, bytes: plaintext.length })
   }
 
+  private async snapshot() {
+    const bytes = await this.store.read(this.config.workspaceId)
+    const snapshot: Snapshot = { version: 1, workspaceId: this.config.workspaceId, document: encodeBlindBytes(bytes),
+      authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
+    const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot))
+    if (plaintext.length > maximumPlaintextBytes) throw new Error("Workspace snapshot exceeds Rusty object limit")
+    return { bytes, snapshot, plaintext, hash: await blindHash(plaintext) }
+  }
+
+  private checkpointAvailable(): boolean {
+    return !!(this.store.prepareCheckpoint && this.store.checkpointAllowed && this.transport.checkpoint &&
+      (this.checkpointPending || this.retainedObjects >= 8))
+  }
+
+  private async prepareCheckpointState(): Promise<boolean> {
+    const allowed = this.store.checkpointAllowed!
+    if (!await allowed(this.checkpointPending?.request)) {
+      this.checkpointPending = undefined
+      this.observe("mesh.rusty.checkpoint.skipped", { phase: "admission_incomplete" })
+      return false
+    }
+    if ((this.checkpointPending?.request.authorization.payload.expiresAt ?? Infinity) <= Date.now()) this.checkpointPending = undefined
+    if (!this.checkpointPending) {
+      const { bytes, snapshot, plaintext, hash } = await this.snapshot()
+      const object = await encryptBlindObject(this.config.scopeId, this.config.keyEpoch, decodeBlindBytes(this.config.contentKey), plaintext)
+      const request = await this.store.prepareCheckpoint!(bytes, object, this.checkpointSequence)
+      if (!request) return false
+      this.checkpointPending = { hash, request, bytes: plaintext.length, parts: await this.parts(snapshot) }
+    }
+    // Signatures do not override local ownership/admission changes during preparation.
+    if (!await allowed(this.checkpointPending.request)) { this.checkpointPending = undefined; return false }
+    return true
+  }
+
+  private async checkpoint(): Promise<"skipped" | "completed" | "conflict"> {
+    if (!this.checkpointAvailable() || !await this.prepareCheckpointState()) return "skipped"
+    const pending = this.checkpointPending!
+    this.observe("mesh.rusty.checkpoint.started", { phase: "replacement", bytes: pending.bytes })
+    let sequence: number
+    try { sequence = (await this.transport.checkpoint!(this.config, pending.request)).payload.sequence }
+    catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "checkpoint_conflict") {
+        this.checkpointPending = undefined
+        this.observe("mesh.rusty.checkpoint.skipped", { phase: "concurrent_writer" })
+        return "conflict"
+      }
+      this.observe("mesh.rusty.checkpoint.failed", { phase: "delivery", bytes: pending.bytes })
+      throw error
+    }
+    const next = { ...this.config, cursor: Math.max(this.config.cursor, sequence), lastUploaded: pending.hash }
+    await this.store.persist(next)
+    this.config.cursor = next.cursor
+    this.config.lastUploaded = next.lastUploaded
+    this.previousParts = pending.parts
+    this.pending = undefined
+    this.checkpointPending = undefined
+    this.retainedObjects = 1
+    this.observe("mesh.rusty.checkpoint.completed", { phase: "replacement", bytes: pending.bytes })
+    return "completed"
+  }
+
   private async acknowledgeStored(hash: string, parts: ContentParts | undefined, phase: string, bytes: number) {
     await this.store.persist({ ...this.config, lastUploaded: hash })
     this.config.lastUploaded = hash
@@ -111,15 +178,33 @@ export class BlindReplica {
       blindHash(new TextEncoder().encode(snapshot.document)),
       blindHash(new TextEncoder().encode(canonicalizeJson(snapshot.authorization))),
       blindHash(new TextEncoder().encode(canonicalizeJson(snapshot.chat))),
-      this.store.documentRevision?.(decodeBlindBytes(snapshot.document)).catch(() => undefined),
+      this.documentRevision(decodeBlindBytes(snapshot.document)),
     ])
     return { document, authority, chat, ...(revision !== undefined ? { revision } : {}) }
   }
 
+  private async documentRevision(bytes: Uint8Array): Promise<string | undefined> {
+    try { return await this.store.documentRevision?.(bytes) }
+    catch (error) {
+      const errorCode = error instanceof RangeError ? "revision_invalid_document" : error instanceof TypeError ? "revision_invalid_type" : "revision_unavailable"
+      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode })
+      return undefined
+    }
+  }
+
   private observe(event: string, detail: Record<string, unknown>) {
-    try { this.store.diagnostic?.(event, { workspaceId: this.config.workspaceId, entityType: "scope", entityId: this.config.scopeId, component: "rusty", operation: "upload", ...detail }) }
+    try { this.store.diagnostic?.(event, { workspaceId: this.config.workspaceId, entityType: "scope", entityId: this.config.scopeId, component: "rusty", operation: event.includes("checkpoint") ? "checkpoint" : event.includes("revision") ? "revision" : "upload", ...detail }) }
     catch { /* Diagnostic failures must not affect durable replication. */ }
   }
 
-  async sync(): Promise<boolean> { const caughtUp = await this.pull(); await this.push(); return caughtUp }
+  async sync(): Promise<boolean> {
+    const caughtUp = await this.pull()
+    if (caughtUp) {
+      const result = await this.checkpoint()
+      if (result === "conflict") return false
+      if (result === "completed") return true
+    }
+    await this.push()
+    return caughtUp
+  }
 }

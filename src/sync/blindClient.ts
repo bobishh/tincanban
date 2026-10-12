@@ -1,6 +1,9 @@
+/* global __TINCANBAN_BUILD_COMMIT__ */
+import { blindOrigin } from "./blindOrigin"
+export { blindOrigin } from "./blindOrigin"
 import { decodeBlindBytes, encodeBlindBytes, type BlindObject } from "./blindEnvelope"
 
-export type BlindAccess = { origin: string; scopeId: string; servicePublicKey: string; readToken: string; writeToken: string; policyRevision: number }
+export type BlindAccess = { origin: string; scopeId: string; servicePublicKey: string; readToken: string; writeToken: string; policyRevision: number; client?: "tincanban" | "automation"; clientBuild?: string }
 export type BlindReceipt = { payload: { kind: "blind-storage-receipt"; version: 2; serviceId: string; scopeId: string; keyEpoch: number;
   objectId: string; sequence: number; policyRevision: number; requestId: string }; signerKeyId: string; signature: string }
 const encoder = new TextEncoder()
@@ -18,17 +21,13 @@ export async function blindHash(bytes: Uint8Array): Promise<string> {
 }
 export async function blindObjectId(object: BlindObject): Promise<string> { return blindHash(encoder.encode(canonicalBlindJson(object))) }
 
-export function blindOrigin(input: string): string {
-  const url = new URL(input.includes("://") ? input : `https://${input}`)
-  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash ||
-    (url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))) {
-    throw new Error("Rusty needs an HTTPS origin; HTTP is allowed only on loopback")
-  }
-  return url.origin
-}
 
 export async function fetchBlind(url: string, init: RequestInit): Promise<Response> {
-  const response = await fetch(url, { ...init, redirect: "manual" })
+  const headers = new Headers(init.headers)
+  if (!headers.has("X-Rusty-Client")) headers.set("X-Rusty-Client", "tincanban")
+  const build = typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "" : __TINCANBAN_BUILD_COMMIT__
+  if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(build) && !headers.has("X-Rusty-Build")) headers.set("X-Rusty-Build", build)
+  const response = await fetch(url, { ...init, headers, redirect: "manual" })
   if (response.redirected || (response.status >= 300 && response.status < 400)) {
     throw new Error("Rusty redirects are not allowed")
   }
@@ -53,20 +52,23 @@ export async function readBlindJson<T>(response: Response, maximumBytes = 32 * 1
   let offset = 0
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
   const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as T
-  if (!response.ok) throw new Error((value as { message?: string }).message || `Rusty returned HTTP ${response.status}`)
+  if (!response.ok) {
+    const error = value as { message?: string; code?: string }
+    throw Object.assign(new Error(error.message || `Rusty returned HTTP ${response.status}`), { code: error.code, status: response.status })
+  }
   return value
 }
 
-export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string }> {
+export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1 }> {
   const origin = blindOrigin(input)
   const descriptor = await readBlindJson<{ protocolVersions: number[]; publicOrigin: string; service: { serviceId: string; publicKey: string };
-    capabilities: { modes: string[]; applicationWrites: boolean; classification: boolean } }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
+    capabilities: { modes: string[]; applicationWrites: boolean; classification: boolean; snapshotCheckpoints?: { version: number } } }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
   if (!descriptor.protocolVersions?.includes(2) || descriptor.publicOrigin !== origin || !descriptor.capabilities?.modes?.includes("blind") ||
     descriptor.capabilities.applicationWrites !== false || descriptor.capabilities.classification !== false ||
     !descriptor.service || await blindHash(decodeBlindBytes(descriptor.service.publicKey)) !== descriptor.service.serviceId) {
     throw new Error("This service does not support blind Rusty replication")
   }
-  return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId }
+  return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId, ...(descriptor.capabilities.snapshotCheckpoints?.version === 1 ? { snapshotCheckpoints: 1 as const } : {}) }
 }
 
 export async function verifyBlindReceipt(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string): Promise<void> {
@@ -87,26 +89,37 @@ export async function uploadBlindObject(access: BlindAccess, object: BlindObject
   const id = await blindObjectId(object)
   const receipt = await readBlindJson<BlindReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}`, {
     method: "PUT", signal: AbortSignal.timeout(30000),
-    headers: { Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json", "X-Rusty-Request-Id": requestId }, body: JSON.stringify(object),
+    headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json", "X-Rusty-Request-Id": requestId }, body: JSON.stringify(object),
   }), 16384)
   await verifyBlindReceipt(receipt, access, object, requestId)
   return receipt
 }
-export async function inventoryBlindObjects(access: BlindAccess, after: number): Promise<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean }> {
-  const result = await readBlindJson<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean }>(
+export async function inventoryBlindObjects(access: BlindAccess, after: number): Promise<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean; objectCount?: number; maxSequence?: number }> {
+  const result = await readBlindJson<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean; objectCount?: number; maxSequence?: number }>(
     await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects?after=${after}`, {
-      signal: AbortSignal.timeout(15000), headers: { Authorization: `Bearer ${access.readToken}` },
+      signal: AbortSignal.timeout(15000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}` },
     }), 65536)
   if (!Array.isArray(result.objects) || result.objects.length > 128 || typeof result.hasMore !== "boolean" || !Number.isSafeInteger(result.cursor) || result.cursor < after ||
     result.objects.some((object, index) => !/^[A-Za-z0-9_-]{43}$/.test(object.objectId) || !Number.isSafeInteger(object.sequence) || object.sequence <= (result.objects[index - 1]?.sequence ?? after)) ||
     result.cursor !== (result.objects.at(-1)?.sequence ?? after) || result.hasMore && result.objects.length === 0) throw new Error("Invalid Rusty inventory")
+  validateCheckpointInventory(result)
   return result
 }
 export async function downloadBlindObject(access: BlindAccess, id: string): Promise<BlindObject> {
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) throw new Error("Invalid encrypted object ID")
   const object = await readBlindJson<BlindObject>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}`, {
-    signal: AbortSignal.timeout(30000), headers: { Authorization: `Bearer ${access.readToken}` },
+    signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}` },
   }))
   if (object.scopeId !== access.scopeId || await blindObjectId(object) !== id) throw new Error("Rusty object integrity failure")
   return object
+}
+
+function validateCheckpointInventory(result: { objectCount?: number; maxSequence?: number; cursor: number; hasMore: boolean }): void {
+  if (result.objectCount !== undefined && (!Number.isSafeInteger(result.objectCount) || result.objectCount < 0 || result.objectCount > 10000) ||
+    result.maxSequence !== undefined && (!Number.isSafeInteger(result.maxSequence) || result.maxSequence < result.cursor ||
+      !result.hasMore && result.maxSequence !== result.cursor)) throw new Error("Invalid Rusty checkpoint inventory")
+}
+
+export function blindProducerHeaders(access: BlindAccess): Record<string, string> {
+  return { "X-Rusty-Client": access.client ?? "tincanban", ...(access.clientBuild && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(access.clientBuild) ? { "X-Rusty-Build": access.clientBuild } : {}) }
 }

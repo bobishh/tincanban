@@ -81,6 +81,17 @@ invitation, content key, or Editor/Visitor application grant. Board history and
 chat are encrypted by clients, which still verify authorizations before merging.
 See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
 
+Compatible Rusty services advertise owner-authorized snapshot checkpoints. After
+eight retained snapshots, a caught-up owner client replaces their storage prefix
+with one freshly encrypted snapshot carrying complete admitted document history
+and the current bounded chat export. The local raw journal must contain no pending
+or quarantined changes, including dismissed or resolved review records. Ownership
+changes and unfinished local writes prevent cleanup. Signed receipts bind the
+replacement and exact previous sequence; concurrent writers force another pull.
+Uncertain delivery retries keep the same ciphertext and authorization. Older
+services retain ordinary append-only replication, and automation write tokens
+cannot authorize checkpoint deletion.
+
 ### Public board links
 
 Owners can open **Settings → Workspace → Publish board** to review and publish

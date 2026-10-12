@@ -36,3 +36,15 @@ test("durable receipt binds pinned service, ciphertext, scope, epoch, policy and
   await expect(verifyBlindReceipt({ ...receipt, signature: encodeBlindBytes(new Uint8Array(64)) }, access, object, "fresh-request")).rejects.toThrow("signature invalid")
   await expect(verifyBlindReceipt(receipt, { ...access, servicePublicKey: encodeBlindBytes(new Uint8Array(32)) }, object, "fresh-request")).rejects.toThrow("does not cover")
 })
+
+test("Inventory metadata cannot claim a completed pass while withholding newer objects", async () => {
+  const access: BlindAccess = { origin: "http://localhost:8080", scopeId: "scope", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, client: "automation", clientBuild: "a".repeat(40) }
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    const headers = new Headers(init.headers)
+    expect(headers.get("X-Rusty-Client")).toBe("automation")
+    expect(headers.get("X-Rusty-Build")).toBe("a".repeat(40))
+    return Response.json({ objects: [], cursor: 0, hasMore: false, objectCount: 8, maxSequence: 8 })
+  }))
+  try { await expect(inventoryBlindObjects(access, 0)).rejects.toThrow("Invalid Rusty checkpoint inventory") }
+  finally { vi.unstubAllGlobals() }
+})

@@ -1,12 +1,9 @@
-import { load, getHeads, free } from "@automerge/automerge/slim"
 import { onBeforeUnmount, ref, watch, type Ref } from "vue"
 import type { useTincanban } from "../state"
 import type { LocalProfile } from "../domain/identity"
 import { readLocal, writeLocal } from "../localDb"
-import { exportAuthorizationBundle } from "./changeAuthorization"
-import { exportChat, receiveChat, subscribeChat } from "../chat/service"
-import { meshTrace } from "./meshTrace"
-import { blindOrigin, discoverBlindKeeper } from "./blindClient"
+import { subscribeChat } from "../chat/service"
+import { blindOrigin } from "./blindOrigin"
 import { decodeBlindBytes, encodeBlindBytes } from "./blindEnvelope"
 import type { BlindReplica, BlindReplicaConfig } from "./blindReplication"
 import { replicaKey, type ReplicaHealth } from "./replicationHealth"
@@ -80,6 +77,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     const owner = personId()
     const doc = await tincanban.readWorkspaceDoc(workspaceId)
     if (!owner || doc.ownerPersonId !== owner) throw new Error("Only the workspace owner can configure Rusty")
+    const { discoverBlindKeeper } = await import("./blindClient")
     const service = await discoverBlindKeeper(originInput)
     if (configs.value.some(config => config.origin === service.origin && config.workspaceId === workspaceId)) throw new Error("Rusty already connected to this board")
     const config: BlindReplicaConfig = { ...service, workspaceId, scopeId: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
@@ -150,21 +148,8 @@ async function approveScope(config: BlindReplicaConfig, profile: LocalProfile, r
 
 async function createReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig) => Promise<void>) {
-  const { BlindReplica } = await import("./blindReplication")
-  ensureIdentity()
-  return new BlindReplica({ ...config }, {
-    read: async id => { ensureIdentity(); return tincanban.readWorkspaceBytes(id) },
-    authorization: bytes => exportAuthorizationBundle(bytes),
-    merge: async (id, bytes, authorization) => { ensureIdentity(); await tincanban.mergeAuthorizedWorkspace(id, bytes, authorization) },
-    readChat: async id => { ensureIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },
-    mergeChat: async (id, chat) => { ensureIdentity(); await receiveChat(id, chat, true) },
-    documentRevision: async bytes => {
-      const doc = load(bytes)
-      try { return getHeads(doc).sort().join(",") } finally { free(doc) }
-    },
-    diagnostic: (event, detail) => meshTrace(event, detail, event.endsWith("failed") ? "warn" : "info"),
-    persist,
-  })
+  const { createBlindReplica } = await import("./blindReplicaStore")
+  return createBlindReplica(config, tincanban, ensureIdentity, persist)
 }
 
 async function loadReplicaConfigs(owner: string): Promise<BlindReplicaConfig[]> {
