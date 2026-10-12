@@ -18,7 +18,7 @@ for (const width of [1280, 390]) test(`Given Device sync at ${width}px, when swi
   await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeHidden()
   await expect(dialog.getByRole("button", { name: "Leave mesh", exact: true })).toBeHidden()
   await dialog.getByRole("tab", { name: "Advanced", exact: true }).click()
-  await expect(dialog.getByText("Technical details", { exact: true })).toBeVisible()
+  await expect(dialog.locator("details")).toHaveCount(0)
   await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
   await participants.click()
   await participants.focus()
