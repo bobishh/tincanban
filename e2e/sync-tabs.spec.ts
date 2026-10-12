@@ -11,6 +11,9 @@ for (const width of [1280, 390]) test(`Given Device sync at ${width}px, when swi
   const dialog = page.getByRole("dialog", { name: "Device sync" })
   const participants = dialog.getByRole("tab", { name: "Participants", exact: true })
   await expect(participants).toHaveAttribute("aria-selected", "true")
+  if (width < 640) {
+    for (const tab of await dialog.getByRole("tab").all()) await expect(tab).toHaveCSS("border-bottom-width", "2px")
+  }
   await expect(dialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
   await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeHidden()
   await expect(dialog.getByRole("button", { name: "Leave mesh", exact: true })).toBeHidden()

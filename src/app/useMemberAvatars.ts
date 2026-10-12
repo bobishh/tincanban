@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, watch } from "vue"
 import { memberAvatarData, memberProfileEntityId } from "../domain/avatarData"
 import { defaultStorage } from "../storage"
 import { newerIdentityPhoto, parseIdentityPhoto, saveIdentityPhoto, type IdentityPhoto } from "./identityPhoto"
@@ -33,6 +33,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     return running
   }
   async function projectPhoto(value: IdentityPhoto, all: boolean) {
+    if (!workspace.ready.value) return
     const id = personId()
     const active = workspace.getActiveDoc()?.id
     const ids = all ? workspace.availableWorkspaces.value.map(item => item.id) : active ? [active] : []
@@ -89,8 +90,8 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     void workspace.docVersion.value
     const doc = workspace.getActiveDoc()
     const entity = doc?.entities[memberProfileEntityId(personId() ?? "")]
-    return `${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
+    return `${workspace.ready.value}:${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
   }, () => { void serial(reconcilePhoto).catch(() => { avatarNotice.value = "Profile photo could not load. Reload to retry." }) }, { immediate: true })
-  onBeforeUnmount(() => { disposed = true; stop() })
+  onScopeDispose(() => { disposed = true; stop() })
   return { memberAvatars, currentAvatar, saveAvatar, avatarNotice }
 }

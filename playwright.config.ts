@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test"
 const port = Number(process.env.TINCANBAN_E2E_PORT ?? 4244)
 
 const networkSpecs = [
+  "**/mobile-profile-sync.spec.ts",
   "**/member-access.spec.ts",
   "**/browser-native.spec.ts",
   "**/keeper-join.spec.ts",
