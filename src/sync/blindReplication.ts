@@ -70,16 +70,16 @@ export class BlindReplica {
     if (hash === this.config.lastUploaded) return
     if (hash === this.receivedHash) {
       // Already durable and admitted; do not echo remote state as fresh ciphertext.
-      await this.store.persist({ ...this.config, lastUploaded: hash })
-      this.config.lastUploaded = hash
-      this.pending = undefined
-      this.previousParts = this.receivedParts
-      this.observe("mesh.rusty.upload.skipped", { phase: "remote_already_stored", bytes: plaintext.length })
+      await this.acknowledgeStored(hash, this.receivedParts, "remote_already_stored", plaintext.length)
       return
     }
     const parts = await this.parts(snapshot)
     const previous = this.previousParts ?? this.receivedParts
     const changedFields = changedParts(parts, previous)
+    if (changedFields.length === 1 && changedFields[0] === "encoding") {
+      await this.acknowledgeStored(hash, parts, "encoding_unchanged_state", plaintext.length)
+      return
+    }
     const retry = this.pending?.hash === hash
     const phase = uploadPhase(retry, previous !== undefined)
     if (this.pending?.hash !== hash) this.pending = { hash, object: await encryptBlindObject(this.config.scopeId, this.config.keyEpoch, decodeBlindBytes(this.config.contentKey), plaintext) }
@@ -93,6 +93,14 @@ export class BlindReplica {
     this.pending = undefined
     this.previousParts = parts
     this.observe("mesh.rusty.upload.completed", { phase, changedFields, bytes: plaintext.length })
+  }
+
+  private async acknowledgeStored(hash: string, parts: ContentParts | undefined, phase: string, bytes: number) {
+    await this.store.persist({ ...this.config, lastUploaded: hash })
+    this.config.lastUploaded = hash
+    this.pending = undefined
+    this.previousParts = parts
+    this.observe("mesh.rusty.upload.skipped", { phase, bytes })
   }
 
   private async parts(snapshot: Snapshot): Promise<ContentParts> {

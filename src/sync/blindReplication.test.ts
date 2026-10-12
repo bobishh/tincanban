@@ -30,13 +30,15 @@ test("Given unchanged document heads, when binary encoding differs, diagnostics 
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
   let bytes = new Uint8Array([1]); let chat: unknown = null
   const events: Array<{ event: string; detail: Record<string, unknown> }> = []
+  let uploads = 0
   const replica = new BlindReplica(config, {
     read: async () => bytes, authorization: async () => ({ signed: true }), readChat: async () => chat,
     documentRevision: async () => "same-logical-heads", diagnostic: (event, detail) => events.push({ event, detail }),
     mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
-  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: async () => ({} as BlindReceipt) })
+  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: async () => { uploads++; return {} as BlindReceipt } })
   await replica.push(); bytes = new Uint8Array([2]); await replica.push()
-  expect(events.filter(value => value.event.endsWith("completed")).at(-1)?.detail.changedFields).toEqual(["encoding"])
+  expect(uploads).toBe(1)
+  expect(events.at(-1)?.detail.phase).toBe("encoding_unchanged_state")
   chat = { message: "private chat content" }; await replica.push()
   expect(events.filter(value => value.event.endsWith("completed")).at(-1)?.detail.changedFields).toEqual(["chat"])
   expect(JSON.stringify(events)).not.toContain("private chat content")
