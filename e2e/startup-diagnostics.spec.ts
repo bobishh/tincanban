@@ -22,7 +22,7 @@ test("Given an intake withholding every acknowledgement, When a mobile board ope
   } finally { acknowledge() }
 })
 
-for (const status of [202, 503]) test(`Given startup debug and intake ${status}, When a mobile page reloads, Then phase checkpoints identify startup and the board stays usable`, async ({ page }) => {
+for (const status of [202, 503]) for (const policyChanged of [false, true]) test(`Given startup debug, intake ${status} and ${policyChanged ? "changed" : "unchanged"} policy, When a mobile page reloads, Then phase checkpoints identify actual work and the board stays usable`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   const events: Array<{ event: string; operation: string; device_id: string; attrs: Record<string, unknown> }> = []
   await page.route("https://telemetry.invalid/events", async route => {
@@ -33,14 +33,25 @@ for (const status of [202, 503]) test(`Given startup debug and intake ${status},
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await expect.poll(() => events.some(event => event.event === "startup.phase.completed" && event.attrs.stage === "start-sync")).toBe(true)
+  if (policyChanged) await page.evaluate(async () => {
+    const app = (await import("/src/state.ts")).useTincanban()
+    const storage = (await import("/src/storage.ts")).defaultStorage
+    const A = await import("/@id/@automerge/automerge/slim")
+    const doc = app.getActiveDoc()!
+    const evidence = (await storage.loadCausalEvidence(doc.id))!
+    evidence.admissionCheckpoint!.policy = "previous-policy"
+    await storage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, evidence)
+  })
   const before = events.length
   await page.reload()
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await expect.poll(() => events.slice(before).some(event => event.event === "startup.phase.completed" && event.attrs.stage === "start-sync")).toBe(true)
   await expect.poll(() => events.slice(before).some(event => event.event === "startup.phase.completed" && event.operation === "access-ui-commit")).toBe(true)
-  for (const stage of ["entry", "policy-wasm", "admission-worker-init", "automerge-wasm", "identity-load", "initial-workspace-load", "workspace-preview", "history-reclassification", "reclassify-admit-history", "workspace-projection", "personal-root-load", "start-sync", "access-active-workspace", "access-serialize", "access-policy", "access-worker-wasm", "access-worker-decode", "access-worker-decide", "access-current-owner", "access-ui-commit"]) {
+  for (const stage of ["entry", "policy-wasm", "admission-worker-init", "automerge-wasm", "identity-load", "initial-workspace-load", "workspace-preview", "history-reclassification", "reclassify-reuse-projection", "workspace-projection", "personal-root-load", "start-sync", "access-active-workspace", "access-serialize", "access-policy", "access-worker-wasm", "access-worker-decode", "access-worker-decide", "access-current-owner", "access-ui-commit"]) {
     await expect.poll(() => events.slice(before).some(event => event.event === "startup.phase.started" && event.operation === stage), { message: `Missing checkpoint: ${stage}` }).toBe(true)
   }
+  expect(events.slice(before).some(event => event.event === "startup.phase.started" && event.operation === "reclassify-admit-history")).toBe(policyChanged)
+  expect(events.slice(before).some(event => event.event === "startup.phase.started" && event.operation === "reclassify-commit")).toBe(policyChanged)
   expect(events.slice(before).find(event => event.event === "startup.phase.completed" && event.operation === "access-serialize")?.attrs.bytes).toBeGreaterThan(0)
   expect(events.slice(before).find(event => event.event === "startup.phase.completed" && event.operation === "access-worker-wasm")?.attrs.bytes).toBeGreaterThan(0)
   expect(events.slice(before).find(event => event.attrs.stage === "entry")?.device_id).toBeTruthy()
