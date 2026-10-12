@@ -22,8 +22,8 @@ second device and keep working across both.
 - On reload, a full-screen loader stays visible until the saved board and fonts
   have rendered. The board then fades into view-only mode while local checks run.
   The same three dots appear in sequence on the startup screen and beside the
-  compact status below the filters. The status shows the current stage;
-  its space stays reserved after checks finish. Editing becomes
+  compact floating notification. The notification shows the current stage
+  without reserving space on the board, and fades away after checks finish. Editing becomes
   available after history and access checks succeed; failed checks preserve the
   saved view and show a retry message.
 - Share selected boards with an editor or a read-only visitor.
@@ -330,6 +330,10 @@ Select participants through **Invite @participant** to attach stable identity
 mentions. Mentions retain workspace visibility and do not create private messages.
 
 Item, chat, and discussion windows share movement, resizing, and focus order.
+Windows and changed panels fade in; maximize and restore animate without slowing
+dragging or keyboard movement. On phones, lead details use one compact heading,
+a single scrolling row of stages, and framed content with a persistent scroll
+indicator. Reduced motion follows the device preference.
 Drag the title bar or resize handle; focused controls support arrow keys and
 Shift for larger steps. **Next window** cycles views, including on narrow screens.
 Window geometry stays local to each workspace. Native content zoom remains available.

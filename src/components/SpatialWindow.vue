@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue"
 import { cycleSpatialWindow, ensureWindowHost, focusSpatialWindow, raiseWindow, registerSpatialWindow, saveWindowGeometry, unregisterSpatialWindow, updateWindowGeometry, type WindowDescriptor, type WindowGeometry } from "../ui/windowManager"
+import { hideLeavingElement, showEnteringElement } from "../ui/modal"
+import ScrollFrame from "./ScrollFrame.vue"
 
 const props = withDefaults(defineProps<{
-  windowId: string; workspaceId: string; title: string; ariaLabel?: string; closeLabel?: string; resizeLabel?: string; initialWidth?: number; initialHeight?: number
+  windowId: string; workspaceId: string; title: string; ariaLabel?: string; closeLabel?: string; resizeLabel?: string; initialWidth?: number; initialHeight?: number; framed?: boolean
 }>(), { initialWidth: 620, initialHeight: 620, closeLabel: "Close" })
 const emit = defineEmits<{ close: [] }>()
 const host = ensureWindowHost()
@@ -11,6 +13,7 @@ const root = ref<HTMLElement | null>(null)
 const descriptor = shallowRef<WindowDescriptor | null>(null)
 const duplicate = ref(false)
 const maximized = ref(false)
+const geometryAnimating = ref(false)
 let restored: WindowGeometry | null = null
 let deferredFocusFrame = 0
 let gesture: { id: number; x: number; y: number; initial: WindowGeometry; resize: boolean } | null = null
@@ -48,6 +51,7 @@ function raise() { if (descriptor.value) raiseWindow(descriptor.value) }
 function start(event: PointerEvent, resize = false) {
   if (event.button !== 0 || (!resize && (event.target as HTMLElement).closest("button, a, input, textarea"))) return
   if (!descriptor.value || maximized.value) return
+  geometryAnimating.value = false
   raise()
   gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, initial: { ...descriptor.value.geometry }, resize }
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -67,17 +71,20 @@ function arrow(event: KeyboardEvent, resize = false) {
   const dx = event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0
   const dy = event.key === "ArrowUp" ? -delta : event.key === "ArrowDown" ? delta : 0
   if (!dx && !dy) return
+  geometryAnimating.value = false
   event.preventDefault()
   const g = descriptor.value.geometry
   updateWindowGeometry(descriptor.value, resize ? { ...g, width: g.width + dx, height: g.height + dy } : { ...g, x: g.x + dx, y: g.y + dy })
   saveWindowGeometry(descriptor.value)
 }
 function resizeViewport() {
+  geometryAnimating.value = false
   if (!descriptor.value) return
   updateWindowGeometry(descriptor.value, maximized.value ? { x: 12, y: 12, width: window.innerWidth, height: window.innerHeight } : descriptor.value.geometry)
 }
 function maximize() {
   if (!descriptor.value) return
+  geometryAnimating.value = true
   if (maximized.value && restored) updateWindowGeometry(descriptor.value, restored)
   else { restored = { ...descriptor.value.geometry }; updateWindowGeometry(descriptor.value, { x: 12, y: 12, width: window.innerWidth, height: window.innerHeight }) }
   maximized.value = !maximized.value
@@ -93,7 +100,8 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 
 <template>
   <Teleport :to="host">
-    <section v-if="!duplicate" ref="root" class="dialog spatial-window" role="dialog" :aria-label="ariaLabel ?? title" tabindex="-1"
+    <Transition name="window" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
+    <section v-if="!duplicate" ref="root" class="dialog spatial-window" :class="{ 'spatial-geometry-motion': geometryAnimating }" role="dialog" :aria-label="ariaLabel ?? title" tabindex="-1"
       :data-window-id="windowId" :style="style" @pointerdown.capture="raise" @focusin="raise" @keydown="keydown">
       <header class="spatial-titlebar" tabindex="0" :aria-label="`Move ${title}: arrow keys`"
         @pointerdown="start($event)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event)">
@@ -103,21 +111,32 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
           <button class="icon-button" type="button" :aria-label="closeLabel" title="Close window" @click="emit('close')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </div>
       </header>
-      <div class="spatial-body"><slot /></div>
+      <div :key="`${workspaceId}:${windowId}`" class="spatial-body" :class="{ 'spatial-body-framed': framed }">
+        <slot name="toolbar" />
+        <ScrollFrame v-if="framed"><slot /></ScrollFrame>
+        <slot v-else />
+      </div>
       <button class="spatial-resize" type="button" :aria-label="resizeLabel ?? `Resize ${title}: arrow keys`" :disabled="maximized"
         @pointerdown="start($event, true)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event, true)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 20 12-12M14 20l6-6" /></svg></button>
     </section>
+    </Transition>
   </Teleport>
 </template>
 
 <style scoped>
 .spatial-window { container: detail-window / inline-size; padding: 0; max-width: none; max-height: none; position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 0; min-height: 0; background: var(--panel, white); color: var(--ink, #171717); border: 2px solid var(--line, #171717); box-shadow: 6px 6px 0 var(--ink, #171717); overflow: hidden; }
+.spatial-window { animation: window-appear var(--motion-panel) var(--motion-ease); }
+.spatial-geometry-motion { transition: left var(--motion-panel) var(--motion-ease), top var(--motion-panel) var(--motion-ease), width var(--motion-panel) var(--motion-ease), height var(--motion-panel) var(--motion-ease); }
+.window-leave-active { transition: opacity var(--motion-fast) ease, transform var(--motion-panel) var(--motion-ease); pointer-events: none; }
+.window-leave-to { opacity: 0; transform: translateY(6px) scale(.985); }
 .spatial-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 12px; min-height: 52px; border-bottom: 2px solid var(--line, #171717); background: var(--soft, #eee); touch-action: none; user-select: none; cursor: grab; }
 .spatial-heading { flex: 1; min-width: 0; padding-block: 6px; line-height: 1.5; overflow-wrap: anywhere; }
 .spatial-controls { display: flex; flex: none; gap: 4px; }
 .spatial-controls button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 8px; }
 .spatial-controls svg, .spatial-resize svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .spatial-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.spatial-body { animation: panel-appear var(--motion-panel) var(--motion-ease); }
+.spatial-body-framed { display: flex; flex-direction: column; padding: 18px; overflow: hidden; }
 .spatial-resize { position: absolute; bottom: 0; right: 0; width: 44px; height: 44px; padding: 16px 2px 2px 16px; background: transparent; border: 0; color: var(--muted, #666); cursor: nwse-resize; touch-action: none; user-select: none; }
 .spatial-resize:disabled { visibility: hidden; }
 @media (max-width: 600px) {
@@ -134,6 +153,21 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 
 <style>
 .spatial-window .spatial-detail { width: 100%; height: 100%; max-height: none; padding: 18px; box-sizing: border-box; }
+.spatial-heading .detail-head { margin: 0; align-items: center; gap: 8px; }
+.spatial-heading .detail-head h2 { margin: 0; font-size: 1.15rem; }
+.spatial-heading .detail-head p { margin: 2px 0 0; font-size: .85rem; line-height: 1.2; }
+.spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 10px; padding: 3px 3px 6px; }
+.spatial-window .status-strip button { flex-shrink: 0; }
+.spatial-window .status-strip button { transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+.scroll-frame .detail-section:first-child { margin-top: 0; }
+@media (max-width: 600px) {
+  .spatial-titlebar { padding: 4px 8px; gap: 6px; }
+  .spatial-heading { padding-block: 2px; }
+  .spatial-window .spatial-detail, .spatial-body-framed { padding: 8px; }
+  .spatial-heading .detail-head-actions .button { min-height: 40px; padding: 4px 8px; }
+  .spatial-heading .detail-head h2 { font-size: 1.05rem; }
+  .spatial-heading .detail-head .eyebrow { display: none; }
+}
 .spatial-window .spatial-detail > .detail-layout { flex: 1; }
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; min-width: 0; }
 .detail-primary, .detail-inspector { min-width: 0; }

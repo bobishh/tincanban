@@ -38,6 +38,7 @@ test("Given generic item and discussion, when pointer drag and resize then both 
   await discussion.getByRole("button", { name: "Maximize window", exact: true }).click()
   await expect(discussion.locator(".spatial-resize")).toBeDisabled()
   await discussion.getByRole("button", { name: "Restore window size", exact: true }).click()
+  await discussion.evaluate(async element => { await Promise.all(element.getAnimations().map(animation => animation.finished)) })
   await expect(discussion.getByRole("button", { name: /^Resize/ })).toBeEnabled()
   const before = (await discussion.boundingBox())!
   const titlebar = (await discussion.locator(".spatial-titlebar").boundingBox())!

@@ -108,11 +108,11 @@ browser	e2e/component-layout.spec.ts	41	no	Component layout audit	Given desktop 
 browser	e2e/component-layout.spec.ts	67	no	Component layout audit	Given mobile viewport, when navigation and settings open, then neither surface escapes viewport
 browser	e2e/contextual-sync.spec.ts	31	no		Given independent paired peers, when signed object discussions sync, then context and avatars converge and unsupported or tampered records remain bounded
 browser	e2e/conversation-windows.spec.ts	28	no		Given generic item and discussion, when pointer drag and resize then both nonmodal windows stay usable
-browser	e2e/conversation-windows.spec.ts	65	no		Given overlapping windows, when cycling focus and opening Settings then bounded ring yields to modal
-browser	e2e/conversation-windows.spec.ts	93	no		Given narrow touch screen and unsent draft, when closing and reopening discussion then source and draft stay reachable
-browser	e2e/conversation-windows.spec.ts	116	no		Given generic description, when keyboard Discuss targets its field then message retains field anchor
-browser	e2e/conversation-windows.spec.ts	128	no		Given tablet touch window, when titlebar and corner gestures move resize and cancel then content keeps native touch behavior
-browser	e2e/conversation-windows.spec.ts	166	no		Given workspace A windows and separate B item, when switching back then A content and geometry restore without B leakage
+browser	e2e/conversation-windows.spec.ts	66	no		Given overlapping windows, when cycling focus and opening Settings then bounded ring yields to modal
+browser	e2e/conversation-windows.spec.ts	94	no		Given narrow touch screen and unsent draft, when closing and reopening discussion then source and draft stay reachable
+browser	e2e/conversation-windows.spec.ts	117	no		Given generic description, when keyboard Discuss targets its field then message retains field anchor
+browser	e2e/conversation-windows.spec.ts	129	no		Given tablet touch window, when titlebar and corner gestures move resize and cancel then content keeps native touch behavior
+browser	e2e/conversation-windows.spec.ts	167	no		Given workspace A windows and separate B item, when switching back then A content and geometry restore without B leakage
 browser	e2e/custom-avatar.spec.ts	32	no		Given identity photo settings, when one crop is saved and another workspace opens, then the same photo appears immediately and survives reload
 browser	e2e/custom-avatar.spec.ts	89	no		Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry
 browser	e2e/custom-avatar.spec.ts	107	no		Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile
@@ -280,7 +280,8 @@ browser	e2e/settings-scope.spec.ts	37	no		Given a job-search workspace, when key
 browser	e2e/spatial-window-loading.spec.ts	4	no		Given a new lead, when its detail module is still loading then a pending status precedes the window
 browser	e2e/startup-diagnostics.spec.ts	3	no		Given an intake withholding every acknowledgement, When a mobile board opens and reloads, Then the board becomes usable before any acknowledgement
 browser	e2e/startup-diagnostics.spec.ts	25	yes		Given startup debug and intake ${status}, When a mobile page reloads, Then phase checkpoints identify startup and the board stays usable
-browser	e2e/startup-preview.spec.ts	4	yes		Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then saved cards stay readable beneath a stage status and edits wait for confirmed access
+browser	e2e/startup-preview.spec.ts	32	no		Given startup HTML before Vue loads, When page styles arrive, Then the same three dots appear sequentially without a rotating ink frame
+browser	e2e/startup-preview.spec.ts	52	yes		Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then a full loader reveals saved cards before compact checks and edits wait for confirmed access
 browser	e2e/startup-runtime-failure.spec.ts	3	no		Given the Rust policy runtime request fails, when tincanban opens, then it identifies the runtime rather than local data
 browser	e2e/startup-storage-failure.spec.ts	3	no		Given local storage fails, when tincanban opens, then it shows the cause without a reload button
 browser	e2e/startup-storage-failure.spec.ts	20	no		Given a saved board cannot open, when a device invitation opens, then pairing remains available and the board error stays visible
@@ -316,6 +317,8 @@ browser	e2e/telemetry.spec.ts	110	no		Given unavailable preference storage, when
 browser	e2e/unified-settings.spec.ts	9	no		Given Settings is open, when Recovery backup opens, then recovery stays above Settings and closes back to it
 browser	e2e/unified-settings.spec.ts	34	no		Settings keeps identity available while workspace controls stay role-gated
 browser	e2e/unified-settings.spec.ts	73	no		Given two workspaces, when identity name changes, then both show that name even with older chat announcements
+browser	e2e/window-presentation.spec.ts	4	yes		Given a detailed lead at ${width}px, When its window opens and scrolls, Then motion is smooth and framed content keeps most of the window
+browser	e2e/window-presentation.spec.ts	53	no		Given sync settings, When tabs change, Then panels fade in and reduced motion remains available
 browser	e2e/workspace-access-isolation.spec.ts	5	no		Given an unreadable authority on one board, when creating and importing another board, then its owner access survives
 browser	e2e/workspace-catalog.spec.ts	3	no		a legacy orphaned workspace reappears and survives another tab saving
 browser	e2e/workspace-configure-create.spec.ts	4	yes		Given a ${width}px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form

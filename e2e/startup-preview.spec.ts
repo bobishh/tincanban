@@ -109,10 +109,12 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await expect(page.locator(".boot-placeholder")).toHaveCount(0)
   await expect(page.getByRole("button", { name: /Add lead to/ })).toHaveCount(0)
   await expect(page.locator('.brand [data-role-stamp="visitor"]')).toHaveCount(0)
-  const toolbar = await page.locator(".toolbar").boundingBox()
   const strip = await status.boundingBox()
   await expect(status).not.toHaveClass(/startup-screen/)
-  expect(strip!.y).toBeGreaterThanOrEqual(toolbar!.y + toolbar!.height - 1)
+  await expect(status).toHaveCSS("position", "fixed")
+  await expect(status).toBeInViewport()
+  await expect(page.locator(".startup-status-slot")).toHaveCount(0)
+  expect(strip!.y).toBeGreaterThan(700)
   expect(strip!.height).toBeLessThan(64)
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Saved engineer")
   await expect(card).toBeVisible()
@@ -125,6 +127,9 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await page.evaluate(() => window.dispatchEvent(new Event("tincanban:finish-history-check")))
   if (fail) {
     await expect(page.getByRole("alert", { name: "Board status" })).toContainText("Saved board is view only")
+    await expect(page.getByRole("alert", { name: "Board status" })).toHaveCSS("position", "fixed")
+    await page.getByRole("alert", { name: "Board status" }).getByText("Details", { exact: true }).click()
+    await expect(page.getByRole("alert", { name: "Board status" }).getByText(/History check failed/)).toBeInViewport()
     await expect(page.getByRole("alert", { name: "Board status" }).locator(".startup-status-mark")).toHaveText("!")
     expect(await page.getByRole("alert", { name: "Board status" }).locator(".startup-status-mark").evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0)
     await expect(card).toBeVisible()
@@ -132,6 +137,7 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   } else {
     await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()
     await expect(status).toHaveCount(0)
+    await expect(page.locator(".startup-status-slot")).toHaveCount(0)
     const settledPosition = await page.locator(".board").boundingBox()
     const settledToolbar = await page.locator(".toolbar").boundingBox()
     const pendingGap = boardPosition!.y - pendingToolbar!.y - pendingToolbar!.height

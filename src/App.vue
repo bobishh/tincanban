@@ -165,11 +165,9 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       </div>
     </section>
 
-    <div class="startup-status-slot">
-      <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
-        <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
-      </Transition>
-    </div>
+    <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
+      <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
+    </Transition>
 
     <template v-if="boardVisible">
     <MobileDrawer
@@ -407,19 +405,19 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @close="showMoveDialog = false; itemToMove = null"
       @confirm="handleConfirmMove"
     />
-
-    <SpatialWindow v-if="selectedLead" :window-id="`item:${selectedLead.id}`" :workspace-id="activeWorkspace.id" :title="selectedLead.company" aria-label="Lead details" close-label="Close detail" :initial-width="760" :initial-height="700" @close="closeDetail">
-      <section ref="detailDialog" class="detail-dialog spatial-detail" tabindex="-1" :data-discussion-item="selectedLead.id">
-        <div class="detail-head">
-          <div><span class="eyebrow">Lead card</span><h2 data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.company']">{{ selectedLead.company }}</h2><p data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.role']">{{ selectedLead.role }}</p></div>
+    <SpatialWindow v-if="selectedLead" framed :window-id="`item:${selectedLead.id}`" :workspace-id="activeWorkspace.id" :title="selectedLead.company" aria-label="Lead details" close-label="Close detail" :initial-width="760" :initial-height="700" @close="closeDetail">
+      <template #header><div class="detail-head" :data-discussion-item="selectedLead.id">
+          <div><h2 data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.company']">{{ selectedLead.company }}</h2><p data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.role']">{{ selectedLead.role }}</p></div>
           <div class="detail-head-actions">
             <button v-if="selectedLeadItem" class="button button-small" type="button" :disabled="!canEditItems" @click="editItem(selectedLeadItem)">Edit</button>
           </div>
-        </div>
+        </div></template>
+      <template #toolbar>
       <CardStageStrip v-if="selectedLeadItem" :item="selectedLeadItem" :columns="genericColumns" :buttons="cardStageButtons(activeBoard, genericColumns)" :read-only="!canEditItems" :move="moveCardToColumn" />
       <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
       <button v-if="archiveUndo && archiveUndo.workspaceId === activeWorkspace.id" class="button button-small" type="button" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo archive' }}</button>
-      <div class="detail-scroll detail-layout" data-detail-layout>
+      </template>
+      <section ref="detailDialog" class="detail-layout" data-detail-layout tabindex="-1" :data-discussion-item="selectedLead.id">
         <div class="detail-primary" data-detail-primary role="region" aria-label="Lead description and documents">
           <section v-if="selectedLeadItem && cardNotes(selectedLeadItem)" class="detail-section"><span class="detail-label">Description</span><MarkdownContent class="detail-copy" data-discussion-text data-discussion-field="narrative" :source="cardNotes(selectedLeadItem) || ''" :editable-tasks="canEditItems" @task-toggle="updateItemMarkdown(selectedLeadItem, $event)" /></section>
           <section v-if="selectedLead.sourceText" class="detail-section"><span class="detail-label">Source snapshot</span><p class="source-snapshot" data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.sourceText']">{{ selectedLead.sourceText }}</p></section>
@@ -453,11 +451,9 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
             placeholder="Optional rejection reason or retrospective note (what went wrong)…" label="Rejection notes" />
         </section>
         </aside>
-      </div>
       </section>
     </SpatialWindow>
     </template>
-
     <SyncDialog v-if="sync.isOpen.value" :initial-tab="syncInitialTab" :member-avatars="memberAvatars" :revoking-person-id="revokingPeer" @revoke-person="revokeWorkspacePeer" :blind-replication="app.collaboration.device.blindReplication"
       :pending-joins="sync.pendingJoins.value"
       @decide-join="sync.decideJoin"
@@ -518,7 +514,6 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
 <style>
 .startup-concealed { visibility: hidden; }
 .startup-revealed { animation: startup-reveal 320ms ease-out; }
-.startup-status-slot { min-height: 56px; }
 .startup-cover-enter-active, .startup-cover-leave-active { transition: opacity 320ms ease; }
 .startup-cover-enter-from, .startup-cover-leave-to { opacity: 0; }
 .startup-cover-leave-active { pointer-events: none; }
