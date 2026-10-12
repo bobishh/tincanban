@@ -332,8 +332,12 @@ mentions. Mentions retain workspace visibility and do not create private message
 Item, chat, and discussion windows share movement, resizing, and focus order.
 Windows and changed panels fade in; maximize and restore animate without slowing
 dragging or keyboard movement. On phones, lead details use one compact heading,
-a single scrolling row of stages, and framed content with a persistent scroll
-indicator. Reduced motion follows the device preference.
+a single scrolling row of stages with arrow hints for hidden buttons, and framed
+content with a persistent scroll indicator. Reduced motion follows the device preference.
+Mobile chat opens at viewport size without a maximize button. Its compact composer
+keeps references and mentions behind **+**, leaving more room for messages.
+Typing reuses saved message rows. Mobile boards use swipe navigation without a
+separate column-switching toolbar.
 Drag the title bar or resize handle; focused controls support arrow keys and
 Shift for larger steps. **Next window** cycles views, including on narrow screens.
 Window geometry stays local to each workspace. Native content zoom remains available.

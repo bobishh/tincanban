@@ -79,6 +79,7 @@ function attachInitialContext(value?: MessageContext) {
 }
 attachInitialContext(props.initialContext)
 const mentionQuery = ref("")
+const toolsOpen = ref(false)
 const mentionChoices = computed(() => (props.members ?? []).filter(member => member.name.toLowerCase().includes(mentionQuery.value.toLowerCase())))
 function mention(member: {personId: string; name: string}) {
   if (context.value.mentions.length >= MAX_MENTIONS && !context.value.mentions.includes(member.personId)) return
@@ -328,14 +329,14 @@ function formatDisplayTime(createdAt: string): string {
 
 <template>
   <SpatialWindow :window-id="windowId ?? 'chat'" :workspace-id="workspaceId ?? ''" :title="title ?? (`Chat${workspaceTitle ? ` · ${workspaceTitle}` : ''}`)" resize-label="Resize chat" :aria-label="title ?? 'Workspace chat'" close-label="Close" :initial-width="680" :initial-height="720" @close="closeChat">
+    <template #header><div class="chat-window-heading"><strong>{{ title ?? (`Chat${workspaceTitle ? ` · ${workspaceTitle}` : ''}`) }}</strong><span class="chat-connection" :class="{ 'is-connected': connected }">{{ connected ? 'Connected' : 'Offline · saved locally' }}</span></div></template>
     <div class="chat-dialog conversation-content">
-      <div class="chat-connection" :class="{ 'is-connected': connected }">{{ connected ? 'Connected' : 'Offline · saved locally' }}</div>
       <p v-if="navigationState" role="status">{{ navigationState }}</p>
       <div ref="messageListRef" class="chat-messages-log" role="log" aria-label="Messages" @scroll="handleScroll">
         <button v-if="hasEarlier" class="button button-small" type="button" @click="loadEarlier">Load earlier messages</button>
         <p v-if="loading" role="status">Loading messages…</p>
         <p v-else-if="!displayedMessages.length">No messages yet. Send a message to start chatting.</p>
-        <article v-for="msg in displayedMessages" :key="msg.id" class="chat-message-item" :data-message-id="msg.id" tabindex="-1" :class="{ 'is-own': msg.personId === currentPersonId, 'is-reply': Boolean(msg.context?.replyTo), 'is-linked-message': msg.id === targetId }">
+        <article v-for="msg in displayedMessages" :key="msg.id" v-memo="[msg.personId, msg.body, msg.name, msg.createdAt, msg.status, msg.context, memberAvatars?.[msg.personId], replyCounts.get(msg.id), targetId, readOnly, workspaceScope, referenceChoices, fieldTitles, inThread, threadRoot, currentPersonId]" class="chat-message-item" :data-message-id="msg.id" tabindex="-1" :class="{ 'is-own': msg.personId === currentPersonId, 'is-reply': Boolean(msg.context?.replyTo), 'is-linked-message': msg.id === targetId }">
           <div class="chat-message-meta">
             <ParticipantAvatar :person-id="msg.personId" :avatar-data="memberAvatars?.[msg.personId]" />
             <strong class="chat-message-author">{{ msg.name || 'Anonymous' }}</strong>
@@ -365,15 +366,18 @@ function formatDisplayTime(createdAt: string): string {
         </div>
         <div v-if="context.replyTo && !inThread" class="reply-quote">Replying to: {{ replyQuote }} <button type="button" aria-label="Cancel reply" @click="context.replyTo = undefined; context.conversationRootId = undefined">×</button></div>
         <div v-if="context.mentions.length" class="reference-chips"><span v-for="personId in context.mentions" :key="personId">@{{ members?.find(member => member.personId === personId)?.name ?? 'Participant' }} <button class="button button-small" type="button" aria-label="Remove mention" @click="context.mentions = context.mentions.filter(id => id !== personId)">×</button></span></div>
+        <div class="chat-compose-tools" :class="{ 'is-open': toolsOpen }">
         <ReferencePicker v-if="referenceChoices?.length" :choices="referenceChoices" :selected="context.references" @select="anchor => context.references.push(clone(anchor))" />
         <details v-if="members?.length" class="mention-picker">
           <summary>Invite @participant</summary>
           <input v-model="mentionQuery" aria-label="Find participant" />
           <button v-for="member in mentionChoices" :key="member.personId" class="button button-small" type="button" :disabled="context.mentions.length >= MAX_MENTIONS" @click="mention(member)"><ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" />{{ member.name }}</button>
         </details>
+        </div>
         <form class="chat-composer-form" @submit.prevent="handleSubmit">
+          <button v-if="referenceChoices?.length || members?.length" class="button button-quiet chat-tools-toggle" type="button" aria-label="Add reference or participant" :aria-expanded="toolsOpen" @click="toolsOpen = !toolsOpen">+</button>
           <label :for="`message-${windowId ?? 'chat'}`" class="chat-composer-label">Message</label>
-          <textarea :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea" aria-label="Message" :disabled="isSubmitting" rows="3" @keydown="handleKeyDown" @compositionstart="isComposing = true" @compositionend="isComposing = false" />
+          <textarea :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea" aria-label="Message" placeholder="Message…" :disabled="isSubmitting" rows="3" @keydown="handleKeyDown" @compositionstart="isComposing = true" @compositionend="isComposing = false" />
           <button class="button button-primary chat-submit-btn" type="submit" aria-label="Send message" :disabled="!draft.trim() || sending || isSubmitting">{{ sending ? 'Saving…' : 'Send' }}</button>
         </form>
       </footer>
@@ -392,4 +396,24 @@ function formatDisplayTime(createdAt: string): string {
 .mention-picker { margin-block: 6px; }
 .mention-picker button { display: inline-flex; align-items: center; gap: 4px; }
 .chat-composer-form { display: grid; gap: 6px; }
+.chat-tools-toggle { display: none; }
+.chat-window-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.chat-window-heading .chat-connection { margin: 0; font-size: .65rem; letter-spacing: 0; }
+@media (max-width: 600px) {
+  .conversation-content { padding: 6px 8px; }
+  .chat-footer { position: relative; margin-top: 6px; padding-top: 6px; }
+  .chat-footer > .reference-chips:empty { display: none; }
+  .chat-composer-form { grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; }
+  .chat-composer-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
+  .chat-tools-toggle { display: block; width: 40px; height: 48px; padding: 4px; }
+  .chat-textarea { grid-column: 2; height: 48px; min-height: 48px; max-height: 88px; resize: none; padding: 8px; }
+  .chat-submit-btn { grid-column: 3; width: auto; min-height: 48px; padding: 6px 10px; }
+  .chat-compose-tools { display: none; position: absolute; z-index: 3; bottom: calc(100% + 6px); left: 0; width: 100%; max-height: 40dvh; overflow: auto; padding: 10px; border: 2px solid var(--line); background: var(--panel); }
+  .chat-compose-tools.is-open { display: block; animation: panel-appear var(--motion-panel) var(--motion-ease); }
+  .chat-messages-log { gap: 10px; padding: 8px; }
+  .chat-message-item { padding: 8px 10px; gap: 3px; }
+  .chat-author-tag { display: none; }
+  .chat-message-meta { gap: 4px; }
+  .chat-message-time { font-size: .65rem; }
+}
 </style>

@@ -18,10 +18,12 @@ test("Given a 640px board, when resizing to a phone, then compact columns become
   await expect(columns.first()).toBeVisible()
   await expect(page.locator(".mobile-column-switcher")).toBeHidden()
   await page.setViewportSize({ width: 560, height: 900 })
-  await expect(page.locator(".mobile-column-switcher")).toBeVisible()
-  await expect(page.getByRole("button", { name: "Previous column" })).toBeDisabled()
-  await page.getByRole("button", { name: "Next column" }).click()
-  await expect(page.locator(".mobile-column-switcher")).toContainText("Applied")
+  await expect(page.locator(".mobile-column-switcher")).toHaveCount(0)
+  await page.locator(".board").evaluate(element => {
+    const column = element.querySelectorAll<HTMLElement>(".column")[1]!
+    element.scrollTo({ left: column.offsetLeft, behavior: "instant" })
+  })
+  await expect.poll(() => page.locator(".board").evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
   await page.setViewportSize({ width: 561, height: 900 })
   await expect(page.locator(".mobile-column-switcher")).toBeHidden()
   await expect.poll(async () => (await columns.nth(0).boundingBox())?.width).toBeLessThan(300)

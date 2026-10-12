@@ -20,6 +20,7 @@ for (const width of [390, 1440]) {
     await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
     const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })
     if (width > 768) await chat.getByRole("button", { name: "Maximize window", exact: true }).click()
+    if (width < 600) await chat.getByRole("button", { name: "Add reference or participant", exact: true }).click()
     await chat.getByText("Attach item reference", { exact: true }).click()
     const picker = chat.locator(".reference-picker")
     const search = picker.getByRole("searchbox", { name: "Find reference", exact: true })

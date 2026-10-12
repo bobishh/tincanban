@@ -207,6 +207,7 @@ browser	e2e/message-references.spec.ts	117	no		Given signing remains pending, wh
 browser	e2e/message-references.spec.ts	138	no		Given a target older than 100 messages, when its link opens, then that retained message becomes visible
 browser	e2e/message-references.spec.ts	154	no		Given chat loading remains pending, when opening a link, then loading precedes retained-message resolution
 browser	e2e/message-references.spec.ts	172	no		Given a copied link before local workspace rekeying, when its preserved scope opens afterward, then the same message resolves
+browser	e2e/mobile-chat-composer.spec.ts	6	no		Given mobile chat, When typing with saved history, Then messages own the height and existing timestamps are not reformatted per keystroke
 browser	e2e/mobile-large-history.spec.ts	4	no		Given a mobile board with over 312k signed operations, When cold loading and retrying a failed access update, Then the saved card remains available
 browser	e2e/mobile-nav.spec.ts	9	yes	Mobile Navigation & Drawer (Gate D)	Given ${viewport.name} viewport, when opened, hamburger drawer provides accessible grouped navigation and traps focus
 browser	e2e/mobile-nav.spec.ts	75	no	Mobile Navigation & Drawer (Gate D)	Given 1024px desktop viewport, topbar displays direct action buttons and hides hamburger button
@@ -247,11 +248,11 @@ browser	e2e/rejection-notes.spec.ts	46	no		Given storage fails, when closing a d
 browser	e2e/rejection-notes.spec.ts	62	no		Given a slow save, when typing newer text, then saved updates never overwrite the draft
 browser	e2e/remaining-ui-polish.spec.ts	22	no		Given an archived item, when Undo is pressed, then it returns to its original column and position
 browser	e2e/remaining-ui-polish.spec.ts	38	no		Given archive persistence fails, when an item is archived, then the item remains visible and the failure is honest
-browser	e2e/remaining-ui-polish.spec.ts	48	no		Given a mobile board, when navigating columns, then the next column peeks and the switcher changes the active column
+browser	e2e/remaining-ui-polish.spec.ts	48	no		Given a mobile board, when navigating columns, then the next column peeks and native scrolling works without a switcher
 browser	e2e/remaining-ui-polish.spec.ts	67	no		Given a Job search lead, when Archive status is selected, then Undo stays available inside Lead details
 browser	e2e/remaining-ui-polish.spec.ts	84	yes		Given ${width}px mobile, when the board opens, then the next column peeks and Add follows the empty card stack
-browser	e2e/remaining-ui-polish.spec.ts	104	no		Given a lead dragged to Archive, when Undo fails then retries, then its original position survives reload
-browser	e2e/remaining-ui-polish.spec.ts	144	no		Given an archived item, when the workspace changes, then its Undo cannot act on the new board
+browser	e2e/remaining-ui-polish.spec.ts	105	no		Given a lead dragged to Archive, when Undo fails then retries, then its original position survives reload
+browser	e2e/remaining-ui-polish.spec.ts	145	no		Given an archived item, when the workspace changes, then its Undo cannot act on the new board
 browser	e2e/root-message-links.spec.ts	4	no		Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings
 browser	e2e/rusty-connection.spec.ts	9	no		Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work
 browser	e2e/rusty-mark-sizing.spec.ts	3	no		Given the Rusty connection panel, when Rusty appears on desktop and narrow mobile, then Rusty keeps TinCanBan visual size without horizontal overflow
@@ -319,6 +320,7 @@ browser	e2e/unified-settings.spec.ts	34	no		Settings keeps identity available wh
 browser	e2e/unified-settings.spec.ts	73	no		Given two workspaces, when identity name changes, then both show that name even with older chat announcements
 browser	e2e/window-presentation.spec.ts	4	yes		Given a detailed lead at ${width}px, When its window opens and scrolls, Then motion is smooth and framed content keeps most of the window
 browser	e2e/window-presentation.spec.ts	53	no		Given sync settings, When tabs change, Then panels fade in and reduced motion remains available
+browser	e2e/window-presentation.spec.ts	66	yes		Given a ${width}px lead window with a long role, When stages overflow, Then Edit stays on one line and arrows reveal hidden stages
 browser	e2e/workspace-access-isolation.spec.ts	5	no		Given an unreadable authority on one board, when creating and importing another board, then its owner access survives
 browser	e2e/workspace-catalog.spec.ts	3	no		a legacy orphaned workspace reappears and survives another tab saving
 browser	e2e/workspace-configure-create.spec.ts	4	yes		Given a ${width}px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form

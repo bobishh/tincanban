@@ -60,7 +60,7 @@ const {
   historyRestoreError, historyRestoreNotice, artifactError,
   showWorkspaces, showEntitySettings, isEditingBoard,
   newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
-  activeMobileColumnIndex, showItemForm, itemFormError, savingItem, editingColumn,
+  showItemForm, itemFormError, savingItem, editingColumn,
   selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError,
   quickNoteDraft, quickNoteSaving, quickNoteError, hasExperimentalMcp,
   showMobileMenu, menuButtonRef, startupError, artifactDraft,
@@ -70,7 +70,7 @@ const {
   workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue,
   computedItemFieldIds, itemFormOptionValues, visibleItems, hasFilters, workspacePresenceSummary,
   visibleColumns, clearFilters, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, expandFilteredCards, columnColor, columnStatus, itemsForColumn,
-  updateMobileColumnIndex, moveMobileColumn, selectedItem, subitemsForSelectedItem,
+  trackBoardScroll, selectedItem, subitemsForSelectedItem,
   selectedItemHistory, editingItem, candidateParentsForMove,
 } = app.board
 const { sync, chat } = app.collaboration.device
@@ -202,13 +202,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <button class="button button-small button-quiet" type="button" @click="clearFilters">Clear search and filters</button>
     </div>
 
-    <nav v-if="visibleColumns.length > 1" class="mobile-column-switcher" aria-label="Board columns">
-      <button class="button button-small button-quiet" type="button" aria-label="Previous column" :disabled="activeMobileColumnIndex === 0" @click="moveMobileColumn(-1)">←</button>
-      <span aria-live="polite">{{ visibleColumns[activeMobileColumnIndex]?.title }}</span>
-      <button class="button button-small button-quiet" type="button" aria-label="Next column" :disabled="activeMobileColumnIndex === visibleColumns.length - 1" @click="moveMobileColumn(1)">→</button>
-    </nav>
-
-    <section :key="boardRenderKey" ref="boardRef" class="board" :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)), 'board-filtered': hasFilters, 'board-single-column': visibleColumns.length === 1 }" role="region" :aria-label="activeWorkspace.title" @scroll.passive="updateMobileColumnIndex">
+    <section :key="boardRenderKey" ref="boardRef" class="board" :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)), 'board-filtered': hasFilters, 'board-single-column': visibleColumns.length === 1 }" role="region" :aria-label="activeWorkspace.title" @scroll.passive="trackBoardScroll">
       <article
         v-for="column in visibleColumns"
         :key="column.id"

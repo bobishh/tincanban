@@ -45,13 +45,13 @@ test("Given archive persistence fails, when an item is archived, then the item r
   await expect(page.getByRole("dialog", { name: "Item overview" }).getByRole("alert")).toContainText("Archive failed")
 })
 
-test("Given a mobile board, when navigating columns, then the next column peeks and the switcher changes the active column", async ({ page }) => {
+test("Given a mobile board, when navigating columns, then the next column peeks and native scrolling works without a switcher", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
 
   const board = page.locator(".board")
-  await expect(page.locator(".mobile-column-switcher")).toBeVisible()
+  await expect(page.locator(".mobile-column-switcher")).toHaveCount(0)
   const layout = await board.evaluate((element) => {
     const first = element.querySelector<HTMLElement>(".column")!
     return { boardWidth: element.clientWidth, columnWidth: first.getBoundingClientRect().width, scrollWidth: element.scrollWidth }
@@ -59,8 +59,8 @@ test("Given a mobile board, when navigating columns, then the next column peeks 
   expect(layout.columnWidth).toBeLessThan(layout.boardWidth)
   expect(layout.scrollWidth).toBeGreaterThan(layout.boardWidth)
 
-  await page.getByRole("button", { name: "Next column" }).click()
-  await expect(page.locator(".mobile-column-switcher")).toContainText("Applied")
+  await board.evaluate(element => element.scrollTo({ left: element.querySelectorAll<HTMLElement>(".column")[1]!.offsetLeft, behavior: "instant" }))
+  await expect.poll(() => board.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
   await expect(page.getByRole("region", { name: "Lead" }).getByRole("button", { name: "Add lead to Lead" })).toBeVisible()
 })
 

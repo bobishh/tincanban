@@ -27,13 +27,13 @@ export function useAppController() {
 
 function boardContext(core: ReturnType<typeof useAppCore>): AppBoardContext {
   const {
-    tincanban, search, filters, isEditingBoard, itemFormParentId, activeMobileColumnIndex,
+    tincanban, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
   } = core
   return {
-    tincanban, search, filters, isEditingBoard, itemFormParentId, activeMobileColumnIndex,
+    tincanban, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
@@ -46,7 +46,7 @@ function appUi(core: ReturnType<typeof useAppCore>) {
     archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice, isArchiveOpen,
     artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
     newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
-    activeMobileColumnIndex, showItemForm, itemFormError, savingItem, editingColumn,
+    showItemForm, itemFormError, savingItem, editingColumn,
     selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError, quickNoteDraft,
     quickNoteSaving, quickNoteError, hasExperimentalMcp, showMobileMenu, menuButtonRef,
     startupError, artifactDraft,
@@ -56,7 +56,7 @@ function appUi(core: ReturnType<typeof useAppCore>) {
     archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice, isArchiveOpen,
     artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
     newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
-    activeMobileColumnIndex, showItemForm, itemFormError, savingItem, editingColumn,
+    showItemForm, itemFormError, savingItem, editingColumn,
     selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError, quickNoteDraft,
     quickNoteSaving, quickNoteError, hasExperimentalMcp, showMobileMenu, menuButtonRef,
     startupError, artifactDraft,
@@ -169,7 +169,6 @@ function watchWorkspaceReset(core: ReturnType<typeof useAppCore>) {
     core.showItemForm.value = false
     core.filters.value = { columnId: "", fieldValues: {}, numberRanges: {}, dateRanges: {} }
     core.search.value = ""
-    core.activeMobileColumnIndex.value = 0
     core.archiveUndo.value = null
     core.archiveError.value = ""
     core.historyRestoreError.value = ""
@@ -179,7 +178,6 @@ function watchWorkspaceReset(core: ReturnType<typeof useAppCore>) {
 
 function watchVisibleColumns(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>) {
   watch(() => board.visibleColumns.value.map(column => column.id).join("|"), () => {
-    core.activeMobileColumnIndex.value = 0
     board.resetBoardScroll()
   }, { flush: "post" })
 }

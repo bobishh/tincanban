@@ -107,7 +107,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
         @pointerdown="start($event)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event)">
         <div class="spatial-heading"><slot name="header"><strong>{{ title }}</strong></slot></div>
         <div class="spatial-controls">
-          <button class="icon-button" type="button" :aria-label="maximized ? 'Restore window size' : 'Maximize window'" :title="maximized ? 'Restore window size' : 'Maximize window'" @click="maximize"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-if="maximized" d="M8 8h12v12H8zM4 16V4h12v4" /><rect v-else x="4" y="4" width="16" height="16" /></svg></button>
+          <button class="icon-button spatial-maximize" type="button" :aria-label="maximized ? 'Restore window size' : 'Maximize window'" :title="maximized ? 'Restore window size' : 'Maximize window'" @click="maximize"><svg viewBox="0 0 24 24" aria-hidden="true"><path v-if="maximized" d="M8 8h12v12H8zM4 16V4h12v4" /><rect v-else x="4" y="4" width="16" height="16" /></svg></button>
           <button class="icon-button" type="button" :aria-label="closeLabel" title="Close window" @click="emit('close')"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
         </div>
       </header>
@@ -149,15 +149,23 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
   }
   .spatial-titlebar { cursor: default; }
   .spatial-resize { display: none; }
+  .spatial-controls .spatial-maximize { display: none; }
 }
 </style>
 
 <style>
 .spatial-window .spatial-detail { width: 100%; height: 100%; max-height: none; padding: 18px; box-sizing: border-box; }
 .spatial-heading .detail-head { margin: 0; align-items: center; gap: 8px; }
+.spatial-heading .detail-head > :first-child { flex: 1; min-width: 0; }
+.spatial-heading .detail-head-actions { flex-shrink: 0; }
+.spatial-heading .detail-head-actions .button { white-space: nowrap; min-width: 44px; }
 .spatial-heading .detail-head h2 { margin: 0; font-size: 1.15rem; }
 .spatial-heading .detail-head p { margin: 2px 0 0; font-size: .85rem; line-height: 1.2; }
-.spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 10px; padding: 3px 3px 6px; }
+.spatial-window .status-strip-shell { position: relative; min-width: 0; flex: none; margin-bottom: 10px; }
+.spatial-window .stage-scroll { position: absolute; top: 0; bottom: 3px; z-index: 1; width: 32px; min-height: 40px; padding: 0; border: 0; font-size: 1.4rem; color: var(--ink); cursor: pointer; }
+.spatial-window .stage-scroll-earlier { left: 0; background: linear-gradient(to right, var(--panel) 60%, transparent); }
+.spatial-window .stage-scroll-later { right: 0; background: linear-gradient(to left, var(--panel) 60%, transparent); }
+.spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: 3px 3px 6px; }
 .spatial-window .status-strip button { flex-shrink: 0; }
 .spatial-window .status-strip button { transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
 .scroll-frame .detail-section:first-child { margin-top: 0; }

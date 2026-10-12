@@ -13,7 +13,7 @@ import { itemNarrative } from "../domain/narrative"
 
 export type AppBoardContext = Pick<ReturnType<typeof useAppCore>,
   | "tincanban"
-  | "search" | "filters" | "isEditingBoard" | "itemFormParentId" | "activeMobileColumnIndex"
+  | "search" | "filters" | "isEditingBoard" | "itemFormParentId"
   | "boardRef" | "movedItemId" | "movedColumnId" | "onlineWorkspaceDevices"
   | "canEditItems" | "canEditBoard" | "notice" | "archiveUndo" | "boardRenderKey"
   | "selectedItemId" | "editingItemId" | "itemToMove" | "selectedLeadId" | "detailDialog"
@@ -28,7 +28,7 @@ export function useAppBoard(core: AppBoardContext) {
 }
 
 function useBoardPresentation(core: AppBoardContext) {
-  const { tincanban, search, filters, isEditingBoard, itemFormParentId, activeMobileColumnIndex, boardRef, movedItemId, movedColumnId } = core
+  const { tincanban, search, filters, isEditingBoard, itemFormParentId, boardRef, movedItemId, movedColumnId } = core
   const workspaceLabel = computed(() => tincanban.activeWorkspace.title.toLowerCase() === "job search" ? "jobs" : tincanban.activeWorkspace.title)
   const entityName = computed(() => tincanban.activeBoard.value?.entityName || (tincanban.activeBoard.value?.preset?.key === "job-search" ? "lead" : "item"))
   const addItemLabel = computed(() => `+ Add ${entityName.value}`)
@@ -126,10 +126,9 @@ function useBoardPresentation(core: AppBoardContext) {
     scrolledBoard = boardRef.value
     boardScrollLeft = scrolledBoard?.scrollLeft ?? 0
   }, { flush: "pre" })
-  const updateMobileColumnIndex = () => {
+  const trackBoardScroll = () => {
     scrolledBoard = boardRef.value
     boardScrollLeft = scrolledBoard?.scrollLeft ?? 0
-    activeMobileColumnIndex.value = mobileColumnIndex(scrolledBoard)
   }
   const resetBoardScroll = () => {
     // Reading geometry or calling scrollTo after a filter patch forces layout.
@@ -139,7 +138,6 @@ function useBoardPresentation(core: AppBoardContext) {
       boardScrollLeft = 0
     }
   }
-  const moveMobileColumn = (direction: -1 | 1) => moveBoardColumn(boardRef.value, visibleColumns.value, activeMobileColumnIndex, direction)
   let highlightTimer: ReturnType<typeof setTimeout> | undefined
   const highlightMoved = (entityId: string, kind: "item" | "column") => {
     if (highlightTimer) clearTimeout(highlightTimer)
@@ -148,7 +146,7 @@ function useBoardPresentation(core: AppBoardContext) {
     highlightTimer = setTimeout(() => { movedItemId.value = null; movedColumnId.value = null }, 700)
   }
   const clearHighlightTimer = () => { if (highlightTimer) clearTimeout(highlightTimer) }
-  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, itemFormOptionValues, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, columnColor, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, updateMobileColumnIndex, resetBoardScroll, moveMobileColumn, highlightMoved, clearHighlightTimer }
+  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, itemFormOptionValues, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, columnColor, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, trackBoardScroll, resetBoardScroll, highlightMoved, clearHighlightTimer }
 }
 
 function searchableItemTextById(
@@ -227,20 +225,6 @@ function visibleBoardColumns(columns: ReturnType<typeof useAppCore>["tincanban"]
   if (!hasFilters || isEditing) return columns
   if (selectedColumnId) return columns.filter(column => column.id === selectedColumnId)
   return columns.filter(column => itemsForColumn(column).length > 0)
-}
-
-function mobileColumnIndex(board: HTMLElement | null) {
-  if (!board || window.matchMedia("(min-width: 561px)").matches) return 0
-  const columns = [...board.querySelectorAll<HTMLElement>(":scope > .column")]
-  if (!columns.length) return 0
-  return columns.reduce((closest, column, current) => Math.abs(column.offsetLeft - board.scrollLeft) < Math.abs(columns[closest].offsetLeft - board.scrollLeft) ? current : closest, 0)
-}
-
-function moveBoardColumn(board: HTMLElement | null, columns: unknown[], index: { value: number }, direction: -1 | 1) {
-  if (!board || !columns.length) return
-  const target = Math.min(columns.length - 1, Math.max(0, index.value + direction))
-  board.querySelectorAll<HTMLElement>(":scope > .column")[target]?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest", inline: "start" })
-  index.value = target
 }
 
 function useBoardSelection(core: AppBoardContext) {

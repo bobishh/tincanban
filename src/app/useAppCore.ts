@@ -52,7 +52,6 @@ function useAppUiState() {
   const boardRenderKey = ref(0)
   const movedItemId = ref<string | null>(null)
   const movedColumnId = ref<string | null>(null)
-  const activeMobileColumnIndex = ref(0)
   const showItemForm = ref(false)
   const itemFormParentId = ref("")
   const itemFormError = ref("")
@@ -76,7 +75,7 @@ function useAppUiState() {
     selectedLeadId, detailDialog, importInput, showArtifactForm, search, filters, notice,
     archiveUndo, undoSaving, archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice,
     isArchiveOpen, artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
-    newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId, activeMobileColumnIndex,
+    newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
     showItemForm, itemFormParentId, itemFormError, savingItem, editingColumn, selectedItemId, editingItemId,
     itemToMove, showMoveDialog, storageError, quickNoteDraft, quickNoteSaving, quickNoteError,
     hasExperimentalMcp, showMobileMenu, menuButtonRef, startupError, toggleMobileMenu, closeMobileMenu,
