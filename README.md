@@ -392,12 +392,16 @@ Cloudflare Worker + Clef ingestion uses an independent identity and an exact own
 
 ### TinSink log sign-in
 
-TinSink can open `/service-login` to request explicit identity approval for one
-project and workspace. The approval page shows the service origin and requested
-scope before signing. Only a device with locally saved signed workspace authority
-can approve; the server independently checks its certificate chain and role.
-Owners and editors can read logs; visitors and automation cannot. Approval shares
-public rights proofs, never documents, transport secrets or private keys. Global
-TinSink administration and event write keys remain separate. Owners synchronize
-the workspace before approving; editor access needs fresh owner confirmation in
-TinSink and expires after 15 minutes without renewal.
+TinSink opens `/service-login` for explicit approval of its exact service domain.
+No project or workspace ID is entered before signing in. The deployment trusts a
+native owner identity and controller devices, using Rusty's existing public trust
+configuration shape. That owner enters the full console; signed native owner and
+editor rights discover accessible boards for other identities. Visitors and
+automation cannot read logs. A self-created unrelated scope cannot claim an
+existing service's board logs. Board and project filters appear after sign-in.
+
+Approval shares public certificates and rights proofs, plus local board labels;
+no documents, transport secrets or private keys. Sessions last eight hours with
+stored signed revocations rechecked on every request. Synchronize boards before
+approval: this offline system cannot know a revocation not yet delivered to the
+service. Owner-confirmation timers and manual workspace linking are removed.

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { serviceLogsUrl } from "../app/serviceLogsUrl"
+import { telemetryConfig } from "../app/diagnostics"
 import ParticipantAvatar from "./ParticipantAvatar.vue"
 import RustyPanel from "./RustyPanel.vue"
 import OwnershipRecoveryPanel from "./OwnershipRecoveryPanel.vue"
@@ -55,6 +57,9 @@ const props = defineProps<{
   networkOnline?: boolean
   live?: boolean
 }>()
+
+const boardLogsUrl = computed(() => props.activeWorkspaceId && (props.currentRole === "owner" || props.currentRole === "editor")
+  ? serviceLogsUrl(telemetryConfig(), props.activeWorkspaceId) : undefined)
 
 const emit = defineEmits<{
   (e: "decideJoin", id: string, approve: boolean): void
@@ -297,6 +302,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <div v-show="activeTab === 'Advanced'" :id="`${tabId}-Advanced-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Advanced-tab`">
           <section class="sync-advanced" aria-label="Connection diagnostics">
             <h3>Connection diagnostics</h3>
+            <a v-if="boardLogsUrl" :href="boardLogsUrl" class="button" target="_blank" rel="noopener">Open board logs</a>
             <p v-if="meshDiagnostic" class="dialog-copy">{{ meshDiagnostic }}</p>
             <code v-if="rejectedSource">{{ rejectedSource.diagnostic }}</code>
             <div v-for="member in peopleMembers" :key="member.personId">

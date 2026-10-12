@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue"
 import type { DeviceCertificate } from "../domain/model"
 import { bootstrapIdentity, signEnvelope } from "../domain/identity"
 import { defaultProofStore } from "../domain/proofs"
+import { defaultStorage } from "../storage"
 import { peerStore } from "../sync/peerStore"
 import { parseServiceLoginRequest, serviceLoginPayload, type ServiceLoginRequest } from "./serviceLogin"
 
@@ -32,20 +33,23 @@ async function approve() {
   error.value = ""
   try {
     const profile = await bootstrapIdentity()
-    const authority = await peerStore.getWorkspaceAuthority(request.value.workspace)
-    if (!authority?.scopeAuthoritySnapshot) throw new Error("Workspace rights unavailable on this device. Open and synchronize workspace first.")
-    const catalog = authority.catalog as { revocations?: unknown[]; deviceRevocations?: Array<{ record: unknown; authority: unknown }>; departures?: unknown[] } | undefined
+    const authorities = await peerStore.listWorkspaceAuthorities()
+    const metadata = await defaultStorage.listWorkspaces()
+    const workspaces = authorities.filter(authority => authority.scopeAuthoritySnapshot).map(authority => {
+      const catalog = authority.catalog as { revocations?: unknown[]; deviceRevocations?: Array<{ record: unknown; authority: unknown }>; departures?: unknown[] } | undefined
+      return { workspace: authority.workspaceId, name: metadata.find(board => board.id === authority.workspaceId)?.title ?? "", grant: authority.localGrant ?? null,
+        policy: { scope: authority.scopeAuthoritySnapshot, revocations: catalog?.revocations ?? [], departures: catalog?.departures ?? [],
+          deviceRevocations: (catalog?.deviceRevocations ?? []).map(value => ({ record: value.record, signer: value.authority })) } }
+    })
     // Sending transport secrets, document contents or identity private keys is unnecessary.
     const proof = await signEnvelope(profile.privateKeys.devicePrivateKey,
-      serviceLoginPayload(request.value, Math.floor(Date.now() / 1000)), profile.device.deviceId, "TINSINK/1")
+      { ...serviceLoginPayload(request.value, Math.floor(Date.now() / 1000)), boards: workspaces.map(board => ({ workspace: board.workspace, name: board.name })) }, profile.device.deviceId, "TINSINK/1")
     const certificates = await certifiedDeviceChain(profile.certificate, hash => defaultProofStore.getCertificate(hash))
     const opener = window.opener as Window | null
     if (!opener) throw new Error("TinSink sign-in window is unavailable")
     const evidence = { identity: profile.identity, deviceId: profile.device.deviceId,
-      certificates,
-      grant: authority.localGrant ?? null, proof,
-      policy: { scope: authority.scopeAuthoritySnapshot, revocations: catalog?.revocations ?? [], departures: catalog?.departures ?? [],
-        deviceRevocations: (catalog?.deviceRevocations ?? []).map(value => ({ record: value.record, signer: value.authority })) } }
+      certificates, proof,
+      workspaces }
     opener.postMessage({ type: "tinsink-approval", challenge: request.value.challenge, evidence: JSON.stringify(evidence) }, request.value.origin)
     approved.value = true
   } catch (e) { error.value = e instanceof Error ? e.message : "Approval failed" }
@@ -74,10 +78,8 @@ async function certifiedDeviceChain(leaf: DeviceCertificate, getCertificate: (ha
       <h2>Sign in to TinSink</h2>
       <template v-if="request">
         <p>Service: <strong>{{ request.origin }}</strong></p>
-        <p>Project: <strong>{{ request.project }}</strong></p>
-        <p>Workspace: <strong>{{ request.workspace }}</strong></p>
         <p v-if="identityName">Identity: <strong>{{ identityName }}</strong></p>
-        <p>Your workspace role controls access. Owners and editors can read logs. Visitors and automation cannot.</p>
+        <p>Sign in with this identity. TinSink discovers your boards from signed owner and editor permissions. Visitors and automation cannot read logs.</p>
       </template>
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-else-if="!ready" role="status">Loading identity…</p>
