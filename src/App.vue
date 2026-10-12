@@ -495,7 +495,6 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @accept-and-join="sync.acceptWorkspaceJoin"
       @copy="sync.copyInvite"
       @export="exportWorkspace"
-      @import="openImport"
       @dismiss="sync.dismiss"
       @start="sync.startDurableMesh"
       @stop="sync.stopLiveSync"

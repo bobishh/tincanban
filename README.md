@@ -159,8 +159,8 @@ Hetzner/DNS configuration: [production architecture](../hetzner_playground/docs/
 - **Workspace:** shared document templates,
   priority rules and `employee_profile` for the named board, and a separate Advanced configuration tab for JSON.
 - **Connections:** shortcuts to the single Participants/devices, Rusty storage and
-  Backups views. Ownership succession and connection diagnostics belong to Sync → Advanced; workspace import
-  and export belong to Backups.
+  Backups views. Ownership succession and connection diagnostics belong to Sync → Advanced.
+  Export belongs to Backups; import as a new board belongs to the Workspaces list.
 
 **Workspace → Priority rules** supports job match priority: company recognition
 20%, company stability 20%, stack match 30%, and work profile match 30%. Each

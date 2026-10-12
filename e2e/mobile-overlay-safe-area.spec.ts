@@ -31,7 +31,7 @@ test("Given mobile board with safe insets, when Sync opens and viewport changes,
   await expect(page.getByRole("button", { name: "Menu", exact: true })).toBeVisible()
   await safeInsets(page)
   await page.getByRole("button", { name: "Menu", exact: true }).tap()
-  await page.getByRole("button", { name: "Sync, import & export", exact: true }).tap()
+  await page.getByRole("button", { name: "Sync & backups", exact: true }).tap()
   const dialog = page.getByRole("dialog", { name: "Device sync", exact: true })
   await expect(dialog).toBeVisible()
   await expect(page.locator(".mobile-drawer-root")).toHaveCount(0)

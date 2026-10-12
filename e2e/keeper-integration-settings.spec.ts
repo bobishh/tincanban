@@ -148,7 +148,7 @@ for (const scenario of [
     await page.evaluate(async mode => (await import("/e2e/support/keeperSettings.ts")).mountKeeperSettings(mode, false), scenario.mode)
     if (scenario.width <= 768) {
       await page.getByRole("button", { name: "Menu" }).click()
-      await page.getByRole("button", { name: "Sync, import & export" }).click()
+      await page.getByRole("button", { name: "Sync & backups" }).click()
     } else await page.getByRole("button", { name: "Sync", exact: true }).click()
     const dialog = page.getByRole("dialog", { name: "Device sync" })
     await dialog.getByRole("tab", { name: "Rusty", exact: true }).click()

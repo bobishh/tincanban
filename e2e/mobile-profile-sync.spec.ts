@@ -51,7 +51,7 @@ test("Given an enrolled mobile owner device with large history, when desktop pho
     await phone.goto(new URL("/", page.url()).href)
     await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync, import & export", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
     const tabs = phone.getByRole("tab")
     await expect(tabs).toHaveCount(4)
     for (const tab of await tabs.all()) await expect(tab).toHaveCSS("border-bottom-width", "2px")

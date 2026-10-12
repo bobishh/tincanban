@@ -1,18 +1,14 @@
 <script setup lang="ts">
-defineProps<{ exportOnly?: boolean }>()
-
 const emit = defineEmits<{
   (event: "export"): void
-  (event: "import"): void
 }>()
 </script>
 
 <template>
   <section class="sync-section">
-    <p class="sync-section-copy">Move or back up this workspace:</p>
+    <p class="sync-section-copy">Back up this workspace:</p>
     <div class="dialog-actions sync-data-actions">
       <button class="button button-quiet" type="button" @click="emit('export')">Export .tincanban</button>
-      <button v-if="!exportOnly" class="button button-quiet" type="button" @click="emit('import')">Import as new board</button>
     </div>
   </section>
 </template>

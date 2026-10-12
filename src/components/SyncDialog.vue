@@ -85,7 +85,6 @@ const emit = defineEmits<{
   (e: "start"): void
   (e: "stop"): void
   (e: "export"): void
-  (e: "import"): void
 }>()
 
 const selectedIds = computed(() => {
@@ -339,7 +338,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>
         </div>
         <div v-show="activeTab === 'Backups'" :id="`${tabId}-Backups-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Backups-tab`">
-        <WorkspaceFileActions @export="emit('export')" @import="emit('import')" />
+        <WorkspaceFileActions @export="emit('export')" />
         </div>
       </template>
       <!-- Step: Direct Workspace Selection (supersedes former preliminary chooser) -->
@@ -389,7 +388,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           </button>
         </section>
 
-        <WorkspaceFileActions @export="emit('export')" @import="emit('import')" />
+        <WorkspaceFileActions @export="emit('export')" />
       </template>
 
       <template v-else-if="step === 'enroll-host-preparing'">
