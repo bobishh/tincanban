@@ -24,7 +24,10 @@ second device and keep working across both.
   The same three dots appear in sequence on the startup screen and beside the
   compact floating notification. The notification shows the current stage
   without reserving space on the board, and fades away after checks finish. Editing becomes
-  available after history and access checks succeed; failed checks preserve the
+  available after saved-state and access checks succeed. An unchanged locally
+  admitted snapshot reuses its atomic admission checkpoint without replaying or
+  rewriting history. New evidence or a different application build triggers
+  reclassification; failed checks preserve the
   saved view and show a retry message.
 - Share selected boards with an editor or a read-only visitor.
 - Publish a selected board as a read-only public link. Public copies include active

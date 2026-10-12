@@ -288,9 +288,11 @@ export class WorkspaceStorage {
     authorizations: WorkspaceChangeAuthorization[],
     command?: { receipt: TransactionReceipt; changeBytes: Uint8Array; proof: ChangeProof },
     causalEvidence?: StoredCausalEvidence,
+    onPhase?: (phase: string) => void,
   ): Promise<{ proofChanged: boolean; causalChanged: boolean }> {
     checkStorageFailureHook()
     if (doc.id !== workspaceId) throw new Error("Workspace commit ID mismatch")
+    onPhase?.("snapshot-read")
     const committed = await readWorkspaceSnapshot(workspaceId)
     const legacyRaw = committed ? null : await getStorageRaw(`tincanban.snapshot.${workspaceId}`)
     const previous = committed ?? (legacyRaw ? parseStoredSnapshot(legacyRaw, workspaceId) : null)
@@ -308,9 +310,14 @@ export class WorkspaceStorage {
     }
     // Legacy proof storage is read-only during migration. The transaction also
     // rereads current proofs, so standalone proof updates cannot be overwritten.
+    onPhase?.("proof-read")
     const previousProofs = await records(workspaceId)
     let proofChanged = false
-    const causalChanged = causalEvidenceChanged(previous?.causalEvidence, causalEvidence)
+    const causalChanged = causalEvidenceChanged(previous?.causalEvidence, snapshot.causalEvidence)
+    const incomingProofChanged = canonicalizeJson(previousProofs) !== canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
+    if (committed && !command && !causalChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
+      return this.reuseCommittedWorkspace(workspaceId, committed, doc)
+    }
     const addCommand = (journal: ReturnType<typeof readLocalJournal>) => {
       if (!command) return
       const { receipt, changeBytes, proof } = command
@@ -333,18 +340,21 @@ export class WorkspaceStorage {
         writeLocalJournal(workspaceId, journal)
       })
     } else {
+      onPhase?.("journal-open")
       const database = await openWorkspaceJournal()
       const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts"], "readwrite")
       const completion = transactionDone(transaction)
       try {
         const snapshotStore = transaction.objectStore("snapshots")
+        onPhase?.("transaction-read")
         const existingSnapshot = await requestResult(snapshotStore.get(workspaceId)) as StoredWorkspaceSnapshot | undefined
         const proofStore = transaction.objectStore("authorizations")
         const stored = await requestResult(proofStore.get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
         const existing = mergeAuthorizationRecords(previousProofs, stored?.records ?? [])
         const next = mergeAuthorizationRecords(existing, authorizations)
         proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
-        if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalEvidence)
+        onPhase?.("transaction-write")
+        if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged)
           snapshotStore.put(snapshot)
         if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
         if (command) {
@@ -364,13 +374,22 @@ export class WorkspaceStorage {
         await completion.catch(() => undefined)
         throw error
       }
+      onPhase?.("transaction-complete")
       await completion
     }
     // Memory projections advance only after the durable transaction completes.
     this.inMemory.snapshots.set(workspaceId, snapshot)
     this.rememberDocument(workspaceId, doc)
+    onPhase?.("catalog-write")
     await this.registerWorkspace(workspaceId, doc.title, doc.archivedAt ?? null, true)
+    onPhase?.("completed")
     return { proofChanged, causalChanged }
+  }
+
+  private reuseCommittedWorkspace(workspaceId: string, snapshot: StoredWorkspaceSnapshot, doc: Automerge.Doc<WorkspaceDocumentV2>) {
+    this.inMemory.snapshots.set(workspaceId, snapshot)
+    this.rememberDocument(workspaceId, doc)
+    return { proofChanged: false, causalChanged: false }
   }
 
   async loadWorkspaceDoc(

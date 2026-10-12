@@ -17,6 +17,7 @@ import {
   readWorkspaceBundleV2,
 } from "./storage"
 import type { WorkspaceDocumentV2 } from "./domain/model"
+import * as journal from "./storageJournal"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -319,6 +320,20 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
       await expect(storage.commitWorkspace(doc.id, doc, raw, [], undefined, { ...evidence, decisions: [] })).rejects.toThrow(/Storage failure/i)
     } finally { setStorageFailureHookForTest(false) }
     expect(await reopened.loadCausalEvidence(doc.id)).toEqual(evidence)
+  })
+
+  it("Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write", async () => {
+    const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Unchanged", profile.identity.personId, "blank"))
+    const bytes = Automerge.save(doc)
+    const evidence = { bytes, decisions: [], authorizationEvidence: [], dismissedHashes: [], resolvedReviews: [] }
+    await storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)
+    const write = vi.spyOn(journal, "writeLocalJournal")
+    const register = vi.spyOn(storage, "registerWorkspace")
+    try {
+      await expect(storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)).resolves.toEqual({ proofChanged: false, causalChanged: false })
+      expect(write).not.toHaveBeenCalled()
+      expect(register).not.toHaveBeenCalled()
+    } finally { write.mockRestore(); register.mockRestore(); Automerge.free(doc) }
   })
 
   it("handles same-ID retry idempotently returning existing receipt without duplicating change", async () => {

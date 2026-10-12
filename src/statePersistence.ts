@@ -273,6 +273,7 @@ async function persistNewLocalChange(
   await storage.commitWorkspace(base.id, authorizedDoc, Automerge.save(authorizedDoc), admission.verifiedAuthorizations, {
     receipt: created.receipt, changeBytes, proof: created.proof,
   }, { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
+    admissionCheckpoint: admission.admissionCheckpoint,
     ...reviewMetadata });
   meshTrace("document.persisted", { workspaceId: base.id, recordId: created.receipt.changeHash, changeId: created.receipt.changeHash, phase: "local", component: "automerge", heads: Automerge.getHeads(authorizedDoc), bytes: changeBytes.byteLength });
   return authorizedDoc;

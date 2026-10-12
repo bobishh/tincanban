@@ -1,6 +1,34 @@
 import { expect, test, type Locator } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 
+test("Given a saved admitted board, When a fresh tab reloads unchanged state, Then editing becomes ready without sending history to the admission worker", async ({ page }) => {
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Saved admission")
+  await page.evaluate(async () => {
+    const app = (await import("/src/state.ts")).useTincanban()
+    await app.createLeadAsync({ company: "Already admitted", role: "Engineer", status: "lead" })
+  })
+  await page.addInitScript(() => {
+    const OriginalWorker = Worker
+    window.Worker = class extends OriginalWorker {
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        if (options?.name !== "workspace-admission") return
+        const send = this.postMessage.bind(this)
+        this.postMessage = (message, transfer) => {
+          if (message.kind !== "access") throw new Error("Unchanged saved history must not be replayed")
+          Reflect.apply(send, this, [message, transfer])
+        }
+      }
+    }
+  })
+  await page.reload()
+  await expect(page.locator('.brand [data-role-stamp="owner"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()
+  await expect(page.locator(".board")).toContainText("Already admitted")
+  await expect(page.getByRole("alert", { name: "Board status" })).toHaveCount(0)
+})
+
 async function expectSequentialDots(status: Locator) {
   const indicator = status.locator(".startup-status-mark")
   await expect(indicator.locator(".startup-status-dot")).toHaveCount(3)

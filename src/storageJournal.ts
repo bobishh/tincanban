@@ -1,4 +1,5 @@
 import type { ChangeProof, TransactionReceipt } from "./domain/model"
+import type { WorkspaceAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 
 export type StoredChange = {
   workspaceId: string
@@ -33,6 +34,8 @@ export type StoredCausalEvidence = {
   bytes: Uint8Array
   decisions: CausalChangeDecision[]
   authorizationEvidence?: unknown[]
+  /** Bound to the raw evidence and admitted projection in this atomic local commit. */
+  admissionCheckpoint?: WorkspaceAdmissionCheckpoint
   /** Local presentation state; never changes a decision's admission status. */
   dismissedHashes?: string[]
   /** Links a quarantined source to one durable, locally authorized replacement change. */

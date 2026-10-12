@@ -1,7 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { validateWorkspaceDoc } from "./domain/model"
-import { exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, workspaceAuthorityIsInvalid, workspaceWritesBlocked } from "./sync/changeAuthorization"
+import { exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, storedWorkspaceAdmissionIsCurrent, workspaceAuthorityIsInvalid, workspaceWritesBlocked } from "./sync/changeAuthorization"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { peerStore } from "./sync/peerStore"
 import { defaultStorage } from "./storage"
@@ -28,7 +28,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     stage = name
     const phaseStartedAt = performance.now()
     const result = await diagnoseStartupStep(`reclassify-${name}`, operation, { workspaceId })
-    meshTrace("workspace.reclassify.phase", { workspaceId, stage: name,
+    meshTrace("workspace.reclassify.phase", { workspaceId, stage: name, phase: name,
       elapsedMs: Math.round(performance.now() - phaseStartedAt) })
     return result
   }
@@ -40,10 +40,14 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     // branch must neither replay them nor persist a new classification.
     if (await phase("validate-authority", () => workspaceAuthorityIsInvalid(workspaceId))) return { doc: loaded.doc, changed: false }
     const evidence = await phase("load-evidence", () => storage.loadCausalEvidence(workspaceId))
+    const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(loaded.doc, stateRuntime.currentProfile ?? undefined))
+    if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization))) {
+      meshTrace("workspace.reclassify.reused", { workspaceId })
+      return { doc: loaded.doc, changed: false }
+    }
     const rawBytes = evidence ? new Uint8Array(evidence.bytes) : Automerge.save(loaded.doc)
     const raw = Automerge.load<WorkspaceDocumentV2>(rawBytes)
     try {
-      const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(raw, stateRuntime.currentProfile ?? undefined))
       const admission = await phase("admit-history", () => evaluateIncomingWorkspaceAdmission(raw, raw, authorization,
         (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[]))
       stage = "validate-projection"
@@ -62,6 +66,11 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
           bytes: admission.rawBytes,
           decisions: admission.decisions,
           authorizationEvidence: admission.authorizationEvidence,
+          admissionCheckpoint: admission.admissionCheckpoint,
+        }, commitPhase => {
+          stage = `commit-${commitPhase}`
+          meshTrace("workspace.commit.phase", { workspaceId, phase: commitPhase,
+            elapsedMs: Math.round(performance.now() - startedAt) })
         }))
       const documentChanged = !sameHeads(doc, loaded.doc)
       return { doc, changed: documentChanged || result.proofChanged || result.causalChanged }

@@ -138,8 +138,18 @@ test("Given an offline editor change accepted before revocation, when the signed
   await expect(reloadedReview.locator("li").filter({ hasText: fixture.changeHash })
     .getByRole("list", { name: "Draft field changes" })).toContainText("Offline editor draft")
 
-  // Failed reclassification leaves review visible and exposes retry feedback.
-  await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
+  // A checkpoint from an older policy requires a new durable classification.
+  // Unchanged current-policy reads no longer need a storage write at all.
+  await page.evaluate(async () => {
+    const app = (await import("/src/state.ts")).useTincanban()
+    const storage = (await import("/src/storage.ts")).defaultStorage
+    const A = await import("/@id/@automerge/automerge/slim")
+    const doc = app.getActiveDoc()!
+    const evidence = (await storage.loadCausalEvidence(doc.id))!
+    evidence.admissionCheckpoint!.policy = "previous-policy"
+    await storage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, evidence)
+    ;(window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true
+  })
   const retryError = await page.evaluate(async id => {
     const { useTincanban } = await import("/src/state.ts")
     try { await useTincanban().reclassifyWorkspace(id); return "unexpected success" }

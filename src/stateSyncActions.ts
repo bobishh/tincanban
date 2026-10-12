@@ -120,7 +120,8 @@ async function mergeAuthorizedWorkspace(
     const documentChanged = !local || !sameHeads(merged, local);
     const { proofChanged, causalChanged } = await storage.commitWorkspace(
       id, merged, Automerge.save(merged), admission.verifiedAuthorizations as WorkspaceChangeAuthorization[], undefined,
-      { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence },
+      { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
+        admissionCheckpoint: admission.admissionCheckpoint },
     );
     const knownLocalHashes = new Set(local ? Automerge.getChangesMetaSince(local, []).map(change => change.hash) : [])
     if (documentChanged) for (const change of Automerge.getChangesMetaSince(merged, []).filter(change => !knownLocalHashes.has(change.hash))) {

@@ -13,6 +13,16 @@ Before accepting a Worker result it rereads durable authority and rejects a resu
 whose authority changed during validation. UI publication and the existing network
 ACK remain downstream of successful persistence.
 
+Local snapshot commits also retain an admission checkpoint bound to the complete
+raw bytes, normalized proof/authority inputs, admitted heads, decisions and frontend
+build. Startup checks those bindings and current durable authority before reusing
+the saved projection. Exact matches require neither raw Automerge decoding nor a
+Worker admission job nor a snapshot write. Missing or changed bindings require full
+reclassification. Authority refresh timestamps alone do not invalidate the result;
+changed security fields do. Checkpoints are local metadata, excluded from document,
+authorization, backup and Rusty exports. Incoming packets always enter admission;
+an incoming checkpoint cannot bypass validation.
+
 Snapshot buffers are transferred, not copied through integer arrays on the main
 thread. Rust's document/metadata serialization runs inside the Worker. Existing
 main-thread snapshot loading/saving, merge, authority lookup, proof object cloning,

@@ -15,6 +15,7 @@ import { authorizeLocalChanges, exportAuthorizationBundle, exportAuthorizations,
 import { executeCommand } from "./domain/commands"
 import { peerStore } from "./sync/peerStore"
 import * as causalAdmission from "./stateCausalAdmission"
+import * as changeAuthorization from "./sync/changeAuthorization"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -32,6 +33,45 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await bootstrapIdentity("State Test User")
     await hydrate()
     await useTincanban().createWorkspaceAsync("Job search", "job-search")
+  })
+
+  it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Admitted once", role: "Engineer", status: "lead" })
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    const commit = vi.spyOn(defaultStorage, "commitWorkspace")
+    resetStateForTest()
+    try {
+      await hydrate()
+      expect(app.ready.value).toBe(true)
+      expect(app.workspace.leads.map(lead => lead.company)).toContain("Admitted once")
+      expect(admission).not.toHaveBeenCalled()
+      expect(commit).not.toHaveBeenCalled()
+    } finally { admission.mockRestore(); commit.mockRestore() }
+  })
+
+  it.each(["missing", "policy", "raw", "decisions"])("Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing", async changed => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Kept admitted", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!
+    const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
+    if (changed === "missing") delete evidence.admissionCheckpoint
+    if (changed === "policy") evidence.admissionCheckpoint!.policy = "older-policy"
+    if (changed === "decisions") evidence.decisions = []
+    if (changed === "raw") {
+      const raw = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Unverified replacement" })
+      evidence.bytes = Automerge.save(raw)
+      Automerge.free(raw)
+    }
+    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    resetStateForTest()
+    try {
+      await hydrate()
+      expect(admission).toHaveBeenCalledOnce()
+      expect(app.ready.value).toBe(true)
+      expect(app.activeWorkspace.title).toBe("Job search")
+    } finally { admission.mockRestore() }
   })
 
   it.each([false, true])("Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked", async fail => {

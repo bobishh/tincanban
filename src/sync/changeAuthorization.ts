@@ -11,6 +11,8 @@ import { rememberWorkspaceAdmission, reusedWorkspaceAdmission } from "./workspac
 import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "./workspaceAdmissionCore"
 import { readWorkspaceSnapshot } from "../storageJournal"
 import { meshTrace } from "./meshTrace"
+import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoint, type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
+import type { StoredCausalEvidence } from "../storageJournal"
 
 import type { WorkspaceRole } from "../domain/permissions"
 export class WorkspaceChangeRejected extends Error {
@@ -335,39 +337,52 @@ export async function validateIncomingChangeAuthorizations(local: Automerge.Doc<
 
 /** Reclassifies complete raw history, including hashes already stored locally. */
 export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
-  remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = []): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array }> {
-  const credential = await incomingCredential(remote.id)
+  remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = []): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
+  const { credential, frozenCredential, knownAuthority, combinedBundle, context } = await workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local))
+  const startedAt = performance.now()
+  meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
+  const { bytes: rawBytes, heads } = rawAdmissionSnapshot(local, remote)
+  // Causal admission uses signed change-time authority, not receiver wall time.
+  const reuseKey = canonicalizeJson({ heads, ...context })
+  const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
+  const plan = reused ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
+    local: undefined, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
+  })
+  if (reused) meshTrace("workspace.admission.reused", { workspaceId: remote.id, elapsedMs: Math.round(performance.now() - startedAt) })
+  else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile })
+  const admissionCheckpoint = plan.authorizedHeads && plan.decisions
+    ? await createAdmissionCheckpoint(await admissionInputHash(rawBytes, context), plan.authorizedHeads, plan.decisions) : undefined
+  // Authority may change while either policy computation or hashing yields.
+  const currentCredential = await incomingCredential(remote.id)
+  traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
+  if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan)
+  return { ...structuredClone(plan), rawBytes, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
+}
+
+/** Reuse only a locally committed projection, never an incoming snapshot's marker. */
+export async function storedWorkspaceAdmissionIsCurrent(doc: Automerge.Doc<WorkspaceDocumentV2>,
+  evidence: StoredCausalEvidence, authorization: unknown): Promise<boolean> {
+  if (!evidence.admissionCheckpoint) return false
+  const { context, frozenCredential } = await workspaceAdmissionContext(doc, authorization,
+    (evidence.authorizationEvidence ?? []) as Authorization[], true)
+  const matches = await matchesAdmissionCheckpoint(evidence.admissionCheckpoint,
+    await admissionInputHash(evidence.bytes, context), Automerge.getHeads(doc), evidence.decisions)
+  return matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential
+}
+
+async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown,
+  priorEvidenceRecords: Authorization[], hasLocal: boolean) {
+  const credential = await incomingCredential(doc.id)
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
   const unnormalizedBundle = authorizationBundle(raw)
   const bundle = { ...unnormalizedBundle, authority: normalizeAuthorityDepartures(unnormalizedBundle.authority) }
   const frozenCredential = authorityValidationFingerprint(credential)
-  const startedAt = performance.now()
-  meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
-  const knownAuthority = local ? workspaceWriteAuthorityEvidence(local, credential) ?? null : null
+  const knownAuthority = hasLocal ? workspaceWriteAuthorityEvidence(doc, credential) ?? null : null
   const rawRecords = (bundle.version === 1 ? bundle.records : bundle.pages.flat()) as Authorization[]
-  const allRecords = mergeAuthorizationRecords([...await records(remote.id), ...priorEvidenceRecords], rawRecords)
+  const allRecords = mergeAuthorizationRecords([...await records(doc.id), ...priorEvidenceRecords], rawRecords)
   const combinedBundle: IncomingAuthorizationBundle = { version: 1, records: allRecords, authority: bundle.authority }
-  const { bytes: rawBytes, heads } = rawAdmissionSnapshot(local, remote)
-  // Causal admission uses signed change-time authority, not receiver wall time
-  // (meta-mesh causal_admission.rs). Include complete evidence and current rights.
-  const reuseKey = canonicalizeJson({ heads,
-    authorization: combinedBundle, knownAuthority, credential: frozenCredential })
-  const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
-  const plan = reused ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
-    // Admission workers transfer input buffers. Keep the original raw union
-    // alive for atomic persistence and replication after the worker returns.
-    local: undefined, remote: rawBytes.slice(),
-    authorization: combinedBundle, knownAuthority,
-    now: Date.now(),
-  })
-  if (reused) meshTrace("workspace.admission.reused", { workspaceId: remote.id, elapsedMs: Math.round(performance.now() - startedAt) })
-  else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile })
-  // Off-thread validation yields while control evidence can change. A result
-  // verified against earlier rights cannot authorize a commit under new rights.
-  const currentCredential = await incomingCredential(remote.id)
-  traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
-  if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan)
-  return { ...structuredClone(plan), rawBytes, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
+  return { credential, frozenCredential, knownAuthority, combinedBundle,
+    context: { workspaceId: doc.id, authorization: combinedBundle, knownAuthority, credential: frozenCredential } }
 }
 
 function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>) {

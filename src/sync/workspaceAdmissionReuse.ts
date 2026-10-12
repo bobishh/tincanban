@@ -1,6 +1,7 @@
 import type { WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
 
-// Keep only the latest exact input per workspace; never persist validation caches.
+// Keep only the latest exact packet result in memory. Durable projection reuse
+// uses the separate atomic admission checkpoint, never this network-input cache.
 const recent = new Map<string, { key: string; result: WorkspaceAdmissionResult }>()
 const maxWorkspaces = 8
 

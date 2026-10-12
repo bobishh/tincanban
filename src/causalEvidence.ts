@@ -7,6 +7,7 @@ export function cloneCausalEvidence(evidence: StoredCausalEvidence | null | unde
     bytes: new Uint8Array(evidence.bytes),
     decisions: evidence.decisions,
     authorizationEvidence: evidence.authorizationEvidence,
+    admissionCheckpoint: evidence.admissionCheckpoint ? structuredClone(evidence.admissionCheckpoint) : undefined,
     dismissedHashes: evidence.dismissedHashes ? [...evidence.dismissedHashes] : undefined,
     resolvedReviews: evidence.resolvedReviews?.map(review => ({ ...review })),
   } : null
@@ -35,6 +36,7 @@ export function causalEvidenceChanged(
   return !sameBytes(previous.bytes, current.bytes) ||
     canonicalizeJson(previous.decisions) !== canonicalizeJson(current.decisions) ||
     canonicalizeJson(previous.authorizationEvidence ?? []) !== canonicalizeJson(current.authorizationEvidence ?? []) ||
+    canonicalizeJson(previous.admissionCheckpoint) !== canonicalizeJson(current.admissionCheckpoint) ||
     canonicalizeJson(previous.dismissedHashes ?? []) !== canonicalizeJson(current.dismissedHashes ?? []) ||
     canonicalizeJson(previous.resolvedReviews ?? []) !== canonicalizeJson(current.resolvedReviews ?? [])
 }
