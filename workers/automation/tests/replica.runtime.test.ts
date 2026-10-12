@@ -320,6 +320,72 @@ async function signedReceipt(access: Parameters<ReplicaTransport["upload"]>[0], 
 }
 
 describe("AutomationReplica in workerd with the compiled Rust policy", () => {
+  it.each([false, true])("Given a legacy pending snapshot and changed document=%s, when retrying after upgrade, then ciphertext is reused only for identical complete state", async changed => {
+    const { automation, packet, persisted } = await fixture();
+    const replica = await AutomationReplica.activate(packet, automation);
+    const state = JSON.parse(replica.serialize());
+    const legacyPlaintext = new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: packet.workspaceId,
+      document: state.rawDocument, authorization: { version: 1, records: state.authorizations, authority: state.authority }, chat: state.chat }));
+    const legacyObject = await encryptBlindObject(packet.blind.scopeId, packet.blind.keyEpoch,
+      decodeBlindBytes(packet.blind.contentKey), legacyPlaintext);
+    state.pending = { hash: await blindHash(legacyPlaintext), object: legacyObject };
+    const uploads: string[] = [];
+    const transport: ReplicaTransport = {
+      inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+      download: async () => { throw new Error("Unexpected download"); },
+      upload: async (access, object) => { uploads.push(await blindObjectId(object)); return signedReceipt(access, object); },
+    };
+    const restored = await AutomationReplica.restore(JSON.stringify(state), automation, async value => { persisted.push(value); }, transport);
+    if (changed) await restored.createLead("changed-legacy-pending", { company: "Acme", role: "Engineer" }, {});
+    await restored.sync();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0] === await blindObjectId(legacyObject)).toBe(!changed);
+    expect(JSON.parse(restored.serialize()).pending).toBeUndefined();
+    await restored.sync();
+    expect(uploads).toHaveLength(1);
+  });
+
+  it("Given an unchanged durable snapshot, when Rusty echoes uploaded objects across polls and Worker restarts, then only one ciphertext is stored", async () => {
+    const { automation, packet, persisted } = await fixture();
+    const objects: Awaited<ReturnType<typeof encryptBlindObject>>[] = [];
+    const transport: ReplicaTransport = {
+      inventory: async (_access, after) => ({ objects: await Promise.all(objects.slice(after).map(async (object, index) => ({
+        objectId: await blindObjectId(object), sequence: after + index + 1,
+      }))), cursor: objects.length, hasMore: false }),
+      download: async (_access, id) => {
+        for (const object of objects) if (await blindObjectId(object) === id) return object;
+        throw new Error("Snapshot missing");
+      },
+      upload: async (access, object) => { objects.push(object); return signedReceipt(access, object); },
+    };
+    packet.transport = transport;
+    let replica = await AutomationReplica.activate(packet, automation);
+    await replica.sync();
+    expect(objects).toHaveLength(1);
+    const initialState = JSON.parse(replica.serialize());
+    for (let poll = 0; poll < 4; poll++) {
+      await replica.sync();
+      const after = JSON.parse(replica.serialize());
+      expect(objects, `Unchanged poll ${poll} must not re-encrypt`).toHaveLength(1);
+      expect(after.rawDocument).toBe(initialState.rawDocument);
+      expect(after.chat).toEqual(initialState.chat);
+      expect(after.authorizations.map((record: { signed: unknown }) => record.signed))
+        .toEqual(initialState.authorizations.map((record: { signed: unknown }) => record.signed));
+      replica = await AutomationReplica.restore(persisted.at(-1)!, automation, async value => { persisted.push(value); }, transport);
+    }
+    await replica.createLead("changed-after-polls", { company: "Acme", role: "Engineer" }, {});
+    await replica.sync();
+    expect(objects).toHaveLength(2);
+    await replica.sync();
+    expect(objects).toHaveLength(2);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(packet.grant.payload.automation!.expiresAt + 1);
+      await expect(replica.sync()).rejects.toThrow("expired");
+      expect(objects).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("Given an owner-authorized snapshot, when a lead and application update are applied, then signed scope admits the same cards", async () => {
     const { automation, packet, persisted } = await fixture();
     packet.initial.chat = { version: 2, capabilities: ["contextual-v2"], messages: [

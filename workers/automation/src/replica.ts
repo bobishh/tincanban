@@ -433,16 +433,19 @@ export class AutomationReplica {
 
   private async push(): Promise<void> {
     const access = this.blind;
-    const bundle = { version: 1 as const, records: this.authorizations, authority: this.authority };
+    // The verifier may return grant:null for owner proofs; merging omits it.
+    // Normalize this optional wrapper without changing any signed payload.
+    const records = normalizeWireAuthorizations(this.authorizations);
+    const bundle = { version: 1 as const, records, authority: this.authority };
     const admission = await this.revalidate();
     if (admission.quarantinedHashes.length || admission.pendingHashes.length) throw new Error("Unadmitted workspace changes prevent replica upload");
     const snapshot: WireSnapshot = { version: 1, workspaceId: this.workspaceId, document: this.rawDocument,
       authorization: bundle, chat: this.chat };
-    const plaintext = new TextEncoder().encode(JSON.stringify(snapshot));
+    const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Automation snapshot exceeds the Rusty object limit");
     const hash = await blindHash(plaintext);
     if (hash === this.lastUploaded && !this.pending) return;
-    if (!this.pending || this.pending.hash !== hash) {
+    if (!this.pending || this.pending.hash !== hash && !await this.pendingMatchesSnapshot(snapshot)) {
       this.pending = { hash, object: await encryptBlindObject(access.scopeId, access.keyEpoch,
         decodeBlindBytes(access.contentKey), plaintext) };
       await this.persistState();
@@ -455,6 +458,17 @@ export class AutomationReplica {
     this.pending = undefined;
     try { await this.persistState(); }
     catch (error) { this.lastUploaded = previousUploaded; this.pending = { hash, object }; throw error; }
+  }
+
+  private async pendingMatchesSnapshot(snapshot: WireSnapshot): Promise<boolean> {
+    if (!this.pending) return false;
+    // Upgrading JSON normalization must not re-encrypt an uncertain durable upload.
+    const plaintext = await decryptBlindObject(this.pending.object, this.blind.scopeId,
+      this.blind.keyEpoch, decodeBlindBytes(this.blind.contentKey));
+    const previous = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) as WireSnapshot;
+    if (previous.authorization?.version !== 1 || !Array.isArray(previous.authorization.records)) return false;
+    return canonicalizeJson({ ...previous, authorization: { ...previous.authorization,
+      records: normalizeWireAuthorizations(previous.authorization.records as WorkspaceChangeAuthorization[]) } }) === canonicalizeJson(snapshot);
   }
 
   private async revalidate() {
@@ -650,6 +664,10 @@ function mergeAuthority(incoming: WorkspaceWriteAuthorityEvidence, known: Worksp
 function normalizeBundle(bundle: IncomingAuthorizationBundle, records: WorkspaceChangeAuthorization[]): IncomingAuthorizationBundle {
   const flattened = bundle.version === 1 ? bundle.records : bundle.pages.flat();
   return { version: 1, records: mergeAuthorizationRecords(records, flattened as WorkspaceChangeAuthorization[]), authority: bundle.authority };
+}
+
+function normalizeWireAuthorizations(records: WorkspaceChangeAuthorization[]): WorkspaceChangeAuthorization[] {
+  return records.map(({ grant, ...record }) => grant ? { ...record, grant } : record);
 }
 
 function parseOpaqueChat(value: unknown): OpaqueChatBatch | null {

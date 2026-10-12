@@ -4,6 +4,14 @@ This Worker accepts bounded job submissions and forwarded email, stores each eve
 
 The public event response means **durably queued**. After a signed owner automation grant and fully admitted encrypted snapshot are activated, clear Clef decisions can create a Lead or move a uniquely matched application to Interview or Rejected. Each action is authored as an Automerge change, admitted against the current signed causal authority, persisted before Rusty upload, and reported as applied only after the signed upload receipt succeeds. Email matching uses a pre-classification snapshot; moves require a valid original `Date` header at least as new as the card workflow and reject concurrent workflow changes. Rejected applications never move backward. Ambiguous matches, uncertain classifications, expired grants, stale workflows, and unavailable proof stay in review or retry. Clef cannot authorize writes. The Worker never falls back to an Editor grant.
 
+Unchanged snapshots reuse the last confirmed upload. Wire JSON uses canonical key
+ordering and omits absent optional grants on owner proof wrappers; signed payloads
+remain intact. This prevents a first self-echo from creating an extra encrypted
+object when the verifier returns `grant: null` and proof merging omits it. Older
+pending ciphertext remains reusable across this normalization upgrade only when
+its full snapshot, including authorization and chat, matches current state. Actual
+document/proof/chat changes still require upload; expired grants still prevent sync.
+
 ## Job priority
 
 Opportunity policy `lead-clef-v2` asks Clef for company recognition, company
