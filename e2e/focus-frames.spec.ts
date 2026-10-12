@@ -34,11 +34,19 @@ for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, 
   await expect(titlebar).toHaveCSS("outline-style", "solid")
   await expect(titlebar).toHaveCSS("outline-color", "rgb(23, 107, 77)")
   await expectNoBlueFrames(page)
+  if (width < 600) {
+    await chat.getByRole("button", { name: "Add reference or participant", exact: true }).focus()
+    await page.keyboard.press("Enter")
+  }
   const summary = chat.locator(".mention-picker summary")
   await summary.focus()
   await expect(summary).toHaveCSS("outline-style", "solid")
   await expect(summary).toHaveCSS("outline-color", "rgb(23, 107, 77)")
   await expectNoBlueFrames(page)
+  if (width < 600) {
+    await chat.getByRole("button", { name: "Add reference or participant", exact: true }).click()
+    await page.keyboard.press("Tab")
+  }
   await chat.getByRole("textbox", { name: "Message", exact: true }).fill("[Board documentation](https://example.com/docs)")
   await chat.getByRole("button", { name: "Send message" }).click()
   await expect(chat.locator(".chat-message-pending")).toHaveCount(0)

@@ -51,7 +51,7 @@ test("Given a Lead detail window, when its container maximizes and then narrows,
   await detail.getByRole("button", { name: "Maximize window" }).click()
   await expect.poll(async () => (await detail.locator("[data-detail-primary]").boundingBox())!.x)
     .toBeLessThan((await inspector.boundingBox())!.x)
-  expect((await detail.boundingBox())?.width ?? 0).toBeGreaterThan(1200)
+  await expect.poll(async () => (await detail.boundingBox())?.width ?? 0).toBeGreaterThan(1200)
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(detail.locator("[data-detail-layout]")).toHaveCSS("grid-template-columns", /\d+px/)
