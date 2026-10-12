@@ -166,7 +166,7 @@ test("Given a visitor joins a workspace, when they save their avatar, then owner
     await page.getByRole("button", { name: "Settings" }).click()
     const settings = page.getByRole("dialog", { name: "Settings" })
     await settings.getByRole("tab", { name: "Connections", exact: true }).click()
-    await settings.getByRole("button", { name: "Participants and devices", exact: true }).click()
+    await settings.getByRole("button", { name: "Open Device sync", exact: true }).click()
     await expect.poll(async () => page.locator(".mesh-member .participant-avatar-photo").evaluateAll((images, expectedSource) =>
       images.some(image => (image as HTMLImageElement).src === expectedSource), source), { timeout: 30_000 }).toBe(true)
   } finally {

@@ -6,6 +6,7 @@ const props = defineProps<{
   members: MeshMemberView[]
   selectedPersonId?: string
   hasMesh?: boolean
+  embedded?: boolean
   succession?: SuccessionView
   currentRole?: "owner" | "editor" | "visitor"
   currentPersonId?: string
@@ -33,14 +34,14 @@ const memberName = (id: string) => props.members.find(member => member.personId 
 </script>
 <template>
   <section v-if="hasMesh" class="recovery-panel" aria-label="Ownership succession">
-    <h3>Ownership succession</h3>
+    <h3 v-if="!embedded">Ownership succession</h3>
     <p v-if="succession?.conflicted" class="sync-error" role="alert">Conflicting recovery claims found. Workspace writes paused; inspect signed claims before transferring ownership.</p>
     <p v-if="succession" class="dialog-copy">
       <template v-if="succession.successorPersonId">Named successor: {{ memberName(succession.successorPersonId) }}.</template>
       <template v-else>Editor quorum: {{ succession.quorum }} of {{ succession.eligibleEditorPersonIds.length }}.</template>
     </p>
     <p v-if="succession && currentRole === 'editor'" class="dialog-copy">Votes for you: {{ succession.votes.filter(vote => vote.candidatePersonId === currentPersonId).length }} / {{ succession.quorum }}.</p>
-    <div v-if="!succession" class="sync-recovery-note"><p>No recovery policy.</p><p class="sync-helper-text">Owner: name a successor or enable editor quorum.</p></div>
+    <div v-if="!succession" class="sync-recovery-note"><p>No recovery policy.</p><p class="sync-helper-text">{{ editors.length ? 'Owner: name a successor or enable editor quorum.' : 'Add an editor in Participants before setting up ownership recovery.' }}</p></div>
     <label v-if="editors.length && (canManageMesh || currentRole === 'editor')">Recovery participant
       <select v-model="candidateId" aria-label="Recovery participant"><option value="">Select an editor</option><option v-for="member in editors" :key="member.personId" :value="member.personId">{{ member.name }}{{ member.self ? ' · You' : '' }}</option></select>
     </label>
@@ -48,7 +49,7 @@ const memberName = (id: string) => props.members.find(member => member.personId 
     <button v-if="canManageMesh && succession?.successorPersonId" class="button" type="button" @click="emit('setSuccessor', null)">Remove named successor</button>
     <button v-if="canVote && candidate" class="button" type="button" @click="emit('voteSuccessor', candidate.personId)">Vote for {{ candidate.self ? 'yourself' : candidate.name }}</button>
     <p v-if="currentRole === 'editor' && currentVote" class="dialog-copy">Vote recorded for {{ memberName(currentVote.candidatePersonId) }}.</p>
-    <button v-if="canManageMesh && !succession" class="button" type="button" @click="emit('setSuccessor', null)">Enable editor quorum</button>
+    <button v-if="canManageMesh && !succession" class="button" type="button" :disabled="!editors.length" @click="emit('setSuccessor', null)">Enable editor quorum</button>
     <button v-if="canClaimSuccession && !succession?.conflicted" class="button button-danger" type="button" @click="emit('claimSuccession')">Claim ownership</button>
   </section>
 </template>

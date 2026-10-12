@@ -1,53 +1,53 @@
 <script setup lang="ts">
 import { MarkdownContent } from "../../ui/markdownContent"
-import { ref } from "vue";
-import type { Template } from "../../types";
+import { computed, watch } from "vue"
+import type { Template } from "../../types"
 
-defineProps<{
-  readOnly?: boolean;
-  templates: Template[];
-}>();
-
-const emit = defineEmits<{
-  (
-    event: "save",
-    payload: { id?: string; name: string; markdown: string },
-  ): void;
-}>();
-
-const editingTemplateId = ref<string | null>(null);
-const templateDraft = ref({ name: "", markdown: "" });
+const props = defineProps<{
+  readOnly?: boolean
+  templates: Template[]
+  saveTemplate: (input: { id?: string; newId?: string; name: string; markdown: string }) => Promise<string>
+}>()
+const editor = defineModel<{ id: string | null; newId: string | null; name: string; markdown: string; saving: boolean; error: string; notice: string }>("editor", { required: true })
+const templateDraft = computed(() => editor.value)
+const editingTemplateId = computed(() => editor.value.id)
+const saving = computed(() => editor.value.saving)
+const error = computed(() => editor.value.error)
+const saveNotice = computed(() => editor.value.notice)
+watch(() => [editor.value.name, editor.value.markdown], () => { editor.value.notice = "" })
 
 function startTemplate() {
-  editingTemplateId.value = null;
-  templateDraft.value = { name: "", markdown: "" };
+  editor.value = { id: null, newId: null, name: "", markdown: "", saving: false, error: "", notice: "" }
 }
-
 function editTemplate(template: Template) {
-  editingTemplateId.value = template.id;
-  templateDraft.value = { name: template.name, markdown: template.markdown };
+  editor.value = { id: template.id, newId: null, name: template.name, markdown: template.markdown, saving: false, error: "", notice: "" }
 }
-
-function saveTemplate() {
-  const name = templateDraft.value.name.trim();
-  const markdown = templateDraft.value.markdown.trim();
-  if (!name || !markdown) return;
-
-  emit("save", {
-    ...(editingTemplateId.value ? { id: editingTemplateId.value } : {}),
-    name,
-    markdown,
-  });
+async function persistTemplate() {
+  const draft = editor.value
+  const name = draft.name.trim()
+  const markdown = draft.markdown.trim()
+  if (!name || !markdown || draft.saving || props.readOnly) return
+  draft.saving = true
+  draft.error = ""
+  if (!draft.id) draft.newId ??= crypto.randomUUID()
+  try {
+    const id = await props.saveTemplate({ ...(draft.id ? { id: draft.id } : { newId: draft.newId! }), name, markdown })
+    draft.id = id
+    draft.newId = null
+    draft.notice = "Saved"
+  } catch (cause) { draft.error = cause instanceof Error ? cause.message : "Could not save template" }
+  finally { draft.saving = false }
 }
 </script>
 
 <template>
   <div class="schema-tab-content">
-    <fieldset :disabled="readOnly" class="templates-layout">
+    <div class="templates-layout">
       <aside class="template-list" aria-label="Saved templates">
         <button
           class="button button-small"
           type="button"
+          :disabled="readOnly || saving"
           @click="startTemplate"
         >
           + Template
@@ -58,6 +58,7 @@ function saveTemplate() {
           class="template-item"
           :class="{ active: editingTemplateId === template.id }"
           type="button"
+          :disabled="saving"
           @click="editTemplate(template)"
         >
           <strong>{{ template.name }}</strong>
@@ -67,7 +68,8 @@ function saveTemplate() {
         </p>
       </aside>
 
-      <form class="template-editor" novalidate @submit.prevent="saveTemplate">
+      <form class="template-editor" novalidate @submit.prevent="persistTemplate">
+        <fieldset :disabled="readOnly || saving" class="template-form-fields">
         <label>
           <span>Name</span>
           <input
@@ -87,14 +89,21 @@ function saveTemplate() {
         </label>
         <section v-if="templateDraft.markdown" aria-label="Template preview">
           <h3>Preview</h3>
-          <MarkdownContent :source="templateDraft.markdown" :editable-tasks="!readOnly" @task-toggle="templateDraft.markdown = $event" />
+          <MarkdownContent :source="templateDraft.markdown" :editable-tasks="!readOnly && !saving" @task-toggle="templateDraft.markdown = $event" />
         </section>
         <div class="dialog-actions">
-          <button class="button button-primary" type="submit">
-            Save template
+          <button class="button button-primary" type="submit" :disabled="!templateDraft.name.trim() || !templateDraft.markdown.trim()">
+            {{ saving ? 'Saving…' : error ? 'Retry save' : 'Save template' }}
           </button>
         </div>
+        </fieldset>
+        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <p v-if="saving || saveNotice" role="status" aria-label="Template save status">{{ saving ? 'Saving…' : saveNotice }}</p>
       </form>
-    </fieldset>
+    </div>
   </div>
 </template>
+
+<style scoped>
+.template-form-fields { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+</style>

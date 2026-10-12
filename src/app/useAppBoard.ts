@@ -248,7 +248,7 @@ function readSelectedItem(core: AppBoardContext) {
 }
 
 function readItem(core: AppBoardContext, id: string) {
-  const entity = core.tincanban.getActiveDoc()?.entities[id]
+  const entity = core.tincanban.getPresentedWorkspaceDoc()?.entities[id]
   return isItem(entity) ? entity : null
 }
 

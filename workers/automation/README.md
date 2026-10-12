@@ -161,6 +161,12 @@ New intake returns HTTP 202 after the Durable Object has stored the event. Clef 
 
 ## Production deployment
 
+The `Deploy production` GitHub workflow publishes both frontend and automation
+only after `Verify` succeeds for a push to the current `main` commit. Automation
+uploads a version tagged with that commit, deploys it to all traffic, preserves
+operator variables, and checks `/health`. It uses the production `wrangler.jsonc`;
+the local `wrangler.e2e.jsonc` is never published.
+
 The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready"}`. Its `workers.dev` route and preview URLs are disabled. Browser CORS allows `https://match.meta-uber-engineer.dev` and the public intake form at `https://meta-uber-engineer.dev`.
 
 Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. The production proof activated one exact owner-approved scope and applied a synthetic Lead through Clef; no applicant or email content was used. Future integrations must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.

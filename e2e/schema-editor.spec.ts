@@ -60,6 +60,8 @@ test.describe("Visual board and entity editing", () => {
     await page.getByRole("region", { name: "Doing" }).getByRole("button", { name: "Edit column" }).click()
     const columnDialog = page.getByRole("dialog", { name: "Edit column" })
     await columnDialog.getByRole("button", { name: "Remove column" }).click()
+    await expect(page.getByRole("region", { name: "Doing", includeHidden: true })).toHaveCount(1)
+    await columnDialog.getByRole("button", { name: "Confirm removal", exact: true }).click()
 
     await expect(page.getByRole("region", { name: "Doing" })).toHaveCount(0)
     await expect(page.getByText("Persistent Work Item")).toHaveCount(0)

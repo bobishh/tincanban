@@ -2,7 +2,7 @@ import { expect, test, type Page, type Locator } from "./support/coverage"
 
 async function participantsFromSettings(page: Page, settings: Locator) {
   await settings.getByRole("tab", { name: "Connections", exact: true }).click()
-  await settings.getByRole("button", { name: "Participants and devices", exact: true }).click()
+  await settings.getByRole("button", { name: "Open Device sync", exact: true }).click()
   return page.getByRole("dialog", { name: "Device sync" })
 }
 
@@ -15,7 +15,10 @@ test("Given Settings is open, when Recovery backup opens, then recovery stays ab
 
   const recovery = page.getByRole("dialog", { name: "Identity recovery" })
   await expect(recovery.getByRole("heading", { name: "Back up or restore your identity" })).toBeVisible()
+  await recovery.getByRole("button", { name: "Restore from backup", exact: true }).click()
   await expect(recovery.getByRole("button", { name: "Restore identity" })).toBeDisabled()
+  await recovery.getByRole("textbox", { name: "Recovery words", exact: true }).fill("invalid restoration words")
+  await recovery.getByLabel("Recovery file").setInputFiles({ name: "invalid-recovery.json", mimeType: "application/json", buffer: Buffer.from("{}") })
   await recovery.getByRole("checkbox").check()
   await recovery.getByRole("button", { name: "Restore identity" }).click()
   await expect(recovery.getByRole("alert")).toBeVisible()

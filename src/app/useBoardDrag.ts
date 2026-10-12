@@ -5,6 +5,7 @@ import { isItem } from "../domain/model"
 import type { AppBoardContext } from "./useAppBoard"
 import { commitBoardDrop } from "./commitBoardDrop"
 import { findDragTarget, type DropMarker, type MarkerPosition } from "./boardDragTarget"
+import { captureSelection, restoreSelection, preserveSelectionAfterMove, type SelectionSnapshot } from "./boardDragSelection"
 import "./boardDrag.css"
 
 type DragPresentation = {
@@ -15,7 +16,6 @@ type DragPresentation = {
 }
 export type DragPreview = { id: string; kind: "item" | "column"; title: string; lead?: ReturnType<DragPresentation["leadForItem"]>; ageLevel?: string; ageLabel?: string; body?: string; context: ReturnType<DragPresentation["cardFields"]>; notes?: string; width: number }
 type ActiveDrag = { workspaceId: string; boardId: string; id: string; kind: "item" | "column"; source: HTMLElement; sourceParentId: string; x: number; y: number; originX: number; originY: number; started: boolean; pointerId: number; touch: boolean; preview: DragPreview; target: DropMarker | null }
-type SelectionSnapshot = { anchorNode: Node; anchorOffset: number; focusNode: Node; focusOffset: number; range: Range }
 
 export function useBoardDragController(core: AppBoardContext, presentation: DragPresentation) {
   const dragPreview = shallowRef<DragPreview | null>(null)
@@ -98,11 +98,11 @@ export function useBoardDragController(core: AppBoardContext, presentation: Drag
     active.x = event.clientX
     active.y = event.clientY
     updateTarget()
-    const finished = active
+    const finished = { ...active, selection: selectionSnapshot }
     clear()
     suppressClick = true
     setTimeout(() => { suppressClick = false }, 0)
-    void commitBoardDrop({ ...finished, title: finished.preview.title }, core, presentation)
+    preserveSelectionAfterMove(finished.selection, () => board, commitBoardDrop({ ...finished, title: finished.preview.title }, core, presentation))
   }
   const onClick = (event: MouseEvent) => {
     if (!suppressClick) return
@@ -183,32 +183,6 @@ function pointerHitsText(event: PointerEvent) {
   return [...range.getClientRects()].some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom)
 }
 
-function captureSelection(): SelectionSnapshot | null {
-  const selection = document.getSelection()
-  if (!selection?.rangeCount || !selection.anchorNode || !selection.focusNode) return null
-  return { anchorNode: selection.anchorNode, anchorOffset: selection.anchorOffset, focusNode: selection.focusNode, focusOffset: selection.focusOffset, range: selection.getRangeAt(0).cloneRange() }
-}
-
-function restoreSelection(snapshot: SelectionSnapshot | null, board: HTMLElement | null) {
-  const selection = document.getSelection()
-  if (!selection) return
-  if (!snapshot) {
-    if (selection.anchorNode && board?.contains(selection.anchorNode)) selection.removeAllRanges()
-    return
-  }
-  if (!snapshot.anchorNode.isConnected || !snapshot.focusNode.isConnected) return
-  if (selectionMatches(selection, snapshot)) return
-  selection.removeAllRanges()
-  if (typeof selection.setBaseAndExtent === "function") {
-    selection.setBaseAndExtent(snapshot.anchorNode, snapshot.anchorOffset, snapshot.focusNode, snapshot.focusOffset)
-  } else {
-    selection.addRange(snapshot.range)
-  }
-}
-
-function selectionMatches(selection: Selection, snapshot: SelectionSnapshot) {
-  return selection.anchorNode === snapshot.anchorNode && selection.anchorOffset === snapshot.anchorOffset && selection.focusNode === snapshot.focusNode && selection.focusOffset === snapshot.focusOffset
-}
 function locateDragSource(event: PointerEvent, board: HTMLElement, core: AppBoardContext, presentation: DragPresentation) {
   const target = event.target instanceof Element ? event.target : null
   if (!target) return null

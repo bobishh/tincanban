@@ -20,7 +20,7 @@ test("Given a long participant name, when the participant list narrows, then nam
   await profile.getByRole("button", { name: "Save name", exact: true }).click()
   await expect(profile.getByRole("button", { name: "Save name", exact: true })).toBeEnabled()
   await profile.getByRole("tab", { name: "Connections", exact: true }).click()
-  await profile.getByRole("button", { name: "Participants and devices", exact: true }).click()
+  await profile.getByRole("button", { name: "Open Device sync", exact: true }).click()
   const row = page.getByRole("dialog", { name: "Device sync" }).locator(".mesh-member").first()
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 844 })
@@ -56,7 +56,7 @@ for (const width of [1280, 390]) {
     await expect(profile.getByRole("button", { name: "Save name", exact: true })).toBeEnabled()
     await expect(profile.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Avatar author")
     await profile.getByRole("tab", { name: "Connections", exact: true }).click()
-    await profile.getByRole("button", { name: "Participants and devices", exact: true }).click()
+    await profile.getByRole("button", { name: "Open Device sync", exact: true }).click()
     const participants = page.getByRole("dialog", { name: "Device sync" })
     await expect(participants.locator(".participant-avatar").first()).toBeVisible()
     expect(await participants.locator(".participant-avatar").first().innerHTML()).toBe(drawing)

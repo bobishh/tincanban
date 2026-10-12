@@ -3,7 +3,6 @@ import type { WorkspaceRole } from "./domain/permissions";
 import { bootstrapIdentity } from "./domain/identity";
 import { createWorkspaceDoc, type WorkspaceCreationDraft } from "./domain/seeds";
 import type { WorkspaceDocumentV2 } from "./domain/model";
-import { forkWorkspaceDocumentV2 } from "./domain/workspaceBundle";
 import { registerWorkspaceInRoot } from "./domain/personalRoot";
 import { recordGenesisAuthority, workspaceRole } from "./sync/changeAuthorization";
 import { defaultStorage, type WorkspaceStorage } from "./storage";
@@ -62,6 +61,7 @@ async function importWorkspaceAsNew(
   storage = defaultStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   const profile = await requireProfile();
+  const { forkWorkspaceDocumentV2 } = await import("./domain/workspaceBundle");
   const copied = forkWorkspaceDocumentV2(
     source,
     crypto.randomUUID(),

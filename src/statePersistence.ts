@@ -38,6 +38,8 @@ import type { CausalReviewCallbacks } from "./stateCausalReviewLoader";
 import { assertWorkspaceWritesAllowed, reclassifyStoredWorkspace } from "./stateCausalAdmission";
 import { applyInjectedFixture } from "./stateInjectedFixture";
 import { canReuseAdmittedDocument } from "./sync/localAdmissionReuse";
+import { clearPendingItemMoves } from "./pendingItemMoves";
+import { startPendingWrite } from "./statePendingWrites";
 import { diagnoseStartupStep, setStartupDiagnosticDevice } from "./sync/startupDiagnostics";
 
 type ReadinessWaiter = {
@@ -48,6 +50,7 @@ type ReadinessWaiter = {
 const readinessWaiters = new Set<ReadinessWaiter>();
 
 export function resetStateForTest(): void {
+  clearPendingItemMoves();
   stateRuntime.activeDoc = null;
   stateRuntime.currentProfile = null;
   stateRuntime.ready.value = false;
@@ -167,14 +170,14 @@ export async function commitAndPersist(
   const workspaceId = targetWorkspaceId ?? stateRuntime.activeDoc?.id;
   const profile = stateRuntime.currentProfile;
   if (!workspaceId || !profile) throw new Error("Workspace not hydrated");
-  startPendingWrite();
+  const finishWrite = startPendingWrite(stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null, command);
   try {
     await persistCommand(workspaceId, command, profile, storage);
   } catch (error) {
     stateRuntime.batchSaveFailed = true;
     throw error;
   } finally {
-    finishPendingWrite();
+    finishWrite();
   }
 }
 
@@ -420,21 +423,6 @@ async function initializeFirstWorkspace(
   return typeof navigator !== "undefined" && navigator.locks
     ? navigator.locks.request("tincanban-first-workspace", initialize)
     : initialize();
-}
-
-function startPendingWrite(): void {
-  if (stateRuntime.pendingWrites === 0) stateRuntime.batchSaveFailed = false;
-  stateRuntime.pendingWrites += 1;
-  stateRuntime.saveState.value = "saving";
-}
-
-function finishPendingWrite(): void {
-  stateRuntime.pendingWrites -= 1;
-  stateRuntime.saveState.value = stateRuntime.pendingWrites
-    ? "saving"
-    : stateRuntime.batchSaveFailed
-      ? "error"
-      : "saved";
 }
 
 async function persistCommand(

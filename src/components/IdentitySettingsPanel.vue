@@ -2,6 +2,7 @@
 import { defineAsyncComponent, ref, watch, type Component } from "vue"
 
 const TelemetrySettingsPanel = defineAsyncComponent<Component>(() => import("./TelemetrySettingsPanel.vue"))
+const TelemetryDeliveryPanel = defineAsyncComponent<Component>(() => import("./TelemetryDeliveryPanel.vue"))
 
 const props = defineProps<{ displayName: string; saveName: (value: string) => Promise<void> }>()
 const emit = defineEmits<{ recovery: [] }>()
@@ -29,7 +30,6 @@ async function save() {
 <template>
   <section aria-label="Identity settings">
     <form class="mesh-member-action identity-name-form" @submit.prevent="save">
-      <h3>Your name</h3>
       <label>Name<input v-model="name" maxlength="48" :disabled="saving" /></label>
       <button class="button button-primary" type="submit" :disabled="saving || !name.trim()">Save name</button>
     </form>
@@ -39,6 +39,7 @@ async function save() {
       <button class="button" type="button" @click="emit('recovery')">Recovery backup</button>
     </section>
     <TelemetrySettingsPanel />
+    <TelemetryDeliveryPanel />
     <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
   </section>
 </template>

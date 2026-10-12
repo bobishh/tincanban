@@ -169,8 +169,8 @@ Hetzner/DNS configuration: [production architecture](../hetzner_playground/docs/
 - **Identity:** display name, one profile photo across workspaces, encrypted identity recovery, device diagnostic consent.
 - **Workspace:** shared document templates,
   priority rules and `employee_profile` for the named board, and a separate Advanced configuration tab for JSON.
-- **Connections:** shortcuts to the single Participants/devices, Rusty storage and
-  Backups views. Ownership succession and connection diagnostics belong to Sync → Advanced.
+- **Connections:** one shortcut to Device sync for Participants/devices, Rusty storage and
+  Backups. Ownership succession and connection diagnostics belong to Sync → Advanced.
   Export belongs to Backups; import as a new board belongs to the Workspaces list.
 
 **Workspace → Priority rules** supports job match priority: company recognition
@@ -238,7 +238,7 @@ secret write keys belong only in backend runtime secrets.
 **Settings → Identity** contains only **Send diagnostics from this device** when a
 collector is configured. The consent choice applies to this browser across
 workspaces and survives reload. Old local collector URLs and keys are ignored;
-explicit old opt-out survives. **Settings → Connections → Diagnostic delivery**
+explicit old opt-out survives. **Settings → Identity → Diagnostic delivery**
 shows queued/dropped events, last confirmed send and delivery failures. The
 collector must accept the [version 2 contract](openspec/changes/configurable-telemetry/design.md).
 Local diagnostic snapshots remain available when external sending is disabled.

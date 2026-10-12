@@ -18,13 +18,14 @@ export function mountMobileDeviceListDialog() {
   app.mount(root)
 }
 
-export async function mountSyncLayoutDialog() {
+export async function mountSyncLayoutDialog(options: { exportWorkspace?: () => Promise<void> } = {}) {
   const profile = await (await import("../../src/domain/identity")).bootstrapIdentity()
   const root = document.createElement("div")
   document.body.appendChild(root)
   const live = ref(true)
   createApp({ render: () => h(SyncDialog, {
     step: "members", title: "Device sync", qrCode: "", inviteUrl: "", copyNotice: "", error: "",
+    exportWorkspace: options.exportWorkspace,
     hasMesh: true, currentRole: "owner", currentPersonId: profile.identity.personId, canManageMesh: true,
     live: live.value, workspaceConnected: false, workspaceReconnecting: false, retryAt: Date.now() + 1_000,
     onStop: () => { live.value = false }, onStart: () => { live.value = true },

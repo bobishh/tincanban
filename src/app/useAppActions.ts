@@ -1,18 +1,15 @@
 import { hasEntityKind } from "../domain/model"
 import { computed, ref } from "vue"
 import * as Automerge from "@automerge/automerge/slim"
-import { verifyBlobBytes } from "@meta-uber/mesh-blob"
 import type { useAppCore } from "./useAppCore"
 import type { useAppBoard } from "./useAppBoard"
-import { exportWorkspaceBundleV2, readWorkspaceBundleV2, referenceBlobId, type BundleBlob } from "../domain/workspaceBundle"
-import { blobDescriptor, readStoredAttachment, writeStoredAttachment } from "../attachments"
 import type { BoardSchemaDraft } from "../domain/schema"
 import type { WorkspaceCreationDraft } from "../domain/seeds"
 import { projectWorkspaceSettings, type WorkspaceSettingsDraft } from "../domain/workspaceSettings"
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { isInlineNarrativeNote, type NarrativeNoteSource } from "../domain/narrative"
 import type { NarrativeFoldSources } from "../domain/commandTypes"
-import { isItem, type AttachedDocument, type Column, type FieldValue, type Heads, type Item, type WorkspaceDocumentV2 } from "../domain/model"
+import { isItem, type AttachedDocument, type Column, type FieldValue, type Heads, type Item } from "../domain/model"
 import type { DocumentInput } from "../types"
 
 export function useAppActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>) {
@@ -79,11 +76,8 @@ function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnTyp
       core.notice.value = `Checklist not saved: ${messageFrom(error)}`
     }
   }
-  const handleSaveTemplate = async (payload: { id?: string; name: string; markdown: string }) => {
-    if (payload.id) await core.tincanban.updateTemplateAsync(payload.id, { name: payload.name, markdown: payload.markdown })
-    else await core.tincanban.createTemplateAsync({ name: payload.name, markdown: payload.markdown })
-    core.notice.value = "Template saved"
-  }
+  const handleSaveTemplate = async (payload: { id?: string; newId?: string; name: string; markdown: string }) =>
+    (await import("./workspaceFiles")).saveWorkspaceTemplate(core, payload)
   const openArtifactForm = () => {
     core.artifactError.value = ""
     core.artifactDraft.value = { kind: "cv", title: "", templateId: "", pdfPath: "", sourceMarkdownPath: "" }
@@ -148,7 +142,7 @@ async function moveItemToColumn(core: ReturnType<typeof useAppCore>, item: Item,
     return
   }
   if (target.id === item.placement.parentId && !isItemArchived(item)) return
-  await core.tincanban.executeCommandAsync({ kind: isItemArchived(item) ? "restoreAndMove" : "moveEntity", entityId: item.id, parentId: target.id, beforeId: null })
+  await core.tincanban.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: target.id, beforeId: null })
   core.notice.value = "Item moved"
 }
 
@@ -376,9 +370,13 @@ async function addColumn(core: ReturnType<typeof useAppCore>, title: string, arc
 }
 
 function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
-  const exportWorkspace = () => exportActiveWorkspace(core)
-  const openImport = () => core.importInput.value?.click()
-  const importWorkspace = (event: Event) => importWorkspaceFile(core, event)
+  const exportWorkspace = async () => (await import("./workspaceFiles")).exportActiveWorkspace(core)
+  const workspaceImportState = ref({ busy: false, error: "" })
+  const openImport = () => { workspaceImportState.value.error = ""; core.importInput.value?.click() }
+  const importWorkspace = async (event: Event) => {
+    try { await (await import("./workspaceFiles")).importWorkspaceFile(core, event, workspaceImportState.value) }
+    catch (error) { workspaceImportState.value.error = messageFrom(error) }
+  }
   const createAndSyncWorkspace = (title: string, preset: "blank" | "job-search") =>
     createWorkspaceWithOwnerCredential(core, title, preset)
   const handleCreateWorkspace = async (payload: { title: string; preset: "blank" | "job-search"; config?: WorkspaceCreationDraft }) => {
@@ -399,7 +397,7 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     await core.tincanban.restoreWorkspaceAsync(id)
     core.notice.value = "Workspace restored"
   }
-  return { exportWorkspace, openImport, importWorkspace, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
+  return { exportWorkspace, openImport, importWorkspace, workspaceImportState, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
 }
 
 async function createWorkspaceWithOwnerCredential(core: ReturnType<typeof useAppCore>, title: string,
@@ -409,83 +407,6 @@ async function createWorkspaceWithOwnerCredential(core: ReturnType<typeof useApp
   return doc
 }
 
-async function exportActiveWorkspace(core: ReturnType<typeof useAppCore>) {
-  const doc = core.tincanban.getActiveDoc()
-  if (!doc) {
-    core.notice.value = "Export unavailable: the current board is not ready"
-    return
-  }
-  const bundle = await exportWorkspaceBundleV2(doc, reference => {
-    const descriptor = blobDescriptor(reference)
-    return descriptor ? readStoredAttachment(descriptor) : Promise.resolve(undefined)
-  })
-  const inspection = await readWorkspaceBundleV2(bundle)
-  if (!inspection.ok) throw new Error(inspection.error.message)
-  downloadBundle(bundle, doc.title)
-  const missing = inspection.value.manifest.missingBlobHashes.length
-  core.notice.value = `tincanban bundle exported; ${missing} attachment${missing === 1 ? "" : "s"} unavailable in the file`
-}
-
-function downloadBundle(bytes: Uint8Array, title: string) {
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.tincanban+zip" }))
-  const anchor = document.createElement("a")
-  anchor.href = url
-  anchor.download = `${title.toLowerCase().replace(/\s+/g, "-")}-${new Date().toISOString().slice(0, 10)}.tincanban`
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 2_000)
-}
-
-async function importWorkspaceFile(core: ReturnType<typeof useAppCore>, event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ""
-  if (!file) return
-  try {
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const bundle = await readWorkspaceBundleV2(bytes)
-    if (!bundle.ok) throw new Error(bundle.error.message)
-    const result = await importVersion2Bundle(core, bundle.value)
-    const attachmentNotice = result.missingAttachments
-      ? `${result.missingAttachments} attachment${result.missingAttachments === 1 ? "" : "s"} unavailable in the file`
-      : "all attachments available"
-    core.notice.value = result.syncError
-      ? `Imported as a new board; ${attachmentNotice}; sync setup failed: ${result.syncError}`
-      : `Imported as a new board; ${attachmentNotice}`
-  } catch (error) { core.notice.value = error instanceof Error ? error.message : "tincanban bundle import failed" }
-}
-
-type Version2Bundle = { doc: WorkspaceDocumentV2; blobs: BundleBlob[]; manifest: { missingBlobHashes: string[] } }
-
-async function importVersion2Bundle(core: ReturnType<typeof useAppCore>, bundle: Version2Bundle): Promise<{ missingAttachments: number; syncError?: string }> {
-  await restoreBundleAttachments(bundle)
-  const doc = await core.tincanban.importWorkspaceAsNew(bundle.doc)
-  try {
-    await core.sync.addOwnerWorkspace(doc.id)
-    return { missingAttachments: bundle.manifest.missingBlobHashes.length }
-  } catch (error) {
-    return { missingAttachments: bundle.manifest.missingBlobHashes.length, syncError: messageFrom(error) }
-  }
-}
-
-async function restoreBundleAttachments(bundle: Version2Bundle): Promise<void> {
-  const bytesById = new Map(bundle.blobs.map(blob => [blob.blobId, blob.bytes]))
-  for (const entity of Object.values(bundle.doc.entities)) {
-    const references = hasEntityKind(entity, "document") ? [entity.file]
-      : hasEntityKind(entity, "artifact") ? [entity.pdf, entity.sourceMarkdown] : []
-    for (const reference of references) {
-      if (!reference) continue
-      const descriptor = blobDescriptor(reference)
-      const blobId = referenceBlobId(reference)
-      const bytes = blobId ? bytesById.get(blobId) : undefined
-      if (descriptor && bytes) {
-        await verifyBlobBytes(descriptor, bytes)
-        await writeStoredAttachment(descriptor, bytes)
-      }
-    }
-  }
-}
 
 function reportArchiveFailure(core: ReturnType<typeof useAppCore>, error: unknown) {
   core.archiveError.value = `Archive failed: ${messageFrom(error)}`

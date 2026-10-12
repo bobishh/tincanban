@@ -35,7 +35,7 @@ test("Given an unreadable authority on one board, when creating and importing an
   const chooserEvent = page.waitForEvent("filechooser")
   await workspaces.getByRole("button", { name: "Import as new board", exact: true }).click()
   await (await chooserEvent).setFiles(bundle!)
-  await workspaces.getByRole("button", { name: "Close", exact: true }).first().click()
+  await expect(workspaces).toBeHidden()
   await expect(page.getByRole("status").filter({ hasText: "Imported as a new board" })).toBeVisible()
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
   await page.reload()

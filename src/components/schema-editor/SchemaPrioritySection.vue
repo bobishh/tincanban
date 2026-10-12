@@ -129,7 +129,7 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
       <header class="priority-settings-head">
         <div>
           <h3>Automatic priority</h3>
-          <p v-if="currentPolicy.evaluator === 'job-fit-v1'">Company recognition and stability contribute 40%; stack and work profile match contribute 60%. Missing or uncertain evidence earns no points. Changing the profile invalidates earlier fit comparisons.</p>
+          <p v-if="currentPolicy.evaluator === 'job-fit-v1'">Missing or uncertain evidence earns no points. Changing the profile invalidates earlier fit comparisons.</p>
           <p v-else>
             Matching rules add points. Fit is clamped to 0–10; priority follows
             the thresholds.
@@ -162,7 +162,7 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
         <legend>Job match criteria</legend>
         <p>Company recognition · 20%</p><p>Company stability · 20%</p>
         <p>Stack match · 30%</p><p>Work profile match · 30%</p>
-        <p>Clef supplies assessments during intake. Existing and manually added cards without assessments start at 0. No remote-work bonus.</p>
+        <p>Clef supplies assessments during intake. Existing and manually added cards without assessments start at 0.</p>
       </fieldset>
       <button v-else class="button" type="button" :disabled="readOnly" @click="emit('enable')">Use job match priority</button>
       <fieldset

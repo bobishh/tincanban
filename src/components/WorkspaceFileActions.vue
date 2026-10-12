@@ -1,15 +1,26 @@
 <script setup lang="ts">
-const emit = defineEmits<{
-  (event: "export"): void
-}>()
+import { ref } from "vue"
+const props = defineProps<{ exportWorkspace?: () => Promise<void> }>()
+const busy = ref(false)
+const error = ref("")
+async function createBackup() {
+  if (busy.value || !props.exportWorkspace) return
+  busy.value = true
+  error.value = ""
+  try { await props.exportWorkspace() }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not create backup" }
+  finally { busy.value = false }
+}
 </script>
 
 <template>
   <section class="sync-section">
     <p class="sync-section-copy">Back up this workspace:</p>
     <div class="dialog-actions sync-data-actions">
-      <button class="button button-quiet" type="button" @click="emit('export')">Export .tincanban</button>
+      <button class="button button-quiet" type="button" :disabled="busy || !exportWorkspace" @click="createBackup">{{ busy ? 'Exporting…' : error ? 'Retry export' : 'Export .tincanban' }}</button>
     </div>
+    <p v-if="busy" role="status">Creating workspace backup…</p>
+    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   </section>
 </template>
 

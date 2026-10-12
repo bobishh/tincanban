@@ -39,6 +39,7 @@ const props = defineProps<{
   columns: Column[];
   fields: FieldDefinition[];
   templates: Template[];
+  saveTemplate: (input: { id?: string; newId?: string; name: string; markdown: string }) => Promise<string>;
   heads?: Heads;
   saveError?: string;
   mode: "entity" | "templates";
@@ -51,10 +52,6 @@ const emit = defineEmits<{
     payload: { schema: BoardSchemaDraft; expectedHeads?: Heads },
   ): void;
   (
-    event: "saveTemplate",
-    payload: { id?: string; name: string; markdown: string },
-  ): void;
-  (
     event: "applyWorkspaceSettings",
     payload: { settings: WorkspaceSettingsDraft; expectedHeads?: Heads },
   ): void;
@@ -63,6 +60,7 @@ const emit = defineEmits<{
 const slots = useSlots();
 const activeTab = ref<"identity" | "workspace" | "connections">(slots.identity ? "identity" : "workspace");
 const workspaceTab = ref<"templates" | "priority" | "advanced">("templates");
+const templateEditor = ref({ id: null as string | null, newId: null as string | null, name: "", markdown: "", saving: false, error: "", notice: "" });
 const settingsId = useId();
 const settingsTabs = computed(() => [
   ...(slots.identity ? [{ key: "identity" as const, label: "Identity" }] : []),
@@ -270,9 +268,6 @@ function invalidJsonError(error: unknown): SchemaValidationError {
     >
       <header class="dialog-head">
         <div>
-          <span class="eyebrow">{{
-            mode === "entity" ? "Entity schema" : "Settings"
-          }}</span>
           <h2>
             {{
               mode === "entity"
@@ -343,7 +338,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
           </nav>
           <div v-if="workspaceTab === 'templates'" :id="`${settingsId}-templates-panel`" role="tabpanel" :aria-labelledby="`${settingsId}-templates-tab`">
             <p class="dialog-copy">Templates are shared across this workspace.</p>
-            <SchemaTemplateSection :read-only="readOnly" :templates="templates" @save="emit('saveTemplate', $event)" />
+            <SchemaTemplateSection v-model:editor="templateEditor" :read-only="readOnly" :templates="templates" :save-template="saveTemplate" />
           </div>
           <div v-else-if="workspaceTab === 'priority'" :id="`${settingsId}-priority-panel`" role="tabpanel" :aria-labelledby="`${settingsId}-priority-tab`">
             <p class="dialog-copy">Priority rules apply to {{ board.title }}.</p>

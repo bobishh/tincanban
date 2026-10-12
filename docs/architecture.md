@@ -95,6 +95,14 @@ Signing prepares evidence without publishing it. Reactive state, tab invalidatio
 replication notifications, and a successful replication return follow completion
 of the transaction. An abort preserves the previous document and proofs.
 
+Pending item moves have a separate in-memory presentation. Stage selection and
+board placement update immediately while commands remain serialized against the
+durable document. Each completed or failed command removes only its own preview;
+later moves remain visible, and failure restores the latest committed placement.
+Previews never enter replication, history, or exported documents. Saving remains
+visible until commit completes; closing or reloading during a pending write asks
+the browser to confirm leaving.
+
 The workspace journal now includes `snapshots` and `authorizations` stores beside
 `changes`, `proofs`, and `receipts`. Snapshot records contain catalog metadata,
 so a successful document commit does not depend on a second catalog write.

@@ -53,7 +53,7 @@ async function handleCreate() {
   <section class="dialog workspace-create-dialog" role="dialog" aria-modal="true" aria-label="Create workspace">
     <form novalidate :aria-busy="creating" @submit.prevent="handleCreate">
       <div class="dialog-head">
-        <div><span class="eyebrow">New workspace</span><h2>Create workspace</h2></div>
+        <h2>Create workspace</h2>
         <button class="icon-button" type="button" aria-label="Close" :disabled="creating" @click="emit('close')">×</button>
       </div>
 

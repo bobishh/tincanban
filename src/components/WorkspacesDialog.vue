@@ -7,6 +7,8 @@ const CreateWorkspaceDialog = defineAsyncComponent(() => import("./CreateWorkspa
 
 const props = defineProps<{
   workspaces: { id: string; title: string; updatedAt: string }[]
+  importing?: boolean
+  importError?: string
   archivedWorkspaces: { id: string; title: string; updatedAt: string }[]
   activeWorkspaceId: string
   renameWorkspace: (payload: { id: string; title: string }) => Promise<void>
@@ -58,10 +60,22 @@ const filteredWorkspaces = computed(() => props.workspaces.filter(ws => {
   const mine = ownerId === props.currentPersonId
   const owner = ownerLabel(ws.id)
   return (scope.value === "all" || (scope.value === "mine" ? mine : !mine)) &&
-    `${ws.title} ${owner} ${ownerIds.value[ws.id] ?? ""}`.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())
+    `${ws.title} ${displayTitle(ws.title)} ${owner} ${ownerIds.value[ws.id] ?? ""}`.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase())
 }))
 const pinnedWorkspaces = computed(() => pinnedIds.value.map(id => props.workspaces.find(ws => ws.id === id)).filter((ws): ws is typeof props.workspaces[number] => Boolean(ws)))
 const recentWorkspaces = computed(() => recentIds.value.map(id => props.workspaces.find(ws => ws.id === id)).filter((ws): ws is typeof props.workspaces[number] => Boolean(ws)).slice(0, 5))
+const directoryGroups = computed(() => {
+  if (query.value.trim() || scope.value !== "all") return [{ key: "all", label: "", rows: filteredWorkspaces.value }]
+  const pinned = pinnedWorkspaces.value
+  const pinnedSet = new Set(pinned.map(workspace => workspace.id))
+  const recent = recentWorkspaces.value.filter(workspace => !pinnedSet.has(workspace.id))
+  const featured = new Set([...pinned, ...recent].map(workspace => workspace.id))
+  return [
+    { key: "pinned", label: "Pinned", rows: pinned },
+    { key: "recent", label: "Recent", rows: recent },
+    { key: "other", label: featured.size ? "Other boards" : "", rows: filteredWorkspaces.value.filter(workspace => !featured.has(workspace.id)) },
+  ].filter(group => group.rows.length)
+})
 
 let ownerLoad = 0
 watch(() => props.workspaces.map(ws => ws.id).join("|"), async () => {
@@ -161,14 +175,13 @@ function displayTitle(title: string) {
 </script>
 
 <template>
-  <ModalLayer protect-draft class="overlay" @close="emit('close')">
+  <ModalLayer protect-draft :busy="importing" class="overlay" @close="emit('close')">
     <section v-if="!isCreating" class="dialog" role="dialog" aria-modal="true" aria-label="Workspaces">
       <div class="dialog-head">
         <div>
-          <span class="eyebrow">Workspaces</span>
           <h2>Your workspaces</h2>
         </div>
-        <button class="icon-button" type="button" aria-label="Close" @click="emit('close')">×</button>
+        <button class="icon-button" type="button" aria-label="Close" :disabled="importing" @click="emit('close')">×</button>
       </div>
 
       <section class="board-directory" aria-label="Board discovery">
@@ -176,13 +189,11 @@ function displayTitle(title: string) {
         <div class="board-directory-filters" role="group" aria-label="Board filters">
           <button v-for="filter in ['all', 'mine', 'shared'] as const" :key="filter" type="button" :aria-pressed="scope === filter" @click="scope = filter">{{ filter === 'all' ? 'All boards' : filter === 'mine' ? 'Mine' : 'Shared' }}</button>
         </div>
-        <section v-if="pinnedWorkspaces.length && !query && scope === 'all'" aria-label="Pinned boards"><h3>Pinned</h3><div v-for="(ws, index) in pinnedWorkspaces" :key="ws.id" class="directory-row"><button type="button" class="directory-link" @click="handleSwitch(ws.id)">{{ displayTitle(ws.title) }} <small>Owner: {{ ownerLabel(ws.id) }}</small></button><button type="button" :aria-label="`Move ${ws.title} up`" :disabled="index === 0" @click="movePin(ws.id, -1)">↑</button><button type="button" :aria-label="`Move ${ws.title} down`" :disabled="index === pinnedWorkspaces.length - 1" @click="movePin(ws.id, 1)">↓</button><button type="button" :aria-label="`Unpin ${ws.title}`" @click="togglePin(ws.id)">★</button></div></section>
-        <section v-if="recentWorkspaces.length && !query && scope === 'all'" aria-label="Recent boards"><h3>Recent</h3><button v-for="ws in recentWorkspaces" :key="ws.id" type="button" class="directory-link" @click="handleSwitch(ws.id)">{{ displayTitle(ws.title) }} <small>Owner: {{ ownerLabel(ws.id) }}</small></button></section>
-      </section>
-
       <div class="workspace-list">
+        <section v-for="group in directoryGroups" :key="group.key" :aria-label="group.label ? `${group.label} boards` : 'Matching boards'">
+        <h3 v-if="group.label">{{ group.label }}</h3>
         <div
-          v-for="ws in filteredWorkspaces"
+          v-for="(ws, index) in group.rows"
           :key="ws.id"
           :data-workspace-id="ws.id"
           class="workspace-item"
@@ -194,6 +205,8 @@ function displayTitle(title: string) {
             <span v-if="ws.id === activeWorkspaceId" class="workspace-active-badge">Active</span>
           </button>
           <div class="workspace-item-actions">
+            <button v-if="group.key === 'pinned'" type="button" :aria-label="`Move ${ws.title} up`" :disabled="index === 0" @click="movePin(ws.id, -1)">↑</button>
+            <button v-if="group.key === 'pinned'" type="button" :aria-label="`Move ${ws.title} down`" :disabled="index === group.rows.length - 1" @click="movePin(ws.id, 1)">↓</button>
             <button type="button" :aria-label="pinnedIds.includes(ws.id) ? `Unpin ${ws.title}` : `Pin ${ws.title}`" @click="togglePin(ws.id)">{{ pinnedIds.includes(ws.id) ? '★' : '☆' }}</button>
             <button v-if="canRenameWorkspace(ws.id)" type="button" aria-label="Rename" @click="startRename(ws)">Rename</button>
             <button type="button" aria-label="Archive" :disabled="archiveBusy" @click="startArchive(ws.id)">Archive</button>
@@ -214,8 +227,11 @@ function displayTitle(title: string) {
             <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
           </div>
         </div>
+        </section>
         <p v-if="!filteredWorkspaces.length" class="dialog-copy" role="status">No boards match this search.</p>
       </div>
+
+      </section>
 
       <button v-if="archivedWorkspaces.length" class="button button-quiet" type="button" @click="showArchived = !showArchived">{{ showArchived ? 'Hide archived' : 'Show archived' }}</button>
       <div v-if="showArchived" class="workspace-list" aria-label="Archived workspaces">
@@ -228,9 +244,10 @@ function displayTitle(title: string) {
 
       <div class="dialog-actions">
         <button class="button button-primary" type="button" @click="isCreating = true">New workspace</button>
-        <button class="button button-quiet" type="button" @click="emit('import')">Import as new board</button>
-        <button class="button button-quiet" type="button" @click="emit('close')">Close</button>
+        <button class="button button-quiet" type="button" :disabled="importing" @click="emit('import')">{{ importing ? 'Importing…' : 'Import as new board' }}</button>
       </div>
+      <p v-if="importing" role="status">Importing this backup as a new board…</p>
+      <p v-if="importError" class="form-error" role="alert">{{ importError }}</p>
     </section>
 
     <CreateWorkspaceDialog v-else :create-workspace="createWorkspace" @close="isCreating = false" />
@@ -238,16 +255,13 @@ function displayTitle(title: string) {
 </template>
 
 <style scoped>
-.board-directory { display: grid; gap: 12px; margin: 0 0 16px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+.board-directory { display: grid; gap: 12px; margin: 0 0 16px; }
 .board-directory-search { display: grid; gap: 5px; font-weight: 650; }
 .board-directory-search input { min-height: 40px; padding: 8px 10px; }
 .board-directory-filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .board-directory-filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .board-directory section { display: grid; gap: 5px; }
 .board-directory h3 { margin: 2px 0; font-size: .84rem; }
-.directory-row { display: flex; align-items: center; gap: 4px; }
-.directory-row .directory-link { flex: 1; }
-.directory-link { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; padding: 7px 8px; text-align: left; }
-.directory-link small, .workspace-switch small { color: var(--muted); font-size: .76rem; font-weight: 500; }
+.workspace-switch small { color: var(--muted); font-size: .76rem; font-weight: 500; }
 .workspace-switch { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 </style>

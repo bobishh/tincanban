@@ -26,7 +26,6 @@ function handleConfirm() {
     <section class="dialog" role="dialog" aria-modal="true" aria-label="Move item">
       <div class="dialog-head">
         <div>
-          <span class="eyebrow">Hierarchy</span>
           <h2>Move item</h2>
         </div>
         <button class="icon-button" type="button" aria-label="Close" @click="emit('close')">×</button>

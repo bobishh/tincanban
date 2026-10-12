@@ -86,7 +86,7 @@ const {
   selectedLead, selectedLeadItem, selectedDocuments, selectedArtifacts, availableArtifactTemplates, openBoardItem,
   restoreSelectedItemVersion, saveQuickNote, submitDocument, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
   openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
-  exportWorkspace, openImport, importWorkspace, closeDetail: closeDetailNow, handleCreateWorkspace,
+  exportWorkspace, openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
   handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError,
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
@@ -261,6 +261,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       v-if="showWorkspaces"
       :workspaces="availableWorkspaces" :archived-workspaces="archivedWorkspaces"
       :active-workspace-id="activeWorkspace.id"
+      :importing="workspaceImportState.busy" :import-error="workspaceImportState.error"
       :read-owner="async (id: string) => (await app.workspace.readWorkspaceDoc(id)).ownerPersonId"
       :current-person-id="chat.personId.value" :current-identity-name="chat.displayName.value" :known-people="chat.members.value"
       :rename-workspace="handleRenameWorkspace" :archive-workspace="handleArchiveWorkspace" :restore-workspace="handleRestoreWorkspace"
@@ -294,7 +295,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :save-error="settingsSaveError"
       mode="templates"
       @close="showSettings = false; settingsSaveError = ''"
-      @save-template="handleSaveTemplate"
+      :save-template="handleSaveTemplate"
       @apply-workspace-settings="applyWorkspaceSettings"
     >
       <template #identity>
@@ -340,7 +341,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       mode="entity"
       @close="showEntitySettings = false"
       @apply="handleApplySchema"
-      @save-template="handleSaveTemplate"
+      :save-template="handleSaveTemplate"
     />
 
     <ItemDetailDialog
@@ -348,9 +349,10 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :workspace-id="activeWorkspace.id" :item="selectedItem" :columns="genericColumns" :card-stage-buttons="cardStageButtons(activeBoard, genericColumns)"
       :move-to-column="moveCardToColumn" :archived="Boolean(selectedItem && isItemArchived(selectedItem))"
       :narrative="selectedItem ? cardNotes(selectedItem) : ''"
+      :narrative-field-id="activeBoard?.preset?.bindings['field.notes']"
       :read-only="!canEditItems"
       :subitems="subitemsForSelectedItem"
-      :fields="boardFields"
+      :fields="boardFields.filter(field => field.id !== activeBoard?.preset?.bindings['field.notes'] || field.valueType !== 'text')"
       :documents="documentsFor(selectedItem.id)"
       :save-document="(document: Omit<DocumentInput, 'leadId'>) => saveItemDocument(selectedItem, document)"
       :update-document="updateDocumentMarkdown"
@@ -494,7 +496,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @decline-device="sync.declineEnrollment"
       @accept-and-join="sync.acceptWorkspaceJoin"
       @copy="sync.copyInvite"
-      @export="exportWorkspace"
+      :export-workspace="exportWorkspace"
       @dismiss="sync.dismiss"
       @start="sync.startDurableMesh"
       @stop="sync.stopLiveSync"

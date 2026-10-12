@@ -16,6 +16,7 @@ function setup(item: Item, fail = false, activeBoard = true) {
       activeWorkspace: { id: "workspace" },
       genericColumns: ref([regular, archive]),
       getActiveDoc: () => ({ entities: { [item.id]: item } }),
+      getPresentedWorkspaceDoc: () => ({ entities: { [item.id]: item } }),
       executeCommandAsync,
     },
     notice: ref(""),

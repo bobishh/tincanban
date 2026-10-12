@@ -12,7 +12,8 @@ const props = defineProps<{
   move: (item: Item, columnId: string) => Promise<void>
 }>()
 
-const pendingColumnId = ref<string | null>(null)
+const pendingMoves = ref(0)
+let selectionVersion = 0
 const error = ref("")
 const strip = ref<HTMLElement | null>(null)
 const earlier = ref(false)
@@ -48,12 +49,13 @@ const visibleButtons = computed(() => props.buttons.flatMap(button => {
 watch(visibleButtons, measureOverflow, { flush: "post" })
 
 async function selectColumn(columnId: string) {
-  if (props.readOnly || pendingColumnId.value || activeColumnId.value === columnId) return
-  pendingColumnId.value = columnId
+  if (props.readOnly || activeColumnId.value === columnId) return
+  const version = ++selectionVersion
+  pendingMoves.value += 1
   error.value = ""
   try { await props.move(props.item, columnId) }
-  catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause) }
-  finally { pendingColumnId.value = null }
+  catch (cause) { if (version === selectionVersion) error.value = cause instanceof Error ? cause.message : String(cause) }
+  finally { pendingMoves.value -= 1 }
 }
 </script>
 
@@ -63,12 +65,12 @@ async function selectColumn(columnId: string) {
     <button v-for="button in visibleButtons" :key="button.columnId" type="button"
       :class="{ active: activeColumnId === button.columnId }"
       :aria-pressed="activeColumnId === button.columnId"
-      :disabled="readOnly || pendingColumnId !== null"
+      :disabled="readOnly"
       @click="selectColumn(button.columnId)">{{ button.title }}</button>
   </div>
     <button v-if="earlier" class="stage-scroll stage-scroll-earlier" type="button" aria-label="Show earlier stages" @click="scrollStages(-1)"><span aria-hidden="true">‹</span></button>
     <button v-if="later" class="stage-scroll stage-scroll-later" type="button" aria-label="Show later stages" @click="scrollStages(1)"><span aria-hidden="true">›</span></button>
   </div>
-  <p v-if="pendingColumnId" role="status" class="dialog-copy">Moving card…</p>
+  <p v-if="pendingMoves" role="status" class="dialog-copy">Saving…</p>
   <p v-if="error" role="alert" class="form-error">Move failed: {{ error }}</p>
 </template>

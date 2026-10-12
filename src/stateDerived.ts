@@ -18,6 +18,7 @@ import { projectItemPriority } from "./domain/priority";
 import { archivedItemsForBoard, isArchiveColumn, isItemArchived } from "./domain/archive";
 import { stateRuntime } from "./stateContext";
 import { statusOrder } from "./types";
+import { projectPendingItemMoves } from "./pendingItemMoves";
 
 export function createStateDerived() {
   const columns = computed(() =>
@@ -58,8 +59,8 @@ export function createStateDerived() {
 
 function projectGenericColumns(board: Board | null) {
   void stateRuntime.docVersion.value;
-  const doc = stateRuntime.activeDoc;
-  if (!doc || !board) return [];
+  if (!stateRuntime.activeDoc || !board) return [];
+  const doc = projectPendingItemMoves(stateRuntime.activeDoc);
   const childrenByParent = childrenIndex(doc.entities)
   const archivedItems = archivedItemsForBoard(doc, board.id);
   return indexedChildren(childrenByParent, board.id)

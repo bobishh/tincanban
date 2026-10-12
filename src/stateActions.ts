@@ -7,6 +7,7 @@ import { createWorkspaceActions } from "./stateWorkspaceActions";
 import { createLeadActions } from "./stateLeadActions";
 import { createContentActions } from "./stateContentActions";
 import { createSyncActions } from "./stateSyncActions";
+import { projectPendingItemMoves } from "./pendingItemMoves";
 
 export function createTincanbanActions() {
   const derived = createStateDerived();
@@ -31,6 +32,10 @@ export function createTincanbanActions() {
     dismissCausalChange,
     restoreCausalChange,
     getActiveDoc: () => stateRuntime.activeDoc,
+    getPresentedWorkspaceDoc: () => {
+      void stateRuntime.docVersion.value;
+      return stateRuntime.activeDoc ? projectPendingItemMoves(stateRuntime.activeDoc) : null;
+    },
     whenReady,
     getCurrentProfile: () => stateRuntime.currentProfile,
     refreshIdentity,

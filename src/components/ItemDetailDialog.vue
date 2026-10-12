@@ -19,6 +19,7 @@ defineProps<{
   moveToColumn: (item: Item, columnId: string) => Promise<void>
   archived?: boolean
   narrative: string
+  narrativeFieldId?: string
   subitems: Item[]
   fields: FieldDefinition[]
   documents: Document[]
@@ -89,7 +90,7 @@ const emit = defineEmits<{
         </aside>
 
         <div class="detail-primary" data-detail-primary role="region" aria-label="Item content">
-          <div v-if="narrative" class="detail-section">
+          <div v-if="narrative" class="detail-section" :data-discussion-field="narrativeFieldId">
             <span class="detail-label">Description</span>
             <MarkdownContent class="detail-copy" data-discussion-field="narrative" data-discussion-text :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', item, $event)" />
           </div>

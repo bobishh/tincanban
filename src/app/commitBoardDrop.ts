@@ -1,5 +1,5 @@
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
-import { isItem, type Item } from "../domain/model"
+import { isItem } from "../domain/model"
 import type { AppBoardContext } from "./useAppBoard"
 import type { DropMarker } from "./boardDragTarget"
 
@@ -28,13 +28,13 @@ async function commitColumnDrop(drag: Drag, core: AppBoardContext, presentation:
 
 async function commitItemDrop(drag: Drag, core: AppBoardContext, presentation: Presentation) {
   const parentId = drag.target!.targetId
-  const sourceItem = core.tincanban.getActiveDoc()?.entities[drag.id]
+  const sourceItem = core.tincanban.getPresentedWorkspaceDoc()?.entities[drag.id]
   const sourceColumn = core.tincanban.genericColumns.value.find(column => column.id === drag.sourceParentId)
   const targetColumn = core.tincanban.genericColumns.value.find(column => column.id === parentId)
   const archiveTarget = Boolean(targetColumn && isArchiveColumn(targetColumn))
   if (!isItem(sourceItem) || archiveTarget && isItemArchived(sourceItem)) return
   if (!archiveTarget && !isItemArchived(sourceItem) && sourceItem.placement.parentId === parentId && unchangedVisiblePosition(drag)) return
-  const command = itemMoveCommand(drag, sourceItem, parentId, archiveTarget)
+  const command = itemMoveCommand(drag, parentId, archiveTarget)
   try {
     await core.tincanban.executeCommandAsync(command)
     presentation.highlightMoved(drag.id, "item")
@@ -53,10 +53,9 @@ function unchangedVisiblePosition(drag: Drag): boolean {
   return (next instanceof HTMLElement ? next.dataset.itemId ?? null : null) === drag.target?.beforeId
 }
 
-function itemMoveCommand(drag: Drag, item: Item, parentId: string, archive: boolean) {
+function itemMoveCommand(drag: Drag, parentId: string, archive: boolean) {
   if (archive) return { kind: "setEntityArchived" as const, entityId: drag.id, archived: true }
-  if (isItemArchived(item)) return { kind: "restoreAndMove" as const, entityId: drag.id, parentId, beforeId: drag.target?.beforeId }
-  return { kind: "moveEntity" as const, entityId: drag.id, parentId, beforeId: drag.target?.beforeId }
+  return { kind: "restoreAndMove" as const, entityId: drag.id, parentId, beforeId: drag.target?.beforeId }
 }
 
 function moveFailure(error: unknown) { return `Move failed: ${error instanceof Error ? error.message : String(error)}` }
