@@ -277,6 +277,19 @@ async function fixture(subjectPersonId?: string) {
   return { owner, automation, packet, key, persisted };
 }
 
+it.each([false, true])("Given an overdue alarm and website=%s intake, when new work arrives, then it rearms a future alarm without losing queued work", async website => {
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(`overdue-${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (instance, ctx) => {
+    await ctx.storage.setAlarm(Date.now() - 60_000);
+    const input = { eventId: "new-work", sourceId: "new-work", bodyHash: "hash", payload: "pending-payload" };
+    if (website) await instance.enqueueWebsite({ ...input, nonce: "nonce", challengeExpiresAt: Date.now() + 60_000 });
+    else await instance.enqueueEmail(input);
+    expect(instance.getEvent(input.eventId)?.status).toBe("pending");
+    expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
+    await ctx.storage.deleteAlarm();
+  });
+});
+
 it("Given a paused durable automation and queued event, when alarm fires, then queue stays pending without attempts and control polling continues even with an empty queue", async () => {
   const id = `paused-${crypto.randomUUID()}`;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(id);

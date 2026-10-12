@@ -485,7 +485,13 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
 
   private async scheduleEarlierAlarm(time: number): Promise<void> {
     const existing = await this.ctx.storage.getAlarm();
-    if (existing === null || time < existing) await this.ctx.storage.setAlarm(time);
+    // Exhausted platform retries can leave an overdue alarm which new intake must rearm.
+    if (existing === null || existing <= Date.now() || time < existing) {
+      await this.ctx.storage.setAlarm(time);
+      if (existing !== null && existing <= Date.now()) console.warn(JSON.stringify({
+        event: "automation.alarm-rearmed", integrationId: this.ctx.id.name, previousScheduledAt: existing, scheduledAt: time,
+      }));
+    }
   }
 
   private async scheduleNextWork(pollControls: boolean): Promise<void> {
