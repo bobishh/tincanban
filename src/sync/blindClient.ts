@@ -114,8 +114,9 @@ export async function downloadBlindObject(access: BlindAccess, id: string): Prom
   return object
 }
 
+// One fsynced checkpoint may temporarily exceed the normal 10,000-object cap before manifest recovery.
 function validateCheckpointInventory(result: { objectCount?: number; maxSequence?: number; cursor: number; hasMore: boolean }): void {
-  if (result.objectCount !== undefined && (!Number.isSafeInteger(result.objectCount) || result.objectCount < 0 || result.objectCount > 10000) ||
+  if (result.objectCount !== undefined && (!Number.isSafeInteger(result.objectCount) || result.objectCount < 0 || result.objectCount > 10001) ||
     result.maxSequence !== undefined && (!Number.isSafeInteger(result.maxSequence) || result.maxSequence < result.cursor ||
       !result.hasMore && result.maxSequence !== result.cursor)) throw new Error("Invalid Rusty checkpoint inventory")
 }

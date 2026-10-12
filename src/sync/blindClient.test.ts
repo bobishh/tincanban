@@ -48,3 +48,14 @@ test("Inventory metadata cannot claim a completed pass while withholding newer o
   try { await expect(inventoryBlindObjects(access, 0)).rejects.toThrow("Invalid Rusty checkpoint inventory") }
   finally { vi.unstubAllGlobals() }
 })
+
+test("Inventory permits one durable checkpoint repair slot above normal capacity, but rejects unbounded overflow", async () => {
+  const access: BlindAccess = { origin: "http://localhost:8080", scopeId: "scope", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1 }
+  let objectCount = 10001
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ objects: [], cursor: 10001, hasMore: false, objectCount, maxSequence: 10001 })))
+  try {
+    await expect(inventoryBlindObjects(access, 10001)).resolves.toMatchObject({ objectCount: 10001 })
+    objectCount = 10002
+    await expect(inventoryBlindObjects(access, 10001)).rejects.toThrow("Invalid Rusty checkpoint inventory")
+  } finally { vi.unstubAllGlobals() }
+})
