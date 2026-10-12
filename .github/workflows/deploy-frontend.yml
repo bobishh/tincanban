@@ -120,7 +120,7 @@ jobs:
           upload_output=$(mktemp)
           WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/automation/node_modules/.bin/wrangler versions upload --config workers/automation/wrangler.jsonc --tag "$RELEASE_SHA" --keep-vars
           version_id=$(node workers/frontend/release.mjs uploaded-version "$upload_output")
-          workers/automation/node_modules/.bin/wrangler versions deploy --config workers/automation/wrangler.jsonc "$version_id@100" --yes
+          workers/automation/node_modules/.bin/wrangler versions deploy --config workers/automation/wrangler.jsonc "$version_id@100" --yes --durable-objects-code-update-mode immediate
           echo "deployed=true" >> "$GITHUB_OUTPUT"
       - name: Verify production automation is ready
         if: steps.publish.outputs.deployed == 'true'

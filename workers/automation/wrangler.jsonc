@@ -1,6 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tincanban-automation",
+  "account_id": "c339afab5539aa748cb654d8281d4fff",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-08",
   "compatibility_flags": [

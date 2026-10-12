@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from "./pipeline";
 import type { WorkerEnv, AutomationIntegration } from "./index";
-import { correlateApplication, isForwardingConfirmation } from "./email";
+import { correlateApplication, gmailForwardingConfirmationUrl } from "./email";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, signEnvelope } from "../../../src/domain/identity";
@@ -238,9 +238,12 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     try {
       const existing = await this.loadReplicaState(storageSecret);
       if (existing) {
-        const state = JSON.parse(existing) as { grant: unknown; definition?: unknown };
+        const state = JSON.parse(existing) as { grant: unknown; definition?: unknown; blind: AutomationActivationPacket["blind"] };
+        const { cursor: priorCursor, lastUploaded: priorUploaded, ...priorAccess } = state.blind;
+        const { cursor: nextCursor, lastUploaded: nextUploaded, ...nextAccess } = packet.blind;
         if (canonicalizeJson(state.grant) !== canonicalizeJson(packet.grant) ||
-          canonicalizeJson(state.definition ?? null) !== canonicalizeJson(packet.definition ?? null)) {
+          canonicalizeJson(state.definition ?? null) !== canonicalizeJson(packet.definition ?? null) ||
+          canonicalizeJson(priorAccess) !== canonicalizeJson(nextAccess)) {
           if (!origin || packet.version !== 2) throw new Error("Scope renewal requires a signed enrolled owner request");
           replica = await AutomationReplica.renew(existing, { ...packet, persist }, profile, origin);
         } else {
@@ -361,11 +364,8 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     let confirmation: { eventId: string; url: string } | null = null;
     for (const row of rows) {
       const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET!, row.event_id, row.payload);
-      if (event.source !== "email" || !isForwardingConfirmation(event.message.subject, event.message.text)) continue;
-      const url = event.message.urls.find(value => {
-        try { const parsed = new URL(value); return parsed.protocol === "https:" && parsed.hostname === "mail.google.com" && parsed.pathname.startsWith("/mail/"); }
-        catch { return false; }
-      });
+      if (event.source !== "email") continue;
+      const url = gmailForwardingConfirmationUrl(event.message);
       if (url) { confirmation = { eventId: row.event_id, url }; break; }
     }
     return { confirmation, events: rows.map(row => this.getEvent(row.event_id)) };

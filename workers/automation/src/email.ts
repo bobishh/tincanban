@@ -225,3 +225,15 @@ export function isForwardingConfirmation(subject: string, text: string): boolean
   if (/\b(?:gmail\s+)?forwarding\s+(?:confirmation|verification)\b/i.test(subject)) return true;
   return /(?:confirm|verify).{0,80}(?:forward(?:ing)? address|email address|mail routing)|(?:forward(?:ing)? address|email address).{0,80}(?:confirm|verify)/i.test(`${subject}\n${text.slice(0, 2_000)}`);
 }
+
+export function gmailForwardingConfirmationUrl(mail: Pick<ForwardedMail, 'subject' | 'text' | 'urls'>): string | null {
+  if (!isForwardingConfirmation(mail.subject, mail.text)) return null;
+  return mail.urls.find(value => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === 'https:' && ['mail.google.com', 'mail-settings.google.com'].includes(parsed.hostname)
+        && parsed.pathname.startsWith('/mail/vf-');
+    }
+    catch { return false; }
+  }) ?? null;
+}

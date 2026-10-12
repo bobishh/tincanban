@@ -129,6 +129,9 @@ Settings displays the private address only to the authenticated workspace owner.
 **Enable email and Applied** signs a revised definition and grant for the same
 instance, executor and board. Old grants without Applied remain valid. Renewal
 admits merged history before saving, retaining outbox and event deduplication.
+Owner-signed renewal can update the content key, key epoch and opaque scope at
+the same Rusty origin; pending uploads are re-encrypted before durable publication,
+and the new scope starts from the owner's supplied cursor.
 The mailbox provider keeps originals and forwards only the existing job filter;
 Gmail's verification message remains available for owner confirmation, without AI.
 

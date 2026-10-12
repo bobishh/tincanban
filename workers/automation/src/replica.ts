@@ -191,8 +191,10 @@ export class AutomationReplica {
     const prior = JSON.parse(serialized) as SerializedReplica;
     await validateSerialized(prior, profile);
     if (prior.tombstoned || prior.workspaceId !== packet.workspaceId || prior.bindings.boardId !== packet.bindings.boardId ||
-      prior.definition?.payload.id !== packet.definition?.payload.id || prior.blind.origin !== packet.blind.origin ||
-      prior.blind.contentKey !== packet.blind.contentKey) throw new Error("Automation renewal must preserve its executor, workspace and storage");
+      prior.definition?.payload.id !== packet.definition?.payload.id) throw new Error("Automation renewal must preserve its executor and workspace");
+    if (prior.blind.origin !== packet.blind.origin) throw new Error(`Automation renewal storage origin mismatch: expected ${prior.blind.origin}, received ${packet.blind.origin}`);
+    const rotatedStorage = prior.blind.contentKey !== packet.blind.contentKey ||
+      prior.blind.scopeId !== packet.blind.scopeId || prior.blind.keyEpoch !== packet.blind.keyEpoch;
     const combined = mergeDocuments(decodeBlindBytes(prior.rawDocument), decodeBlindBytes(packet.initial.document), actorIdForProfile(profile));
     let publish = false;
     const replica = await AutomationReplica.activate({ ...packet, persist: async value => {
@@ -203,9 +205,13 @@ export class AutomationReplica {
     } }, profile, expectedOrigin);
     if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be renewed");
     replica.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, prior.applied);
-    replica.pending = prior.pending;
-    replica.cursor = Math.min(prior.blind.cursor, packet.blind.cursor);
-    replica.lastUploaded = prior.blind.lastUploaded;
+    // Only the enrolled owner's signed activation can supply replacement keys.
+    // Re-encrypt an unacknowledged upload before persisting its new binding.
+    replica.pending = prior.pending && rotatedStorage ? { hash: prior.pending.hash,
+      object: await encryptBlindObject(packet.blind.scopeId, packet.blind.keyEpoch, decodeBlindBytes(packet.blind.contentKey),
+        await decryptBlindObject(prior.pending.object, prior.blind.scopeId, prior.blind.keyEpoch, decodeBlindBytes(prior.blind.contentKey))) } : prior.pending;
+    replica.cursor = rotatedStorage ? packet.blind.cursor : Math.min(prior.blind.cursor, packet.blind.cursor);
+    replica.lastUploaded = rotatedStorage ? "" : prior.blind.lastUploaded;
     publish = true;
     await replica.persistState();
     return replica;

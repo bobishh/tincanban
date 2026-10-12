@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { correlateApplication, parseForwardedMail } from '../src/email.ts';
+import { correlateApplication, gmailForwardingConfirmationUrl, parseForwardedMail } from '../src/email.ts';
 
 test('Given a unique exact thread reference, when correlated, then selects the existing application', () => {
   const result = correlateApplication({
@@ -59,4 +59,15 @@ test('Given a Gmail forwarding verification message, when parsed, then marks it 
     'https://mail.google.com/mail/vf-example-code'].join('\r\n');
   const mail = await parseForwardedMail(new TextEncoder().encode(raw));
   assert.equal(mail.confirmation, true);
+});
+
+test('Given Gmail forwarding setup, when choosing its confirmation link, then accepts current and legacy Google hosts and excludes revocation or external links', () => {
+  const message = { subject: 'Gmail Forwarding Confirmation - Receive Mail from owner@example.test', text: '' };
+  for (const host of ['mail-settings.google.com', 'mail.google.com']) {
+    const url = `https://${host}/mail/vf-example-code`;
+    assert.equal(gmailForwardingConfirmationUrl({ ...message, urls: [url] }), url);
+  }
+  for (const url of ['https://mail-settings.google.com/mail/uf-revoke', 'http://mail.google.com/mail/vf-code', 'https://mail.google.com.evil.test/mail/vf-code']) {
+    assert.equal(gmailForwardingConfirmationUrl({ ...message, urls: [url] }), null);
+  }
 });

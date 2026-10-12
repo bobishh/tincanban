@@ -10,7 +10,7 @@ import { createWorkspaceDoc } from "../../../src/domain/seeds";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
 import { executeCommand } from "../../../src/domain/commands";
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "../../../src/sync/blindClient";
-import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject } from "../../../src/sync/blindEnvelope";
+import { decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject } from "../../../src/sync/blindEnvelope";
 import { AutomationReplica, type AutomationActivationPacket, type ReplicaTransport } from "../src/replica";
 import { automationTypes, parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { automationEntityId } from "../../../src/domain/automationLifecycle";
@@ -56,11 +56,17 @@ it("Given an owner-signed type contract, when activated and restored, then only 
   expect(restored.allowsSource("email")).toBe(false);
 });
 
-it("Given a signed email scope renewal, when reactivated, then preserves the executor and prior event deduplication", async () => {
+it.each([false, true])("Given a signed email scope renewal with rotated storage=%s, when reactivated, then preserves the executor, pending upload and event deduplication", async rotated => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);
   const created = await replica.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {});
   const stored = JSON.parse(replica.serialize());
+  const pendingPlaintext = new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: stored.workspaceId,
+    document: stored.rawDocument, authorization: { version: 1, authority: stored.authority, records: stored.authorizations }, chat: stored.chat }));
+  stored.pending = { hash: await blindHash(pendingPlaintext), object: await encryptBlindObject(stored.blind.scopeId,
+    stored.blind.keyEpoch, decodeBlindBytes(stored.blind.contentKey), pendingPlaintext) };
+  stored.blind.cursor = 17;
+  stored.blind.lastUploaded = stored.pending.hash;
   const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument));
   const board = document.entities[data.packet.bindings.boardId];
   if (board.kind !== "board") throw new Error("Missing board");
@@ -77,14 +83,21 @@ it("Given a signed email scope renewal, when reactivated, then preserves the exe
     kind: "workspace-changes" as const, version: 1 as const, workspaceId: data.packet.workspaceId,
     hashes: [changed.value.receipt.changeHash], personId: data.owner.identity.personId, deviceId: data.owner.device.deviceId,
   }, data.owner.device.deviceId);
-  const packet = { ...data.packet, grant, definition, bindings, initial: {
+  const blind = rotated ? { ...data.packet.blind, scopeId: "rotated-scope", keyEpoch: 2,
+    contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), cursor: 3 } : data.packet.blind;
+  const packet = { ...data.packet, blind, grant, definition, bindings, initial: {
     ...data.packet.initial, document: encodeBlindBytes(Automerge.save(changed.value.newDoc)),
     authorization: { version: 1 as const, authority: stored.authority, records: [...stored.authorizations, {
       signed, publicKey: data.owner.identity.publicKey, certificates: [data.owner.certificate],
       ownerPublicKey: data.owner.identity.publicKey, ownerCertificates: [data.owner.certificate],
     }] },
   } };
-  const renewed = await AutomationReplica.renew(replica.serialize(), packet, data.automation, "https://automation.example.test");
+  const renewed = await AutomationReplica.renew(JSON.stringify(stored), packet, data.automation, "https://automation.example.test");
+  const next = JSON.parse(renewed.serialize());
+  expect(next.blind.cursor).toBe(blind.cursor);
+  expect(next.blind.lastUploaded).toBe(rotated ? "" : stored.pending.hash);
+  expect(next.pending.hash).toBe(stored.pending.hash);
+  expect(await decryptBlindObject(next.pending.object, blind.scopeId, blind.keyEpoch, decodeBlindBytes(blind.contentKey))).toEqual(pendingPlaintext);
   expect(renewed.allowsSource("email")).toBe(true);
   expect(await renewed.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {})).toEqual({ cardId: created.cardId, duplicate: true });
   Automerge.free(document); Automerge.free(changed.value.newDoc);
