@@ -113,6 +113,9 @@ instance, workspace, grant, nonce, freshness and exact desired heads before show
 confirmed state. Network failure, expired grant and unsynced controls stay pending.
 Pause/resume/remove write only CRDT; no HTTP pause switch competes with the owner
 record. Durable alarms poll controls every 15 seconds even with an empty queue.
+New intake rearms overdue alarms after exhausted platform retries. Production
+allows up to 180 seconds of CPU per invocation for admitting existing board
+history; the default 30-second limit reset the real workspace during admission.
 Pause preserves queued events without spending retries or AI calls. Removal is a
 terminal tombstone; retries and stale snapshots cannot resurrect execution.
 
