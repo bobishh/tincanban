@@ -9,7 +9,7 @@ const approvalSchema = z.strictObject({
     kind: z.literal("workspace-grant"), version: z.literal(1), grantId: identifier, workspaceId: identifier,
     personId: identifier, role: z.literal("automation"), accessEpoch: z.number().int().positive(),
     automation: z.strictObject({ version: z.literal(1), boardId: identifier,
-      columns: z.strictObject({ lead: identifier, interview: identifier, rejected: identifier }),
+      columns: z.strictObject({ lead: identifier, applied: identifier.optional(), interview: identifier, rejected: identifier }),
       fieldIds: z.array(identifier).min(1).max(128), expiresAt: z.number().int().positive(),
     }),
   }) }),

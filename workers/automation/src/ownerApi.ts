@@ -1,3 +1,4 @@
+import { privateEmailRoutes } from "./emailRoutes";
 import { automationTypes, parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { automationBodyHash, verifyAutomationOwnerRequest } from "../../../src/domain/automationProtocol";
 import type { WorkerEnv, AutomationIntegration } from "./index";
@@ -11,9 +12,9 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
   if (request.method === "GET" && url.pathname === "/v2/capabilities") return json({
     version: 2, origin: url.origin, enrollment: owners.length > 0,
     types: automationTypes.map(value => ({ type: value.type, version: value.version, title: value.title })),
-    emailRouting: false,
+    emailRouting: privateEmailRoutes(env).length > 0,
   }, 200, cors);
-  const match = url.pathname.match(/^\/v2\/integrations\/([0-9a-f-]{36})\/(identity|activation|observation)$/);
+  const match = url.pathname.match(/^\/v2\/integrations\/([0-9a-f-]{36})\/(identity|activation|observation|email)$/);
   if (!match) return json({ error: "Not found" }, 404, cors);
   const operation = match[2]!;
   if (request.method !== (operation === "activation" ? "PUT" : "POST")) return json({ error: "Method not allowed" }, 405, cors);
@@ -34,6 +35,11 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
       return json({ integrationId: intent.integrationId, origin: url.origin, personId: profile.identity.personId,
         identityPublicKey: profile.identity.publicKey, deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
         deviceCertificate: profile.deviceCertificate }, 200, cors);
+    }
+    if (operation === "email") {
+      await coordinator.observeOwner(registration, intent.nonce, url.origin);
+      const route = privateEmailRoutes(env).find(value => value.id === intent.integrationId);
+      return json({ route: route ?? null, receipt: await coordinator.emailSetup() }, 200, cors);
     }
     if (operation === "observation") {
       const observation = await coordinator.observeOwner(registration, intent.nonce, url.origin);

@@ -9,9 +9,11 @@ const testAi = {
     if (questions.includes("application_event")) {
       const rejection = /\b(rejected|not moving forward|declined)\b/i.test(String(request.state ?? ""));
       const probabilities = rejection
-        ? { new_opportunity: 0, interview: 0, rejected: 0.96, offer: 0, follow_up: 0, unrelated: 0.02, uncertain: 0.02 }
-        : { new_opportunity: 0, interview: 0.96, rejected: 0, offer: 0, follow_up: 0.02, unrelated: 0, uncertain: 0.02 };
-      return { answers: { application_event: { type: "choice", choice: rejection ? "rejected" : "interview",
+        ? { new_opportunity: 0, applied: 0, interview: 0, rejected: 0.96, offer: 0, follow_up: 0, unrelated: 0.02, uncertain: 0.02 }
+        : { new_opportunity: 0, applied: 0, interview: 0.96, rejected: 0, offer: 0, follow_up: 0.02, unrelated: 0, uncertain: 0.02 };
+      const applied = !rejection && /received your application/i.test(String(request.state ?? ""));
+      if (applied) { probabilities.interview = 0; probabilities.applied = 0.96; }
+      return { answers: { application_event: { type: "choice", choice: rejection ? "rejected" : applied ? "applied" : "interview",
         confidence: 0.96, probabilities } } };
     }
     return { answers: {
@@ -33,6 +35,8 @@ const provisioningToken = "automation-e2e-provisioning-token-with-at-least-32-by
 interface E2EEnv extends WorkerEnv { TEST_CONFIG: DurableObjectNamespace<AutomationE2eConfig> }
 
 export class AutomationE2eConfig extends DurableObject<E2EEnv> {
+  async setEmailRoutes(value: string): Promise<void> { await this.ctx.storage.put("emailRoutes", value); }
+  async getEmailRoutes(): Promise<string> { return await this.ctx.storage.get<string>("emailRoutes") ?? "[]"; }
   async setOwners(value: string): Promise<void> { await this.ctx.storage.put("owners", value); }
   async getOwners(): Promise<string> { return await this.ctx.storage.get<string>("owners") ?? ""; }
   async setIntegrations(value: string): Promise<void> { await this.ctx.storage.put("integrations", value); }
@@ -107,12 +111,13 @@ async function configureTestIntegration(request: Request, env: E2EEnv): Promise<
   }
   const integration = {
     id: "e2e", workspaceId: value.workspaceId, scope: { version: 1, boardId: value.boardId,
-      columns: { lead: columns.lead, interview: columns.interview, rejected: columns.rejected },
+      columns: { ...(typeof columns.applied === "string" ? { applied: columns.applied } : {}), lead: columns.lead, interview: columns.interview, rejected: columns.rejected },
       fieldIds: { company: fieldIds.company, role: fieldIds.role, jobUrl: fieldIds.jobUrl, ...optionalIds },
       expiresAt },
     ...(typeof value.emailAddress === "string" ? { emailAddress: value.emailAddress } : {}),
     allowedForwarders: ["owner@example.test"],
   };
+  if (value.privateEmailRoutes) await env.TEST_CONFIG.getByName("integration").setEmailRoutes(JSON.stringify(value.privateEmailRoutes));
   if (typeof value.ownerPersonId === "string") await env.TEST_CONFIG.getByName("integration").setOwners(value.ownerPersonId);
   await env.TEST_CONFIG.getByName("integration").setIntegrations(JSON.stringify([integration]));
   return json({ integrationId: "e2e", provisioningToken }, 200);
@@ -120,6 +125,7 @@ async function configureTestIntegration(request: Request, env: E2EEnv): Promise<
 
 async function withTestConfiguration(env: E2EEnv): Promise<WorkerEnv> {
   return { ...env, AI: testAi as unknown as Ai,
+    EMAIL_ROUTES_JSON: await env.TEST_CONFIG.getByName("integration").getEmailRoutes(),
     AUTOMATION_OWNER_IDS: await env.TEST_CONFIG.getByName("integration").getOwners(),
     INTEGRATIONS_JSON: await env.TEST_CONFIG.getByName("integration").getIntegrations(), PROVISIONING_TOKEN: provisioningToken };
 }

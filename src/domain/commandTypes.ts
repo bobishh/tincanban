@@ -71,6 +71,7 @@ export type Command =
   | { kind: "updateWorkspaceSettings"; settings: WorkspaceSettingsDraft; expectedHeads?: Heads }
   | { kind: "setMemberAvatar"; avatarData: string | null; changedAt?: string }
   | { kind: "createAutomation"; definition: AutomationDefinition; approval: string; executor: { origin: string; personId: string } }
+  | { kind: "configureAutomation"; definition: AutomationDefinition; approval: string }
   | { kind: "setAutomationState"; automationId: string; state: AutomationDesiredState };
 
 export type ExecuteResult = CommandResult<{

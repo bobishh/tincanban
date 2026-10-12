@@ -59,6 +59,12 @@ it("Given an existing paused automation, when activation export retries, then it
   const retry = await prepareAutomationActivation({ ...input, expiresAt: Date.now() + 120_000 })
   expect(retry.grant).toEqual(first.grant)
   expect(retry.definition).toEqual(first.definition)
+  const renewed = await prepareAutomationActivation({ ...input, configuration: {
+    name: "Job intake", type: "job-intake", typeVersion: 1, parameters: { sources: ["website", "email"] },
+  } })
+  expect(renewed.grant.payload.grantId).not.toBe(first.grant.payload.grantId)
+  expect(renewed.grant.payload.personId).toBe(first.grant.payload.personId)
+  expect(renewed.grant.payload.automation?.columns.applied).toBeDefined()
   const record = doc.entities[id]
   if (record.kind !== "automation") throw new Error("Missing record")
   record.controls[crypto.randomUUID()] = JSON.stringify({ state: "deleted", supersedes: [head] })

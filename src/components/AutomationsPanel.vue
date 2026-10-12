@@ -18,6 +18,10 @@ async function connect() {
 async function setState(record: AutomationManagement["records"]["value"][number], state: "active" | "paused" | "deleted") {
   try { await props.management.setState(record, state); removing.value = "" } catch { /* Keep failed action visible. */ }
 }
+async function enableEmail(record: AutomationManagement["records"]["value"][number]) {
+  try { await props.management.retry(record, { name: record.definition.name, type: "job-intake", typeVersion: 1,
+    parameters: { sources: ["website", "email"] } }) } catch { /* Show activation failure. */ }
+}
 async function retry(record: AutomationManagement["records"]["value"][number]) {
   try { await props.management.retry(record) } catch { /* Keep failed activation visible. */ }
 }
@@ -42,6 +46,14 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
       <p class="automation-state" :class="{ confirmed: management.confirmation(record) }">{{ stateLabel[record.control.state] }} · {{ management.confirmation(record) ? 'confirmed by Worker' : 'waiting for Worker' }}</p>
       <p class="dialog-copy">{{ automationTypes.find(value => value.type === record.definition.type)?.title }} · {{ record.entity.executor.origin }}</p>
       <p v-if="management.observationErrors.value[record.entity.id]" class="dialog-copy">{{ management.observationErrors.value[record.entity.id] }}</p>
+      <section v-if="owner && management.email.value[record.entity.id]?.route" aria-label="Email forwarding" class="automation-record">
+        <h4>Email forwarding</h4>
+        <p class="dialog-copy">Forward copies of job emails from {{ management.email.value[record.entity.id]?.route?.mailbox }} to this private address. Keep originals in your inbox.</p>
+        <input aria-label="Forwarding address" readonly :value="management.email.value[record.entity.id]?.route?.address" />
+        <button v-if="!record.definition.parameters.sources.includes('email')" class="button button-small" type="button" :disabled="management.busy.value" @click="enableEmail(record)">Enable email and Applied</button>
+        <p v-else role="status">Email enabled · {{ management.email.value[record.entity.id]?.receipt.events.length ? 'Mail received' : 'Waiting for first email' }}</p>
+        <a v-if="management.email.value[record.entity.id]?.receipt.confirmation" :href="management.email.value[record.entity.id]?.receipt.confirmation?.url" target="_blank" rel="noopener noreferrer">Confirm Gmail forwarding</a>
+      </section>
       <div v-if="owner && record.control.state !== 'deleted'" class="automation-actions">
         <button class="button button-small" type="button" :disabled="management.busy.value" @click="setState(record, record.control.state === 'active' ? 'paused' : 'active')">{{ record.control.state === 'active' ? 'Pause' : 'Resume' }}</button>
         <button v-if="!management.confirmation(record)" class="button button-small" type="button" :disabled="management.busy.value" @click="retry(record)">Retry connection</button>

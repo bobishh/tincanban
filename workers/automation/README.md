@@ -2,7 +2,7 @@
 
 This Worker accepts bounded job submissions and forwarded email, stores each event in a per-integration SQLite Durable Object, and classifies events with Cloudflare Clef-flash. It keeps challenge nonces, idempotency keys, event state, retry count, and classification results durable across Worker restarts.
 
-The public event response means **durably queued**. After a signed owner automation grant and fully admitted encrypted snapshot are activated, clear Clef decisions can create a Lead or move a uniquely matched application to Interview or Rejected. Each action is authored as an Automerge change, admitted against the current signed causal authority, persisted before Rusty upload, and reported as applied only after the signed upload receipt succeeds. Email matching uses a pre-classification snapshot; moves require a valid original `Date` header at least as new as the card workflow and reject concurrent workflow changes. Rejected applications never move backward. Ambiguous matches, uncertain classifications, expired grants, stale workflows, and unavailable proof stay in review or retry. Clef cannot authorize writes. The Worker never falls back to an Editor grant.
+The public event response means **durably queued**. After a signed owner automation grant and fully admitted encrypted snapshot are activated, clear Clef decisions can create a Lead or move a uniquely matched application to Applied, Interview or Rejected. Each action is authored as an Automerge change, admitted against the current signed causal authority, persisted before Rusty upload, and reported as applied only after the signed upload receipt succeeds. Email matching uses a pre-classification snapshot; moves require a valid original `Date` header at least as new as the card workflow and reject concurrent workflow changes. Rejected applications never move backward. Ambiguous matches, uncertain classifications, expired grants, stale workflows, and unavailable proof stay in review or retry. Clef cannot authorize writes. The Worker never falls back to an Editor grant.
 
 Unchanged snapshots reuse the last confirmed upload. Wire JSON uses canonical key
 ordering and omits absent optional grants on owner proof wrappers; signed payloads
@@ -116,10 +116,27 @@ record. Durable alarms poll controls every 15 seconds even with an empty queue.
 Pause preserves queued events without spending retries or AI calls. Removal is a
 terminal tombstone; retries and stale snapshots cannot resurrect execution.
 
-Current UI registry contains `job-intake@1`, with website submissions enabled.
-Email classification remains implemented for configured legacy recipients. New UI
-instances do not advertise working email routes: Cloudflare Email Routing and a
-verified forwarding envelope are still required before offering that source.
+Current UI registry contains `job-intake@1`. Website intake is enabled initially.
+For an owner-enrolled instance, an operator provisions a private email route in
+`EMAIL_ROUTES_JSON` (Worker secret), containing `{ id, address, mailbox }`. Addresses
+must contain a cryptographically random 32–48 hexadecimal character suffix:
+`jobs-<random>@inbox.example.com`. The recipient acts as a bearer capability;
+never put it in public routing JSON, source control, public logs or CRDT.
+Cloudflare must route that exact address to this Worker. Legacy recipient routes
+continue to require their exact envelope sender allowlist.
+
+Settings displays the private address only to the authenticated workspace owner.
+**Enable email and Applied** signs a revised definition and grant for the same
+instance, executor and board. Old grants without Applied remain valid. Renewal
+admits merged history before saving, retaining outbox and event deduplication.
+The mailbox provider keeps originals and forwards only the existing job filter;
+Gmail's verification message remains available for owner confirmation, without AI.
+
+Clear application receipts move matched Leads to Applied. New receipts containing
+one extractable public vacancy can create a card directly in explicitly granted
+Applied; vacancy announcements can create Leads. Email vacancy assessments use the
+same admitted employee profile and priority rules as website submissions.
+Ambiguous company/role matches and insufficient vacancy metadata remain in review.
 An added instance does not require a release; an added type/version does.
 
 Private activation contains storage credentials, a content key and workspace
@@ -136,7 +153,9 @@ and encrypted replica chunks with atomic generation publication.
 - `POST /v1/integrations/{integrationId}/identity` requires the operator bearer token and returns an independent automation identity's public keys and device certificate. Private seeds stay encrypted in that integration's Durable Object.
 - `PUT /v1/integrations/{integrationId}/activation` requires the operator bearer token and a signed, scope-matched grant plus admitted snapshot.
 - `GET /v1/integrations/{integrationId}/events/{eventId}` requires the operator bearer token and returns redacted event status and decision summary.
-- Cloudflare's `email()` handler accepts only configured recipient and allowed outer sender pairs. Forwarding confirmation messages enter owner review.
+- `POST /v2/integrations/{uuid}/email`: signed owner observation request; returns private forwarding address, Gmail confirmation link and redacted recent event status.
+- `GET /v1/integrations/{integrationId}/email`: equivalent operator-authenticated setup/status endpoint.
+- Cloudflare's `email()` accepts either a private capability recipient or a legacy recipient with an approved outer sender. It never trusts mail header target IDs.
 
 New intake returns HTTP 202 after the Durable Object has stored the event. Clef or page-fetch failures stay retryable and move to `failed` after eight attempts. Unrelated, ambiguous, or not-yet-authorable decisions remain `review`; no response calls those events applied.
 
@@ -146,4 +165,4 @@ The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://
 
 Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. The production proof activated one exact owner-approved scope and applied a synthetic Lead through Clef; no applicant or email content was used. Future integrations must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
 
-Cloudflare Email Routing remains unconfigured. The proposed forwarding recipient `jobs@inbox.meta-uber-engineer.dev` is not provisioned or active. No live Gmail envelope sender has been verified, so keep `emailAddress` unset until a real delivery proves the outer SMTP sender. This repository does not provision email accounts or forwarding routes.
+On 2026-10-12, Cloudflare Email Routing for `inbox.meta-uber-engineer.dev` and an exact private-recipient Worker rule were provisioned. The public `jobs@inbox.meta-uber-engineer.dev` address is not an intake capability. Production uses the private route secret. Gmail forwarding confirmation and a real delivered board action must be verified separately before claiming end-to-end readiness.

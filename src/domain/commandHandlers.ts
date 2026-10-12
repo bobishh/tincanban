@@ -36,6 +36,7 @@ const handlers = {
   updateWorkspaceSettings: schema.updateWorkspaceSettings,
   setMemberAvatar: profile.setMemberAvatar,
   createAutomation: automation.createAutomation,
+  configureAutomation: automation.configureAutomation,
   setAutomationState: automation.setAutomationState,
 } satisfies { [K in Command["kind"]]: CommandHandler<K> }
 

@@ -35,14 +35,22 @@ export async function prepareAutomationActivation<
   }
   await validateWorkerIdentity(profile, worker)
   const bindings = selectAutomationBindings(doc)
+  if (input.configuration && !input.configuration.parameters.sources.includes("email")) delete bindings.columns.applied
   const existing = doc.entities[automationEntityId(worker.integrationId ?? worker.personId)]
+  let expiresAt = input.expiresAt
   const initial = { document: encodeBlindBytes(input.bytes), authorization, chat: null }
   if (existing) {
-    const approval = await existingAutomationApproval(existing, profile, worker, authorization, doc.id, bindings)
-    return { version: 2 as const, workspaceId: doc.id, blind, ...approval, bindings, initial }
+    if (!hasEntityKind(existing, "automation")) throw new Error("Automation instance ID is occupied")
+    const previous = parseAutomationApproval(existing.approval)
+    expiresAt = Math.min(expiresAt, previous.grant.payload.automation.expiresAt)
+    const legacyBindings = { ...bindings, columns: { ...bindings.columns } }
+    if (!previous.grant.payload.automation.columns.applied) delete legacyBindings.columns.applied
+    const approval = await existingAutomationApproval(existing, profile, worker, authorization, doc.id, legacyBindings)
+    if (!input.configuration) return { version: 2 as const, workspaceId: doc.id, blind, ...approval, bindings: legacyBindings, initial }
+
   }
   const grant = await createAutomationWorkspaceGrant(profile, doc.id, worker.personId, {
-    version: 1, boardId: bindings.boardId, columns: bindings.columns, fieldIds: Object.values(bindings.fieldIds), expiresAt: input.expiresAt,
+    version: 1, boardId: bindings.boardId, columns: bindings.columns, fieldIds: Object.values(bindings.fieldIds), expiresAt,
   }, authorization.authority.currentEpoch)
   const definition: AutomationDefinition = parseAutomationDefinition({
     kind: "automation-definition", version: 1, id: worker.integrationId ?? worker.personId,
@@ -80,7 +88,7 @@ function selectAutomationBindings(doc: WorkspaceDocumentV2) {
     return entityId
   }
   return { boardId: board.id,
-    columns: { lead: id("status.lead", "column"), interview: id("status.interview", "column"), rejected: id("status.rejected", "column") },
+    columns: { lead: id("status.lead", "column"), applied: id("status.applied", "column") as string | undefined, interview: id("status.interview", "column"), rejected: id("status.rejected", "column") },
     fieldIds: { company: id("field.company", "field"), role: id("field.role", "field"), jobUrl: id("field.url", "field"),
       notes: id("field.notes", "field"), sourceText: id("field.sourceText", "field") } }
 }

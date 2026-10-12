@@ -297,6 +297,23 @@ describe("automation Worker", () => {
     expect(rejection).toEqual(["Sender is not approved for this automation integration"]);
   });
 
+  it("Given a private forwarding recipient, When Gmail preserves the original SMTP sender, Then it queues mail but rejects a changed recipient", async () => {
+    const address = "jobs-" + "a".repeat(32) + "@example.test";
+    const routed = { ...testEnv, EMAIL_ROUTES_JSON: JSON.stringify([{ id: "test-integration", address, mailbox: "owner@example.test" }]) };
+    const raw = new TextEncoder().encode("From: recruiter@example.test\r\nMessage-ID: <gmail-forward@example.test>\r\n\r\nApplication received");
+    for (const recipient of [address, address.replace("aaa", "aab")]) {
+      const rejection: string[] = [];
+      await worker.email!({ from: "recruiter@example.test", to: recipient, rawSize: raw.length,
+        raw: new ReadableStream({ start(controller) { controller.enqueue(raw); controller.close(); } }),
+        headers: new Headers(), setReject(reason: string) { rejection.push(reason); },
+        async forward() { throw new Error("not expected"); }, async reply() { throw new Error("not expected"); },
+      } as ForwardableEmailMessage, routed, createExecutionContext());
+      expect(rejection).toEqual(recipient === address ? [] : ["Unknown automation forwarding address"]);
+    }
+    const eventId = await digestIdForTest("test-integration:email:<gmail-forward@example.test>");
+    expect(await testEnv.AUTOMATION.getByName("test-integration").getEvent(eventId)).toMatchObject({ source: "email", status: "pending" });
+  });
+
   it("Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write", async () => {
     const roleProbabilities = { backend: 1, frontend: 0, fullstack: 0, platform_devops: 0, data_ai: 0,
       mobile: 0, engineering_management: 0, other_unknown: 0 };
@@ -320,6 +337,29 @@ describe("automation Worker", () => {
 
     expect(result).toMatchObject({ status: "review", decision: { relevance: "yes" } });
     expect(result.reason).toContain("confidence and an approved scope");
+  });
+
+  it("Given a forwarded vacancy URL and employee profile, When intake classifies it, Then it extracts the job and assesses the same priority as website intake", async () => {
+    const profile = { stack: "Ruby, Rails", work_profile: "Senior Software Engineer" };
+    const ai = { run: async (_model: string, input: unknown) => {
+      const request = input as { questions: Record<string, unknown>; state: unknown };
+      if (request.questions.application_event) return { answers: { application_event: {
+        type: "choice", choice: "new_opportunity", confidence: 1, probabilities: { applied: 0, new_opportunity: 1, interview: 0, rejected: 0, offer: 0, follow_up: 0, unrelated: 0, uncertain: 0 },
+      } } };
+      expect(request.state).toMatchObject({ employee_profile: profile });
+      return { answers: { ...Object.fromEntries(["company_recognition", "company_stability", "stack_fit", "work_fit"].map(key => [key, {
+        type: "choice", choice: "strong", confidence: 1, probabilities: { strong: 1, partial: 0, weak: 0, unknown: 0 },
+      }])), job_opportunity: { type: "choice", choice: "yes", confidence: 1, probabilities: { yes: 1, no: 0, uncertain: 0 } },
+      role_type: { type: "choice", choice: "backend", confidence: 1, probabilities: { backend: 1, frontend: 0, fullstack: 0, platform_devops: 0, data_ai: 0, mobile: 0, engineering_management: 0, other_unknown: 0 } },
+      seniority: { type: "choice", choice: "senior", confidence: 1, probabilities: { intern_junior: 0, middle: 0, senior: 1, staff_principal: 0, lead_manager: 0, unknown: 0 } } } };
+    } };
+    const result = await runPipeline({ source: "email", receivedAt: new Date().toISOString(), rawMime: "",
+      message: { from: "recruiter@example.test", to: "owner@example.test", messageId: "<vacancy@example.test>", inReplyTo: null,
+        references: [], subject: "Job opportunity", text: "Senior Software Engineer at Example GmbH", date: null,
+        urls: ["https://jobs.example.test/42"], confirmation: false, attachments: [] } }, ai,
+      async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Software Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Ruby and Rails"}</script>', { headers: { "content-type": "text/html" } }), profile);
+    expect(result.opportunity).toMatchObject({ priority: { score: 10, optionId: "p0" } });
+    expect(result.extraction).toMatchObject({ company: "Example GmbH", role: "Senior Software Engineer" });
   });
 
   it("Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI", async () => {

@@ -185,6 +185,31 @@ export class AutomationReplica {
     return replica;
   }
 
+  static async renew(serialized: string, packet: AutomationActivationPacket, profile: LocalProfile, expectedOrigin: string): Promise<AutomationReplica> {
+    await initializeAutomerge();
+    const prior = JSON.parse(serialized) as SerializedReplica;
+    await validateSerialized(prior, profile);
+    if (prior.tombstoned || prior.workspaceId !== packet.workspaceId || prior.bindings.boardId !== packet.bindings.boardId ||
+      prior.definition?.payload.id !== packet.definition?.payload.id || prior.blind.origin !== packet.blind.origin ||
+      prior.blind.contentKey !== packet.blind.contentKey) throw new Error("Automation renewal must preserve its executor, workspace and storage");
+    const combined = mergeDocuments(decodeBlindBytes(prior.rawDocument), decodeBlindBytes(packet.initial.document), actorIdForProfile(profile));
+    let publish = false;
+    const replica = await AutomationReplica.activate({ ...packet, persist: async value => {
+      if (publish) await packet.persist!(value);
+    }, initial: { ...packet.initial, document: encodeBlindBytes(combined),
+      authorization: normalizeBundle(packet.initial.authorization, prior.authorizations),
+      chat: mergeOpaqueChat(prior.chat, packet.initial.chat),
+    } }, profile, expectedOrigin);
+    if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be renewed");
+    replica.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, prior.applied);
+    replica.pending = prior.pending;
+    replica.cursor = Math.min(prior.blind.cursor, packet.blind.cursor);
+    replica.lastUploaded = prior.blind.lastUploaded;
+    publish = true;
+    await replica.persistState();
+    return replica;
+  }
+
   static async restore(serialized: string, profile: LocalProfile,
     persist?: (serialized: string) => Promise<void>, transport: ReplicaTransport = defaultTransport): Promise<AutomationReplica> {
     await initializeAutomerge();
@@ -213,12 +238,13 @@ export class AutomationReplica {
     });
   }
 
-  createLead(eventId: string, normalized: NormalizedLead, decision: unknown): Promise<{ cardId: string; duplicate: boolean }> {
+  createLead(eventId: string, normalized: NormalizedLead, decision: unknown, columnId = this.bindings.columns.lead): Promise<{ cardId: string; duplicate: boolean }> {
     return this.enqueue(async () => {
       this.assertActive();
       this.assertPersistence();
       await this.revalidate();
       this.assertExecuting();
+      if (columnId !== this.bindings.columns.lead && columnId !== this.bindings.columns.applied) throw new Error("Initial application column is not approved");
       const cardId = await deterministicCardId(eventId);
       const previous = Object.hasOwn(this.applied, eventId) ? this.applied[eventId] : undefined;
       if (previous) {
@@ -237,7 +263,7 @@ export class AutomationReplica {
         }
         const values = this.leadValues(normalized, decision, eventId);
         const result = await executeOwnedCommand(document, { kind: "createItem", id: cardId,
-          parentId: this.bindings.columns.lead, title: `${requiredText(normalized.company, "company")} — ${requiredText(normalized.role, "role")}`,
+          parentId: columnId, title: `${requiredText(normalized.company, "company")} — ${requiredText(normalized.role, "role")}`,
           body: normalized.message?.slice(0, 8_000) ?? "", values }, this.profile, actorIdForProfile(this.profile), await this.grantHash());
         if (!result.ok) throw new Error(`Lead creation rejected: ${result.error.message}`);
         const previousRaw = this.rawDocument;
@@ -264,8 +290,8 @@ export class AutomationReplica {
       this.assertPersistence();
       await this.revalidate();
       this.assertExecuting();
-      if (columnId !== this.bindings.columns.interview && columnId !== this.bindings.columns.rejected) {
-        throw new Error("Automation may move cards only to Interview or Rejected");
+      if (columnId !== this.bindings.columns.applied && columnId !== this.bindings.columns.interview && columnId !== this.bindings.columns.rejected) {
+        throw new Error("Automation may move cards only to approved application columns");
       }
       const previous = Object.hasOwn(this.applied, eventId) ? this.applied[eventId] : undefined;
       if (previous) {
@@ -336,6 +362,10 @@ export class AutomationReplica {
       return hasEntityKind(board, "board") && board.priorityPolicy?.evaluator === "job-fit-v1"
         ? board.priorityPolicy.bands.map(band => ({ ...band })) : undefined;
     } finally { Automerge.free(document); }
+  }
+
+  appliedForRuntime(eventId: string): AppliedEvent | undefined {
+    return Object.hasOwn(this.applied, eventId) ? { ...this.applied[eventId]! } : undefined;
   }
 
   bindingsForRuntime(): AutomationGrantScope["columns"] { return { ...this.bindings.columns }; }

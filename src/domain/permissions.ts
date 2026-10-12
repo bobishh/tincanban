@@ -86,6 +86,7 @@ const commandCapabilities: Record<Command["kind"], WorkspaceCapability | "entity
   updateWorkspaceSettings: "board.configure",
   setMemberAvatar: "chat.profile",
   createAutomation: "board.configure",
+  configureAutomation: "board.configure",
   setAutomationState: "board.configure",
 }
 
@@ -140,8 +141,8 @@ function assertAutomationTransition(role: WorkspaceRole, before: WorkspaceDocume
   assertAutomationRecord(after)
   if (!before) return
   if (!hasEntityKind(before, "automation")) throw new Error("Automation record cannot replace another entity")
-  const stable = (value: typeof after) => Object.fromEntries(Object.entries(value).filter(([key]) => !["controls", "updatedAt"].includes(key)))
-  if (canonicalizeJson(stable(before)) !== canonicalizeJson(stable(after))) throw new Error("Automation identity and granted definition are immutable")
+  const stable = (value: typeof after) => Object.fromEntries(Object.entries(value).filter(([key]) => !["controls", "updatedAt", "definition", "approval", "title"].includes(key)))
+  if (canonicalizeJson(stable(before)) !== canonicalizeJson(stable(after))) throw new Error("Automation executor and placement are immutable")
   if (Object.entries(before.controls).some(([id, data]) => after.controls[id] !== data)) throw new Error("Automation control history and tombstones cannot be removed")
   if (automationLifecycle(before).state === "deleted") throw new Error("Deleted automation is immutable")
 }

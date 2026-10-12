@@ -1,8 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue"
+import type { LocalProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
 import type { BlindReplicationController } from "./blindReplication"
 import type { AutomationConfiguration, AutomationWorkerIdentity } from "./automation"
-import { activateAutomation, automationOrigin, enrollAutomation, observeAutomation } from "./automationClient"
+import { activateAutomation, automationOrigin, enrollAutomation, observeAutomation, readAutomationEmail, type AutomationEmailSetup } from "./automationClient"
 import { automationLifecycle, type AutomationDesiredState } from "../domain/automationLifecycle"
 import { parseAutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind } from "../domain/model"
@@ -12,8 +13,10 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
   const busy = ref(false)
   const failure = ref("")
   const observations = ref<Record<string, AutomationObservation>>({})
+  const email = ref<Record<string, AutomationEmailSetup>>({})
   const observationErrors = ref<Record<string, string>>({})
   const now = ref(Date.now())
+  const emailChecked = new Map<string, number>()
   let disposed = false
   let checking = false
   let pendingInstance: { workspaceId: string; origin: string; id: string; identity?: AutomationWorkerIdentity } | undefined
@@ -28,6 +31,16 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
     return !!receipt && now.value - receipt.issuedAt < 60_000 && receipt.state === record.control.state &&
       JSON.stringify([...receipt.heads].sort()) === JSON.stringify([...record.control.heads].sort())
   }
+  async function refreshEmail(record: typeof records.value[number], profile: LocalProfile, workspaceId: string) {
+    if (now.value - (emailChecked.get(record.entity.id) ?? 0) <= 30_000) return
+    try {
+      const setup = await readAutomationEmail(profile, { origin: record.entity.executor.origin, integrationId: record.definition.id, workspaceId })
+      if (!disposed && workspace.getActiveDoc()?.id === workspaceId && workspace.getCurrentProfile()?.identity.personId === profile.identity.personId) {
+        email.value[record.entity.id] = setup
+      }
+    } catch { delete email.value[record.entity.id] }
+    finally { emailChecked.set(record.entity.id, now.value) }
+  }
   async function observeAll(): Promise<void> {
     if (disposed || checking || !owner()) return
     const profile = workspace.getCurrentProfile()
@@ -41,6 +54,7 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
             integrationId: record.definition.id, workspaceId, grantId: record.definition.scope.grantId })
           if (disposed || workspace.getActiveDoc()?.id !== workspaceId || workspace.getCurrentProfile()?.identity.personId !== profile.identity.personId) return
           observations.value[record.entity.id] = receipt
+          await refreshEmail(record, profile, workspaceId)
           delete observationErrors.value[record.entity.id]
         } catch (error) {
           delete observations.value[record.entity.id]
@@ -79,15 +93,16 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
       await observeAll()
     })
   }
-  async function retry(record: typeof records.value[number]): Promise<void> {
+  async function retry(record: typeof records.value[number], configuration?: AutomationConfiguration): Promise<void> {
     await run(async () => {
       const profile = workspace.getCurrentProfile()
       const config = storage.value[0]
       if (!profile || !config) throw new Error("Connect Rusty storage before retrying activation")
       if (record.control.state === "deleted") throw new Error("Removed automations cannot be activated")
       const identity = await enrollAutomation(profile, record.entity.executor.origin, config.workspaceId, record.definition.id)
-      const text = await blind.exportAutomationAccess(config, JSON.stringify(identity))
+      const text = await blind.exportAutomationAccess(config, JSON.stringify(identity), configuration)
       await activateAutomation(profile, identity, config.workspaceId, JSON.parse(text))
+      emailChecked.delete(record.entity.id)
       await blind.syncNow()
       await observeAll()
     })
@@ -103,7 +118,7 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
   const stop = watch(() => { void workspace.docVersion.value; return workspace.getActiveDoc()?.id }, () => { void observeAll() }, { immediate: true })
   const interval = setInterval(() => { now.value = Date.now(); void observeAll() }, 3_000)
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(interval) })
-  return { records, storage, busy, failure, observationErrors, confirmation, add, retry, setState }
+  return { records, storage, email, busy, failure, observationErrors, confirmation, add, retry, setState }
 }
 export type AutomationWorkspace = ReturnType<typeof useTincanban>
 export type AutomationManagement = ReturnType<typeof useAutomations>

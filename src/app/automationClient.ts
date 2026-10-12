@@ -63,3 +63,15 @@ export async function observeAutomation(profile: LocalProfile, input: { origin: 
   const receipt = await requestJson(input.origin, `/v2/integrations/${input.integrationId}/observation`, { ownerRequest })
   return verifyAutomationObservation(receipt, { ...input, nonce: ownerRequest.signed.payload.nonce })
 }
+
+export type AutomationEmailSetup = {
+  route: { address: string; mailbox: string } | null
+  receipt: { confirmation: { eventId: string; url: string } | null;
+    events: Array<{ eventId: string; status: string; createdAt: number }> }
+}
+
+export async function readAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }): Promise<AutomationEmailSetup> {
+  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "observe", origin: input.origin,
+    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
+  return await requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ownerRequest }) as AutomationEmailSetup
+}

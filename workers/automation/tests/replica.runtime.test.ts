@@ -56,6 +56,56 @@ it("Given an owner-signed type contract, when activated and restored, then only 
   expect(restored.allowsSource("email")).toBe(false);
 });
 
+it("Given a signed email scope renewal, when reactivated, then preserves the executor and prior event deduplication", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const created = await replica.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {});
+  const stored = JSON.parse(replica.serialize());
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument));
+  const board = document.entities[data.packet.bindings.boardId];
+  if (board.kind !== "board") throw new Error("Missing board");
+  const bindings = { ...data.packet.bindings, columns: { ...data.packet.bindings.columns, applied: board.preset!.bindings["status.applied"]! } };
+  const grant = await createAutomationWorkspaceGrant(data.owner, data.packet.workspaceId, data.automation.identity.personId,
+    { ...data.packet.grant.payload.automation!, columns: bindings.columns });
+  const payload = { ...data.packet.definition!.payload, parameters: { sources: ["website", "email"] as Array<"website" | "email"> },
+    scope: { ...data.packet.definition!.payload.scope, grantId: grant.payload.grantId } };
+  const definition = await signEnvelope(data.owner.privateKeys.devicePrivateKey, payload, data.owner.device.deviceId);
+  const changed = await executeCommand(document, { kind: "configureAutomation", definition: payload,
+    approval: JSON.stringify({ definition, grant }) }, data.owner);
+  if (!changed.ok) throw new Error(changed.error.message);
+  const signed = await signEnvelope(data.owner.privateKeys.devicePrivateKey, {
+    kind: "workspace-changes" as const, version: 1 as const, workspaceId: data.packet.workspaceId,
+    hashes: [changed.value.receipt.changeHash], personId: data.owner.identity.personId, deviceId: data.owner.device.deviceId,
+  }, data.owner.device.deviceId);
+  const packet = { ...data.packet, grant, definition, bindings, initial: {
+    ...data.packet.initial, document: encodeBlindBytes(Automerge.save(changed.value.newDoc)),
+    authorization: { version: 1 as const, authority: stored.authority, records: [...stored.authorizations, {
+      signed, publicKey: data.owner.identity.publicKey, certificates: [data.owner.certificate],
+      ownerPublicKey: data.owner.identity.publicKey, ownerCertificates: [data.owner.certificate],
+    }] },
+  } };
+  const renewed = await AutomationReplica.renew(replica.serialize(), packet, data.automation, "https://automation.example.test");
+  expect(renewed.allowsSource("email")).toBe(true);
+  expect(await renewed.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {})).toEqual({ cardId: created.cardId, duplicate: true });
+  Automerge.free(document); Automerge.free(changed.value.newDoc);
+});
+
+it("Given an explicitly signed Applied binding, when a new confirmed application is created, then it starts in Applied and duplicate delivery creates no second card", async () => {
+  const data = await fixture();
+  const doc = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+  const board = doc.entities[data.packet.bindings.boardId];
+  if (board.kind !== "board") throw new Error("Missing board");
+  const applied = board.preset!.bindings["status.applied"]!;
+  const bindings = { ...data.packet.bindings, columns: { ...data.packet.bindings.columns, applied } };
+  const grant = await createAutomationWorkspaceGrant(data.owner, data.packet.workspaceId, data.automation.identity.personId,
+    { ...data.packet.grant.payload.automation!, columns: bindings.columns });
+  const replica = await AutomationReplica.activate({ ...data.packet, grant, bindings }, data.automation);
+  const created = await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer" }, {}, applied);
+  expect(replica.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(applied);
+  expect(await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer" }, {}, applied)).toEqual({ cardId: created.cardId, duplicate: true });
+  Automerge.free(doc);
+});
+
 it("Given already verified workspace evidence, when controls are read repeatedly with no CPU budget for revalidation, then observations remain available but expired grants fail", async () => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);

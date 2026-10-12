@@ -112,6 +112,18 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     await expect(page.getByRole("button", { name: "Open Nacre Light Integration GmbH — Principal Systems Engineer", exact: true })).toBeVisible({ timeout: 30_000 })
     await testInfo.attach("lead-after-client-reopen", { body: await page.screenshot(), contentType: "image/png" })
 
+    await page.close()
+    const appliedId = await postForwardedMail(workerOrigin, "<automation-applied-1@example.test>",
+      "Application received: Principal Systems Engineer at Nacre Light Integration GmbH",
+      "We received your application for Principal Systems Engineer at Nacre Light Integration GmbH.")
+    const appliedResult = await waitForAppliedEvent(workerOrigin, appliedId)
+    expect(actionFrom(appliedResult)).toMatchObject({ cardId: leadCardId, columnId: workspace.columns.applied })
+    page = await context.newPage()
+    await page.goto(baseURL!)
+    await expect(page.getByRole("region", { name: "Job search", exact: true })).toBeVisible()
+    await syncFromBlindRusty(page)
+    await expectStatusColumn(page, "Applied", "Nacre Light Integration GmbH — Principal Systems Engineer")
+
     const applicationHeader = "Interview invitation for Principal Systems Engineer at Nacre Light Integration GmbH"
     await page.close()
     const interviewId = await postForwardedMail(workerOrigin, "<automation-interview-1@example.test>", applicationHeader,
@@ -202,7 +214,7 @@ async function connectBlindRusty(page: Page, origin: string): Promise<void> {
 type WorkspaceSeed = {
   workspaceId: string
   boardId: string
-  columns: { lead: string; interview: string; rejected: string }
+  columns: { lead: string; applied: string; interview: string; rejected: string }
   fieldBindings: { company: string; role: string; jobUrl: string; notes: string; sourceText: string }
 }
 
@@ -217,7 +229,7 @@ async function inspectWorkspace(page: Page): Promise<WorkspaceSeed> {
     const board = Object.values(doc.entities).find(entity => entity.kind === "board" && entity.preset?.key === "job-search")
     if (!board || board.kind !== "board") throw new Error("Job-search board is missing")
     const bindings = board.preset.bindings
-    const columns = { lead: bindings["status.lead"], interview: bindings["status.interview"], rejected: bindings["status.rejected"] }
+    const columns = { lead: bindings["status.lead"], applied: bindings["status.applied"], interview: bindings["status.interview"], rejected: bindings["status.rejected"] }
     const fieldBindings = { company: bindings["field.company"], role: bindings["field.role"], jobUrl: bindings["field.url"],
       notes: bindings["field.notes"], sourceText: bindings["field.sourceText"] }
     return { workspaceId: doc.id, boardId: board.id, columns, fieldBindings }
@@ -481,6 +493,21 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     await panel.getByRole("button", { name: "Connect automation", exact: true }).click()
     const automation = panel.getByRole("article", { name: "My job intake" })
     await expect(automation.getByText("Active · confirmed by Worker", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const instanceId = await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/state.ts")
+      const instance = Object.values(useTincanban().getActiveDoc()!.entities).find(entity => entity.kind === "automation")
+      if (!instance || instance.kind !== "automation") throw new Error("Missing instance")
+      return JSON.parse(instance.definition).id as string
+    })
+    const privateAddress = `jobs-${"a".repeat(32)}@example.test`
+    await fetch(`${setup.origin}/__test/configure`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId, columns: workspace.columns,
+        fieldIds: workspace.fieldBindings, ownerPersonId: trustedOwner.identity.personId,
+        privateEmailRoutes: [{ id: instanceId, address: privateAddress, mailbox: "owner@example.test" }] }) })
+    await expect(automation.getByRole("button", { name: "Enable email and Applied", exact: true })).toBeVisible({ timeout: 45_000 })
+    await automation.getByRole("button", { name: "Enable email and Applied", exact: true }).click()
+    await expect(automation.getByText("Email enabled · Waiting for first email", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(automation.getByRole("button", { name: "Enable email and Applied", exact: true })).toHaveCount(0)
     await automation.getByRole("button", { name: "Pause", exact: true }).click()
     await expect(automation.getByText("Paused · confirmed by Worker", { exact: true })).toBeVisible({ timeout: 30_000 })
     await automation.getByRole("button", { name: "Resume", exact: true }).click()

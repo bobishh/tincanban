@@ -40,13 +40,13 @@ test('Given malformed Clef probabilities, when classifying, then leaves event re
 
 test('Given uncertain application-event distribution, when classifying, then requests review', async () => {
   const result = await classifyApplicationEvent(ai({
-    application_event: { type: 'choice', choice: 'interview', confidence: 0.44, probabilities: { new_opportunity: 0, interview: 0.44, rejected: 0.4, offer: 0, follow_up: 0, unrelated: 0, uncertain: 0.16 } },
+    application_event: { type: 'choice', choice: 'interview', confidence: 0.44, probabilities: { new_opportunity: 0, applied: 0, interview: 0.44, rejected: 0.4, offer: 0, follow_up: 0, unrelated: 0, uncertain: 0.16 } },
   }), 'mail');
   assert.equal(result.event, 'uncertain');
 });
 
 test('Given a confident rejection, when classifying, then returns a rejection and keeps full probabilities', async () => {
-  const probabilities = { new_opportunity: 0, interview: 0.04, rejected: 0.9, offer: 0.01, follow_up: 0.02, unrelated: 0.01, uncertain: 0.02 };
+  const probabilities = { new_opportunity: 0, applied: 0, interview: 0.04, rejected: 0.9, offer: 0.01, follow_up: 0.02, unrelated: 0.01, uncertain: 0.02 };
   const result = await classifyApplicationEvent(ai({
     application_event: { type: 'choice', choice: 'rejected', confidence: 0.9, probabilities },
   }), 'We will not be proceeding.');
@@ -86,4 +86,12 @@ test('Given uncertain fit evidence and no employee profile, when assessing, then
   }), 'vacancy');
   assert.equal(result.assessment.scores.companyStability, null);
   assert.equal(result.priority.score, 0);
+});
+
+test('Given a confident receipt confirmation, when classifying, then selects Applied rather than interview or follow-up', async () => {
+  const probabilities = { new_opportunity: 0, applied: 0.95, interview: 0.01, rejected: 0, offer: 0, follow_up: 0.02, unrelated: 0, uncertain: 0.02 };
+  const result = await classifyApplicationEvent(ai({ application_event: {
+    type: 'choice', choice: 'applied', confidence: 0.95, probabilities,
+  } }), 'We received your application for Senior Software Engineer at Example GmbH.');
+  assert.equal(result.event, 'applied');
 });

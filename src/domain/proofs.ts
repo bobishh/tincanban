@@ -214,8 +214,8 @@ function exactAutomationKeys(value: object, expected: string[]): boolean {
   return keys.length === expected.length && keys.every((key, index) => key === sorted[index])
 }
 function validAutomationColumns(columns: AutomationGrantScope["columns"]): boolean {
-  if (!columns || !exactAutomationKeys(columns, ["lead", "interview", "rejected"])) return false
-  const ids = [columns.lead, columns.interview, columns.rejected]
+  if (!columns || !exactAutomationKeys(columns, ["lead", "interview", "rejected", ...(columns.applied === undefined ? [] : ["applied"])])) return false
+  const ids = [columns.lead, columns.interview, columns.rejected, ...(columns.applied === undefined ? [] : [columns.applied])]
   return ids.every(id => typeof id === "string" && Boolean(id)) && new Set(ids).size === ids.length
 }
 function validAutomationFields(ids: AutomationGrantScope["fieldIds"]): boolean {

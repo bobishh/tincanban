@@ -22,6 +22,10 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
     await tincanban.executeCommandAsync({ kind: "createAutomation", definition: packet.definition.payload,
       approval: JSON.stringify({ definition: packet.definition, grant: packet.grant }), executor: { origin: worker.origin, personId: worker.personId } })
   }
+  else if (configuration) {
+    await tincanban.executeCommandAsync({ kind: "configureAutomation", definition: packet.definition.payload,
+      approval: JSON.stringify({ definition: packet.definition, grant: packet.grant }) })
+  }
   const currentBytes = await tincanban.readWorkspaceBytes(config.workspaceId)
   packet.initial = { ...packet.initial, document: encodeBlindBytes(currentBytes), authorization: await exportAuthorizationBundle(currentBytes, profile) }
   if (tincanban.getCurrentProfile()?.identity.personId !== profile.identity.personId) throw new Error("Identity changed during automation approval")

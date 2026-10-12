@@ -241,10 +241,12 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         const state = JSON.parse(existing) as { grant: unknown; definition?: unknown };
         if (canonicalizeJson(state.grant) !== canonicalizeJson(packet.grant) ||
           canonicalizeJson(state.definition ?? null) !== canonicalizeJson(packet.definition ?? null)) {
-          throw new Error("Existing automation identity cannot be rebound; create a new instance");
+          if (!origin || packet.version !== 2) throw new Error("Scope renewal requires a signed enrolled owner request");
+          replica = await AutomationReplica.renew(existing, { ...packet, persist }, profile, origin);
+        } else {
+          replica = await this.restoreReplica(existing, profile, storageSecret);
+          if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be reactivated");
         }
-        replica = await this.restoreReplica(existing, profile, storageSecret);
-        if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be reactivated");
       } else replica = await AutomationReplica.activate({ ...packet, persist }, profile, origin);
       if (origin) replica.observationForRuntime(origin, crypto.randomUUID());
     }
@@ -352,6 +354,21 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     );
     await this.scheduleEarlierAlarm(now + 1_000);
     return { eventId: input.eventId, status: "pending", duplicate: false };
+  }
+
+  async emailSetup() {
+    const rows = this.ctx.storage.sql.exec<EventRow>("SELECT * FROM events WHERE source = 'email' ORDER BY created_at DESC LIMIT 10").toArray();
+    let confirmation: { eventId: string; url: string } | null = null;
+    for (const row of rows) {
+      const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET!, row.event_id, row.payload);
+      if (event.source !== "email" || !event.message.confirmation) continue;
+      const url = event.message.urls.find(value => {
+        try { const parsed = new URL(value); return parsed.protocol === "https:" && parsed.hostname === "mail.google.com" && parsed.pathname.startsWith("/mail/"); }
+        catch { return false; }
+      });
+      if (url) { confirmation = { eventId: row.event_id, url }; break; }
+    }
+    return { confirmation, events: rows.map(row => this.getEvent(row.event_id)) };
   }
 
   getEvent(eventId: string): { eventId: string; source: string; status: StoredEventStatus; createdAt: number; result?: unknown } | null {
@@ -524,18 +541,25 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     emailCandidates: AutomationCandidate[] | undefined, replica: AutomationReplica | null): Promise<{
     kind: "created-lead" | "moved-application"; cardId: string; columnId?: string; message: string;
   } | null> {
-    const leadDecision = event.source === "website" && result.decision && "relevance" in result.decision ? result.decision : undefined;
+    const recorded = replica?.appliedForRuntime(eventId);
+    if (recorded && replica) {
+      await replica.sync();
+      if (replica.controlForRuntime().state !== "active" || !replica.allowsSource(event.source)) return null;
+      return { kind: recorded.kind === "lead" ? "created-lead" : "moved-application", cardId: recorded.cardId,
+        ...(recorded.kind === "move" ? { columnId: recorded.columnId } : {}), message: "Previously recorded application change uploaded" };
+    }
+    const leadDecision = event.source === "website" && result.decision && "relevance" in result.decision ? result.decision : result.opportunity;
     const mailDecision = event.source === "email" && result.decision && "event" in result.decision ? result.decision : undefined;
     const isLeadProposal = leadDecision?.relevance === "yes";
-    const isApplicationMove = mailDecision?.event === "interview" || mailDecision?.event === "rejection";
+    const isApplicationMove = mailDecision?.event === "applied" || mailDecision?.event === "interview" || mailDecision?.event === "rejection";
     if (!isLeadProposal && !isApplicationMove) return null;
     if (isApplicationMove && !emailCandidates) return null;
     if (isLeadProposal) {
       const opportunity = leadDecision!.distributions.job_opportunity;
       const sorted = Object.values(opportunity.probabilities).sort((left, right) => right - left);
       if (sorted[0]! < 0.7 || sorted[0]! - sorted[1]! < 0.2) return null;
-      if (!(event.source === "website") || !(event.submission.company || result.extraction?.company)?.trim() ||
-        !(event.submission.role || result.extraction?.role)?.trim()) return null;
+      if (!(event.source === "website" ? event.submission.company || result.extraction?.company : result.extraction?.company)?.trim() ||
+        !(event.source === "website" ? event.submission.role || result.extraction?.role : result.extraction?.role)?.trim()) return null;
     }
     if (!replica) return null;
     await replica.sync();
@@ -557,6 +581,22 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       return { kind: "created-lead", cardId: created.cardId, message: created.duplicate ? "Lead was already applied" : "Lead created in the authorized Lead column" };
     }
 
+    if (event.source === "email" && isLeadProposal && leadDecision && result.extraction) {
+      const incoming = { ...event.message, urls: [...event.message.urls, result.extraction.finalUrl] };
+      const correlation = correlateApplication(incoming, replica.candidates());
+      if (correlation.kind === "review" && correlation.reason === "No existing application matched") {
+        const columns = replica.bindingsForRuntime();
+        const columnId = mailDecision?.event === "applied" ? columns.applied : columns.lead;
+        if (!columnId) return null;
+        const created = await replica.createLead(eventId, { company: result.extraction.company, role: result.extraction.role,
+          jobUrl: result.extraction.finalUrl, sourceText: event.message.text, message: event.message.text,
+          receivedAt: event.receivedAt, roleType: leadDecision.roleType, seniority: leadDecision.seniority }, leadDecision, columnId);
+        await replica.sync();
+        return { kind: "created-lead", cardId: created.cardId, columnId,
+          message: created.duplicate ? "Application was already recorded" : `Application created in ${columnId === columns.applied ? "Applied" : "Lead"}` };
+      }
+    }
+
     if (event.source === "email" && isApplicationMove && mailDecision) {
       const correlation = correlateApplication(event.message, emailCandidates!);
       if (correlation.kind !== "matched") return null;
@@ -565,16 +605,18 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       const messageTime = event.message.date ? Date.parse(event.message.date) : Number.NaN;
       const changedTime = candidate.workflow ? Date.parse(candidate.workflow.changedAt) : Number.NaN;
       if (!Number.isFinite(messageTime) || !Number.isFinite(changedTime) || messageTime < changedTime) return null;
-      const columnId = mailDecision.event === "interview" ? replica.bindingsForRuntime().interview : replica.bindingsForRuntime().rejected;
+      const columnId = mailDecision.event === "applied" ? replica.bindingsForRuntime().applied : mailDecision.event === "interview" ? replica.bindingsForRuntime().interview : replica.bindingsForRuntime().rejected;
+      if (!columnId) return null;
       const columns = replica.bindingsForRuntime();
-      const canAdvance = candidate.columnId === columns.lead && (columnId === columns.interview || columnId === columns.rejected) ||
+      const canAdvance = candidate.columnId === columns.lead && (columnId === columns.applied || columnId === columns.interview || columnId === columns.rejected) ||
+        candidate.columnId === columns.applied && (columnId === columns.interview || columnId === columns.rejected) ||
         candidate.columnId === columns.interview && columnId === columns.rejected;
       if (!canAdvance) return null;
       const moved = await replica.moveCard(eventId, candidate.cardId, columnId,
         { columnId: candidate.columnId, ...(candidate.workflow ? { changedAt: candidate.workflow.changedAt } : {}) });
       await replica.sync();
       return { kind: "moved-application", cardId: moved.cardId, columnId,
-        message: moved.duplicate ? "Application status was already applied" : `Application moved to ${mailDecision.event === "interview" ? "Interview" : "Rejected"}` };
+        message: moved.duplicate ? "Application status was already applied" : `Application moved to ${mailDecision.event === "applied" ? "Applied" : mailDecision.event === "interview" ? "Interview" : "Rejected"}` };
     }
     return null;
   }

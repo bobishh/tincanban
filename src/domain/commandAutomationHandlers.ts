@@ -32,6 +32,27 @@ export const createAutomation: CommandHandler<"createAutomation"> = (doc, comman
   } } }
 }
 
+export const configureAutomation: CommandHandler<"configureAutomation"> = (doc, command, context) => {
+  try {
+    const definition = parseAutomationDefinition(command.definition)
+    const approval = parseAutomationApproval(command.approval)
+    const entity = doc.entities[automationEntityId(definition.id)]
+    if (!hasEntityKind(entity, "automation") || automationLifecycle(entity).state === "deleted") return err("invalid_input", "Automation is missing or removed")
+    if (definition.scope.workspaceId !== doc.id || definition.scope.boardId !== entity.placement.parentId ||
+      approval.grant.payload.personId !== entity.executor.personId || canonicalizeJson(approval.definition.payload) !== canonicalizeJson(definition)) {
+      return err("invalid_input", "Automation approval does not match its executor and scope")
+    }
+    return { ok: true, value: { changedEntityIds: [entity.id], apply: draft => {
+      const target = draft.entities[entity.id]
+      if (!hasEntityKind(target, "automation")) throw new Error("Automation disappeared")
+      target.definition = JSON.stringify(definition)
+      target.approval = command.approval
+      target.title = definition.name
+      target.updatedAt = context.nowIso
+    } } }
+  } catch { return err("invalid_input", "Automation approval is invalid") }
+}
+
 export const setAutomationState: CommandHandler<"setAutomationState"> = (doc, command, context) => {
   const entity = doc.entities[command.automationId]
   if (!hasEntityKind(entity, "automation")) return err("not_found", "Automation instance not found")

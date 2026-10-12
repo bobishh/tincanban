@@ -1,3 +1,4 @@
+import { privateEmailRoutes } from "./emailRoutes";
 import { parseForwardedMail, MAX_RAW_EMAIL_BYTES } from "./email";
 import { assertPublicHttpsUrl } from "./extraction";
 import { parseWebsiteSubmission, issueHumanChallenge, verifyHumanChallenge, type WebsiteSubmission } from "./intake";
@@ -13,7 +14,7 @@ export { AutomationCoordinator } from "./coordinator";
 export type AutomationScope = {
   version: 1;
   boardId: string;
-  columns: { lead: string; interview: string; rejected: string };
+  columns: { lead: string; applied?: string; interview: string; rejected: string };
   fieldIds: { company: string; role: string; jobUrl: string; notes?: string; sourceText?: string; roleType?: string; seniority?: string };
   expiresAt: string;
 };
@@ -35,6 +36,7 @@ export interface WorkerEnv {
   CORS_ORIGINS: string;
   PUBLIC_ORIGIN: string;
   EMAIL_DOMAIN: string;
+  EMAIL_ROUTES_JSON?: string;
   PROVISIONING_TOKEN?: string;
   IDENTITY_STORAGE_SECRET?: string;
   EVENT_STORAGE_SECRET?: string;
@@ -77,7 +79,7 @@ const defaultHandler = {
       return;
     }
     const sender = normalizeEmail(message.from);
-    if (!route.integration.allowedForwarders.includes(sender)) {
+    if (!route.privateRecipient && !route.integration.allowedForwarders.includes(sender)) {
       message.setReject("Sender is not approved for this automation integration");
       return;
     }
@@ -107,6 +109,7 @@ const defaultHandler = {
       payload: await encryptEventPayload(env.EVENT_STORAGE_SECRET, eventId, payload),
     });
     if ("error" in result) message.setReject("Email message ID conflicts with a stored intake event");
+    else console.log(JSON.stringify({ event: "email.intake.accepted", integrationId: route.integration.id, eventId, duplicate: result.duplicate }));
   },
 } satisfies ExportedHandler<WorkerEnv>;
 
@@ -194,6 +197,14 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     return json(acceptedResponse(result), result.duplicate ? 200 : 202, cors);
   }
 
+  const emailSetupMatch = url.pathname.match(/^\/v1\/integrations\/([A-Za-z0-9_-]{1,128})\/email$/);
+  if (request.method === "GET" && emailSetupMatch) {
+    authorizeProvisioning(request, env);
+    await getIntegration(env, emailSetupMatch[1]!);
+    const route = privateEmailRoutes(env).find(value => value.id === emailSetupMatch[1]);
+    return json({ route: route ?? null, receipt: await coordinator(env, emailSetupMatch[1]!).emailSetup() }, 200, cors);
+  }
+
   const eventMatch = url.pathname.match(/^\/v1\/integrations\/([A-Za-z0-9_-]{1,128})\/events\/([A-Za-z0-9_-]{20,64})$/);
   if (request.method === "GET" && eventMatch) {
     authorizeProvisioning(request, env);
@@ -258,6 +269,7 @@ function parseScope(value: unknown): AutomationScope {
     version: 1,
     boardId: requiredString(input.boardId, "scope.boardId", 128),
     columns: {
+      ...(columns.applied === undefined ? {} : { applied: requiredString(columns.applied, "scope.columns.applied", 128) }),
       lead: requiredString(columns.lead, "scope.columns.lead", 128),
       interview: requiredString(columns.interview, "scope.columns.interview", 128),
       rejected: requiredString(columns.rejected, "scope.columns.rejected", 128),
@@ -337,8 +349,13 @@ function assertActiveIntegration(integration: AutomationIntegration): void {
   if (Date.parse(integration.scope.expiresAt) <= Date.now()) throw new Error("Integration authorization has expired");
 }
 
-async function findEmailIntegration(env: WorkerEnv, recipient: string): Promise<{ integration: AutomationIntegration } | null> {
+async function findEmailIntegration(env: WorkerEnv, recipient: string): Promise<{ integration: AutomationIntegration; privateRecipient?: boolean } | null> {
   const address = normalizeEmail(recipient);
+  const route = privateEmailRoutes(env).find(value => constantTimeEqual(value.address, address));
+  if (route) {
+    const integration = await getIntegration(env, route.id);
+    return { integration, privateRecipient: true };
+  }
   const integration = parseIntegrations(env).find((candidate) => candidate.emailAddress === address);
   return integration ? { integration } : null;
 }
