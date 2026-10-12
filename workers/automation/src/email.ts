@@ -29,11 +29,11 @@ export type CorrelationResult =
   | { kind: 'matched'; cardId: string; method: 'thread' | 'job-url' | 'company-role' }
   | { kind: 'review'; reason: string; candidates: string[] };
 
-export async function parseForwardedMail(input: ArrayBuffer | Uint8Array): Promise<ForwardedMail> {
+export async function parseForwardedMail(input: ArrayBuffer | Uint8Array, nested = false): Promise<ForwardedMail> {
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   if (bytes.byteLength > MAX_RAW_EMAIL_BYTES) throw new TypeError('Email exceeds the raw message size limit');
   const { default: PostalMime } = await import('postal-mime');
-  const message = await new PostalMime().parse(bytes);
+  const message = await new PostalMime({ maxNestingDepth: 30, maxHeadersSize: 64_000, maxPartCount: 100, maxRfc822NestingDepth: 0, forceRfc822Attachments: true }).parse(bytes);
   const headers = new Map<string, string>();
   for (const header of message.headers ?? []) {
     if (typeof header.key === 'string' && typeof header.value === 'string') headers.set(header.key.toLowerCase(), header.value);
@@ -43,7 +43,6 @@ export async function parseForwardedMail(input: ArrayBuffer | Uint8Array): Promi
   const text = boundText(parsedText.trim() ? parsedText : htmlText);
   const forwardedHeaders = readForwardedHeaders(text);
   const subject = (message.subject || forwardedHeaders.subject || '').slice(0, 500).trim();
-  const allText = `${subject}\n${text}`;
   const references = uniqueTokens([
     ...messageIds(headers.get('references')),
     ...messageIds(message.references),
@@ -60,6 +59,15 @@ export async function parseForwardedMail(input: ArrayBuffer | Uint8Array): Promi
   }
   const attachmentBytes = attachments.reduce((sum, attachment) => sum + attachment.size, 0);
   if (attachmentBytes > MAX_RAW_EMAIL_BYTES) throw new TypeError('Email attachments exceed the size limit');
+  const originals = (message.attachments ?? []).filter(attachment => attachment.mimeType === 'message/rfc822');
+  if (originals.length > 1 || nested && originals.length) throw new TypeError('Only one original forwarded message is supported');
+  if (originals.length === 1) {
+    const content = originals[0].content;
+    const originalBytes = typeof content === 'string' ? new TextEncoder().encode(content) : new Uint8Array(content);
+    const original = await parseForwardedMail(originalBytes, true);
+    return { ...original, messageId,
+      references: uniqueTokens([...references, ...original.references, ...(original.messageId ? [original.messageId] : [])]).slice(0, 40) };
+  }
   const dateValue = message.date ?? headers.get('date') ?? null;
   const urls = uniqueTokens([...extractUrls(text), ...extractUrls(typeof message.html === 'string' ? message.html : '')]).slice(0, MAX_URLS);
   return {

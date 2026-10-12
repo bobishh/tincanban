@@ -100,7 +100,8 @@ it("Given an explicitly signed Applied binding, when a new confirmed application
   const grant = await createAutomationWorkspaceGrant(data.owner, data.packet.workspaceId, data.automation.identity.personId,
     { ...data.packet.grant.payload.automation!, columns: bindings.columns });
   const replica = await AutomationReplica.activate({ ...data.packet, grant, bindings }, data.automation);
-  const created = await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer" }, {}, applied);
+  const created = await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer", messageIds: ["<original@example.test>"] }, {}, applied);
+  expect(replica.candidates().find(card => card.cardId === created.cardId)?.messageIds).toEqual(["<original@example.test>"]);
   expect(replica.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(applied);
   expect(await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer" }, {}, applied)).toEqual({ cardId: created.cardId, duplicate: true });
   Automerge.free(doc);

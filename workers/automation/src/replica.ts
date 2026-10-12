@@ -87,6 +87,7 @@ export type NormalizedLead = {
   seniority?: string;
   sourceText?: string;
   receivedAt?: string;
+  messageIds?: string[];
 };
 
 export type ExpectedWorkflow = { columnId: string; changedAt?: string };
@@ -342,7 +343,7 @@ export class AutomationReplica {
           ...(this.bindings.fieldIds.jobUrl && stringValue(item.values[this.bindings.fieldIds.jobUrl])
             ? { jobUrl: stringValue(item.values[this.bindings.fieldIds.jobUrl]) } : {}),
           columnId: workflowColumnId(document.entities, item.id) ?? item.placement.parentId ?? "",
-          ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}), messageIds: [],
+          ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}), messageIds: sourceMessageIds(stringValue(item.values[this.bindings.fieldIds.sourceText ?? ""])),
         }));
     } finally { Automerge.free(document); }
   }
@@ -565,7 +566,7 @@ export class AutomationReplica {
     if (normalized.jobUrl) values[this.bindings.fieldIds.jobUrl] = normalized.jobUrl.slice(0, 2048);
     if (this.bindings.fieldIds.roleType && normalized.roleType) values[this.bindings.fieldIds.roleType] = normalized.roleType.slice(0, 256);
     if (this.bindings.fieldIds.seniority && normalized.seniority) values[this.bindings.fieldIds.seniority] = normalized.seniority.slice(0, 256);
-    const source = JSON.stringify({ eventId, receivedAt: normalized.receivedAt, contact: normalized.contact,
+    const source = JSON.stringify({ eventId, receivedAt: normalized.receivedAt, contact: normalized.contact, messageIds: normalized.messageIds?.slice(0, 40),
       message: normalized.message?.slice(0, 2000), sourceText: normalized.sourceText?.slice(0, 2000), decision });
     if (this.bindings.fieldIds.notes && normalized.message) values[this.bindings.fieldIds.notes] = normalized.message.slice(0, 8_000);
     if (this.bindings.fieldIds.sourceText) values[this.bindings.fieldIds.sourceText] = source;
@@ -797,4 +798,11 @@ function requiredText(value: unknown, field: string): string {
 async function deterministicCardId(eventId: string): Promise<string> {
   if (typeof eventId !== "string" || !eventId.trim() || eventId.length > 256) throw new TypeError("Automation event ID is invalid");
   return `automation-${(await sha256Base64Url(new TextEncoder().encode(eventId))).slice(0, 32)}`;
+}
+
+function sourceMessageIds(source: string): string[] {
+  try {
+    const value = JSON.parse(source) as { messageIds?: unknown };
+    return Array.isArray(value.messageIds) ? value.messageIds.filter((id): id is string => typeof id === "string" && id.length <= 500).slice(0, 40) : [];
+  } catch { return []; }
 }

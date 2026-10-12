@@ -33,3 +33,21 @@ test('Given HTML-only forwarded MIME, when parsed, then extracts quoted source U
   assert.ok(result.text.includes('<original@example.test>'));
   assert.ok(result.urls.includes('https://jobs.example.test/42'));
 });
+
+test('Given an original message forwarded as RFC822 attachment, when parsed, then preserves original date, content, job URL and thread reference', async () => {
+  const raw = [
+    'From: owner@example.test', 'Subject: Fwd: Application received', 'Message-ID: <wrapper@example.test>',
+    'Date: Mon, 12 Oct 2026 10:00:00 +0000', 'Content-Type: multipart/mixed; boundary="fwd"', '',
+    '--fwd', 'Content-Type: text/plain', '', 'Forwarded copy', '--fwd',
+    'Content-Type: message/rfc822', 'Content-Disposition: attachment; filename="original.eml"', '',
+    'From: recruiter@example.test', 'Subject: Your application at Example GmbH', 'Message-ID: <original@example.test>',
+    'Date: Sun, 11 Oct 2026 09:03:28 +0000', 'Content-Type: text/plain', '',
+    'We received your application for Senior Software Engineer. https://jobs.example.test/42', '--fwd--', '',
+  ].join('\r\n');
+  const mail = await parseForwardedMail(new TextEncoder().encode(raw));
+  assert.match(mail.text, /We received your application/);
+  assert.ok(mail.urls.includes('https://jobs.example.test/42'));
+  assert.ok(mail.references.includes('<original@example.test>'));
+  assert.equal(mail.messageId, '<wrapper@example.test>');
+  assert.equal(Date.parse(mail.date!), Date.parse('2026-10-11T09:03:28Z'));
+});

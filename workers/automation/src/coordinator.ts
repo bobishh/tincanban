@@ -590,7 +590,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         if (!columnId) return null;
         const created = await replica.createLead(eventId, { company: result.extraction.company, role: result.extraction.role,
           jobUrl: result.extraction.finalUrl, sourceText: event.message.text, message: event.message.text,
-          receivedAt: event.receivedAt, roleType: leadDecision.roleType, seniority: leadDecision.seniority }, leadDecision, columnId);
+          receivedAt: event.receivedAt, messageIds: [event.message.messageId, event.message.inReplyTo, ...event.message.references].filter((value): value is string => !!value), roleType: leadDecision.roleType, seniority: leadDecision.seniority }, leadDecision, columnId);
         await replica.sync();
         return { kind: "created-lead", cardId: created.cardId, columnId,
           message: created.duplicate ? "Application was already recorded" : `Application created in ${columnId === columns.applied ? "Applied" : "Lead"}` };

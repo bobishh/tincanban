@@ -97,7 +97,9 @@ const defaultHandler = {
       message.setReject("Email exceeds the automation message size limit");
       return;
     }
-    const parsed = await parseForwardedMail(bytes);
+    let parsed;
+    try { parsed = await parseForwardedMail(bytes); }
+    catch { message.setReject("Email could not be parsed within the supported MIME limits"); return; }
     const rawHash = await digestBytes(bytes);
     const stableSourceId = parsed.messageId ?? `sha256:${rawHash}`;
     const eventId = await digestId(`${route.integration.id}:email:${stableSourceId}`);
