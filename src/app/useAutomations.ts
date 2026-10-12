@@ -28,7 +28,7 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
   const storage = computed(() => blind.configs.value.filter(value => value.workspaceId === workspace.getActiveDoc()?.id && !value.removalPending))
   function confirmation(record: typeof records.value[number]): boolean {
     const receipt = observations.value[record.entity.id]
-    return !!receipt && now.value - receipt.issuedAt < 60_000 && receipt.state === record.control.state &&
+    return !!receipt && receipt.grantId === record.definition.scope.grantId && now.value - receipt.issuedAt < 60_000 && receipt.state === record.control.state &&
       JSON.stringify([...receipt.heads].sort()) === JSON.stringify([...record.control.heads].sort())
   }
   async function refreshEmail(record: typeof records.value[number], profile: LocalProfile, workspaceId: string) {

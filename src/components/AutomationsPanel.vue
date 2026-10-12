@@ -51,6 +51,7 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
         <p class="dialog-copy">Forward copies of job emails from {{ management.email.value[record.entity.id]?.route?.mailbox }} to this private address. Keep originals in your inbox.</p>
         <input aria-label="Forwarding address" readonly :value="management.email.value[record.entity.id]?.route?.address" />
         <button v-if="!record.definition.parameters.sources.includes('email')" class="button button-small" type="button" :disabled="management.busy.value" @click="enableEmail(record)">Enable email and Applied</button>
+        <p v-else-if="!management.confirmation(record)" role="status">Email activation pending</p>
         <p v-else role="status">Email enabled · {{ management.email.value[record.entity.id]?.receipt.events.length ? 'Mail received' : 'Waiting for first email' }}</p>
         <a v-if="management.email.value[record.entity.id]?.receipt.confirmation" :href="management.email.value[record.entity.id]?.receipt.confirmation?.url" target="_blank" rel="noopener noreferrer">Confirm Gmail forwarding</a>
       </section>
