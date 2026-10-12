@@ -138,6 +138,7 @@ test("Given a lead dragged to Archive, when Undo fails then retries, then its or
   const cards = page.getByRole("region", { name: "Lead", exact: true }).locator(".lead-card")
   await expect(cards).toHaveCount(2)
   await expect(cards.first()).toContainText("First")
+  await expect(page.getByRole("status").filter({ hasText: /^Restored / })).toBeVisible()
   await page.reload()
   await expect(cards.first()).toContainText("First")
 })
