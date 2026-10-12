@@ -3,9 +3,15 @@ import { ensureJobSearchWorkspace } from "./support/workspaces"
 
 test("Given an enrolled mobile owner device with large history, when desktop photo changes while mobile is closed, then cold reopening receives the photo without another upload", async ({ page, playwright }, info) => {
   test.setTimeout(120_000)
-  const webkit = await playwright.webkit.launch()
-  const context = await webkit.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const mobileOptions = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }
+  // WebKitGTK cannot establish this WebRTC path. Linux CI checks delivery in
+  // mobile Chromium; separate WebKit tests cover crop and tab presentation.
+  // macOS retains the real cross-engine WebKit enrollment and cold-start check.
+  const appleWebkit = process.platform === "darwin"
+  const mobileBrowser = await (appleWebkit ? playwright.webkit : playwright.chromium).launch()
+  const context = await mobileBrowser.newContext(mobileOptions)
   const phone = await context.newPage()
+  info.annotations.push({ type: "mobile-browser", description: appleWebkit ? "WebKit" : "Chromium" })
   try {
     await page.goto("/")
     await ensureJobSearchWorkspace(page)
@@ -51,5 +57,5 @@ test("Given an enrolled mobile owner device with large history, when desktop pho
     for (const tab of await tabs.all()) await expect(tab).toHaveCSS("border-bottom-width", "2px")
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", source!, { timeout: 30_000 })
     await phone.screenshot({ path: info.outputPath("mobile-profile-arrived.png") })
-  } finally { await context.close(); await webkit.close() }
+  } finally { await context.close(); await mobileBrowser.close() }
 })
