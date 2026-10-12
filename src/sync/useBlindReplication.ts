@@ -1,3 +1,4 @@
+import { load, getHeads, free } from "@automerge/automerge/slim"
 import { onBeforeUnmount, ref, watch, type Ref } from "vue"
 import type { useTincanban } from "../state"
 import type { LocalProfile } from "../domain/identity"
@@ -158,9 +159,8 @@ async function createReplica(config: BlindReplicaConfig, tincanban: ReturnType<t
     readChat: async id => { ensureIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },
     mergeChat: async (id, chat) => { ensureIdentity(); await receiveChat(id, chat, true) },
     documentRevision: async bytes => {
-      const Automerge = await import("@automerge/automerge/slim")
-      const doc = Automerge.load(bytes)
-      try { return Automerge.getHeads(doc).sort().join(",") } finally { Automerge.free(doc) }
+      const doc = load(bytes)
+      try { return getHeads(doc).sort().join(",") } finally { free(doc) }
     },
     diagnostic: (event, detail) => meshTrace(event, detail, event.endsWith("failed") ? "warn" : "info"),
     persist,

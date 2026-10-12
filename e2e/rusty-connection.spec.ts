@@ -75,10 +75,23 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await page.getByRole("tab", { name: "Rusty", exact: true }).click()
     await expect(panel.getByText("Removal pending", { exact: true })).toBeVisible()
+    // Given an operator reset preserving service identity, stale connections remain removable.
+    const serviceKey = await readFile(join(directory, "service-key"))
+    await rm(join(directory, "scopes"), { recursive: true, force: true })
+    await rm(join(directory, "enrollment"), { recursive: true, force: true })
     await start(new URL(origin).host)
+    expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
     await panel.getByRole("button", { name: "Retry removal", exact: true }).click()
     await expect(panel.getByText(origin, { exact: true })).toHaveCount(0)
     expect(JSON.parse(await readFile(join(directory, "scopes", scope!, "policy.json"), "utf8")).revoked).toBe(true)
+    // When the owner reconnects by address, a fresh scope stores the preserved local board.
+    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await panel.getByLabel("Address", { exact: true }).fill(origin)
+    await panel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(panel.getByText("Synced", { exact: true })).toBeVisible()
+    const newScope = (await readdir(join(directory, "scopes"))).find(value => value !== scope)
+    expect(newScope).toBeTruthy()
+    expect((await readdir(join(directory, "scopes", newScope!, "objects"))).length).toBeGreaterThan(0)
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await expect(page.getByRole("region", { name: "Preserved Jobs", exact: true })).toBeVisible()
   } finally {

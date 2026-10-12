@@ -6,8 +6,9 @@ const privateStartup = startupBudgetFiles(manifest, "private")
 const publicStartup = startupBudgetFiles(manifest, "public")
 
 export default [
-  // Service approval shares identity modules; consolidated chunks add less than 1 kB.
-  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "236 kB" },
+  // Board discovery and native Rusty revision diagnostics add under 1 kB after
+  // removing whole-namespace Automerge retention and the full Storage import.
+  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "237 kB" },
   // Include the synchronous startup status/loader; anonymous-reader budget stays separate.
   { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.75 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },

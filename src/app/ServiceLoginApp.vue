@@ -3,7 +3,7 @@ import { onMounted, ref } from "vue"
 import type { DeviceCertificate } from "../domain/model"
 import { bootstrapIdentity, signEnvelope } from "../domain/identity"
 import { defaultProofStore } from "../domain/proofs"
-import { defaultStorage } from "../storage"
+import { readWorkspaceCatalogRecords } from "../storageCatalog"
 import { peerStore } from "../sync/peerStore"
 import { parseServiceLoginRequest, serviceLoginPayload, type ServiceLoginRequest } from "./serviceLogin"
 
@@ -34,7 +34,7 @@ async function approve() {
   try {
     const profile = await bootstrapIdentity()
     const authorities = await peerStore.listWorkspaceAuthorities()
-    const metadata = await defaultStorage.listWorkspaces()
+    const metadata = (await readWorkspaceCatalogRecords()).filter(board => !board.archivedAt)
     const workspaces = authorities.filter(authority => authority.scopeAuthoritySnapshot).map(authority => {
       const catalog = authority.catalog as { revocations?: unknown[]; deviceRevocations?: Array<{ record: unknown; authority: unknown }>; departures?: unknown[] } | undefined
       return { workspace: authority.workspaceId, name: metadata.find(board => board.id === authority.workspaceId)?.title ?? "", grant: authority.localGrant ?? null,
