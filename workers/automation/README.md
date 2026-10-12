@@ -153,7 +153,7 @@ and encrypted replica chunks with atomic generation publication.
 - `POST /v1/integrations/{integrationId}/identity` requires the operator bearer token and returns an independent automation identity's public keys and device certificate. Private seeds stay encrypted in that integration's Durable Object.
 - `PUT /v1/integrations/{integrationId}/activation` requires the operator bearer token and a signed, scope-matched grant plus admitted snapshot.
 - `GET /v1/integrations/{integrationId}/events/{eventId}` requires the operator bearer token and returns redacted event status and decision summary.
-- `POST /v2/integrations/{uuid}/email`: signed owner observation request; returns private forwarding address, Gmail confirmation link and redacted recent event status.
+- `POST /v2/integrations/{uuid}/email`: signed owner request with the dedicated `email` action; returns private forwarding address, Gmail confirmation link and redacted recent event status. A public status observation cannot be replayed to retrieve this private setup.
 - `GET /v1/integrations/{integrationId}/email`: equivalent operator-authenticated setup/status endpoint.
 - Cloudflare's `email()` accepts either a private capability recipient or a legacy recipient with an approved outer sender. It never trusts mail header target IDs.
 
