@@ -371,6 +371,46 @@ async function signedReceipt(access: Parameters<ReplicaTransport["upload"]>[0], 
 }
 
 describe("AutomationReplica in workerd with the compiled Rust policy", () => {
+  it("Given browser-supplied storage metadata, when the Worker pulls and uploads through its real adapter, then requests identify automation without claiming a browser build", async () => {
+    const { automation, packet, key } = await fixture();
+    packet.blind.client = "tincanban";
+    packet.blind.clientBuild = "f".repeat(40);
+    const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
+    const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    packet.blind.servicePublicKey = encodeBlindBytes(publicKey);
+    const serviceId = await blindHash(publicKey);
+    const remote = await encryptBlindObject(packet.blind.scopeId, packet.blind.keyEpoch, key,
+      new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: packet.workspaceId,
+        ...packet.initial, chat: null })));
+    const remoteId = await blindObjectId(remote);
+    const requests: Array<{ method: string; headers: Headers }> = [];
+    const network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const headers = new Headers(init?.headers);
+      requests.push({ method, headers });
+      if (url.includes("?after=")) return Response.json({ objects: [{ objectId: remoteId, sequence: 1 }], cursor: 1, hasMore: false });
+      if (method === "GET") return Response.json(remote);
+      const object = JSON.parse(String(init?.body));
+      const payload = { kind: "blind-storage-receipt" as const, version: 2 as const, serviceId,
+        scopeId: packet.blind.scopeId, keyEpoch: packet.blind.keyEpoch, objectId: await blindObjectId(object),
+        sequence: 2, policyRevision: packet.blind.policyRevision, requestId: headers.get("X-Rusty-Request-Id")! };
+      const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", pair.privateKey,
+        new TextEncoder().encode(`RUSTY/2/${payload.kind}\0${canonicalBlindJson(payload)}`)));
+      return Response.json({ payload, signerKeyId: serviceId, signature: encodeBlindBytes(signature) });
+    });
+    try {
+      const replica = await AutomationReplica.activate(packet, automation);
+      await replica.sync();
+      expect(requests.map(request => request.method)).toEqual(["GET", "GET", "PUT"]);
+      for (const request of requests) {
+        expect(request.headers.get("X-Rusty-Client")).toBe("automation");
+        expect(request.headers.get("X-Rusty-Build")).toBeNull();
+      }
+      expect(JSON.parse(replica.serialize()).pending).toBeUndefined();
+    } finally { network.mockRestore(); }
+  });
+
   it.each([false, true])("Given a legacy pending snapshot and changed document=%s, when retrying after upgrade, then ciphertext is reused only for identical complete state", async changed => {
     const { automation, packet, persisted } = await fixture();
     const replica = await AutomationReplica.activate(packet, automation);

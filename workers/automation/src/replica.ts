@@ -123,9 +123,9 @@ type SerializedReplica = {
 type WireSnapshot = { version: 1; workspaceId: string; document: string; authorization: IncomingAuthorizationBundle; chat: OpaqueChatBatch | null };
 
 const defaultTransport: ReplicaTransport = {
-  inventory: inventoryBlindObjects,
-  download: downloadBlindObject,
-  upload: uploadBlindObject,
+  inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after),
+  download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id),
+  upload: (access, object) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object),
 };
 
 /** Owner-approved, bounded Automerge writer for one existing workspace. */
