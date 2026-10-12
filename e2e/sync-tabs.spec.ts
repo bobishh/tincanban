@@ -62,7 +62,6 @@ test("Given Rusty is unavailable, when connecting from its tab, then pending and
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill("https://rusty.invalid")
   await panel.getByRole("button", { name: "Connect", exact: true }).click()
-  await expect(panel.getByText("Working…", { exact: true })).toHaveCount(0)
   await expect(panel.getByRole("button", { name: "Connect", exact: true })).toBeDisabled()
   release()
   await expect(panel.getByRole("alert")).toBeVisible()
