@@ -3,6 +3,22 @@ import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { encryptBlindObject, encodeBlindBytes } from "./blindEnvelope"
 import { type BlindReceipt, blindObjectId } from "./blindClient"
 
+test("Given an already stored snapshot, when a periodic pass has no changes, diagnostics connect board and storage scope without another upload", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const events: Array<{ event: string; detail: Record<string, unknown> }> = []
+  let uploads = 0
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1]), authorization: async () => ({ signed: true }), readChat: async () => null,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+    diagnostic: (event, detail) => events.push({ event, detail }),
+  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: async () => { uploads++; return {} as BlindReceipt } })
+  await replica.push()
+  await replica.push()
+  expect(uploads).toBe(1)
+  expect(events.at(-1)).toMatchObject({ event: "mesh.rusty.upload.skipped", detail: { phase: "unchanged", workspaceId: "board", entityType: "scope", entityId: "opaque" } })
+  expect(JSON.stringify(events)).not.toContain(config.contentKey)
+})
+
 test("Given a durable remote snapshot, when a fresh client admits it unchanged, then it does not upload another encrypted copy", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32))
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }

@@ -55,6 +55,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     for (let pass = 0; pass < 3; pass++) {
       await syncButton.click()
       await expect(syncButton).toBeDisabled()
+      await expect(panel.getByText("Working…", { exact: true })).toHaveCount(0)
       await expect(syncButton).toBeEnabled()
     }
     expect(await readdir(join(directory, "scopes", scope!, "objects"))).toHaveLength(files.length)

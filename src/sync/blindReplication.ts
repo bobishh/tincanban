@@ -67,7 +67,10 @@ export class BlindReplica {
     const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot))
     if (plaintext.length > maximumPlaintextBytes) throw new Error("Workspace snapshot exceeds Rusty object limit")
     const hash = await blindHash(plaintext)
-    if (hash === this.config.lastUploaded) return
+    if (hash === this.config.lastUploaded) {
+      this.observe("mesh.rusty.upload.skipped", { phase: "unchanged", bytes: plaintext.length })
+      return
+    }
     if (hash === this.receivedHash) {
       // Already durable and admitted; do not echo remote state as fresh ciphertext.
       await this.acknowledgeStored(hash, this.receivedParts, "remote_already_stored", plaintext.length)

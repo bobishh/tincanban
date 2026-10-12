@@ -9,7 +9,6 @@ const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)
 const records = computed(() => props.controller.configs.value.filter(config => config.workspaceId === props.workspaceId))
-const working = computed(() => pending.value || records.value.some(config => props.controller.statuses.value[replicaKey(config)]?.phase === "syncing"))
 async function run(action: () => Promise<void>) {
   pending.value = true
   failure.value = ""
@@ -40,7 +39,6 @@ async function connect() {
       <button class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="adding = false">Cancel</button>
     </form>
     <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(controller.syncNow)">Sync now</button>
-    <p v-if="working" role="status">Working…</p>
     <p v-if="failure" role="alert">{{ failure }}</p>
 
   </section>
