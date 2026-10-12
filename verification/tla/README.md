@@ -120,6 +120,11 @@ its two unsafe variants must violate this temporal property. Neither model provi
 a wall-clock bound or proves JavaScript refinement. Production mapping and actual
 entry-point regression tests: [architecture fitness](../../docs/architecture-fitness.md).
 
+`GossipTimerShutdown` checks a timer tick queued behind a pending send, followed
+by driver closure before execution. Cancellation produces no uncaught rejection;
+the old rejecting variant must fail. The real vendored driver test observes Node
+unhandled rejections so the assertion fails independently of runner settings.
+
 ## Run
 
 Requirements: Java, Python 3, official

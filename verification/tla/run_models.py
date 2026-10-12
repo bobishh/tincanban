@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 
 MODELS = [
+    ("GossipTimerShutdown", "GossipTimerShutdown", None),
+    ("GossipTimerShutdownRejectsQueued", "GossipTimerShutdown", "Invariant TimerCancellationIsSilent is violated"),
     ("SavedAdmission", "SavedAdmission", None),
     ("SavedAdmissionIgnoresAuthority", "SavedAdmission", "Invariant ReuseRequiresLocalExactAdmission is violated"),
     ("SavedAdmissionIgnoresRace", "SavedAdmission", "Invariant ReadyUsesCurrentContext is violated"),
