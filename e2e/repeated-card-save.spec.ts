@@ -27,7 +27,7 @@ async function savedJournal(page: Page) {
   })
 }
 
-test("Given a detailed board and two enrolled device certificates, when Archive and Applied alternate repeatedly, then every transition persists without history replay", async ({ page }, info) => {
+test("Given a detailed board, two enrolled certificates and ten idle minutes, when Archive and Applied alternate repeatedly, then every transition persists without history replay or renewed access serialization", async ({ page }, info) => {
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.evaluate(async () => {
@@ -42,8 +42,23 @@ test("Given a detailed board and two enrolled device certificates, when Archive 
     const certificates = [profile.certificate, second].sort((a, b) => b.signature.localeCompare(a.signature))
     proofs.defaultProofStore.listCertificates = async () => certificates
     await app.reclassifyWorkspace(app.activeWorkspace.id)
+    await (await import("/src/sync/changeAuthorization.ts")).workspaceRole(app.getActiveDoc()!, profile)
     ;(await import("/src/sync/meshTrace.ts")).clearMeshTrace()
   })
+  const idleAccess = await page.evaluate(async () => {
+    const app = (await import("/src/state.ts")).useTincanban()
+    const { workspaceRole } = await import("/src/sync/changeAuthorization.ts")
+    const now = Date.now, send = Worker.prototype.postMessage
+    let requests = 0
+    Worker.prototype.postMessage = function(message: unknown, options?: Transferable[] | StructuredSerializeOptions) {
+      if (message && typeof message === "object" && "kind" in message && message.kind === "access") requests++
+      Reflect.apply(send, this, [message, options])
+    }
+    Date.now = () => now() + 600_000
+    try { return { role: await workspaceRole(app.getActiveDoc()!, app.getCurrentProfile()!), requests } }
+    finally { Date.now = now; Worker.prototype.postMessage = send }
+  })
+  expect(idleAccess).toEqual({ role: "owner", requests: 0 })
   const before = await savedJournal(page)
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Lead details", exact: true })

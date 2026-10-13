@@ -7,7 +7,7 @@ import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
 import { createWorkspaceDoc } from "../domain/seeds"
-import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant } from "../domain/proofs"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant } from "../domain/proofs"
 import { publicKeyId, toBase64Url } from "../domain/identity"
 import { createWorkspaceOwnershipTransfer, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"
 import { executeCommand, type Command } from "../domain/commands"
@@ -646,6 +646,26 @@ it("Given malformed stored authority and an owner profile, When local admission 
     ownerPersonId: owner.identity.personId, ownerPublicKey: "forged-key", ownerCertificates: [owner.certificate],
     ownerHistory: [], catalog: {}, epoch: 1 }
   await expect(localWorkspaceAdmissionAuthority(doc, owner)).rejects.toThrow("Workspace authority could not be verified")
+})
+
+it("Given a real signed automation grant, When its exact expiry arrives without changed authority, Then the Rust access policy removes automation access immediately", async () => {
+  const now = Date.now(), expiresAt = now + 1
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now)
+  try {
+    const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Signed automation expiry", owner.identity.personId, "blank"))
+    const board = Object.values(doc.entities).find(entity => entity.kind === "board")!
+    const columns = Object.values(doc.entities).filter(entity => entity.kind === "column")
+    const localGrant = await createAutomationWorkspaceGrant(owner, doc.id, member.identity.personId, {
+      version: 1, boardId: board.id, columns: { lead: columns[0]!.id, interview: columns[1]!.id, rejected: columns[2]!.id },
+      fieldIds: ["company"], expiresAt,
+    })
+    peerStoreState.authority = { version: 1, workspaceId: doc.id, genesisOwnerPersonId: owner.identity.personId,
+      ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+      localGrant, ownerHistory: [], catalog: {}, epoch: 1 }
+    await expect(workspaceRole(doc, member)).resolves.toBe("automation")
+    clock.mockReturnValue(expiresAt)
+    await expect(workspaceRole(doc, member)).resolves.toBe("visitor")
+  } finally { clock.mockRestore() }
 })
 
 it("Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access", async () => {

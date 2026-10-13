@@ -6,7 +6,7 @@ import { createWorkspaceDoc } from "../domain/seeds"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { decideAccess, inheritLocalMoveAccess } from "./workspaceAccess"
 
-const decision = vi.hoisted(() => vi.fn(() => "editor"))
+const decision = vi.hoisted(() => vi.fn<(input?: unknown) => string>(() => "editor"))
 const stages = vi.hoisted(() => [] as string[])
 vi.mock("./startupDiagnostics", () => ({ diagnoseStartupStep: async (stage: string, step: () => unknown) => {
   stages.push(`${stage}:started`)
@@ -20,7 +20,80 @@ beforeAll(async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
 })
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+it("Given admitted access inherited by a trusted local move, When ten minutes pass with identical signed authority, Then local access stays cached without serializing or checking historical data again", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(100_000)
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Access after idle", "owner", "blank"))
+  const evidence = { snapshot: { ownerPersonId: "owner" } }
+  decision.mockReturnValue("editor")
+  await decideAccess(doc, evidence)
+  const moved = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Trusted local move" })
+  inheritLocalMoveAccess(doc, moved)
+  const calls = decision.mock.calls.length
+  stages.length = 0
+  clock.mockReturnValue(700_000)
+  await expect(decideAccess(moved, evidence)).resolves.toBe("editor")
+  expect(decision).toHaveBeenCalledTimes(calls)
+  expect(stages).toEqual([])
+})
+
+it("Given an automation grant valid for one more millisecond, When its exact expiry arrives, Then access revalidates immediately and expired visitor access remains cached", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(100)
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Automation expiry", "owner", "blank"))
+  const evidence = { snapshot: {}, grant: { payload: { automation: { expiresAt: 101 } } } }
+  decision.mockReturnValue("automation")
+  await decideAccess(doc, evidence)
+  const calls = decision.mock.calls.length
+  clock.mockReturnValue(101)
+  decision.mockReturnValue("visitor")
+  await expect(decideAccess(doc, evidence)).resolves.toBe("visitor")
+  expect(decision).toHaveBeenCalledTimes(calls + 1)
+  clock.mockReturnValue(700_000)
+  await expect(decideAccess(doc, evidence)).resolves.toBe("visitor")
+  expect(decision).toHaveBeenCalledTimes(calls + 1)
+})
+
+it("Given previously checked access, When the system clock moves before its validation time, Then the time-sensitive policy must run again", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(100)
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Clock rollback", "owner", "blank"))
+  const evidence = { snapshot: {} }
+  await decideAccess(doc, evidence)
+  const calls = decision.mock.calls.length
+  clock.mockReturnValue(99)
+  await decideAccess(doc, evidence)
+  expect(decision).toHaveBeenCalledTimes(calls + 1)
+})
+
+it("Given an automation response crossing its deadline, When asynchronous validation finishes, Then expired automation is returned as visitor immediately", async () => {
+  const clock = vi.spyOn(Date, "now").mockReturnValue(100)
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Delayed automation result", "owner", "blank"))
+  decision.mockImplementationOnce(() => { clock.mockReturnValue(101); return "automation" })
+  await expect(decideAccess(doc, { snapshot: {}, grant: { payload: { automation: { expiresAt: 101 } } } })).resolves.toBe("visitor")
+})
+
+it("Given an in-flight check inherited before a trusted move, When that check fails, Then the new document can check again instead of retaining a rejected promise", async () => {
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Failed access recovery", "owner", "blank"))
+  const evidence = { snapshot: {} }
+  decision.mockImplementationOnce(() => { throw new Error("Policy unavailable") })
+  const first = decideAccess(doc, evidence)
+  const failed = expect(first).rejects.toThrow("Policy unavailable")
+  const moved = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Moved" })
+  inheritLocalMoveAccess(doc, moved)
+  await failed
+  decision.mockReturnValue("editor")
+  await expect(decideAccess(moved, evidence)).resolves.toBe("editor")
+})
+
+it("Given a caller-owned authority object, When its grant changes after validation starts, Then the verified result and cache remain bound to the original private input", async () => {
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Input ownership", "owner", "blank"))
+  const evidence = { snapshot: {}, grant: { payload: { role: "visitor" } } }
+  decision.mockImplementationOnce(input => (input as { grant: { payload: { role: string } } }).grant.payload.role)
+  const checking = decideAccess(doc, evidence)
+  evidence.grant.payload.role = "editor"
+  await expect(checking).resolves.toBe("visitor")
+  await expect(decideAccess(doc, { snapshot: {}, grant: { payload: { role: "visitor" } } })).resolves.toBe("visitor")
+})
 
 it("Given uncached access, When checking permissions, Then checkpoints precede document serialization and policy execution", async () => {
   stages.length = 0

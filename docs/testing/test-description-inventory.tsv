@@ -261,7 +261,7 @@ browser	e2e/remaining-ui-polish.spec.ts	67	no		Given a Job search lead, when Arc
 browser	e2e/remaining-ui-polish.spec.ts	84	yes		Given ${width}px mobile, when the board opens, then the next column peeks and Add follows the empty card stack
 browser	e2e/remaining-ui-polish.spec.ts	105	no		Given a lead dragged to Archive, when Undo fails then retries, then its original position survives reload
 browser	e2e/remaining-ui-polish.spec.ts	145	no		Given an archived item, when the workspace changes, then its Undo cannot act on the new board
-browser	e2e/repeated-card-save.spec.ts	30	no		Given a detailed board and two enrolled device certificates, when Archive and Applied alternate repeatedly, then every transition persists without history replay
+browser	e2e/repeated-card-save.spec.ts	30	no		Given a detailed board, two enrolled certificates and ten idle minutes, when Archive and Applied alternate repeatedly, then every transition persists without history replay or renewed access serialization
 browser	e2e/repeated-peer-packet.spec.ts	4	no		Given a detailed board and a committed peer packet, When duplicates repeat around a local stage change, Then history stays idle and a changed signature still fails
 browser	e2e/repeated-rusty-poll.spec.ts	4	no		Given a detailed board already uploaded to Rusty, When unchanged polls repeat around an archived card, chat message and failed delivery, Then idle polls avoid historical exports and changed data is still uploaded
 browser	e2e/root-message-links.spec.ts	4	no		Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings
@@ -901,10 +901,11 @@ app-unit	src/sync/changeAuthorization.test.ts	615	no		rejects a valid signature 
 app-unit	src/sync/changeAuthorization.test.ts	622	no		rejects a forged owner-issued role
 app-unit	src/sync/changeAuthorization.test.ts	628	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
 app-unit	src/sync/changeAuthorization.test.ts	643	no		Given malformed stored authority and an owner profile, When local admission binds its context, Then profile fallback cannot hide the invalid authority
-app-unit	src/sync/changeAuthorization.test.ts	651	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
-app-unit	src/sync/changeAuthorization.test.ts	668	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
-app-unit	src/sync/changeAuthorization.test.ts	682	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
-app-unit	src/sync/changeAuthorization.test.ts	700	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
+app-unit	src/sync/changeAuthorization.test.ts	651	no		Given a real signed automation grant, When its exact expiry arrives without changed authority, Then the Rust access policy removes automation access immediately
+app-unit	src/sync/changeAuthorization.test.ts	671	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
+app-unit	src/sync/changeAuthorization.test.ts	688	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
+app-unit	src/sync/changeAuthorization.test.ts	702	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
+app-unit	src/sync/changeAuthorization.test.ts	720	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
 app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds incomplete snapshots and reassembles out-of-order parts exactly
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
@@ -1202,11 +1203,17 @@ app-unit	src/sync/useDeviceSync.test.ts	170	no	useDeviceSync direct sync selecti
 app-unit	src/sync/useDeviceSync.test.ts	197	no	useDeviceSync direct sync selection and custom workspace sets	handles empty workspace selection disabling generation
 app-unit	src/sync/useDeviceSync.test.ts	214	no	useDeviceSync direct sync selection and custom workspace sets	Given an editor, when they generate an invite, rejects before starting a network node
 app-unit	src/sync/useDeviceSync.test.ts	233	no	useDeviceSync direct sync selection and custom workspace sets	handles expired invitation by setting error state and preventing connection
-app-unit	src/sync/workspaceAccess.test.ts	25	no		Given uncached access, When checking permissions, Then checkpoints precede document serialization and policy execution
-app-unit	src/sync/workspaceAccess.test.ts	37	no		revalidates revoked authority after a trusted move instead of retaining cached editor rights
-app-unit	src/sync/workspaceAccess.test.ts	52	no		Given cached access after a trusted local move, When certificate sets reorder, Then access stays cached and changed certificates still revalidate
-app-unit	src/sync/workspaceAccess.test.ts	69	no		revalidates an unrelated document change even with identical authority
-app-unit	src/sync/workspaceAccess.test.ts	80	no		Given browser access validation, When sending a saved document, Then ownership transfers without cloning a number array
+app-unit	src/sync/workspaceAccess.test.ts	25	no		Given admitted access inherited by a trusted local move, When ten minutes pass with identical signed authority, Then local access stays cached without serializing or checking historical data again
+app-unit	src/sync/workspaceAccess.test.ts	41	no		Given an automation grant valid for one more millisecond, When its exact expiry arrives, Then access revalidates immediately and expired visitor access remains cached
+app-unit	src/sync/workspaceAccess.test.ts	57	no		Given previously checked access, When the system clock moves before its validation time, Then the time-sensitive policy must run again
+app-unit	src/sync/workspaceAccess.test.ts	68	no		Given an automation response crossing its deadline, When asynchronous validation finishes, Then expired automation is returned as visitor immediately
+app-unit	src/sync/workspaceAccess.test.ts	75	no		Given an in-flight check inherited before a trusted move, When that check fails, Then the new document can check again instead of retaining a rejected promise
+app-unit	src/sync/workspaceAccess.test.ts	88	no		Given a caller-owned authority object, When its grant changes after validation starts, Then the verified result and cache remain bound to the original private input
+app-unit	src/sync/workspaceAccess.test.ts	98	no		Given uncached access, When checking permissions, Then checkpoints precede document serialization and policy execution
+app-unit	src/sync/workspaceAccess.test.ts	110	no		revalidates revoked authority after a trusted move instead of retaining cached editor rights
+app-unit	src/sync/workspaceAccess.test.ts	125	no		Given cached access after a trusted local move, When certificate sets reorder, Then access stays cached and changed certificates still revalidate
+app-unit	src/sync/workspaceAccess.test.ts	142	no		revalidates an unrelated document change even with identical authority
+app-unit	src/sync/workspaceAccess.test.ts	153	no		Given browser access validation, When sending a saved document, Then ownership transfers without cloning a number array
 app-unit	src/sync/workspaceAccessWorker.test.ts	16	no		Given transferred document bytes, When checking worker access, Then the policy receives its original numeric document format
 app-unit	src/sync/workspaceAdmissionClient.test.ts	37	no		Given verified history in a warm worker, When checking access, Then the same worker validates rights without another WASM instance
 app-unit	src/sync/workspaceAdmissionClient.test.ts	53	no		rejects queued history and access checks after initialization failure and starts a fresh worker on retry

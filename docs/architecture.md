@@ -108,6 +108,13 @@ proofs, projection heads, policy build and current authority still match and all
 stored changes are admitted. Current access checks remain in place. The new signed
 change must depend on the exact admitted frontier; its root and affected-entity
 transitions are checked without replaying historical transitions or signatures.
+Access decisions are bound to exact signed authority and document heads, with
+inheritance only after verified local transitions in the same workspace. Successfully
+checked authority timestamps remain valid as time advances; unchanged access does
+not expire on an arbitrary minute timer. Automation access expires at its signed
+deadline, including when validation finishes after that deadline. Moving the clock
+before the last validation time requires another check. Failed checks cannot be
+inherited, and each new check uses a private copy of authority input.
 Ambiguous operation targets use a complete check of that one transition. Changed
 authority, proofs, policy, missing checkpoints or unresolved history use full causal
 admission. Review actions and changed incoming replication retain full reclassification.
