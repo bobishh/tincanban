@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { IDBFactory } from "fake-indexeddb"
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import { beforeAll, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "./crdt"
@@ -10,8 +10,10 @@ import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 import { prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync/changeAuthorization"
 import { requestResult, transactionDone, type StoredWorkspaceSnapshot } from "./storageJournal"
 import { createDeltaBasis, prepareWorkspaceDelta, WorkspaceDeltaJournal } from "./workspaceDeltaJournal"
+import { StorageDeltaRepository } from "./storageDeltaRepository"
 
 beforeAll(async () => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
@@ -32,6 +34,7 @@ async function fixture() {
       for (const name of ["snapshots", "frontiers", "deltas", "changes", "proofs", "receipts"]) {
         const store = request.result.createObjectStore(name, { keyPath: "id" })
         store.createIndex("workspaceId", "workspaceId")
+        if (name === "deltas") store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
       }
     }
     request.onsuccess = () => resolve(request.result)
@@ -71,6 +74,137 @@ it("Given an admitted basis, When one local command commits, Then only the delta
   expect(await requestResult(read.objectStore("proofs").get(`${f.doc.id}:${f.delta.command.receipt.changeHash}`))).toMatchObject({ proof: f.delta.command.proof })
   expect(await requestResult(read.objectStore("changes").get(`${f.doc.id}:${f.delta.command.receipt.changeHash}`))).toMatchObject({ bytes: f.delta.command.changeBytes })
   await done
+  f.database.close()
+})
+
+async function appendRename(f: Awaited<ReturnType<typeof fixture>>, title: string) {
+  const frontier = (await f.journal.readFrontier(f.doc.id))!
+  const result = await executeCommand(f.created, { kind: "renameWorkspace", title }, f.profile)
+  if (!result.ok) throw new Error(result.error.message)
+  const delta = await prepareWorkspaceDelta(frontier, { ...f.delta.command, title,
+    receipt: result.value.receipt, proof: result.value.proof,
+    changeBytes: Automerge.getLastLocalChange(result.value.newDoc)!,
+    authorizations: await prepareLocalChangeAuthorizations(result.value.newDoc, f.profile, [result.value.receipt.changeHash]),
+  })
+  await f.journal.append(frontier, delta)
+  f.created = result.value.newDoc
+  return delta
+}
+
+it("Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail", async () => {
+  const f = await fixture()
+  await f.journal.append(f.frontier, f.delta)
+  const reader = new StorageDeltaRepository()
+  vi.spyOn(reader, "journal").mockResolvedValue(f.journal)
+  await reader.read(f.doc.id)
+  await appendRename(f, "Other tab edit")
+  const cold = vi.spyOn(f.journal, "read")
+  const transactions = vi.spyOn(f.database, "transaction")
+  const digest = vi.spyOn(crypto.subtle, "digest")
+  try {
+    const loaded = await reader.loadDocument(f.doc.id)
+    expect(loaded!.doc.title).toBe("Other tab edit")
+    expect((await reader.read(f.doc.id))!.deltas).toHaveLength(2)
+    expect(cold).not.toHaveBeenCalled()
+    expect(transactions.mock.calls.some(([stores]) => Array.from(typeof stores === "string" ? [stores] : stores).includes("snapshots"))).toBe(false)
+    expect(digest.mock.calls.some(([, bytes]) => bytes.byteLength === f.snapshot.bytes.byteLength)).toBe(false)
+    Automerge.free(loaded!.doc)
+  } finally { cold.mockRestore(); transactions.mockRestore(); digest.mockRestore(); reader.forget(f.doc.id); f.database.close() }
+})
+
+it("Given a warm stored prefix and a reusable document already at newer heads, When loading, Then storage still verifies the new tail before reusing admission and access", async () => {
+  const f = await fixture()
+  const reader = new StorageDeltaRepository()
+  vi.spyOn(reader, "journal").mockResolvedValue(f.journal)
+  await reader.read(f.doc.id)
+  await f.journal.append(f.frontier, f.delta)
+  const tail = vi.spyOn(f.journal, "readAfter")
+  const loaded = await reader.loadDocument(f.doc.id, f.created)
+  expect(loaded!.doc.title).toBe(f.created.title)
+  expect(tail).toHaveBeenCalledOnce()
+  tail.mockRestore()
+  reader.forget(f.doc.id)
+  Automerge.free(loaded!.doc)
+  f.database.close()
+})
+
+it("Given a checked prefix ending at nine, When commands ten through twelve arrive, Then the numeric index returns exactly the new ordered tail", async () => {
+  const f = await fixture()
+  await f.journal.append(f.frontier, f.delta)
+  for (let index = 2; index <= 9; index++) await appendRename(f, `Edit ${index}`)
+  const previous = (await f.journal.read(f.doc.id))!.frontier
+  for (let index = 10; index <= 12; index++) await appendRename(f, `Edit ${index}`)
+  const tail = await f.journal.readAfter(previous)
+  expect(tail!.deltas.map(delta => delta.sequence)).toEqual([10, 11, 12])
+  expect(tail!.frontier.title).toBe("Edit 12")
+  expect(tail!.frontier).toEqual((await f.journal.read(f.doc.id))!.frontier)
+  f.database.close()
+})
+
+it.each(["bytes", "proof", "role", "missing"])("Given a warm tab and altered %s in a new tail, When it catches up, Then it refuses the new frontier and can recover after the damaged record is restored", async alteration => {
+  const f = await fixture()
+  await f.journal.append(f.frontier, f.delta)
+  const reader = new StorageDeltaRepository()
+  vi.spyOn(reader, "journal").mockResolvedValue(f.journal)
+  await reader.read(f.doc.id)
+  const delta = await appendRename(f, "Verified recovery")
+  const damaged = structuredClone(delta)
+  if (alteration === "bytes") damaged.command.changeBytes[0]! ^= 1
+  if (alteration === "proof") damaged.command.authorizations[0]!.publicKey = "changed-key"
+  if (alteration === "role") damaged.command.role = "visitor"
+  const write = f.database.transaction("deltas", "readwrite")
+  const done = transactionDone(write)
+  if (alteration === "missing") write.objectStore("deltas").delete(delta.id)
+  else write.objectStore("deltas").put(damaged)
+  await done
+  await expect(reader.loadDocument(f.doc.id)).rejects.toThrow(/delta|frontier|chain/i)
+  const repair = f.database.transaction("deltas", "readwrite")
+  const repaired = transactionDone(repair)
+  repair.objectStore("deltas").put(delta)
+  await repaired
+  expect((await reader.loadDocument(f.doc.id))!.doc.title).toBe("Verified recovery")
+  reader.forget(f.doc.id)
+  f.database.close()
+})
+
+it("Given a checked old basis, When another tab commits a replacement basis and generation, Then catch-up validates the new basis through a cold read", async () => {
+  const f = await fixture()
+  const reader = new StorageDeltaRepository()
+  vi.spyOn(reader, "journal").mockResolvedValue(f.journal)
+  await reader.read(f.doc.id)
+  const replacement = { ...f.snapshot, title: f.created.title, heads: Automerge.getHeads(f.created).sort(),
+    bytes: Automerge.save(f.created), causalEvidence: { bytes: Automerge.save(f.created), decisions: [],
+      admissionCheckpoint: await createAdmissionCheckpoint("replacement-basis", Automerge.getHeads(f.created), []) } }
+  const frontier = await createDeltaBasis(replacement, "replacement-rights")
+  const write = f.database.transaction(["snapshots", "frontiers"], "readwrite")
+  const done = transactionDone(write)
+  write.objectStore("snapshots").put(replacement)
+  write.objectStore("frontiers").put(frontier)
+  await done
+  const cold = vi.spyOn(f.journal, "read")
+  expect((await reader.loadDocument(f.doc.id))!.doc.title).toBe(f.created.title)
+  expect(cold).toHaveBeenCalledOnce()
+  expect((await reader.read(f.doc.id))!.frontier).toEqual(frontier)
+  cold.mockRestore()
+  reader.forget(f.doc.id)
+  f.database.close()
+})
+
+it("Given a stale cached prefix and an already committed command followed by another write, When the old append retries, Then the cache retains neither stale content nor a false current frontier", async () => {
+  const f = await fixture()
+  const reader = new StorageDeltaRepository()
+  vi.spyOn(reader, "journal").mockResolvedValue(f.journal)
+  await reader.read(f.doc.id)
+  await f.journal.append(f.frontier, f.delta)
+  const first = f.created
+  await appendRename(f, "Later committed edit")
+  const current = await reader.append(f.frontier, f.delta, first)
+  expect(current.revision).toBe(2)
+  const loaded = await reader.loadDocument(f.doc.id)
+  expect(Automerge.getHeads(loaded!.doc).sort()).toEqual(loaded!.heads)
+  expect(loaded!.doc.title).toBe("Later committed edit")
+  Automerge.free(loaded!.doc)
+  reader.forget(f.doc.id)
   f.database.close()
 })
 

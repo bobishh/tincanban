@@ -1,5 +1,49 @@
 import { expect, test } from "./support/coverage"
 
+test("Given a held version 2 journal with existing deltas, When the numeric index upgrade is blocked, Then startup explains recovery and preserves the ordered records after the old tab closes", async ({ page, context, baseURL }) => {
+  await page.route("**/version-two.html", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Version two holder</title>" }))
+  await page.goto((baseURL ?? "http://127.0.0.1:4244") + "/version-two.html")
+  await page.evaluate(() => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open("tincanban-workspace-state", 2)
+    request.onupgradeneeded = () => {
+      for (const name of ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas"]) {
+        const store = request.result.createObjectStore(name, { keyPath: "id" })
+        store.createIndex("workspaceId", "workspaceId", { unique: false })
+        if (name === "snapshots") store.createIndex("catalog", ["workspaceId", "title", "savedAt"])
+      }
+    }
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const database = request.result
+      const write = database.transaction("deltas", "readwrite")
+      for (const sequence of [10, 2]) write.objectStore("deltas").put({ id: `retained-${sequence}`,
+        workspaceId: "upgrade-proof", generation: "retained", sequence, command: { retained: true } })
+      write.oncomplete = () => resolve()
+      write.onabort = () => reject(write.error)
+      ;(window as Window & { versionTwoJournal?: IDBDatabase }).versionTwoJournal = database
+    }
+  }))
+  const app = await context.newPage()
+  await app.goto(baseURL ?? "http://127.0.0.1:4244")
+  await expect(app.getByRole("alert")).toContainText("Close other tincanban tabs and reload", { timeout: 8_000 })
+  await page.close()
+  await app.reload()
+  await expect(app.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
+  expect(await app.evaluate(() => new Promise<{ version: number; sequences: number[] }>((resolve, reject) => {
+    const request = indexedDB.open("tincanban-workspace-state")
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const database = request.result
+      const read = database.transaction("deltas", "readonly")
+      const rows = read.objectStore("deltas").index("sequence").getAll(IDBKeyRange.bound(
+        ["upgrade-proof", "retained", 1], ["upgrade-proof", "retained", 20]))
+      rows.onsuccess = () => { resolve({ version: database.version, sequences: rows.result.map((row: { sequence: number }) => row.sequence) }); database.close() }
+      rows.onerror = () => { reject(rows.error); database.close() }
+    }
+  }))).toEqual({ version: 3, sequences: [2, 10] })
+  await app.close()
+})
+
 test("Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads", async ({ page, baseURL }) => {
   await page.route("**/old-journal.html", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Old journal</title>" }))
   await page.goto((baseURL ?? "http://127.0.0.1:4244") + "/old-journal.html")

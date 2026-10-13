@@ -6,6 +6,7 @@ import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
   type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
+import { readDeltaTail } from "./workspaceDeltaTail"
 
 export type WorkspaceDeltaCommand = {
   receipt: TransactionReceipt
@@ -141,6 +142,21 @@ export class WorkspaceDeltaJournal {
     return frontier
   }
 
+  /** Verify only the tail after a previously checked local prefix, from one atomic read. */
+  async readAfter(previous: WorkspaceDeltaFrontier): Promise<{ frontier: WorkspaceDeltaFrontier; deltas: StoredWorkspaceDelta[] } | undefined> {
+    const tail = await readDeltaTail(this.database, previous)
+    if (!tail) return
+    const { frontier, deltas } = tail
+    let checked = previous
+    for (const delta of deltas) {
+      await verifyDelta(checked, delta)
+      checked = nextFrontier(checked, delta)
+    }
+    if (canonicalizeJson(checked) !== canonicalizeJson(frontier)) throw new Error("Delta tail does not reach the saved frontier")
+    return { frontier, deltas }
+  }
+
+
   async append(expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta): Promise<WorkspaceDeltaFrontier> {
     // Crypto runs before opening the transaction; no async crypto can close an IDB transaction early.
     await verifyDelta(expected, delta)
@@ -260,6 +276,7 @@ export class WorkspaceDeltaJournal {
   }
 }
 
+
 function sameBasis(left: StoredWorkspaceSnapshot | undefined, right: StoredWorkspaceSnapshot) {
   if (!left) return false
   const descriptor = (snapshot: StoredWorkspaceSnapshot) => ({ ...snapshot, bytes: null,
@@ -271,9 +288,11 @@ function sameBasis(left: StoredWorkspaceSnapshot | undefined, right: StoredWorks
 
 type CheckedDeltaWorkspace = NonNullable<Awaited<ReturnType<WorkspaceDeltaJournal["read"]>>>
 
-export function createDeltaWorkspaceDocument(saved: CheckedDeltaWorkspace): Automerge.Doc<WorkspaceDocumentV2> {
-  let doc = Automerge.load<WorkspaceDocumentV2>(saved.basis.bytes)
-  if (saved.deltas.length) [doc] = Automerge.applyChanges(doc, saved.deltas.map(delta => delta.command.changeBytes))
+export function createDeltaWorkspaceDocument(saved: CheckedDeltaWorkspace,
+  prefix?: { document: Automerge.Doc<WorkspaceDocumentV2>; revision: number }): Automerge.Doc<WorkspaceDocumentV2> {
+  let doc = prefix ? Automerge.clone(prefix.document) : Automerge.load<WorkspaceDocumentV2>(saved.basis.bytes)
+  const deltas = prefix ? saved.deltas.slice(prefix.revision) : saved.deltas
+  if (deltas.length) [doc] = Automerge.applyChanges(doc, deltas.map(delta => delta.command.changeBytes))
   if (!sameHeads(Automerge.getHeads(doc), saved.frontier.heads) || doc.id !== saved.frontier.workspaceId ||
     doc.title !== saved.frontier.title || (doc.archivedAt ?? null) !== saved.frontier.archivedAt) {
     Automerge.free(doc)

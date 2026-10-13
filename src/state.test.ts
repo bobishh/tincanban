@@ -20,6 +20,7 @@ import { createSyncActions } from "./stateSyncActions"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "./domain/proofs"
 import { publicKeyId, toBase64Url } from "./domain/identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+import { withWorkspaceMutation } from "./workspaceMutation"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -42,6 +43,51 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await bootstrapIdentity("State Test User")
     await hydrate()
     await useTincanban().createWorkspaceAsync("Job search", "job-search")
+  })
+
+  it("Given a tab behind a verified local delta, When reclassification reuses the durable frontier, Then its active view catches up without publishing another shared change", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Before catch-up", role: "Engineer", status: "lead" })
+    const base = app.getActiveDoc()!
+    const profile = app.getCurrentProfile()!
+    const other = new WorkspaceStorage()
+    await persistAuthorizedCommand(base, { kind: "renameWorkspace", title: "Other tab title" }, profile, other)
+    expect(app.getActiveDoc()!.title).not.toBe("Other tab title")
+    const publish = vi.fn()
+    const unsubscribe = app.subscribeLocalChanges(publish)
+    try {
+      await createSyncActions().reclassifyWorkspace(base.id, other)
+      expect(app.getActiveDoc()!.title).toBe("Other tab title")
+      expect(publish).not.toHaveBeenCalled()
+    } finally { unsubscribe() }
+  })
+
+  it("Given reconciliation holds an older read, When a workspace write is queued, Then publication finishes before that writer enters the shared mutation boundary", async () => {
+    const app = useTincanban()
+    const id = app.activeWorkspace.id
+    let readStarted!: () => void, releaseRead!: () => void
+    const started = new Promise<void>(resolve => { readStarted = resolve })
+    const gate = new Promise<void>(resolve => { releaseRead = resolve })
+    const original = defaultStorage.loadWorkspaceDoc.bind(defaultStorage)
+    const read = vi.spyOn(defaultStorage, "loadWorkspaceDoc").mockImplementationOnce(async (...args) => {
+      const loaded = await original(...args)
+      readStarted()
+      await gate
+      return loaded
+    })
+    const reconciliation = reconcile(defaultStorage, true, id)
+    await started
+    let entered = false
+    const writer = withWorkspaceMutation(id, async () => { entered = true })
+    try {
+      await new Promise<void>(resolve => queueMicrotask(() => queueMicrotask(resolve)))
+      expect(entered).toBe(false)
+    } finally {
+      releaseRead()
+      await Promise.all([reconciliation, writer])
+      read.mockRestore()
+    }
+    expect(entered).toBe(true)
   })
 
   it("Given a large admitted board warmed for local edits, When Archive and Applied alternate, Then writes serialize and hash only new changes and preserve the final stage after reload", async () => {

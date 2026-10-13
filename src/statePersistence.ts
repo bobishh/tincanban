@@ -463,13 +463,16 @@ async function reconcileWorkspace(storage: WorkspaceStorage, workspaceChanged = 
   const active = stateRuntime.activeDoc;
   if (!active) return;
   await refreshAvailableWorkspaces(storage);
-  const loaded = await storage.loadWorkspaceDoc(active.id, active);
-  const activeChanged = loaded &&
-    Automerge.getHeads(active).sort().join(",") !== loaded.heads.join(",");
-  if (activeChanged) {
-    updateReactiveState(loaded.doc);
-  }
-  await refreshCausalReview(storage, active.id);
+  const activeChanged = await withWorkspaceMutation(active.id, async () => {
+    const current = stateRuntime.activeDoc;
+    if (current?.id !== active.id) return false;
+    const loaded = await storage.loadWorkspaceDoc(current.id, current);
+    if (stateRuntime.activeDoc?.id !== current.id) return false;
+    const changed = loaded && Automerge.getHeads(current).sort().join(",") !== loaded.heads.join(",");
+    if (changed) updateReactiveState(loaded.doc);
+    await refreshCausalReview(storage, current.id);
+    return Boolean(changed);
+  });
   if (workspaceUnknown) {
     notifyLocalChanges();
     return;

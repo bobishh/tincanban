@@ -33,12 +33,28 @@ export class StorageDeltaRepository {
     if (!frontier) { this.forget(workspaceId); return }
     const cached = this.entries.get(workspaceId)
     if (cached && canonicalizeJson(cached.checked.frontier) === canonicalizeJson(frontier)) return cached.checked
+    if (cached) {
+      // Own a handle across awaits; another read or append can replace the cached entry.
+      const document = Automerge.clone(cached.document)
+      try {
+        const tail = await (await this.journal()).readAfter(cached.checked.frontier)
+        if (tail) {
+          const checked = { ...cached.checked, frontier: tail.frontier, deltas: [...cached.checked.deltas, ...tail.deltas] }
+          const doc = createDeltaWorkspaceDocument(checked, { document, revision: cached.checked.frontier.revision })
+          const { inheritLocalMoveAccess } = await import("./sync/workspaceAccess")
+          inheritLocalMoveAccess(document, doc)
+          this.remember(checked, doc)
+          Automerge.free(doc)
+          return checked
+        }
+      } finally { Automerge.free(document) }
+    }
     const checked = await (await this.journal()).read(workspaceId)
     if (checked) {
       const doc = createDeltaWorkspaceDocument(checked)
       this.remember(checked, doc)
       Automerge.free(doc)
-    }
+    } else this.forget(workspaceId)
     return checked
   }
 
@@ -47,7 +63,8 @@ export class StorageDeltaRepository {
     if (!frontier || frontier.invalidated) return undefined
     const cached = this.entries.get(workspaceId)
     const candidate = reusable ?? cached?.document
-    if (candidate?.id === workspaceId && Automerge.getHeads(candidate).sort().join() === frontier.heads.join())
+    if (cached && canonicalizeJson(cached.checked.frontier) === canonicalizeJson(frontier) &&
+      candidate?.id === workspaceId && Automerge.getHeads(candidate).sort().join() === frontier.heads.join())
       return { doc: Automerge.clone(candidate), heads: [...frontier.heads] }
     const checked = await this.read(workspaceId)
     return checked ? { doc: Automerge.clone(this.entries.get(workspaceId)!.document), heads: [...checked.frontier.heads] } : undefined
@@ -56,7 +73,8 @@ export class StorageDeltaRepository {
   async append(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>) {
     const next = await (await this.journal()).append(frontier, delta)
     const entry = this.entries.get(frontier.workspaceId)
-    if (entry && canonicalizeJson(entry.checked.frontier) === canonicalizeJson(frontier)) {
+    if (entry && next.revision === delta.sequence && next.chainHash === delta.chainHash &&
+      canonicalizeJson(entry.checked.frontier) === canonicalizeJson(frontier)) {
       this.remember({ ...entry.checked, frontier: next, deltas: [...entry.checked.deltas, delta] }, doc)
     } else this.forget(frontier.workspaceId)
     return next

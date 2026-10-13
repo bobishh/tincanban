@@ -54,7 +54,10 @@ async function reclassifyWorkspace(id: string, storage = defaultStorage): Promis
     const result = await reclassifyStoredWorkspace(id, storage)
     if (!result.doc) return
     if (result.changed) await publishCommittedWorkspace(id, result.doc, storage)
-    else await refreshCausalReview(storage, id)
+    else {
+      if (stateRuntime.activeDoc?.id === id && !sameHeads(stateRuntime.activeDoc, result.doc)) updateReactiveState(result.doc)
+      await refreshCausalReview(storage, id)
+    }
   } catch (error) {
     stateRuntime.causalReviewError.value = "Access update pending. Workspace history could not be reclassified; reload to retry."
     throw error

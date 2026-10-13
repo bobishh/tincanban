@@ -113,6 +113,8 @@ async function storeUnadmittedRawTitle(page: Page, workspaceId: string, title: s
     const { readWorkspaceSnapshot } = await import("/src/storageJournal.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const A = await import("/@id/@automerge/automerge/slim")
+    const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
+    await A.initializeWasm(wasmUrl)
     const saved = await readWorkspaceSnapshot(id)
     if (!saved?.causalEvidence) throw new Error("Expected saved admission evidence")
     const projection = A.load(saved.bytes)

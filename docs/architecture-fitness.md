@@ -12,6 +12,8 @@ below 250ms; it reports separate full-replay timings and is not a network deadli
 | Reclassification rechecks authority after asynchronous admission before committing. | Existing authorization context/race tests in `src/sync/changeAuthorization.test.ts`. | `SavedAdmissionIgnoresRace` must violate current-context safety. |
 | Identical snapshot/evidence/proofs replay writes no journal or catalog. | `src/storage.test.ts`. New command receipts still require atomic persistence. | Existing `WorkspaceCommit`; exact duplicate storage cost is an implementation assertion. |
 | Ordinary local commands write only a new delta, proof, receipt and frontier; aborted or competing writes cannot advance it. | `src/workspaceDeltaJournal.test.ts`, `src/state.test.ts`, `e2e/repeated-card-save.spec.ts`; opt-in `src/stateLocalSavePerformance.test.ts` checks growing histories. | Implementation tests cover IndexedDB integrity and atomicity; no model claims storage performance. |
+| A warm tab verifies only new indexed deltas; damaged tails do not advance its cache, replacement bases require cold validation, and retries cannot associate stale content with a newer frontier. | `src/workspaceDeltaJournal.test.ts`; offline two-tab Archive/Applied flow in `e2e/incremental-tabs.spec.ts`; version 2 upgrade and preserved numeric order in `e2e/storage-upgrade-block.spec.ts`. | Indexed reads and cache publication are implementation assertions. |
+| Reclassification catches up a stale active view without publishing a new shared change; reconciliation publishes under the shared mutation boundary. | `src/state.test.ts`: verified later delta, no subscriber notification, controlled older read and queued writer. | Read/publication ordering is exercised in the application boundary. |
 | Certificate ordering does not invalidate rights or access caches; signed payload order, distinct certificates and revocations remain consequential. | `src/sync/authorityFingerprint.test.ts`, `src/sync/changeAuthorization.test.ts`, `src/sync/workspaceAccess.test.ts`. | Canonical representation is an implementation invariant. |
 | Successful snapshot/delta commits do not depend on a later legacy catalog write. | `src/storage.test.ts`, `src/sync/localWorkspaceAdmission.test.ts`: unavailable legacy writer, fresh storage reader and recovered catalog. | The atomic commit contains its catalog metadata. |
 | Renewing a local admission checkpoint does not publish a shared change. | `src/state.test.ts`: actual reclassify entry point, persisted repaired checkpoint, zero subscribed notifications; a real edit notifies. | `SavedAdmissionPublishesMarker` must fail. |
@@ -36,7 +38,7 @@ security boundary and is not an accepted optimization.
 
 Additional candidates remain in [the redundant-work audit](redundant-work-audit.md):
 scoped durable replication, typing without durable merges, unchanged Rusty polling
-without full export, incremental reads of commands from other tabs, keys-only catalog reads,
+without full export, keys-only catalog reads,
 revision-based automation projections and indexed proof/history lookups. These are
 identified work, not enforced or completed contracts. No passing model is evidence
 that every production finding has been fixed.

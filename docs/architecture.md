@@ -116,13 +116,19 @@ command writes its new change, proof, receipt and a chained delta with a small
 frontier in one transaction. It neither serializes the full document nor hashes
 the full evidence on each save. A failed write cannot advance the durable frontier.
 Reload validates the basis and delta chain before reusing admission; these local
-markers never authorize incoming peer changes. Cold reads and a changed frontier
-from another tab still validate retained history, so those costs grow with history.
+markers never authorize incoming peer changes. A warm tab reads a numeric indexed
+tail from its last checked frontier and applies only those new changes, without
+reading or hashing the immutable basis again. A new generation or changed rights
+requires validating the replacement basis. Cold reads still validate the full
+retained chain, so their cost grows with history. Reconciliation holds the shared
+mutation lock through publication; an older read cannot overwrite a newer write.
 
-The version 2 workspace journal includes `snapshots`, `authorizations`, `frontiers`
+The version 3 workspace journal includes `snapshots`, `authorizations`, `frontiers`
 and `deltas` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier
 records contain catalog metadata. Successful commits require no separate legacy
 catalog write; fresh readers recover title and archive state from the atomic journal.
+The `deltas.sequence` index orders commands by workspace, generation and numeric
+sequence. Upgrading versions 1 or 2 creates this index without replacing records.
 Legacy local snapshots and the separate authorization database remain readable;
 the next commit migrates their content into the journal transaction. Legacy
 records are retained for recovery. Once an authorization record is migrated,

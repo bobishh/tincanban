@@ -15,7 +15,7 @@ let legacyJournalDatabasePromise: Promise<IDBDatabase | undefined> | undefined
 
 function openCurrentJournal(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(journalDatabaseName, 2)
+    const request = indexedDB.open(journalDatabaseName, 3)
     let settled = false
     let blockedTimer: ReturnType<typeof setTimeout> | undefined
     request.onupgradeneeded = () => {
@@ -25,6 +25,9 @@ function openCurrentJournal(): Promise<IDBDatabase> {
         const store = database.objectStoreNames.contains(name)
           ? request.transaction!.objectStore(name) : database.createObjectStore(name, { keyPath: "id" })
         if (!store.indexNames.contains("workspaceId")) store.createIndex("workspaceId", "workspaceId", { unique: false })
+        if (name === "deltas" && !store.indexNames.contains("sequence")) {
+          store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
+        }
         if (name === "snapshots" && !store.indexNames.contains("catalog")) {
           store.createIndex("catalog", ["workspaceId", "title", "savedAt"], { unique: false })
         }
