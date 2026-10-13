@@ -110,7 +110,7 @@ change must depend on the exact admitted frontier; its root and affected-entity
 transitions are checked without replaying historical transitions or signatures.
 Ambiguous operation targets use a complete check of that one transition. Changed
 authority, proofs, policy, missing checkpoints or unresolved history use full causal
-admission. Review actions and incoming replication retain full reclassification.
+admission. Review actions and changed incoming replication retain full reclassification.
 Once validated, the saved snapshot becomes an immutable local basis. Each ordinary
 command writes its new change, proof, receipt and a chained delta with a small
 frontier in one transaction. It neither serializes the full document nor hashes
@@ -123,16 +123,33 @@ requires validating the replacement basis. Cold reads still validate the full
 retained chain, so their cost grows with history. Reconciliation holds the shared
 mutation lock through publication; an older read cannot overwrite a newer write.
 
-The version 3 workspace journal includes `snapshots`, `authorizations`, `frontiers`
-and `deltas` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier
+The version 4 workspace journal includes `snapshots`, `authorizations`, `frontiers`,
+`deltas` and `revisions` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier
 records contain catalog metadata. Successful commits require no separate legacy
 catalog write; fresh readers recover title and archive state from the atomic journal.
 The `deltas.sequence` index orders commands by workspace, generation and numeric
-sequence. Upgrading versions 1 or 2 creates this index without replacing records.
+sequence. Upgrading versions 1 or 2 creates this index without replacing records;
+version 3 retains the index while adding revision storage. Changed snapshots,
+proof evidence and commands advance a small workspace revision in their own atomic
+transaction. Idempotent retries keep that revision. Legacy command writes and
+proof updates invalidate the incremental frontier in the same transaction.
 Legacy local snapshots and the separate authorization database remain readable;
 the next commit migrates their content into the journal transaction. Legacy
 records are retained for recovery. Once an authorization record is migrated,
 the journal is authoritative for that workspace.
+
+Successfully committed incoming packets have a bounded, private in-memory copy
+(eight workspaces, 32 MiB total). An identical packet under unchanged local authority,
+policy and durable revision can reuse its committed result without loading raw
+history, serializing documents or replaying signatures. Reuse after local deltas
+additionally requires the same valid admitted generation and complete verification
+of every supplied proof and claimed hash. Unknown hashes, discarded proof variants
+and unresolved history cannot gain this extension. Changed bytes, signatures,
+authority, proof evidence or replacement generations require validation again.
+Unsigned certificate collection order is immaterial; signed payload order and
+distinct certificate variants remain significant. Caller mutation cannot alter
+the saved private copy. Optional cache maintenance cannot turn a durable commit
+into a reported save failure. This cache never trusts a peer admission marker.
 
 Rollout requires reloading old tincanban tabs. An old tab holding the previous journal
 schema can block its upgrade; the error asks users to close other tabs and reload.

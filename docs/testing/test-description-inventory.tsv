@@ -262,6 +262,7 @@ browser	e2e/remaining-ui-polish.spec.ts	84	yes		Given ${width}px mobile, when th
 browser	e2e/remaining-ui-polish.spec.ts	105	no		Given a lead dragged to Archive, when Undo fails then retries, then its original position survives reload
 browser	e2e/remaining-ui-polish.spec.ts	145	no		Given an archived item, when the workspace changes, then its Undo cannot act on the new board
 browser	e2e/repeated-card-save.spec.ts	30	no		Given a detailed board and two enrolled device certificates, when Archive and Applied alternate repeatedly, then every transition persists without history replay
+browser	e2e/repeated-peer-packet.spec.ts	4	no		Given a detailed board and a committed peer packet, When duplicates repeat around a local stage change, Then history stays idle and a changed signature still fails
 browser	e2e/root-message-links.spec.ts	4	no		Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings
 browser	e2e/rusty-connection.spec.ts	9	no		Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work
 browser	e2e/rusty-mark-sizing.spec.ts	3	no		Given the Rusty connection panel, when Rusty appears on desktop and narrow mobile, then Rusty keeps TinCanBan visual size without horizontal overflow
@@ -307,11 +308,11 @@ browser	e2e/storage-failure.spec.ts	4	no		Given newer local databases, when tinc
 browser	e2e/storage-failure.spec.ts	52	no		Given storage failure, when an item is saved, then failure stays visible and no card publishes
 browser	e2e/storage-journal-migration.spec.ts	3	no		Given a held legacy journal with committed board and receipts, when tincanban opens and edits, then migration preserves data and does not replay compacted changes
 browser	e2e/storage-offline-shape.spec.ts	3	no		Given snapshots in local kv and changes in legacy journal, when default storage loads workspace, then it restores both
-browser	e2e/storage-upgrade-block.spec.ts	3	no		Given a held version 2 journal with existing deltas, When the numeric index upgrade is blocked, Then startup explains recovery and preserves the ordered records after the old tab closes
-browser	e2e/storage-upgrade-block.spec.ts	47	no		Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads
-browser	e2e/storage-upgrade-block.spec.ts	100	no		Given normal browser storage, when tincanban starts, then workspace controls load
-browser	e2e/storage-upgrade-block.spec.ts	109	no		Given a legacy version upgrade is pending, when tincanban opens it unversioned, then timeout is distinguishable and recovers
-browser	e2e/storage-upgrade-block.spec.ts	156	no		Given legacy records conflict with current receipt, when migration aborts and conflict is fixed, then retry copies all records atomically
+browser	e2e/storage-upgrade-block.spec.ts	4	yes		Given a held version ${version} journal with existing deltas, When the storage upgrade is blocked, Then startup explains recovery and preserves ordered records with revision storage after the old tab closes
+browser	e2e/storage-upgrade-block.spec.ts	50	no		Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads
+browser	e2e/storage-upgrade-block.spec.ts	103	no		Given normal browser storage, when tincanban starts, then workspace controls load
+browser	e2e/storage-upgrade-block.spec.ts	112	no		Given a legacy version upgrade is pending, when tincanban opens it unversioned, then timeout is distinguishable and recovers
+browser	e2e/storage-upgrade-block.spec.ts	159	no		Given legacy records conflict with current receipt, when migration aborts and conflict is fixed, then retry copies all records atomically
 browser	e2e/succession.spec.ts	38	no		Given an owner names an editor successor, when the editor claims succession, then every peer accepts the new owner
 browser	e2e/succession.spec.ts	73	no		Given editor quorum recovery, when a majority votes, then one vote stays pending and quorum elects the candidate
 browser	e2e/sync-layout.spec.ts	4	yes		Given sync management at ${width}px, when offline and then paused, then status and actions remain readable
@@ -760,35 +761,44 @@ app-unit	src/public/publicationClient.test.ts	83	yes	publication client signed s
 app-unit	src/public/publicationClient.test.ts	88	no	publication client signed state and receipts	Given a challenge signed by a different key, When publishing, Then no mutation is sent
 app-unit	src/public/publicationClient.test.ts	93	yes	publication client signed state and receipts	Given a signed receipt with wrong %s, When publishing, Then success is rejected
 app-unit	src/public/publicationClient.test.ts	98	no	publication client signed state and receipts	Given an exact receipt signed by a different key, When publishing, Then success is rejected
-app-unit	src/state.test.ts	48	no	Repository-backed state and projections (Requirement 1.8)	Given a tab behind a verified local delta, When reclassification reuses the durable frontier, Then its active view catches up without publishing another shared change
-app-unit	src/state.test.ts	65	no	Repository-backed state and projections (Requirement 1.8)	Given reconciliation holds an older read, When a workspace write is queued, Then publication finishes before that writer enters the shared mutation boundary
-app-unit	src/state.test.ts	93	no	Repository-backed state and projections (Requirement 1.8)	Given a large admitted board warmed for local edits, When Archive and Applied alternate, Then writes serialize and hash only new changes and preserve the final stage after reload
-app-unit	src/state.test.ts	128	no	Repository-backed state and projections (Requirement 1.8)	Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes
-app-unit	src/state.test.ts	143	no	Repository-backed state and projections (Requirement 1.8)	Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload
-app-unit	src/state.test.ts	165	no	Repository-backed state and projections (Requirement 1.8)	Given an owner with two device certificates, When Archive and Applied alternate repeatedly, Then every save extends admission without replaying history
-app-unit	src/state.test.ts	194	yes	Repository-backed state and projections (Requirement 1.8)	Given %s admission evidence, When a local card is archived, Then complete admission runs before saving
-app-unit	src/state.test.ts	218	no	Repository-backed state and projections (Requirement 1.8)	Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change
-app-unit	src/state.test.ts	236	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing
-app-unit	src/state.test.ts	260	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked
-app-unit	src/state.test.ts	285	no	Repository-backed state and projections (Requirement 1.8)	rejects an invalid configured workspace before durable or active-state changes
-app-unit	src/state.test.ts	309	no	Repository-backed state and projections (Requirement 1.8)	Given a format 2 owner board, when tincanban starts, then migration is signed and durable
-app-unit	src/state.test.ts	334	no	Repository-backed state and projections (Requirement 1.8)	notifies subscribers only after durable commit succeeds
-app-unit	src/state.test.ts	356	no	Repository-backed state and projections (Requirement 1.8)	Given two commands start together, when they commit to one workspace, then UI and reopened storage retain both
-app-unit	src/state.test.ts	374	no	Repository-backed state and projections (Requirement 1.8)	Given two accepted peer branches, when merges overlap, then reopened storage retains both
-app-unit	src/state.test.ts	392	no	Repository-backed state and projections (Requirement 1.8)	Given a signed proof for a hash absent from raw history, when its change later arrives with genuine proof, then unverified proof never persists or poisons replay
-app-unit	src/state.test.ts	416	no	Repository-backed state and projections (Requirement 1.8)	Given local commit fails, when command is rejected, then no authorization or change leaks
-app-unit	src/state.test.ts	428	no	Repository-backed state and projections (Requirement 1.8)	does not notify replication or adopt change when save fails
-app-unit	src/state.test.ts	456	no	Repository-backed state and projections (Requirement 1.8)	rejects a local edit while an ownership transfer awaits confirmation
-app-unit	src/state.test.ts	488	no	Repository-backed state and projections (Requirement 1.8)	rejects review of a quarantined edit while ownership transfer awaits confirmation
-app-unit	src/state.test.ts	532	no	Repository-backed state and projections (Requirement 1.8)	reconciles changes from BroadcastChannel without losing local state
-app-unit	src/state.test.ts	542	no	Repository-backed state and projections (Requirement 1.8)	refreshes active and archived workspace lists with one catalog read
-app-unit	src/state.test.ts	551	no	Repository-backed state and projections (Requirement 1.8)	notifies live mesh subscribers when another tab persists an inactive workspace during reconciliation
-app-unit	src/state.test.ts	567	no	Repository-backed state and projections (Requirement 1.8)	rejects an unrelated same-ID workspace without changing local documents or identity
-app-unit	src/state.test.ts	579	no	Repository-backed state and projections (Requirement 1.8)	rejects a document addressed to another workspace without touching the active board
-app-unit	src/state.test.ts	588	no	Repository-backed state and projections (Requirement 1.8)	does not allow a peer to replace the owner used to authorize chat
-app-unit	src/state.test.ts	601	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
-app-unit	src/state.test.ts	610	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
+app-unit	src/state.test.ts	49	no	Repository-backed state and projections (Requirement 1.8)	Given a tab behind a verified local delta, When reclassification reuses the durable frontier, Then its active view catches up without publishing another shared change
+app-unit	src/state.test.ts	66	no	Repository-backed state and projections (Requirement 1.8)	Given reconciliation holds an older read, When a workspace write is queued, Then publication finishes before that writer enters the shared mutation boundary
+app-unit	src/state.test.ts	94	no	Repository-backed state and projections (Requirement 1.8)	Given a large admitted board warmed for local edits, When Archive and Applied alternate, Then writes serialize and hash only new changes and preserve the final stage after reload
+app-unit	src/state.test.ts	129	no	Repository-backed state and projections (Requirement 1.8)	Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes
+app-unit	src/state.test.ts	144	no	Repository-backed state and projections (Requirement 1.8)	Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload
+app-unit	src/state.test.ts	166	no	Repository-backed state and projections (Requirement 1.8)	Given an owner with two device certificates, When Archive and Applied alternate repeatedly, Then every save extends admission without replaying history
+app-unit	src/state.test.ts	195	yes	Repository-backed state and projections (Requirement 1.8)	Given %s admission evidence, When a local card is archived, Then complete admission runs before saving
+app-unit	src/state.test.ts	219	no	Repository-backed state and projections (Requirement 1.8)	Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change
+app-unit	src/state.test.ts	237	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing
+app-unit	src/state.test.ts	261	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked
+app-unit	src/state.test.ts	286	no	Repository-backed state and projections (Requirement 1.8)	rejects an invalid configured workspace before durable or active-state changes
+app-unit	src/state.test.ts	310	no	Repository-backed state and projections (Requirement 1.8)	Given a format 2 owner board, when tincanban starts, then migration is signed and durable
+app-unit	src/state.test.ts	335	no	Repository-backed state and projections (Requirement 1.8)	notifies subscribers only after durable commit succeeds
+app-unit	src/state.test.ts	357	no	Repository-backed state and projections (Requirement 1.8)	Given two commands start together, when they commit to one workspace, then UI and reopened storage retain both
+app-unit	src/state.test.ts	375	no	Repository-backed state and projections (Requirement 1.8)	Given two accepted peer branches, when merges overlap, then reopened storage retains both
+app-unit	src/state.test.ts	393	no	Repository-backed state and projections (Requirement 1.8)	Given a committed detailed peer packet, When identical fresh packet objects repeat, Then validation reuses the committed result without serialization, evidence loading or workspace writes
+app-unit	src/state.test.ts	415	no	Repository-backed state and projections (Requirement 1.8)	Given a valid peer packet, When optional cache maintenance fails after commit, Then merging still succeeds and reopened storage retains the saved view
+app-unit	src/state.test.ts	429	no	Repository-backed state and projections (Requirement 1.8)	Given a fully verified cached packet, When a local delta advances history and the same peer packet repeats, Then the local edit remains and history is not replayed
+app-unit	src/state.test.ts	444	no	Repository-backed state and projections (Requirement 1.8)	Given a cached peer packet, When a relevant signature changes, Then the packet is checked again and rejected without replacing the saved view
+app-unit	src/state.test.ts	460	no	Repository-backed state and projections (Requirement 1.8)	Given a cached packet with a previously unknown forged proof, When its claimed hash enters local history, Then repeating the packet revalidates that newly relevant proof
+app-unit	src/state.test.ts	483	no	Repository-backed state and projections (Requirement 1.8)	Given a cached committed packet, When the caller mutates its old input, Then a fresh genuine copy still reuses the private committed packet
+app-unit	src/state.test.ts	499	no	Repository-backed state and projections (Requirement 1.8)	Given a signed proof for a hash absent from raw history, when its change later arrives with genuine proof, then unverified proof never persists or poisons replay
+app-unit	src/state.test.ts	523	no	Repository-backed state and projections (Requirement 1.8)	Given local commit fails, when command is rejected, then no authorization or change leaks
+app-unit	src/state.test.ts	535	no	Repository-backed state and projections (Requirement 1.8)	does not notify replication or adopt change when save fails
+app-unit	src/state.test.ts	563	no	Repository-backed state and projections (Requirement 1.8)	rejects a local edit while an ownership transfer awaits confirmation
+app-unit	src/state.test.ts	595	no	Repository-backed state and projections (Requirement 1.8)	rejects review of a quarantined edit while ownership transfer awaits confirmation
+app-unit	src/state.test.ts	639	no	Repository-backed state and projections (Requirement 1.8)	reconciles changes from BroadcastChannel without losing local state
+app-unit	src/state.test.ts	649	no	Repository-backed state and projections (Requirement 1.8)	refreshes active and archived workspace lists with one catalog read
+app-unit	src/state.test.ts	658	no	Repository-backed state and projections (Requirement 1.8)	notifies live mesh subscribers when another tab persists an inactive workspace during reconciliation
+app-unit	src/state.test.ts	674	no	Repository-backed state and projections (Requirement 1.8)	rejects an unrelated same-ID workspace without changing local documents or identity
+app-unit	src/state.test.ts	686	no	Repository-backed state and projections (Requirement 1.8)	rejects a document addressed to another workspace without touching the active board
+app-unit	src/state.test.ts	695	no	Repository-backed state and projections (Requirement 1.8)	does not allow a peer to replace the owner used to authorize chat
+app-unit	src/state.test.ts	708	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
+app-unit	src/state.test.ts	717	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
 app-unit	src/stateCausalReview.test.ts	16	no	quarantined review resolution	requires the exact review clone to be admitted before hiding the source
+app-unit	src/stateIncomingReuseEquality.test.ts	10	no		Given fresh JSON packet objects, When certificate collection order changes, Then equality ignores only that unsigned collection order
+app-unit	src/stateIncomingReuseEquality.test.ts	18	yes		Given a changed %s, When comparing a cached input, Then every distinct security value remains consequential
+app-unit	src/stateIncomingReuseEquality.test.ts	27	no		Given a signed batch claiming an absent hash, When only its known hash was verified, Then the input cannot extend reuse across local writes
 app-unit	src/stateLocalSavePerformance.test.ts	19	no		Given growing admitted histories, When Archive and Applied alternate repeatedly, Then only new deltas serialize and warm saves stay below 250ms
 app-unit	src/statePersonalRootScope.test.ts	14	no	identity-scoped local workspace catalog	shows root-entitled workspaces, including invited visitor refs, but hides another identity's local docs
 app-unit	src/statePersonalRootScope.test.ts	38	no	identity-scoped local workspace catalog	fails closed when legacy root omits its workspace map
@@ -869,10 +879,11 @@ app-unit	src/sync/changeAuthorization.test.ts	610	no		rejects editor board-struc
 app-unit	src/sync/changeAuthorization.test.ts	615	no		rejects a valid signature over a different change hash
 app-unit	src/sync/changeAuthorization.test.ts	622	no		rejects a forged owner-issued role
 app-unit	src/sync/changeAuthorization.test.ts	628	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
-app-unit	src/sync/changeAuthorization.test.ts	643	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
-app-unit	src/sync/changeAuthorization.test.ts	660	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
-app-unit	src/sync/changeAuthorization.test.ts	674	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
-app-unit	src/sync/changeAuthorization.test.ts	692	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
+app-unit	src/sync/changeAuthorization.test.ts	643	no		Given malformed stored authority and an owner profile, When local admission binds its context, Then profile fallback cannot hide the invalid authority
+app-unit	src/sync/changeAuthorization.test.ts	651	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
+app-unit	src/sync/changeAuthorization.test.ts	668	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
+app-unit	src/sync/changeAuthorization.test.ts	682	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
+app-unit	src/sync/changeAuthorization.test.ts	700	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
 app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds incomplete snapshots and reassembles out-of-order parts exactly
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
@@ -1261,19 +1272,20 @@ app-unit	src/webmcp.test.ts	138	no	generic WebMCP tools	reads and atomically app
 app-unit	src/webmcp.test.ts	167	no	generic WebMCP tools	executes valid create_item and rejects invalid create_item without mutating
 app-unit	src/webmcp.test.ts	199	no	generic WebMCP tools	executes move_entity and rename_entity with proper validation
 app-unit	src/webmcp.test.ts	230	no	generic WebMCP tools	archives an item and lists it through the same archive state
-app-unit	src/workspaceDeltaJournal.test.ts	60	no		Given an admitted basis, When one local command commits, Then only the delta is written and a fresh reader sees its exact history, proof and receipt
-app-unit	src/workspaceDeltaJournal.test.ts	94	no		Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail
-app-unit	src/workspaceDeltaJournal.test.ts	115	no		Given a warm stored prefix and a reusable document already at newer heads, When loading, Then storage still verifies the new tail before reusing admission and access
-app-unit	src/workspaceDeltaJournal.test.ts	131	no		Given a checked prefix ending at nine, When commands ten through twelve arrive, Then the numeric index returns exactly the new ordered tail
-app-unit	src/workspaceDeltaJournal.test.ts	144	yes		Given a warm tab and altered %s in a new tail, When it catches up, Then it refuses the new frontier and can recover after the damaged record is restored
-app-unit	src/workspaceDeltaJournal.test.ts	170	no		Given a checked old basis, When another tab commits a replacement basis and generation, Then catch-up validates the new basis through a cold read
-app-unit	src/workspaceDeltaJournal.test.ts	193	no		Given a stale cached prefix and an already committed command followed by another write, When the old append retries, Then the cache retains neither stale content nor a false current frontier
-app-unit	src/workspaceDeltaJournal.test.ts	211	no		Given a stale tab frontier, When two different commands append concurrently, Then exactly one commits and the other cannot overwrite it
-app-unit	src/workspaceDeltaJournal.test.ts	227	no		Given a command already committed, When the same append retries, Then its receipt is idempotent and the frontier does not advance
-app-unit	src/workspaceDeltaJournal.test.ts	235	no		Given a failure after writing delta and frontier, When the receipt write fails, Then the transaction preserves the basis and publishes no partial command
-app-unit	src/workspaceDeltaJournal.test.ts	263	yes		Given altered %s in the saved delta chain, When a cold reader checks it, Then it refuses the frontier
-app-unit	src/workspaceDeltaJournal.test.ts	280	yes		Given changed %s in local frontier metadata, When a cold reader checks it, Then the integrity chain cannot be reused
-app-unit	src/workspaceDeltaJournal.test.ts	294	no		Given pending history in a saved snapshot, When creating an incremental basis, Then storage refuses to mark it fully admitted
+app-unit	src/workspaceDeltaJournal.test.ts	62	no		Given an admitted basis, When one local command commits, Then only the delta is written and a fresh reader sees its exact history, proof and receipt
+app-unit	src/workspaceDeltaJournal.test.ts	96	no		Given a checked IndexedDB frontier, When a legacy transaction writes new evidence, Then revision changes and the frontier is invalidated atomically while retries remain idle
+app-unit	src/workspaceDeltaJournal.test.ts	122	no		Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail
+app-unit	src/workspaceDeltaJournal.test.ts	143	no		Given a warm stored prefix and a reusable document already at newer heads, When loading, Then storage still verifies the new tail before reusing admission and access
+app-unit	src/workspaceDeltaJournal.test.ts	159	no		Given a checked prefix ending at nine, When commands ten through twelve arrive, Then the numeric index returns exactly the new ordered tail
+app-unit	src/workspaceDeltaJournal.test.ts	172	yes		Given a warm tab and altered %s in a new tail, When it catches up, Then it refuses the new frontier and can recover after the damaged record is restored
+app-unit	src/workspaceDeltaJournal.test.ts	198	no		Given a checked old basis, When another tab commits a replacement basis and generation, Then catch-up validates the new basis through a cold read
+app-unit	src/workspaceDeltaJournal.test.ts	221	no		Given a stale cached prefix and an already committed command followed by another write, When the old append retries, Then the cache retains neither stale content nor a false current frontier
+app-unit	src/workspaceDeltaJournal.test.ts	239	no		Given a stale tab frontier, When two different commands append concurrently, Then exactly one commits and the other cannot overwrite it
+app-unit	src/workspaceDeltaJournal.test.ts	255	no		Given a command already committed, When the same append retries, Then its receipt is idempotent and the frontier does not advance
+app-unit	src/workspaceDeltaJournal.test.ts	272	no		Given a failure after writing delta and frontier, When the receipt write fails, Then the transaction preserves the basis and publishes no partial command
+app-unit	src/workspaceDeltaJournal.test.ts	300	yes		Given altered %s in the saved delta chain, When a cold reader checks it, Then it refuses the frontier
+app-unit	src/workspaceDeltaJournal.test.ts	317	yes		Given changed %s in local frontier metadata, When a cold reader checks it, Then the integrity chain cannot be reused
+app-unit	src/workspaceDeltaJournal.test.ts	331	no		Given pending history in a saved snapshot, When creating an incremental basis, Then storage refuses to mark it fully admitted
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/access.rs	139	no		expired_automation_grant_loses_current_access
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	940	no		succession_summary_excludes_revoked_editors_and_reports_quorum
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	957	no		eligible_editors_are_unique_sorted_and_active

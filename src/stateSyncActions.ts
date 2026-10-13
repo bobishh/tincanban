@@ -113,8 +113,13 @@ async function mergeAuthorizedWorkspace(
   storage = defaultStorage,
 ): Promise<void> {
   await withWorkspaceMutation(id, async () => {
+    const { reuseIncomingPacket, copyIncomingPacket, rememberIncomingPacket } = await import("./stateIncomingReuse")
+    const { fullyVerifiedIncomingInput } = await import("./stateIncomingReuseEquality")
+    const profile = stateRuntime.currentProfile ?? undefined
+    if (await reuseIncomingPacket(id, { bytes, authorization }, storage, profile)) return
+    const packet = copyIncomingPacket(bytes, authorization)
     // Validation must use the same current durable base as the eventual merge.
-    const { remote, local, admission } = await validateAuthorizedWorkspace(id, bytes, authorization, storage);
+    const { remote, local, admission } = await validateAuthorizedWorkspace(id, packet.bytes, packet.authorization, storage);
     const merged = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument);
     const mergedValidation = validateWorkspaceDoc(merged);
     if (!mergedValidation.ok) throw invalidWorkspaceReceived(mergedValidation.error);
@@ -132,6 +137,9 @@ async function mergeAuthorizedWorkspace(
         phase: "remote", component: "automerge", heads: Automerge.getHeads(merged) });
     }
     if (documentChanged || proofChanged || causalChanged) await publishCommittedWorkspace(id, merged, storage);
+    // Optional cache maintenance follows durable success and cannot reject that success.
+    await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint,
+      fullyVerifiedIncomingInput(packet.authorization, admission), profile).catch(() => undefined)
   });
 }
 

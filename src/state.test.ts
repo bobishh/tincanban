@@ -21,6 +21,7 @@ import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "
 import { publicKeyId, toBase64Url } from "./domain/identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { withWorkspaceMutation } from "./workspaceMutation"
+import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -387,6 +388,112 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await Promise.all(branches.map(branch => tincanban.mergeAuthorizedWorkspace(base.id, branch.bytes, branch.authorization)))
     const reopened = await new WorkspaceStorage().loadWorkspaceDoc(base.id)
     expect(Object.values(reopened!.doc.entities).filter(isItem).map(item => item.title)).toEqual(expect.arrayContaining(["Peer A", "Peer B"]))
+  })
+
+  it("Given a committed detailed peer packet, When identical fresh packet objects repeat, Then validation reuses the committed result without serialization, evidence loading or workspace writes", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Repeated packet", role: "Engineer", status: "lead", description: "Large source text. ".repeat(2000) })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const bytes = Automerge.save(doc)
+    const authorization = await exportAuthorizationBundle(bytes, profile)
+    await app.mergeAuthorizedWorkspace(doc.id, bytes, authorization)
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    const evidence = vi.spyOn(defaultStorage, "loadCausalEvidence")
+    const commit = vi.spyOn(defaultStorage, "commitWorkspace")
+    const save = vi.mocked(Automerge.save)
+    save.mockClear()
+    try {
+      for (let index = 0; index < 3; index++) await app.mergeAuthorizedWorkspace(doc.id, bytes.slice(), structuredClone(authorization))
+      expect(admission).not.toHaveBeenCalled()
+      expect(evidence).not.toHaveBeenCalled()
+      expect(commit).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      expect(app.workspace.leads.map(lead => lead.company)).toContain("Repeated packet")
+    } finally { admission.mockRestore(); evidence.mockRestore(); commit.mockRestore(); save.mockClear() }
+  })
+
+  it("Given a valid peer packet, When optional cache maintenance fails after commit, Then merging still succeeds and reopened storage retains the saved view", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Cache maintenance failure", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
+    const incomingReuse = await import("./stateIncomingReuse")
+    const remember = vi.spyOn(incomingReuse, "rememberIncomingPacket").mockRejectedValueOnce(new Error("Optional cache unavailable"))
+    try {
+      await expect(app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)).resolves.toBeUndefined()
+      const reopened = (await new WorkspaceStorage().loadWorkspaceDoc(doc.id))!
+      expect(Object.values(reopened.doc.entities).filter(isItem).map(item => item.title)).toContain("Cache maintenance failure — Engineer")
+    } finally { remember.mockRestore() }
+  })
+
+  it("Given a fully verified cached packet, When a local delta advances history and the same peer packet repeats, Then the local edit remains and history is not replayed", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Before local delta", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
+    await app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)
+    await app.executeCommandAsync({ kind: "renameWorkspace", title: "After local delta" })
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await app.mergeAuthorizedWorkspace(doc.id, bytes.slice(), structuredClone(bundle))
+      expect(admission).not.toHaveBeenCalled()
+      expect(app.getActiveDoc()!.title).toBe("After local delta")
+    } finally { admission.mockRestore() }
+  })
+
+  it("Given a cached peer packet, When a relevant signature changes, Then the packet is checked again and rejected without replacing the saved view", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Signature guard", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
+    await app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)
+    const altered = structuredClone(bundle)
+    ;(altered.records[0] as WorkspaceChangeAuthorization).signed.signature += "forged"
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await expect(app.mergeAuthorizedWorkspace(doc.id, bytes, altered)).rejects.toThrow(/signature|authorization/i)
+      expect(admission).toHaveBeenCalledOnce()
+      expect(app.workspace.leads.map(lead => lead.company)).toContain("Signature guard")
+    } finally { admission.mockRestore() }
+  })
+
+  it("Given a cached packet with a previously unknown forged proof, When its claimed hash enters local history, Then repeating the packet revalidates that newly relevant proof", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Unknown hash guard", role: "Engineer", status: "lead" })
+    const base = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const candidate = await executeCommand(base, { kind: "renameWorkspace", title: "Newly present hash" }, profile)
+    if (!candidate.ok) throw new Error(candidate.error.message)
+    const authorizations = await prepareLocalChangeAuthorizations(candidate.value.newDoc, profile, [candidate.value.receipt.changeHash])
+    const bytes = Automerge.save(base), bundle = await exportAuthorizationBundle(bytes, profile)
+    bundle.records.push({ ...authorizations[0]!, signed: { ...authorizations[0]!.signed, signature: "forged-unknown-proof" } })
+    await app.mergeAuthorizedWorkspace(base.id, bytes, bundle)
+    const raw = Automerge.save(candidate.value.newDoc)
+    const previous = (await defaultStorage.loadCausalEvidence(base.id))!
+    await defaultStorage.commitWorkspace(base.id, candidate.value.newDoc, raw, authorizations, undefined, {
+      bytes: raw, decisions: [...previous.decisions, { hash: candidate.value.receipt.changeHash, status: { type: "admitted", role: "owner" } }],
+      authorizationEvidence: [...previous.authorizationEvidence ?? [], ...authorizations],
+    })
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await expect(app.mergeAuthorizedWorkspace(base.id, bytes, structuredClone(bundle))).rejects.toThrow(/signature|authorization/i)
+      expect(admission).toHaveBeenCalledOnce()
+    } finally { admission.mockRestore() }
+  })
+
+  it("Given a cached committed packet, When the caller mutates its old input, Then a fresh genuine copy still reuses the private committed packet", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Private packet copy", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
+    const genuine = { bytes: bytes.slice(), bundle: structuredClone(bundle) }
+    await app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)
+    bytes[0]! ^= 1
+    ;(bundle.records[0] as WorkspaceChangeAuthorization).signed.signature = "caller-mutation"
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await app.mergeAuthorizedWorkspace(doc.id, genuine.bytes, genuine.bundle)
+      expect(admission).not.toHaveBeenCalled()
+    } finally { admission.mockRestore() }
   })
 
   it("Given a signed proof for a hash absent from raw history, when its change later arrives with genuine proof, then unverified proof never persists or poisons replay", async () => {

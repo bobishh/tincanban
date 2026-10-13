@@ -640,6 +640,14 @@ it("Given a forged durable authority and a valid active credential, when role is
   await expect(workspaceRole(doc, member)).resolves.toBe("visitor")
 })
 
+it("Given malformed stored authority and an owner profile, When local admission binds its context, Then profile fallback cannot hide the invalid authority", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Invalid stored authority", owner.identity.personId, "blank"))
+  peerStoreState.authority = { version: 1, workspaceId: doc.id, genesisOwnerPersonId: owner.identity.personId,
+    ownerPersonId: owner.identity.personId, ownerPublicKey: "forged-key", ownerCertificates: [owner.certificate],
+    ownerHistory: [], catalog: {}, epoch: 1 }
+  await expect(localWorkspaceAdmissionAuthority(doc, owner)).rejects.toThrow("Workspace authority could not be verified")
+})
+
 it("Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access", async () => {
   resetIdentityStorageForTest(); const successor = await bootstrapIdentity("Successor")
   const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Historical authority", owner.identity.personId, "blank"))

@@ -1,5 +1,5 @@
 import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuthorizations, writeLocalJournal, readLocalJournal,
-  withLocalJournalLock, requestResult, transactionDone } from "../storageJournal"
+  withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
 import { canonicalizeJson } from "../domain/identity"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
@@ -56,7 +56,7 @@ export async function putRecords(workspaceId: string, incoming: WorkspaceChangeA
   const db = await openWorkspaceJournal()
   return new Promise<boolean>((resolve, reject) => {
     let changed = false
-    const transaction = db.transaction(["authorizations", "frontiers"], "readwrite")
+    const transaction = db.transaction(["authorizations", "frontiers", "revisions"], "readwrite")
     const store = transaction.objectStore("authorizations")
     const get = store.get(workspaceId)
     get.onsuccess = () => {
@@ -66,6 +66,7 @@ export async function putRecords(workspaceId: string, incoming: WorkspaceChangeA
         changed = canonicalizeJson(existing) !== canonicalizeJson(next)
         if (!get.result || changed) store.put({ id: workspaceId, workspaceId, records: next })
         if (changed) {
+          advanceWorkspaceRevision(transaction, workspaceId)
           const frontiers = transaction.objectStore("frontiers")
           const frontier = frontiers.get(workspaceId)
           frontier.onsuccess = () => { if (frontier.result) frontiers.put({ ...frontier.result, invalidated: true }) }

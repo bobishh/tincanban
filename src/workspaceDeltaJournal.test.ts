@@ -11,6 +11,8 @@ import { prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync
 import { requestResult, transactionDone, type StoredWorkspaceSnapshot } from "./storageJournal"
 import { createDeltaBasis, prepareWorkspaceDelta, WorkspaceDeltaJournal } from "./workspaceDeltaJournal"
 import { StorageDeltaRepository } from "./storageDeltaRepository"
+import { WorkspaceStorage } from "./storage"
+import * as storageJournal from "./storageJournal"
 
 beforeAll(async () => {
   vi.stubGlobal("IDBKeyRange", IDBKeyRange)
@@ -31,7 +33,7 @@ async function fixture() {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = new IDBFactory().open("delta-fixture", 1)
     request.onupgradeneeded = () => {
-      for (const name of ["snapshots", "frontiers", "deltas", "changes", "proofs", "receipts"]) {
+      for (const name of ["snapshots", "frontiers", "deltas", "changes", "proofs", "receipts", "revisions"]) {
         const store = request.result.createObjectStore(name, { keyPath: "id" })
         store.createIndex("workspaceId", "workspaceId")
         if (name === "deltas") store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
@@ -90,6 +92,32 @@ async function appendRename(f: Awaited<ReturnType<typeof fixture>>, title: strin
   f.created = result.value.newDoc
   return delta
 }
+
+it("Given a checked IndexedDB frontier, When a legacy transaction writes new evidence, Then revision changes and the frontier is invalidated atomically while retries remain idle", async () => {
+  const f = await fixture()
+  await f.journal.append(f.frontier, f.delta)
+  const next = await executeCommand(f.created, { kind: "renameWorkspace", title: "Legacy writer" }, f.profile)
+  if (!next.ok) throw new Error(next.error.message)
+  const open = vi.spyOn(storageJournal, "openWorkspaceJournal").mockResolvedValue(f.database)
+  const previousIndexedDB = globalThis.indexedDB
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  const storage = new WorkspaceStorage()
+  try {
+    const before = await storage.readWorkspaceRevision(f.doc.id)
+    const { receipt, proof, newDoc } = next.value
+    const bytes = Automerge.getLastLocalChange(newDoc)!
+    await storage.commitTransaction(f.doc.id, receipt, bytes, proof)
+    const after = await storage.readWorkspaceRevision(f.doc.id)
+    expect(after).toBeTruthy()
+    expect(after).not.toBe(before)
+    const read = f.database.transaction("frontiers", "readonly")
+    const done = transactionDone(read)
+    expect(await requestResult(read.objectStore("frontiers").get(f.doc.id))).toMatchObject({ invalidated: true })
+    await done
+    await storage.commitTransaction(f.doc.id, receipt, bytes, proof)
+    expect(await storage.readWorkspaceRevision(f.doc.id)).toBe(after)
+  } finally { open.mockRestore(); vi.stubGlobal("indexedDB", previousIndexedDB); f.database.close() }
+})
 
 it("Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail", async () => {
   const f = await fixture()
@@ -227,7 +255,16 @@ it("Given a stale tab frontier, When two different commands append concurrently,
 it("Given a command already committed, When the same append retries, Then its receipt is idempotent and the frontier does not advance", async () => {
   const f = await fixture()
   const committed = await f.journal.append(f.frontier, f.delta)
+  const revision = async () => {
+    const read = f.database.transaction("revisions", "readonly")
+    const done = transactionDone(read)
+    const result = await requestResult(read.objectStore("revisions").get(f.doc.id))
+    await done
+    return result
+  }
+  const before = await revision()
   expect(await f.journal.append(f.frontier, f.delta)).toEqual(committed)
+  expect(await revision()).toEqual(before)
   expect((await f.journal.read(f.doc.id))!.deltas).toHaveLength(1)
   f.database.close()
 })
@@ -251,7 +288,7 @@ it("Given a failure after writing delta and frontier, When the receipt write fai
   injected.mockRestore()
   expect(await f.journal.readFrontier(f.doc.id)).toEqual(f.frontier)
   expect((await f.journal.read(f.doc.id))!.deltas).toEqual([])
-  for (const name of ["receipts", "proofs", "changes"]) {
+  for (const name of ["receipts", "proofs", "changes", "revisions"]) {
     const read = f.database.transaction(name, "readonly")
     const done = transactionDone(read)
     expect(await requestResult(read.objectStore(name).getAll())).toEqual([])

@@ -19,6 +19,7 @@ import { StorageDeltaAccess } from "./storageDeltaAccess"
 import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, type WorkspaceMeta } from "./storageCatalog"
 import {
   deleteWorkspaceJournal,
+  advanceWorkspaceRevision,
   readWorkspaceSnapshot,
   readWorkspaceBasisSnapshot,
   type StoredWorkspaceSnapshot,
@@ -217,7 +218,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
 
     if (typeof indexedDB !== "undefined") {
       const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["changes", "proofs", "receipts"], "readwrite")
+      const transaction = database.transaction(["changes", "proofs", "receipts", "frontiers", "revisions"], "readwrite")
       const completion = transactionDone(transaction)
       try {
         const existing = await requestResult(transaction.objectStore("receipts").get(receiptKey)) as StoredReceiptRecord | undefined
@@ -232,6 +233,8 @@ export class WorkspaceStorage extends StorageDeltaAccess {
         transaction.objectStore("receipts").put({
           id: receiptKey, workspaceId, transactionId: receipt.transactionId, receipt,
         } satisfies StoredReceiptRecord)
+        advanceWorkspaceRevision(transaction, workspaceId)
+        await this.invalidateDeltaFrontier(transaction, workspaceId)
       } catch (error) {
         transaction.abort()
         await completion.catch(() => undefined)
@@ -338,7 +341,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     } else {
       onPhase?.("journal-open")
       const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas"], "readwrite")
+      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas", "revisions"], "readwrite")
       const completion = transactionDone(transaction)
       try {
         const snapshotStore = transaction.objectStore("snapshots")
@@ -354,6 +357,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
           snapshotStore.put(snapshot)
         if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
         await this.clearDeltaRows(transaction, workspaceId)
+        advanceWorkspaceRevision(transaction, workspaceId)
         if (command) {
           const { receipt, changeBytes, proof } = command
           const receiptKey = `${workspaceId}:${receipt.transactionId}`

@@ -4,7 +4,7 @@ import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceRole } from "./domain/permissions"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceAuthorizationRecords"
 import type { WorkspaceDocumentV2 } from "./domain/model"
-import { readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
+import { advanceWorkspaceRevision, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
   type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
 import { readDeltaTail } from "./workspaceDeltaTail"
 
@@ -162,7 +162,7 @@ export class WorkspaceDeltaJournal {
     await verifyDelta(expected, delta)
     const next = nextFrontier(expected, delta)
     if (!this.database) return this.appendMemory(expected, delta, next)
-    const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts"], "readwrite")
+    const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions"], "readwrite")
     const done = transactionDone(transaction)
     try {
       const frontiers = transaction.objectStore("frontiers")
@@ -187,6 +187,7 @@ export class WorkspaceDeltaJournal {
         changeHash: receipt.changeHash, bytes: new Uint8Array(changeBytes), addedAt: delta.savedAt })
       transaction.objectStore("proofs").put({ id: changeKey, workspaceId: expected.workspaceId, changeHash: receipt.changeHash, proof })
       receipts.add({ id: receiptKey, workspaceId: expected.workspaceId, transactionId: receipt.transactionId, receipt })
+      advanceWorkspaceRevision(transaction, expected.workspaceId)
     } catch (error) {
       transaction.abort()
       await done.catch(() => undefined)
@@ -208,7 +209,7 @@ export class WorkspaceDeltaJournal {
         return { ...current }
       }
       if (canonicalizeJson(current.frontier) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
-      return { ...current, frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
+      return { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
         changes: [...current.changes, { workspaceId: expected.workspaceId, changeHash: receipt.changeHash,
           bytesBase64: toBase64Url(changeBytes), addedAt: delta.savedAt }],
         receipts: { ...current.receipts, [receipt.transactionId]: receipt }, proofs: { ...current.proofs, [receipt.changeHash]: proof } }

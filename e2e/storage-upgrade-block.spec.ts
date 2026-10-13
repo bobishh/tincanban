@@ -1,15 +1,17 @@
 import { expect, test } from "./support/coverage"
 
-test("Given a held version 2 journal with existing deltas, When the numeric index upgrade is blocked, Then startup explains recovery and preserves the ordered records after the old tab closes", async ({ page, context, baseURL }) => {
+for (const version of [2, 3]) {
+test(`Given a held version ${version} journal with existing deltas, When the storage upgrade is blocked, Then startup explains recovery and preserves ordered records with revision storage after the old tab closes`, async ({ page, context, baseURL }) => {
   await page.route("**/version-two.html", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Version two holder</title>" }))
   await page.goto((baseURL ?? "http://127.0.0.1:4244") + "/version-two.html")
-  await page.evaluate(() => new Promise<void>((resolve, reject) => {
-    const request = indexedDB.open("tincanban-workspace-state", 2)
+  await page.evaluate(version => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open("tincanban-workspace-state", version)
     request.onupgradeneeded = () => {
       for (const name of ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas"]) {
         const store = request.result.createObjectStore(name, { keyPath: "id" })
         store.createIndex("workspaceId", "workspaceId", { unique: false })
         if (name === "snapshots") store.createIndex("catalog", ["workspaceId", "title", "savedAt"])
+        if (name === "deltas" && version === 3) store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
       }
     }
     request.onerror = () => reject(request.error)
@@ -22,14 +24,14 @@ test("Given a held version 2 journal with existing deltas, When the numeric inde
       write.onabort = () => reject(write.error)
       ;(window as Window & { versionTwoJournal?: IDBDatabase }).versionTwoJournal = database
     }
-  }))
+  }), version)
   const app = await context.newPage()
   await app.goto(baseURL ?? "http://127.0.0.1:4244")
   await expect(app.getByRole("alert")).toContainText("Close other tincanban tabs and reload", { timeout: 8_000 })
   await page.close()
   await app.reload()
   await expect(app.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
-  expect(await app.evaluate(() => new Promise<{ version: number; sequences: number[] }>((resolve, reject) => {
+  expect(await app.evaluate(() => new Promise<{ version: number; sequences: number[]; revisions: boolean }>((resolve, reject) => {
     const request = indexedDB.open("tincanban-workspace-state")
     request.onerror = () => reject(request.error)
     request.onsuccess = () => {
@@ -37,12 +39,13 @@ test("Given a held version 2 journal with existing deltas, When the numeric inde
       const read = database.transaction("deltas", "readonly")
       const rows = read.objectStore("deltas").index("sequence").getAll(IDBKeyRange.bound(
         ["upgrade-proof", "retained", 1], ["upgrade-proof", "retained", 20]))
-      rows.onsuccess = () => { resolve({ version: database.version, sequences: rows.result.map((row: { sequence: number }) => row.sequence) }); database.close() }
+      rows.onsuccess = () => { resolve({ version: database.version, sequences: rows.result.map((row: { sequence: number }) => row.sequence), revisions: database.objectStoreNames.contains("revisions") }); database.close() }
       rows.onerror = () => { reject(rows.error); database.close() }
     }
-  }))).toEqual({ version: 3, sequences: [2, 10] })
+  }))).toEqual({ version: 4, sequences: [2, 10], revisions: true })
   await app.close()
 })
+}
 
 test("Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads", async ({ page, baseURL }) => {
   await page.route("**/old-journal.html", route => route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Old journal</title>" }))

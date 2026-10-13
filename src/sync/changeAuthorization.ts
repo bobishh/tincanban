@@ -261,8 +261,10 @@ export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<Works
 }
 
 /** Current authority only; ordinary local commands never export historical proofs. */
-export async function localWorkspaceAdmissionAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile) {
-  let authority = (await storedWorkspaceAuthority(doc.id)).authority
+export async function localWorkspaceAdmissionAuthority(doc: Pick<WorkspaceDocumentV2, "id" | "ownerPersonId">, knownProfile?: LocalProfile) {
+  const stored = await storedWorkspaceAuthority(doc.id)
+  if (stored.invalid) throw new Error("Workspace authority could not be verified")
+  let authority = stored.authority
   if (!authority && typeof indexedDB === "undefined" && knownProfile?.identity.personId === doc.ownerPersonId) {
     authority = {
       version: 1, workspaceId: doc.id, genesisOwnerPersonId: knownProfile.identity.personId,
@@ -275,10 +277,11 @@ export async function localWorkspaceAdmissionAuthority(doc: Automerge.Doc<Worksp
   if (!evidence) throw new Error("Workspace authority is unavailable for write authorization")
   const credential = await incomingCredential(doc.id)
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
-  return { authority: evidence, fingerprint: canonicalAuthorityJson({ authority: evidence, credential: authorityValidationFingerprint(credential) }) }
+  const credentialFingerprint = authorityValidationFingerprint(credential)
+  return { authority: evidence, credentialFingerprint, fingerprint: canonicalAuthorityJson({ authority: evidence, credential: credentialFingerprint }) }
 }
 
-function workspaceWriteAuthorityEvidence(doc: WorkspaceDocumentV2, authority: StoredWorkspaceAuthority | null): WorkspaceWriteAuthorityEvidence | undefined {
+function workspaceWriteAuthorityEvidence(doc: Pick<WorkspaceDocumentV2, "id" | "ownerPersonId">, authority: StoredWorkspaceAuthority | null): WorkspaceWriteAuthorityEvidence | undefined {
   if (!authority) return undefined
   const owners = authorities(authority)
   const genesisOwner = owners.find(owner => owner.personId === doc.ownerPersonId)
@@ -346,7 +349,7 @@ export async function validateIncomingChangeAuthorizations(local: Automerge.Doc<
 
 /** Reclassifies complete raw history, including hashes already stored locally. */
 export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
-  remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = []): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
+  remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = []): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
   const { credential, frozenCredential, knownAuthority, combinedBundle, context } = await workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local))
   const startedAt = performance.now()
   meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
@@ -365,7 +368,7 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   const currentCredential = await incomingCredential(remote.id)
   traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
   if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan)
-  return { ...structuredClone(plan), rawBytes, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
+  return { ...structuredClone(plan), rawBytes, credentialFingerprint: frozenCredential, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
 }
 
 /** Reuse only a locally committed projection, never an incoming snapshot's marker. */

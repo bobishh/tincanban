@@ -3,7 +3,7 @@ import type { WorkspaceDocumentV2 } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { StorageDeltaRepository } from "./storageDeltaRepository"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
-import { openWorkspaceJournal, readWorkspaceSnapshot, requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence } from "./storageJournal"
+import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence } from "./storageJournal"
 import { cloneCausalEvidence } from "./causalEvidence"
 
 export abstract class StorageDeltaAccess {
@@ -13,6 +13,14 @@ export abstract class StorageDeltaAccess {
 
   async readDeltaFrontier(workspaceId: string) { return this.delta.frontier(workspaceId) }
   async readDeltaWorkspace(workspaceId: string) { return this.delta.read(workspaceId) }
+  async readWorkspaceRevision(workspaceId: string): Promise<string | undefined> {
+    if (typeof indexedDB === "undefined") return readLocalJournalReference(workspaceId).revision
+    const transaction = (await openWorkspaceJournal()).transaction("revisions", "readonly")
+    const done = transactionDone(transaction)
+    const row = await requestResult(transaction.objectStore("revisions").get(workspaceId)) as { revision: string } | undefined
+    await done
+    return row?.revision
+  }
   async installDeltaBasis(snapshot: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier,
     authorizations: WorkspaceChangeAuthorization[], doc: Automerge.Doc<WorkspaceDocumentV2>) {
     this.checkDeltaWrites()
@@ -43,6 +51,12 @@ export abstract class StorageDeltaAccess {
     const deltas = transaction.objectStore("deltas")
     const keys = await requestResult(deltas.index("workspaceId").getAllKeys(workspaceId))
     for (const key of keys) deltas.delete(key)
+  }
+
+  protected async invalidateDeltaFrontier(transaction: IDBTransaction, workspaceId: string) {
+    const frontiers = transaction.objectStore("frontiers")
+    const frontier = await requestResult(frontiers.get(workspaceId)) as WorkspaceDeltaFrontier | undefined
+    if (frontier) frontiers.put({ ...frontier, invalidated: true })
   }
 
   protected async readJournalRecord<T>(storeName: "receipts" | "proofs", key: string) {

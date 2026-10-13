@@ -6,7 +6,7 @@ export * from "./storageJournalRecords"
 const journalDatabaseName = "tincanban-workspace-state"
 const legacyJournalDatabaseName = "tincanban-workspace-journal-v1"
 const legacyMigrationMarkerId = "__meta__legacy-journal-migration-complete__"
-const journalStores = ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas"] as const
+const journalStores = ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas", "revisions"] as const
 type JournalStoreName = typeof journalStores[number]
 type JournalIndexedStoreName = JournalStoreName
 
@@ -15,7 +15,7 @@ let legacyJournalDatabasePromise: Promise<IDBDatabase | undefined> | undefined
 
 function openCurrentJournal(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(journalDatabaseName, 3)
+    const request = indexedDB.open(journalDatabaseName, 4)
     let settled = false
     let blockedTimer: ReturnType<typeof setTimeout> | undefined
     request.onupgradeneeded = () => {

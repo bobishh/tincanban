@@ -25,6 +25,7 @@ export type LocalJournal = {
   authorizations?: unknown[]
   frontier?: WorkspaceDeltaFrontier
   deltas?: StoredWorkspaceDelta[]
+  revision?: string
 }
 
 type CausalChangeDecision = {
@@ -91,8 +92,14 @@ export function readLocalJournal(workspaceId: string): LocalJournal {
 
 export function writeLocalJournal(workspaceId: string, journal: LocalJournal): void {
   const saved = structuredClone(journal)
+  saved.revision = crypto.randomUUID()
   if (saved.frontier) saved.frontier.invalidated = true
   memoryJournals.set(workspaceId, saved)
+}
+
+/** Advance only inside a transaction that changes durable history or evidence. */
+export function advanceWorkspaceRevision(transaction: IDBTransaction, workspaceId: string) {
+  transaction.objectStore("revisions").put({ id: workspaceId, workspaceId, revision: crypto.randomUUID() })
 }
 
 export function withLocalJournalLock<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
