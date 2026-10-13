@@ -18,6 +18,7 @@ import {
 } from "./storage"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import * as journal from "./storageJournal"
+import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -311,6 +312,35 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(reloaded).toBeDefined()
     const item = Object.values(reloaded!.doc.entities).find(isItem)
     expect(item?.title).toBe("Persisted Item")
+  })
+
+  it.each(["quarantined", "pending"] as const)("Given a legacy journal change classified as %s, When reopening its admitted projection, Then raw journal replay cannot expose that change", async type => {
+    const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Admitted title", profile.identity.personId, "blank"))
+    await storage.saveSnapshot(base.id, base, Automerge.save(base))
+    const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Unadmitted title" }, profile)
+    if (!result.ok) throw new Error(result.error.message)
+    const { receipt, proof, newDoc } = result.value
+    await storage.commitTransaction(base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
+    const decisions = [{ hash: receipt.changeHash, status: { type, reason: "unreviewed authority" } }]
+    await storage.commitWorkspace(base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(newDoc), decisions })
+    const reader = new WorkspaceStorage()
+    expect((await reader.loadWorkspaceDoc(base.id))!.doc.title).toBe("Admitted title")
+    expect(Automerge.load<WorkspaceDocumentV2>((await reader.loadCausalEvidence(base.id))!.bytes).title).toBe("Unadmitted title")
+    expect(await reader.listChanges(base.id)).toHaveLength(1)
+  })
+
+  it("Given admitted raw evidence followed by an uncheckpointed legacy write, When loading raw history for reclassification, Then the new change survives without inheriting admission", async () => {
+    const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Old checkpoint", profile.identity.personId, "blank"))
+    const decisions = Automerge.getChangesMetaSince(base, []).map(change => ({ hash: change.hash, status: { type: "admitted" as const, role: "owner" as const } }))
+    const admissionCheckpoint = await createAdmissionCheckpoint("old-raw-input", Automerge.getHeads(base), decisions)
+    await storage.commitWorkspace(base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(base), decisions, admissionCheckpoint })
+    const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Legacy tail survives" }, profile)
+    if (!result.ok) throw new Error(result.error.message)
+    await storage.commitTransaction(base.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
+    const evidence = (await new WorkspaceStorage().loadCausalEvidence(base.id))!
+    expect(Automerge.load<WorkspaceDocumentV2>(evidence.bytes).title).toBe("Legacy tail survives")
+    expect(evidence.decisions).toEqual(decisions)
+    expect(evidence.admissionCheckpoint).toBeUndefined()
   })
 
   it("Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot", async () => {

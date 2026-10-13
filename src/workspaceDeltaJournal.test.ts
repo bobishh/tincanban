@@ -33,7 +33,7 @@ async function fixture() {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = new IDBFactory().open("delta-fixture", 1)
     request.onupgradeneeded = () => {
-      for (const name of ["snapshots", "frontiers", "deltas", "changes", "proofs", "receipts", "revisions"]) {
+      for (const name of ["snapshots", "authorizations", "frontiers", "deltas", "changes", "proofs", "receipts", "revisions"]) {
         const store = request.result.createObjectStore(name, { keyPath: "id" })
         store.createIndex("workspaceId", "workspaceId")
         if (name === "deltas") store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
@@ -117,6 +117,33 @@ it("Given a checked IndexedDB frontier, When a legacy transaction writes new evi
     await storage.commitTransaction(f.doc.id, receipt, bytes, proof)
     expect(await storage.readWorkspaceRevision(f.doc.id)).toBe(after)
   } finally { open.mockRestore(); vi.stubGlobal("indexedDB", previousIndexedDB); f.database.close() }
+})
+
+it("Given an IndexedDB legacy change reclassified as quarantined, When a later legacy command arrives and storage reopens, Then the admitted view excludes quarantine while raw recovery retains both changes", async () => {
+  const f = await fixture()
+  f.database.close()
+  const previousIndexedDB = globalThis.indexedDB
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  const storage = new WorkspaceStorage()
+  try {
+    await storage.commitWorkspace(f.doc.id, f.doc, f.snapshot.bytes, f.delta.command.authorizations)
+    await storage.commitTransaction(f.doc.id, f.delta.command.receipt, f.delta.command.changeBytes, f.delta.command.proof)
+    await storage.commitWorkspace(f.doc.id, f.doc, f.snapshot.bytes, f.delta.command.authorizations, undefined, {
+      bytes: Automerge.save(f.created), decisions: [{ hash: f.delta.command.receipt.changeHash, status: { type: "quarantined", reason: "rights changed" } }],
+    })
+    expect((await storage.loadWorkspaceDoc(f.doc.id))!.doc.title).toBe("Delta board")
+    const next = await executeCommand(Automerge.clone(f.doc), { kind: "renameWorkspace", title: "Admitted legacy tail" }, f.profile)
+    if (!next.ok) throw new Error(next.error.message)
+    await storage.commitTransaction(f.doc.id, next.value.receipt, Automerge.getLastLocalChange(next.value.newDoc)!, next.value.proof)
+    const reopened = new WorkspaceStorage()
+    expect((await reopened.loadWorkspaceDoc(f.doc.id))!.doc.title).toBe("Admitted legacy tail")
+    const evidence = (await reopened.loadCausalEvidence(f.doc.id))!
+    const raw = Automerge.load(evidence.bytes)
+    expect(Automerge.hasHeads(raw, [f.delta.command.receipt.changeHash, next.value.receipt.changeHash])).toBe(true)
+    expect(evidence.decisions).toEqual([{ hash: f.delta.command.receipt.changeHash, status: { type: "quarantined", reason: "rights changed" } }])
+    expect(evidence.admissionCheckpoint).toBeUndefined()
+    Automerge.free(raw)
+  } finally { vi.stubGlobal("indexedDB", previousIndexedDB) }
 })
 
 it("Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail", async () => {

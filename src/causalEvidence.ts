@@ -1,5 +1,34 @@
 import { canonicalizeJson } from "./domain/identity"
-import type { StoredCausalEvidence } from "./storageJournal"
+import * as Automerge from "@automerge/automerge/slim"
+import type { StoredCausalEvidence, StoredChange } from "./storageJournal"
+import type { WorkspaceDocumentV2 } from "./domain/model"
+
+/** Classified raw changes must not reappear through the legacy local journal. */
+export function replayAdmittedJournal(doc: Automerge.Doc<WorkspaceDocumentV2>, changes: StoredChange[], evidence?: StoredCausalEvidence) {
+  const excluded = new Set(evidence?.decisions.filter(decision => decision.status.type !== "admitted").map(decision => decision.hash))
+  const missing = changes.filter(change => !excluded.has(change.changeHash) && !Automerge.hasHeads(doc, [change.changeHash]))
+  if (!missing.length) return doc
+  try { return Automerge.applyChanges(doc, missing.map(change => change.bytes))[0] }
+  catch {
+    // Preserve legacy recovery of independent changes when one dependency is unavailable.
+    for (const change of missing) {
+      try { [doc] = Automerge.applyChanges(doc, [change.bytes]) } catch { /* Dependent change remains in raw recovery history. */ }
+    }
+    return doc
+  }
+}
+
+/** Legacy writes extend raw recovery history, never its prior admission checkpoint. */
+export function extendRawEvidence(evidence: StoredCausalEvidence, changes: StoredChange[]): StoredCausalEvidence {
+  if (!changes.length) return evidence
+  let raw = Automerge.load(evidence.bytes)
+  try {
+    const missing = changes.filter(change => !Automerge.hasHeads(raw, [change.changeHash]))
+    if (!missing.length) return evidence
+    ;[raw] = Automerge.applyChanges(raw, missing.map(change => change.bytes))
+    return { ...evidence, bytes: Automerge.save(raw), admissionCheckpoint: undefined }
+  } finally { Automerge.free(raw) }
+}
 
 /** Copy persisted evidence bytes while keeping immutable classification records. */
 export function cloneCausalEvidence(evidence: StoredCausalEvidence | null | undefined): StoredCausalEvidence | null {

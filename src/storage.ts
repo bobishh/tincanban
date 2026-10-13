@@ -8,7 +8,7 @@ import type {
 } from "./domain/model"
 import { records, mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { canonicalizeJson } from "./domain/identity"
-import { causalEvidenceChanged, snapshotCausalEvidence } from "./causalEvidence"
+import { causalEvidenceChanged, snapshotCausalEvidence, replayAdmittedJournal } from "./causalEvidence"
 import { parseStoredSnapshot, type StoredSnapshot } from "./storageSnapshot"
 import type { StoredProofsV1 } from "./domain/proofs"
 import { toBase64Url, fromBase64Url } from "./domain/identity"
@@ -416,24 +416,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     }
 
     const changes = await this.listChanges(workspaceId)
-    const missingChanges = changes.filter(change => !Automerge.hasHeads(doc, [change.changeHash]))
-    if (missingChanges.length > 0) {
-      const changeByteArrays = missingChanges.map((c) => c.bytes)
-      try {
-        const [updatedDoc] = Automerge.applyChanges(doc, changeByteArrays)
-        doc = updatedDoc
-      } catch {
-        // If some changes were already present, apply individual
-        for (const bytes of changeByteArrays) {
-          try {
-            const [next] = Automerge.applyChanges(doc, [bytes])
-            doc = next
-          } catch {
-            // Already applied or dependent
-          }
-        }
-      }
-    }
+    doc = replayAdmittedJournal(doc, changes, snapshot?.causalEvidence)
 
     const heads = Automerge.getHeads(doc).sort()
     if (!snapshot && changes.length === 0) {

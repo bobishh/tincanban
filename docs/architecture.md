@@ -175,6 +175,11 @@ fix transport timeout causes or establish replication coverage on Keeper.
 ## Causal write admission
 
 The journal retains raw signed history separately from the authorized document.
+Legacy journal replay excludes hashes already classified as pending or quarantined;
+reopening storage cannot put them back into the admitted view. Uncheckpointed legacy
+changes extend raw recovery/export history without gaining admission decisions, and
+invalidate the prior admission checkpoint. The verified incremental path remains
+unchanged; this legacy recovery path requires reclassification.
 New authority evidence reclassifies already-known hashes as well as incoming
 changes. A valid old-grant write outside the signed revocation frontier becomes
 quarantined; descendants with missing or unadmitted dependencies remain pending.

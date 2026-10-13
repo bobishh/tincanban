@@ -294,8 +294,9 @@ browser	e2e/settings-scope.spec.ts	128	no		Given an unsaved profile name, when s
 browser	e2e/spatial-window-loading.spec.ts	4	no		Given a new lead, when its detail module is still loading then a pending status precedes the window
 browser	e2e/startup-diagnostics.spec.ts	3	no		Given an intake withholding every acknowledgement, When a mobile board opens and reloads, Then the board becomes usable before any acknowledgement
 browser	e2e/startup-diagnostics.spec.ts	25	yes		Given startup debug and intake ${status}, When a mobile page reloads, Then phase checkpoints identify startup and the board stays usable
-browser	e2e/startup-preview.spec.ts	32	no		Given startup HTML before Vue loads, When page styles arrive, Then the same three dots appear sequentially without a rotating ink frame
-browser	e2e/startup-preview.spec.ts	52	yes		Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then a full loader reveals saved cards before compact checks and edits wait for confirmed access
+browser	e2e/startup-preview.spec.ts	4	no		Given a saved admitted board, When a fresh tab reloads unchanged state, Then editing becomes ready without sending history to the admission worker
+browser	e2e/startup-preview.spec.ts	60	no		Given startup HTML before Vue loads, When page styles arrive, Then the same three dots appear sequentially without a rotating ink frame
+browser	e2e/startup-preview.spec.ts	80	yes		Given a saved board at ${width}px, When history checks ${fail ? "fail" : "are pending"}, Then a full loader reveals saved cards before compact checks and edits wait for confirmed access
 browser	e2e/startup-runtime-failure.spec.ts	3	no		Given the Rust policy runtime request fails, when tincanban opens, then it identifies the runtime rather than local data
 browser	e2e/startup-storage-failure.spec.ts	3	no		Given local storage fails, when tincanban opens, then it shows the cause without a reload button
 browser	e2e/startup-storage-failure.spec.ts	20	no		Given a saved board cannot open, when a device invitation opens, then pairing remains available and the board error stays visible
@@ -811,30 +812,32 @@ app-unit	src/stateSyncActions.test.ts	29	no	readWorkspaceDoc	loads inactive work
 app-unit	src/stateSyncActions.test.ts	37	no		Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause
 app-unit	src/stateSyncActions.test.ts	47	no	recordVerifiedOwnerWorkspace	adds only an owned verified workspace to personal-root catalog
 app-unit	src/stateSyncActions.test.ts	68	no	recordVerifiedOwnerWorkspace	rejects foreign-owned documents without changing personal-root entitlements
-app-unit	src/storage.test.ts	34	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
-app-unit	src/storage.test.ts	49	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
-app-unit	src/storage.test.ts	76	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
-app-unit	src/storage.test.ts	90	no	personal root map writes	does not persist a root when its mutation rejects
-app-unit	src/storage.test.ts	110	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
-app-unit	src/storage.test.ts	122	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
-app-unit	src/storage.test.ts	136	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
-app-unit	src/storage.test.ts	165	no	Document & Change-hash persistence (Requirement 1.7)	Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal
-app-unit	src/storage.test.ts	175	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
-app-unit	src/storage.test.ts	186	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
-app-unit	src/storage.test.ts	225	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
-app-unit	src/storage.test.ts	237	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
-app-unit	src/storage.test.ts	245	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
-app-unit	src/storage.test.ts	267	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
-app-unit	src/storage.test.ts	276	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
-app-unit	src/storage.test.ts	316	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
-app-unit	src/storage.test.ts	335	no	Document & Change-hash persistence (Requirement 1.7)	Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write
-app-unit	src/storage.test.ts	349	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
-app-unit	src/storage.test.ts	374	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
-app-unit	src/storage.test.ts	403	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
-app-unit	src/storage.test.ts	436	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
-app-unit	src/storage.test.ts	470	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
-app-unit	src/storage.test.ts	502	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
-app-unit	src/storage.test.ts	543	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
+app-unit	src/storage.test.ts	35	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
+app-unit	src/storage.test.ts	50	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
+app-unit	src/storage.test.ts	77	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
+app-unit	src/storage.test.ts	91	no	personal root map writes	does not persist a root when its mutation rejects
+app-unit	src/storage.test.ts	111	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
+app-unit	src/storage.test.ts	123	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
+app-unit	src/storage.test.ts	137	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
+app-unit	src/storage.test.ts	166	no	Document & Change-hash persistence (Requirement 1.7)	Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal
+app-unit	src/storage.test.ts	176	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
+app-unit	src/storage.test.ts	187	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
+app-unit	src/storage.test.ts	226	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
+app-unit	src/storage.test.ts	238	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
+app-unit	src/storage.test.ts	246	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
+app-unit	src/storage.test.ts	268	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
+app-unit	src/storage.test.ts	277	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
+app-unit	src/storage.test.ts	317	yes	Document & Change-hash persistence (Requirement 1.7)	Given a legacy journal change classified as %s, When reopening its admitted projection, Then raw journal replay cannot expose that change
+app-unit	src/storage.test.ts	332	no	Document & Change-hash persistence (Requirement 1.7)	Given admitted raw evidence followed by an uncheckpointed legacy write, When loading raw history for reclassification, Then the new change survives without inheriting admission
+app-unit	src/storage.test.ts	346	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
+app-unit	src/storage.test.ts	365	no	Document & Change-hash persistence (Requirement 1.7)	Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write
+app-unit	src/storage.test.ts	379	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
+app-unit	src/storage.test.ts	404	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
+app-unit	src/storage.test.ts	433	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
+app-unit	src/storage.test.ts	466	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
+app-unit	src/storage.test.ts	500	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
+app-unit	src/storage.test.ts	532	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
+app-unit	src/storage.test.ts	573	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
 app-unit	src/storageCatalog.test.ts	17	no		checks ancestor and merged branch heads using metadata without expanding text operations
 app-unit	src/sync/authorityFingerprint.test.ts	25	no	workspace authority fingerprint	Given identical certificate sets in different orders, When authority refreshes, Then the fingerprint stays equal without mutating stored records
 app-unit	src/sync/authorityFingerprint.test.ts	38	no	workspace authority fingerprint	Given duplicate signatures or a changed signed payload, When fingerprinting, Then every distinct security value remains visible
@@ -1291,18 +1294,19 @@ app-unit	src/webmcp.test.ts	199	no	generic WebMCP tools	executes move_entity and
 app-unit	src/webmcp.test.ts	230	no	generic WebMCP tools	archives an item and lists it through the same archive state
 app-unit	src/workspaceDeltaJournal.test.ts	62	no		Given an admitted basis, When one local command commits, Then only the delta is written and a fresh reader sees its exact history, proof and receipt
 app-unit	src/workspaceDeltaJournal.test.ts	96	no		Given a checked IndexedDB frontier, When a legacy transaction writes new evidence, Then revision changes and the frontier is invalidated atomically while retries remain idle
-app-unit	src/workspaceDeltaJournal.test.ts	122	no		Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail
-app-unit	src/workspaceDeltaJournal.test.ts	143	no		Given a warm stored prefix and a reusable document already at newer heads, When loading, Then storage still verifies the new tail before reusing admission and access
-app-unit	src/workspaceDeltaJournal.test.ts	159	no		Given a checked prefix ending at nine, When commands ten through twelve arrive, Then the numeric index returns exactly the new ordered tail
-app-unit	src/workspaceDeltaJournal.test.ts	172	yes		Given a warm tab and altered %s in a new tail, When it catches up, Then it refuses the new frontier and can recover after the damaged record is restored
-app-unit	src/workspaceDeltaJournal.test.ts	198	no		Given a checked old basis, When another tab commits a replacement basis and generation, Then catch-up validates the new basis through a cold read
-app-unit	src/workspaceDeltaJournal.test.ts	221	no		Given a stale cached prefix and an already committed command followed by another write, When the old append retries, Then the cache retains neither stale content nor a false current frontier
-app-unit	src/workspaceDeltaJournal.test.ts	239	no		Given a stale tab frontier, When two different commands append concurrently, Then exactly one commits and the other cannot overwrite it
-app-unit	src/workspaceDeltaJournal.test.ts	255	no		Given a command already committed, When the same append retries, Then its receipt is idempotent and the frontier does not advance
-app-unit	src/workspaceDeltaJournal.test.ts	272	no		Given a failure after writing delta and frontier, When the receipt write fails, Then the transaction preserves the basis and publishes no partial command
-app-unit	src/workspaceDeltaJournal.test.ts	300	yes		Given altered %s in the saved delta chain, When a cold reader checks it, Then it refuses the frontier
-app-unit	src/workspaceDeltaJournal.test.ts	317	yes		Given changed %s in local frontier metadata, When a cold reader checks it, Then the integrity chain cannot be reused
-app-unit	src/workspaceDeltaJournal.test.ts	331	no		Given pending history in a saved snapshot, When creating an incremental basis, Then storage refuses to mark it fully admitted
+app-unit	src/workspaceDeltaJournal.test.ts	122	no		Given an IndexedDB legacy change reclassified as quarantined, When a later legacy command arrives and storage reopens, Then the admitted view excludes quarantine while raw recovery retains both changes
+app-unit	src/workspaceDeltaJournal.test.ts	149	no		Given a warm tab with a checked prefix, When another tab appends a command, Then catch-up reads no snapshot or old deltas and applies only the new tail
+app-unit	src/workspaceDeltaJournal.test.ts	170	no		Given a warm stored prefix and a reusable document already at newer heads, When loading, Then storage still verifies the new tail before reusing admission and access
+app-unit	src/workspaceDeltaJournal.test.ts	186	no		Given a checked prefix ending at nine, When commands ten through twelve arrive, Then the numeric index returns exactly the new ordered tail
+app-unit	src/workspaceDeltaJournal.test.ts	199	yes		Given a warm tab and altered %s in a new tail, When it catches up, Then it refuses the new frontier and can recover after the damaged record is restored
+app-unit	src/workspaceDeltaJournal.test.ts	225	no		Given a checked old basis, When another tab commits a replacement basis and generation, Then catch-up validates the new basis through a cold read
+app-unit	src/workspaceDeltaJournal.test.ts	248	no		Given a stale cached prefix and an already committed command followed by another write, When the old append retries, Then the cache retains neither stale content nor a false current frontier
+app-unit	src/workspaceDeltaJournal.test.ts	266	no		Given a stale tab frontier, When two different commands append concurrently, Then exactly one commits and the other cannot overwrite it
+app-unit	src/workspaceDeltaJournal.test.ts	282	no		Given a command already committed, When the same append retries, Then its receipt is idempotent and the frontier does not advance
+app-unit	src/workspaceDeltaJournal.test.ts	299	no		Given a failure after writing delta and frontier, When the receipt write fails, Then the transaction preserves the basis and publishes no partial command
+app-unit	src/workspaceDeltaJournal.test.ts	327	yes		Given altered %s in the saved delta chain, When a cold reader checks it, Then it refuses the frontier
+app-unit	src/workspaceDeltaJournal.test.ts	344	yes		Given changed %s in local frontier metadata, When a cold reader checks it, Then the integrity chain cannot be reused
+app-unit	src/workspaceDeltaJournal.test.ts	358	no		Given pending history in a saved snapshot, When creating an incremental basis, Then storage refuses to mark it fully admitted
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/access.rs	139	no		expired_automation_grant_loses_current_access
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	940	no		succession_summary_excludes_revoked_editors_and_reports_quorum
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	957	no		eligible_editors_are_unique_sorted_and_active

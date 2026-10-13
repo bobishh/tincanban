@@ -85,12 +85,20 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
     const app = (await import("/src/state.ts")).useTincanban()
     const A = await import("/@id/@automerge/automerge/slim")
     const storage = (await import("/src/storage.ts")).defaultStorage
+    const { executeCommand } = await import("/src/domain/commands.ts")
     const column = app.genericColumns.value.find(column => column.title === "Lead")!
     await app.executeCommandAsync({ kind: "createItem", id: "saved-preview-card", parentId: column.id, title: "Saved engineer" })
     const saved = app.getActiveDoc()!
-    const raw = A.change(A.clone(saved), draft => { draft.entities["saved-preview-card"].title = "Unverified replacement" })
-    await storage.commitWorkspace(saved.id, saved, A.save(saved), [], undefined, { bytes: A.save(raw), decisions: [] })
-    A.free(raw)
+    const previous = (await storage.loadCausalEvidence(saved.id))!
+    const change = await executeCommand(A.clone(saved), { kind: "patchItem", entityId: "saved-preview-card", title: "Unverified replacement" }, app.getCurrentProfile()!)
+    if (!change.ok) throw new Error(change.error.message)
+    const { receipt, proof, newDoc } = change.value
+    await storage.commitTransaction(saved.id, receipt, A.getLastLocalChange(newDoc)!, proof)
+    await storage.commitWorkspace(saved.id, saved, A.save(saved), [], undefined, {
+      bytes: A.save(newDoc), authorizationEvidence: previous.authorizationEvidence,
+      decisions: [...previous.decisions, { hash: receipt.changeHash, status: { type: "quarantined", reason: "Missing workspace authorization" } }],
+    })
+    A.free(newDoc)
   })
   await page.addInitScript(({ fail }) => {
     const instantiate = WebAssembly.instantiateStreaming.bind(WebAssembly)

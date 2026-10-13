@@ -3,12 +3,13 @@ import type { WorkspaceDocumentV2 } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { StorageDeltaRepository } from "./storageDeltaRepository"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
-import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence } from "./storageJournal"
-import { cloneCausalEvidence } from "./causalEvidence"
+import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence, type StoredChange } from "./storageJournal"
+import { cloneCausalEvidence, extendRawEvidence } from "./causalEvidence"
 
 export abstract class StorageDeltaAccess {
   protected abstract checkDeltaWrites(): void
   abstract registerWorkspace(id: string, title: string, archivedAt?: string | null, allowRestore?: boolean): Promise<void>
+  abstract listChanges(workspaceId: string): Promise<StoredChange[]>
   protected delta = new StorageDeltaRepository()
 
   async readDeltaFrontier(workspaceId: string) { return this.delta.frontier(workspaceId) }
@@ -43,7 +44,10 @@ export abstract class StorageDeltaAccess {
 
   async loadCausalEvidence(workspaceId: string): Promise<StoredCausalEvidence | null> {
     const snapshot = await readWorkspaceSnapshot(workspaceId)
-    return cloneCausalEvidence(snapshot?.causalEvidence)
+    const evidence = cloneCausalEvidence(snapshot?.causalEvidence)
+    if (!evidence) return null
+    const frontier = await this.delta.frontier(workspaceId)
+    return frontier && !frontier.invalidated ? evidence : extendRawEvidence(evidence, await this.listChanges(workspaceId))
   }
 
   protected async clearDeltaRows(transaction: IDBTransaction, workspaceId: string) {
