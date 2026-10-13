@@ -17,6 +17,8 @@ import { peerStore } from "./sync/peerStore"
 import * as causalAdmission from "./stateCausalAdmission"
 import * as changeAuthorization from "./sync/changeAuthorization"
 import { createSyncActions } from "./stateSyncActions"
+import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "./domain/proofs"
+import { publicKeyId, toBase64Url } from "./domain/identity"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -76,6 +78,35 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(admission).not.toHaveBeenCalled()
       expect(app.workspace.leads.map(lead => lead.company)).toContain("Incremental save")
     } finally { admission.mockRestore(); history.mockClear() }
+  })
+
+  it("Given an owner with two device certificates, When Archive and Applied alternate repeatedly, Then every save extends admission without replaying history", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Repeat transitions", role: "Engineer", status: "lead" })
+    const profile = await bootstrapIdentity()
+    const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair
+    const publicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))
+    const second = await createDelegatedCertificate(profile.privateKeys.devicePrivateKey, profile.device.deviceId,
+      profile.identity.personId, await publicKeyId(publicKey), publicKey, await certHashDefault(profile.certificate))
+    const certificates = [profile.certificate, second].sort((a, b) => b.signature.localeCompare(a.signature))
+    const pool = vi.spyOn(defaultProofStore, "listCertificates").mockResolvedValue(certificates)
+    await causalAdmission.reclassifyStoredWorkspace(app.activeWorkspace.id)
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    const doc = app.getActiveDoc()!
+    const item = Object.values(doc.entities).find(isItem)!
+    const applied = Object.values(doc.entities).find(entity => entity.kind === "column" && entity.title === "Applied")!
+    try {
+      for (let i = 0; i < 3; i++) {
+        await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
+        expect(admission).not.toHaveBeenCalled()
+        await app.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: applied.id, beforeId: null })
+        expect(admission).not.toHaveBeenCalled()
+      }
+      resetStateForTest()
+      await hydrate()
+      expect(admission).not.toHaveBeenCalled()
+      expect(app.getActiveDoc()!.entities[item.id]!.placement.parentId).toBe(applied.id)
+    } finally { pool.mockRestore(); admission.mockRestore() }
   })
 
   it.each(["missing", "policy", "raw", "decisions", "pending"])("Given %s admission evidence, When a local card is archived, Then complete admission runs before saving", async changed => {

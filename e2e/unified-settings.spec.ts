@@ -1,5 +1,36 @@
 import { expect, test, type Page, type Locator } from "./support/coverage"
 
+test("Given a healthy board, when Workspace settings opens, then it shows saved status without an empty sync warning", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
+  await expect(settings.getByRole("region", { name: "Workspace status" })).toContainText("Changes saved on this device.")
+  await expect(settings.getByRole("region", { name: "Workspace status" }).locator(".sync-error")).toHaveCount(0)
+  await expect(settings.getByText("Sync problem details", { exact: true })).toHaveCount(0)
+})
+
+test("Given a sync failure while local data stays saved, when Workspace settings opens, then the reason is visible and disappears after recovery", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
+  const setDiagnostic = (message: string) => page.evaluate(value => {
+    // Exercise the mounted app's actual reactive controller in this isolated tab.
+    const root = document.querySelector("#app") as Element & {
+      __vue_app__: { _instance: { setupState: { sync: { meshDiagnostic: { value: string } } } } }
+    }
+    root.__vue_app__._instance.setupState.sync.meshDiagnostic.value = value
+  }, message)
+  await setDiagnostic("Direct session ended: remote device disconnected.")
+  const warning = settings.getByRole("region", { name: "Workspace status" }).locator(".sync-error")
+  await expect(warning).toContainText("Direct session ended: remote device disconnected.")
+  await expect(warning).toContainText("Open Sync to check the connection.")
+  await expect(settings.getByRole("region", { name: "Workspace status" })).toContainText("Changes saved on this device.")
+  await setDiagnostic("")
+  await expect(warning).toHaveCount(0)
+})
+
 async function participantsFromSettings(page: Page, settings: Locator) {
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
   await page.getByRole("button", { name: "Sync", exact: true }).click()

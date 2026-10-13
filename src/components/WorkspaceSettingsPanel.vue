@@ -20,7 +20,7 @@ const logsUrl = computed(() => props.accessRole === "owner" || props.accessRole 
     <h4>Board status</h4>
     <p role="status">{{ saveState === 'error' ? 'Changes could not be saved on this device.' : saveState === 'saving' ? 'Saving changes on this device…' : 'Changes saved on this device.' }}</p>
     <p>{{ presence }}</p>
-    <p v-if="diagnostic" class="sync-error" role="status">Sync reported a problem. Changes saved on this device stay available.</p>
+    <p v-if="diagnostic" class="sync-error" role="status">{{ diagnostic }} Changes saved on this device stay available. Open Sync to check the connection.</p>
   </section>
   <slot />
   <AutomationsPanel :management="automations" :owner="owner" />
@@ -28,7 +28,6 @@ const logsUrl = computed(() => props.accessRole === "owner" || props.accessRole 
     <h4>Diagnostics</h4>
     <TelemetrySettingsPanel />
     <TelemetryDeliveryPanel />
-    <details v-if="diagnostic"><summary>Sync problem details</summary><p>{{ diagnostic }}</p></details>
     <a v-if="logsUrl" :href="logsUrl" target="_blank" rel="noopener">Open board logs</a>
     <details v-if="members.length">
       <summary>Device information for support</summary>

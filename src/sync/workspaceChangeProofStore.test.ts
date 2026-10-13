@@ -1,5 +1,16 @@
 import { expect, it } from "vitest"
-import { putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
+import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
+
+it("Given device certificates in enrollment order, When a proof is saved and reread, Then duplicate merging preserves its canonical representation", () => {
+  const record = {
+    signed: { signature: "same-proof" }, publicKey: "editor-key", ownerPublicKey: "owner-key",
+    certificates: [{ signature: "z-device" }, { signature: "a-device" }],
+    ownerCertificates: [{ signature: "z-owner" }, { signature: "a-owner" }],
+  } as unknown as WorkspaceChangeAuthorization
+  const first = mergeAuthorizationRecords([], [record])
+  expect(mergeAuthorizationRecords(first, first)).toEqual(first)
+  expect(record.certificates.map(cert => cert.signature)).toEqual(["z-device", "a-device"])
+})
 
 it("repairs a stored proof that predates owner authority fields when the proof is replayed", async () => {
   const workspaceId = `proof-repair-${crypto.randomUUID()}`

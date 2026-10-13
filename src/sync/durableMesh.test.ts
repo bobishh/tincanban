@@ -1230,7 +1230,9 @@ describe("durable runtime cleanup", () => {
     const internal = mesh as any
     internal.notify = vi.fn(async () => { throw new Error("storage unavailable") })
     internal.trace = vi.fn()
-    internal.report("Restart", new Error("node closed"))
+    const failure = new Error("node closed")
+    internal.report("Restart", failure)
+    expect(internal.trace).toHaveBeenCalledWith("diagnostic", { stage: "Restart", reason: "node closed" }, "warn", failure)
     await vi.waitFor(() => expect(internal.trace).toHaveBeenCalledWith(
       "diagnostic.notification.failed", { reason: "storage unavailable" }, "warn"))
     expect(internal.notify).toHaveBeenCalledOnce()

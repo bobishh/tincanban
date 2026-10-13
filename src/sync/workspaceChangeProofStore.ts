@@ -70,7 +70,11 @@ export function mergeAuthorizationRecords(existing: WorkspaceChangeAuthorization
   for (const record of [...existing, ...incoming]) {
     const key = authorizationVariantKey(record)
     const current = result.get(key)
-    result.set(key, current ? mergeAuthorization(current, record) : record)
+    result.set(key, current ? mergeAuthorization(current, record) : {
+      ...record,
+      certificates: mergeCertificates([], record.certificates),
+      ownerCertificates: mergeCertificates([], record.ownerCertificates),
+    })
   }
   return [...result.values()].sort((left, right) => left.signed.signature.localeCompare(right.signed.signature) ||
     canonicalizeJson(left.grant ?? null).localeCompare(canonicalizeJson(right.grant ?? null)))

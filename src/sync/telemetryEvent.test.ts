@@ -3,6 +3,21 @@ import { diagnosticEvent, entityTraceId } from "./telemetryEvent"
 
 const context = { project: "match", sessionId: "session-a", deviceId: "device-a", timestamp: 1_791_381_600_000, level: "info" }
 describe("telemetry event contract", () => {
+  it("Given a slow successful sync phase, When recorded as a warning, Then it does not report a sync failure", async () => {
+    const event = await diagnosticEvent("workspace.scope.phase", { phase: "transport.response-read", elapsedMs: 1185 }, { ...context, level: "warn" })
+    expect(event.status).toBe("warning")
+    expect(event.duration_ms).toBe(1185)
+    expect(event.attrs.error_code).toBeUndefined()
+  })
+  it.each([
+    ["workspace.scope.failed", {}],
+    ["session.rejected", {}],
+    ["workspace.admission.authority-changed", {}],
+    ["workspace.scope.phase", { error: new Error("private cause") }],
+    ["workspace.scope.phase", { errorCode: "OperationError" }],
+  ])("Given a real failure in %s, When encoded, Then its error status survives", async (name, detail) => {
+    expect((await diagnosticEvent(name, detail, { ...context, level: "warn" })).status).toBe("error")
+  })
   it("Given camel-case diagnostics and many changed fields, When encoded, Then intake identifiers and field limits are valid while opaque IDs retain case", async () => {
     const event = await diagnosticEvent("workspace.command.completed", {
       component: "Workspace", operation: "updateWorkspaceSettings", entityType: "BoardItem", outcome: "Saved",

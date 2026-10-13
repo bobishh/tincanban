@@ -305,7 +305,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <template #workspace>
         <WorkspaceSettingsPanel :workspace="app.workspace" :workspace-id="activeWorkspace.id"
           :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" :presence="meshPresenceLabel" :save-state="saveState" :access-role="confirmedRole"
-          :diagnostic="sync.meshDiagnostic" :members="meshMembers">
+          :diagnostic="sync.meshDiagnostic.value" :members="meshMembers">
           <PublicBoardControls v-if="uiReady" :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
         </WorkspaceSettingsPanel>
       </template>

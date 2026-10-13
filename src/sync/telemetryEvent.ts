@@ -53,7 +53,8 @@ function contextId(value: unknown, length: number): string {
   return typeof value === "string" && new RegExp(`^[0-9a-f]{${length}}$`).test(value) && !/^0+$/.test(value) ? value : ""
 }
 function outcome(event: string, detail: Record<string, unknown>, level: string): string {
-  return intakeIdentifier(detail.outcome) || (level === "warn" || /failed|rejected/.test(event) ? "error" : "ok")
+  return intakeIdentifier(detail.outcome) || (detail.error !== undefined || detail.errorCode !== undefined || level === "error" || /failed|rejected|authority-changed/.test(event)
+    ? "error" : level === "warn" ? "warning" : "ok")
 }
 export async function diagnosticEvent(event: string, detail: Record<string, unknown>, context: { project: string; sessionId: string; deviceId: string; timestamp: number; level: string }): Promise<TelemetryEvent> {
   const entityId = diagnosticId(detail.entityId ?? detail.recordId)
