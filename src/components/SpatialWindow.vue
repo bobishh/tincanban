@@ -49,7 +49,7 @@ function register() {
 }
 function raise() { if (descriptor.value) raiseWindow(descriptor.value) }
 function start(event: PointerEvent, resize = false) {
-  if (event.button !== 0 || (!resize && (event.target as HTMLElement).closest("button, a, input, textarea"))) return
+  if (event.button !== 0 || (!resize && (event.target as HTMLElement).closest("button, a, input, textarea, [data-discussion-text]"))) return
   if (!descriptor.value || maximized.value) return
   geometryAnimating.value = false
   raise()
@@ -130,6 +130,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .window-leave-active { transition: opacity var(--motion-fast) ease, transform var(--motion-panel) var(--motion-ease); pointer-events: none; }
 .window-leave-to { opacity: 0; transform: translateY(6px) scale(.985); }
 .spatial-titlebar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: none; padding: 8px 12px; min-height: 52px; border-bottom: 2px solid var(--line, #171717); background: var(--soft, #eee); touch-action: none; user-select: none; cursor: grab; }
+.spatial-titlebar :deep([data-discussion-text]) { user-select: text; -webkit-user-select: text; cursor: text; }
 .spatial-heading { flex: 1; min-width: 0; padding-block: 6px; line-height: 1.5; overflow-wrap: anywhere; }
 .spatial-controls { display: flex; flex: none; gap: 4px; }
 .spatial-controls button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 8px; }

@@ -34,20 +34,21 @@ browser	e2e/avatar-crop-responsive.spec.ts	18	no		Given a narrow mobile viewport
 browser	e2e/board-breakpoint.spec.ts	4	no		Given a 640px board, when resizing to a phone, then compact columns become a navigable single column only at 560px
 browser	e2e/board-discovery.spec.ts	4	no		Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear
 browser	e2e/board-discovery.spec.ts	50	no		Given empty workspace chat, when opened, then message area owns scrolling without a stray content scrollbar
-browser	e2e/board-drag-drop.spec.ts	74	no	Trello-like board dragging	Given detailed card text across columns, when dragging from card border, then selection stays empty and card moves
-browser	e2e/board-drag-drop.spec.ts	99	no	Trello-like board dragging	Given selectable card text, when dragging across its title, then text selects and card does not move
-browser	e2e/board-drag-drop.spec.ts	114	no	Trello-like board dragging	Given an active border drag, when Escape cancels, then selection clears and later text selection still works
-browser	e2e/board-drag-drop.spec.ts	139	no	Trello-like board dragging	Given an active border drag, when pointercancel fires, then no move commits and selection works afterward
-browser	e2e/board-drag-drop.spec.ts	164	no	Trello-like board dragging	Given filtered cards with a hidden neighbor, when dropping at the unchanged visible position, then hidden order and document revision stay unchanged
-browser	e2e/board-drag-drop.spec.ts	183	no	Trello-like board dragging	Given an unchanged card order, when cancelling a drag or dropping at its original position, then no document write occurs
-browser	e2e/board-drag-drop.spec.ts	212	no	Trello-like board dragging	Given a card and its neighbor, when dragged before the neighbor, then source stays in Vue DOM and separate preview marks one persisted move
-browser	e2e/board-drag-drop.spec.ts	246	no	Trello-like board dragging	Given an independent text selection, when a card border drag completes, then that selection remains intact
-browser	e2e/board-drag-drop.spec.ts	268	no	Trello-like board dragging	Given a mobile card stack, when a finger swipes immediately, then the board scroll gesture does not reorder cards
-browser	e2e/board-drag-drop.spec.ts	296	no	Trello-like board dragging	Given a mobile board, when an editor drags a card sideways, then the board scrolls and the card changes column
-browser	e2e/board-drag-drop.spec.ts	311	no	Trello-like board dragging	Given a mobile board, when a card is released over another column header, then that column receives it
-browser	e2e/board-drag-drop.spec.ts	324	no	Trello-like board dragging	Given three cards, when cards and columns reorder, then hints, neighbors and exact order survive reload
-browser	e2e/board-drag-drop.spec.ts	408	no	Trello-like board dragging	Given persistence fails, when a card is dragged and retried, then rollback and recovery preserve neighbors after reload
-browser	e2e/board-drag-drop.spec.ts	427	no	Trello-like board dragging	Given storage rejects a card move, when rollback finishes, then card text remains selectable
+browser	e2e/board-drag-drop.spec.ts	88	no	Trello-like board dragging	Given a detailed card, when dragging then cancelling or dropping, then the full card follows the grab point and a quiet gap clears
+browser	e2e/board-drag-drop.spec.ts	149	no	Trello-like board dragging	Given detailed card text across columns, when dragging from card border, then selection stays empty and card moves
+browser	e2e/board-drag-drop.spec.ts	174	no	Trello-like board dragging	Given board title text, when dragging it into another column, then the full card moves without selecting text or opening details
+browser	e2e/board-drag-drop.spec.ts	194	no	Trello-like board dragging	Given an active border drag, when Escape cancels, then drag clears and text selection still works inside details
+browser	e2e/board-drag-drop.spec.ts	213	no	Trello-like board dragging	Given an active border drag, when pointercancel fires, then no move commits and details remain selectable
+browser	e2e/board-drag-drop.spec.ts	232	no	Trello-like board dragging	Given filtered cards with a hidden neighbor, when dropping at the unchanged visible position, then hidden order and document revision stay unchanged
+browser	e2e/board-drag-drop.spec.ts	251	no	Trello-like board dragging	Given an unchanged card order, when cancelling a drag or dropping at its original position, then no document write occurs
+browser	e2e/board-drag-drop.spec.ts	280	no	Trello-like board dragging	Given a card and its neighbor, when dragged before the neighbor, then source stays in Vue DOM and separate preview marks one persisted move
+browser	e2e/board-drag-drop.spec.ts	314	no	Trello-like board dragging	Given an independent header selection, when a card border drag completes, then that selection remains intact
+browser	e2e/board-drag-drop.spec.ts	336	no	Trello-like board dragging	Given a mobile card stack, when a finger swipes immediately, then the board scroll gesture does not reorder cards
+browser	e2e/board-drag-drop.spec.ts	364	no	Trello-like board dragging	Given a mobile board, when an editor drags a card sideways, then the board scrolls and the card changes column
+browser	e2e/board-drag-drop.spec.ts	379	no	Trello-like board dragging	Given a mobile board, when a card is released over another column header, then that column receives it
+browser	e2e/board-drag-drop.spec.ts	392	no	Trello-like board dragging	Given three cards, when cards and columns reorder, then hints, neighbors and exact order survive reload
+browser	e2e/board-drag-drop.spec.ts	477	no	Trello-like board dragging	Given persistence fails, when a card is dragged and retried, then rollback and recovery preserve neighbors after reload
+browser	e2e/board-drag-drop.spec.ts	496	no	Trello-like board dragging	Given storage rejects a card move, when rollback finishes, then card details remain selectable
 browser	e2e/board-local.spec.ts	17	yes		Given local runtime is still loading at ${viewport.width}px, when tincanban opens, then a compact stage status leaves the shell visible until cards arrive
 browser	e2e/board-local.spec.ts	42	no		Given a saved base CV, when a generated PDF is attached to a lead, then it keeps template provenance and rejects incomplete artifacts
 browser	e2e/board-local.spec.ts	75	no		Given an archived card, when Archive opens, then it expands into a filtered column and can collapse again
@@ -127,9 +128,9 @@ browser	e2e/device-sync-dialog.spec.ts	39	no		Given Device sync shows an invalid
 browser	e2e/device-sync-dialog.spec.ts	49	no		Given many devices on mobile, when their list is scrolled, then the list moves and the board stays locked
 browser	e2e/discussion-entry-points.spec.ts	18	no		Given board card, when Discuss sends then source link opens card and workspace Reply opens a thread
 browser	e2e/discussion-entry-points.spec.ts	65	no		Given lead metadata selection spanning fields, when Discuss then captured quote attaches and returns to source
-browser	e2e/discussion-entry-points.spec.ts	85	no		Given board text, when pointer selects company then Discuss opens quote without opening card
-browser	e2e/discussion-entry-points.spec.ts	104	no		Given card context menu, when right click then native menu is suppressed and Escape dismisses app menu
-browser	e2e/discussion-entry-points.spec.ts	123	no		Given window controls, when maximize restore and cycle then fixed SVG controls keep header reachable
+browser	e2e/discussion-entry-points.spec.ts	85	no		Given board text, when clicking opens details then selecting company opens a quoted discussion
+browser	e2e/discussion-entry-points.spec.ts	106	no		Given board and open card details, when right clicking then discussion actions appear only inside details
+browser	e2e/discussion-entry-points.spec.ts	130	no		Given window controls, when maximize restore and cycle then fixed SVG controls keep header reachable
 browser	e2e/document-editing.spec.ts	23	no		Given a generic card, when Edit is selected, then its visible fields can be changed from the detail view
 browser	e2e/document-editing.spec.ts	39	no		Given a real file attachment, when it is reopened, then tincanban can preview and download its persisted bytes
 browser	e2e/document-editing.spec.ts	73	no		Given document controls fail to load, when item detail opens, then pending and error states preserve board access
@@ -159,11 +160,11 @@ browser	e2e/favicon.spec.ts	32	no		Given a ready board with no peers, when its t
 browser	e2e/favicon.spec.ts	42	no		Given app startup fails, when its tab opens, then tincanban icon still loads
 browser	e2e/favicon.spec.ts	49	no		Given favicon animation cannot load, when the board opens, then the static icon and local board remain available
 browser	e2e/filtered-board-layout.spec.ts	32	no		Given a fresh desktop board, when filtering, searching, and moving a card, then layout and hidden cards persist
-browser	e2e/filtered-board-layout.spec.ts	122	no		Given a mobile status filter, when one column remains then it uses the screen without redundant navigation
-browser	e2e/filtered-board-layout.spec.ts	140	no		Given a horizontally scrolled mobile board, when search changes visible columns, then the first matching column returns into view
-browser	e2e/filtered-board-layout.spec.ts	152	no		Given filtered cards and a failed save, when dragging ends then the preview disappears and the card returns
-browser	e2e/filtered-board-layout.spec.ts	173	no		Given a card being dragged, when document data refreshes then drag continues and its ghost disappears on release
-browser	e2e/filtered-board-layout.spec.ts	199	yes		Given a card being dragged, when filtering to ${query} rebuilds the board then drag cancels without leaving a ghost or saving a move
+browser	e2e/filtered-board-layout.spec.ts	123	no		Given a mobile status filter, when one column remains then it uses the screen without redundant navigation
+browser	e2e/filtered-board-layout.spec.ts	141	no		Given a horizontally scrolled mobile board, when search changes visible columns, then the first matching column returns into view
+browser	e2e/filtered-board-layout.spec.ts	153	no		Given filtered cards and a failed save, when dragging ends then the preview disappears and the card returns
+browser	e2e/filtered-board-layout.spec.ts	174	no		Given a card being dragged, when document data refreshes then drag continues and its ghost disappears on release
+browser	e2e/filtered-board-layout.spec.ts	200	yes		Given a card being dragged, when filtering to ${query} rebuilds the board then drag cancels without leaving a ghost or saving a move
 browser	e2e/footer-animation.spec.ts	3	yes		Given workspace permissions ${unavailable ? "fail" : "load"}, when footer animation replays, then it completes without blocking controls
 browser	e2e/history-restore.spec.ts	30	no		Given a moved item, when restore fails then retries, then current placement is preserved until durable compensation succeeds
 browser	e2e/inline-add.spec.ts	15	yes		Given two cards at ${width}px, when hovering their gap, then add appears there and failed insertion retries in place

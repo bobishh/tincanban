@@ -229,7 +229,6 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
                 :lead="leadForItem(item)"
                 :notes="cardNotes(item)"
                 :fields="cardFields(item)"
-                :bindings="activeBoard?.preset?.bindings"
                 :has-filters="expandFilteredCards || Boolean(cardNoteSearchMatch(item))"
                 :show-fields="hasFilters"
                 :search-query="cardNoteSearchMatch(item)?.query"
@@ -254,7 +253,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <form v-if="isEditingBoard" class="add-column-card" @submit.prevent="addBoardColumn"><label class="sr-only" for="new-board-column">New column</label><input id="new-board-column" v-model="newBoardColumnTitle" placeholder="New column" :disabled="addingBoardColumn" /><label><input type="checkbox" :checked="newBoardColumnArchive" :disabled="genericColumns.some(column => isArchiveColumn(column)) || addingBoardColumn" @change="selectArchiveColumn(($event.target as HTMLInputElement).checked)" /> Archive column</label><label><input v-model="newBoardColumnCollapsible" type="checkbox" :disabled="addingBoardColumn" /> Allow this column to collapse</label><button class="button button-primary" type="submit" :disabled="addingBoardColumn">{{ addingBoardColumn ? 'Adding…' : '+ Add column' }}</button><p v-if="addBoardColumnError" class="form-error" role="alert">{{ addBoardColumnError }}</p></form>
     </section>
 
-    <BoardDragOverlay :controller="app.board" :filtered="hasFilters" />
+    <BoardDragOverlay :controller="app.board" />
 
     <!-- Dialogs -->
     <WorkspacesDialog

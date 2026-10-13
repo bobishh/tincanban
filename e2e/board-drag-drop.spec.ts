@@ -31,6 +31,19 @@ async function textSelection(page: Page) {
   return page.evaluate(() => window.getSelection()?.toString() ?? "")
 }
 
+async function selectDetailTitle(page: Page, title: string) {
+  await page.getByRole("button", { name: `Open ${title}`, exact: true }).click()
+  const details = page.getByRole("dialog", { name: "Item overview" })
+  const heading = details.getByRole("heading", { name: title, exact: true })
+  await expect(heading).toBeVisible()
+  const bounds = (await heading.boundingBox())!
+  await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(bounds.x + bounds.width - 2, bounds.y + bounds.height / 2, { steps: 8 })
+  await page.mouse.up()
+  expect(await textSelection(page)).toContain(title.split(" ")[0])
+}
+
 async function settleBoard(page: Page) {
   await expect(page.getByRole("status", { name: "Board status" })).toHaveCount(0)
   await page.locator(".board").evaluate(element => Promise.all(element.getAnimations({ subtree: true })
@@ -72,6 +85,67 @@ async function touchDrag(context: BrowserContext, page: Page, sourceSelector: st
 }
 
 test.describe("Trello-like board dragging", () => {
+  test("Given a detailed card, when dragging then cancelling or dropping, then the full card follows the grab point and a quiet gap clears", async ({ page }, testInfo) => {
+    await createBlankWorkspace(page, "Full card drag preview")
+    await createItem(page, "Drag this entire card", "To do")
+    await createItem(page, "Destination neighbor", "Doing")
+    await setItemBody(page, "Drag this entire card", "**Visible detail** with a second line.\n\n- [ ] Keep this task")
+    await settleBoard(page)
+    const source = page.locator('.lead-card[data-item-id]:has-text("Drag this entire card")')
+    await expect(source.locator(".markdown-content strong")).toHaveText("Visible detail")
+    const neighbor = page.locator('.lead-card[data-item-id]:has-text("Destination neighbor")')
+    const original = (await source.boundingBox())!
+    const destination = (await neighbor.boundingBox())!
+    const text = await source.innerText()
+    const appearance = await source.evaluate(card => ({
+      border: getComputedStyle(card).borderImageSource,
+      fill: getComputedStyle(card, "::before").backgroundImage,
+    }))
+    for (const outcome of ["cancel", "drop"]) {
+      await page.mouse.move(original.x + 4, original.y + 4)
+      await page.mouse.down()
+      const point = { x: destination.x + destination.width / 2, y: destination.y + 5 }
+      await page.mouse.move(point.x, point.y, { steps: 16 })
+      const preview = page.locator(".board-drag-preview")
+      await expect(preview).toBeVisible()
+      await expect(preview).toHaveText(text, { useInnerText: true })
+      await expect(page.locator(".board-drop-marker")).toHaveCount(0)
+      await expect(neighbor).toHaveClass(/board-drop-gap/)
+      expect((await neighbor.boundingBox())!.y - destination.y).toBeCloseTo(32, 0)
+      await expect(source).toHaveCSS("visibility", "hidden")
+      await expect.poll(async () => {
+        const box = (await preview.boundingBox())!
+        return Math.abs(box.x - (point.x - 4)) + Math.abs(box.y - (point.y - 4))
+      }).toBeLessThan(2)
+      const box = (await preview.boundingBox())!
+      expect(box.width).toBeCloseTo(original.width, 0)
+      expect(box.height).toBeCloseTo(original.height, 0)
+      await expect(preview).toHaveCSS("opacity", "1")
+      expect(await preview.locator(".lead-card").evaluate(card => ({
+        border: getComputedStyle(card).borderImageSource,
+        fill: getComputedStyle(card, "::before").backgroundImage,
+      }))).toEqual(appearance)
+      // A second pointer position must move the same card without moving the insertion gap.
+      await page.mouse.move(point.x + 20, point.y + 10)
+      await expect.poll(async () => (await preview.boundingBox())!.x).toBeCloseTo(box.x + 20, 0)
+      expect((await neighbor.boundingBox())!.y - destination.y).toBeCloseTo(32, 0)
+      if (outcome === "cancel") {
+        await page.screenshot({ path: testInfo.outputPath("full-card-drag.png") })
+        await page.keyboard.press("Escape")
+      }
+      await page.mouse.up()
+      await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
+      await expect(source).toHaveCSS("visibility", "visible")
+      await expect(source).toHaveCSS("opacity", "1")
+      await expect(page.getByRole("region", { name: outcome === "cancel" ? "To do" : "Doing", exact: true }).locator(".card-main > strong"))
+        .toHaveText(outcome === "cancel" ? ["Drag this entire card"] : ["Drag this entire card", "Destination neighbor"])
+      if (outcome === "drop") await expect(page.getByRole("status")).toContainText("Item moved")
+    }
+    await page.reload()
+    await expect(page.getByRole("region", { name: "Doing", exact: true }).locator(".card-main > strong"))
+      .toHaveText(["Drag this entire card", "Destination neighbor"])
+  })
+
   test("Given detailed card text across columns, when dragging from card border, then selection stays empty and card moves", async ({ page }) => {
     await createBlankWorkspace(page, "Drag selection arbitration")
     await createItem(page, "Border dragged card", "To do")
@@ -85,34 +159,39 @@ test.describe("Trello-like board dragging", () => {
     await page.mouse.down()
     await page.mouse.move(source.x + 5, source.y + 4)
     await expect(page.locator(".board")).toHaveClass(/board-drag-pending/)
-    expect(await page.locator(".board-drag-pending [data-discussion-text]").first().evaluate(element => getComputedStyle(element).userSelect)).toBe("none")
+    expect(await page.locator(".board-drag-pending .card-main").first().evaluate(element => getComputedStyle(element).userSelect)).toBe("none")
     expect(await textSelection(page)).toBe("")
     await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 18 })
     await expect(page.locator(".board-drag-preview")).toBeVisible()
-    await expect(page.locator(".board-drop-marker")).toHaveAttribute("data-target-id", await page.getByRole("region", { name: "Doing", exact: true }).getAttribute("data-column-id"))
-    expect(await page.locator(".board-dragging [data-discussion-text]").first().evaluate(element => getComputedStyle(element).userSelect)).toBe("none")
+    await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await page.getByRole("region", { name: "Doing", exact: true }).getAttribute("data-column-id"))
+    expect(await page.locator(".board-dragging .card-main").first().evaluate(element => getComputedStyle(element).userSelect)).toBe("none")
     expect(await textSelection(page)).toBe("")
     await page.mouse.up()
     await expect(page.getByRole("region", { name: "Doing", exact: true }).getByText("Border dragged card", { exact: true })).toBeVisible()
     expect(await textSelection(page)).toBe("")
   })
 
-  test("Given selectable card text, when dragging across its title, then text selects and card does not move", async ({ page }) => {
-    await createBlankWorkspace(page, "Text selection arbitration")
-    await createItem(page, "Selectable card title", "To do")
-    const title = page.getByText("Selectable card title", { exact: true })
+  test("Given board title text, when dragging it into another column, then the full card moves without selecting text or opening details", async ({ page }) => {
+    await createBlankWorkspace(page, "Title drag arbitration")
+    await createItem(page, "Drag from title", "To do")
+    const title = page.getByText("Drag from title", { exact: true })
     const bounds = (await title.boundingBox())!
+    const destination = (await page.getByRole("region", { name: "Doing", exact: true }).locator(".card-stack").boundingBox())!
     await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
     await page.mouse.down()
-    await page.mouse.move(bounds.x + bounds.width - 2, bounds.y + bounds.height / 2, { steps: 8 })
+    await page.mouse.move(destination.x + destination.width / 2, destination.y + 100, { steps: 12 })
+    await expect(page.locator(".board-drag-preview")).toContainText("Drag from title")
+    expect(await textSelection(page)).toBe("")
+    await expect(page.getByRole("button", { name: "Discuss selection", exact: true })).toHaveCount(0)
     await page.mouse.up()
-    expect(await textSelection(page)).toContain("Selectable")
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
-    await expect(page.getByRole("region", { name: "To do", exact: true }).getByText("Selectable card title", { exact: true })).toBeVisible()
-    await expect(page.getByText("Item moved", { exact: true })).toHaveCount(0)
+    await expect(page.getByRole("status")).toContainText("Item moved")
+    await expect(page.getByRole("dialog", { name: "Item overview" })).toHaveCount(0)
+    await expect(page.getByRole("region", { name: "Doing", exact: true }).getByText("Drag from title", { exact: true })).toBeVisible()
+    await selectDetailTitle(page, "Drag from title")
+    await expect(page.getByRole("button", { name: "Discuss selection", exact: true })).toBeVisible()
   })
 
-  test("Given an active border drag, when Escape cancels, then selection clears and later text selection still works", async ({ page }) => {
+  test("Given an active border drag, when Escape cancels, then drag clears and text selection still works inside details", async ({ page }) => {
     await createBlankWorkspace(page, "Escape drag selection")
     await createItem(page, "Escape source", "To do")
     const source = await page.locator('.lead-card:has-text("Escape source")').boundingBox()
@@ -124,20 +203,14 @@ test.describe("Trello-like board dragging", () => {
     await expect(page.locator(".board-drag-preview")).toBeVisible()
     await page.keyboard.press("Escape")
     await page.mouse.up()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await expect(page.locator(".board")).not.toHaveClass(/board-drag/)
     await expect(page.getByRole("region", { name: "To do", exact: true }).getByText("Escape source", { exact: true })).toBeVisible()
     expect(await textSelection(page)).toBe("")
-    const title = page.getByText("Escape source", { exact: true })
-    const bounds = (await title.boundingBox())!
-    await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(bounds.x + bounds.width - 2, bounds.y + bounds.height / 2, { steps: 8 })
-    await page.mouse.up()
-    expect(await textSelection(page)).toContain("Escape")
+    await selectDetailTitle(page, "Escape source")
   })
 
-  test("Given an active border drag, when pointercancel fires, then no move commits and selection works afterward", async ({ page }) => {
+  test("Given an active border drag, when pointercancel fires, then no move commits and details remain selectable", async ({ page }) => {
     await createBlankWorkspace(page, "Pointer cancel drag selection")
     await createItem(page, "Pointer cancel source", "To do")
     const source = await page.locator('.lead-card:has-text("Pointer cancel source")').boundingBox()
@@ -149,17 +222,11 @@ test.describe("Trello-like board dragging", () => {
     await expect(page.locator(".board-drag-preview")).toBeVisible()
     await page.evaluate(() => document.dispatchEvent(new PointerEvent("pointercancel", { bubbles: true })))
     await page.mouse.up()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await expect(page.locator(".board")).not.toHaveClass(/board-drag/)
     await expect(page.getByRole("region", { name: "To do", exact: true }).getByText("Pointer cancel source", { exact: true })).toBeVisible()
     expect(await textSelection(page)).toBe("")
-    const title = page.getByText("Pointer cancel source", { exact: true })
-    const bounds = (await title.boundingBox())!
-    await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(bounds.x + bounds.width - 2, bounds.y + bounds.height / 2, { steps: 8 })
-    await page.mouse.up()
-    expect(await textSelection(page)).toContain("Pointer cancel")
+    await selectDetailTitle(page, "Pointer cancel source")
   })
 
   test("Given filtered cards with a hidden neighbor, when dropping at the unchanged visible position, then hidden order and document revision stay unchanged", async ({ page }) => {
@@ -175,7 +242,7 @@ test.describe("Trello-like board dragging", () => {
     await page.mouse.move(source.x + source.width / 2 + 12, source.y + source.height / 2, { steps: 3 })
     await expect(page.locator(".board-drag-preview")).toBeVisible()
     await page.mouse.up()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     expect(await page.evaluate(async () => (await import("/src/stateContext.ts")).stateRuntime.docVersion.value)).toBe(initial)
     await search.fill("")
     await expect(page.getByRole("region", { name: "To do", exact: true }).locator(".card-main > strong")).toHaveText(["Shown First", "Hidden", "Shown Second"])
@@ -196,14 +263,14 @@ test.describe("Trello-like board dragging", () => {
     await expect(page.locator(".board-drag-preview")).toBeVisible()
     await page.keyboard.press("Escape")
     await page.mouse.up()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     expect(await revision()).toBe(initial)
     await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
     await page.mouse.down()
     await page.mouse.move(source.x + source.width / 2 + 12, source.y + source.height / 2, { steps: 3 })
     await expect(page.locator(".board-drag-preview")).toBeVisible()
     await page.mouse.up()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     expect(await revision()).toBe(initial)
     await expect(page.getByRole("region", { name: "To do", exact: true }).locator(".card-main > strong")).toHaveText(["First", "Second"])
     await card.click()
@@ -226,34 +293,34 @@ test.describe("Trello-like board dragging", () => {
     await page.mouse.down()
     await page.mouse.move(neighborBox.x + neighborBox.width / 2, neighborBox.y + 5, { steps: 12 })
     await expect(page.locator(".board-drag-preview")).toBeVisible()
-    await expect(page.locator(".board-drop-marker")).toHaveAttribute("data-before-id", /.+/)
-    const insertionLine = await page.locator(".board-drop-marker").boundingBox()
-    const sourceBounds = await source.boundingBox()
-    expect(insertionLine?.width).toBeGreaterThan(100)
-    expect(insertionLine?.height).toBe(4)
+    await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-before-id", /.+/)
+    const insertionGap = await page.locator(".board-drop-gap").evaluate(element => Number.parseFloat(getComputedStyle(element).marginTop))
+    const sourceBounds = await source.evaluate(element => ({ width: element.getBoundingClientRect().width }))
+    expect(insertionGap).toBe(32)
+    await expect(page.locator(".board-drop-marker")).toHaveCount(0)
     expect(sourceBounds?.width).toBeGreaterThan(100)
     const sourceStillOwned = await source.evaluate(element => element === (window as any).__dragSourceNode && element.parentElement === (window as any).__dragSourceParent && element.nextElementSibling === (window as any).__dragSourceNext)
     expect(sourceStillOwned).toBe(true)
     await page.mouse.up()
     await expect(page.getByRole("region", { name: "To do", exact: true }).locator(".card-main > strong")).toHaveText(["Neighbor", "Keep here"])
     await expect(page.getByRole("status")).toContainText("Item moved")
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => {
       const { stateRuntime } = await import("/src/stateContext.ts")
       return stateRuntime.docVersion.value - (window as any).__dragVersionBefore
     })).toBe(1)
   })
 
-  test("Given an independent text selection, when a card border drag completes, then that selection remains intact", async ({ page }) => {
+  test("Given an independent header selection, when a card border drag completes, then that selection remains intact", async ({ page }) => {
     await createBlankWorkspace(page, "Preserved independent selection")
     await createItem(page, "Preserve this selection", "To do")
     await createItem(page, "Selection drop target", "Doing")
-    const title = page.getByText("Preserve this selection", { exact: true })
+    const title = page.locator(".topbar .workspace-heading")
     await title.evaluate(element => {
       const text = element.firstChild
       if (!text) throw new Error("Card title text missing")
       const selection = document.getSelection()!
-      selection.setBaseAndExtent(text, 0, text, "Preserve this".length)
+      selection.setBaseAndExtent(text, 0, text, Math.min(12, text.textContent?.length ?? 0))
     })
     const selected = await textSelection(page)
     const source = (await page.locator('.lead-card:has-text("Preserve this selection")').boundingBox())!
@@ -344,7 +411,7 @@ test.describe("Trello-like board dragging", () => {
       await page.mouse.down()
       await page.mouse.move(box.x + box.width / 2, box.y + 28, { steps: 20 })
       await expect(target.locator(".empty-column")).toBeVisible()
-      await expect(page.locator(".board-drop-marker")).toHaveAttribute("data-target-id", await target.getAttribute("data-column-id"))
+      await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await target.getAttribute("data-column-id"))
       await page.mouse.up()
       await expect(page.getByRole("status")).toContainText("Item moved")
       await expect(titles("Doing")).toHaveText(["Third"])
@@ -417,7 +484,7 @@ test.describe("Trello-like board dragging", () => {
     const source = page.getByRole("region", { name: "To do", exact: true }).locator(".card-main > strong")
     await expect(source).toHaveText(["Keep here", "Neighbor"])
     await expect(page.getByRole("region", { name: "Doing", exact: true }).getByText("No items", { exact: true })).toBeVisible()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await page.evaluate(() => { (window as any).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
     await drag(page, '.lead-card[data-item-id]:has-text("Keep here")', '[role="region"][aria-label="Doing"] .card-stack')
     await expect(page.getByRole("status")).toContainText("Item moved")
@@ -426,21 +493,15 @@ test.describe("Trello-like board dragging", () => {
     await expect(page.getByRole("region", { name: "Doing", exact: true }).locator(".card-main > strong")).toHaveText(["Keep here"])
   })
 
-  test("Given storage rejects a card move, when rollback finishes, then card text remains selectable", async ({ page }) => {
+  test("Given storage rejects a card move, when rollback finishes, then card details remain selectable", async ({ page }) => {
     await createBlankWorkspace(page, "Failed drag selection recovery")
     await createItem(page, "Selectable after rollback", "To do")
     await page.evaluate(() => { (window as any).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
     await drag(page, '.lead-card[data-item-id]:has-text("Selectable after rollback")', '[role="region"][aria-label="Doing"] .card-stack')
     await expect(page.getByRole("status")).toContainText("Move failed")
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await expect(page.getByRole("region", { name: "To do", exact: true }).getByText("Selectable after rollback", { exact: true })).toBeVisible()
     expect(await textSelection(page)).toBe("")
-    const title = page.getByText("Selectable after rollback", { exact: true })
-    const bounds = (await title.boundingBox())!
-    await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2)
-    await page.mouse.down()
-    await page.mouse.move(bounds.x + bounds.width - 2, bounds.y + bounds.height / 2, { steps: 8 })
-    await page.mouse.up()
-    expect(await textSelection(page)).toContain("Selectable after")
+    await selectDetailTitle(page, "Selectable after rollback")
   })
 })

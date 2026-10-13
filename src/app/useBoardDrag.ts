@@ -1,27 +1,22 @@
 import { nextTick, ref, shallowRef, type Ref } from "vue"
-import type { Lead } from "../types"
-import type { Item } from "../domain/model"
 import { isItem } from "../domain/model"
 import type { AppBoardContext } from "./useAppBoard"
 import { commitBoardDrop } from "./commitBoardDrop"
-import { findDragTarget, type DropMarker, type MarkerPosition } from "./boardDragTarget"
+import { findDragTarget, type DropMarker } from "./boardDragTarget"
+import { createBoardDragGap } from "./boardDragGap"
 import { captureSelection, restoreSelection, preserveSelectionAfterMove, type SelectionSnapshot } from "./boardDragSelection"
 import "./boardDrag.css"
 
 type DragPresentation = {
-  leadForItem(item: Item): Pick<Lead, "company" | "role" | "priority" | "fitScore" | "location"> | undefined
-  cardFields(item: Item): { id: string; title: string; value: string }[]
-  cardNotes(item: Item): string | null
   highlightMoved(id: string, kind: "item" | "column"): void
 }
-export type DragPreview = { id: string; kind: "item" | "column"; title: string; lead?: ReturnType<DragPresentation["leadForItem"]>; ageLevel?: string; ageLabel?: string; body?: string; context: ReturnType<DragPresentation["cardFields"]>; notes?: string; width: number }
-type ActiveDrag = { workspaceId: string; boardId: string; id: string; kind: "item" | "column"; source: HTMLElement; sourceParentId: string; x: number; y: number; originX: number; originY: number; started: boolean; pointerId: number; touch: boolean; preview: DragPreview; target: DropMarker | null }
+export type DragPreview = { id: string; kind: "item" | "column"; title: string; card?: HTMLElement; width: number; height?: number }
+type ActiveDrag = { workspaceId: string; boardId: string; id: string; kind: "item" | "column"; source: HTMLElement; sourceParentId: string; x: number; y: number; originX: number; originY: number; grabX: number; grabY: number; started: boolean; pointerId: number; touch: boolean; preview: DragPreview; target: DropMarker | null }
 
 export function useBoardDragController(core: AppBoardContext, presentation: DragPresentation) {
   const dragPreview = shallowRef<DragPreview | null>(null)
-  const dropMarker = shallowRef<DropMarker | null>(null)
   const dragPreviewElement: Ref<HTMLElement | null> = ref(null)
-  const dropMarkerElement: Ref<HTMLElement | null> = ref(null)
+  const gap = createBoardDragGap()
   let board: HTMLElement | null = null
   let active: ActiveDrag | null = null
   let longPress: ReturnType<typeof setTimeout> | undefined
@@ -37,11 +32,15 @@ export function useBoardDragController(core: AppBoardContext, presentation: Drag
     selectionSnapshot = null
     active = null
     dragPreview.value = null
-    dropMarker.value = null
+    gap.clear()
     frames.cancel()
   }
   const updateTarget = () => {
-    if (active && board) refreshTarget(active, board, dropMarker, dropMarkerElement)
+    // Measure the unchanged board, then reopen the visual gap. Its extra spacing
+    // must not change the insertion target while the pointer stays still.
+    gap.clear(); if (!active || !board) return
+    active.target = findDragTarget(active, board)?.marker ?? null
+    gap.show(active.target, active.source, board)
   }
   const frames = dragFrameLoop(() => {
     if (!active) return false
@@ -73,7 +72,7 @@ export function useBoardDragController(core: AppBoardContext, presentation: Drag
   }
   const onPointerDown = (event: PointerEvent) => {
     if (!board || active || !canStartDrag(event, core)) return
-    const drag = locateDragSource(event, board, core, presentation)
+    const drag = locateDragSource(event, board, core)
     if (!drag) return
     const moving: ActiveDrag = { ...drag, x: event.clientX, y: event.clientY, originX: event.clientX, originY: event.clientY, started: false, pointerId: event.pointerId, touch: event.pointerType === "touch", target: null }
     active = moving
@@ -133,9 +132,8 @@ export function useBoardDragController(core: AppBoardContext, presentation: Drag
     attach(current)
     if (active && !validDrag(active, current, core)) clear()
   }
-  return { dragPreview, dropMarker, setupBoardDrag, destroyBoardDrag: detach,
+  return { dragPreview, setupBoardDrag, destroyBoardDrag: detach,
     setDragPreviewElement: (element: HTMLElement | null) => { dragPreviewElement.value = element },
-    setDropMarkerElement: (element: HTMLElement | null) => { dropMarkerElement.value = element },
   }
 }
 
@@ -165,25 +163,10 @@ function canDrag(core: AppBoardContext) { return core.canEditItems.value || core
 function canStartDrag(event: PointerEvent, core: AppBoardContext) {
   if (event.button !== 0 || !canDrag(core)) return false
   const target = event.target instanceof Element ? event.target : null
-  if (target?.closest("[data-discussion-text]") && pointerHitsText(event)) return false
   const control = target?.closest("button, input, select, textarea, a, [contenteditable=true]")
   return Boolean(target && (!control || control.matches(".card-open-button") && !core.isEditingBoard.value))
 }
-function pointerHitsText(event: PointerEvent) {
-  const caret = document.caretRangeFromPoint?.(event.clientX, event.clientY)
-  const position = document.caretPositionFromPoint?.(event.clientX, event.clientY)
-  const text = caret?.startContainer ?? position?.offsetNode
-  const offset = caret?.startOffset ?? position?.offset
-  if (!text || offset === undefined || text.nodeType !== Node.TEXT_NODE) return false
-  const length = text.textContent?.length ?? 0
-  if (!length) return false
-  const range = document.createRange()
-  range.setStart(text, Math.max(0, offset - 1))
-  range.setEnd(text, Math.min(length, offset + 1))
-  return [...range.getClientRects()].some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom)
-}
-
-function locateDragSource(event: PointerEvent, board: HTMLElement, core: AppBoardContext, presentation: DragPresentation) {
+function locateDragSource(event: PointerEvent, board: HTMLElement, core: AppBoardContext) {
   const target = event.target instanceof Element ? event.target : null
   if (!target) return null
   const kind: ActiveDrag["kind"] = core.isEditingBoard.value ? "column" : "item"
@@ -193,36 +176,34 @@ function locateDragSource(event: PointerEvent, board: HTMLElement, core: AppBoar
   const id = source.dataset[kind === "item" ? "itemId" : "columnId"]
   if (!id) return null
   const bounds = source.getBoundingClientRect()
-  const preview = createDragPreview(id, kind, bounds.width, core, presentation)
+  const preview = createDragPreview(id, kind, source, core)
   if (!preview) return null
-  Object.assign(preview, previewAge(source))
-  return { workspaceId: core.tincanban.activeWorkspace.id, boardId: core.tincanban.activeBoard.value!.id, id, kind, source, sourceParentId: source.closest<HTMLElement>("[data-column-id]")?.dataset.columnId ?? "", preview }
+  return { workspaceId: core.tincanban.activeWorkspace.id, boardId: core.tincanban.activeBoard.value!.id, id, kind, source, sourceParentId: source.closest<HTMLElement>("[data-column-id]")?.dataset.columnId ?? "", preview, grabX: event.clientX - bounds.left, grabY: event.clientY - bounds.top }
 }
 
-function previewAge(source: HTMLElement) {
-  return { ageLevel: [...source.classList].find(name => name.startsWith("card-aging-")),
-    ageLabel: source.querySelector(".card-activity-age")?.textContent ?? undefined }
-}
-
-function createDragPreview(id: string, kind: "item" | "column", width: number, core: AppBoardContext, presentation: DragPresentation): DragPreview | null {
+function createDragPreview(id: string, kind: "item" | "column", source: HTMLElement, core: AppBoardContext): DragPreview | null {
+  const { width, height } = source.getBoundingClientRect()
   if (kind === "column") {
     const column = core.tincanban.genericColumns.value.find(candidate => candidate.id === id)
-    return column ? { id, kind, title: column.title, width, context: [] } : null
+    return column ? { id, kind, title: column.title, width } : null
   }
   const item = core.tincanban.getActiveDoc()?.entities[id]
   if (!isItem(item)) return null
-  const lead = presentation.leadForItem(item)
-  return { id, kind, title: item.title, lead, body: item.body, context: presentation.cardFields(item), notes: presentation.cardNotes(item) ?? undefined, width }
+  // Snapshot the rendered card, including filtered excerpts, fields, aging and
+  // discussion badges. The original remains owned by Vue in its source stack.
+  const card = source.cloneNode(true) as HTMLElement
+  card.classList.remove("card-moved")
+  card.dataset.inkId = id
+  delete card.dataset.itemId
+  for (const element of [card, ...card.querySelectorAll<HTMLElement>("*")]) {
+    element.removeAttribute("id")
+    for (const name of element.getAttributeNames()) if (name.startsWith("data-discussion-")) element.removeAttribute(name)
+  }
+  return { id, kind, title: item.title, card, width, height }
 }
 
 function positionPreview(drag: ActiveDrag, element: HTMLElement | null) {
-  if (element) element.style.transform = `translate3d(${drag.x + 14}px, ${drag.y + 14}px, 0)`
-}
-function applyMarker(position: MarkerPosition, element: HTMLElement | null) {
-  if (!element) return
-  element.style.width = `${position.width}px`
-  element.style.height = position.vertical ? `${position.height ?? 0}px` : "4px"
-  element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`
+  if (element) element.style.transform = `translate3d(${drag.x - drag.grabX}px, ${drag.y - drag.grabY}px, 0)`
 }
 function nearScrollEdge(drag: ActiveDrag, board: HTMLElement | null) {
   if (!board) return false
@@ -255,21 +236,6 @@ function dragFrameLoop(run: () => boolean) {
   const tick = () => { id = 0; if (run()) request() }
   const request = () => { if (!id) id = requestAnimationFrame(tick) }
   return { request, cancel() { if (id) cancelAnimationFrame(id); id = 0 } }
-}
-
-function refreshTarget(drag: ActiveDrag, board: HTMLElement, marker: Ref<DropMarker | null>, element: Ref<HTMLElement | null>) {
-  const result = findDragTarget(drag, board)
-  drag.target = result?.marker ?? null
-  if (!result) { if (marker.value) marker.value = null; return }
-  const current = marker.value
-  if (current?.targetId === result.marker.targetId && current.beforeId === result.marker.beforeId && current.vertical === result.marker.vertical) {
-    applyMarker(result.position, element.value)
-    return
-  }
-  marker.value = result.marker
-  void nextTick(() => {
-    if (marker.value === result.marker || marker.value?.targetId === result.marker.targetId && marker.value.beforeId === result.marker.beforeId) applyMarker(result.position, element.value)
-  })
 }
 
 function validDrag(drag: ActiveDrag, board: HTMLElement | null, core: AppBoardContext) {

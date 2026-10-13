@@ -36,8 +36,10 @@ second device and keep working across both.
 - Inspect item history and restore an earlier version without erasing history.
 - Cards with saved messages show a count on their permanent chat icon. Open the
   thread with the latest saved activity from the icon; empty cards offer a new
-  discussion on hover/focus. Select text for a quoted
-  discussion, or right-click a card/field for the app's context menu. References
+  discussion on hover/focus. Drag cards from their title or surface; a full card
+  follows the grab point and a quiet gap shows the insertion position. Click a card
+  to open its details, where text selection creates quoted discussions and
+  right-clicking a field opens discussion actions. References
   return to their source. Reply opens a thread; workspace chat shows reply counts
   and collapsed read-only previews with Open controls. Item, discussion, and chat
   windows can move and resize together.

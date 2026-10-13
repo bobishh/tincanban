@@ -105,7 +105,7 @@ export function useObjectConversations(app: ReturnType<typeof useAppController>)
   }
   function menuKey(event: KeyboardEvent) { if (event.key === "Escape" && contextMenu.value) { contextMenu.value = null; event.preventDefault() } }
   function openCard(item: Item, event: MouseEvent) {
-    if ((event.target as Element).closest("a, input, button") || !window.getSelection()?.isCollapsed) return
+    if ((event.target as Element).closest("a, input, button")) return
     app.actions.openBoardItem(item)
   }
 

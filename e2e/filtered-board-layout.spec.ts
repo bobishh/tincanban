@@ -101,6 +101,7 @@ test("Given a fresh desktop board, when filtering, searching, and moving a card,
     expect(previewLayout.contextBottom).toBeLessThanOrEqual(previewLayout.cardBottom)
     await page.screenshot({ path: testInfo.outputPath("drag-preview.png") })
     await page.mouse.up()
+    await expect(page.getByRole("status")).toContainText("Item moved")
   })
 
   await test.step("Moved card leaves filtered source, hidden card survives reset and reload", async () => {
@@ -115,7 +116,7 @@ test("Given a fresh desktop board, when filtering, searching, and moving a card,
     await expect(page.getByRole("region", { name: "Doing", exact: true }).getByRole("button", { name: "Open Launch design", exact: true })).toBeVisible()
     await expect(page.getByRole("region", { name: "To do", exact: true }).getByRole("button", { name: "Open Launch design", exact: true })).toHaveCount(0)
     await expect(page.getByRole("region", { name: "Done", exact: true }).getByRole("button", { name: "Open Housekeeping", exact: true })).toBeVisible()
-    await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+    await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
   })
 })
 
@@ -165,7 +166,7 @@ test("Given filtered cards and a failed save, when dragging ends then the previe
   await expect(page.locator(".board-drag-preview")).toBeVisible()
   await page.mouse.up()
   await expect(page.getByRole("status")).toContainText("Move failed")
-  await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+  await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
   await expect(page.getByRole("region", { name: "To do", exact: true }).getByRole("button", { name: "Open Launch design", exact: true })).toBeVisible()
   await expect(target.locator(".lead-card")).toHaveCount(1)
 })
@@ -189,7 +190,7 @@ test("Given a card being dragged, when document data refreshes then drag continu
   })
   await expect(page.locator(".board-drag-preview")).toBeVisible()
   await page.mouse.up()
-  await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+  await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
   await expect(page.getByRole("status")).toContainText("Item moved")
   await expect(target.locator(".lead-card")).toHaveCount(2)
   await page.reload()
@@ -210,7 +211,7 @@ for (const query of ["Launch design", "Launch review"]) test(`Given a card being
   await expect(page.locator(".board-drag-preview")).toBeVisible()
   await search.fill(query)
   await expect(page.locator(".board > .column")).toHaveCount(1)
-  await expect(page.locator(".board-drag-preview, .board-drop-marker")).toHaveCount(0)
+  await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
   await page.mouse.up()
   await expect(page.getByRole("status")).not.toContainText("Item moved")
   await page.getByRole("button", { name: "Clear search and filters" }).click()

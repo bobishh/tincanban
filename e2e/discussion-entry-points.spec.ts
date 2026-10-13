@@ -82,16 +82,18 @@ test("Given lead metadata selection spanning fields, when Discuss then captured 
   await expect(item.locator("mark")).toContainText("Remote Europe")
 })
 
-test("Given board text, when pointer selects company then Discuss opens quote without opening card", async ({ page }) => {
+test("Given board text, when clicking opens details then selecting company opens a quoted discussion", async ({ page }) => {
   const item = await board(page)
   await item.getByRole("button", { name: "Close detail", exact: true }).click()
-  const company = page.locator(".item-card .company").filter({ hasText: "Reedsy" })
+  await page.locator(".item-card .company").filter({ hasText: "Reedsy" }).click()
+  await expect(item).toBeVisible()
+  const company = item.getByRole("heading", { name: "Reedsy", exact: true })
   const bounds = (await company.boundingBox())!
   await page.mouse.move(bounds.x + 1, bounds.y + bounds.height / 2)
   await page.mouse.down()
   await page.mouse.move(bounds.x + bounds.width - 1, bounds.y + bounds.height / 2, { steps: 8 })
   await page.mouse.up()
-  await expect(item).toHaveCount(0)
+  await expect(page.locator(".board-drag-preview")).toHaveCount(0)
   await page.getByRole("button", { name: "Discuss selection", exact: true }).click()
   const discussion = page.getByRole("dialog", { name: /^Discussion/ })
   await expect(discussion.locator(".draft-reference")).toContainText("Reedsy")
@@ -101,7 +103,7 @@ test("Given board text, when pointer selects company then Discuss opens quote wi
   await expect(item.getByRole("button", { name: "Discuss", exact: true })).toHaveCount(0)
 })
 
-test("Given card context menu, when right click then native menu is suppressed and Escape dismisses app menu", async ({ page }) => {
+test("Given board and open card details, when right clicking then discussion actions appear only inside details", async ({ page }) => {
   const item = await board(page)
   await item.getByRole("button", { name: "Close detail", exact: true }).click()
   await page.evaluate(() => document.addEventListener("contextmenu", event => {
@@ -109,13 +111,18 @@ test("Given card context menu, when right click then native menu is suppressed a
   }))
   const card = page.locator(".item-card").filter({ hasText: "Reedsy" })
   await card.click({ button: "right", position: { x: 4, y: 4 } })
+  await expect(page.locator("body")).toHaveAttribute("data-native-menu-suppressed", "false")
+  await expect(page.getByRole("menu", { name: "Discussion actions" })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+  await card.locator(".company").click()
+  await item.locator(".detail-grid").click({ button: "right" })
   await expect(page.locator("body")).toHaveAttribute("data-native-menu-suppressed", "true")
   const menu = page.getByRole("menu", { name: "Discussion actions" })
   await expect(menu).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
   await expect(page.getByRole("dialog", { name: /^Discussion/ })).toHaveCount(0)
-  await card.click({ button: "right", position: { x: 4, y: 4 } })
+  await item.locator(".detail-grid").click({ button: "right" })
   await page.getByRole("menuitem", { name: "Discuss", exact: true }).click()
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).locator(".draft-reference")).toContainText("Reedsy")
 })

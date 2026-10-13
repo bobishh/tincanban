@@ -45,7 +45,7 @@ test("Given 55 detailed cards, when a card moves, then persistence does not stal
   await page.mouse.down()
   await page.mouse.move(points.targetX, points.targetY, { steps: 15 })
   await mark("drag-finished")
-  await page.waitForFunction(targetId => document.querySelector(".board-drop-marker")?.getAttribute("data-target-id") === targetId, points.targetId)
+  await page.waitForFunction(targetId => document.querySelector(".board-drop-gap")?.getAttribute("data-target-id") === targetId, points.targetId)
   await page.mouse.up()
   await mark("drop-released")
   await page.waitForFunction(() => {

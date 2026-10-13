@@ -91,20 +91,27 @@
 .card-add-gap:hover .card-insert-button, .card-add-gap:focus-within .card-insert-button { opacity: 1; transform: translateY(0); }
 .lead-card { position: relative; width: 100%; min-width: 0; padding: 14px; overflow-wrap: anywhere; text-align: left; border: 2px solid var(--line); border-radius: 0; color: var(--ink); cursor: grab; touch-action: pan-y; transition: transform var(--motion-fast) var(--motion-ease), opacity var(--motion-fast) ease; }
 .card-open-button { position: absolute; inset: auto 0 0; z-index: 1; width: 100%; height: 14px; border: 0; background: transparent; cursor: inherit; }
-.card-main, .card-context, .card-activity-age { position: relative; z-index: 2; pointer-events: none; }
+.card-main, .card-context, .card-activity-age { position: relative; z-index: 2; }
 .card-chat-action { position: absolute; right: 8px; bottom: 8px; z-index: 3; display: grid; place-items: center; width: 36px; height: 36px; padding: 6px; border: 2px solid var(--line); background: var(--panel); cursor: pointer; opacity: 0; pointer-events: none; }
 .card-chat-action svg { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .card-chat-action.has-discussion, .lead-card:hover .card-chat-action, .lead-card:focus-within .card-chat-action { opacity: 1; pointer-events: auto; }
 @media (hover: none) { .card-chat-action { opacity: 1; pointer-events: auto; } }
 .card-discussion-count { position: absolute; top: -7px; right: -7px; display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 3px; border: 1px solid var(--line); border-radius: 50%; background: var(--yellow); color: var(--ink); font: 700 .65rem/1 var(--site-font-sans); pointer-events: none; }
-.card-layout [data-discussion-text] { pointer-events: auto; cursor: text; user-select: text; -webkit-user-select: text; }
+.board .lead-card, .board .lead-card * { user-select: none; -webkit-user-select: none; }
+.card-layout a, .card-layout input { pointer-events: auto; }
 .card-activity-age { display: block; margin-top: 11px; color: var(--muted); font: 700 .8rem/1.25 var(--site-font-sans); letter-spacing: .02em; }
 .lead-card:active { cursor: grabbing; opacity: .55; }
 .board-drag-source { opacity: .38; }
-.board-drag-preview { position: fixed; top: 0; left: 0; z-index: 1000; margin: 0 !important; opacity: 1; pointer-events: none; transition: none; }
-.board-drag-preview:not(.lead-card-expanded) { transform: translate3d(-10000px, -10000px, 0); }
-.board-drop-marker { position: fixed; top: 0; left: 0; z-index: 999; height: 4px; border: 1px solid var(--ink); background: var(--yellow); pointer-events: none; }
-.board-drop-marker.is-vertical { width: 4px; border-width: 1px; }
+.lead-card.board-drag-source { visibility: hidden; opacity: 0; }
+.board-drag-preview { position: fixed; top: 0; left: 0; z-index: 1000; margin: 0; opacity: 1; pointer-events: none; transition: none; transform: translate3d(-10000px, -10000px, 0); }
+.board-drag-preview * { pointer-events: none !important; }
+.board-drag-card, .board-drag-card > .lead-card { width: 100%; height: 100%; margin: 0; content-visibility: visible; }
+.board-drag-card > .lead-card { opacity: 1; transition: none; }
+.card-stack > .board-drop-gap-before { margin-top: 32px; }
+.card-stack > .board-drop-gap-after { margin-bottom: 46px; }
+.board > .column.board-drop-gap-before { margin-left: 32px; }
+.board > .column.board-drop-gap-after { margin-right: 32px; }
+.column-closed.board-drop-gap-before { padding-top: 56px; }
 .board-dragging .card-add-gap:hover, .board-dragging .card-add-gap:focus-within { height: 14px; }
 .board-dragging { user-select: none; }
 .board-dragging .lead-card { transform: none; transition: none; }

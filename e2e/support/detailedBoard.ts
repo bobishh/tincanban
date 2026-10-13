@@ -56,6 +56,6 @@ export async function moveFirst(page: Page) {
   await page.mouse.move(sourceX, sourceY)
   await page.mouse.down()
   await page.mouse.move(target.x + target.width / 2, target.y + 28, { steps: 15 })
-  await expect(page.locator(".board-drop-marker")).toHaveAttribute("data-target-id", await destination.getAttribute("data-column-id"))
+  await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await destination.getAttribute("data-column-id"))
   await page.mouse.up()
 }

@@ -125,7 +125,7 @@ test("Given a lead dragged to Archive, when Undo fails then retries, then its or
   await page.mouse.down()
   await page.mouse.move(to.x + to.width / 2, to.y + 24, { steps: 18 })
   await expect(page.locator(".board-drag-preview")).toBeVisible()
-  await expect(page.locator(".board-drop-marker")).toHaveAttribute("data-target-id", await archive.getAttribute("data-column-id"))
+  await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await archive.getAttribute("data-column-id"))
   await page.mouse.up()
   await expect(archive.getByRole("button", { name: "Open First — Engineer", exact: true })).toBeVisible()
   await expect(page.getByRole("status").filter({ hasText: "Item archived" })).toBeVisible()
