@@ -63,7 +63,16 @@ const slots = useSlots();
 type SettingsTab = "identity" | "workspace" | "templates" | "priority" | "json";
 const activeTab = ref<SettingsTab>(slots.identity ? "identity" : "workspace");
 const settingsContent = ref<HTMLElement>();
-watch(activeTab, async () => { await nextTick(); if (settingsContent.value) settingsContent.value.scrollTop = 0; });
+watch(activeTab, async () => {
+  await nextTick();
+  const content = settingsContent.value;
+  if (!content) return;
+  content.scrollTop = 0;
+  content.getAnimations().forEach(animation => animation.cancel());
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    content.animate([{ opacity: .6 }, { opacity: 1 }], { duration: 220, easing: "ease-out" });
+  }
+});
 const templateEditor = ref({ id: null as string | null, newId: null as string | null, name: "", markdown: "", saving: false, error: "", notice: "" });
 const settingsId = useId();
 const settingsTabs = computed(() => [
@@ -272,7 +281,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
   >
     <section
       class="dialog schema-editor-dialog"
-      :class="{ 'schema-entity-dialog': mode === 'entity' }"
+      :class="{ 'schema-entity-dialog': mode === 'entity', 'settings-dialog': mode === 'templates' }"
       role="dialog"
       aria-modal="true"
       :aria-label="

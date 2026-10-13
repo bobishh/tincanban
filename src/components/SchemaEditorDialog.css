@@ -10,6 +10,9 @@
 .schema-entity-dialog {
   width: min(720px, 100%);
 }
+.settings-dialog {
+  height: min(760px, calc(100dvh - max(var(--modal-gutter, 24px), var(--safe-top)) - max(var(--modal-gutter, 24px), var(--safe-bottom))));
+}
 .schema-editor-dialog > .dialog-head,
 .schema-editor-dialog > .schema-error-banner {
   flex-shrink: 0;
@@ -389,13 +392,15 @@
 .settings-nav-button { text-align: left; padding: 8px 10px; min-height: 44px; border: 2px solid transparent; background: transparent; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
 .settings-nav-button.active { font-weight: 700; }
 .settings-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; }
-.settings-content { overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 8px 8px 20px; display: flex; flex-direction: column; gap: 16px; }
+.settings-content { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; min-height: 0; padding: 8px 8px 20px; display: flex; flex-direction: column; gap: 16px; animation: none; }
+.settings-content > * { flex-shrink: 0; }
 .settings-content > p, .settings-section-title { margin: 0; }
 .settings-content .schema-tab-content { overflow: visible; padding: 0; flex: none; gap: 16px; }
 .settings-save-bar { display: flex; justify-content: flex-end; flex-shrink: 0; padding-top: 12px; border-top: 1px solid var(--soft); margin-top: auto; }
 .settings-save-bar .button { min-height: 42px; }
 @media (max-width: 600px) {
   .schema-editor-dialog { padding: 16px; }
+  .settings-dialog { height: 100dvh; }
   .settings-layout { grid-template-columns: 110px minmax(0, 1fr); gap: 8px; }
   .settings-nav { padding-right: 8px; }
   .settings-nav-button { padding: 8px 4px; font-size: .8rem; }

@@ -287,6 +287,8 @@ browser	e2e/scoped-sync.spec.ts	499	no		Given a visitor already has the owner's 
 browser	e2e/scoped-sync.spec.ts	542	no		Given existing data under another identity, when enrollment is approved, then the same device keeps old data stored but hides its unentitled scope
 browser	e2e/scoped-sync.spec.ts	615	no		Given a delegated owner device, when it grants an editor access twice, then the editor verifies both grants
 browser	e2e/search-responsiveness.spec.ts	7	no		Given 55 detailed leads, when search narrows then has no matches, then keyboard stays responsive and clearing restores cards without writes
+browser	e2e/settings-layout.spec.ts	5	yes		Given Settings at ${viewport.width}px, when sections and validation change, then the window and navigation stay fixed
+browser	e2e/settings-layout.spec.ts	37	yes		Given motion preference ${reducedMotion}, when Settings sections switch quickly, then the current section appears with the preferred transition and no stale content
 browser	e2e/settings-scope.spec.ts	4	yes		Given Settings at ${width}px, when editing identity and templates, then ink selection and focus fit and forms keep usable proportions
 browser	e2e/settings-scope.spec.ts	68	yes		Given Settings at ${width}px, when choosing a section, then flat navigation keeps compact profile and workspace controls separate
 browser	e2e/settings-scope.spec.ts	110	no		Given flat settings, when keyboard moves through sections, then vertical navigation follows focus and shows one panel
