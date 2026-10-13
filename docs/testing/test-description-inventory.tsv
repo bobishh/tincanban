@@ -263,6 +263,7 @@ browser	e2e/remaining-ui-polish.spec.ts	105	no		Given a lead dragged to Archive,
 browser	e2e/remaining-ui-polish.spec.ts	145	no		Given an archived item, when the workspace changes, then its Undo cannot act on the new board
 browser	e2e/repeated-card-save.spec.ts	30	no		Given a detailed board and two enrolled device certificates, when Archive and Applied alternate repeatedly, then every transition persists without history replay
 browser	e2e/repeated-peer-packet.spec.ts	4	no		Given a detailed board and a committed peer packet, When duplicates repeat around a local stage change, Then history stays idle and a changed signature still fails
+browser	e2e/repeated-rusty-poll.spec.ts	4	no		Given a detailed board already uploaded to Rusty, When unchanged polls repeat around an archived card, chat message and failed delivery, Then idle polls avoid historical exports and changed data is still uploaded
 browser	e2e/root-message-links.spec.ts	4	no		Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings
 browser	e2e/rusty-connection.spec.ts	9	no		Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work
 browser	e2e/rusty-mark-sizing.spec.ts	3	no		Given the Rusty connection panel, when Rusty appears on desktop and narrow mobile, then Rusty keeps TinCanBan visual size without horizontal overflow
@@ -843,9 +844,25 @@ app-unit	src/sync/authorityFingerprint.test.ts	79	no	workspace authority fingerp
 app-unit	src/sync/blindClient.test.ts	5	no		Given workerd fetch, when reading Rusty, then uses manual redirect handling and rejects redirects
 app-unit	src/sync/blindClient.test.ts	20	no		durable receipt binds pinned service, ciphertext, scope, epoch, policy and fresh request
 app-unit	src/sync/blindEnvelope.test.ts	7	no	blind encrypted replication	round-trips document bytes without giving storage a content key
-app-unit	src/sync/blindReplication.test.ts	6	no		Given encrypted signed history, when admission fails, replication never advances its durable cursor
-app-unit	src/sync/blindReplication.test.ts	29	no		Given an uncertain durable receipt, when uploading retries, the same immutable ciphertext is reused
-app-unit	src/sync/blindReplication.test.ts	49	no		Given an inventory exceeding one bounded pass, when syncing, then completion is not reported until backlog drains
+app-unit	src/sync/blindReplication.test.ts	7	no		Given a durably uploaded snapshot and unchanged document, proof, authority and chat revision, When polling repeats, Then no document read, proof export or historical hash runs
+app-unit	src/sync/blindReplication.test.ts	34	no		Given an already stored snapshot, when a periodic pass has no changes, diagnostics connect board and storage scope without another upload
+app-unit	src/sync/blindReplication.test.ts	50	yes		Given %s, When a later poll runs, Then an unstable or unacknowledged revision cannot skip the snapshot
+app-unit	src/sync/blindReplication.test.ts	74	no		Given a durable remote snapshot, when a fresh client admits it unchanged, then it does not upload another encrypted copy
+app-unit	src/sync/blindReplication.test.ts	97	no		Given unchanged document heads, when binary encoding differs, diagnostics distinguish encoding churn from chat or authority changes
+app-unit	src/sync/blindReplication.test.ts	116	no		Given encrypted signed history, when admission fails, replication never advances its durable cursor
+app-unit	src/sync/blindReplication.test.ts	139	no		Given an uncertain durable receipt, when uploading retries, the same immutable ciphertext is reused
+app-unit	src/sync/blindReplication.test.ts	159	no		Given an inventory exceeding one bounded pass, when syncing, then completion is not reported until backlog drains
+app-unit	src/sync/blindReplication.test.ts	177	no		Given eight fully admitted retained snapshots, when the owner catches up, a fresh checkpoint replaces the old prefix and unchanged polling stays bounded
+app-unit	src/sync/blindReplication.test.ts	188	no		Given quarantined or pending raw history, when a pass catches up, the client preserves every remote object and does not checkpoint
+app-unit	src/sync/blindReplication.test.ts	196	no		Given a checkpoint receipt lost after durable storage, retries preserve ciphertext and authorization while advancing the local cursor only after confirmation
+app-unit	src/sync/blindReplication.test.ts	208	no		Given another writer after inventory, checkpoint conflict never acknowledges stale replacement and the next pass admits that writer
+app-unit	src/sync/blindReplication.test.ts	220	no		Given identity or admission changes during checkpoint preparation, the owner request is never submitted
+app-unit	src/sync/blindReplication.test.ts	228	no		Failed logical revision inspection emits a bounded diagnosis while preserving the durable upload fallback
+app-unit	src/sync/blindReplication.test.ts	277	no		Given a reloaded client with an unchanged durable snapshot, subsequent encoding churn skips upload while real document, authority and chat changes retain their diagnosis
+app-unit	src/sync/blindSnapshotRevision.test.ts	22	no		Given unchanged durable evidence, When polling repeats, Then root metadata is read once and typing cannot force historical snapshot work
+app-unit	src/sync/blindSnapshotRevision.test.ts	30	yes		Given changed %s, When polling repeats, Then snapshot revision changes
+app-unit	src/sync/blindSnapshotRevision.test.ts	39	yes		Given %s changes during the read, When binding a snapshot revision, Then reuse is unavailable
+app-unit	src/sync/blindSnapshotRevision.test.ts	48	no		Given an old journal without a revision, When polling, Then revision reuse is disabled without loading historical document metadata
 app-unit	src/sync/changeAuthorization.test.ts	98	no		exports the same fresh authorization evidence from a hydrated document without consuming it
 app-unit	src/sync/changeAuthorization.test.ts	104	no		Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints
 app-unit	src/sync/changeAuthorization.test.ts	123	no		reports admission phase costs without changing the authorized result

@@ -1,8 +1,35 @@
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
-import { expect, test } from "vitest"
+import { expect, test, vi } from "vitest"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { encryptBlindObject, encodeBlindBytes } from "./blindEnvelope"
 import { type BlindReceipt, blindObjectId } from "./blindClient"
+
+test("Given a durably uploaded snapshot and unchanged document, proof, authority and chat revision, When polling repeats, Then no document read, proof export or historical hash runs", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let revision = "document-proof-authority-chat-1", value = 1
+  const read = vi.fn(async () => new Uint8Array([value]))
+  const authorization = vi.fn(async () => ({ signed: value }))
+  const digest = vi.spyOn(crypto.subtle, "digest")
+  const upload = vi.fn(async () => ({} as BlindReceipt))
+  const replica = new BlindReplica(config, {
+    read, authorization, readSnapshotRevision: async () => revision, readChat: async () => null,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload })
+  try {
+    await replica.push()
+    read.mockClear(); authorization.mockClear(); digest.mockClear()
+    for (let index = 0; index < 4; index++) await replica.push()
+    expect(read).not.toHaveBeenCalled()
+    expect(authorization).not.toHaveBeenCalled()
+    expect(digest).not.toHaveBeenCalled()
+    expect(upload).toHaveBeenCalledTimes(1)
+    revision = "document-proof-authority-chat-2"; value = 2
+    await replica.push()
+    expect(read).toHaveBeenCalledOnce()
+    expect(authorization).toHaveBeenCalledOnce()
+    expect(upload).toHaveBeenCalledTimes(2)
+  } finally { digest.mockRestore() }
+})
 
 test("Given an already stored snapshot, when a periodic pass has no changes, diagnostics connect board and storage scope without another upload", async () => {
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
@@ -18,6 +45,30 @@ test("Given an already stored snapshot, when a periodic pass has no changes, dia
   expect(uploads).toBe(1)
   expect(events.at(-1)).toMatchObject({ event: "mesh.rusty.upload.skipped", detail: { phase: "unchanged", workspaceId: "board", entityType: "scope", entityId: "opaque" } })
   expect(JSON.stringify(events)).not.toContain(config.contentKey)
+})
+
+test.each(["during-read", "failed-save", "missing-revision", "failed-revision"])("Given %s, When a later poll runs, Then an unstable or unacknowledged revision cannot skip the snapshot", async scenario => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: "unused", readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let revision = "one", first = true
+  const read = vi.fn(async () => {
+    if (scenario === "during-read" && first) revision = "two"
+    return new Uint8Array([revision === "one" ? 1 : 2])
+  })
+  const replica = new BlindReplica(config, {
+    read, authorization: async () => ({ signed: true }), readChat: async () => null,
+    readSnapshotRevision: async () => {
+      if (scenario === "failed-revision") throw new Error("Revision unavailable")
+      return scenario === "missing-revision" ? undefined : revision
+    },
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {
+      if (scenario === "failed-save" && first) throw new Error("Acknowledgement save failed")
+    },
+  }, { inventory: async () => ({ objects: [], cursor: 0, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: async () => ({} as BlindReceipt) })
+  if (scenario === "failed-save") await expect(replica.push()).rejects.toThrow("Acknowledgement save failed")
+  else await replica.push()
+  first = false
+  await replica.push()
+  expect(read).toHaveBeenCalledTimes(2)
 })
 
 test("Given a durable remote snapshot, when a fresh client admits it unchanged, then it does not upload another encrypted copy", async () => {

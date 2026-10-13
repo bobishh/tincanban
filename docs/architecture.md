@@ -151,6 +151,15 @@ distinct certificate variants remain significant. Caller mutation cannot alter
 the saved private copy. Optional cache maintenance cannot turn a durable commit
 into a reported save failure. This cache never trusts a peer admission marker.
 
+Rusty polling checks the durable workspace revision, current authority and bounded
+chat export before building an outgoing snapshot. A successfully acknowledged,
+unchanged revision skips document reads, full proof export, historical serialization
+and hashing. Chat messages and profile changes invalidate reuse; transient typing
+does not enter Rusty snapshots. Revision changes during snapshot construction,
+missing revision metadata, failed revision reads and unacknowledged writes preserve
+the full export/retry path. The optimization changes neither encrypted object
+contents nor signed receipt validation or checkpoint admission.
+
 Rollout requires reloading old tincanban tabs. An old tab holding the previous journal
 schema can block its upgrade; the error asks users to close other tabs and reload.
 A pre-migration build cannot safely consume new journal snapshots and

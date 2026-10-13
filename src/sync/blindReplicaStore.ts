@@ -5,12 +5,15 @@ import { exportChat, receiveChat } from "../chat/service"
 import { meshTrace } from "./meshTrace"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { checkpointHooks } from "./blindCheckpointAdmission"
+import { createBlindSnapshotRevision } from "./blindSnapshotRevision"
 
 export function createBlindReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig) => Promise<void>) {
   ensureIdentity()
+  const readSnapshotRevision = createBlindSnapshotRevision(tincanban)
   return new BlindReplica({ ...config }, {
     read: async id => { ensureIdentity(); return tincanban.readWorkspaceBytes(id) },
+    readSnapshotRevision: async id => { ensureIdentity(); return readSnapshotRevision(id) },
     authorization: bytes => exportAuthorizationBundle(bytes),
     merge: async (id, bytes, authorization) => { ensureIdentity(); await tincanban.mergeAuthorizedWorkspace(id, bytes, authorization) },
     readChat: async id => { ensureIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },

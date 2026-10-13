@@ -15,6 +15,7 @@ below 250ms; it reports separate full-replay timings and is not a network deadli
 | A warm tab verifies only new indexed deltas; damaged tails do not advance its cache, replacement bases require cold validation, and retries cannot associate stale content with a newer frontier. | `src/workspaceDeltaJournal.test.ts`; offline two-tab Archive/Applied flow in `e2e/incremental-tabs.spec.ts`; version 2/3 upgrade and preserved numeric order in `e2e/storage-upgrade-block.spec.ts`. | Indexed reads and cache publication are implementation assertions. |
 | Repeated committed peer packets skip history loading and replay only under current authority, policy and durable revision; extension across local deltas requires every supplied hash and proof to be verified. | `src/state.test.ts`, `src/stateIncomingReuseEquality.test.ts`, `e2e/repeated-peer-packet.spec.ts`: duplicates, local edit preservation, altered signatures, unknown hashes becoming relevant, private input copies and cache maintenance failures. | Success-only packet reuse is an implementation assertion; peer markers never authorize it. |
 | Changed evidence advances a workspace revision atomically; legacy transaction writes invalidate the frontier and idempotent retries keep their revision. | `src/workspaceDeltaJournal.test.ts`: atomic append/abort/retry and legacy IndexedDB write. | The small revision binds packet reuse to durable state. |
+| Unchanged Rusty polls skip document/proof export and historical hashing only after successful acknowledgement; document, proof, rights and chat changes invalidate reuse. | `src/sync/blindReplication.test.ts`, `src/sync/blindSnapshotRevision.test.ts`, `e2e/repeated-rusty-poll.spec.ts`: idle passes, card archive, chat update, unstable revision and failed delivery/acknowledgement. | Revision reuse never bypasses receipt or checkpoint verification. |
 | Reclassification catches up a stale active view without publishing a new shared change; reconciliation publishes under the shared mutation boundary. | `src/state.test.ts`: verified later delta, no subscriber notification, controlled older read and queued writer. | Read/publication ordering is exercised in the application boundary. |
 | Certificate ordering does not invalidate rights or access caches; signed payload order, distinct certificates and revocations remain consequential. | `src/sync/authorityFingerprint.test.ts`, `src/sync/changeAuthorization.test.ts`, `src/sync/workspaceAccess.test.ts`. | Canonical representation is an implementation invariant. |
 | Successful snapshot/delta commits do not depend on a later legacy catalog write. | `src/storage.test.ts`, `src/sync/localWorkspaceAdmission.test.ts`: unavailable legacy writer, fresh storage reader and recovered catalog. | The atomic commit contains its catalog metadata. |
@@ -39,8 +40,7 @@ code/dependency/WASM closure. A manual version or worker-only hash would weaken 
 security boundary and is not an accepted optimization.
 
 Additional candidates remain in [the redundant-work audit](redundant-work-audit.md):
-scoped durable replication, typing without durable merges, unchanged Rusty polling
-without full export, keys-only catalog reads,
+scoped durable replication, typing without durable merges, keys-only catalog reads,
 revision-based automation projections and indexed proof/history lookups. These are
 identified work, not enforced or completed contracts. No passing model is evidence
 that every production finding has been fixed.

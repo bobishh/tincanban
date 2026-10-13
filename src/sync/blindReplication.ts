@@ -12,6 +12,7 @@ export type BlindReplicaStore = {
   mergeChat: (id: string, chat: unknown) => Promise<void>
   persist: (config: BlindReplicaConfig) => Promise<void>
   documentRevision?: (bytes: Uint8Array) => Promise<string>
+  readSnapshotRevision?: (id: string) => Promise<string | undefined>
   checkpointAllowed?: (request?: BlindCheckpointRequest) => Promise<boolean>
   prepareCheckpoint?: (bytes: Uint8Array, object: Awaited<ReturnType<typeof encryptBlindObject>>, expectedSequence: number) => Promise<BlindCheckpointRequest | undefined>
   diagnostic?: (event: string, detail: Record<string, unknown>) => void
@@ -37,6 +38,7 @@ export class BlindReplica {
   private checkpointSequence = 0
   private checkpointPending: { hash: string; parts: ContentParts; bytes: number; request: BlindCheckpointRequest } | undefined
   private pending: { hash: string; object: Awaited<ReturnType<typeof encryptBlindObject>> } | undefined
+  private unchangedSnapshot: { revision: string; hash: string; bytes: number } | undefined
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
     private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject,
       checkpoint: async (access, request) => (await import("./blindCheckpoint")).submitBlindCheckpoint(access, request) }) {}
@@ -72,23 +74,44 @@ export class BlindReplica {
   }
 
   async push(): Promise<void> {
+    const revision = await this.snapshotRevision()
+    const previous = this.unchangedSnapshot
+    if (revision && previous?.revision === revision && previous.hash === this.config.lastUploaded) {
+      this.observe("mesh.rusty.upload.skipped", { phase: "unchanged", bytes: previous.bytes })
+      return
+    }
+    const bytes = await this.pushSnapshot()
+    if (revision && await this.snapshotRevision() === revision)
+      this.unchangedSnapshot = { revision, hash: this.config.lastUploaded, bytes }
+    else this.unchangedSnapshot = undefined
+  }
+
+  private async snapshotRevision(): Promise<string | undefined> {
+    try { return await this.store.readSnapshotRevision?.(this.config.workspaceId) }
+    catch {
+      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode: "snapshot_revision_unavailable" })
+      return undefined
+    }
+  }
+
+  private async pushSnapshot(): Promise<number> {
     const { snapshot, plaintext, hash } = await this.snapshot()
     if (hash === this.config.lastUploaded) {
       this.previousParts ??= await this.parts(snapshot)
       this.observe("mesh.rusty.upload.skipped", { phase: "unchanged", bytes: plaintext.length })
-      return
+      return plaintext.length
     }
     if (hash === this.receivedHash) {
       // Already durable and admitted; do not echo remote state as fresh ciphertext.
       await this.acknowledgeStored(hash, this.receivedParts, "remote_already_stored", plaintext.length)
-      return
+      return plaintext.length
     }
     const parts = await this.parts(snapshot)
     const previous = this.previousParts ?? this.receivedParts
     const changedFields = changedParts(parts, previous)
     if (changedFields.length === 1 && changedFields[0] === "encoding") {
       await this.acknowledgeStored(hash, parts, "encoding_unchanged_state", plaintext.length)
-      return
+      return plaintext.length
     }
     const retry = this.pending?.hash === hash
     const phase = uploadPhase(retry, previous !== undefined)
@@ -103,6 +126,7 @@ export class BlindReplica {
     this.pending = undefined
     this.previousParts = parts
     this.observe("mesh.rusty.upload.completed", { phase, changedFields, bytes: plaintext.length })
+    return plaintext.length
   }
 
   private async snapshot() {
