@@ -34,7 +34,7 @@ import { createNarrativeEditHandler } from "./app/narrativeEditor"
 import { useColumnCollapse } from "./app/useColumnCollapse"
 import { useAppViewState } from "./app/useAppViewState"
 import { useMemberAvatars } from "./app/useMemberAvatars"
-import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, startOfflineDetailPreload, WorkspaceConnectionsPanel, IdentityPhotoPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
@@ -88,7 +88,7 @@ const {
   openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
   exportWorkspace, openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
-  handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError,
+  handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, settingsSaving,
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
@@ -292,30 +292,29 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :templates="workspace.templates"
       :heads="currentDocHeads"
       :save-error="settingsSaveError"
+      :saving="settingsSaving"
       mode="templates"
       @close="showSettings = false; settingsSaveError = ''"
       :save-template="handleSaveTemplate"
       @apply-workspace-settings="applyWorkspaceSettings"
     >
       <template #identity>
-        <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
-        <IdentityPhotoPanel :avatar-data="currentAvatar" :save-avatar="saveAvatar" />
+        <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </template>
-      <template #connections>
-        <WorkspaceConnectionsPanel :workspace="app.workspace" :workspace-title="activeWorkspace.title" :workspace-id="activeWorkspace.id"
-          :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" @open="openConnections" />
-      </template>
-      <template #publication>
-        <PublicBoardControls v-if="uiReady && confirmedRole === 'owner'" :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
+      <template #workspace>
+        <WorkspaceSettingsPanel :workspace="app.workspace" :workspace-id="activeWorkspace.id"
+          :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" :presence="meshPresenceLabel" :save-state="saveState" :access-role="confirmedRole"
+          :diagnostic="sync.meshDiagnostic" :members="meshMembers">
+          <PublicBoardControls v-if="uiReady" :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
+        </WorkspaceSettingsPanel>
       </template>
     </SchemaEditorDialog>
     <ModalLayer v-else-if="showSettings" @close="showSettings = false">
       <section class="dialog" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="dialog-head"><div><span class="eyebrow">Identity</span><h2>Settings</h2></div><button class="icon-button" type="button" aria-label="Close" @click="showSettings = false">×</button></div>
         <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
-          :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
-        <IdentityPhotoPanel :avatar-data="currentAvatar" :save-avatar="saveAvatar" />
+          :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </ModalLayer>

@@ -83,7 +83,7 @@
       <section class="guide-card">
         <h2>Safe agent workflow</h2>
         <ol>
-          <li>Call <code>list_workspaces</code> to inspect the local catalog. The user controls which existing workspace is current.</li>
+          <li>Call <code>list_workspaces</code> to inspect the local catalog. Use <code>switch_workspace</code> with the chosen <code>workspaceId</code> when the task requires an existing workspace. Creating or switching changes the current workspace shown to the user.</li>
           <li>Call <code>get_workspace_settings</code>. Resolve board, column, field, option, and template IDs from its result.</li>
           <li>Read items with <code>list_items</code> or inspect one typed entity with <code>get_entity</code>.</li>
           <li>Use generic mutation tools. Put custom values under stable field IDs, not field titles.</li>
@@ -93,7 +93,7 @@
 
       <section class="guide-card">
         <h2>Complete workspace settings</h2>
-        <p><code>get_workspace_settings</code> returns <code>settings</code> plus <code>heads</code>. Settings contain <code>formatVersion</code>, <code>workspace.title</code>, the board title and item name, ordered columns, typed fields and select options, and <code>documentTemplates</code>. Templates belong to that workspace and describe documents generated for its items; they have no fixed CV/cover-letter kind enum.</p>
+        <p><code>get_workspace_settings</code> returns <code>settings</code> plus <code>heads</code>. Settings contain <code>formatVersion</code>, <code>workspace.title</code>, the board title and item name, column colors and archive behavior, card stage buttons, aging thresholds, <code>priorityPolicy</code>, <code>employee_profile</code>, typed fields and select options, and <code>documentTemplates</code>. Templates belong to that workspace and describe documents generated for its items; they have no fixed CV/cover-letter kind enum.</p>
         <p>To change the complete configuration, edit the returned object and call <code>apply_workspace_settings</code> with those <code>heads</code> as <code>expectedHeads</code>. The apply is one validated CRDT transaction. Omitted columns, fields, and templates are soft-archived. Existing descendants and field values remain stored.</p>
         <p class="note">Keep IDs returned by tincanban when editing. Omit an ID only when adding a column, field, field option, or document template. A field's <code>valueType</code> cannot change in place.</p>
       </section>
@@ -104,6 +104,7 @@
         <h3 class="subhead">Workspace</h3>
         <div class="tool-grid">
           <article class="tool"><span class="tool-name">list_workspaces</span><p>List all local workspaces.</p></article>
+          <article class="tool"><span class="tool-name">switch_workspace</span><p>Open an existing local workspace by workspaceId. Read its IDs again after switching.</p></article>
           <article class="tool"><span class="tool-name">create_workspace</span><p>Create and open a job-search or blank workspace.</p></article>
           <article class="tool"><span class="tool-name">rename_workspace</span><p>Rename the current workspace.</p></article>
           <article class="tool"><span class="tool-name">get_workspace</span><p>Read current workspace and active board summary.</p></article>
@@ -124,6 +125,11 @@
           <article class="tool"><span class="tool-name">list_placement_issues</span><p>List missing-parent and cyclic ancestry problems.</p></article>
           <article class="tool"><span class="tool-name">create_column</span><p>Create a column under a board.</p></article>
         </div>
+        <h3 class="subhead">Chat and diagnostics</h3>
+        <div class="tool-grid">
+          <article class="tool"><span class="tool-name">send_chat_message</span><p>Send body text (1–8,000 characters) to the active workspace chat. Send only when the user explicitly requests a message.</p></article>
+          <article class="tool"><span class="tool-name">get_sync_trace</span><p>Read this browser’s bounded sync trace. No workspace or connection changes.</p></article>
+        </div>
       </section>
 
       <section class="guide-card">
@@ -141,15 +147,25 @@
         <h2>Sync, identity, and storage</h2>
         <ul>
           <li><strong>Share workspaces:</strong> Sync opens with the current workspace selected. Select one or more existing workspaces, then generate one invitation for that fixed set. The recipient keeps a separate person and device identity.</li>
-          <li><strong>Sync all / Add my device:</strong> enrolls another device under the same personal identity and shares the personal workspace catalog after mutual code approval.</li>
+          <li><strong>Add my device:</strong> enrolls another device under the same personal identity and shares the personal workspace catalog after mutual code approval.</li>
+          <li>Sync contains Participants, Rusty, Backups, and Recovery. Import as a new board belongs to the Workspaces list; export belongs to Sync → Backups.</li>
+          <li>Rusty stores encrypted objects without reading or classifying cards. Eligible owners automatically replace old snapshots after 8 retained objects; the replacement still contains Automerge history, so document size can grow.</li>
           <li>Automerge changes sync incrementally while peer sessions are live. Workspace snapshots and trust state persist in IndexedDB.</li>
           <li>A <code>.tincanban</code> export carries workspace data, Automerge history, and public proofs. It excludes private signing keys, the personal root, and pairing secrets.</li>
         </ul>
       </section>
 
       <section class="guide-card">
+        <h2>Settings and publication</h2>
+        <p>Settings uses one section list: Identity, Workspace, Document templates, Priority rules (job-search boards), and settings.json. Identity saves photo and name together and contains encrypted identity recovery. Workspace shows saved/sync status, automations, Public board access, and device diagnostics. Diagnostic consent applies across workspaces on this device.</p>
+        <p>Public board is an owner-only switch with a scope confirmation. Publication creates a saved public copy; later edits remain private until Update public copy. Withdrawing removes access to that copy and its files, but cannot recall downloaded copies. Publication is separate from workspace settings and has no WebMCP tool.</p>
+        <p>CLEF supplies vacancy assessments through approved automations. Automatic priority computes fit and priority from those saved assessments; it does not start or stop CLEF. Job match uses company recognition 20%, stability 20%, stack 30%, and work profile 30%. Missing evidence contributes no points. Profile edits invalidate old stack/work comparisons; historical cards are not automatically reclassified. Preserve existing weighted rules unless the user requests conversion.</p>
+        <p>Board cards drag with their full content. Select text and open contextual discussions inside a card’s details.</p>
+      </section>
+
+      <section class="guide-card">
         <h2>Run locally</h2>
-        <p>Install dependencies with <code>npm install</code>, build the canonical browser transport in <code>vendor/meta-mesh</code> after Rust changes, then start Vite with <code>npm run dev</code>. Workspaces remain in that browser profile's IndexedDB. Production builds use <code>npm run build</code>.</p>
+        <p>Install pinned dependencies with <code>npm ci</code>, then start Vite with <code>npm run dev</code>. Workspaces remain in that browser profile's IndexedDB. Production builds use <code>npm run build</code>. Rust is needed only when rebuilding the canonical transport after transport source changes.</p>
       </section>
     </main>
 

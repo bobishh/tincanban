@@ -10,6 +10,8 @@ test.describe("Agent guide", () => {
 
     const guide = page.getByRole("main")
     for (const tool of [
+      "list_workspaces", "switch_workspace", "create_workspace", "rename_workspace", "get_workspace",
+      "list_items", "get_entity", "rename_entity", "create_column", "get_sync_trace", "send_chat_message",
       "get_workspace_settings",
       "apply_workspace_settings",
       "create_item",
@@ -20,10 +22,14 @@ test.describe("Agent guide", () => {
       "restore_and_move",
       "list_placement_issues",
     ]) {
-      await expect(guide.locator(".tool-name", { hasText: tool })).toHaveText(tool)
+      await expect(guide.locator(".tool-name", { hasText: new RegExp(`^${tool}$`) })).toHaveText(tool)
     }
 
     await expect(guide).toContainText("documentTemplates")
+    await expect(guide).toContainText("employee_profile")
+    await expect(guide).toContainText("settings.json")
+    await expect(guide).toContainText("Public board")
+    await expect(guide).toContainText("8 retained objects")
     await expect(guide).toContainText("expectedHeads")
     await expect(guide).toContainText("Archive")
     await expect(guide).toContainText("current workspace")

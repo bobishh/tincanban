@@ -8,8 +8,7 @@ const browserKey = "public-browser-fixture-key-0123456789"
 async function settings(page: Page) {
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true })
-  const identity = dialog.getByRole("tab", { name: "Identity", exact: true })
-  if (await identity.count()) await identity.click()
+  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
   await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeVisible()
   await expect(dialog.getByLabel("Intake URL")).toHaveCount(0)
   return dialog
@@ -52,9 +51,9 @@ for (const status of [202, 503]) {
     await chat.getByRole("button", { name: "Close", exact: true }).click()
     const dialog = await settings(page)
     await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeChecked()
-    await dialog.getByRole("tab", { name: "Identity", exact: true }).click()
-    await expect(dialog.getByRole("status", { name: "Diagnostic delivery" })).toContainText(status === 503 ? "pending" : "ready")
-    if (status === 503) await expect(dialog.getByRole("alert")).toContainText("Intake unavailable")
+    await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
+    await expect(dialog.getByRole("status", { name: "Diagnostic delivery" })).toContainText(status === 503 ? "Waiting to deliver" : "Diagnostics delivered")
+    if (status === 503) await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true }).getByRole("alert")).toContainText("Intake unavailable")
     await page.reload()
     await send(page, "reload-check")
     await expect(page.getByRole("dialog", { name: "Workspace chat", exact: true }).getByText(text, { exact: true })).toBeVisible()
@@ -94,9 +93,9 @@ for (const rejection of [401, 404]) test(`Given intake returns ${rejection}, whe
   await expect.poll(() => requests).toBe(1)
   await chat.getByRole("button", { name: "Close", exact: true }).click()
   const dialog = await settings(page)
-  await dialog.getByRole("tab", { name: "Identity", exact: true }).click()
-  await expect(dialog.getByRole("alert")).toContainText(`HTTP ${rejection}`)
-  await dialog.getByRole("tab", { name: "Identity", exact: true }).click()
+  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
+  await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true }).getByRole("alert")).toContainText(`HTTP ${rejection}`)
+  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
   await dialog.getByRole("checkbox", { name: "Send diagnostics from this device" }).uncheck()
   await page.reload()
   await expect((await settings(page)).getByRole("checkbox", { name: "Send diagnostics from this device" })).not.toBeChecked()
@@ -117,6 +116,30 @@ test("Given unavailable preference storage, when device opts out, then the check
     }
   })
   await dialog.getByRole("checkbox", { name: "Send diagnostics from this device" }).click()
-  await expect(dialog.getByRole("alert")).toContainText("could not be saved")
+  await expect(dialog.getByRole("region", { name: "Device diagnostics", exact: true }).getByRole("alert")).toContainText("could not be saved")
   await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeChecked()
+})
+
+test("Given a rejected diagnostic batch, when delivery resumes, then new diagnostics are confirmed and Identity stays free of log status", async ({ page }) => {
+  let recovered = false
+  await page.route(endpoint, async route => {
+    const batch = route.request().postDataJSON() as Batch
+    await route.fulfill({ status: recovered ? 202 : 400, json: recovered ? { accepted: batch.events.length } : { error: { code: "invalid_telemetry_event" } } })
+  })
+  await page.goto("/")
+  const chat = await send(page, "saved-during-rejected-diagnostics")
+  await chat.getByRole("button", { name: "Close", exact: true }).click()
+  const dialog = await settings(page)
+  const delivery = dialog.getByRole("region", { name: "Diagnostic delivery", exact: true })
+  await expect(delivery.getByRole("alert")).toContainText("HTTP 400")
+  await expect(dialog.getByRole("region", { name: "Workspace status", exact: true })).toContainText("Changes saved on this device.")
+  recovered = true
+  await delivery.getByRole("button", { name: "Resume diagnostics", exact: true }).click()
+  await expect(delivery.getByRole("alert")).toHaveCount(0)
+  await dialog.getByRole("tab", { name: "Identity", exact: true }).click()
+  await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true })).toHaveCount(0)
+  await dialog.getByRole("button", { name: "Dismiss", exact: true }).click()
+  const nextChat = await send(page, "delivery-resumed")
+  await nextChat.getByRole("button", { name: "Close", exact: true }).click()
+  await expect((await settings(page)).getByRole("status", { name: "Diagnostic delivery" })).toContainText("Diagnostics delivered.")
 })

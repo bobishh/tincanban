@@ -5,7 +5,7 @@ async function openSettingsJson(page: Page) {
   await page.getByRole("button", { name: "Settings" }).click()
   const dialog = page.getByRole("dialog", { name: "Settings" })
   await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await dialog.getByText("Advanced configuration", { exact: true }).click()
+  await dialog.getByText("settings.json", { exact: true }).click()
   return { dialog, editor: dialog.getByLabel("Workspace settings JSON") }
 }
 

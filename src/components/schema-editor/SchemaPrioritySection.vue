@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import AutoGrowTextarea from "../AutoGrowTextarea.vue";
+import { computed, ref, useId } from "vue";
 import { employeeProfileSchema } from "../../domain/entitySchemas";
 import type { EmployeeProfile } from "../../domain/jobPriority";
 import type { FieldDefinition, PriorityPolicy } from "../../domain/model";
@@ -19,19 +20,22 @@ const emit = defineEmits<{
   (event: "add-rule"): void;
   (event: "disable"): void;
   (event: "enable"): void;
+  (event: "use-job-match"): void;
   (event: "remove-rule", index: number): void;
-  (event: "save"): void;
 }>();
 
 const currentPolicy = computed(() => props.policy);
 const currentProfile = computed(() => props.employeeProfile);
 
 const importError = ref("");
+const importNotice = ref("");
+const importId = useId();
 async function importProfile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file) return;
   importError.value = "";
+  importNotice.value = "";
   try {
     if (file.size > 20_000) throw new Error("Employee profile file must be under 20 KB");
     const json: unknown = JSON.parse(await file.text());
@@ -40,6 +44,7 @@ async function importProfile(event: Event) {
     if (!result.success) throw new Error("Profile must contain stack and work_profile text within their length limits");
     if (props.readOnly) return;
     Object.assign(currentProfile.value, result.data);
+    importNotice.value = "Profile imported. Save priority rules to apply.";
   } catch (error) {
     importError.value = error instanceof Error ? error.message : "Cannot read employee profile";
   } finally { input.value = ""; }
@@ -112,17 +117,20 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
 
 <template>
   <div class="schema-tab-content priority-settings">
+    <label class="priority-toggle"><input type="checkbox" role="switch" :checked="!!currentPolicy" :disabled="readOnly" @change="($event.target as HTMLInputElement).checked ? emit('enable') : emit('disable')" />Automatic priority</label>
+    <p class="dialog-copy">CLEF supplies vacancy assessments through an approved automation. This board calculates fit and priority from the saved assessments.</p>
+    <p class="dialog-copy">This changes priority calculation, not whether CLEF runs.</p>
     <div v-if="errors.length" class="schema-error-banner" role="alert">
       {{ errors[0] }}
     </div>
 
     <fieldset :disabled="readOnly" class="priority-profile" aria-label="Employee profile">
       <legend>Employee profile</legend>
-      <label><span>Import employee profile</span><input type="file" accept="application/json,.json" aria-label="Import employee profile" @change="importProfile" /></label>
+      <div class="priority-profile-import"><label class="button button-small" :for="importId">Import profile JSON</label><input :id="importId" class="sr-only" type="file" accept="application/json,.json" aria-label="Import employee profile" @change="importProfile" /><p v-if="importNotice" class="dialog-copy" role="status">{{ importNotice }}</p></div>
       <p v-if="importError" role="alert">{{ importError }}</p>
       <p>Shared with this board and its approved automation. Clef compares vacancies with this profile.</p>
-      <label><span>Employee stack</span><textarea v-model="currentProfile.stack" aria-label="Employee stack" rows="3" placeholder="Languages, frameworks, infrastructure and experience" /></label>
-      <label><span>Employee work profile</span><textarea v-model="currentProfile.work_profile" aria-label="Employee work profile" rows="4" placeholder="Responsibilities, role, seniority and preferred work" /></label>
+      <label><span>Employee stack</span><AutoGrowTextarea v-model="currentProfile.stack" aria-label="Employee stack" rows="3" placeholder="Languages, frameworks, infrastructure and experience" /></label>
+      <label><span>Employee work profile</span><AutoGrowTextarea v-model="currentProfile.work_profile" aria-label="Employee work profile" rows="4" placeholder="Responsibilities, role, seniority and preferred work" /></label>
     </fieldset>
 
     <template v-if="currentPolicy">
@@ -135,14 +143,7 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
             the thresholds.
           </p>
         </div>
-        <button
-          class="button button-danger"
-          type="button"
-          :disabled="readOnly"
-          @click="emit('disable')"
-        >
-          Disable automatic priority
-        </button>
+
       </header>
 
       <label class="priority-order">
@@ -164,7 +165,7 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
         <p>Stack match · 30%</p><p>Work profile match · 30%</p>
         <p>Clef supplies assessments during intake. Existing and manually added cards without assessments start at 0.</p>
       </fieldset>
-      <button v-else class="button" type="button" :disabled="readOnly" @click="emit('enable')">Use job match priority</button>
+      <button v-else class="button" type="button" :disabled="readOnly" @click="emit('use-job-match')">Use job match priority</button>
       <fieldset
         v-if="currentPolicy.evaluator === 'weighted-rules-v1'"
         :disabled="readOnly"
@@ -298,33 +299,18 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
     <section v-else class="priority-empty">
       <h3>Manual priority</h3>
       <p>
-        Enable job match priority to compare company recognition, stability, stack and work with your employee profile.
+        Priority is set manually. Enable the switch and save to calculate priority from saved assessments.
       </p>
-      <button
-        class="button button-primary"
-        type="button"
-        :disabled="readOnly"
-        @click="emit('enable')"
-      >
-        Enable automatic priority
-      </button>
+
     </section>
 
-    <div class="dialog-actions">
-      <button
-        class="button button-primary"
-        type="button"
-        :disabled="readOnly"
-        @click="emit('save')"
-      >
-        Save priority rules
-      </button>
-    </div>
+
   </div>
 </template>
 
 <style scoped>
-.priority-profile { display: grid; gap: 0.75rem; }
+.priority-profile { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 14px; }
+.priority-toggle { display: flex; align-items: center; gap: 8px; }
+.priority-profile-import { display: grid; gap: 8px; justify-items: start; }
 .priority-profile label { display: grid; gap: 0.35rem; }
-.priority-profile textarea { width: 100%; box-sizing: border-box; resize: vertical; }
 </style>

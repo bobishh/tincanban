@@ -26,7 +26,7 @@ test("Given live sync is enabled without a connected peer, when Sync opens, then
   await page.getByRole("button", { name: "Sync", exact: true }).click()
 
   const dialog = page.getByRole("dialog", { name: "Device sync" })
-  await dialog.getByText("Advanced", { exact: true }).click()
+  await dialog.getByText("Recovery", { exact: true }).click()
   await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
 
   await dialog.getByRole("button", { name: "Stop live sync", exact: true }).click()

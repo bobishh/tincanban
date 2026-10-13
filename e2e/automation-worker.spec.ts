@@ -480,7 +480,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
         fieldIds: workspace.fieldBindings, ownerPersonId: trustedOwner.identity.personId }) })
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
-    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Connections", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
     const panel = page.getByRole("region", { name: "Automations", exact: true })
     await panel.getByRole("button", { name: "Add automation", exact: true }).click()
     await panel.getByLabel("Automation name").fill("My job intake")
@@ -518,7 +518,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     await expect(automation.getByRole("button", { name: "Resume", exact: true })).toHaveCount(0)
     await page.reload()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
-    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Connections", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
     await expect(page.getByRole("article", { name: "My job intake" }).getByText("Removed · confirmed by Worker", { exact: true })).toBeVisible({ timeout: 30_000 })
   } finally {
     try { await context?.close() } finally {

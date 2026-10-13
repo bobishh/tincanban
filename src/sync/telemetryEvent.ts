@@ -10,6 +10,11 @@ export type TelemetryEvent = {
 function diagnosticId(value: unknown, limit = 160): string {
   return typeof value === "string" && value.length <= limit && /^[A-Za-z0-9_.:-]+$/.test(value) ? value : ""
 }
+function intakeIdentifier(value: unknown, limit = 64): string {
+  if (typeof value !== "string") return ""
+  const identifier = value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()
+  return identifier.length <= limit && /^[a-z][a-z0-9_.-]*$/.test(identifier) && !identifier.endsWith(".") && !identifier.includes("..") ? identifier : ""
+}
 const stringAttrs: Record<string, [string, number]> = {
   phase: ["phase", 64], transport: ["transport", 64], mode: ["mode", 64], connectionId: ["connection_id", 160], peerId: ["peer_id", 160],
   kind: ["frame_kind", 64], recovery: ["recovery", 64], changeId: ["change_id", 160],
@@ -24,18 +29,20 @@ function attributes(detail: Record<string, unknown>): TelemetryAttrs {
   // Opaque IDs retain case; intake error codes use lowercase identifiers.
   const errorCode = diagnosticId(detail.errorCode, 64)
   if (errorCode) attrs.error_code = intakeErrorCode(errorCode)
-  for (const [key, [target, limit]] of Object.entries(stringAttrs)) { const value = diagnosticId(detail[key], limit); if (value) attrs[target] = value }
+  for (const [key, [target, limit]] of Object.entries(stringAttrs)) {
+    const value = ["connectionId", "peerId", "changeId"].includes(key) ? diagnosticId(detail[key], limit) : intakeIdentifier(detail[key], limit)
+    if (value) attrs[target] = value
+  }
   for (const [key, target] of Object.entries(numberAttrs)) {
     const value = detail[key]
     if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) attrs[target] = value
   }
   if (Array.isArray(detail.heads)) attrs.heads = detail.heads.slice(0, 32).map(value => diagnosticId(value)).filter(Boolean)
-  if (Array.isArray(detail.changedFields)) attrs.changed_fields = detail.changedFields.slice(0, 32).map(value => diagnosticId(value, 64)).filter(Boolean)
+  if (Array.isArray(detail.changedFields)) attrs.changed_fields = detail.changedFields.map(value => intakeIdentifier(value)).filter(Boolean).slice(0, 16)
   return attrs
 }
 function intakeErrorCode(value: string): string {
-  const code = value.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()
-  return code.length <= 64 && /^[a-z][a-z0-9_.-]*$/.test(code) && !code.endsWith(".") && !code.includes("..") ? code : "unknown_error"
+  return intakeIdentifier(value) || "unknown_error"
 }
 export async function entityTraceId(project: string, workspace: string, type: string, id: string): Promise<string> {
   if (!id) return ""
@@ -46,18 +53,18 @@ function contextId(value: unknown, length: number): string {
   return typeof value === "string" && new RegExp(`^[0-9a-f]{${length}}$`).test(value) && !/^0+$/.test(value) ? value : ""
 }
 function outcome(event: string, detail: Record<string, unknown>, level: string): string {
-  return diagnosticId(detail.outcome, 64) || (level === "warn" || /failed|rejected/.test(event) ? "error" : "ok")
+  return intakeIdentifier(detail.outcome) || (level === "warn" || /failed|rejected/.test(event) ? "error" : "ok")
 }
 export async function diagnosticEvent(event: string, detail: Record<string, unknown>, context: { project: string; sessionId: string; deviceId: string; timestamp: number; level: string }): Promise<TelemetryEvent> {
   const entityId = diagnosticId(detail.entityId ?? detail.recordId)
-  const entityType = diagnosticId(detail.entityType, 64) || (event.startsWith("chat.") ? "message" : event.startsWith("document.") ? "change" : "")
+  const entityType = intakeIdentifier(detail.entityType) || (event.startsWith("chat.") ? "message" : event.startsWith("document.") ? "change" : "")
   const workspaceId = diagnosticId(detail.workspaceId)
   return {
-    event_id: crypto.randomUUID(), occurred_at: new Date(context.timestamp).toISOString(), event: diagnosticId(event),
+    event_id: crypto.randomUUID(), occurred_at: new Date(context.timestamp).toISOString(), event: intakeIdentifier(event, 160),
     build: typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "test" : __TINCANBAN_BUILD_COMMIT__,
     session_id: context.sessionId, device_id: diagnosticId(context.deviceId), workspace_id: workspaceId, entity_type: entityType, entity_id: entityId,
     trace_id: contextId(detail.traceId, 32) || await entityTraceId(context.project, workspaceId, entityType, entityId), span_id: contextId(detail.spanId, 16), parent_span_id: contextId(detail.parentSpanId, 16),
-    component: diagnosticId(detail.component, 64) || (event.startsWith("chat.") ? "chat" : "mesh"), operation: diagnosticId(detail.operation, 64) || diagnosticId(event.split(".").at(-1), 64),
+    component: intakeIdentifier(detail.component) || (event.startsWith("chat.") ? "chat" : "mesh"), operation: intakeIdentifier(detail.operation) || intakeIdentifier(event.split(".").at(-1)) || "diagnostic",
     status: outcome(event, detail, context.level),
     duration_ms: typeof detail.elapsedMs === "number" && Number.isFinite(detail.elapsedMs) ? Math.min(86_400_000, Math.max(0, detail.elapsedMs)) : 0,
     attrs: attributes(detail),

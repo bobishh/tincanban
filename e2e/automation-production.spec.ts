@@ -69,7 +69,7 @@ test.describe.serial("production automation proof", () => {
 
       await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
   await page.getByRole("button", { name: "Settings", exact: true }).click()
-  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Connections", exact: true }).click()
+  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
   const setup = page.getByRole("region", { name: "Manual automation integration", exact: true })
   await setup.getByText("Manual integration setup", { exact: true }).click()
       await setup.getByLabel("Allow Worker to read this workspace and automate the job board").check()

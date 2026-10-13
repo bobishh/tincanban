@@ -203,7 +203,7 @@ test("Given a desktop scrollbar, when settings open, reject a draft, and close, 
   await expect(dialog).toBeVisible()
   expect(await geometry()).toEqual(initial)
   await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await dialog.getByText("Advanced configuration", { exact: true }).click()
+  await dialog.getByText("settings.json", { exact: true }).click()
   await dialog.getByLabel("Workspace settings JSON").fill("{")
   await expect(dialog.getByRole("button", { name: "Apply JSON", exact: true })).toBeDisabled()
   expect(await geometry()).toEqual(initial)

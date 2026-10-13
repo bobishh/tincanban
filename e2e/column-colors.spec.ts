@@ -18,7 +18,7 @@ test("Given a blank board, when colors are configured in JSON, then unique defau
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const settings = page.getByRole("dialog", { name: "Settings" })
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await settings.getByText("Advanced configuration", { exact: true }).click()
+  await settings.getByText("settings.json", { exact: true }).click()
   const editor = settings.getByLabel("Workspace settings JSON")
   const config = JSON.parse(await editor.inputValue())
   config.board.columns[0].color = "yellow"

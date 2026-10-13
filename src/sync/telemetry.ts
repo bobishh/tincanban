@@ -36,6 +36,15 @@ function admitErrorDiagnostic(event: string, detail: Record<string, unknown>): b
 
 export function telemetryStatus(): TelemetryStatus { return { ...status, queued: queue.length + pending + inFlight, preparing: pending } }
 export function subscribeTelemetryStatus(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } }
+export function retryTelemetry() {
+  if (!telemetryConfig().enabled || flushing) return
+  suspended = false
+  failures = 0
+  status.error = ""
+  if (timer !== undefined) clearTimeout(timer)
+  timer = undefined
+  void flush()
+}
 function notify() { for (const listener of listeners) listener() }
 function schedule(delay: number) {
   if (timer !== undefined || flushing || suspended || !telemetryConfig().enabled) return
@@ -108,7 +117,7 @@ function failedBatch(batch: Queued[], cause: unknown) {
     status.dropped += batch.length + queue.length
     queue.length = 0
     status.state = "error"
-    status.error = `Intake rejected diagnostics (${cause.message}). Check settings and save to retry.`
+    status.error = `Diagnostic service rejected a batch (${cause.message}). Board changes are saved separately. Update the app, then resume diagnostics; the rejected batch was discarded.`
     return
   }
   queue.unshift(...batch)

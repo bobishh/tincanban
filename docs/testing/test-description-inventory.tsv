@@ -9,8 +9,8 @@ app-rust	crates/tincanban-lighthouse/src/join.rs	395	no		failed_join_preserves_e
 app-rust	crates/tincanban-lighthouse/src/lib.rs	660	no		signed_document_survives_restart_but_unsigned_change_never_replaces_it
 browser	e2e/access-policy-local.spec.ts	6	no		Given multiple workspaces, when active content changes, then inactive access loads wait for workspace invalidation
 browser	e2e/agent-guide.spec.ts	4	no	Agent guide	Given current tincanban, when an agent opens the guide, then workspace and MCP instructions match the live contract
-browser	e2e/agent-guide.spec.ts	40	no	Agent guide	Given invalid or stale settings, when an agent follows recovery guidance, then validation and conflict behavior is explicit
-browser	e2e/agent-guide.spec.ts	50	no	Agent guide	Given a narrow viewport, when the guide opens, then content remains within the viewport
+browser	e2e/agent-guide.spec.ts	46	no	Agent guide	Given invalid or stale settings, when an agent follows recovery guidance, then validation and conflict behavior is explicit
+browser	e2e/agent-guide.spec.ts	56	no	Agent guide	Given a narrow viewport, when the guide opens, then content remains within the viewport
 browser	e2e/archive-column-option.spec.ts	15	no		Given a blank board, when Archive column is enabled and item archived, then one collapsible Archive contains item after reload
 browser	e2e/archive-column-option.spec.ts	41	no		Given archive column save fails, when checked column is added, then draft remains and board has no Archive
 browser	e2e/archive-column-option.spec.ts	53	no		Given item archived before Archive column exists, when column is enabled, then item appears and restores
@@ -24,12 +24,13 @@ browser	e2e/archive-layout.spec.ts	204	no		Given a board taller than the viewpor
 browser	e2e/archive-layout.spec.ts	240	no		Given an open column, when folded and unfolded, then its striped header turns and stretches into a full-height spine
 browser	e2e/archive-role-settings.spec.ts	4	no		Given an Archive column, when role moves in column settings, then Archive role stays independent from collapse
 browser	e2e/automatic-priority.spec.ts	27	no	Automatic priority from workspace preferences	Given weighted work-mode rules, when leads are created, then fit and priority are derived without manual fields
-browser	e2e/automatic-priority.spec.ts	71	no	Automatic priority from workspace preferences	Given automatic priority with no criteria, when saving, then settings stay open with an actionable error
-browser	e2e/automatic-priority.spec.ts	102	no		Given job match priority, when employee_profile is saved, then profile persists and missing assessments receive no remote bonus
+browser	e2e/automatic-priority.spec.ts	73	no	Automatic priority from workspace preferences	Given automatic priority with no criteria, when saving, then settings stay open with an actionable error
+browser	e2e/automatic-priority.spec.ts	104	no		Given an employee profile draft, when persistence fails, then Settings shows the error and the same draft can retry
+browser	e2e/automatic-priority.spec.ts	121	no		Given job match priority, when employee_profile is saved, then profile persists and missing assessments receive no remote bonus
 browser	e2e/automation-production.spec.ts	36	no	production automation proof	Given the production owner UI, when owner connects Rusty and approves the Worker, then private signed scope is exported
 browser	e2e/automation-production.spec.ts	108	no	production automation proof	Given exact owner-approved Worker routing, when real Clef classifies website intake, then a Lead syncs to Rusty and reopens in the owner UI
 browser	e2e/automation-worker.spec.ts	14	no		Given an owner-approved blind workspace, when Worker intake and forwarded mail run, then real clients see one scoped Lead and safe status moves
-browser	e2e/automation-worker.spec.ts	443	no		Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit
+browser	e2e/automation-worker.spec.ts	455	no		Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit
 browser	e2e/avatar-crop-responsive.spec.ts	18	no		Given a narrow mobile viewport, when cropping a wide photo, then preview scale matches saved square bounds
 browser	e2e/board-breakpoint.spec.ts	4	no		Given a 640px board, when resizing to a phone, then compact columns become a navigable single column only at 560px
 browser	e2e/board-discovery.spec.ts	4	no		Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear
@@ -76,9 +77,11 @@ browser	e2e/card-narrative-race.spec.ts	49	no		Given legacy narrative sources an
 browser	e2e/card-narrative-race.spec.ts	73	no		Given legacy narrative sources, when unchanged Description saves, then old text remains editable after reload
 browser	e2e/card-narrative-race.spec.ts	96	no		Given a failed narrative save, when retry succeeds, then draft commits once and source remains intact until then
 browser	e2e/card-narrative-race.spec.ts	129	no		Given an inline note changes while Description edit open, when stale form saves, then newer note and draft both survive
-browser	e2e/card-stage-shortcuts.spec.ts	19	no		Given a generic card, when stage shortcut is clicked, then card moves and selection persists
-browser	e2e/card-stage-shortcuts.spec.ts	31	no		Given a generic card, when stage move fails, then card stays put and error appears
-browser	e2e/card-stage-shortcuts.spec.ts	41	no		Given board JSON, when stage buttons are configured, then card shows configured buttons and order
+browser	e2e/card-stage-shortcuts.spec.ts	35	no		Given delayed local persistence, when stages change twice, then selection and board move immediately and the final stage survives reload
+browser	e2e/card-stage-shortcuts.spec.ts	60	no		Given delayed failing local persistence, when stage changes, then selection previews immediately and failure restores selection and board placement
+browser	e2e/card-stage-shortcuts.spec.ts	79	no		Given a generic card, when stage shortcut is clicked, then card moves and selection persists
+browser	e2e/card-stage-shortcuts.spec.ts	92	no		Given a generic card, when stage move fails, then card stays put and error appears
+browser	e2e/card-stage-shortcuts.spec.ts	102	no		Given board JSON, when stage buttons are configured, then card shows configured buttons and order
 browser	e2e/causal-admission.spec.ts	3	no		Given an offline editor change accepted before revocation, when the signed revocation arrives, then the projection retracts and review creates a new authorized change
 browser	e2e/chat-local.spec.ts	17	no		Given Markdown cannot load, when a chat message is saved, then its text remains visible
 browser	e2e/chat-local.spec.ts	32	yes		Given a ${width}px workspace, when I name myself and send a message, then both persist after reload
@@ -114,9 +117,10 @@ browser	e2e/conversation-windows.spec.ts	94	no		Given narrow touch screen and un
 browser	e2e/conversation-windows.spec.ts	117	no		Given generic description, when keyboard Discuss targets its field then message retains field anchor
 browser	e2e/conversation-windows.spec.ts	129	no		Given tablet touch window, when titlebar and corner gestures move resize and cancel then content keeps native touch behavior
 browser	e2e/conversation-windows.spec.ts	167	no		Given workspace A windows and separate B item, when switching back then A content and geometry restore without B leakage
-browser	e2e/custom-avatar.spec.ts	32	no		Given identity photo settings, when one crop is saved and another workspace opens, then the same photo appears immediately and survives reload
-browser	e2e/custom-avatar.spec.ts	89	no		Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry
-browser	e2e/custom-avatar.spec.ts	107	no		Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile
+browser	e2e/custom-avatar.spec.ts	32	no		Given photo settings, when the crop window cannot load, then reload recovery is visible and a reselected photo survives saving
+browser	e2e/custom-avatar.spec.ts	58	no		Given identity photo settings, when one crop is saved and another workspace opens, then the same photo appears immediately and survives reload
+browser	e2e/custom-avatar.spec.ts	118	no		Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry
+browser	e2e/custom-avatar.spec.ts	138	no		Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile
 browser	e2e/datetime-field.spec.ts	14	no	Datetime field type	Given a board with a datetime field, supports datetime input, validation, card rendering, and persistence across reload
 browser	e2e/datetime-field.spec.ts	91	no	Datetime field type	Given schema visual editor, allows selecting datetime as field type
 browser	e2e/detail-prose-width.spec.ts	31	no		Given a Lead detail window, when its container maximizes and then narrows, then properties reflow beside narrative only while space allows
@@ -137,25 +141,25 @@ browser	e2e/document-editing.spec.ts	73	no		Given document controls fail to load
 browser	e2e/durable-mesh.spec.ts	156	no		Given paired browsers, when a lead changes, then the peer receives the durable board update
 browser	e2e/durable-mesh.spec.ts	174	no		Given a legacy local device without metadata, when Sync opens in a known browser, then it shows the current browser and OS
 browser	e2e/durable-mesh.spec.ts	202	no		Given a joined workspace with local data, when an editor leaves the mesh, then its copy remains and rejoining requires merge confirmation
-browser	e2e/durable-mesh.spec.ts	251	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
-browser	e2e/durable-mesh.spec.ts	317	no		Given a current-owner revocation bound to quarantined history, when repair retries after reload, then owner access returns and revoked peer leaves roster
-browser	e2e/durable-mesh.spec.ts	458	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
-browser	e2e/durable-mesh.spec.ts	491	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
-browser	e2e/durable-mesh.spec.ts	529	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
-browser	e2e/durable-mesh.spec.ts	576	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
-browser	e2e/durable-mesh.spec.ts	629	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
-browser	e2e/durable-mesh.spec.ts	717	no		Given a mobile peer with 32 leads and 9 applied cards, when desktop moves cards while it is offline, then both persist 23 leads and 12 applied without reloading to sync
-browser	e2e/durable-mesh.spec.ts	784	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
-browser	e2e/durable-mesh.spec.ts	860	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
-browser	e2e/durable-mesh.spec.ts	884	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
-browser	e2e/durable-mesh.spec.ts	933	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
-browser	e2e/durable-mesh.spec.ts	980	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
-browser	e2e/durable-mesh.spec.ts	1042	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
-browser	e2e/durable-mesh.spec.ts	1064	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
-browser	e2e/durable-mesh.spec.ts	1100	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
-browser	e2e/durable-mesh.spec.ts	1175	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
-browser	e2e/durable-mesh.spec.ts	1206	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
-browser	e2e/durable-mesh.spec.ts	1371	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
+browser	e2e/durable-mesh.spec.ts	252	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
+browser	e2e/durable-mesh.spec.ts	318	no		Given a current-owner revocation bound to quarantined history, when repair retries after reload, then owner access returns and revoked peer leaves roster
+browser	e2e/durable-mesh.spec.ts	459	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
+browser	e2e/durable-mesh.spec.ts	492	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
+browser	e2e/durable-mesh.spec.ts	530	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
+browser	e2e/durable-mesh.spec.ts	577	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
+browser	e2e/durable-mesh.spec.ts	630	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
+browser	e2e/durable-mesh.spec.ts	718	no		Given a mobile peer with 32 leads and 9 applied cards, when desktop moves cards while it is offline, then both persist 23 leads and 12 applied without reloading to sync
+browser	e2e/durable-mesh.spec.ts	785	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
+browser	e2e/durable-mesh.spec.ts	861	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
+browser	e2e/durable-mesh.spec.ts	885	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
+browser	e2e/durable-mesh.spec.ts	934	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
+browser	e2e/durable-mesh.spec.ts	981	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
+browser	e2e/durable-mesh.spec.ts	1043	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
+browser	e2e/durable-mesh.spec.ts	1065	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
+browser	e2e/durable-mesh.spec.ts	1101	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
+browser	e2e/durable-mesh.spec.ts	1179	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
+browser	e2e/durable-mesh.spec.ts	1210	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
+browser	e2e/durable-mesh.spec.ts	1375	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
 browser	e2e/favicon.spec.ts	32	no		Given a ready board with no peers, when its tab opens, then tincanban favicon matches empty mesh without blinking
 browser	e2e/favicon.spec.ts	42	no		Given app startup fails, when its tab opens, then tincanban icon still loads
 browser	e2e/favicon.spec.ts	49	no		Given favicon animation cannot load, when the board opens, then the static icon and local board remain available
@@ -174,11 +178,11 @@ browser	e2e/interaction-polish.spec.ts	30	no		Given an empty form, when Escape i
 browser	e2e/interaction-polish.spec.ts	48	no		Given nested schema dialogs, when the preview closes, then focus returns to its parent before the parent closes
 browser	e2e/interaction-polish.spec.ts	70	no		Given mobile save failure, when retry succeeds, then draft persists exactly once and save status recovers
 browser	e2e/interaction-polish.spec.ts	92	no		Given a filtered mobile board, when no cards match, then result count and reset explain the empty state
-browser	e2e/interaction-polish.spec.ts	111	no		Given slow startup, when data is not ready, then compact progress keeps the shell visible and controls wait for checks
-browser	e2e/interaction-polish.spec.ts	129	no		Given reduced motion, when mobile navigation opens and closes, then transitions do not delay interaction
-browser	e2e/interaction-polish.spec.ts	142	no		Given a pending save, when the user tries to edit or submit again, then the form waits and publishes one card
-browser	e2e/interaction-polish.spec.ts	170	no		Given fast startup, when data arrives before the progress delay, then no loading indicator flashes
-browser	e2e/interaction-polish.spec.ts	185	no		Given a desktop scrollbar, when settings open, reject a draft, and close, then header and logo keep their positions
+browser	e2e/interaction-polish.spec.ts	111	no		Given slow startup, when data is not ready, then the full loader keeps controls hidden until checks finish
+browser	e2e/interaction-polish.spec.ts	130	no		Given reduced motion, when mobile navigation opens and closes, then transitions do not delay interaction
+browser	e2e/interaction-polish.spec.ts	143	no		Given a pending save, when the user tries to edit or submit again, then the form waits and publishes one card
+browser	e2e/interaction-polish.spec.ts	171	no		Given fast startup, when the first board paint completes, then the loader yields to ready controls
+browser	e2e/interaction-polish.spec.ts	184	no		Given a desktop scrollbar, when settings open, reject a draft, and close, then header and logo keep their positions
 browser	e2e/job-search-rejected.spec.ts	5	no	Job Search Rejected Column & Retrospective Notes (Gate F)	Given a Job search board with a lead, when moved to Rejected and a retrospective note is added, it persists across reload
 browser	e2e/job-search-rejected.spec.ts	56	no	Job Search Rejected Column & Retrospective Notes (Gate F)	Given a lead created directly in Rejected status, optional rejection reason is saved upon creation
 browser	e2e/keeper-integration-settings.spec.ts	2	no		Given signed Rusty status confirms settings support, when owner opens the editor, then no unavailable warning appears
@@ -230,9 +234,10 @@ browser	e2e/paper-and-technical-type.spec.ts	11	no		Given paper buttons and card
 browser	e2e/paper-and-technical-type.spec.ts	34	no		Given archive, when expanded and collapsed, then open archive keeps strokes and folded columns retain their category colors and closed borders
 browser	e2e/paper-and-technical-type.spec.ts	83	no		Given local device details and recovery words, when viewed or restore fails, then technical text remains readable in Fira Code
 browser	e2e/paper-controls-chat.spec.ts	5	yes		Given a ${width}px board, when a select opens and a long chat message scrolls, then paper controls and complete message frames remain usable
-browser	e2e/participant-avatars.spec.ts	16	yes		Given a ${width}px workspace, when an author renames and reloads, then their chat and participant avatar stays stable
-browser	e2e/participant-avatars.spec.ts	49	no		Given slow signing, when a message is pending then fails, then its avatar stays stable and retry preserves attribution
-browser	e2e/participant-avatars.spec.ts	75	no		Given two signed participants share a name, when one profile disappears offline, then names stay distinct and their retained avatar stays stable
+browser	e2e/participant-avatars.spec.ts	15	no		Given a long participant name, when the participant list narrows, then name and device count remain readable inside the row
+browser	e2e/participant-avatars.spec.ts	39	yes		Given a ${width}px workspace, when an author renames and reloads, then their chat and participant avatar stays stable
+browser	e2e/participant-avatars.spec.ts	75	no		Given slow signing, when a message is pending then fails, then its avatar stays stable and retry preserves attribution
+browser	e2e/participant-avatars.spec.ts	101	no		Given two signed participants share a name, when one profile disappears offline, then names stay distinct and their retained avatar stays stable
 browser	e2e/personal-root-map-lock.spec.ts	3	no		Given two tabs, when root writes overlap, then the shared map keeps both changes
 browser	e2e/personal-root-map-lock.spec.ts	73	no		Given one owner cache, when tabs add and remove keepers concurrently, then unrelated keeper rows survive
 browser	e2e/policy-transport-startup.spec.ts	24	no		Given persisted authorized local data, when transport assets are unavailable, then the board opens and local edits survive reload without transport requests
@@ -277,8 +282,9 @@ browser	e2e/scoped-sync.spec.ts	499	no		Given a visitor already has the owner's 
 browser	e2e/scoped-sync.spec.ts	542	no		Given existing data under another identity, when enrollment is approved, then the same device keeps old data stored but hides its unentitled scope
 browser	e2e/scoped-sync.spec.ts	615	no		Given a delegated owner device, when it grants an editor access twice, then the editor verifies both grants
 browser	e2e/search-responsiveness.spec.ts	7	no		Given 55 detailed leads, when search narrows then has no matches, then keyboard stays responsive and clearing restores cards without writes
-browser	e2e/settings-scope.spec.ts	3	yes		Given Settings at ${width}px, when switching scope, then profile, workspace and connections stay separate
-browser	e2e/settings-scope.spec.ts	37	no		Given a job-search workspace, when keyboard moves between settings and board sections, then focus and visible content follow selection
+browser	e2e/settings-scope.spec.ts	4	yes		Given Settings at ${width}px, when choosing a section, then flat navigation keeps compact profile and workspace controls separate
+browser	e2e/settings-scope.spec.ts	46	no		Given flat settings, when keyboard moves through sections, then vertical navigation follows focus and shows one panel
+browser	e2e/settings-scope.spec.ts	64	no		Given an unsaved profile name, when sections change, then the draft survives and saving persists it
 browser	e2e/spatial-window-loading.spec.ts	4	no		Given a new lead, when its detail module is still loading then a pending status precedes the window
 browser	e2e/startup-diagnostics.spec.ts	3	no		Given an intake withholding every acknowledgement, When a mobile board opens and reloads, Then the board becomes usable before any acknowledgement
 browser	e2e/startup-diagnostics.spec.ts	25	yes		Given startup debug and intake ${status}, When a mobile page reloads, Then phase checkpoints identify startup and the board stays usable
@@ -301,24 +307,25 @@ browser	e2e/storage-upgrade-block.spec.ts	3	no		Given a local journal created be
 browser	e2e/storage-upgrade-block.spec.ts	56	no		Given normal browser storage, when tincanban starts, then workspace controls load
 browser	e2e/storage-upgrade-block.spec.ts	65	no		Given a legacy version upgrade is pending, when tincanban opens it unversioned, then timeout is distinguishable and recovers
 browser	e2e/storage-upgrade-block.spec.ts	112	no		Given legacy records conflict with current receipt, when migration aborts and conflict is fixed, then retry copies all records atomically
-browser	e2e/succession.spec.ts	33	no		Given an owner names an editor successor, when the editor claims succession, then every peer accepts the new owner
-browser	e2e/succession.spec.ts	66	no		Given editor quorum recovery, when a majority votes, then one vote stays pending and quorum elects the candidate
+browser	e2e/succession.spec.ts	38	no		Given an owner names an editor successor, when the editor claims succession, then every peer accepts the new owner
+browser	e2e/succession.spec.ts	73	no		Given editor quorum recovery, when a majority votes, then one vote stays pending and quorum elects the candidate
 browser	e2e/sync-layout.spec.ts	4	yes		Given sync management at ${width}px, when offline and then paused, then status and actions remain readable
 browser	e2e/sync-tabs.spec.ts	3	yes		Given Device sync at ${width}px, when switching tasks, then each tab exposes only its relevant controls
-browser	e2e/sync-tabs.spec.ts	37	no		Given Rusty is unavailable, when connecting from its tab, then pending and failure stay local to Rusty
+browser	e2e/sync-tabs.spec.ts	52	no		Given Rusty is unavailable, when connecting from its tab, then pending and failure stay local to Rusty
 browser	e2e/sync.spec.ts	4	no		Given clipboard access is denied, when Sync opens, then its pairing link remains selectable for manual copy
 browser	e2e/sync.spec.ts	23	no		Given a malformed pairing link, when tincanban opens it, then it fails without claiming a sync
 browser	e2e/sync.spec.ts	35	no		Given a QR invitation opened in a scanner, when its current URL opens in another browser then the invitation survives
 browser	e2e/sync.spec.ts	58	yes		Given an expired invitation, when its error is closed with ${exit}, then the URL returns to the board and reload stays there
 browser	e2e/sync.spec.ts	96	no		Given paired browser profiles, when either peer changes a card, then the other board updates without another QR
-browser	e2e/telemetry.spec.ts	28	yes		Given diagnostics return ${status}, when chat saves, then text persists and telemetry excludes content
-browser	e2e/telemetry.spec.ts	65	no		Given diagnostics are disabled, when chat saves and page hides, then no intake request occurs
-browser	e2e/telemetry.spec.ts	76	no		Given legacy collector settings, when deployment loads, then only the deployed collector receives events
-browser	e2e/telemetry.spec.ts	90	yes		Given intake returns ${rejection}, when chat saves, then retry stops and user can disable diagnostics
-browser	e2e/telemetry.spec.ts	110	no		Given unavailable preference storage, when device opts out, then the checkbox reverts and reports the failure
+browser	e2e/telemetry.spec.ts	27	yes		Given diagnostics return ${status}, when chat saves, then text persists and telemetry excludes content
+browser	e2e/telemetry.spec.ts	63	no		Given diagnostics are disabled, when chat saves and page hides, then no intake request occurs
+browser	e2e/telemetry.spec.ts	74	no		Given legacy collector settings, when deployment loads, then only the deployed collector receives events
+browser	e2e/telemetry.spec.ts	88	yes		Given intake returns ${rejection}, when chat saves, then retry stops and user can disable diagnostics
+browser	e2e/telemetry.spec.ts	107	no		Given unavailable preference storage, when device opts out, then the checkbox reverts and reports the failure
+browser	e2e/telemetry.spec.ts	123	no		Given a rejected diagnostic batch, when delivery resumes, then new diagnostics are confirmed and Identity stays free of log status
 browser	e2e/unified-settings.spec.ts	9	no		Given Settings is open, when Recovery backup opens, then recovery stays above Settings and closes back to it
-browser	e2e/unified-settings.spec.ts	34	no		Settings keeps identity available while workspace controls stay role-gated
-browser	e2e/unified-settings.spec.ts	73	no		Given two workspaces, when identity name changes, then both show that name even with older chat announcements
+browser	e2e/unified-settings.spec.ts	37	no		Settings keeps identity available while workspace controls stay role-gated
+browser	e2e/unified-settings.spec.ts	76	no		Given two workspaces, when identity name changes, then both show that name even with older chat announcements
 browser	e2e/window-presentation.spec.ts	4	yes		Given a detailed lead at ${width}px, When its window opens and scrolls, Then motion is smooth and framed content keeps most of the window
 browser	e2e/window-presentation.spec.ts	53	no		Given sync settings, When tabs change, Then panels fade in and reduced motion remains available
 browser	e2e/window-presentation.spec.ts	66	yes		Given a ${width}px lead window with a long role, When stages overflow, Then Edit stays on one line and arrows reveal hidden stages
@@ -740,25 +747,30 @@ app-unit	src/public/publicationClient.test.ts	83	yes	publication client signed s
 app-unit	src/public/publicationClient.test.ts	88	no	publication client signed state and receipts	Given a challenge signed by a different key, When publishing, Then no mutation is sent
 app-unit	src/public/publicationClient.test.ts	93	yes	publication client signed state and receipts	Given a signed receipt with wrong %s, When publishing, Then success is rejected
 app-unit	src/public/publicationClient.test.ts	98	no	publication client signed state and receipts	Given an exact receipt signed by a different key, When publishing, Then success is rejected
-app-unit	src/state.test.ts	37	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked
-app-unit	src/state.test.ts	62	no	Repository-backed state and projections (Requirement 1.8)	rejects an invalid configured workspace before durable or active-state changes
-app-unit	src/state.test.ts	86	no	Repository-backed state and projections (Requirement 1.8)	Given a format 2 owner board, when tincanban starts, then migration is signed and durable
-app-unit	src/state.test.ts	111	no	Repository-backed state and projections (Requirement 1.8)	notifies subscribers only after durable commit succeeds
-app-unit	src/state.test.ts	133	no	Repository-backed state and projections (Requirement 1.8)	Given two commands start together, when they commit to one workspace, then UI and reopened storage retain both
-app-unit	src/state.test.ts	151	no	Repository-backed state and projections (Requirement 1.8)	Given two accepted peer branches, when merges overlap, then reopened storage retains both
-app-unit	src/state.test.ts	169	no	Repository-backed state and projections (Requirement 1.8)	Given a signed proof for a hash absent from raw history, when its change later arrives with genuine proof, then unverified proof never persists or poisons replay
-app-unit	src/state.test.ts	193	no	Repository-backed state and projections (Requirement 1.8)	Given local commit fails, when command is rejected, then no authorization or change leaks
-app-unit	src/state.test.ts	205	no	Repository-backed state and projections (Requirement 1.8)	does not notify replication or adopt change when save fails
-app-unit	src/state.test.ts	233	no	Repository-backed state and projections (Requirement 1.8)	rejects a local edit while an ownership transfer awaits confirmation
-app-unit	src/state.test.ts	265	no	Repository-backed state and projections (Requirement 1.8)	rejects review of a quarantined edit while ownership transfer awaits confirmation
-app-unit	src/state.test.ts	309	no	Repository-backed state and projections (Requirement 1.8)	reconciles changes from BroadcastChannel without losing local state
-app-unit	src/state.test.ts	319	no	Repository-backed state and projections (Requirement 1.8)	refreshes active and archived workspace lists with one catalog read
-app-unit	src/state.test.ts	328	no	Repository-backed state and projections (Requirement 1.8)	notifies live mesh subscribers when another tab persists an inactive workspace during reconciliation
-app-unit	src/state.test.ts	344	no	Repository-backed state and projections (Requirement 1.8)	rejects an unrelated same-ID workspace without changing local documents or identity
-app-unit	src/state.test.ts	356	no	Repository-backed state and projections (Requirement 1.8)	rejects a document addressed to another workspace without touching the active board
-app-unit	src/state.test.ts	365	no	Repository-backed state and projections (Requirement 1.8)	does not allow a peer to replace the owner used to authorize chat
-app-unit	src/state.test.ts	378	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
-app-unit	src/state.test.ts	387	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
+app-unit	src/state.test.ts	44	no	Repository-backed state and projections (Requirement 1.8)	Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes
+app-unit	src/state.test.ts	59	no	Repository-backed state and projections (Requirement 1.8)	Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload
+app-unit	src/state.test.ts	81	yes	Repository-backed state and projections (Requirement 1.8)	Given %s admission evidence, When a local card is archived, Then complete admission runs before saving
+app-unit	src/state.test.ts	105	no	Repository-backed state and projections (Requirement 1.8)	Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change
+app-unit	src/state.test.ts	123	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing
+app-unit	src/state.test.ts	147	yes	Repository-backed state and projections (Requirement 1.8)	Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked
+app-unit	src/state.test.ts	172	no	Repository-backed state and projections (Requirement 1.8)	rejects an invalid configured workspace before durable or active-state changes
+app-unit	src/state.test.ts	196	no	Repository-backed state and projections (Requirement 1.8)	Given a format 2 owner board, when tincanban starts, then migration is signed and durable
+app-unit	src/state.test.ts	221	no	Repository-backed state and projections (Requirement 1.8)	notifies subscribers only after durable commit succeeds
+app-unit	src/state.test.ts	243	no	Repository-backed state and projections (Requirement 1.8)	Given two commands start together, when they commit to one workspace, then UI and reopened storage retain both
+app-unit	src/state.test.ts	261	no	Repository-backed state and projections (Requirement 1.8)	Given two accepted peer branches, when merges overlap, then reopened storage retains both
+app-unit	src/state.test.ts	279	no	Repository-backed state and projections (Requirement 1.8)	Given a signed proof for a hash absent from raw history, when its change later arrives with genuine proof, then unverified proof never persists or poisons replay
+app-unit	src/state.test.ts	303	no	Repository-backed state and projections (Requirement 1.8)	Given local commit fails, when command is rejected, then no authorization or change leaks
+app-unit	src/state.test.ts	315	no	Repository-backed state and projections (Requirement 1.8)	does not notify replication or adopt change when save fails
+app-unit	src/state.test.ts	343	no	Repository-backed state and projections (Requirement 1.8)	rejects a local edit while an ownership transfer awaits confirmation
+app-unit	src/state.test.ts	375	no	Repository-backed state and projections (Requirement 1.8)	rejects review of a quarantined edit while ownership transfer awaits confirmation
+app-unit	src/state.test.ts	419	no	Repository-backed state and projections (Requirement 1.8)	reconciles changes from BroadcastChannel without losing local state
+app-unit	src/state.test.ts	429	no	Repository-backed state and projections (Requirement 1.8)	refreshes active and archived workspace lists with one catalog read
+app-unit	src/state.test.ts	438	no	Repository-backed state and projections (Requirement 1.8)	notifies live mesh subscribers when another tab persists an inactive workspace during reconciliation
+app-unit	src/state.test.ts	454	no	Repository-backed state and projections (Requirement 1.8)	rejects an unrelated same-ID workspace without changing local documents or identity
+app-unit	src/state.test.ts	466	no	Repository-backed state and projections (Requirement 1.8)	rejects a document addressed to another workspace without touching the active board
+app-unit	src/state.test.ts	475	no	Repository-backed state and projections (Requirement 1.8)	does not allow a peer to replace the owner used to authorize chat
+app-unit	src/state.test.ts	488	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
+app-unit	src/state.test.ts	497	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
 app-unit	src/stateCausalReview.test.ts	16	no	quarantined review resolution	requires the exact review clone to be admitted before hiding the source
 app-unit	src/statePersonalRootScope.test.ts	14	no	identity-scoped local workspace catalog	shows root-entitled workspaces, including invited visitor refs, but hides another identity's local docs
 app-unit	src/statePersonalRootScope.test.ts	38	no	identity-scoped local workspace catalog	fails closed when legacy root omits its workspace map
@@ -1091,23 +1103,26 @@ app-unit	src/sync/startupDiagnostics.test.ts	28	no		Given errors-only telemetry 
 app-unit	src/sync/startupDiagnostics.test.ts	45	no		Given an intake awaiting acknowledgement, When startup runs, Then local work completes while both checkpoints remain in flight
 app-unit	src/sync/startupDiagnostics.test.ts	62	no		Given a startup failure, When the stage throws, Then diagnostics identify the stage and error type without transmitting raw error content
 app-unit	src/sync/startupDiagnostics.test.ts	71	yes		Given %s diagnostics, When startup runs, Then diagnostics cannot prevent local work
-app-unit	src/sync/telemetry.test.ts	37	no	bounded telemetry delivery	Given errors-only diagnostics, When many workspaces fail, Then the hourly budget caps delivery at thirty events
-app-unit	src/sync/telemetry.test.ts	48	no	bounded telemetry delivery	Given errors-only diagnostics, When sync repeats or succeeds, Then only one failure per five minutes is sent
-app-unit	src/sync/telemetry.test.ts	64	no	bounded telemetry delivery	Given an in-flight batch, when device opts out and back in, then old request aborts and old events are discarded
-app-unit	src/sync/telemetry.test.ts	90	no	bounded telemetry delivery	Given large attribute lists, when delivered, then every request fits the byte and event limits
-app-unit	src/sync/telemetry.test.ts	109	no	bounded telemetry delivery	Given default settings on production hostname, when traced, then no fetch is scheduled
-app-unit	src/sync/telemetry.test.ts	119	no	bounded telemetry delivery	Given temporary failure, when retried, then event IDs remain stable and confirmed receipt clears queue
-app-unit	src/sync/telemetry.test.ts	136	no	bounded telemetry delivery	Given permanent 404, when delivery fails, then retries halt until device opts out
-app-unit	src/sync/telemetry.test.ts	149	no	bounded telemetry delivery	Given offline collection beyond capacity, when events age out, then memory stays bounded and expired events are dropped
+app-unit	src/sync/telemetry.test.ts	37	no	bounded telemetry delivery	Given a rejected batch, When delivery is explicitly retried, Then new diagnostics can be confirmed without resending discarded events
+app-unit	src/sync/telemetry.test.ts	54	no	bounded telemetry delivery	Given errors-only diagnostics, When many workspaces fail, Then the hourly budget caps delivery at thirty events
+app-unit	src/sync/telemetry.test.ts	65	no	bounded telemetry delivery	Given errors-only diagnostics, When sync repeats or succeeds, Then only one failure per five minutes is sent
+app-unit	src/sync/telemetry.test.ts	81	no	bounded telemetry delivery	Given an in-flight batch, when device opts out and back in, then old request aborts and old events are discarded
+app-unit	src/sync/telemetry.test.ts	107	no	bounded telemetry delivery	Given large attribute lists, when delivered, then every request fits the byte and event limits
+app-unit	src/sync/telemetry.test.ts	126	no	bounded telemetry delivery	Given default settings on production hostname, when traced, then no fetch is scheduled
+app-unit	src/sync/telemetry.test.ts	136	no	bounded telemetry delivery	Given temporary failure, when retried, then event IDs remain stable and confirmed receipt clears queue
+app-unit	src/sync/telemetry.test.ts	153	no	bounded telemetry delivery	Given permanent 404, when delivery fails, then retries halt until device opts out
+app-unit	src/sync/telemetry.test.ts	166	no	bounded telemetry delivery	Given offline collection beyond capacity, when events age out, then memory stays bounded and expired events are dropped
 app-unit	src/sync/telemetryConfig.test.ts	18	no	deployment telemetry configuration and device consent	Given application deployment configuration, when loaded, then sampling and batching come from the build
 app-unit	src/sync/telemetryConfig.test.ts	22	no	deployment telemetry configuration and device consent	Given legacy device configuration pointing elsewhere, when upgraded, then only explicit disablement survives
 app-unit	src/sync/telemetryConfig.test.ts	27	no	deployment telemetry configuration and device consent	Given no deployed collector key, when device opts in, then sending cannot be enabled locally
 app-unit	src/sync/telemetryConfig.test.ts	35	no	deployment telemetry configuration and device consent	Given a configured application, when this device opts out and reloads, then only the consent flag is stored
 app-unit	src/sync/telemetryConfig.test.ts	45	yes	deployment telemetry configuration and device consent	Given invalid deployment value %s=%s, when loaded, then collection fails closed
 app-unit	src/sync/telemetryConfig.test.ts	55	no	deployment telemetry configuration and device consent	Given unavailable local storage, when opting out, then the failure is reported without claiming consent was saved
-app-unit	src/sync/telemetryEvent.test.ts	6	no	telemetry event contract	Given an authority race, When diagnostics reach Cloudflare, Then stage and changed field names survive without authority values
-app-unit	src/sync/telemetryEvent.test.ts	14	no	telemetry event contract	Given the same signed entity on two devices, when recorded, then trace correlation survives differing sessions
-app-unit	src/sync/telemetryEvent.test.ts	27	no	telemetry event contract	Given diagnostic detail containing content and secrets, when encoded, then only typed allowed fields remain
+app-unit	src/sync/telemetryEvent.test.ts	6	no	telemetry event contract	Given camel-case diagnostics and many changed fields, When encoded, Then intake identifiers and field limits are valid while opaque IDs retain case
+app-unit	src/sync/telemetryEvent.test.ts	17	no	telemetry event contract	Given a startup error type, When encoded for intake, Then the error code is a lowercase identifier
+app-unit	src/sync/telemetryEvent.test.ts	21	no	telemetry event contract	Given an authority race, When diagnostics reach Cloudflare, Then stage and changed field names survive without authority values
+app-unit	src/sync/telemetryEvent.test.ts	29	no	telemetry event contract	Given the same signed entity on two devices, when recorded, then trace correlation survives differing sessions
+app-unit	src/sync/telemetryEvent.test.ts	42	no	telemetry event contract	Given diagnostic detail containing content and secrets, when encoded, then only typed allowed fields remain
 app-unit	src/sync/useDeviceSync.test.ts	16	no	device sync errors	explains a archived local copy without blaming another open tab
 app-unit	src/sync/useDeviceSync.test.ts	23	no	device sync errors	preserves the bounded root cause for live-session diagnostics
 app-unit	src/sync/useDeviceSync.test.ts	29	no	device sync errors	Given a CRDT merge failure, when pairing reports it, then the UI does not blame the QR code
@@ -1202,13 +1217,15 @@ app-unit	src/ui/windowManager.test.ts	18	no	local window layouts	separates works
 app-unit	src/ui/windowManager.test.ts	50	no	window focus ring	reopening identical content focuses existing window and adds no duplicate
 app-unit	src/ui/windowManager.test.ts	57	no	window focus ring	restores initiating control after closing focused window
 app-unit	src/ui/windowManager.test.ts	65	no	window focus ring	cycles only current workspace and keeps z bounded after repeated focus
-app-unit	src/webmcp.test.ts	40	no	generic WebMCP tools	registers generic workspace commands without job-search aliases
-app-unit	src/webmcp.test.ts	77	no	generic WebMCP tools	reads lifecycle evidence without changing workspace data or allowing write inputs
-app-unit	src/webmcp.test.ts	94	no	generic WebMCP tools	returns cloneable workspace records and switches the active workspace
-app-unit	src/webmcp.test.ts	120	no	generic WebMCP tools	reads and atomically applies the complete workspace settings through WebMCP
-app-unit	src/webmcp.test.ts	146	no	generic WebMCP tools	executes valid create_item and rejects invalid create_item without mutating
-app-unit	src/webmcp.test.ts	178	no	generic WebMCP tools	executes move_entity and rename_entity with proper validation
-app-unit	src/webmcp.test.ts	209	no	generic WebMCP tools	archives an item and lists it through the same archive state
+app-unit	src/webmcp.test.ts	40	no	generic WebMCP tools	Given the served agent guide, when tools are registered, then documented names exactly match the runtime surface
+app-unit	src/webmcp.test.ts	47	no	generic WebMCP tools	registers generic workspace commands without job-search aliases
+app-unit	src/webmcp.test.ts	84	no	generic WebMCP tools	Given workspace entities, when their summary is requested, then stable IDs and kinds are discoverable without entity contents
+app-unit	src/webmcp.test.ts	95	no	generic WebMCP tools	reads lifecycle evidence without changing workspace data or allowing write inputs
+app-unit	src/webmcp.test.ts	112	no	generic WebMCP tools	returns cloneable workspace records and switches the active workspace
+app-unit	src/webmcp.test.ts	138	no	generic WebMCP tools	reads and atomically applies the complete workspace settings through WebMCP
+app-unit	src/webmcp.test.ts	167	no	generic WebMCP tools	executes valid create_item and rejects invalid create_item without mutating
+app-unit	src/webmcp.test.ts	199	no	generic WebMCP tools	executes move_entity and rename_entity with proper validation
+app-unit	src/webmcp.test.ts	230	no	generic WebMCP tools	archives an item and lists it through the same archive state
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/access.rs	139	no		expired_automation_grant_loses_current_access
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	940	no		succession_summary_excludes_revoked_editors_and_reports_quorum
 meta-mesh-rust	vendor/meta-mesh/crates/meta-mesh-core/src/authority.rs	957	no		eligible_editors_are_unique_sorted_and_active
@@ -1766,3 +1783,17 @@ worker-unit	workers/automation/tests/runtime.runtime.test.ts	284	no	automation W
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	300	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	325	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	346	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance
+browser	e2e/mobile-profile-sync.spec.ts	4	no		Given an enrolled mobile owner device with large history, when desktop photo changes while mobile is closed, then cold reopening receives the photo without another upload
+browser	e2e/ui-screen-audit.spec.ts	12	no		Given the board directory, When an invalid backup is selected, Then import failure stays beside the import action and the current board remains
+browser	e2e/ui-screen-audit.spec.ts	25	no		Given an unsaved template, When settings tabs change and Save is repeated, Then its draft survives and only one template is stored
+browser	e2e/ui-screen-audit.spec.ts	45	no		Given template storage fails, When Save is retried, Then the error and draft stay in the editor and a single template is saved
+browser	e2e/ui-screen-audit.spec.ts	65	no		Given a recovery backup is generated, When restoration words or the next backup length change, Then generated words and their count remain unchanged
+browser	e2e/ui-screen-audit.spec.ts	83	no		Given Device sync, When Recovery opens, Then recovery controls stay visible without a technical device dump
+browser	e2e/ui-screen-audit.spec.ts	96	no		Given backup creation is pending or fails, When Export is selected, Then duplicate export is blocked and its error can be retried inline
+app-unit	src/stateLocalSavePerformance.test.ts	13	no		Given growing admitted histories, When one card changes, Then compare full replay with checkpoint extension
+app-unit	src/sync/localCommandTransition.test.ts	29	no		Given a signed local card creation, When checking an editor command, Then only its transition is admitted
+app-unit	src/sync/localCommandTransition.test.ts	34	yes		Given an editor column rename with reported targets=%s, When checking the local transition, Then board structure remains protected
+app-unit	src/sync/localCommandTransition.test.ts	40	yes		Given a local command with wrong %s, When extending admission, Then it is rejected
+app-unit	src/sync/localCommandTransition.test.ts	49	no		Given a visitor local command, When creating a card, Then it is rejected before durable admission
+app-unit	src/sync/localWorkspaceAdmission.test.ts	45	yes		Given changed %s after admission, When a local command saves, Then the checkpoint cannot extend
+app-unit	src/sync/localWorkspaceAdmission.test.ts	52	no		Given an authority change during local validation, When extending the checkpoint, Then no admitted result is returned

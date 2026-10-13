@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
-import type { WorkspaceDocumentV2, WorkspaceGrant, DeviceCertificate } from "../domain/model"
+import type { WorkspaceDocumentV2, WorkspaceGrant, DeviceCertificate, TransactionReceipt } from "../domain/model"
 import { defaultProofStore } from "../domain/proofs"
 import { peerStore, type WorkspaceAuthorityRecord, type WorkspaceMeshCredential } from "./peerStore"
 import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type WorkspaceOwnershipTransfer,
@@ -15,6 +15,7 @@ import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoi
 import type { StoredCausalEvidence } from "../storageJournal"
 
 import type { WorkspaceRole } from "../domain/permissions"
+import { assertLocalCommandTransition } from "./localCommandTransition"
 export class WorkspaceChangeRejected extends Error {
   constructor(message: string) { super(message); this.name = "WorkspaceChangeRejected" }
 }
@@ -368,6 +369,33 @@ export async function storedWorkspaceAdmissionIsCurrent(doc: Automerge.Doc<Works
   const matches = await matchesAdmissionCheckpoint(evidence.admissionCheckpoint,
     await admissionInputHash(evidence.bytes, context), Automerge.getHeads(doc), evidence.decisions)
   return matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential
+}
+
+/** Extend only a locally committed, fully admitted base under identical rights. */
+export async function extendLocalWorkspaceAdmission(
+  base: Automerge.Doc<WorkspaceDocumentV2>, next: Automerge.Doc<WorkspaceDocumentV2>,
+  previous: StoredCausalEvidence | null, authorization: IncomingAuthorizationBundle,
+  authorizations: Authorization[], receipt: TransactionReceipt, changeBytes: Uint8Array,
+  role: WorkspaceRole, profile: LocalProfile,
+): Promise<StoredCausalEvidence | undefined> {
+  if (!previous?.admissionCheckpoint || previous.decisions.some(decision => decision.status.type !== "admitted")) return
+  const { context, frozenCredential } = await workspaceAdmissionContext(base, authorization,
+    (previous.authorizationEvidence ?? []) as Authorization[], true)
+  if (!await matchesAdmissionCheckpoint(previous.admissionCheckpoint,
+    await admissionInputHash(previous.bytes, context), Automerge.getHeads(base), previous.decisions)) return
+  await assertLocalCommandTransition(base, next, receipt, changeBytes, authorizations, role, profile)
+  const bytes = Automerge.save(next)
+  const decisions = [...previous.decisions, { hash: receipt.changeHash, status: { type: "admitted" as const, role } }]
+  // Preserve only previously verified proofs plus the newly verified local
+  // signature. Unmatched records in the input context remain untrusted.
+  const authorizationEvidence = mergeAuthorizationRecords((previous.authorizationEvidence ?? []) as Authorization[], authorizations)
+  const nextContext = { ...context, authorization: { ...context.authorization,
+    records: mergeAuthorizationRecords(context.authorization.records as Authorization[], authorizations) } }
+  const admissionCheckpoint = await createAdmissionCheckpoint(await admissionInputHash(bytes, nextContext), Automerge.getHeads(next), decisions)
+  if (authorityValidationFingerprint(await incomingCredential(base.id)) !== frozenCredential)
+    throw new Error("Workspace authority changed during validation. Retry synchronization.")
+  meshTrace("workspace.admission.local-extended", { workspaceId: base.id, changeId: receipt.changeHash, checkedChanges: 1 })
+  return { ...previous, bytes, decisions, authorizationEvidence, admissionCheckpoint }
 }
 
 async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown,

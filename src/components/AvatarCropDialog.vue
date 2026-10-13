@@ -166,7 +166,7 @@ async function saveCrop() {
       </div>
       <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
       <p v-if="saving" class="dialog-copy" role="status">Preparing photo…</p>
-      <div class="dialog-actions"><button class="button" type="button" :disabled="saving" @click="emit('cancel')">Cancel</button><button class="button button-primary" type="button" :disabled="!loaded || saving" @click="saveCrop">Save photo</button></div>
+      <div class="dialog-actions"><button class="button" type="button" :disabled="saving" @click="emit('cancel')">Cancel</button><button class="button button-primary" type="button" :disabled="!loaded || saving" @click="saveCrop">Use photo</button></div>
     </section>
   </ModalLayer>
 </template>

@@ -148,6 +148,7 @@ async function moveItemToColumn(core: ReturnType<typeof useAppCore>, item: Item,
 
 function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>) {
   const settingsSaveError = ref("")
+  const settingsSaving = ref(false)
   const itemInsertion = ref<{ columnId: string; beforeId: string } | null>(null)
   const newBoardColumnArchive = ref(false)
   const newBoardColumnCollapsible = ref(false)
@@ -170,10 +171,14 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
   const currentDocHeads = computed(() => { void core.tincanban.docVersion.value; const doc = core.tincanban.getActiveDoc(); return doc ? Automerge.getHeads(doc) : [] })
   const handleApplySchema = (payload: { schema: BoardSchemaDraft; expectedHeads?: Heads }) => applySchema(core, payload)
   const handleApplyWorkspaceSettings = async (payload: { settings: WorkspaceSettingsDraft; expectedHeads?: Heads }) => {
+    if (settingsSaving.value) return false
     settingsSaveError.value = ""
-    const saved = await applyWorkspaceSettings(core, payload)
-    if (!saved) settingsSaveError.value = core.notice.value
-    return saved
+    settingsSaving.value = true
+    try {
+      const saved = await applyWorkspaceSettings(core, payload)
+      if (!saved) settingsSaveError.value = core.notice.value
+      return saved
+    } finally { settingsSaving.value = false }
   }
   const handleArchiveItem = (itemId: string) => archiveItem(core, board.selectedItem.value, itemId)
   const handleRestoreItem = (itemId: string) => restoreItem(core, itemId)
@@ -201,7 +206,7 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
     newBoardColumnArchive.value = checked
     if (checked && !core.newBoardColumnTitle.value.trim()) core.newBoardColumnTitle.value = "Archive"
   }
-  return { openBoardItem, closeDetail, openAddItem, handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItem, handleOpenItemEdit, handleAddSubitem, handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn }
+  return { openBoardItem, closeDetail, openAddItem, handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, settingsSaving, handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItem, handleOpenItemEdit, handleAddSubitem, handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn }
 }
 
 type ItemSavePayload = { title: string; body: string; parentId?: string; values: Record<string, FieldValue>; foldSnapshot?: NarrativeFoldSources }

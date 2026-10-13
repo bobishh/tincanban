@@ -8,7 +8,6 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: "apply"): void;
   (event: "update:value", value: string): void;
 }>();
 </script>
@@ -16,7 +15,7 @@ const emit = defineEmits<{
 <template>
   <div class="schema-tab-content workspace-json-editor">
     <p>
-      Advanced workspace configuration. One apply updates workspace title,
+      Edit settings.json for this workspace. One apply updates workspace title,
       board, columns, card stage buttons, fields, and document templates.
     </p>
     <div v-if="errors.length" class="schema-error-banner" role="alert">
@@ -42,15 +41,6 @@ const emit = defineEmits<{
         "
       ></textarea>
     </label>
-    <div class="dialog-actions">
-      <button
-        class="button button-primary"
-        type="button"
-        :disabled="readOnly || errors.length > 0"
-        @click="emit('apply')"
-      >
-        Apply JSON
-      </button>
-    </div>
+
   </div>
 </template>

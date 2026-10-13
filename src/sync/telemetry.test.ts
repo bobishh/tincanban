@@ -34,6 +34,23 @@ async function prepared(telemetry: Awaited<ReturnType<typeof setup>>["telemetry"
 }
 
 describe("bounded telemetry delivery", () => {
+  it("Given a rejected batch, When delivery is explicitly retried, Then new diagnostics can be confirmed without resending discarded events", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(new Response("", { status: 400 }))
+      .mockResolvedValue(Response.json({ accepted: 1 }))
+    vi.stubGlobal("fetch", fetch)
+    const { telemetry } = await setup()
+    telemetry.record("chat.persisted", { recordId: "discarded-message" })
+    await prepared(telemetry, 1)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(telemetry.telemetryStatus().state).toBe("error")
+    telemetry.retryTelemetry()
+    telemetry.record("chat.persisted", { recordId: "new-message" })
+    await prepared(telemetry, 1)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[1]![1].body).not.toContain("discarded-message")
+    expect(telemetry.telemetryStatus().state).toBe("ready")
+  })
   it("Given errors-only diagnostics, When many workspaces fail, Then the hourly budget caps delivery at thirty events", async () => {
     vi.stubEnv("VITE_SYNC_TELEMETRY_LEVEL", "errors")
     const fetch = vi.fn().mockResolvedValue(Response.json({ accepted: 30 }))

@@ -48,7 +48,7 @@ test.describe("Component layout audit", () => {
     await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
     await expect(dialog.getByRole("tab", { name: "Document templates" })).toHaveCSS("border-radius", "0px")
     await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-    await dialog.getByText("Advanced configuration", { exact: true }).click()
+    await dialog.getByText("settings.json", { exact: true }).click()
     await expect(dialog.getByLabel("Workspace settings JSON")).toBeVisible()
     await dialog.getByRole("button", { name: "Dismiss" }).click()
 
@@ -74,7 +74,7 @@ test.describe("Component layout audit", () => {
     const dialog = page.getByRole("dialog", { name: "Settings" })
     await expectInsideViewport(dialog, page)
     await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-    await dialog.getByText("Advanced configuration", { exact: true }).click()
+    await dialog.getByText("settings.json", { exact: true }).click()
     await expectInsideViewport(dialog, page)
   })
 })

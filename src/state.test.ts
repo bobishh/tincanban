@@ -18,6 +18,11 @@ import * as causalAdmission from "./stateCausalAdmission"
 import * as changeAuthorization from "./sync/changeAuthorization"
 import { createSyncActions } from "./stateSyncActions"
 
+vi.mock("@automerge/automerge/slim", async () => {
+  const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
+  return { ...actual, getChangesMetaSince: vi.fn(actual.getChangesMetaSince) }
+})
+
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
@@ -49,6 +54,52 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(admission).not.toHaveBeenCalled()
       expect(commit).not.toHaveBeenCalled()
     } finally { admission.mockRestore(); commit.mockRestore() }
+  })
+
+  it("Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Incremental save", role: "Engineer", status: "lead" })
+    const item = Object.values(app.getActiveDoc()!.entities).find(isItem)!
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    const history = vi.mocked(Automerge.getChangesMetaSince)
+    history.mockClear()
+    try {
+      await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
+      await app.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: item.placement.parentId!, beforeId: null })
+      expect(admission).not.toHaveBeenCalled()
+      expect(history.mock.calls.some(([, heads]) => heads.length === 0)).toBe(false)
+      const evidence = (await defaultStorage.loadCausalEvidence(app.activeWorkspace.id))!
+      expect(evidence.decisions.every(decision => decision.status.type === "admitted")).toBe(true)
+      expect(evidence.admissionCheckpoint?.projectionHeads).toEqual(Automerge.getHeads(app.getActiveDoc()!).sort())
+      resetStateForTest()
+      await hydrate()
+      expect(admission).not.toHaveBeenCalled()
+      expect(app.workspace.leads.map(lead => lead.company)).toContain("Incremental save")
+    } finally { admission.mockRestore(); history.mockClear() }
+  })
+
+  it.each(["missing", "policy", "raw", "decisions", "pending"])("Given %s admission evidence, When a local card is archived, Then complete admission runs before saving", async changed => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Fallback save", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!
+    const item = Object.values(doc.entities).find(isItem)!
+    const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
+    if (changed === "missing") delete evidence.admissionCheckpoint
+    if (changed === "policy") evidence.admissionCheckpoint!.policy = "older-policy"
+    if (changed === "decisions") evidence.decisions = []
+    if (changed === "pending") evidence.decisions[0]!.status = { type: "pending", reason: "Recheck required" }
+    if (changed === "raw") {
+      const raw = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Unverified replacement" })
+      evidence.bytes = Automerge.save(raw)
+      Automerge.free(raw)
+    }
+    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
+      expect(admission).toHaveBeenCalledOnce()
+      expect(JSON.parse((app.getActiveDoc()!.entities[item.id] as { lifecycle: string }).lifecycle).state).toBe("archived")
+    } finally { admission.mockRestore() }
   })
 
   it("Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change", async () => {

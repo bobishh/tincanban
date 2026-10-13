@@ -1,8 +1,8 @@
 import { expect, test, type Page, type Locator } from "./support/coverage"
 
 async function participantsFromSettings(page: Page, settings: Locator) {
-  await settings.getByRole("tab", { name: "Connections", exact: true }).click()
-  await settings.getByRole("button", { name: "Open Device sync", exact: true }).click()
+  await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
+  await page.getByRole("button", { name: "Sync", exact: true }).click()
   return page.getByRole("dialog", { name: "Device sync" })
 }
 
@@ -45,16 +45,16 @@ test("Settings keeps identity available while workspace controls stay role-gated
   const settings = page.getByRole("dialog", { name: "Settings" })
   await expect(settings.getByRole("tab", { name: "Identity" })).toBeVisible()
   await expect(settings.getByRole("tab", { name: "Your profile" })).toHaveCount(0)
-  await expect(settings.getByRole("tab", { name: "Connections" })).toBeVisible()
+  await expect(settings.getByRole("tab", { name: "Workspace" })).toBeVisible()
   await expect(settings.getByRole("tab", { name: "Workspace", exact: true })).toBeVisible()
   await settings.getByRole("tab", { name: "Identity" }).click()
   await expect(settings.getByLabel("Name")).toHaveValue(/^[A-Za-z]+ [A-Za-z]+$/)
   await settings.getByLabel("Name").fill("Settings identity")
-  await settings.getByRole("button", { name: "Save name" }).click()
+  await settings.getByRole("button", { name: "Save profile" }).click()
   await expect(settings.getByLabel("Name")).toHaveValue("Settings identity")
   const nameWidth = await settings.getByLabel("Name").evaluate(element => element.getBoundingClientRect().width)
-  const buttonWidth = await settings.getByRole("button", { name: "Save name" }).evaluate(element => element.getBoundingClientRect().width)
-  expect(Math.abs(nameWidth - buttonWidth)).toBeLessThan(1)
+  const buttonWidth = await settings.getByRole("button", { name: "Save profile" }).evaluate(element => element.getBoundingClientRect().width)
+  expect(buttonWidth).toBeLessThan(nameWidth)
   const participants = await participantsFromSettings(page, settings)
   await expect(participants.locator(".mesh-member").filter({ hasText: "You" })).toContainText("Settings identity")
   await expect(participants.locator(".mesh-member").filter({ hasText: "You" })).not.toContainText("Chat name:")
@@ -93,7 +93,7 @@ test("Given two workspaces, when identity name changes, then both show that name
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
   await settings.getByRole("tab", { name: "Identity" }).click()
   await settings.getByLabel("Name").fill("Bo")
-  await settings.getByRole("button", { name: "Save name" }).click()
+  await settings.getByRole("button", { name: "Save profile" }).click()
   const participants = await participantsFromSettings(page, settings)
   await expect(participants.locator(".mesh-member").filter({ hasText: "You" })).toContainText("Bo")
   await participants.getByRole("button", { name: "Close", exact: true }).click()

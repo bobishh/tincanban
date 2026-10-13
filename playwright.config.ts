@@ -35,7 +35,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   projects: [
     { name: "core", testIgnore: [...networkSpecs, "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/rusty-connection.spec.ts", "**/public-board-keeper.spec.ts"] },
-    { name: "mobile-webkit", testMatch: ["**/ui-screen-audit.spec.ts", "**/sync-tabs.spec.ts", "**/avatar-crop-responsive.spec.ts", "**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts", "**/window-presentation.spec.ts", "**/mobile-chat-composer.spec.ts", "**/public-board.spec.ts", "**/focus-frames.spec.ts", "**/root-message-links.spec.ts"], use: { browserName: "webkit" } },
+    { name: "mobile-webkit", testMatch: ["**/settings-scope.spec.ts", "**/automatic-priority.spec.ts", "**/ui-screen-audit.spec.ts", "**/sync-tabs.spec.ts", "**/avatar-crop-responsive.spec.ts", "**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts", "**/window-presentation.spec.ts", "**/mobile-chat-composer.spec.ts", "**/public-board.spec.ts", "**/focus-frames.spec.ts", "**/root-message-links.spec.ts"], use: { browserName: "webkit" } },
     ...groupedNetworkSpecs.map(spec => ({
       name: spec.match(/([^/]+)\.spec\.ts$/)?.[1] ?? spec,
       testMatch: spec,

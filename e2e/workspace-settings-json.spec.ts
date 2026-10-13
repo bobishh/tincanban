@@ -15,7 +15,7 @@ test("Given a blank workspace, when invalid settings are repaired, then one appl
   await page.getByRole("button", { name: "Settings" }).click()
   const dialog = page.getByRole("dialog", { name: "Settings" })
   await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await dialog.getByText("Advanced configuration", { exact: true }).click()
+  await dialog.getByText("settings.json", { exact: true }).click()
   const editor = dialog.getByLabel("Workspace settings JSON")
   const config = JSON.parse(await editor.inputValue())
   const originalWorkspaceTitle = config.workspace.title

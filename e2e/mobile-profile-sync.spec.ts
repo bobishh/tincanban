@@ -44,7 +44,9 @@ test("Given an enrolled mobile owner device with large history, when desktop pho
       return canvas.toDataURL("image/png").split(",")[1]!
     })
     await page.getByLabel("Choose photo").setInputFiles({ name: "portrait.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") })
-    await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Save photo", exact: true }).click()
+    await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
+    await page.getByRole("button", { name: "Save profile", exact: true }).click()
+    await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
     const photo = page.getByRole("img", { name: "Your profile photo" })
     await expect(photo).toBeVisible()
     const source = await photo.getAttribute("src")

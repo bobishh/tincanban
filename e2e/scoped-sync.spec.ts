@@ -665,7 +665,7 @@ test("Given a delegated owner device, when it grants an editor access twice, the
     await editor.getByRole("button", { name: "Close detail" }).click()
     await editor.getByRole("button", { name: "Sync", exact: true }).click()
     const editorDialog = editor.getByRole("dialog", { name: "Device sync" })
-    await editorDialog.getByText("Advanced", { exact: true }).click()
+    await editorDialog.getByText("Recovery", { exact: true }).click()
     await editorDialog.getByRole("button", { name: "Leave mesh" }).click()
     await editorDialog.getByRole("button", { name: "Leave mesh, keep copy" }).click()
     const closeEditorSync = editorDialog.getByRole("button", { name: "Close", exact: true }).first()

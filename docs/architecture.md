@@ -103,6 +103,19 @@ Previews never enter replication, history, or exported documents. Saving remains
 visible until commit completes; closing or reloading during a pending write asks
 the browser to confirm leaving.
 
+Ordinary local commands extend the saved admission checkpoint when its raw history,
+proofs, projection heads, policy build and current authority still match and all
+stored changes are admitted. Current access checks remain in place. The new signed
+change must depend on the exact admitted frontier; its root and affected-entity
+transitions are checked without replaying historical transitions or signatures.
+Ambiguous operation targets use a complete check of that one transition. Changed
+authority, proofs, policy, missing checkpoints or unresolved history use full causal
+admission. Review actions and incoming replication retain full reclassification.
+The extended evidence and checkpoint commit atomically with the snapshot and new
+proof, so a failed write cannot advance the durable frontier. Reload uses the same
+checkpoint. Snapshot serialization, checkpoint hashing and storage still scale
+with document/evidence size; this is not a constant-time storage format.
+
 The workspace journal now includes `snapshots` and `authorizations` stores beside
 `changes`, `proofs`, and `receipts`. Snapshot records contain catalog metadata,
 so a successful document commit does not depend on a second catalog write.

@@ -37,6 +37,13 @@ describe("generic WebMCP tools", () => {
     }
   })
 
+  it("Given the served agent guide, when tools are registered, then documented names exactly match the runtime surface", async () => {
+    await registerWebMcp({ getActiveDoc: tincanban.getActiveDoc }, mockContext)
+    const guide = await readFile("public/agent/index.html", "utf8")
+    const documented = [...guide.matchAll(/class="tool-name">([^<]+)</g)].map(match => match[1]).sort()
+    expect(documented).toEqual([...registeredTools.keys()].sort())
+  })
+
   it("registers generic workspace commands without job-search aliases", async () => {
     const sendChatMessage = vi.fn().mockResolvedValue(undefined)
     await registerWebMcp({

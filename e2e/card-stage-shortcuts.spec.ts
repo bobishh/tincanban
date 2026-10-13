@@ -105,7 +105,7 @@ test("Given board JSON, when stage buttons are configured, then card shows confi
   await page.getByRole("button", { name: "Settings" }).click()
   const settings = page.getByRole("dialog", { name: "Settings" })
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await settings.getByText("Advanced configuration", { exact: true }).click()
+  await settings.getByText("settings.json", { exact: true }).click()
   const editor = settings.getByLabel("Workspace settings JSON")
   const config = JSON.parse(await editor.inputValue())
   expect(config.board.cardStageButtons).toHaveLength(3)

@@ -3,6 +3,17 @@ import { diagnosticEvent, entityTraceId } from "./telemetryEvent"
 
 const context = { project: "match", sessionId: "session-a", deviceId: "device-a", timestamp: 1_791_381_600_000, level: "info" }
 describe("telemetry event contract", () => {
+  it("Given camel-case diagnostics and many changed fields, When encoded, Then intake identifiers and field limits are valid while opaque IDs retain case", async () => {
+    const event = await diagnosticEvent("workspace.command.completed", {
+      component: "Workspace", operation: "updateWorkspaceSettings", entityType: "BoardItem", outcome: "Saved",
+      phase: "localSave", peerId: "Peer:AB12", changedFields: Array.from({ length: 32 }, (_, i) => `fieldValue${i}`),
+    }, context)
+    expect(event).toMatchObject({ component: "workspace", operation: "update_workspace_settings", entity_type: "board_item", status: "saved" })
+    expect(event.attrs.phase).toBe("local_save")
+    expect(event.attrs.peer_id).toBe("Peer:AB12")
+    expect(event.attrs.changed_fields).toHaveLength(16)
+    expect((event.attrs.changed_fields as string[])[0]).toBe("field_value0")
+  })
   it("Given a startup error type, When encoded for intake, Then the error code is a lowercase identifier", async () => {
     const event = await diagnosticEvent("startup.phase.failed", { errorCode: "TypeError" }, { ...context, level: "warn" })
     expect(event.attrs.error_code).toBe("type_error")
@@ -12,7 +23,7 @@ describe("telemetry event contract", () => {
       stage: "admit-history", changedFields: ["updatedAt", "catalog"], previousEpoch: 1, currentEpoch: 1,
       catalog: { secret: "private-proof" }, elapsedMs: 1200,
     }, { ...context, level: "warn" })
-    expect(event.attrs).toMatchObject({ stage: "admit-history", changed_fields: ["updatedAt", "catalog"], previous_epoch: 1, current_epoch: 1 })
+    expect(event.attrs).toMatchObject({ stage: "admit-history", changed_fields: ["updated_at", "catalog"], previous_epoch: 1, current_epoch: 1 })
     expect(JSON.stringify(event)).not.toContain("private-proof")
   })
   it("Given the same signed entity on two devices, when recorded, then trace correlation survives differing sessions", async () => {

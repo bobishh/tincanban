@@ -39,5 +39,5 @@ test("Given a narrow mobile viewport, when cropping a wide photo, then preview s
   expect(Math.abs(geometry.imageHeight - geometry.contentWidth)).toBeLessThan(2)
   expect(Math.abs(geometry.imageLeft + geometry.contentWidth / 2)).toBeLessThan(2)
   expect(Math.abs(geometry.imageTop)).toBeLessThan(1)
-  await expect(crop.getByRole("button", { name: "Save photo" })).toBeEnabled()
+  await expect(crop.getByRole("button", { name: "Use photo" })).toBeEnabled()
 })

@@ -12,7 +12,7 @@ async function createBoard(page: Page) {
   await page.getByRole("button", { name: "Settings" }).click()
   const settings = page.getByRole("dialog", { name: "Settings" })
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await settings.getByText("Advanced configuration", { exact: true }).click()
+  await settings.getByText("settings.json", { exact: true }).click()
   const editor = settings.getByLabel("Workspace settings JSON")
   const json = JSON.parse(await editor.inputValue())
   json.board.fields.push({ title: "Owner", valueType: "text", required: false })

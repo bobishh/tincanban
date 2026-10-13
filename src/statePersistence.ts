@@ -18,6 +18,7 @@ import { type Board, type WorkspaceDocumentV2 } from "./domain/model";
 import { executeCommand, type Command, type ExecuteResult } from "./domain/commands";
 import {
   evaluateIncomingWorkspaceAdmission,
+  extendLocalWorkspaceAdmission,
   exportDocumentAuthorizationBundle,
   prepareLocalChangeAuthorizations,
   recordGenesisAuthority,
@@ -224,26 +225,31 @@ async function commitAuthorizedCommand(
   assertWorkspaceCommand(role, doc, command);
   const authorityGrantHash = await localChangeAuthorityGrantHash(doc.id, profile.identity.personId, command.kind === "setMemberAvatar");
   const result = await executeCommand(doc, command, profile, undefined, authorityGrantHash);
-  if (!result.ok)
-    throw new Error(
-      `Command failed: [${result.error.code}] ${result.error.message}`,
-    );
-  return persistNewLocalChange(doc, result.value, profile, storage);
+  if (!result.ok) throw new Error(`Command failed: [${result.error.code}] ${result.error.message}`);
+  return persistNewLocalChange(doc, result.value, profile, storage, undefined, role);
 }
 
 type CreatedLocalChange = Extract<ExecuteResult, { ok: true }>['value']
 
 async function persistNewLocalChange(
   base: Automerge.Doc<WorkspaceDocumentV2>, created: CreatedLocalChange,
-  profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash?: string,
+  profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash?: string, localRole?: WorkspaceRole,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   await assertWorkspaceWritesAllowed(base.id);
   const changeBytes = Automerge.getLastLocalChange(created.newDoc);
   if (!changeBytes) throw new Error("No change produced");
   const authorizations = await prepareLocalChangeAuthorizations(created.newDoc, profile, [created.receipt.changeHash]);
-  const bundle = await exportDocumentAuthorizationBundle(created.newDoc, profile)
-  bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
+  const bundle = await exportDocumentAuthorizationBundle(base, profile)
   const previousEvidence = await storage.loadCausalEvidence(base.id)
+  const extended = localRole === undefined ? undefined : await extendLocalWorkspaceAdmission(base, created.newDoc,
+    previousEvidence, bundle, authorizations, created.receipt, changeBytes, localRole, profile)
+  if (extended) {
+    await storage.commitWorkspace(base.id, created.newDoc, extended.bytes, authorizations,
+      { receipt: created.receipt, changeBytes, proof: created.proof }, extended)
+    tracePersistedLocalChange(base.id, created, created.newDoc, changeBytes)
+    return created.newDoc
+  }
+  bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
   // An all-admitted evidence snapshot is already represented by the authorized
   // base document. Reuse it instead of synchronously loading the full raw
   // history on every local write. Keep loading raw bytes when quarantined or
@@ -275,8 +281,14 @@ async function persistNewLocalChange(
   }, { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
     admissionCheckpoint: admission.admissionCheckpoint,
     ...reviewMetadata });
-  meshTrace("document.persisted", { workspaceId: base.id, recordId: created.receipt.changeHash, changeId: created.receipt.changeHash, phase: "local", component: "automerge", heads: Automerge.getHeads(authorizedDoc), bytes: changeBytes.byteLength });
+  tracePersistedLocalChange(base.id, created, authorizedDoc, changeBytes)
   return authorizedDoc;
+}
+
+function tracePersistedLocalChange(workspaceId: string, created: CreatedLocalChange,
+  doc: Automerge.Doc<WorkspaceDocumentV2>, changeBytes: Uint8Array): void {
+  meshTrace("document.persisted", { workspaceId, recordId: created.receipt.changeHash, changeId: created.receipt.changeHash,
+    phase: "local", component: "automerge", heads: Automerge.getHeads(doc), bytes: changeBytes.byteLength })
 }
 
 function causalReviewMetadata(

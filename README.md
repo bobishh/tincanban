@@ -171,14 +171,12 @@ sessions until they support device removals and membership departures.
 Deployment topology, source locations, infrastructure ownership and import-first
 Hetzner/DNS configuration: [production architecture](../hetzner_playground/docs/architecture.md).
 
-- **Identity:** display name, one profile photo across workspaces, encrypted identity recovery, device diagnostic consent.
-- **Workspace:** shared document templates,
-  priority rules and `employee_profile` for the named board, and a separate Advanced configuration tab for JSON.
-- **Connections:** one shortcut to Device sync for Participants/devices, Rusty storage and
-  Backups. Ownership succession and connection diagnostics belong to Sync → Advanced.
-  Export belongs to Backups; import as a new board belongs to the Workspaces list.
+- **Identity:** photo and display name in one compact profile form, one Save profile action, and encrypted identity recovery.
+- **Workspace:** board save/sync status, owner-confirmed Public board switch, automation management, and diagnostic delivery. Diagnostic consent applies to this device across workspaces; support counters and device information are collapsed.
+- **Document templates**, **Priority rules**, and **settings.json:** separate sections in a flat left-hand navigation. Priority and JSON save actions remain visible while content scrolls.
+- **Sync:** Participants/devices, Rusty storage, Backups, and Recovery. Ownership succession and live sync controls belong to Recovery. Export belongs to Backups; import as a new board belongs to the Workspaces list.
 
-**Workspace → Priority rules** supports job match priority: company recognition
+**Settings → Priority rules** supports job match priority: company recognition
 20%, company stability 20%, stack match 30%, and work profile match 30%. Each
 criterion contributes 10 for strong evidence, 5 for partial evidence, or 0 for
 an explicit mismatch; missing or uncertain evidence earns no points. Default
@@ -195,9 +193,11 @@ retaining company scores. Existing/manual cards without assessments start at 0;
 there is no automatic reclassification of historical cards. Existing weighted
 rules stay active until **Use job match priority** is selected and saved.
 
+Automatic priority changes calculation from saved assessments; it does not start or stop CLEF. Pause or resume the automation separately under Workspace.
+
 Removing a participant explicitly revokes all their devices in that workspace.
 Removing a single device remains a separate action. Both disclose their scope.
-**Connections → Automations** lets the owner add a supported Worker instance, pause,
+**Workspace → Automations** lets the owner add a supported Worker instance, pause,
 resume or remove it. Desired state is shared through CRDT. Confirmed state requires
 a signed Worker acknowledgement of those exact commands. Reading access applies
 to the entire workspace; grants last 30 days. New UI instances support website
@@ -407,7 +407,7 @@ The standalone `../mesh-lighthouse` service now runs protocol 2 opaque storage. 
 
 Private access files contain reading keys and storage tokens; transfer them privately to devices already authorized for the board. Settings are local to the identity on this device. Local disconnection does not revoke other storage credentials. Old plaintext Keeper volumes fail closed and require a fresh storage directory plus explicit client migration; old Keeper board grants must be revoked separately. Setup, quotas, storage-token revocation, and container configuration: [Rusty README](../mesh-lighthouse/README.md).
 
-Cloudflare Worker + Clef ingestion uses an independent identity and an exact owner-signed Automation grant. **Settings → Connections → Automations** enrolls the Worker by owner signature and privately sends its activation packet; its workspace-wide reading scope is disclosed before approval. The real production Worker has created a synthetic Lead through live Clef and blind Rusty. Interview/Rejected transitions are verified locally; Gmail forwarding and a real received email are still pending. See [implementation evidence and rollout limits](openspec/changes/blind-keeper-and-scoped-automation/implementation.md) and the [Worker setup](workers/automation/README.md).
+Cloudflare Worker + Clef ingestion uses an independent identity and an exact owner-signed Automation grant. **Settings → Workspace → Automations** enrolls the Worker by owner signature and privately sends its activation packet; its workspace-wide reading scope is disclosed before approval. The real production Worker has created a synthetic Lead through live Clef and blind Rusty. Interview/Rejected transitions are verified locally; Gmail forwarding and a real received email are still pending. See [implementation evidence and rollout limits](openspec/changes/blind-keeper-and-scoped-automation/implementation.md) and the [Worker setup](workers/automation/README.md).
 
 ### TinSink log sign-in
 

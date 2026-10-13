@@ -36,8 +36,7 @@ export const WorkspacesDialog = defineAsyncComponent<Component>(() => import("..
 export const ColumnDialog = defineAsyncComponent<Component>(() => import("../components/ColumnDialog.vue"))
 export const SchemaEditorDialog = defineAsyncComponent<Component>(() => import("../components/SchemaEditorDialog.vue"))
 export const MoveItemDialog = defineAsyncComponent<Component>(() => import("../components/MoveItemDialog.vue"))
-export const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("../components/IdentityPhotoPanel.vue"))
-export const WorkspaceConnectionsPanel = defineAsyncComponent<Component>(() => import("../components/WorkspaceConnectionsPanel.vue"))
+export const WorkspaceSettingsPanel = defineAsyncComponent<Component>(() => import("../components/WorkspaceSettingsPanel.vue"))
 
 let detailChunksPromise: Promise<void> | null = null
 

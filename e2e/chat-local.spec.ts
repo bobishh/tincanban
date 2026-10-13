@@ -35,7 +35,7 @@ for (const width of [1280, 375]) {
     let settings = await profileSettings(page)
     await expect(settings.getByRole("textbox", { name: "Name", exact: true })).not.toHaveValue("")
     await settings.getByRole("textbox", { name: "Name", exact: true }).fill("Тревожная мимоза")
-    await settings.getByRole("button", { name: "Save name", exact: true }).click()
+    await settings.getByRole("button", { name: "Save profile", exact: true }).click()
     await expect(settings.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Тревожная мимоза")
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     let chat = await openChat(page)
@@ -96,7 +96,7 @@ test("Given a chosen profile name, when a new workspace is created, then it reus
   await page.goto("/")
   let settings = await profileSettings(page)
   await settings.getByRole("textbox", { name: "Name", exact: true }).fill("Тревожная мимоза")
-  await settings.getByRole("button", { name: "Save name", exact: true }).click()
+  await settings.getByRole("button", { name: "Save profile", exact: true }).click()
   await expect(settings.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Тревожная мимоза")
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
 

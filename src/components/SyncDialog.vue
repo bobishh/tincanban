@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { serviceLogsUrl } from "../app/serviceLogsUrl"
-import { telemetryConfig } from "../app/diagnostics"
 import ParticipantAvatar from "./ParticipantAvatar.vue"
 import RustyPanel from "./RustyPanel.vue"
 import OwnershipRecoveryPanel from "./OwnershipRecoveryPanel.vue"
@@ -59,9 +57,6 @@ const props = defineProps<{
   exportWorkspace?: () => Promise<void>
 }>()
 
-const boardLogsUrl = computed(() => props.activeWorkspaceId && (props.currentRole === "owner" || props.currentRole === "editor")
-  ? serviceLogsUrl(telemetryConfig(), props.activeWorkspaceId) : undefined)
-
 const emit = defineEmits<{
   (e: "decideJoin", id: string, approve: boolean): void
   (e: "dismiss"): void
@@ -106,9 +101,9 @@ const invitationChoices = computed(() => (props.availableWorkspaces ?? []).map(w
 const isEnrollmentHost = computed(
   () => props.step === "enroll-host" || props.step === "enroll-host-pending",
 )
-const tabs = ["Participants", "Rusty", "Backups", "Advanced"] as const
+const tabs = ["Participants", "Rusty", "Backups", "Recovery"] as const
 const activeTab = ref<typeof tabs[number]>(props.initialTab ?? "Participants")
-const successionOpen = ref(false), diagnosticsOpen = ref(false)
+const successionOpen = ref(false)
 watch(() => [props.canClaimSuccession, props.succession?.conflicted], ([claim, conflict]) => { if (claim || conflict) successionOpen.value = true }, { immediate: true })
 const tabId = useId()
 function navigateTabs(event: KeyboardEvent) {
@@ -134,7 +129,6 @@ const rejectedSource = computed(() => {
   const device = member?.deviceList.find(candidate => candidate.deviceId.startsWith(source))
   return { diagnostic, source, member, device }
 })
-watch(rejectedSource, source => { if (source) diagnosticsOpen.value = true }, { immediate: true })
 const visiblePendingJoins = computed(() => props.pendingJoins ?? [])
 const confirmingLeave = ref(false)
 const confirmingReconnect = ref(false)
@@ -236,7 +230,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p>This board kept its accepted data. The source still has rejected changes. Removing its access stops attempts for this workspace; review its local copy first if needed.</p>
           <button v-if="rejectedSource.member" class="button" type="button" @click="reviewRejectedSource">Review source device</button>
           <p v-else>Source device is not currently listed among known members.</p>
-          <button class="button button-quiet" type="button" @click="activeTab = 'Advanced'">Technical details</button>
         </section>
         <p v-else-if="networkOnline !== false && meshDiagnostic && (meshMembers || []).some(member => !member.self)" class="sync-error" role="status">{{ workspaceConnected ? "Sync issue:" : "Reconnect:" }} {{ meshDiagnostic }}</p>
         <p class="dialog-copy">People and their known devices trusted by {{ invitationWorkspaceTitle || "this workspace" }}.</p>
@@ -301,7 +294,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </section>
         <div class="dialog-actions sync-primary-actions"><button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button></div>
         </div>
-        <div v-show="activeTab === 'Advanced'" :id="`${tabId}-Advanced-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Advanced-tab`">
+        <div v-show="activeTab === 'Recovery'" :id="`${tabId}-Recovery-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Recovery-tab`">
         <section class="sync-advanced" aria-label="Sync controls"><h3>Sync controls</h3>
         <section v-if="confirmingLeave && hasMesh" class="mesh-member-action" aria-label="Leave mesh confirmation">
           <strong>Leave this workspace mesh?</strong>
@@ -323,19 +316,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
             @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
         </details>
-        <details class="sync-advanced" :open="diagnosticsOpen" @toggle="diagnosticsOpen = ($event.target as HTMLDetailsElement).open"><summary>Technical details</summary>
-          <section class="sync-advanced" aria-label="Connection diagnostics">
-            <h3>Connection diagnostics</h3>
-            <a v-if="boardLogsUrl" :href="boardLogsUrl" class="button" target="_blank" rel="noopener">Open board logs</a>
-            <p v-if="meshDiagnostic" class="dialog-copy">{{ meshDiagnostic }}</p>
-            <code v-if="rejectedSource">{{ rejectedSource.diagnostic }}</code>
-            <label v-if="peopleMembers.length">Participant<select v-model="selectedMemberId" aria-label="Diagnostic participant"><option v-for="member in peopleMembers" :key="member.personId" :value="member.personId">{{ member.name }}</option></select></label>
-            <div class="mesh-device-ua" v-for="device in selectedMember?.deviceList ?? []" :key="device.deviceId">
-              <small>{{ device.name }} · {{ device.deviceId }}</small>
-              <code v-if="device.userAgent">User agent: {{ device.userAgent }}</code>
-            </div>
-          </section>
-        </details>
+
         </div>
         <div v-show="activeTab === 'Rusty'" :id="`${tabId}-Rusty-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Rusty-tab`">
           <RustyPanel v-if="blindReplication && activeWorkspaceId" :controller="blindReplication" :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />

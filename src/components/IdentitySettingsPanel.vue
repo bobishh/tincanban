@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { defineAsyncComponent, ref, watch, type Component } from "vue"
 
-const TelemetrySettingsPanel = defineAsyncComponent<Component>(() => import("./TelemetrySettingsPanel.vue"))
-const TelemetryDeliveryPanel = defineAsyncComponent<Component>(() => import("./TelemetryDeliveryPanel.vue"))
+const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("./IdentityPhotoPanel.vue"))
 
-const props = defineProps<{ displayName: string; saveName: (value: string) => Promise<void> }>()
+const props = defineProps<{ displayName: string; saveName: (value: string) => Promise<void>; avatarData?: string; saveAvatar: (value: string | null) => Promise<void> }>()
 const emit = defineEmits<{ recovery: [] }>()
 const name = ref(props.displayName)
 const saving = ref(false)
+const avatarDraft = ref<string | null | undefined>(undefined)
+const saved = ref(false)
 const error = ref("")
 watch(() => props.displayName, value => { name.value = value })
 
@@ -16,10 +17,13 @@ async function save() {
   if (!value || saving.value) return
   saving.value = true
   error.value = ""
+  saved.value = false
   try {
-    await props.saveName(value)
+    if (value !== props.displayName) await props.saveName(value)
+    if (avatarDraft.value !== undefined) { await props.saveAvatar(avatarDraft.value); avatarDraft.value = undefined }
+    saved.value = true
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "Could not save identity name"
+    error.value = cause instanceof Error ? cause.message : "Could not save profile"
   } finally {
     saving.value = false
   }
@@ -28,23 +32,33 @@ async function save() {
 </script>
 
 <template>
-  <section aria-label="Identity settings">
-    <form class="mesh-member-action identity-name-form" @submit.prevent="save">
-      <label>Name<input v-model="name" maxlength="48" :disabled="saving" /></label>
-      <button class="button button-primary" type="submit" :disabled="saving || !name.trim()">Save name</button>
+  <section class="identity-settings" aria-label="Identity settings">
+    <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
+      <IdentityPhotoPanel :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving" @update:avatar="avatarDraft = $event; saved = false" />
+      <div class="identity-profile-fields">
+        <label>Name<input v-model="name" maxlength="48" :disabled="saving" @input="saved = false" /></label>
+        <button class="button button-primary" type="submit" :disabled="saving || !name.trim()">{{ saving ? 'Saving…' : 'Save profile' }}</button>
+        <p v-if="saved" class="dialog-copy" role="status">Profile saved.</p>
+      </div>
+      <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
     </form>
-    <section class="mesh-member-action" aria-label="Identity recovery">
+    <section class="identity-recovery" aria-label="Identity recovery">
       <h3>Identity recovery</h3>
       <p class="dialog-copy">Create an encrypted identity backup or restore one on this device.</p>
       <button class="button" type="button" @click="emit('recovery')">Recovery backup</button>
     </section>
-    <TelemetrySettingsPanel />
-    <TelemetryDeliveryPanel />
-    <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
   </section>
 </template>
 
 <style scoped>
-.identity-name-form label { display: grid; gap: 7px; min-width: 0; }
-.identity-name-form input, .identity-name-form .button { box-sizing: border-box; width: 100%; min-height: 46px; }
+.identity-settings { display: grid; gap: 24px; }
+.identity-profile { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
+.identity-profile-fields { display: grid; gap: 12px; max-width: 320px; padding-top: 8px; }
+.identity-profile-fields label { display: grid; gap: 7px; min-width: 0; }
+.identity-profile input { box-sizing: border-box; width: 100%; min-height: 42px; }
+.identity-profile .button, .identity-recovery .button { justify-self: start; min-height: 42px; }
+.identity-profile > .sync-error { grid-column: 1 / -1; margin: 0; }
+.identity-recovery { display: grid; gap: 10px; }
+.identity-recovery h3, .identity-recovery p { margin: 0; }
+@media (max-width: 600px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 </style>

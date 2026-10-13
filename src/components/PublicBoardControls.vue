@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, onMounted, ref, watch } from "vue"
 import type { Board, WorkspaceDocumentV2 } from "../domain/model"
 
 const props = defineProps<{ board: Board; workspaceId: string; document: WorkspaceDocumentV2; sourceVersion: number; owner: boolean }>()
 const origin = ((import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined) ?? "").trim()
-const open = ref(false)
 const checked = ref(false)
 const revision = ref(0)
 const hash = ref("")
@@ -17,18 +16,22 @@ const error = ref("")
 let operationGeneration = 0
 const link = computed(() => `${window.location.origin}/boards/${encodeURIComponent(props.board.id)}`)
 const sourceKey = computed(() => `${props.workspaceId}:${props.board.id}`)
-async function togglePublication() {
-  open.value = !open.value
-  if (open.value && !checked.value && !busy.value) await refresh()
+function requestVisibility(event: Event) {
+  const input = event.target as HTMLInputElement
+  pendingAction.value = input.checked ? "publish" : "unpublish"
+  input.checked = published.value
 }
+onMounted(() => { if (props.owner) void refresh() })
 watch(sourceKey, () => {
   pendingAction.value = null
   operationGeneration++; checked.value = false; changed.value = null; busy.value = false; error.value = ""
   published.value = false; revision.value = 0; hash.value = ""
+  if (props.owner) void refresh()
 })
 watch(() => props.sourceVersion, () => {
   pendingAction.value = null
   operationGeneration++; checked.value = false; changed.value = null; busy.value = false; error.value = ""
+  if (props.owner) void refresh()
 })
 
 async function profile() {
@@ -118,33 +121,43 @@ async function confirmPublication() {
 </script>
 
 <template>
-  <div v-if="owner" class="public-board-controls">
-    <button type="button" class="button button-quiet button-small" :aria-expanded="open" @click="togglePublication">{{ published ? 'Public link' : 'Publish board' }}</button>
-    <section v-if="open" class="publication-panel" aria-label="Public board publication">
-      <p v-if="busy && !checked" role="status">Checking publication…</p>
-      <button v-else-if="!checked" type="button" class="button button-quiet button-small" @click="refresh">{{ error ? 'Retry' : 'Check publication' }}</button>
-      <template v-else>
-        <p v-if="published">Public revision {{ revision }}<span v-if="changed === true"> · Local content has unpublished changes</span><span v-else-if="changed === false"> · Matched at last check</span></p>
-        <p v-else>This board is not public.</p>
-        <a v-if="published" :href="link" target="_blank" rel="noopener">Open public board</a>
-        <button v-if="!published" type="button" class="button button-quiet button-small" :disabled="busy" @click="pendingAction = 'publish'">{{ busy ? 'Publishing…' : 'Publish' }}</button>
-        <button v-if="published" type="button" class="button button-quiet button-small" :disabled="busy" @click="pendingAction = 'update'">{{ busy ? 'Updating…' : 'Update' }}</button>
-        <button v-if="published" type="button" class="button button-quiet button-small" :disabled="busy" @click="pendingAction = 'unpublish'">Unpublish</button>
-        <button v-if="published && changed === null" type="button" class="button button-quiet button-small" :disabled="busy" @click="checkLocalChanges">{{ busy ? 'Checking…' : 'Check for local changes' }}</button>
-        <button type="button" class="button button-quiet button-small" :disabled="busy" @click="refresh">Refresh</button>
-      </template>
-      <section v-if="pendingAction" class="publication-confirmation" role="group" aria-label="Confirm public board change">
-        <p v-if="pendingAction === 'unpublish'">Stop public access to this board and its files? Copies already downloaded cannot be recalled.</p>
-        <p v-else>{{ disclosure }}</p>
+  <section v-if="owner" class="publication-panel" aria-label="Public board publication" :data-public-revision="revision">
+    <label class="publication-toggle"><input type="checkbox" role="switch" :checked="published" :disabled="busy || !checked || !!pendingAction" @change="requestVisibility" />Public board</label>
+    <p v-if="busy" role="status">{{ checked ? 'Saving public board…' : 'Checking publication…' }}</p>
+    <template v-else-if="checked">
+      <p v-if="published" role="status">Public · Saved copy available to anyone with the link.</p>
+      <p v-else role="status">Private · Access requires an invitation.</p>
+    </template>
+    <p v-else class="dialog-copy">Publication status unavailable. Retry to check this board.</p>
+    <template v-if="checked && published">
+      <a :href="link" target="_blank" rel="noopener">Open public board</a>
+      <p class="dialog-copy">Edits stay private until you update the public copy.<span v-if="changed === true"> There are unpublished changes.</span><span v-else-if="changed === false"> Copy matched at last check.</span></p>
+      <div class="publication-actions">
+        <button type="button" class="button button-quiet button-small" :disabled="busy || !!pendingAction" @click="pendingAction = 'update'">Update public copy</button>
+        <button v-if="changed === null" type="button" class="button button-quiet button-small" :disabled="busy" @click="checkLocalChanges">Check for local changes</button>
+      </div>
+    </template>
+    <section v-if="pendingAction" class="publication-confirmation" role="group" aria-label="Confirm public board change">
+      <p v-if="pendingAction === 'unpublish'">Stop public access to this board and its files? Copies already downloaded cannot be recalled.</p>
+      <p v-else>{{ disclosure }}</p>
+      <div class="publication-actions">
         <button class="button button-primary button-small" type="button" @click="confirmPublication">{{ pendingAction === 'unpublish' ? 'Confirm withdrawal' : 'Confirm publication' }}</button>
         <button class="button button-quiet button-small" type="button" @click="pendingAction = null">Cancel</button>
-      </section>
-      <p v-if="error" role="alert">{{ error }}</p>
+      </div>
     </section>
-  </div>
+    <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
+    <button v-if="!checked && !busy" type="button" class="button button-quiet button-small" @click="refresh">Retry publication status</button>
+    <button v-else-if="checked" type="button" class="button button-quiet button-small" :disabled="busy || !!pendingAction" @click="refresh">Refresh publication status</button>
+  </section>
+  <p v-else class="dialog-copy">Only the board owner can change public access.</p>
 </template>
 
 <style scoped>
-.publication-confirmation { flex-basis: 100%; display: grid; gap: 10px; }
-.public-board-controls{display:grid;gap:12px}.public-board-controls>button{justify-self:start}.publication-panel{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:14px 0;border-top:1px solid var(--soft);overflow-wrap:anywhere}.publication-panel p{flex-basis:100%;margin:0}.publication-panel a{color:var(--link,#245f9e)}
+.publication-panel { display: grid; gap: 10px; overflow-wrap: anywhere; }
+.publication-panel p { margin: 0; }
+.publication-toggle { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.publication-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.publication-confirmation { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); }
+.publication-panel a { color: var(--link, #245f9e); }
+.publication-panel > button { justify-self: start; }
 </style>
