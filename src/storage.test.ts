@@ -20,6 +20,11 @@ import type { WorkspaceDocumentV2 } from "./domain/model"
 import * as journal from "./storageJournal"
 import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 
+vi.mock("@automerge/automerge/slim", async () => {
+  const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
+  return { ...actual, load: vi.fn(actual.load) }
+})
+
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
@@ -341,6 +346,23 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(Automerge.load<WorkspaceDocumentV2>(evidence.bytes).title).toBe("Legacy tail survives")
     expect(evidence.decisions).toEqual(decisions)
     expect(evidence.admissionCheckpoint).toBeUndefined()
+  })
+
+  it("Given a full local admission covering every legacy journal hash, When reading unchanged evidence repeatedly, Then raw bytes are reused without decoding historical documents", async () => {
+    const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Checked history", profile.identity.personId, "blank"))
+    await storage.saveSnapshot(base.id, base, Automerge.save(base))
+    const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Checked command" }, profile)
+    if (!result.ok) throw new Error(result.error.message)
+    const { receipt, proof, newDoc } = result.value
+    await storage.commitTransaction(base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
+    const decisions = Automerge.getChangesMetaSince(newDoc, []).map(change => ({ hash: change.hash, status: { type: "admitted" as const, role: "owner" as const } }))
+    const admissionCheckpoint = await createAdmissionCheckpoint("checked-input", Automerge.getHeads(newDoc), decisions)
+    const bytes = Automerge.save(newDoc)
+    await storage.commitWorkspace(base.id, newDoc, bytes, [], undefined, { bytes, decisions, admissionCheckpoint })
+    const load = vi.mocked(Automerge.load)
+    load.mockClear()
+    for (let index = 0; index < 3; index++) expect((await storage.loadCausalEvidence(base.id))!.bytes).toEqual(bytes)
+    expect(load).not.toHaveBeenCalled()
   })
 
   it("Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot", async () => {

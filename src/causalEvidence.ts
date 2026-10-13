@@ -21,6 +21,11 @@ export function replayAdmittedJournal(doc: Automerge.Doc<WorkspaceDocumentV2>, c
 /** Legacy writes extend raw recovery history, never its prior admission checkpoint. */
 export function extendRawEvidence(evidence: StoredCausalEvidence, changes: StoredChange[]): StoredCausalEvidence {
   if (!changes.length) return evidence
+  // A full local admission classified every raw hash; only an unknown journal hash needs assembly.
+  if (evidence.admissionCheckpoint && !evidence.admissionCheckpoint.incremental) {
+    const classified = new Set(evidence.decisions.map(decision => decision.hash))
+    if (changes.every(change => classified.has(change.changeHash))) return evidence
+  }
   let raw = Automerge.load(evidence.bytes)
   try {
     const missing = changes.filter(change => !Automerge.hasHeads(raw, [change.changeHash]))

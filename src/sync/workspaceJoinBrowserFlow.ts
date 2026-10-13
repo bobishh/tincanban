@@ -27,6 +27,7 @@ export type WorkspaceJoinBrowserContext = {
   currentRun: () => number
   waitToReconnect: (milliseconds: number) => Promise<void>
   setNode: (node: SyncNode | undefined) => void
+  getNode: () => SyncNode | undefined
   setLiveSession: (session: LiveWorkspaceSync | undefined) => void
   setStopWatching: (stop: (() => void) | undefined) => void
   clearPairingLocation: () => void
@@ -46,6 +47,7 @@ type GuestCycle = {
   connection?: SyncConnection
   session?: LiveWorkspaceSync
   adopted: boolean
+  registered?: boolean
 }
 
 export async function connectWorkspaceJoin(context: WorkspaceJoinBrowserContext, run: number, invite: WorkspaceJoinInvite) {
@@ -95,6 +97,7 @@ async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: numb
     cycle.node = await startGuestNode(context, attempts)
     if (context.currentRun() !== run) return cycle
     context.setNode(cycle.node)
+    cycle.registered = true
     cycle.connection = meshNetworkConnection(await meshNetworkIO(dialGuest(cycle.node, invite.issuerEndpoint)))
     await installGuestInvitation(context, run, invite, profile, replica, cycle)
     cycle.session = liveWorkspaceSetSync(cycle.connection, invite.secret, replica)
@@ -108,9 +111,15 @@ async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: numb
     await cycle.session.publish()
     const handoff = new BrowserWorkspaceJoinHandoffGuest(new WasmWorkspaceJoinHandoff(invite.secret, "guest"))
     const outcome = await handoff.run(cycle.connection, async () => {
+      // Transfer ownership before awaiting startup: closing the pairing UI cannot close an adopted mesh node.
+      cycle.adopted = Boolean(context.durableMesh)
+      if (cycle.adopted) context.setNode(undefined)
       await context.durableMesh?.resumeAll(cycle.node)
       await context.durableMesh?.waitUntilListening()
-    }, async () => context.durableMesh?.pauseAll())
+    }, async () => {
+      await context.durableMesh?.pauseAll()
+      cycle.adopted = false
+    })
     if (outcome.kind === "retry") {
       context.state.step.value = "workspace-reconnecting"
     } else {
@@ -126,15 +135,22 @@ async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: numb
     context.state.step.value = "workspace-reconnecting"
   } finally {
     window.removeEventListener("offline", offline)
+    await cleanupGuestCycle(context, run, cycle)
+  }
+  return cycle
+}
+
+async function cleanupGuestCycle(context: WorkspaceJoinBrowserContext, run: number, cycle: GuestCycle) {
+  if (context.currentRun() === run) {
     context.setStopWatching(undefined)
     context.setLiveSession(undefined)
     context.state.directLive.value = false
-    await cycle.session?.close()
-    await cycle.connection?.close()
-    if (!cycle.adopted) await cycle.node?.close("Reconnecting").catch(() => {})
-    context.setNode(undefined)
   }
-  return cycle
+  await cycle.session?.close()
+  await cycle.connection?.close()
+  if (!cycle.adopted && (!cycle.registered || context.getNode() === cycle.node))
+    await cycle.node?.close("Reconnecting").catch(() => {})
+  if (context.getNode() === cycle.node) context.setNode(undefined)
 }
 
 async function startGuestNode(context: WorkspaceJoinBrowserContext, attempts: number) {

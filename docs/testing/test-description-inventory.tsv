@@ -361,11 +361,11 @@ browser	e2e/workspace-schema-migration.spec.ts	48	no		Given an older signed boar
 browser	e2e/workspace-schema-migration.spec.ts	81	no		Given malformed older board, when owner reloads, then migration stops and stored copy remains
 browser	e2e/workspace-settings-json.spec.ts	13	no		Given a blank workspace, when invalid settings are repaired, then one apply persists all configuration
 browser	e2e/workspace-sync-data.spec.ts	17	no		Given a workspace attachment, when another peer opens it, then verified bytes transfer over the authenticated mesh session
-browser	e2e/workspace-sync-data.spec.ts	74	no		Given independent devices without a signaling API, when a workspace invitation is accepted, then saved cards arrive and edits sync both ways
-browser	e2e/workspace-sync-data.spec.ts	128	no		Given no network before accepting, when the connection returns, then the same invitation completes without another click
-browser	e2e/workspace-sync-data.spec.ts	158	no		Given both devices have independent populated workspaces, when joining, then random IDs keep the local one separate without conflict renaming
-browser	e2e/workspace-sync-data.spec.ts	201	no		Given a storage failure on the receiving device, when joining, then it shows progress followed by an error and keeps the invitation
-browser	e2e/workspace-sync-data.spec.ts	230	no		Given three workspaces, when sharing A and B while viewing Private, then only selected documents arrive and stay independent
+browser	e2e/workspace-sync-data.spec.ts	80	no		Given independent devices without a signaling API, when a workspace invitation is accepted, then saved cards arrive and edits sync both ways
+browser	e2e/workspace-sync-data.spec.ts	134	no		Given no network before accepting, when the connection returns, then the same invitation completes without another click
+browser	e2e/workspace-sync-data.spec.ts	164	no		Given both devices have independent populated workspaces, when joining, then random IDs keep the local one separate without conflict renaming
+browser	e2e/workspace-sync-data.spec.ts	207	no		Given a storage failure on the receiving device, when joining, then it shows progress followed by an error and keeps the invitation
+browser	e2e/workspace-sync-data.spec.ts	236	no		Given three workspaces, when sharing A and B while viewing Private, then only selected documents arrive and stay independent
 browser	e2e/workspace-worker.spec.ts	31	no		Given an already admitted board, when its exact signed evidence repeats, then it needs no new Worker
 browser	e2e/workspace-worker.spec.ts	56	no		Given a large signed peer history, when admission runs, then board controls stay responsive until durable commit
 browser	e2e/workspace-worker.spec.ts	124	yes		Given ${failure} fails admission, when a candidate arrives, then document and notifications remain unchanged
@@ -812,32 +812,33 @@ app-unit	src/stateSyncActions.test.ts	29	no	readWorkspaceDoc	loads inactive work
 app-unit	src/stateSyncActions.test.ts	37	no		Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause
 app-unit	src/stateSyncActions.test.ts	47	no	recordVerifiedOwnerWorkspace	adds only an owned verified workspace to personal-root catalog
 app-unit	src/stateSyncActions.test.ts	68	no	recordVerifiedOwnerWorkspace	rejects foreign-owned documents without changing personal-root entitlements
-app-unit	src/storage.test.ts	35	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
-app-unit	src/storage.test.ts	50	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
-app-unit	src/storage.test.ts	77	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
-app-unit	src/storage.test.ts	91	no	personal root map writes	does not persist a root when its mutation rejects
-app-unit	src/storage.test.ts	111	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
-app-unit	src/storage.test.ts	123	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
-app-unit	src/storage.test.ts	137	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
-app-unit	src/storage.test.ts	166	no	Document & Change-hash persistence (Requirement 1.7)	Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal
-app-unit	src/storage.test.ts	176	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
-app-unit	src/storage.test.ts	187	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
-app-unit	src/storage.test.ts	226	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
-app-unit	src/storage.test.ts	238	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
-app-unit	src/storage.test.ts	246	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
-app-unit	src/storage.test.ts	268	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
-app-unit	src/storage.test.ts	277	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
-app-unit	src/storage.test.ts	317	yes	Document & Change-hash persistence (Requirement 1.7)	Given a legacy journal change classified as %s, When reopening its admitted projection, Then raw journal replay cannot expose that change
-app-unit	src/storage.test.ts	332	no	Document & Change-hash persistence (Requirement 1.7)	Given admitted raw evidence followed by an uncheckpointed legacy write, When loading raw history for reclassification, Then the new change survives without inheriting admission
-app-unit	src/storage.test.ts	346	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
-app-unit	src/storage.test.ts	365	no	Document & Change-hash persistence (Requirement 1.7)	Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write
-app-unit	src/storage.test.ts	379	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
-app-unit	src/storage.test.ts	404	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
-app-unit	src/storage.test.ts	433	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
-app-unit	src/storage.test.ts	466	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
-app-unit	src/storage.test.ts	500	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
-app-unit	src/storage.test.ts	532	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
-app-unit	src/storage.test.ts	573	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
+app-unit	src/storage.test.ts	40	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
+app-unit	src/storage.test.ts	55	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
+app-unit	src/storage.test.ts	82	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
+app-unit	src/storage.test.ts	96	no	personal root map writes	does not persist a root when its mutation rejects
+app-unit	src/storage.test.ts	116	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
+app-unit	src/storage.test.ts	128	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
+app-unit	src/storage.test.ts	142	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
+app-unit	src/storage.test.ts	171	no	Document & Change-hash persistence (Requirement 1.7)	Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal
+app-unit	src/storage.test.ts	181	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
+app-unit	src/storage.test.ts	192	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
+app-unit	src/storage.test.ts	231	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
+app-unit	src/storage.test.ts	243	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
+app-unit	src/storage.test.ts	251	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
+app-unit	src/storage.test.ts	273	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
+app-unit	src/storage.test.ts	282	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
+app-unit	src/storage.test.ts	322	yes	Document & Change-hash persistence (Requirement 1.7)	Given a legacy journal change classified as %s, When reopening its admitted projection, Then raw journal replay cannot expose that change
+app-unit	src/storage.test.ts	337	no	Document & Change-hash persistence (Requirement 1.7)	Given admitted raw evidence followed by an uncheckpointed legacy write, When loading raw history for reclassification, Then the new change survives without inheriting admission
+app-unit	src/storage.test.ts	351	no	Document & Change-hash persistence (Requirement 1.7)	Given a full local admission covering every legacy journal hash, When reading unchanged evidence repeatedly, Then raw bytes are reused without decoding historical documents
+app-unit	src/storage.test.ts	368	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
+app-unit	src/storage.test.ts	387	no	Document & Change-hash persistence (Requirement 1.7)	Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write
+app-unit	src/storage.test.ts	401	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
+app-unit	src/storage.test.ts	426	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
+app-unit	src/storage.test.ts	455	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
+app-unit	src/storage.test.ts	488	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
+app-unit	src/storage.test.ts	522	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
+app-unit	src/storage.test.ts	554	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
+app-unit	src/storage.test.ts	595	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
 app-unit	src/storageCatalog.test.ts	17	no		checks ancestor and merged branch heads using metadata without expanding text operations
 app-unit	src/sync/authorityFingerprint.test.ts	25	no	workspace authority fingerprint	Given identical certificate sets in different orders, When authority refreshes, Then the fingerprint stays equal without mutating stored records
 app-unit	src/sync/authorityFingerprint.test.ts	38	no	workspace authority fingerprint	Given duplicate signatures or a changed signed payload, When fingerprinting, Then every distinct security value remains visible
@@ -1222,6 +1223,7 @@ app-unit	src/sync/workspaceAdmissionPaths.test.ts	57	no	workspace admission oper
 app-unit	src/sync/workspaceChangeProofStore.test.ts	4	no		Given device certificates in enrollment order, When a proof is saved and reread, Then duplicate merging preserves its canonical representation
 app-unit	src/sync/workspaceChangeProofStore.test.ts	15	no		repairs a stored proof that predates owner authority fields when the proof is replayed
 app-unit	src/sync/workspaceChangeProofStore.test.ts	34	no		retains distinct signed grant provenance variants for one change proof
+app-unit	src/sync/workspaceJoinBrowserFlow.test.ts	19	yes		Given guest handoff in %s, When pairing Close takes ownership, Then the old join cycle cannot close the adopted node or clear a newer session
 app-unit	src/sync/workspaceJoinProtocol.test.ts	73	no	Rust workspace join state machine in browser stream adapter	Given a keeper commit remains pending, when an offer is accepted, then bounded receipt reaches host only after commit
 app-unit	src/sync/workspaceJoinProtocol.test.ts	103	no	Rust workspace join state machine in browser stream adapter	Given a keeper sends a receipt for another snapshot, when host checks ACK, then host never accepts the peer
 app-unit	src/sync/workspaceJoinProtocol.test.ts	120	no	Rust workspace join state machine in browser stream adapter	Given a prepared workspace, when guest accepts and acknowledges it, then host receives guest snapshot

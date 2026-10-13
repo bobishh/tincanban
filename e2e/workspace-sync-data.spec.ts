@@ -46,8 +46,8 @@ test("Given a workspace attachment, when another peer opens it, then verified by
   await hostDialog.getByRole("button", { name: "Generate link" }).click()
   const invite = await hostDialog.getByLabel("Pairing link").inputValue()
   const guestContext = await browser.newContext({ acceptDownloads: true })
+  const guest = await guestContext.newPage()
   try {
-    const guest = await guestContext.newPage()
     await guest.goto(invite)
     const guestDialog = guest.getByRole("dialog", { name: "Device sync" })
     await guestDialog.getByRole("button", { name: "Accept and join" }).click()
@@ -66,6 +66,12 @@ test("Given a workspace attachment, when another peer opens it, then verified by
     const downloadStarted = guest.waitForEvent("download")
     await remoteAttachment.getByRole("button", { name: "Download" }).click()
     expect((await downloadStarted).suggestedFilename()).toBe("mesh-design.txt")
+  } catch (error) {
+    for (const [name, current] of [["host", page], ["guest", guest]] as const) {
+      const trace = await current.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()).catch(() => [])
+      await test.info().attach(`${name}-mesh-lifecycle`, { body: JSON.stringify(trace, null, 2), contentType: "application/json" })
+    }
+    throw error
   } finally {
     await guestContext.close()
   }

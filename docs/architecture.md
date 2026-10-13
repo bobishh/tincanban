@@ -180,6 +180,10 @@ reopening storage cannot put them back into the admitted view. Uncheckpointed le
 changes extend raw recovery/export history without gaining admission decisions, and
 invalidate the prior admission checkpoint. The verified incremental path remains
 unchanged; this legacy recovery path requires reclassification.
+A full local admission already covers every classified raw hash. If all retained
+journal hashes occur in that checkpoint's classifications, evidence reads reuse
+raw bytes directly; they do not decode the historical document again. A new hash
+still requires assembly and clears the old checkpoint.
 New authority evidence reclassifies already-known hashes as well as incoming
 changes. A valid old-grant write outside the signed revocation frontier becomes
 quarantined; descendants with missing or unadmitted dependencies remain pending.

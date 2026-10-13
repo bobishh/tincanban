@@ -497,6 +497,7 @@ export class DeviceSyncController {
         currentRun: () => this.run,
         waitToReconnect: milliseconds => this.waitToReconnect(milliseconds),
         setNode: node => { this.node = node },
+        getNode: () => this.node,
         setLiveSession: session => { this.liveSession = session },
         setStopWatching: stop => { this.stopWatchingWorkspace = stop },
         clearPairingLocation,
