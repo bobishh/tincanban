@@ -9,8 +9,14 @@ import * as authorization from "./sync/changeAuthorization"
 import { putRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { WorkspaceStorage } from "./storage"
 import { persistAuthorizedCommand } from "./statePersistence"
+import * as deltaAdmission from "./stateDeltaAdmission"
 
-it.runIf(process.env.TINCANBAN_LOCAL_SAVE_BENCHMARK === "1")("Given growing admitted histories, When one card changes, Then compare full replay with checkpoint extension", async () => {
+vi.mock("@automerge/automerge/slim", async () => {
+  const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
+  return { ...actual, save: vi.fn(actual.save) }
+})
+
+it.runIf(process.env.TINCANBAN_LOCAL_SAVE_BENCHMARK === "1")("Given growing admitted histories, When Archive and Applied alternate repeatedly, Then only new deltas serialize and warm saves stay below 250ms", async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
@@ -39,19 +45,33 @@ it.runIf(process.env.TINCANBAN_LOCAL_SAVE_BENCHMARK === "1")("Given growing admi
       bytes: admitted.rawBytes, decisions: admitted.decisions, authorizationEvidence: admitted.authorizationEvidence,
       admissionCheckpoint: admitted.admissionCheckpoint,
     })
-    const extension = vi.spyOn(authorization, "extendLocalWorkspaceAdmission").mockResolvedValueOnce(undefined)
+    const extension = vi.spyOn(deltaAdmission, "persistDeltaCommand").mockResolvedValueOnce(undefined)
     const fullStarted = performance.now()
     let saved: typeof doc
     try { saved = await persistAuthorizedCommand(doc, { kind: "setEntityArchived", entityId: "measured", archived: true }, profile, storage) }
     finally { extension.mockRestore() }
     const fullReplayMs = Math.round(performance.now() - fullStarted)
+    expect(await deltaAdmission.reusableDeltaAdmission(saved, storage, profile)).toBeDefined()
     const replay = vi.spyOn(authorization, "evaluateIncomingWorkspaceAdmission")
-    const localStarted = performance.now()
+    const save = vi.mocked(Automerge.save)
+    save.mockClear()
+    const snapshots = vi.spyOn(storage, "commitWorkspace")
+    const localMs: number[] = []
     try {
-      await persistAuthorizedCommand(saved, { kind: "restoreAndMove", entityId: "measured", parentId: parent.id, beforeId: null }, profile, storage)
+      for (let index = 0; index < 6; index++) {
+        const localStarted = performance.now()
+        saved = await persistAuthorizedCommand(saved, index % 2
+          ? { kind: "setEntityArchived", entityId: "measured", archived: true }
+          : { kind: "restoreAndMove", entityId: "measured", parentId: parent.id, beforeId: null }, profile, storage)
+        localMs.push(performance.now() - localStarted)
+      }
       expect(replay).not.toHaveBeenCalled()
-    } finally { replay.mockRestore() }
-    timings.push({ historyChanges: count + 2, fullReplayMs, checkpointExtensionMs: Math.round(performance.now() - localStarted) })
+      expect(save).not.toHaveBeenCalled()
+      expect(snapshots).not.toHaveBeenCalled()
+      expect(Math.max(...localMs)).toBeLessThan(250)
+    } finally { replay.mockRestore(); snapshots.mockRestore() }
+    timings.push({ historyChanges: count + 2, fullReplayMs, deltaSaveMs: localMs.map(value => Math.round(value)),
+      averageDeltaMs: Math.round(localMs.reduce((sum, value) => sum + value, 0) / localMs.length) })
   }
   await writeFile("/tmp/tincanban-local-save-benchmark.json", JSON.stringify(timings, null, 2))
 }, 120_000)

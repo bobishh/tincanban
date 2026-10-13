@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
-import type { WorkspaceDocumentV2, WorkspaceGrant, DeviceCertificate, TransactionReceipt } from "../domain/model"
+import type { WorkspaceDocumentV2, WorkspaceGrant, DeviceCertificate } from "../domain/model"
 import { defaultProofStore } from "../domain/proofs"
 import { peerStore, type WorkspaceAuthorityRecord, type WorkspaceMeshCredential } from "./peerStore"
 import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type WorkspaceOwnershipTransfer,
@@ -15,7 +15,7 @@ import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoi
 import type { StoredCausalEvidence } from "../storageJournal"
 
 import type { WorkspaceRole } from "../domain/permissions"
-import { assertLocalCommandTransition } from "./localCommandTransition"
+import { canonicalAuthorityJson, normalizeCertificateSets } from "./authorityFingerprint"
 export class WorkspaceChangeRejected extends Error {
   constructor(message: string) { super(message); this.name = "WorkspaceChangeRejected" }
 }
@@ -191,7 +191,7 @@ async function decideWorkspaceRole(doc: WorkspaceDocumentV2, profile: LocalProfi
 
 async function assertCurrentAccessAuthority(workspaceId: string, authority: StoredWorkspaceAuthority) {
   if (typeof indexedDB === "undefined") return
-  if (canonicalizeJson({ ...(await storedWorkspaceAuthority(workspaceId)).authority, updatedAt: "" }) !== canonicalizeJson({ ...authority, updatedAt: "" }))
+  if (authorityValidationFingerprint((await storedWorkspaceAuthority(workspaceId)).authority) !== authorityValidationFingerprint(authority))
     throw new Error("Workspace authority changed during access validation. Retry.")
 }
 
@@ -275,7 +275,7 @@ export async function localWorkspaceAdmissionAuthority(doc: Automerge.Doc<Worksp
   if (!evidence) throw new Error("Workspace authority is unavailable for write authorization")
   const credential = await incomingCredential(doc.id)
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
-  return { authority: evidence, fingerprint: canonicalizeJson({ authority: evidence, credential: authorityValidationFingerprint(credential) }) }
+  return { authority: evidence, fingerprint: canonicalAuthorityJson({ authority: evidence, credential: authorityValidationFingerprint(credential) }) }
 }
 
 function workspaceWriteAuthorityEvidence(doc: WorkspaceDocumentV2, authority: StoredWorkspaceAuthority | null): WorkspaceWriteAuthorityEvidence | undefined {
@@ -379,41 +379,14 @@ export async function storedWorkspaceAdmissionIsCurrent(doc: Automerge.Doc<Works
   return matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential
 }
 
-/** Extend only a locally committed, fully admitted base under identical rights. */
-export async function extendLocalWorkspaceAdmission(
-  base: Automerge.Doc<WorkspaceDocumentV2>, next: Automerge.Doc<WorkspaceDocumentV2>,
-  previous: StoredCausalEvidence | null, authorization: IncomingAuthorizationBundle,
-  authorizations: Authorization[], receipt: TransactionReceipt, changeBytes: Uint8Array,
-  role: WorkspaceRole, profile: LocalProfile,
-): Promise<StoredCausalEvidence | undefined> {
-  if (!previous?.admissionCheckpoint || previous.decisions.some(decision => decision.status.type !== "admitted")) return
-  const { context, frozenCredential } = await workspaceAdmissionContext(base, authorization,
-    (previous.authorizationEvidence ?? []) as Authorization[], true)
-  if (!await matchesAdmissionCheckpoint(previous.admissionCheckpoint,
-    await admissionInputHash(previous.bytes, context), Automerge.getHeads(base), previous.decisions)) return
-  await assertLocalCommandTransition(base, next, receipt, changeBytes, authorizations, role, profile)
-  const bytes = Automerge.save(next)
-  const decisions = [...previous.decisions, { hash: receipt.changeHash, status: { type: "admitted" as const, role } }]
-  // Preserve only previously verified proofs plus the newly verified local
-  // signature. Unmatched records in the input context remain untrusted.
-  const authorizationEvidence = mergeAuthorizationRecords((previous.authorizationEvidence ?? []) as Authorization[], authorizations)
-  const nextContext = { ...context, authorization: { ...context.authorization,
-    records: mergeAuthorizationRecords(context.authorization.records as Authorization[], authorizations) } }
-  const admissionCheckpoint = await createAdmissionCheckpoint(await admissionInputHash(bytes, nextContext), Automerge.getHeads(next), decisions)
-  if (authorityValidationFingerprint(await incomingCredential(base.id)) !== frozenCredential)
-    throw new Error("Workspace authority changed during validation. Retry synchronization.")
-  meshTrace("workspace.admission.local-extended", { workspaceId: base.id, changeId: receipt.changeHash, checkedChanges: 1 })
-  return { ...previous, bytes, decisions, authorizationEvidence, admissionCheckpoint }
-}
-
 async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown,
   priorEvidenceRecords: Authorization[], hasLocal: boolean, savedRecords?: Authorization[]) {
   const credential = await incomingCredential(doc.id)
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
   const unnormalizedBundle = authorizationBundle(raw)
-  const bundle = { ...unnormalizedBundle, authority: normalizeAuthorityDepartures(unnormalizedBundle.authority) }
+  const bundle = { ...unnormalizedBundle, authority: normalizeCertificateSets(normalizeAuthorityDepartures(unnormalizedBundle.authority)) }
   const frozenCredential = authorityValidationFingerprint(credential)
-  const knownAuthority = hasLocal ? workspaceWriteAuthorityEvidence(doc, credential) ?? null : null
+  const knownAuthority = normalizeCertificateSets(hasLocal ? workspaceWriteAuthorityEvidence(doc, credential) ?? null : null)
   const rawRecords = (bundle.version === 1 ? bundle.records : bundle.pages.flat()) as Authorization[]
   const allRecords = mergeAuthorizationRecords([...savedRecords ?? await records(doc.id), ...priorEvidenceRecords], rawRecords)
   const combinedBundle: IncomingAuthorizationBundle = { version: 1, records: allRecords, authority: bundle.authority }
@@ -451,7 +424,7 @@ export function authorityValidationFingerprint(authority: StoredWorkspaceAuthori
   // Keep every security field in the race guard, including unknown future fields.
   const rights = { ...authority }
   delete (rights as Partial<StoredWorkspaceAuthority>).updatedAt
-  return canonicalizeJson(rights)
+  return canonicalAuthorityJson(rights)
 }
 
 function authorityChangedFields(before: StoredWorkspaceAuthority | null, after: StoredWorkspaceAuthority | null): string[] {

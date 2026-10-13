@@ -96,19 +96,10 @@ async function discardTransportState(page: Page) {
 
 async function storeUnadmittedRawTitle(page: Page, workspaceId: string, title: string) {
   const snapshot = await page.evaluate(async id => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("tincanban-workspace-state")
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    const transaction = db.transaction("snapshots", "readonly")
-    const request = transaction.objectStore("snapshots").get(id)
-    const value = await new Promise<{ bytes: number[] }>((resolve, reject) => {
-      request.onsuccess = () => resolve({ bytes: Array.from(request.result.bytes as Uint8Array) })
-      request.onerror = () => reject(request.error)
-    })
-    db.close()
-    return value
+    const { readWorkspaceSnapshot } = await import("/src/storageJournal.ts")
+    const saved = await readWorkspaceSnapshot(id)
+    if (!saved) throw new Error("Expected a saved admitted projection")
+    return { bytes: Array.from(saved.bytes) }
   }, workspaceId)
   const base = Automerge.load<{ title: string }>(new Uint8Array(snapshot.bytes))
   const candidate = Automerge.change(base, draft => { draft.title = title })
@@ -119,36 +110,19 @@ async function storeUnadmittedRawTitle(page: Page, workspaceId: string, title: s
   const rawBytes = Array.from(Automerge.save(candidate))
   Automerge.free(candidate)
   await page.evaluate(async ({ id, bytes, hash }) => {
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("tincanban-workspace-state")
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    const transaction = db.transaction("snapshots", "readwrite")
-    const store = transaction.objectStore("snapshots")
-    const snapshot = await new Promise<{ [key: string]: unknown; causalEvidence?: {
-      decisions?: Array<{ hash: string; status: { type: string; reason: string } }>
-      authorizationEvidence?: unknown[]
-      bytes?: Uint8Array
-    } }>((resolve, reject) => {
-      const request = store.get(id)
-      request.onsuccess = () => resolve(request.result as {
-        [key: string]: unknown
-        causalEvidence?: { decisions?: Array<{ hash: string; status: { type: string; reason: string } }>; authorizationEvidence?: unknown[]; bytes?: Uint8Array }
+    const { readWorkspaceSnapshot } = await import("/src/storageJournal.ts")
+    const { defaultStorage } = await import("/src/storage.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const saved = await readWorkspaceSnapshot(id)
+    if (!saved?.causalEvidence) throw new Error("Expected saved admission evidence")
+    const projection = A.load(saved.bytes)
+    try {
+      await defaultStorage.commitWorkspace(id, projection as never, saved.bytes, [], undefined, {
+        ...saved.causalEvidence, bytes: new Uint8Array(bytes),
+        decisions: [...saved.causalEvidence.decisions,
+          { hash, status: { type: "pending", reason: "Untrusted raw candidate" } }],
       })
-      request.onerror = () => reject(request.error)
-    })
-    const evidence = snapshot.causalEvidence ?? { decisions: [], authorizationEvidence: [] }
-    snapshot.causalEvidence = { ...evidence, bytes: new Uint8Array(bytes), decisions: [...(evidence.decisions ?? []),
-      { hash, status: { type: "pending", reason: "Untrusted raw candidate" } }]
-    }
-    store.put(snapshot)
-    await new Promise<void>((resolve, reject) => {
-      transaction.oncomplete = () => resolve()
-      transaction.onerror = () => reject(transaction.error)
-      transaction.onabort = () => reject(transaction.error)
-    })
-    db.close()
+    } finally { A.free(projection) }
   }, { id: workspaceId, bytes: rawBytes, hash: changeHash })
   return rawHeads
 }

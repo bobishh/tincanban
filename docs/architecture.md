@@ -120,8 +120,9 @@ markers never authorize incoming peer changes. Cold reads and a changed frontier
 from another tab still validate retained history, so those costs grow with history.
 
 The version 2 workspace journal includes `snapshots`, `authorizations`, `frontiers`
-and `deltas` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier records contain catalog metadata,
-so a successful document commit does not depend on a second catalog write.
+and `deltas` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier
+records contain catalog metadata. Successful commits require no separate legacy
+catalog write; fresh readers recover title and archive state from the atomic journal.
 Legacy local snapshots and the separate authorization database remain readable;
 the next commit migrates their content into the journal transaction. Legacy
 records are retained for recovery. Once an authorization record is migrated,

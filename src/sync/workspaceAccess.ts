@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalAuthorityJson } from "./authorityFingerprint"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { WorkspaceRole } from "../domain/permissions"
 import { diagnoseStartupStep } from "./startupDiagnostics"
@@ -25,7 +25,7 @@ export function inheritLocalMoveAccess(before: Automerge.Doc<WorkspaceDocumentV2
 
 export function decideAccess(doc: Automerge.Doc<WorkspaceDocumentV2>, evidence: { snapshot: Record<string, unknown> } & Record<string, unknown>): Promise<WorkspaceRole> {
   const key = documentKey(doc)
-  const signature = canonicalizeJson(evidence)
+  const signature = canonicalAuthorityJson(evidence)
   const previous = cache.get(key)
   if (previous?.evidence === signature && previous.expires > Date.now()) return previous.result
   const detail = { workspaceId: doc.id, bytes: 0 }

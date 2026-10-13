@@ -22,9 +22,7 @@ export abstract class StorageDeltaAccess {
   }
   async commitDelta(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>) {
     this.checkDeltaWrites()
-    const next = await this.delta.append(frontier, delta, doc)
-    await this.registerWorkspace(doc.id, doc.title, doc.archivedAt ?? null, true)
-    return next
+    return this.delta.append(frontier, delta, doc)
   }
   async hasCausalEvidence(workspaceId: string) {
     return Boolean(await this.delta.frontier(workspaceId) || await this.loadCausalEvidence(workspaceId))

@@ -2,7 +2,8 @@
 
 These checks prevent regressions found during the 2026-10-12 startup/sync audit.
 They run in the existing unit, browser and formal CI jobs. Operation counts protect
-architectural behavior; no arbitrary elapsed-time quota is introduced.
+architectural behavior. The opt-in local-save workload also requires warm writes
+below 250ms; it reports separate full-replay timings and is not a network deadline.
 
 | Contract | Production regression | Formal model |
 | --- | --- | --- |
@@ -10,6 +11,9 @@ architectural behavior; no arbitrary elapsed-time quota is introduced.
 | Changed history, decisions, missing checkpoint or policy invalidates reuse. Incoming metadata grants no trust. | `src/state.test.ts`, `src/sync/workspaceAdmissionCheckpoint.test.ts`; network admission uses its own verifier. | `SavedAdmission`, including forged remote marker and omitted authority mutants. |
 | Reclassification rechecks authority after asynchronous admission before committing. | Existing authorization context/race tests in `src/sync/changeAuthorization.test.ts`. | `SavedAdmissionIgnoresRace` must violate current-context safety. |
 | Identical snapshot/evidence/proofs replay writes no journal or catalog. | `src/storage.test.ts`. New command receipts still require atomic persistence. | Existing `WorkspaceCommit`; exact duplicate storage cost is an implementation assertion. |
+| Ordinary local commands write only a new delta, proof, receipt and frontier; aborted or competing writes cannot advance it. | `src/workspaceDeltaJournal.test.ts`, `src/state.test.ts`, `e2e/repeated-card-save.spec.ts`; opt-in `src/stateLocalSavePerformance.test.ts` checks growing histories. | Implementation tests cover IndexedDB integrity and atomicity; no model claims storage performance. |
+| Certificate ordering does not invalidate rights or access caches; signed payload order, distinct certificates and revocations remain consequential. | `src/sync/authorityFingerprint.test.ts`, `src/sync/changeAuthorization.test.ts`, `src/sync/workspaceAccess.test.ts`. | Canonical representation is an implementation invariant. |
+| Successful snapshot/delta commits do not depend on a later legacy catalog write. | `src/storage.test.ts`, `src/sync/localWorkspaceAdmission.test.ts`: unavailable legacy writer, fresh storage reader and recovered catalog. | The atomic commit contains its catalog metadata. |
 | Renewing a local admission checkpoint does not publish a shared change. | `src/state.test.ts`: actual reclassify entry point, persisted repaired checkpoint, zero subscribed notifications; a real edit notifies. | `SavedAdmissionPublishesMarker` must fail. |
 | Eviction disconnects and rejects new work without awaiting its own receive queue or draining under a mutation lock. Cleanup is supervised separately. | `src/sync/workspaceSet.test.ts`: current-peer control callback and actual concurrent mutation-lock owner. | `ScopeShutdown`: self-drain and lock-drain variants must fail eventual cleanup. |
 | A gossip timer queued before driver replacement cancels if the driver closes before execution; explicit API calls on closed drivers still reject. | Vendored `gossip.test.ts`: blocked send, timer tick, close, no timer effects or unhandled rejection. | `GossipTimerShutdown` checks silent cancellation; the old rejecting variant must fail. |
@@ -32,7 +36,7 @@ security boundary and is not an accepted optimization.
 
 Additional candidates remain in [the redundant-work audit](redundant-work-audit.md):
 scoped durable replication, typing without durable merges, unchanged Rusty polling
-without full export, incremental command admission, keys-only catalog reads,
+without full export, incremental reads of commands from other tabs, keys-only catalog reads,
 revision-based automation projections and indexed proof/history lookups. These are
 identified work, not enforced or completed contracts. No passing model is evidence
 that every production finding has been fixed.

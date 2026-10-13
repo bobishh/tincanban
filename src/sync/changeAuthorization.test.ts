@@ -7,10 +7,11 @@ import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
 import { createWorkspaceDoc } from "../domain/seeds"
-import { createWorkspaceGrant } from "../domain/proofs"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant } from "../domain/proofs"
+import { publicKeyId, toBase64Url } from "../domain/identity"
 import { createWorkspaceOwnershipTransfer, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"
 import { executeCommand, type Command } from "../domain/commands"
-import { exportAuthorizations, exportAuthorizationBundle, exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, recordGenesisAuthority, validateIncomingChanges, validateIncomingChangesWithProofStatus, validateIncomingChangeAuthorizations, workspaceRole, workspaceWritesBlocked } from "./changeAuthorization"
+import { authorityValidationFingerprint, localWorkspaceAdmissionAuthority, exportAuthorizations, exportAuthorizationBundle, exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, recordGenesisAuthority, validateIncomingChanges, validateIncomingChangesWithProofStatus, validateIncomingChangeAuthorizations, workspaceRole, workspaceWritesBlocked } from "./changeAuthorization"
 import { reconcileOwnerRevocationBoundaries } from "./ownerRevocationBoundaryRepair"
 import { assertWorkspaceTransition } from "../domain/permissions"
 import { isItem, type WorkspaceDocumentV2 } from "../domain/model"
@@ -98,6 +99,25 @@ it("exports the same fresh authorization evidence from a hydrated document witho
   const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Hydrated proofs", owner.identity.personId, "blank"))
   expect(await exportDocumentAuthorizationBundle(doc, owner)).toEqual(await exportAuthorizationBundle(Automerge.save(doc), owner))
   expect(Automerge.change(doc, draft => { draft.title = "Still writable" }).title).toBe("Still writable")
+})
+
+it("Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Certificate representation", owner.identity.personId, "blank"))
+  const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair
+  const publicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))
+  const second = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, await publicKeyId(publicKey), publicKey, await certHashDefault(owner.certificate))
+  const stored = { version: 1 as const, workspaceId: doc.id, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate, second], epoch: 1, updatedAt: "first", catalog: {} }
+  peerStoreState.authority = stored
+  peerStoreState.credential = stored
+  const before = await localWorkspaceAdmissionAuthority(doc, owner)
+  const reversed = { ...stored, ownerCertificates: [...stored.ownerCertificates].reverse(), updatedAt: "second" }
+  peerStoreState.authority = reversed
+  peerStoreState.credential = reversed
+  expect(authorityValidationFingerprint(reversed)).toBe(authorityValidationFingerprint(stored))
+  expect((await localWorkspaceAdmissionAuthority(doc, owner)).fingerprint).toBe(before.fingerprint)
+  Automerge.free(doc)
 })
 
 it("reports admission phase costs without changing the authorized result", async () => {

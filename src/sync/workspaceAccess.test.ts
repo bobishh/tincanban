@@ -49,6 +49,23 @@ it("revalidates revoked authority after a trusted move instead of retaining cach
   expect(decision).toHaveBeenCalledTimes(calls + 1)
 })
 
+it("Given cached access after a trusted local move, When certificate sets reorder, Then access stays cached and changed certificates still revalidate", async () => {
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Certificate sets", "owner", "blank"))
+  const certificates = [{ signature: "a" }, { signature: "b" }]
+  const evidence = { snapshot: { genesisOwner: { certificates } }, identity: { certificates } }
+  decision.mockReturnValue("editor")
+  await decideAccess(doc, evidence)
+  const moved = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Trusted move" })
+  inheritLocalMoveAccess(doc, moved)
+  const calls = decision.mock.calls.length
+  const reordered = { snapshot: { genesisOwner: { certificates: [...certificates].reverse() } }, identity: { certificates: [...certificates].reverse() } }
+  await expect(decideAccess(moved, reordered)).resolves.toBe("editor")
+  expect(decision).toHaveBeenCalledTimes(calls)
+  decision.mockReturnValue("visitor")
+  await expect(decideAccess(moved, { ...reordered, identity: { certificates: [{ signature: "other" }] } })).resolves.toBe("visitor")
+  expect(decision).toHaveBeenCalledTimes(calls + 1)
+})
+
 it("revalidates an unrelated document change even with identical authority", async () => {
   const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Access", "owner", "blank"))
   const evidence = { snapshot: { ownerPersonId: "owner" } }

@@ -12,12 +12,12 @@ export function workspaceAuthorityFingerprint(
     const security: Record<string, unknown> = { ...credential }
     delete security.transportSecret
     delete security.updatedAt
-    return security
+    return normalizeCertificateSets(security)
   })
   const authorityState = authorities.map(authority => {
     const security: Record<string, unknown> = { ...authority }
     delete security.updatedAt
-    return security
+    return normalizeCertificateSets(security)
   })
   return canonicalJson({
     credentials: canonicalSort(credentialState),
@@ -37,6 +37,21 @@ export class AuthorityFingerprintTracker {
 
 function canonicalSort(values: unknown[]): unknown[] {
   return values.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))
+}
+
+/** Certificate collections are sets; signed payloads and all other arrays retain their order. */
+export function normalizeCertificateSets<T>(value: T): T {
+  if (Array.isArray(value)) return (value as unknown[]).map(item => normalizeCertificateSets(item)) as T
+  if (!value || typeof value !== "object") return value
+  const record = value as Record<string, unknown>
+  if ("signature" in record && "payload" in record) return value
+  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key,
+    Array.isArray(item) && (key === "certificates" || key === "ownerCertificates")
+      ? canonicalSort((item as unknown[]).slice()) : normalizeCertificateSets(item)])) as T
+}
+
+export function canonicalAuthorityJson(value: unknown): string {
+  return canonicalJson(normalizeCertificateSets(value))
 }
 
 function canonicalJson(value: unknown): string {

@@ -138,28 +138,28 @@ browser	e2e/discussion-entry-points.spec.ts	130	no		Given window controls, when 
 browser	e2e/document-editing.spec.ts	23	no		Given a generic card, when Edit is selected, then its visible fields can be changed from the detail view
 browser	e2e/document-editing.spec.ts	39	no		Given a real file attachment, when it is reopened, then tincanban can preview and download its persisted bytes
 browser	e2e/document-editing.spec.ts	73	no		Given document controls fail to load, when item detail opens, then pending and error states preserve board access
-browser	e2e/durable-mesh.spec.ts	156	no		Given paired browsers, when a lead changes, then the peer receives the durable board update
-browser	e2e/durable-mesh.spec.ts	174	no		Given a legacy local device without metadata, when Sync opens in a known browser, then it shows the current browser and OS
-browser	e2e/durable-mesh.spec.ts	202	no		Given a joined workspace with local data, when an editor leaves the mesh, then its copy remains and rejoining requires merge confirmation
-browser	e2e/durable-mesh.spec.ts	252	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
-browser	e2e/durable-mesh.spec.ts	318	no		Given a current-owner revocation bound to quarantined history, when repair retries after reload, then owner access returns and revoked peer leaves roster
-browser	e2e/durable-mesh.spec.ts	459	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
-browser	e2e/durable-mesh.spec.ts	492	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
-browser	e2e/durable-mesh.spec.ts	530	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
-browser	e2e/durable-mesh.spec.ts	577	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
-browser	e2e/durable-mesh.spec.ts	630	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
-browser	e2e/durable-mesh.spec.ts	718	no		Given a mobile peer with 32 leads and 9 applied cards, when desktop moves cards while it is offline, then both persist 23 leads and 12 applied without reloading to sync
-browser	e2e/durable-mesh.spec.ts	785	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
-browser	e2e/durable-mesh.spec.ts	861	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
-browser	e2e/durable-mesh.spec.ts	885	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
-browser	e2e/durable-mesh.spec.ts	934	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
-browser	e2e/durable-mesh.spec.ts	981	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
-browser	e2e/durable-mesh.spec.ts	1043	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
-browser	e2e/durable-mesh.spec.ts	1065	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
-browser	e2e/durable-mesh.spec.ts	1101	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
-browser	e2e/durable-mesh.spec.ts	1179	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
-browser	e2e/durable-mesh.spec.ts	1210	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
-browser	e2e/durable-mesh.spec.ts	1375	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
+browser	e2e/durable-mesh.spec.ts	130	no		Given paired browsers, when a lead changes, then the peer receives the durable board update
+browser	e2e/durable-mesh.spec.ts	148	no		Given a legacy local device without metadata, when Sync opens in a known browser, then it shows the current browser and OS
+browser	e2e/durable-mesh.spec.ts	176	no		Given a joined workspace with local data, when an editor leaves the mesh, then its copy remains and rejoining requires merge confirmation
+browser	e2e/durable-mesh.spec.ts	226	no		Given signed workspace authority, when transport state disappears, then owner and editor roles recover while forged authority stays read-only
+browser	e2e/durable-mesh.spec.ts	292	no		Given a current-owner revocation bound to quarantined history, when repair retries after reload, then owner access returns and revoked peer leaves roster
+browser	e2e/durable-mesh.spec.ts	433	no		Given a paired editor, when the invitation tab reloads repeatedly, then trust and editing survive and sync resumes without approval
+browser	e2e/durable-mesh.spec.ts	466	no		Given two connected clients, when exactly one page reloads after a pending network state, then both sides restore live presence
+browser	e2e/durable-mesh.spec.ts	504	no		Given a paired editor, when its actual Iroh node closes unexpectedly, then a fresh node reconnects and syncs without reload or pairing
+browser	e2e/durable-mesh.spec.ts	551	no		Given a paired editor, when live receive persistence fails, then no saved state is acknowledged and reconnect replays it after storage recovers
+browser	e2e/durable-mesh.spec.ts	604	no		Given two tabs for one editor device, when their real Iroh nodes disconnect repeatedly, then roles, edits, and node ownership recover without accumulation
+browser	e2e/durable-mesh.spec.ts	692	no		Given a mobile peer with 32 leads and 9 applied cards, when desktop moves cards while it is offline, then both persist 23 leads and 12 applied without reloading to sync
+browser	e2e/durable-mesh.spec.ts	759	no		Given a paired editor goes offline, when both sides edit and it comes online, then persisted changes converge without reloading
+browser	e2e/durable-mesh.spec.ts	835	no		Given a connected peer misses a local change notification, then periodic anti-entropy converges without adding another device
+browser	e2e/durable-mesh.spec.ts	859	no		Given an existing editor, when the owner enrolls another device, then the owner device verifies that editor after reload
+browser	e2e/durable-mesh.spec.ts	908	no		Given trusted devices and multiple tabs, when tabs close and reopen, then each tab keeps an independent channel under one device
+browser	e2e/durable-mesh.spec.ts	955	no		Given a connected peer closes its tab, when it returns, then presence turns offline and queued changes sync
+browser	e2e/durable-mesh.spec.ts	1017	no		Given owner introduced two editors, when owner goes offline, then editors discover each other and keep syncing
+browser	e2e/durable-mesh.spec.ts	1039	no		Given an editor has synced changes, when owner removes access, then writes stop and a new peer retains accepted history
+browser	e2e/durable-mesh.spec.ts	1075	no		Given an online editor, when owner selects them in mesh members and transfers ownership, then roles swap across devices
+browser	e2e/durable-mesh.spec.ts	1153	no		Given sibling tabs on both devices, when mesh reconnects concurrently, then connections settle without repeated closure
+browser	e2e/durable-mesh.spec.ts	1184	no		Given an editor has an unsigned raw branch, when it is reloaded, then it stays quarantined and valid sync continues
+browser	e2e/durable-mesh.spec.ts	1349	no		Given chat history exceeds one control frame, when paired peers reconnect, then history and subsequent edits sync
 browser	e2e/favicon.spec.ts	32	no		Given a ready board with no peers, when its tab opens, then tincanban favicon matches empty mesh without blinking
 browser	e2e/favicon.spec.ts	42	no		Given app startup fails, when its tab opens, then tincanban icon still loads
 browser	e2e/favicon.spec.ts	49	no		Given favicon animation cannot load, when the board opens, then the static icon and local board remain available
@@ -785,7 +785,7 @@ app-unit	src/state.test.ts	542	no	Repository-backed state and projections (Requi
 app-unit	src/state.test.ts	555	no	Repository-backed state and projections (Requirement 1.8)	keeps unsigned merge helpers private and rejects importing another owner's workspace
 app-unit	src/state.test.ts	564	no	Repository-backed state and projections (Requirement 1.8)	deletes the active workspace and opens a remaining workspace
 app-unit	src/stateCausalReview.test.ts	16	no	quarantined review resolution	requires the exact review clone to be admitted before hiding the source
-app-unit	src/stateLocalSavePerformance.test.ts	13	no		Given growing admitted histories, When one card changes, Then compare full replay with checkpoint extension
+app-unit	src/stateLocalSavePerformance.test.ts	19	no		Given growing admitted histories, When Archive and Applied alternate repeatedly, Then only new deltas serialize and warm saves stay below 250ms
 app-unit	src/statePersonalRootScope.test.ts	14	no	identity-scoped local workspace catalog	shows root-entitled workspaces, including invited visitor refs, but hides another identity's local docs
 app-unit	src/statePersonalRootScope.test.ts	38	no	identity-scoped local workspace catalog	fails closed when legacy root omits its workspace map
 app-unit	src/statePersonalRootScope.test.ts	54	no	identity-scoped local workspace catalog	repairs polluted genesis refs without dropping invited or unavailable refs
@@ -796,74 +796,79 @@ app-unit	src/stateSyncActions.test.ts	29	no	readWorkspaceDoc	loads inactive work
 app-unit	src/stateSyncActions.test.ts	37	no		Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause
 app-unit	src/stateSyncActions.test.ts	47	no	recordVerifiedOwnerWorkspace	adds only an owned verified workspace to personal-root catalog
 app-unit	src/stateSyncActions.test.ts	68	no	recordVerifiedOwnerWorkspace	rejects foreign-owned documents without changing personal-root entitlements
-app-unit	src/storage.test.ts	33	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
-app-unit	src/storage.test.ts	48	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
-app-unit	src/storage.test.ts	75	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
-app-unit	src/storage.test.ts	89	no	personal root map writes	does not persist a root when its mutation rejects
-app-unit	src/storage.test.ts	109	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
-app-unit	src/storage.test.ts	121	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
-app-unit	src/storage.test.ts	135	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
-app-unit	src/storage.test.ts	164	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
-app-unit	src/storage.test.ts	175	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
-app-unit	src/storage.test.ts	214	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
-app-unit	src/storage.test.ts	226	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
-app-unit	src/storage.test.ts	234	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
-app-unit	src/storage.test.ts	256	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
-app-unit	src/storage.test.ts	265	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
-app-unit	src/storage.test.ts	305	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
-app-unit	src/storage.test.ts	324	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
-app-unit	src/storage.test.ts	349	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
-app-unit	src/storage.test.ts	378	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
-app-unit	src/storage.test.ts	411	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
-app-unit	src/storage.test.ts	445	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
-app-unit	src/storage.test.ts	477	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
-app-unit	src/storage.test.ts	518	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
+app-unit	src/storage.test.ts	34	no	personal root map writes	serializes writes from separate storage instances without dropping another identity root
+app-unit	src/storage.test.ts	49	no	personal root map writes	preserves independent field updates made concurrently from separate tabs
+app-unit	src/storage.test.ts	76	no	personal root map writes	keeps deletion visible to stale storage instances and never recreates a missing root
+app-unit	src/storage.test.ts	90	no	personal root map writes	does not persist a root when its mutation rejects
+app-unit	src/storage.test.ts	110	no	Workspace catalog across browser tabs	keeps a received workspace when a stale tab saves another workspace
+app-unit	src/storage.test.ts	122	no	Workspace catalog across browser tabs	reads available and archived entries from one catalog snapshot
+app-unit	src/storage.test.ts	136	no	Workspace catalog across browser tabs	does not resurrect a archived workspace from a stale tab
+app-unit	src/storage.test.ts	165	no	Document & Change-hash persistence (Requirement 1.7)	Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal
+app-unit	src/storage.test.ts	175	no	Document & Change-hash persistence (Requirement 1.7)	loads stored documents without creating unsigned CRDT changes
+app-unit	src/storage.test.ts	186	no	Document & Change-hash persistence (Requirement 1.7)	requires new owner authorization before publishing a rekeyed workspace
+app-unit	src/storage.test.ts	225	no	Document & Change-hash persistence (Requirement 1.7)	reuses a matching snapshot without losing a later journal write or consuming the borrowed document
+app-unit	src/storage.test.ts	237	no	Document & Change-hash persistence (Requirement 1.7)	loads another tab's newer snapshot when cached heads differ
+app-unit	src/storage.test.ts	245	no	Document & Change-hash persistence (Requirement 1.7)	reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes
+app-unit	src/storage.test.ts	267	no	Document & Change-hash persistence (Requirement 1.7)	selects the current identity root after enrollment instead of the first stored root
+app-unit	src/storage.test.ts	276	no	Document & Change-hash persistence (Requirement 1.7)	atomically commits change bytes, proof, and transaction receipt
+app-unit	src/storage.test.ts	316	no	Document & Change-hash persistence (Requirement 1.7)	Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot
+app-unit	src/storage.test.ts	335	no	Document & Change-hash persistence (Requirement 1.7)	Given an identical admitted snapshot and evidence, When replayed without a new command, Then storage performs no journal or catalog write
+app-unit	src/storage.test.ts	349	no	Document & Change-hash persistence (Requirement 1.7)	handles same-ID retry idempotently returning existing receipt without duplicating change
+app-unit	src/storage.test.ts	374	no	Document & Change-hash persistence (Requirement 1.7)	aborts commit cleanly when storage failure hook is active
+app-unit	src/storage.test.ts	403	no	Document & Change-hash persistence (Requirement 1.7)	handles stale-tab concurrent saves without overwriting unseen writes
+app-unit	src/storage.test.ts	436	no	Document & Change-hash persistence (Requirement 1.7)	compacts snapshot while preserving unseen concurrent writer chunks
+app-unit	src/storage.test.ts	470	no	Document & Change-hash persistence (Requirement 1.7)	persists and reloads personal root document
+app-unit	src/storage.test.ts	502	no	Document & Change-hash persistence (Requirement 1.7)	exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)
+app-unit	src/storage.test.ts	543	no	Document & Change-hash persistence (Requirement 1.7)	persists changes, proofs, receipts, and personal root across fresh storage instances (simulated reload)
 app-unit	src/storageCatalog.test.ts	17	no		checks ancestor and merged branch heads using metadata without expanding text operations
-app-unit	src/sync/authorityFingerprint.test.ts	25	no	workspace authority fingerprint	ignores peer-independent timestamps and transport secrets, and sorts stored records
-app-unit	src/sync/authorityFingerprint.test.ts	39	yes	workspace authority fingerprint	changes when %s changes
-app-unit	src/sync/authorityFingerprint.test.ts	54	no	workspace authority fingerprint	tracks stored-ledger changes and conflicts with the credential
+app-unit	src/sync/authorityFingerprint.test.ts	25	no	workspace authority fingerprint	Given identical certificate sets in different orders, When authority refreshes, Then the fingerprint stays equal without mutating stored records
+app-unit	src/sync/authorityFingerprint.test.ts	38	no	workspace authority fingerprint	Given duplicate signatures or a changed signed payload, When fingerprinting, Then every distinct security value remains visible
+app-unit	src/sync/authorityFingerprint.test.ts	50	no	workspace authority fingerprint	ignores peer-independent timestamps and transport secrets, and sorts stored records
+app-unit	src/sync/authorityFingerprint.test.ts	64	yes	workspace authority fingerprint	changes when %s changes
+app-unit	src/sync/authorityFingerprint.test.ts	79	no	workspace authority fingerprint	tracks stored-ledger changes and conflicts with the credential
 app-unit	src/sync/blindClient.test.ts	5	no		Given workerd fetch, when reading Rusty, then uses manual redirect handling and rejects redirects
 app-unit	src/sync/blindClient.test.ts	20	no		durable receipt binds pinned service, ciphertext, scope, epoch, policy and fresh request
 app-unit	src/sync/blindEnvelope.test.ts	7	no	blind encrypted replication	round-trips document bytes without giving storage a content key
 app-unit	src/sync/blindReplication.test.ts	6	no		Given encrypted signed history, when admission fails, replication never advances its durable cursor
 app-unit	src/sync/blindReplication.test.ts	29	no		Given an uncertain durable receipt, when uploading retries, the same immutable ciphertext is reused
 app-unit	src/sync/blindReplication.test.ts	49	no		Given an inventory exceeding one bounded pass, when syncing, then completion is not reported until backlog drains
-app-unit	src/sync/changeAuthorization.test.ts	97	no		exports the same fresh authorization evidence from a hydrated document without consuming it
-app-unit	src/sync/changeAuthorization.test.ts	103	no		reports admission phase costs without changing the authorized result
-app-unit	src/sync/changeAuthorization.test.ts	113	no		Given one raw document used as local and remote, When reclassifying it, Then avoid a full clone and keep the caller document usable
-app-unit	src/sync/changeAuthorization.test.ts	126	no		Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again
-app-unit	src/sync/changeAuthorization.test.ts	155	no		admits a signed owner bootstrap with long text without expanding it into text patches
-app-unit	src/sync/changeAuthorization.test.ts	169	no		checks a signed item edit without materializing unrelated whole-document historical views
-app-unit	src/sync/changeAuthorization.test.ts	179	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
-app-unit	src/sync/changeAuthorization.test.ts	231	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
-app-unit	src/sync/changeAuthorization.test.ts	240	no		quarantines an unsigned received branch without materializing it in the authorized projection
-app-unit	src/sync/changeAuthorization.test.ts	263	no		admits a visitor's signed change only for their own avatar profile
-app-unit	src/sync/changeAuthorization.test.ts	270	no		defaults an omitted optional departures list before calling Rust
-app-unit	src/sync/changeAuthorization.test.ts	278	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
-app-unit	src/sync/changeAuthorization.test.ts	299	no		admits a valid editor bundle when optional departures are omitted
-app-unit	src/sync/changeAuthorization.test.ts	306	no		rejects malformed present departures evidence before Rust
-app-unit	src/sync/changeAuthorization.test.ts	312	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
-app-unit	src/sync/changeAuthorization.test.ts	317	no		accepts an owner-root grant and rejects a forged root grant
-app-unit	src/sync/changeAuthorization.test.ts	335	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
-app-unit	src/sync/changeAuthorization.test.ts	367	no		repairs a current-owner signed revocation bound only to quarantined raw history
-app-unit	src/sync/changeAuthorization.test.ts	397	no		does not repair a missing boundary with a foreign-owner signature
-app-unit	src/sync/changeAuthorization.test.ts	416	no		does not repair owner boundaries from a revoked owner device
-app-unit	src/sync/changeAuthorization.test.ts	435	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
-app-unit	src/sync/changeAuthorization.test.ts	470	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
-app-unit	src/sync/changeAuthorization.test.ts	513	no		reports a proof change only once when the same authorization is replayed
-app-unit	src/sync/changeAuthorization.test.ts	518	no		keeps a later local owner boundary when admitting a peer's older history
-app-unit	src/sync/changeAuthorization.test.ts	551	no		does not persist a proof while validating an incoming workspace
-app-unit	src/sync/changeAuthorization.test.ts	556	no		reports a proof change once when a replay enriches certificates around the same change signature
-app-unit	src/sync/changeAuthorization.test.ts	566	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
-app-unit	src/sync/changeAuthorization.test.ts	583	no		accepts an editor changing only workspace title casing
-app-unit	src/sync/changeAuthorization.test.ts	590	no		rejects editor board-structure changes through the same policy used for local commands
-app-unit	src/sync/changeAuthorization.test.ts	595	no		rejects a valid signature over a different change hash
-app-unit	src/sync/changeAuthorization.test.ts	602	no		rejects a forged owner-issued role
-app-unit	src/sync/changeAuthorization.test.ts	608	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
-app-unit	src/sync/changeAuthorization.test.ts	623	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
-app-unit	src/sync/changeAuthorization.test.ts	640	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
-app-unit	src/sync/changeAuthorization.test.ts	654	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
-app-unit	src/sync/changeAuthorization.test.ts	672	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
+app-unit	src/sync/changeAuthorization.test.ts	98	no		exports the same fresh authorization evidence from a hydrated document without consuming it
+app-unit	src/sync/changeAuthorization.test.ts	104	no		Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints
+app-unit	src/sync/changeAuthorization.test.ts	123	no		reports admission phase costs without changing the authorized result
+app-unit	src/sync/changeAuthorization.test.ts	133	no		Given one raw document used as local and remote, When reclassifying it, Then avoid a full clone and keep the caller document usable
+app-unit	src/sync/changeAuthorization.test.ts	146	no		Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again
+app-unit	src/sync/changeAuthorization.test.ts	175	no		admits a signed owner bootstrap with long text without expanding it into text patches
+app-unit	src/sync/changeAuthorization.test.ts	189	no		checks a signed item edit without materializing unrelated whole-document historical views
+app-unit	src/sync/changeAuthorization.test.ts	199	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
+app-unit	src/sync/changeAuthorization.test.ts	251	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
+app-unit	src/sync/changeAuthorization.test.ts	260	no		quarantines an unsigned received branch without materializing it in the authorized projection
+app-unit	src/sync/changeAuthorization.test.ts	283	no		admits a visitor's signed change only for their own avatar profile
+app-unit	src/sync/changeAuthorization.test.ts	290	no		defaults an omitted optional departures list before calling Rust
+app-unit	src/sync/changeAuthorization.test.ts	298	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
+app-unit	src/sync/changeAuthorization.test.ts	319	no		admits a valid editor bundle when optional departures are omitted
+app-unit	src/sync/changeAuthorization.test.ts	326	no		rejects malformed present departures evidence before Rust
+app-unit	src/sync/changeAuthorization.test.ts	332	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
+app-unit	src/sync/changeAuthorization.test.ts	337	no		accepts an owner-root grant and rejects a forged root grant
+app-unit	src/sync/changeAuthorization.test.ts	355	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
+app-unit	src/sync/changeAuthorization.test.ts	387	no		repairs a current-owner signed revocation bound only to quarantined raw history
+app-unit	src/sync/changeAuthorization.test.ts	417	no		does not repair a missing boundary with a foreign-owner signature
+app-unit	src/sync/changeAuthorization.test.ts	436	no		does not repair owner boundaries from a revoked owner device
+app-unit	src/sync/changeAuthorization.test.ts	455	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
+app-unit	src/sync/changeAuthorization.test.ts	490	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
+app-unit	src/sync/changeAuthorization.test.ts	533	no		reports a proof change only once when the same authorization is replayed
+app-unit	src/sync/changeAuthorization.test.ts	538	no		keeps a later local owner boundary when admitting a peer's older history
+app-unit	src/sync/changeAuthorization.test.ts	571	no		does not persist a proof while validating an incoming workspace
+app-unit	src/sync/changeAuthorization.test.ts	576	no		reports a proof change once when a replay enriches certificates around the same change signature
+app-unit	src/sync/changeAuthorization.test.ts	586	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
+app-unit	src/sync/changeAuthorization.test.ts	603	no		accepts an editor changing only workspace title casing
+app-unit	src/sync/changeAuthorization.test.ts	610	no		rejects editor board-structure changes through the same policy used for local commands
+app-unit	src/sync/changeAuthorization.test.ts	615	no		rejects a valid signature over a different change hash
+app-unit	src/sync/changeAuthorization.test.ts	622	no		rejects a forged owner-issued role
+app-unit	src/sync/changeAuthorization.test.ts	628	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
+app-unit	src/sync/changeAuthorization.test.ts	643	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
+app-unit	src/sync/changeAuthorization.test.ts	660	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
+app-unit	src/sync/changeAuthorization.test.ts	674	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
+app-unit	src/sync/changeAuthorization.test.ts	692	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
 app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds incomplete snapshots and reassembles out-of-order parts exactly
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
@@ -1077,8 +1082,9 @@ app-unit	src/sync/localCommandTransition.test.ts	29	no		Given a signed local car
 app-unit	src/sync/localCommandTransition.test.ts	34	yes		Given an editor column rename with reported targets=%s, When checking the local transition, Then board structure remains protected
 app-unit	src/sync/localCommandTransition.test.ts	40	yes		Given a local command with wrong %s, When extending admission, Then it is rejected
 app-unit	src/sync/localCommandTransition.test.ts	49	no		Given a visitor local command, When creating a card, Then it is rejected before durable admission
-app-unit	src/sync/localWorkspaceAdmission.test.ts	45	yes		Given changed %s after admission, When a local command saves, Then the checkpoint cannot extend
-app-unit	src/sync/localWorkspaceAdmission.test.ts	52	no		Given an authority change during local validation, When extending the checkpoint, Then no admitted result is returned
+app-unit	src/sync/localWorkspaceAdmission.test.ts	50	yes		Given changed %s after admission, When a local command saves, Then the checkpoint cannot extend
+app-unit	src/sync/localWorkspaceAdmission.test.ts	57	no		Given an unavailable legacy catalog writer, When a local delta commits, Then success and catalog recovery use the atomic frontier
+app-unit	src/sync/localWorkspaceAdmission.test.ts	68	no		Given an authority change during local validation, When extending the checkpoint, Then no admitted result is returned
 app-unit	src/sync/memberAccess.test.ts	46	no	member access	promotes a visitor with a signed owner grant and preserves promotion on a stale announcement
 app-unit	src/sync/memberAccess.test.ts	55	no	member access	Given a promotion, when publication needs the workspace lock, then durable rights commit before publication
 app-unit	src/sync/memberAccess.test.ts	65	no	member access	removes only the chosen device and refuses its old signed advertisement on reconnect
@@ -1162,8 +1168,9 @@ app-unit	src/sync/useDeviceSync.test.ts	214	no	useDeviceSync direct sync selecti
 app-unit	src/sync/useDeviceSync.test.ts	233	no	useDeviceSync direct sync selection and custom workspace sets	handles expired invitation by setting error state and preventing connection
 app-unit	src/sync/workspaceAccess.test.ts	25	no		Given uncached access, When checking permissions, Then checkpoints precede document serialization and policy execution
 app-unit	src/sync/workspaceAccess.test.ts	37	no		revalidates revoked authority after a trusted move instead of retaining cached editor rights
-app-unit	src/sync/workspaceAccess.test.ts	52	no		revalidates an unrelated document change even with identical authority
-app-unit	src/sync/workspaceAccess.test.ts	63	no		Given browser access validation, When sending a saved document, Then ownership transfers without cloning a number array
+app-unit	src/sync/workspaceAccess.test.ts	52	no		Given cached access after a trusted local move, When certificate sets reorder, Then access stays cached and changed certificates still revalidate
+app-unit	src/sync/workspaceAccess.test.ts	69	no		revalidates an unrelated document change even with identical authority
+app-unit	src/sync/workspaceAccess.test.ts	80	no		Given browser access validation, When sending a saved document, Then ownership transfers without cloning a number array
 app-unit	src/sync/workspaceAccessWorker.test.ts	16	no		Given transferred document bytes, When checking worker access, Then the policy receives its original numeric document format
 app-unit	src/sync/workspaceAdmissionClient.test.ts	37	no		Given verified history in a warm worker, When checking access, Then the same worker validates rights without another WASM instance
 app-unit	src/sync/workspaceAdmissionClient.test.ts	53	no		rejects queued history and access checks after initialization failure and starts a fresh worker on retry

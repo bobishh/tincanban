@@ -19,9 +19,9 @@ test("Given a rejected card, when typing continuously, then input stays local un
   const detail = await openRejectedCard(page)
   await page.evaluate(async () => {
     const { defaultStorage } = await import("/src/storage.ts")
-    const original = defaultStorage.commitWorkspace.bind(defaultStorage)
+    const original = defaultStorage.commitDelta.bind(defaultStorage)
     ;(window as any).__noteCommits = 0
-    defaultStorage.commitWorkspace = async (...args: Parameters<typeof original>) => {
+    defaultStorage.commitDelta = async (...args: Parameters<typeof original>) => {
       ;(window as any).__noteCommits++
       return original(...args)
     }
@@ -63,9 +63,9 @@ test("Given a slow save, when typing newer text, then saved updates never overwr
   const detail = await openRejectedCard(page)
   await page.evaluate(async () => {
     const { defaultStorage } = await import("/src/storage.ts")
-    const original = defaultStorage.commitWorkspace.bind(defaultStorage)
+    const original = defaultStorage.commitDelta.bind(defaultStorage)
     let first = true
-    defaultStorage.commitWorkspace = async (...args: Parameters<typeof original>) => {
+    defaultStorage.commitDelta = async (...args: Parameters<typeof original>) => {
       if (first) {
         first = false
         await new Promise<void>(resolve => { (window as any).__releaseNoteSave = resolve })

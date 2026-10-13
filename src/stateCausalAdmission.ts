@@ -40,7 +40,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     // is malformed. Raw causal bytes may contain unreviewed changes, so this
     // branch must neither replay them nor persist a new classification.
     if (await phase("validate-authority", () => workspaceAuthorityIsInvalid(workspaceId))) return { doc: loaded.doc, changed: false }
-    if (await phase("reuse-delta-projection", () => reusableDeltaAdmission(loaded.doc, storage, stateRuntime.currentProfile ?? undefined))) {
+    if (await phase("reuse-projection", () => reusableDeltaAdmission(loaded.doc, storage, stateRuntime.currentProfile ?? undefined))) {
       meshTrace("workspace.reclassify.reused", { workspaceId })
       return { doc: loaded.doc, changed: false }
     }

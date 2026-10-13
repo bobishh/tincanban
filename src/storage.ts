@@ -20,6 +20,7 @@ import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, 
 import {
   deleteWorkspaceJournal,
   readWorkspaceSnapshot,
+  readWorkspaceBasisSnapshot,
   type StoredWorkspaceSnapshot,
   openWorkspaceJournal,
   readLocalJournal,
@@ -132,8 +133,10 @@ export class WorkspaceStorage extends StorageDeltaAccess {
   }
 
   async registerWorkspace(id: string, title: string, archivedAt: string | null = null, allowRestore = false): Promise<void> {
-    const previous = await getStorageRaw(`tincanban.workspace-meta.${id}`)
-    if (previous && !archivedAt && !allowRestore && (JSON.parse(previous) as WorkspaceMeta).archivedAt)
+    const committed = await this.delta.frontier(id) ?? await readWorkspaceBasisSnapshot(id)
+    const legacy = committed?.archivedAt === undefined ? await getStorageRaw(`tincanban.workspace-meta.${id}`) : null
+    const previousArchive = committed?.archivedAt === undefined ? (legacy ? (JSON.parse(legacy) as WorkspaceMeta).archivedAt : null) : committed.archivedAt
+    if (!archivedAt && !allowRestore && previousArchive)
       throw new Error("Workspace was archived in another tab")
     const meta = { id, title, updatedAt: new Date().toISOString(), archivedAt }
     await setStorageRaw(`tincanban.workspace-meta.${id}`, JSON.stringify(meta))
@@ -373,8 +376,6 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     }
     // Memory projections advance only after the durable transaction completes.
     this.rememberCommittedSnapshot(workspaceId, snapshot, doc)
-    onPhase?.("catalog-write")
-    await this.registerWorkspace(workspaceId, doc.title, doc.archivedAt ?? null, true)
     onPhase?.("completed")
     return { proofChanged, causalChanged }
   }

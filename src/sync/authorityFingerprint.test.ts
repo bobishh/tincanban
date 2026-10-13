@@ -22,6 +22,31 @@ function fingerprint(c = credential(), a = authority()) {
 }
 
 describe("workspace authority fingerprint", () => {
+  it("Given identical certificate sets in different orders, When authority refreshes, Then the fingerprint stays equal without mutating stored records", () => {
+    const c = credential(), a = authority()
+    c.ownerCertificates.push({ id: "cert-b" })
+    a.ownerCertificates.push({ id: "cert-b" })
+    c.ownerHistory![0]!.certificates = [{ id: "old-a" }, { id: "old-b" }]
+    const reversed = structuredClone(c), reversedAuthority = structuredClone(a)
+    reversed.ownerCertificates.reverse()
+    reversedAuthority.ownerCertificates.reverse()
+    reversed.ownerHistory![0]!.certificates.reverse()
+    expect(fingerprint(reversed, reversedAuthority)).toBe(fingerprint(c, a))
+    expect(reversed.ownerCertificates[0]).toEqual({ id: "cert-b" })
+  })
+
+  it("Given duplicate signatures or a changed signed payload, When fingerprinting, Then every distinct security value remains visible", () => {
+    const c = credential()
+    c.ownerCertificates = [{ signature: "same", payload: { deviceId: "a" } }, { signature: "same", payload: { deviceId: "b" } }]
+    const altered = structuredClone(c)
+    altered.ownerCertificates.pop()
+    expect(fingerprint(altered)).not.toBe(fingerprint(c))
+    c.catalog = { signed: { signature: "signature", payload: { certificates: ["a", "b"] } } }
+    altered.catalog = { signed: { signature: "signature", payload: { certificates: ["b", "a"] } } }
+    altered.ownerCertificates = c.ownerCertificates
+    expect(fingerprint(altered)).not.toBe(fingerprint(c))
+  })
+
   it("ignores peer-independent timestamps and transport secrets, and sorts stored records", () => {
     const left = credential()
     const leftAuthority = authority()

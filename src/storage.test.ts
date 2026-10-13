@@ -162,6 +162,16 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     storage = new WorkspaceStorage()
   })
 
+  it("Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal", async () => {
+    const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Atomic catalog", profile.identity.personId, "blank"))
+    const register = vi.spyOn(storage, "registerWorkspace").mockRejectedValue(new Error("Legacy catalog unavailable"))
+    try {
+      await expect(storage.saveSnapshot(doc.id, doc, Automerge.save(doc))).resolves.toBeUndefined()
+      expect(register).not.toHaveBeenCalled()
+      expect((await new WorkspaceStorage().listWorkspaces()).find(record => record.id === doc.id)?.title).toBe(doc.title)
+    } finally { register.mockRestore(); Automerge.free(doc) }
+  })
+
   it("loads stored documents without creating unsigned CRDT changes", async () => {
     const raw = createWorkspaceDoc(crypto.randomUUID(), "Legacy", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(raw)
