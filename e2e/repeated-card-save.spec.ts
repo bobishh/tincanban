@@ -1,5 +1,31 @@
 import { expect, test } from "./support/coverage"
 import { populatedBoard } from "./support/detailedBoard"
+import type { Page } from "@playwright/test"
+
+async function savedJournal(page: Page) {
+  return page.evaluate(async () => {
+    const id = (await import("/src/state.ts")).useTincanban().activeWorkspace.id
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("tincanban-workspace-state")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const read = db.transaction(["snapshots", "authorizations", "frontiers"], "readonly")
+    const get = <T>(name: string) => new Promise<T>(resolve => {
+      const request = read.objectStore(name).get(id)
+      request.onsuccess = () => resolve(request.result)
+    })
+    const [snapshot, proofs, frontier] = await Promise.all([
+      get<{ savedAt: string; bytes: Uint8Array }>("snapshots"),
+      get<{ records: unknown[] }>("authorizations"),
+      get<{ revision: number } | undefined>("frontiers"),
+    ])
+    db.close()
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(snapshot.bytes)))
+    return { savedAt: snapshot.savedAt, snapshotHash: Array.from(digest).join(","),
+      basisProofCount: proofs.records.length, revision: frontier?.revision ?? 0 }
+  })
+}
 
 test("Given a detailed board and two enrolled device certificates, when Archive and Applied alternate repeatedly, then every transition persists without history replay", async ({ page }, info) => {
   test.setTimeout(120_000)
@@ -18,6 +44,7 @@ test("Given a detailed board and two enrolled device certificates, when Archive 
     await app.reclassifyWorkspace(app.activeWorkspace.id)
     ;(await import("/src/sync/meshTrace.ts")).clearMeshTrace()
   })
+  const before = await savedJournal(page)
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
   const timings: Array<{ stage: string; elapsedMs: number }> = []
@@ -32,7 +59,15 @@ test("Given a detailed board and two enrolled device certificates, when Archive 
   const historyReplays = await page.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()
     .filter(event => event.event === "workspace.admission.started"))
   expect(historyReplays).toEqual([])
+  const after = await savedJournal(page)
+  expect(after.savedAt).toBe(before.savedAt)
+  expect(after.snapshotHash).toBe(before.snapshotHash)
+  expect(after.basisProofCount).toBe(before.basisProofCount)
+  expect(after.revision).toBe(before.revision + 6)
   await info.attach("repeated-save-timings", { body: JSON.stringify(timings), contentType: "application/json" })
   await page.reload()
   await expect(page.getByRole("region", { name: "Applied", exact: true }).getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible({ timeout: 30_000 })
+  const coldReplays = await page.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()
+    .filter(event => event.event === "workspace.admission.started"))
+  expect(coldReplays).toEqual([])
 })

@@ -52,13 +52,13 @@ async function save() {
 
 <style scoped>
 .identity-settings { display: grid; gap: 24px; }
-.identity-profile { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: start; }
-.identity-profile-fields { display: grid; gap: 12px; max-width: 320px; padding-top: 8px; }
+.identity-profile { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; align-items: start; }
+.identity-profile-fields { display: grid; gap: 12px; width: 100%; max-width: 360px; }
 .identity-profile-fields label { display: grid; gap: 7px; min-width: 0; }
-.identity-profile input { box-sizing: border-box; width: 100%; min-height: 42px; }
+.identity-profile input { box-sizing: border-box; width: 100%; min-height: 42px; padding: 8px 10px; }
 .identity-profile .button, .identity-recovery .button { justify-self: start; min-height: 42px; }
 .identity-profile > .sync-error { grid-column: 1 / -1; margin: 0; }
 .identity-recovery { display: grid; gap: 10px; }
 .identity-recovery h3, .identity-recovery p { margin: 0; }
-@media (max-width: 600px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
+@container (max-width: 460px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: 20px; } }
 </style>

@@ -65,7 +65,7 @@ async function validateStoredAuthority(authority: StoredWorkspaceAuthority | nul
 function uniqueCertificates(profile: LocalProfile, certificates: DeviceCertificate[]) {
   const values = [profile.certificate, ...certificates].filter(certificate =>
     certificate?.payload?.personId === profile.identity.personId)
-  return [...new Map(values.map(certificate => [certificate.signature, certificate])).values()]
+  return [...new Map(values.map(certificate => [certificate.signature, certificate])).values()].sort((a, b) => a.signature.localeCompare(b.signature))
 }
 
 export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile): Promise<Authorization[]> {
@@ -254,6 +254,14 @@ export async function exportAuthorizationBundle(bytes: Uint8Array, knownProfile?
 }
 
 export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile): Promise<Extract<IncomingAuthorizationBundle, { version: 1 }>> {
+  const { authority: evidence } = await localWorkspaceAdmissionAuthority(doc, knownProfile)
+  const snapshot = await readWorkspaceSnapshot(doc.id)
+  const rawEvidence = (snapshot?.causalEvidence?.authorizationEvidence ?? []) as Authorization[]
+  return { version: 1, records: mergeAuthorizationRecords(await records(doc.id), rawEvidence), authority: evidence }
+}
+
+/** Current authority only; ordinary local commands never export historical proofs. */
+export async function localWorkspaceAdmissionAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile) {
   let authority = (await storedWorkspaceAuthority(doc.id)).authority
   if (!authority && typeof indexedDB === "undefined" && knownProfile?.identity.personId === doc.ownerPersonId) {
     authority = {
@@ -265,9 +273,9 @@ export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<Works
   }
   const evidence = workspaceWriteAuthorityEvidence(doc, authority)
   if (!evidence) throw new Error("Workspace authority is unavailable for write authorization")
-  const snapshot = await readWorkspaceSnapshot(doc.id)
-  const rawEvidence = (snapshot?.causalEvidence?.authorizationEvidence ?? []) as Authorization[]
-  return { version: 1, records: mergeAuthorizationRecords(await records(doc.id), rawEvidence), authority: evidence }
+  const credential = await incomingCredential(doc.id)
+  if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
+  return { authority: evidence, fingerprint: canonicalizeJson({ authority: evidence, credential: authorityValidationFingerprint(credential) }) }
 }
 
 function workspaceWriteAuthorityEvidence(doc: WorkspaceDocumentV2, authority: StoredWorkspaceAuthority | null): WorkspaceWriteAuthorityEvidence | undefined {
@@ -362,10 +370,10 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
 
 /** Reuse only a locally committed projection, never an incoming snapshot's marker. */
 export async function storedWorkspaceAdmissionIsCurrent(doc: Automerge.Doc<WorkspaceDocumentV2>,
-  evidence: StoredCausalEvidence, authorization: unknown): Promise<boolean> {
-  if (!evidence.admissionCheckpoint) return false
+  evidence: StoredCausalEvidence, authorization: unknown, savedRecords?: Authorization[]): Promise<boolean> {
+  if (!evidence.admissionCheckpoint || evidence.admissionCheckpoint.incremental) return false
   const { context, frozenCredential } = await workspaceAdmissionContext(doc, authorization,
-    (evidence.authorizationEvidence ?? []) as Authorization[], true)
+    (evidence.authorizationEvidence ?? []) as Authorization[], true, savedRecords)
   const matches = await matchesAdmissionCheckpoint(evidence.admissionCheckpoint,
     await admissionInputHash(evidence.bytes, context), Automerge.getHeads(doc), evidence.decisions)
   return matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential
@@ -399,7 +407,7 @@ export async function extendLocalWorkspaceAdmission(
 }
 
 async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown,
-  priorEvidenceRecords: Authorization[], hasLocal: boolean) {
+  priorEvidenceRecords: Authorization[], hasLocal: boolean, savedRecords?: Authorization[]) {
   const credential = await incomingCredential(doc.id)
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
   const unnormalizedBundle = authorizationBundle(raw)
@@ -407,7 +415,7 @@ async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>
   const frozenCredential = authorityValidationFingerprint(credential)
   const knownAuthority = hasLocal ? workspaceWriteAuthorityEvidence(doc, credential) ?? null : null
   const rawRecords = (bundle.version === 1 ? bundle.records : bundle.pages.flat()) as Authorization[]
-  const allRecords = mergeAuthorizationRecords([...await records(doc.id), ...priorEvidenceRecords], rawRecords)
+  const allRecords = mergeAuthorizationRecords([...savedRecords ?? await records(doc.id), ...priorEvidenceRecords], rawRecords)
   const combinedBundle: IncomingAuthorizationBundle = { version: 1, records: allRecords, authority: bundle.authority }
   return { credential, frozenCredential, knownAuthority, combinedBundle,
     context: { workspaceId: doc.id, authorization: combinedBundle, knownAuthority, credential: frozenCredential } }

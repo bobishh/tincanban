@@ -166,7 +166,6 @@
 .item-history-entry { font-size: .8rem; }
 .item-history-head { margin-bottom: 4px; }
 .item-history-time, .item-history-author { color: var(--muted); }
-.templates-layout { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 20px; }
 .workspace-list { display: grid; gap: 8px; margin: 24px 0; }
 .workspace-item { width: 100%; min-height: 72px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 2px solid var(--line); color: var(--ink); }
 .workspace-switch { min-width: 0; min-height: 68px; display: flex; align-items: center; gap: 12px; padding: 14px 16px; border: 0; background: transparent; text-align: left; }
@@ -184,12 +183,10 @@
 .workspace-preset legend { padding: 0 6px; color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }
 .workspace-preset-options { display: grid; gap: 4px; }
 .workspace-preset-options label { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px; cursor: pointer; }
-.template-list { display: grid; align-content: start; gap: 8px; padding-right: 18px; border-right: 2px solid var(--line); }
 .template-item { display: grid; gap: 4px; padding: 10px; border: 2px solid var(--line); color: var(--ink); text-align: left; }
 .template-item span { color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .1em; text-transform: uppercase; }
 .template-item strong { font-size: .8rem; }
 .empty-template-list { margin: 10px 0; color: var(--muted); font: 700 .8rem/1.4 var(--site-font-sans); }
-.template-editor { display: grid; gap: 12px; }
 .form-error { margin: 0; padding: 10px; border: 2px solid var(--red); color: var(--red); background: #fff0eb; font: 700 .8rem/1.4 var(--site-font-sans); }.detail-head p { margin-top: 6px; color: var(--muted); font-size: 1rem; }
 .eyebrow, .detail-label { display: block; color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .13em; text-transform: uppercase; }
 
@@ -369,20 +366,6 @@
   }
 }
 
-@media (max-width: 768px) {
-  .templates-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 768px) {
-  .template-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    padding: 0 0 14px;
-    border-right: 0;
-    border-bottom: 2px solid var(--line);
-  }
-}
 @media (max-width: 560px) {
   .board {
     width: 100%;

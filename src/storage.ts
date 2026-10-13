@@ -8,13 +8,14 @@ import type {
 } from "./domain/model"
 import { records, mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { canonicalizeJson } from "./domain/identity"
-import { causalEvidenceChanged, cloneCausalEvidence, snapshotCausalEvidence } from "./causalEvidence"
+import { causalEvidenceChanged, snapshotCausalEvidence } from "./causalEvidence"
 import { parseStoredSnapshot, type StoredSnapshot } from "./storageSnapshot"
 import type { StoredProofsV1 } from "./domain/proofs"
 import { toBase64Url, fromBase64Url } from "./domain/identity"
 import { validateRekeyAuthorizations } from "./storageRekey"
 import { getStorageRaw, removeStorageRaw, setStorageRaw } from "./storageRaw"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
+import { StorageDeltaAccess } from "./storageDeltaAccess"
 import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, type WorkspaceMeta } from "./storageCatalog"
 import {
   deleteWorkspaceJournal,
@@ -80,26 +81,14 @@ const memoryStore: InMemoryStore = {
 }
 
 
-async function readIndexedJournalRecord<T>(
-  workspaceId: string,
-  storeName: "receipts" | "proofs",
-  key: string
-): Promise<T | undefined> {
-  const database = await openWorkspaceJournal()
-  const transaction = database.transaction(storeName, "readonly")
-  const completion = transactionDone(transaction)
-  const record = await requestResult(transaction.objectStore(storeName).get(key)) as T | undefined
-  await completion
-  return record
-}
-
-
-export class WorkspaceStorage {
+export class WorkspaceStorage extends StorageDeltaAccess {
   private inMemory: InMemoryStore
   private personalRootStore: PersonalRootMapStore
   private loadedDocuments = new Map<string, Automerge.Doc<WorkspaceDocumentV2>>()
+  protected checkDeltaWrites() { checkStorageFailureHook() }
 
   constructor(store = memoryStore) {
+    super()
     this.inMemory = store
     this.personalRootStore = new PersonalRootMapStore(store.personalRoots, checkStorageFailureHook)
   }
@@ -191,6 +180,7 @@ export class WorkspaceStorage {
   }
 
   async purgeWorkspaceForTest(workspaceId: string): Promise<void> {
+    this.delta.forget(workspaceId)
     await removeStorageRaw(`${workspaceMetaPrefix}${workspaceId}`)
     this.inMemory.snapshots.delete(workspaceId)
     this.rememberDocument(workspaceId)
@@ -336,6 +326,8 @@ export class WorkspaceStorage {
         const next = mergeAuthorizationRecords(existing, authorizations)
         proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
         journal.snapshot = snapshot
+        journal.frontier = undefined
+        journal.deltas = []
         journal.authorizations = next
         addCommand(journal)
         writeLocalJournal(workspaceId, journal)
@@ -343,7 +335,7 @@ export class WorkspaceStorage {
     } else {
       onPhase?.("journal-open")
       const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts"], "readwrite")
+      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas"], "readwrite")
       const completion = transactionDone(transaction)
       try {
         const snapshotStore = transaction.objectStore("snapshots")
@@ -358,6 +350,7 @@ export class WorkspaceStorage {
         if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged || checkpointChanged)
           snapshotStore.put(snapshot)
         if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
+        await this.clearDeltaRows(transaction, workspaceId)
         if (command) {
           const { receipt, changeBytes, proof } = command
           const receiptKey = `${workspaceId}:${receipt.transactionId}`
@@ -379,12 +372,17 @@ export class WorkspaceStorage {
       await completion
     }
     // Memory projections advance only after the durable transaction completes.
-    this.inMemory.snapshots.set(workspaceId, snapshot)
-    this.rememberDocument(workspaceId, doc)
+    this.rememberCommittedSnapshot(workspaceId, snapshot, doc)
     onPhase?.("catalog-write")
     await this.registerWorkspace(workspaceId, doc.title, doc.archivedAt ?? null, true)
     onPhase?.("completed")
     return { proofChanged, causalChanged }
+  }
+
+  private rememberCommittedSnapshot(workspaceId: string, snapshot: StoredWorkspaceSnapshot, doc: Automerge.Doc<WorkspaceDocumentV2>) {
+    this.delta.forget(workspaceId)
+    this.inMemory.snapshots.set(workspaceId, snapshot)
+    this.rememberDocument(workspaceId, doc)
   }
 
   private reuseCommittedWorkspace(workspaceId: string, snapshot: StoredWorkspaceSnapshot, doc: Automerge.Doc<WorkspaceDocumentV2>) {
@@ -396,6 +394,8 @@ export class WorkspaceStorage {
   async loadWorkspaceDoc(
     workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>
   ): Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null> {
+    const incremental = await this.delta.loadDocument(workspaceId, reusable)
+    if (incremental) return incremental
     const committedSnapshot = await readWorkspaceSnapshot(workspaceId)
     const rawSnapshot = committedSnapshot ? null : await getStorageRaw(`tincanban.snapshot.${workspaceId}`)
     const parsedSnapshot = committedSnapshot ?? (rawSnapshot ? parseStoredSnapshot(rawSnapshot, workspaceId) : null)
@@ -436,11 +436,6 @@ export class WorkspaceStorage {
     }
     this.rememberDocument(workspaceId, doc)
     return { doc, heads }
-  }
-
-  async loadCausalEvidence(workspaceId: string): Promise<StoredCausalEvidence | null> {
-    const snapshot = await readWorkspaceSnapshot(workspaceId)
-    return cloneCausalEvidence(snapshot?.causalEvidence)
   }
 
   async compactWorkspace(
@@ -505,7 +500,7 @@ export class WorkspaceStorage {
     const key = `${workspaceId}:${transactionId}`
     const receipt = typeof indexedDB === "undefined"
       ? readLocalJournal(workspaceId).receipts[transactionId] ?? null
-      : (await readIndexedJournalRecord<StoredReceiptRecord>(workspaceId, "receipts", key))?.receipt ?? null
+      : (await this.readJournalRecord<StoredReceiptRecord>("receipts", key))?.receipt ?? null
     if (receipt) this.inMemory.receipts.set(key, receipt)
     else this.inMemory.receipts.delete(key)
     return receipt
@@ -515,7 +510,7 @@ export class WorkspaceStorage {
     const key = `${workspaceId}:${changeHash}`
     const proof = typeof indexedDB === "undefined"
       ? readLocalJournal(workspaceId).proofs[changeHash] ?? null
-      : (await readIndexedJournalRecord<StoredProofRecord>(workspaceId, "proofs", key))?.proof ?? null
+      : (await this.readJournalRecord<StoredProofRecord>("proofs", key))?.proof ?? null
     if (proof) this.inMemory.proofs.set(key, proof)
     else this.inMemory.proofs.delete(key)
     return proof

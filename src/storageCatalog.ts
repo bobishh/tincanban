@@ -84,7 +84,8 @@ async function recoverSnapshotCatalogRecord(key: string, id: string): Promise<Wo
 async function mergeCommittedCatalog(records: Map<string, WorkspaceMeta>, snapshots: CommittedWorkspaceMeta[]) {
   for (const snapshot of snapshots) {
     const previous = records.get(snapshot.id)
-    const committed = !previous || previous.updatedAt < snapshot.updatedAt ? await readWorkspaceSnapshot(snapshot.id) : null
-    acceptCatalogRecord(records, { ...snapshot, archivedAt: committed?.archivedAt ?? previous?.archivedAt ?? null })
+    const committed = snapshot.archivedAt === undefined && (!previous || previous.updatedAt < snapshot.updatedAt) ? await readWorkspaceSnapshot(snapshot.id) : null
+    acceptCatalogRecord(records, { ...snapshot, archivedAt: snapshot.archivedAt === undefined
+      ? committed?.archivedAt ?? previous?.archivedAt ?? null : snapshot.archivedAt })
   }
 }

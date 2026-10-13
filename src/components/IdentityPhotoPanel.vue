@@ -82,9 +82,9 @@ onBeforeUnmount(() => { disposed = true; discardSource() })
     </section>
 </template>
 <style scoped>
-.identity-avatar-form { display: grid; gap: 10px; }
+.identity-avatar-form { display: grid; justify-items: start; gap: 12px; min-width: 0; }
 .identity-avatar-placeholder { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: var(--soft); color: var(--muted); }
 .identity-avatar-preview { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; }
-.identity-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.identity-avatar-actions .button { min-height: 36px; font-size: .9rem; }
+.identity-avatar-actions { display: grid; gap: 10px; width: 100%; max-width: 140px; }
+.identity-avatar-actions .button { min-height: 42px; padding: 8px 10px; font-size: .9rem; }
 </style>

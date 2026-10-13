@@ -7,9 +7,11 @@ export type WorkspaceAdmissionCheckpoint = {
   inputHash: string
   projectionHeads: string[]
   decisionsHash: string
+  /** Integrity chain stored only in the local delta journal. */
+  incremental?: true
 }
 
-function admissionPolicy() {
+export function admissionPolicy() {
   return typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "test" : __TINCANBAN_BUILD_COMMIT__
 }
 

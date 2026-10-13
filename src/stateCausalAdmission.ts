@@ -9,6 +9,7 @@ import { withWorkspaceMutation } from "./workspaceMutation"
 import { stateRuntime } from "./stateContext"
 import { meshTrace } from "./sync/meshTrace"
 import { diagnoseStartupStep } from "./sync/startupDiagnostics"
+import { reusableDeltaAdmission } from "./stateDeltaAdmission"
 
 export async function assertWorkspaceWritesAllowed(workspaceId?: string): Promise<void> {
   if (!workspaceId) return
@@ -39,6 +40,10 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     // is malformed. Raw causal bytes may contain unreviewed changes, so this
     // branch must neither replay them nor persist a new classification.
     if (await phase("validate-authority", () => workspaceAuthorityIsInvalid(workspaceId))) return { doc: loaded.doc, changed: false }
+    if (await phase("reuse-delta-projection", () => reusableDeltaAdmission(loaded.doc, storage, stateRuntime.currentProfile ?? undefined))) {
+      meshTrace("workspace.reclassify.reused", { workspaceId })
+      return { doc: loaded.doc, changed: false }
+    }
     const evidence = await phase("load-evidence", () => storage.loadCausalEvidence(workspaceId))
     const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(loaded.doc, stateRuntime.currentProfile ?? undefined))
     if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization))) {

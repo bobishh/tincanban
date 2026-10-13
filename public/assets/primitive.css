@@ -213,6 +213,7 @@ textarea) {
 
 .template-item:hover,
 .template-item.active,
+.settings-nav-button.active,
 .mesh-member.is-selected,
 .keeper-row:hover,
 .keeper-code,
@@ -273,6 +274,7 @@ textarea) {
 .workspace-item,
 .workspace-preset,
 .template-item,
+.settings-nav-button.active,
 .search-field,
 .drawer-item-btn,
 .mesh-member,
@@ -308,6 +310,10 @@ textarea) {
   background: transparent !important;
   border-image-source: var(--ink-surface) !important;
   border-image-slice: 12 fill !important;
+}
+
+.settings-nav-button:not(.active):not(:focus-visible) {
+  border-image: none !important;
 }
 
 @media (hover: hover) and (pointer: fine) {

@@ -98,11 +98,6 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
   }
 }
 
-@media (max-width: 768px) {
-  .template-list .button, .empty-template-list {
-    grid-column: 1 / -1;
-  }
-}
 @media (max-width: 560px) {
   .mobile-column-switcher .button { min-width: var(--control-size-compact); padding-inline: 8px; }
 }

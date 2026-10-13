@@ -10,7 +10,7 @@ import { requestBlob, respondToBlobRequest, type BlobDescriptor } from "@meta-ub
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
-import type { SyncConnection} from "./transport"
+import type { SyncConnection, SyncNode } from "./transport"
 import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync} from "./workspaceSet"
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
@@ -165,28 +165,31 @@ export class DurableMeshSessions extends DurableMeshHandshake {
   protected async connectPeer(peer: WorkspacePeerRecord, route: DeviceRoute, signal: AbortSignal, routeSignal: AbortSignal) {
     const key = this.peerKey(peer.workspaceId, peer.deviceId, peer.instanceId)
     const connectionId = this.connectionId("outgoing")
+    const node = this.node
     let connection: SyncConnection | undefined
     try {
-      this.throwIfDialCancelled(signal, routeSignal)
+      if (!node) throw new MeshDialCancelled()
+      this.throwIfDialCancelled(signal, routeSignal, node)
       let credential = await this.requireDialCredential(peer)
-      connection = await this.openPeerConnection(peer, route, key, connectionId)
+      this.throwIfDialCancelled(signal, routeSignal, node)
+      connection = await this.openPeerConnection(peer, route, key, connectionId, node)
       const handshake = await this.exchangeOutgoingHandshake(connection, peer, credential, connectionId)
       credential = handshake.credential
       if (Array.isArray(handshake.response.revocations)) await this.mergeRevocations(credential, handshake.response.revocations)
-      this.throwIfDialCancelled(signal, routeSignal)
+      this.throwIfDialCancelled(signal, routeSignal, node)
       const result = { connection, connectionId, instanceId: handshake.remote.instanceId, issuedAt: handshake.remote.issuedAt,
         routeSequence: handshake.remote.routeSequence, personId: handshake.remote.personId, endpoint: handshake.remote.endpoint,
         ownerWorkspaceIds: handshake.response.ownerWorkspaceIds, ...handshake.features }
       connection = undefined
       return result
     } catch (error) {
-      await this.handleDialFailure(error, connection, peer, key, connectionId, signal, routeSignal)
+      await this.handleDialFailure(error, connection, peer, key, connectionId, signal, routeSignal, node)
       throw error
     }
   }
 
-  protected throwIfDialCancelled(signal: AbortSignal, routeSignal: AbortSignal): void {
-    if (!this.node || signal.aborted || routeSignal.aborted) throw new MeshDialCancelled()
+  protected throwIfDialCancelled(signal: AbortSignal, routeSignal: AbortSignal, node = this.node): void {
+    if (!node || this.node !== node || signal.aborted || routeSignal.aborted) throw new MeshDialCancelled()
   }
 
   protected async requireDialCredential(peer: WorkspacePeerRecord): Promise<WorkspaceMeshCredential> {
@@ -195,11 +198,11 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     return credential
   }
 
-  protected async openPeerConnection(peer: WorkspacePeerRecord, route: DeviceRoute, key: string, connectionId: string): Promise<SyncConnection> {
-    const mode = this.reconnectPolicy.mode(this.node!, key)
+  protected async openPeerConnection(peer: WorkspacePeerRecord, route: DeviceRoute, key: string, connectionId: string, node: SyncNode): Promise<SyncConnection> {
+    const mode = this.reconnectPolicy.mode(node, key)
     this.trace("dial.started", { connectionId, peerId: peer.deviceId, workspaceId: peer.workspaceId,
       endpoint: peer.endpoint.slice(0, 8), mode })
-    const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<SyncConnection>(this.node!, key, route.endpoint)))
+    const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<SyncConnection>(node, key, route.endpoint)))
     this.trace("dial.connected", { connectionId, peerId: peer.deviceId, mode })
     return connection
   }
@@ -230,8 +233,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
   }
 
   protected async handleDialFailure(error: unknown, connection: SyncConnection | undefined, peer: WorkspacePeerRecord, key: string,
-    connectionId: string, signal: AbortSignal, routeSignal: AbortSignal): Promise<void> {
-    if (error instanceof MeshDialCancelled || signal.aborted || routeSignal.aborted) {
+    connectionId: string, signal: AbortSignal, routeSignal: AbortSignal, node: SyncNode | undefined): Promise<void> {
+    if (error instanceof MeshDialCancelled || signal.aborted || routeSignal.aborted || this.node !== node) {
       await connection?.close().catch(() => {})
       this.trace("dial.cancelled", { connectionId, peerId: peer.deviceId })
       throw new MeshDialCancelled()
@@ -242,10 +245,9 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     if (!this.hasPeerSession(peer.workspaceId, peer.deviceId, peer.instanceId)) this.reportProtocolFailure(`Dial ${peer.deviceId.slice(0, 6)}`, error)
     else this.trace("dial.failure.superseded", { connectionId, peerId: peer.deviceId })
     await connection?.close().catch(() => {})
-    if (/runtime node is closed|node is closed/i.test(error instanceof Error ? error.message : String(error))) {
-      const stale = this.node
+    if (this.node === node && /runtime node is closed|node is closed/i.test(error instanceof Error ? error.message : String(error))) {
       this.node = undefined
-      await stale?.close("Mesh runtime closed").catch(() => {})
+      await node?.close("Mesh runtime closed").catch(() => {})
     }
   }
   private readonly browserSessions = new BrowserMeshSessions<SyncConnection, LiveWorkspaceSync, LocalProfile>({

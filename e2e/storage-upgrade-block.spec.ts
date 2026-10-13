@@ -17,7 +17,6 @@ test("Given a local journal created before the catalog index, when tincanban ope
     const profile = await bootstrapIdentity("Upgrade owner")
     const id = crypto.randomUUID()
     const doc = Automerge.from(createWorkspaceDoc(id, "Older local board", profile.identity.personId, "blank"))
-    await recordGenesisAuthority(doc as never, profile)
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("tincanban-workspace-state", 1)
       request.onupgradeneeded = () => {
@@ -37,6 +36,7 @@ test("Given a local journal created before the catalog index, when tincanban ope
       transaction.onabort = () => reject(transaction.error)
     })
     database.close()
+    await recordGenesisAuthority(doc as never, profile)
     return id
   })
   await page.goto(baseURL ?? "http://127.0.0.1:4244")
@@ -115,7 +115,7 @@ test("Given legacy records conflict with current receipt, when migration aborts 
   const result = await page.evaluate(async () => {
     const stores = ["changes", "proofs", "receipts", "snapshots", "authorizations"]
     const open = (name: string, catalog: boolean) => new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(name, 1)
+      const request = indexedDB.open(name)
       request.onupgradeneeded = () => {
         for (const storeName of stores) {
           const store = request.result.createObjectStore(storeName, { keyPath: "id" })

@@ -82,20 +82,20 @@ async function persistTemplate() {
           <span>Markdown</span>
           <textarea
             v-model="templateDraft.markdown"
-            rows="16"
+            rows="8"
             required
             placeholder="# Your name"
           ></textarea>
         </label>
-        <section v-if="templateDraft.markdown" aria-label="Template preview">
-          <h3>Preview</h3>
-          <MarkdownContent :source="templateDraft.markdown" :editable-tasks="!readOnly && !saving" @task-toggle="templateDraft.markdown = $event" />
-        </section>
         <div class="dialog-actions">
           <button class="button button-primary" type="submit" :disabled="!templateDraft.name.trim() || !templateDraft.markdown.trim()">
             {{ saving ? 'Saving…' : error ? 'Retry save' : 'Save template' }}
           </button>
         </div>
+        <section v-if="templateDraft.markdown" aria-label="Template preview">
+          <h3>Preview</h3>
+          <MarkdownContent :source="templateDraft.markdown" :editable-tasks="!readOnly && !saving" @task-toggle="templateDraft.markdown = $event" />
+        </section>
         </fieldset>
         <p v-if="error" class="form-error" role="alert">{{ error }}</p>
         <p v-if="saving || saveNotice" role="status" aria-label="Template save status">{{ saving ? 'Saving…' : saveNotice }}</p>
@@ -105,5 +105,15 @@ async function persistTemplate() {
 </template>
 
 <style scoped>
+.templates-layout { display: grid; gap: 20px; min-width: 0; }
+.template-list { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.template-list .button, .template-item { max-width: 100%; overflow-wrap: anywhere; }
+.empty-template-list { margin: 0; }
+.template-editor { display: grid; gap: 12px; min-width: 0; }
 .template-form-fields { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.template-editor label { color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
+.template-editor input { min-height: 42px; color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
+.template-editor textarea { height: 240px; min-height: 160px; }
+.template-editor .dialog-actions { margin-top: 0; }
+.template-editor h3 { margin: 8px 0; }
 </style>

@@ -1,92 +1,29 @@
-import type { ChangeProof, TransactionReceipt } from "./domain/model"
-import type { WorkspaceAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
-
-export type StoredChange = {
-  workspaceId: string
-  changeHash: string
-  bytes: Uint8Array
-  addedAt: string
-}
-
-export type StoredProofRecord = { id: string; workspaceId: string; changeHash: string; proof: ChangeProof }
-export type StoredReceiptRecord = {
-  id: string
-  workspaceId: string
-  transactionId: string
-  receipt: TransactionReceipt
-}
-
-export type LocalJournal = {
-  changes: Array<{ workspaceId: string; changeHash: string; bytesBase64: string; addedAt: string }>
-  proofs: Record<string, ChangeProof>
-  receipts: Record<string, TransactionReceipt>
-  snapshot?: StoredWorkspaceSnapshot
-  authorizations?: unknown[]
-}
-
-type CausalChangeDecision = {
-  hash: string
-  status: { type: "admitted"; role: "owner" | "editor" | "visitor" | "automation" }
-    | { type: "quarantined" | "pending"; reason: string }
-}
-
-export type StoredCausalEvidence = {
-  bytes: Uint8Array
-  decisions: CausalChangeDecision[]
-  authorizationEvidence?: unknown[]
-  /** Bound to the raw evidence and admitted projection in this atomic local commit. */
-  admissionCheckpoint?: WorkspaceAdmissionCheckpoint
-  /** Local presentation state; never changes a decision's admission status. */
-  dismissedHashes?: string[]
-  /** Links a quarantined source to one durable, locally authorized replacement change. */
-  resolvedReviews?: Array<{ sourceHash: string; authorizedChangeHash: string }>
-}
-
-export type StoredWorkspaceSnapshot = {
-  id: string
-  workspaceId: string
-  title: string
-  archivedAt?: string | null
-  heads: string[]
-  bytes: Uint8Array
-  causalEvidence?: StoredCausalEvidence
-  savedAt: string
-}
+import { clearLocalJournal, localJournalEntries, readLocalJournal, readLocalJournalReference, requestResult, transactionDone,
+  type StoredWorkspaceSnapshot } from "./storageJournalRecords"
+import { WorkspaceDeltaJournal, materializeDeltaWorkspace, type WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
+export * from "./storageJournalRecords"
 
 const journalDatabaseName = "tincanban-workspace-state"
 const legacyJournalDatabaseName = "tincanban-workspace-journal-v1"
 const legacyMigrationMarkerId = "__meta__legacy-journal-migration-complete__"
-const journalStores = ["changes", "proofs", "receipts", "snapshots", "authorizations"] as const
+const journalStores = ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas"] as const
 type JournalStoreName = typeof journalStores[number]
 type JournalIndexedStoreName = JournalStoreName
 
 let journalDatabasePromise: Promise<IDBDatabase> | undefined
 let legacyJournalDatabasePromise: Promise<IDBDatabase | undefined> | undefined
-const localJournalQueues = new Map<string, Promise<unknown>>()
-const memoryJournals = new Map<string, LocalJournal>()
-
-export function requestResult<T>(request: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"))
-  })
-}
-
-export function transactionDone(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => resolve()
-    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"))
-    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"))
-  })
-}
 
 function openCurrentJournal(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(journalDatabaseName)
+    const request = indexedDB.open(journalDatabaseName, 2)
+    let settled = false
+    let blockedTimer: ReturnType<typeof setTimeout> | undefined
     request.onupgradeneeded = () => {
+      if (settled) { request.transaction?.abort(); return }
       const database = request.result
       for (const name of journalStores) {
-        const store = database.createObjectStore(name, { keyPath: "id" })
+        const store = database.objectStoreNames.contains(name)
+          ? request.transaction!.objectStore(name) : database.createObjectStore(name, { keyPath: "id" })
         if (!store.indexNames.contains("workspaceId")) store.createIndex("workspaceId", "workspaceId", { unique: false })
         if (name === "snapshots" && !store.indexNames.contains("catalog")) {
           store.createIndex("catalog", ["workspaceId", "title", "savedAt"], { unique: false })
@@ -94,10 +31,25 @@ function openCurrentJournal(): Promise<IDBDatabase> {
       }
     }
     request.onsuccess = () => {
+      if (blockedTimer) clearTimeout(blockedTimer)
+      if (settled) { request.result.close(); return }
+      settled = true
       request.result.onversionchange = () => { request.result.close(); journalDatabasePromise = undefined }
       resolve(request.result)
     }
-    request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"))
+    request.onerror = () => {
+      if (blockedTimer) clearTimeout(blockedTimer)
+      settled = true
+      reject(request.error ?? new Error("IndexedDB open failed"))
+    }
+    request.onblocked = () => {
+      blockedTimer ??= setTimeout(() => {
+        settled = true
+        const error = new Error("Close other tincanban tabs and reload to finish the storage update. Keep your website data.")
+        error.name = "WorkspaceJournalUpgradeBlockedError"
+        reject(error)
+      }, 1500)
+    }
   })
 }
 
@@ -346,26 +298,6 @@ function openJournalDatabase(): Promise<IDBDatabase> {
   })
 }
 
-export function readLocalJournal(workspaceId: string): LocalJournal {
-  return structuredClone(memoryJournals.get(workspaceId) ?? { changes: [], proofs: {}, receipts: {} })
-}
-
-export function writeLocalJournal(workspaceId: string, journal: LocalJournal): void {
-  memoryJournals.set(workspaceId, structuredClone(journal))
-}
-
-export function withLocalJournalLock<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
-  const previous = localJournalQueues.get(workspaceId) ?? Promise.resolve()
-  const current = previous.catch(() => undefined).then(operation)
-  localJournalQueues.set(workspaceId, current)
-  void current.then(() => {
-    if (localJournalQueues.get(workspaceId) === current) localJournalQueues.delete(workspaceId)
-  }, () => {
-    if (localJournalQueues.get(workspaceId) === current) localJournalQueues.delete(workspaceId)
-  })
-  return current
-}
-
 export async function openWorkspaceJournal(): Promise<IDBDatabase> {
   return openJournalDatabase()
 }
@@ -385,14 +317,14 @@ export async function recordsForWorkspace<T>(
 }
 
 export async function deleteWorkspaceJournal(workspaceId: string): Promise<void> {
-  memoryJournals.delete(workspaceId)
+  clearLocalJournal(workspaceId)
   if (typeof indexedDB === "undefined") {
     return
   }
   const database = await openJournalDatabase()
   const transaction = database.transaction([...journalStores], "readwrite")
   const completion = transactionDone(transaction)
-  for (const name of ["changes", "proofs", "receipts", "snapshots", "authorizations"] as const) {
+  for (const name of journalStores) {
     const store = transaction.objectStore(name)
     const keys = await requestResult(store.index("workspaceId").getAllKeys(workspaceId))
     for (const key of keys) {
@@ -404,6 +336,16 @@ export async function deleteWorkspaceJournal(workspaceId: string): Promise<void>
 }
 
 export async function readWorkspaceSnapshot(workspaceId: string): Promise<StoredWorkspaceSnapshot | undefined> {
+  const journal = new WorkspaceDeltaJournal(typeof indexedDB === "undefined" ? undefined : await openWorkspaceJournal())
+  const frontier = await journal.readFrontier(workspaceId)
+  if (frontier?.revision) {
+    const saved = await journal.read(workspaceId)
+    return saved ? materializeDeltaWorkspace(saved) : undefined
+  }
+  return readWorkspaceBasisSnapshot(workspaceId)
+}
+
+export async function readWorkspaceBasisSnapshot(workspaceId: string): Promise<StoredWorkspaceSnapshot | undefined> {
   if (typeof indexedDB === "undefined") return readLocalJournal(workspaceId).snapshot
   const database = await openWorkspaceJournal()
   const transaction = database.transaction("snapshots", "readonly")
@@ -413,15 +355,34 @@ export async function readWorkspaceSnapshot(workspaceId: string): Promise<Stored
   return snapshot
 }
 
-export type CommittedWorkspaceMeta = { id: string; title: string; updatedAt: string }
+export async function readWorkspaceDeltaAuthorizations(workspaceId: string): Promise<unknown[]> {
+  if (typeof indexedDB === "undefined") {
+    const journal = readLocalJournalReference(workspaceId)
+    return (journal.deltas ?? []).filter(delta => delta.generation === journal.frontier?.generation).flatMap(delta => delta.command.authorizations)
+  }
+  const database = await openWorkspaceJournal()
+  const transaction = database.transaction(["frontiers", "deltas"], "readonly")
+  const done = transactionDone(transaction)
+  const [frontier, deltas] = await Promise.all([
+    requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
+    requestResult(transaction.objectStore("deltas").index("workspaceId").getAll(workspaceId)) as Promise<Array<{ generation: string; command: { authorizations: unknown[] } }>>,
+  ])
+  await done
+  return deltas.filter(delta => delta.generation === frontier?.generation).flatMap(delta => delta.command.authorizations)
+}
+
+export type CommittedWorkspaceMeta = { id: string; title: string; updatedAt: string; archivedAt?: string | null }
 
 export async function listCommittedWorkspaces(): Promise<CommittedWorkspaceMeta[]> {
-  if (typeof indexedDB === "undefined") return [...memoryJournals.values()].flatMap(journal => journal.snapshot
-    ? [{ id: journal.snapshot.workspaceId, title: journal.snapshot.title, updatedAt: journal.snapshot.savedAt }] : [])
+  if (typeof indexedDB === "undefined") return [...localJournalEntries()].flatMap(journal => {
+    const saved = journal.frontier ?? journal.snapshot
+    return saved ? [{ id: saved.workspaceId, title: saved.title, updatedAt: saved.savedAt, archivedAt: saved.archivedAt }] : []
+  })
   const database = await openWorkspaceJournal()
-  const transaction = database.transaction("snapshots", "readonly")
+  const transaction = database.transaction(["snapshots", "frontiers"], "readonly")
   const completion = transactionDone(transaction)
   const results: CommittedWorkspaceMeta[] = []
+  const frontiers = requestResult(transaction.objectStore("frontiers").getAll()) as Promise<WorkspaceDeltaFrontier[]>
   const snapshots = transaction.objectStore("snapshots")
   const indexed = snapshots.indexNames.contains("catalog")
   // Older databases lack this index. Read their rows without an upgrade that
@@ -447,5 +408,9 @@ export async function listCommittedWorkspaces(): Promise<CommittedWorkspaceMeta[
     request.onerror = () => reject(request.error ?? new Error("Workspace catalog read failed"))
   })
   await Promise.all([scanned, completion])
-  return results
+  const latest = new Map((await frontiers).map(frontier => [frontier.workspaceId, frontier]))
+  return results.map(result => {
+    const frontier = latest.get(result.id)
+    return frontier ? { id: result.id, title: frontier.title, updatedAt: frontier.savedAt, archivedAt: frontier.archivedAt } : result
+  })
 }

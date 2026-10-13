@@ -13,8 +13,7 @@ export async function refreshCausalReview(storage = defaultStorage, workspaceId 
     await (await import("./stateCausalReview")).refreshCausalReview(storage, workspaceId)
     return
   }
-  const evidence = await storage.loadCausalEvidence(workspaceId)
-  if (!evidence?.decisions.some(decision => decision.status.type !== "admitted")) {
+  if (!await storage.hasUnresolvedCausalChanges(workspaceId)) {
     stateRuntime.causalReview.value = []
     stateRuntime.causalReviewError.value = ""
     return

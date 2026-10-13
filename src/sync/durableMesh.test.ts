@@ -12,11 +12,46 @@ import { isNativeKeeperRoute } from "./durableMeshSessions"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
+import type { SyncNode } from "./transport"
 
 beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")) })
 
 
 describe("DurableMesh peer catalog gossip", () => {
+  it.each(["credential", "connection"])("Given a dial from an older runtime, When the node changes during %s, Then its failure cannot close or penalize the replacement", async phase => {
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
+      workspaceStore: {} as never, getProfile: async () => ({} as never) })
+    const internal = mesh as unknown as {
+      node?: SyncNode
+      requireDialCredential: () => Promise<unknown>
+      openPeerConnection: () => Promise<unknown>
+      recordRouteFailure: () => unknown
+      reportProtocolFailure: () => unknown
+      connectPeer: (peer: { workspaceId: string; deviceId: string }, route: object, signal: AbortSignal, routeSignal: AbortSignal) => Promise<unknown>
+    }
+    const previous = { close: vi.fn(async () => {}) }
+    const replacement = { close: vi.fn(async () => {}) }
+    internal.node = previous as unknown as SyncNode
+    internal.requireDialCredential = vi.fn(async () => {
+      if (phase === "credential") internal.node = replacement as unknown as SyncNode
+      return {}
+    })
+    internal.openPeerConnection = vi.fn(async () => {
+      internal.node = replacement as unknown as SyncNode
+      throw new MeshNetworkError("browser runtime node is closed")
+    })
+    internal.recordRouteFailure = vi.fn()
+    internal.reportProtocolFailure = vi.fn()
+    await expect(internal.connectPeer({ workspaceId: "workspace", deviceId: "remote" }, {},
+      new AbortController().signal, new AbortController().signal)).rejects.toThrow(/closed|cancelled/i)
+    expect(internal.node).toBe(replacement)
+    expect(replacement.close).not.toHaveBeenCalled()
+    expect(internal.recordRouteFailure).not.toHaveBeenCalled()
+    if (phase === "credential") expect(internal.openPeerConnection).not.toHaveBeenCalled()
+    // This fixture owns no actual runtime node.
+    internal.node = undefined
+    await mesh.dispose()
+  })
   it("Given unchanged rights, When handshakes overlap and timestamps refresh, Then history is reclassified once until rights change", async () => {
     let authority = { version: 1, workspaceId: "workspace", ownerPersonId: "owner", ownerPublicKey: "key",
       ownerCertificates: [], epoch: 1, updatedAt: "2026-10-09T11:00:00Z", catalog: {} }

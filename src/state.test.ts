@@ -19,10 +19,11 @@ import * as changeAuthorization from "./sync/changeAuthorization"
 import { createSyncActions } from "./stateSyncActions"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "./domain/proofs"
 import { publicKeyId, toBase64Url } from "./domain/identity"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
-  return { ...actual, getChangesMetaSince: vi.fn(actual.getChangesMetaSince) }
+  return { ...actual, getChangesMetaSince: vi.fn(actual.getChangesMetaSince), save: vi.fn(actual.save) }
 })
 
 beforeAll(async () => {
@@ -41,6 +42,41 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await bootstrapIdentity("State Test User")
     await hydrate()
     await useTincanban().createWorkspaceAsync("Job search", "job-search")
+  })
+
+  it("Given a large admitted board warmed for local edits, When Archive and Applied alternate, Then writes serialize and hash only new changes and preserve the final stage after reload", async () => {
+    const app = useTincanban()
+    await app.createLeadAsync({ company: "Delta writes", role: "Engineer", status: "lead" })
+    const doc = app.getActiveDoc()!
+    const item = Object.values(doc.entities).find(isItem)!
+    const applied = Object.values(doc.entities).find(entity => entity.kind === "column" && entity.title === "Applied")!
+    await app.executeCommandAsync({ kind: "patchItem", entityId: item.id,
+      body: Array.from({ length: 1200 }, () => `Detailed requirement ${crypto.randomUUID()}`).join("\n") })
+    await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
+    await app.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: applied.id, beforeId: null })
+    const history = (await defaultStorage.loadCausalEvidence(doc.id))!.bytes
+    const save = vi.mocked(Automerge.save)
+    save.mockClear()
+    const bundles = vi.spyOn(changeAuthorization, "exportDocumentAuthorizationBundle")
+    const digest = vi.spyOn(crypto.subtle, "digest")
+    const access = vi.spyOn(meshRustRuntime().state, "decideWorkspaceAccess")
+    try {
+      for (let index = 0; index < 3; index++) {
+        await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
+        await app.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: applied.id, beforeId: null })
+      }
+      expect(access).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      expect(bundles).not.toHaveBeenCalled()
+      expect(digest.mock.calls.some(([, bytes]) => {
+        const input = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+        return input.length === history.length && input.every((byte, index) => byte === history[index])
+      })).toBe(false)
+      resetStateForTest()
+      await hydrate()
+      expect(app.getActiveDoc()!.entities[item.id]!.placement.parentId).toBe(applied.id)
+      expect(app.getActiveDoc()!.entities[item.id]!.archivedAt ?? null).toBeNull()
+    } finally { bundles.mockRestore(); digest.mockRestore(); access.mockRestore(); save.mockClear() }
   })
 
   it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {

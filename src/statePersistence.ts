@@ -18,7 +18,6 @@ import { type Board, type WorkspaceDocumentV2 } from "./domain/model";
 import { executeCommand, type Command, type ExecuteResult } from "./domain/commands";
 import {
   evaluateIncomingWorkspaceAdmission,
-  extendLocalWorkspaceAdmission,
   exportDocumentAuthorizationBundle,
   prepareLocalChangeAuthorizations,
   recordGenesisAuthority,
@@ -42,6 +41,8 @@ import { canReuseAdmittedDocument } from "./sync/localAdmissionReuse";
 import { clearPendingItemMoves } from "./pendingItemMoves";
 import { startPendingWrite } from "./statePendingWrites";
 import { diagnoseStartupStep, setStartupDiagnosticDevice } from "./sync/startupDiagnostics";
+import { causalReviewMetadata, hasUnresolvedCausalChanges } from "./stateCausalReviewMetadata";
+import { persistDeltaCommand } from "./stateDeltaAdmission";
 
 type ReadinessWaiter = {
   resolve: () => void;
@@ -239,16 +240,13 @@ async function persistNewLocalChange(
   const changeBytes = Automerge.getLastLocalChange(created.newDoc);
   if (!changeBytes) throw new Error("No change produced");
   const authorizations = await prepareLocalChangeAuthorizations(created.newDoc, profile, [created.receipt.changeHash]);
+  const deltaDoc = await persistDeltaCommand(base, created, changeBytes, authorizations, profile, storage, localRole, reviewedChangeHash)
+  if (deltaDoc) {
+    tracePersistedLocalChange(base.id, created, deltaDoc, changeBytes)
+    return deltaDoc
+  }
   const bundle = await exportDocumentAuthorizationBundle(base, profile)
   const previousEvidence = await storage.loadCausalEvidence(base.id)
-  const extended = localRole === undefined ? undefined : await extendLocalWorkspaceAdmission(base, created.newDoc,
-    previousEvidence, bundle, authorizations, created.receipt, changeBytes, localRole, profile)
-  if (extended) {
-    await storage.commitWorkspace(base.id, created.newDoc, extended.bytes, authorizations,
-      { receipt: created.receipt, changeBytes, proof: created.proof }, extended)
-    tracePersistedLocalChange(base.id, created, created.newDoc, changeBytes)
-    return created.newDoc
-  }
   bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
   // An all-admitted evidence snapshot is already represented by the authorized
   // base document. Reuse it instead of synchronously loading the full raw
@@ -281,6 +279,7 @@ async function persistNewLocalChange(
   }, { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
     admissionCheckpoint: admission.admissionCheckpoint,
     ...reviewMetadata });
+  if (allChangesAdmitted) (await import("./sync/workspaceAccess")).inheritLocalMoveAccess(base, authorizedDoc)
   tracePersistedLocalChange(base.id, created, authorizedDoc, changeBytes)
   return authorizedDoc;
 }
@@ -289,26 +288,6 @@ function tracePersistedLocalChange(workspaceId: string, created: CreatedLocalCha
   doc: Automerge.Doc<WorkspaceDocumentV2>, changeBytes: Uint8Array): void {
   meshTrace("document.persisted", { workspaceId, recordId: created.receipt.changeHash, changeId: created.receipt.changeHash,
     phase: "local", component: "automerge", heads: Automerge.getHeads(doc), bytes: changeBytes.byteLength })
-}
-
-function causalReviewMetadata(
-  previous: Awaited<ReturnType<WorkspaceStorage["loadCausalEvidence"]>>,
-  sourceHash: string | undefined,
-  authorizedChangeHash: string,
-) {
-  const resolved = new Map((previous?.resolvedReviews ?? []).map(review => [review.sourceHash, review.authorizedChangeHash]))
-  const dismissed = new Set(previous?.dismissedHashes ?? [])
-  if (sourceHash) { resolved.set(sourceHash, authorizedChangeHash); dismissed.add(sourceHash) }
-  return {
-    dismissedHashes: [...dismissed].sort(),
-    resolvedReviews: [...resolved].map(([reviewSourceHash, authorizedHash]) => ({
-      sourceHash: reviewSourceHash, authorizedChangeHash: authorizedHash,
-    })),
-  }
-}
-
-function hasUnresolvedCausalChanges(evidence: Awaited<ReturnType<WorkspaceStorage["loadCausalEvidence"]>>): boolean {
-  return evidence?.decisions.some(decision => decision.status.type !== "admitted") ?? false;
 }
 
 export async function reconcile(storage = defaultStorage, workspaceChanged = false, changedWorkspaceId?: string): Promise<void> {
@@ -464,7 +443,7 @@ async function latestWorkspaceDocument(
     stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null;
   const stored = (await storage.loadWorkspaceDoc(workspaceId, local ?? undefined))?.doc ?? null;
   if (!local && !stored) throw new Error("Workspace not hydrated");
-  const hasCausalEvidence = Boolean(stored && await storage.loadCausalEvidence(workspaceId));
+  const hasCausalEvidence = Boolean(stored && await storage.hasCausalEvidence(workspaceId));
   return chooseLatestWorkspaceDocument(local, stored, hasCausalEvidence);
 }
 

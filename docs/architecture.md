@@ -111,13 +111,16 @@ transitions are checked without replaying historical transitions or signatures.
 Ambiguous operation targets use a complete check of that one transition. Changed
 authority, proofs, policy, missing checkpoints or unresolved history use full causal
 admission. Review actions and incoming replication retain full reclassification.
-The extended evidence and checkpoint commit atomically with the snapshot and new
-proof, so a failed write cannot advance the durable frontier. Reload uses the same
-checkpoint. Snapshot serialization, checkpoint hashing and storage still scale
-with document/evidence size; this is not a constant-time storage format.
+Once validated, the saved snapshot becomes an immutable local basis. Each ordinary
+command writes its new change, proof, receipt and a chained delta with a small
+frontier in one transaction. It neither serializes the full document nor hashes
+the full evidence on each save. A failed write cannot advance the durable frontier.
+Reload validates the basis and delta chain before reusing admission; these local
+markers never authorize incoming peer changes. Cold reads and a changed frontier
+from another tab still validate retained history, so those costs grow with history.
 
-The workspace journal now includes `snapshots` and `authorizations` stores beside
-`changes`, `proofs`, and `receipts`. Snapshot records contain catalog metadata,
+The version 2 workspace journal includes `snapshots`, `authorizations`, `frontiers`
+and `deltas` stores beside `changes`, `proofs`, and `receipts`. Snapshot and frontier records contain catalog metadata,
 so a successful document commit does not depend on a second catalog write.
 Legacy local snapshots and the separate authorization database remain readable;
 the next commit migrates their content into the journal transaction. Legacy
