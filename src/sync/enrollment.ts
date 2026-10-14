@@ -6,6 +6,8 @@ import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { defaultStorage } from "../storage"
 import { keyId, verifyDeviceChain } from "./meshRecords"
 import type { DeviceEnrollmentInvitation } from "@meta-uber/mesh-pairing"
+import { isMemberProfileData } from "../domain/avatarData"
+import { newerIdentityPhoto } from "../app/identityPhoto"
 
 const text = z.string().min(1).max(512)
 const certificateSchema = z.object({
@@ -36,6 +38,7 @@ const keeperIntegrationSchema = z.object({
 })
 const rootSchema = z.object({ kind: z.literal("personal-root"), formatVersion: z.literal(1), rootId: text,
   identity: identitySchema,
+  photo: z.custom<PersonalRootDocumentV1["photo"]>(value => isMemberProfileData(JSON.stringify(value))).optional(),
   displayNamePreset: z.string().min(1).max(256).optional(),
   devices: z.record(z.string(), z.object({ deviceId: text, publicKey: text, displayName: text, certificateHash: text, addedAt: text })),
   workspaces: z.record(z.string(), z.object({ workspaceId: text, documentId: text, grantHash: text, forgotten: z.boolean() })),
@@ -48,6 +51,7 @@ const approvalSchema = z.object({
   payload: z.object({ kind: z.literal("device-enrollment-approval"), version: z.literal(2), invitationId: text,
     recipientDeviceId: text, certificate: certificateSchema, certificates: z.array(certificateSchema).min(1).max(32),
     personalRoot: rootSchema, workspaces: z.array(z.object({ id: text, title: text })).min(1).max(512),
+    replicaPreferences: z.array(z.unknown()).max(128).optional(),
     activeWorkspaceId: text,
     meshWorkspaces: z.array(z.object({ workspaceId: text, ownerPersonId: text, ownerPublicKey: text }).passthrough()).max(512),
     grants: z.array(z.object({ payload: z.object({ kind: z.literal("workspace-grant"), version: z.literal(1), grantId: text,
@@ -85,6 +89,7 @@ export async function enrollmentPayload(invite: DeviceEnrollmentInvitation, prof
     recipientDeviceId: certificate.payload.deviceId, certificate,
     certificates: [...new Map(certificates.map(cert => [cert.signature, cert])).values()],
     personalRoot, workspaces, activeWorkspaceId, meshWorkspaces, grants, snapshot: toBase64Url(snapshot),
+    replicaPreferences: await (await import("./identityDevicePreferences")).readReplicaPreferences(profile.identity.personId),
   }
   // Optional mesh fields must have exactly the same shape when signed and sent as JSON.
   return encode(await signEnvelope(profile.privateKeys.devicePrivateKey, JSON.parse(JSON.stringify(payload)), profile.device.deviceId))
@@ -117,12 +122,14 @@ export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollm
     }
     prepared.payload.personalRoot = { ...incoming, rootId: existingRoot.rootId,
       devices: { ...existingRoot.devices, ...incoming.devices },
+      photo: newerIdentityPhoto(existingRoot.photo, incoming.photo),
       workspaces: { ...incoming.workspaces, ...existingRoot.workspaces },
       keeperIntegrations: { ...incoming.keeperIntegrations, ...existingRoot.keeperIntegrations } }
   }
   for (const cert of prepared.certificates) await defaultProofStore.putCertificate(await certHashDefault(cert), cert)
   await defaultStorage.savePersonalRoot(prepared.payload.personalRoot)
   const enrolled = await adoptEnrolledIdentity(prepared.payload.personalRoot.identity, prepared.payload.certificate)
+  if (prepared.payload.replicaPreferences) await (await import("./identityDevicePreferences")).receiveReplicaPreferences(enrolled.identity.personId, prepared.payload.replicaPreferences)
   return { ...prepared.payload, profile: enrolled }
 }
 
@@ -138,6 +145,7 @@ export async function preflightEnrollment(bytes: Uint8Array, invite: DeviceEnrol
   if (approval.signerKeyId !== invite.issuerDeviceId || !await verifyEnvelope(raw, invite.issuerPublicKey)) {
     throw new Error("Invalid device enrollment approval signature.")
   }
+  if (payload.replicaPreferences) (await import("./identityDevicePreferences")).parseReplicaPreferences(payload.replicaPreferences)
   if (!hasMatchingEnrollmentContents(payload, invite, profile)) {
     throw new Error("Invalid device enrollment approval.")
   }

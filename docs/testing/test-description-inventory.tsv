@@ -30,7 +30,7 @@ browser	e2e/automatic-priority.spec.ts	121	no		Given job match priority, when em
 browser	e2e/automation-production.spec.ts	36	no	production automation proof	Given the production owner UI, when owner connects Rusty and approves the Worker, then private signed scope is exported
 browser	e2e/automation-production.spec.ts	108	no	production automation proof	Given exact owner-approved Worker routing, when real Clef classifies website intake, then a Lead syncs to Rusty and reopens in the owner UI
 browser	e2e/automation-worker.spec.ts	14	no		Given an owner-approved blind workspace, when Worker intake and forwarded mail run, then real clients see one scoped Lead and safe status moves
-browser	e2e/automation-worker.spec.ts	455	no		Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit
+browser	e2e/automation-worker.spec.ts	456	no		Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit
 browser	e2e/avatar-crop-responsive.spec.ts	18	no		Given a narrow mobile viewport, when cropping a wide photo, then preview scale matches saved square bounds
 browser	e2e/board-breakpoint.spec.ts	4	no		Given a 640px board, when resizing to a phone, then compact columns become a navigable single column only at 560px
 browser	e2e/board-discovery.spec.ts	4	no		Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear
@@ -267,6 +267,7 @@ browser	e2e/repeated-rusty-poll.spec.ts	4	no		Given a detailed board already upl
 browser	e2e/root-message-links.spec.ts	4	no		Given a root message with replies, when its copied local link reloads, then root conversation reveals the root and its siblings
 browser	e2e/rusty-connection.spec.ts	9	no		Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work
 browser	e2e/rusty-mark-sizing.spec.ts	3	no		Given the Rusty connection panel, when Rusty appears on desktop and narrow mobile, then Rusty keeps TinCanBan visual size without horizontal overflow
+browser	e2e/rusty-mobile.spec.ts	5	no		Given an already enrolled phone, when desktop connects Rusty and later changes its photo while offline from the phone, then the phone inherits Rusty and receives the photo with desktop closed
 browser	e2e/schema-driven-filters.spec.ts	13	no	Schema-driven board filters	Given a renamed select option, when filters render, then they use the current schema title and stable option ID
 browser	e2e/schema-driven-filters.spec.ts	29	no	Schema-driven board filters	Given a generic workspace select field, when one option is filtered, then only matching items remain
 browser	e2e/schema-driven-filters.spec.ts	62	no	Schema-driven board filters	Given a numeric schema field, when filters render, then bounds come from the schema without preset buckets
@@ -912,6 +913,7 @@ app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
 app-unit	src/sync/controlFrames.test.ts	30	no	bounded control snapshots	rejects oversized physical frames and logical snapshots
+app-unit	src/sync/deviceEnrollmentDelegation.test.ts	9	no		Given a phone enrolled with an older root-issued certificate, when its approving computer reconnects, then preserve its keys and renew through that controller
 app-unit	src/sync/deviceManagementActions.test.ts	5	no	owned workspace discovery	reports a broken board and keeps healthy ownership on repeated mesh starts
 app-unit	src/sync/deviceManagementActions.test.ts	28	no	owned workspace discovery	keeps diagnostic callback failures from aborting healthy workspace discovery
 app-unit	src/sync/deviceSyncController.policyRefresh.test.ts	8	no	mesh policy refresh	does not reload all nine boards for repeated status notifications, while heartbeat work stays responsive
@@ -1000,19 +1002,23 @@ app-unit	src/sync/durableMeshCredentials.test.ts	56	no	owner keeper offer policy
 app-unit	src/sync/durableMeshCredentials.test.ts	64	no	owner keeper offer policy	blocks new grants while a settings operation has unresolved policy
 app-unit	src/sync/durableMeshCredentials.test.ts	74	no	owner keeper offer policy	preserves legacy cache behavior when no durable integration reference exists
 app-unit	src/sync/durableMeshStartup.test.ts	5	yes	durable mesh transport demand	Given $label, when startup checks network demand, then transport demand is $expected
-app-unit	src/sync/enrollment.test.ts	33	no	device enrollment boundary	rejects replacement of another identity without explicit consent before writing anything
-app-unit	src/sync/enrollment.test.ts	41	no	device enrollment boundary	preserves an existing target identity's local root entries during enrollment
-app-unit	src/sync/enrollment.test.ts	52	no	device enrollment boundary	requires possession of the requested device key and binds requests to an invitation
-app-unit	src/sync/enrollment.test.ts	62	no	device enrollment boundary	persists the approved identity and device certificate without copying a root private key
-app-unit	src/sync/enrollment.test.ts	74	no	device enrollment boundary	carries the sender's active workspace for the enrolled device
-app-unit	src/sync/enrollment.test.ts	79	no	device enrollment boundary	preflights approval without replacing the local identity or saving its root
-app-unit	src/sync/enrollment.test.ts	89	no	device enrollment boundary	carries the personal display-name preset to the enrolled device
-app-unit	src/sync/enrollment.test.ts	96	no	device enrollment boundary	rejects forged or replayed approvals before changing local identity
-app-unit	src/sync/enrollment.test.ts	105	no	device enrollment boundary	keeps the current identity when approval cannot be saved
-app-unit	src/sync/enrollment.test.ts	112	no	device enrollment boundary	lets an enrolled device issue a verifiable delegated certificate for another device
+app-unit	src/sync/enrollment.test.ts	34	no	device enrollment boundary	Given an owner photo, when a phone enrolls, then its personal catalog retains that photo
+app-unit	src/sync/enrollment.test.ts	40	no	device enrollment boundary	rejects replacement of another identity without explicit consent before writing anything
+app-unit	src/sync/enrollment.test.ts	48	no	device enrollment boundary	preserves an existing target identity's local root entries during enrollment
+app-unit	src/sync/enrollment.test.ts	59	no	device enrollment boundary	requires possession of the requested device key and binds requests to an invitation
+app-unit	src/sync/enrollment.test.ts	69	no	device enrollment boundary	persists the approved identity and device certificate without copying a root private key
+app-unit	src/sync/enrollment.test.ts	81	no	device enrollment boundary	carries the sender's active workspace for the enrolled device
+app-unit	src/sync/enrollment.test.ts	86	no	device enrollment boundary	preflights approval without replacing the local identity or saving its root
+app-unit	src/sync/enrollment.test.ts	96	no	device enrollment boundary	carries the personal display-name preset to the enrolled device
+app-unit	src/sync/enrollment.test.ts	103	no	device enrollment boundary	rejects forged or replayed approvals before changing local identity
+app-unit	src/sync/enrollment.test.ts	112	no	device enrollment boundary	keeps the current identity when approval cannot be saved
+app-unit	src/sync/enrollment.test.ts	119	no	device enrollment boundary	lets an enrolled device issue a verifiable delegated certificate for another device
 app-unit	src/sync/failureDiagnostic.test.ts	9	yes	safe failure diagnostics	Given a typed failure, When telemetry encodes it, Then its code survives without private error content
 app-unit	src/sync/failureDiagnostic.test.ts	24	no	safe failure diagnostics	Given a wrapped network failure, When classified, Then the underlying type remains visible
 app-unit	src/sync/failureDiagnostic.test.ts	29	no	safe failure diagnostics	Given an unknown or cyclic failure, When classified, Then no dynamic name or content is exposed
+app-unit	src/sync/identityDevicePreferences.test.ts	14	no		Given Rusty settings, when another enrolled device receives them, then it starts its own cursor without resetting an existing cursor
+app-unit	src/sync/identityDevicePreferences.test.ts	27	no		Given a removed Rusty, when an old device replays its settings, then a durable tombstone prevents resurrection
+app-unit	src/sync/identityDevicePreferences.test.ts	38	no		Given a different participant, when the session exports mesh metadata, then private Rusty credentials never enter that participant's stream
 app-unit	src/sync/invitations.test.ts	16	no	InvitationService (Requirements 3.2 - 3.4)	handles atomic single-target claim and same-target resume
 app-unit	src/sync/invitations.test.ts	39	no	InvitationService (Requirements 3.2 - 3.4)	handles cancellation and expiration
 app-unit	src/sync/invitations.test.ts	54	no	InvitationService (Requirements 3.2 - 3.4)	derives deterministic short transcript authentication codes
@@ -1827,6 +1833,11 @@ meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	949	no
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	955	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 8. keyId utility	rejects non-string or invalid length public keys
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	962	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 9. owner-authoritative revocation	accepts an owner-signed monotonic tombstone
 meta-mesh-unit	vendor/meta-mesh/packages/mesh-workspace/src/index.test.ts	969	no	Mesh records cryptographic admission (src/sync/meshRecords.ts) > 9. owner-authoritative revocation	rejects a tombstone signed by another identity
+worker-unit	workers/automation/tests/applicationMove.test.ts	13	no		Given an Upvest rejection naming a different saved role, when matching, then report the missing source without moving another application
+worker-unit	workers/automation/tests/applicationMove.test.ts	16	no		Given a matching current rejection, when planning, then move to Rejected and explain stale or undated mail
+worker-unit	workers/automation/tests/applicationMove.test.ts	24	no		Given an incorrect card role and an authoritative vacancy URL, when its page names the role in the rejection, then move without editing the card
+worker-unit	workers/automation/tests/applicationMove.test.ts	30	no		Given two same-company vacancy pages or an unavailable page, when resolving a rejection, then preserve ambiguity and never fall back to card text
+worker-unit	workers/automation/tests/applicationMove.test.ts	40	no		Given two Upvest roles with incorrect card labels, when original pages identify distinct roles, then only the page matching the email can move
 worker-unit	workers/automation/tests/clef.test.ts	12	no		Given complete Clef probability maps, when classifying a vacancy, then preserves every distribution
 worker-unit	workers/automation/tests/clef.test.ts	23	no		Given a valid Clef distribution and a lower independent confidence score, when classifying, then accepts the distribution without equating the two values
 worker-unit	workers/automation/tests/clef.test.ts	33	no		Given malformed Clef probabilities, when classifying, then leaves event retryable by throwing
@@ -1869,9 +1880,13 @@ worker-unit	workers/automation/tests/runtime.runtime.test.ts	157	no	automation W
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	169	no	automation Worker	Given operator authorization, When activation omits its signed scope packet, Then it rejects before storing a replica
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	178	no	automation Worker	Given a valid challenge, When website intake is retried, Then it stores one durable event
 worker-unit	workers/automation/tests/runtime.runtime.test.ts	224	no	automation Worker	Given an expired integration, When intake is requested, Then it rejects before consuming the challenge
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	234	no	automation Worker	Given an approved forwarder and recipient, When forwarded email arrives, Then it is durably queued for that integration
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	262	no	automation Worker	Given forwarded mail without Message-ID, When the same MIME bytes arrive again, Then the digest deduplicates retries
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	284	no	automation Worker	Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	300	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	325	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
-worker-unit	workers/automation/tests/runtime.runtime.test.ts	346	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	234	no	automation Worker	Given an email needing review, when its bound owner retries, then requeue the same event and preserve applied-event deduplication
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	257	no	automation Worker	Given an approved forwarder and recipient, When forwarded email arrives, Then it is durably queued for that integration
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	285	no	automation Worker	Given forwarded mail without Message-ID, When the same MIME bytes arrive again, Then the digest deduplicates retries
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	307	no	automation Worker	Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	323	no	automation Worker	Given a private forwarding recipient, When Gmail preserves the original SMTP sender, Then it queues mail but rejects a changed recipient
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	340	no	automation Worker	Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	365	no	automation Worker	Given a forwarded vacancy URL and employee profile, When intake classifies it, Then it extracts the job and assesses the same priority as website intake
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	388	no	automation Worker	Given a forwarding confirmation, When mail is classified, Then it stays visible for owner review without AI
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	409	no		Given deployment-approved owners, when browser enrollment is signed, then identity provisioning is idempotent and another owner cannot rebind the instance
+worker-unit	workers/automation/tests/runtime.runtime.test.ts	430	no		Given a signed public status observation, when replayed against private email setup, then rejects it before reading routing secrets

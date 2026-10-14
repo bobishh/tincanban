@@ -34,6 +34,7 @@ test("Given a moved item, when restore fails then retries, then current placemen
   const detail = page.getByRole("dialog", { name: "Item overview" })
   const restore = detail.locator(".item-history-entry").filter({ hasText: "createItem" })
     .getByRole("button", { name: "Restore this version" })
+  await expect(restore).toBeVisible()
   await test.step("Failed restore leaves the committed placement unchanged", async () => {
     await page.evaluate(() => { (window as any).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
     await restore.click()

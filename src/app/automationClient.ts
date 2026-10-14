@@ -67,11 +67,17 @@ export async function observeAutomation(profile: LocalProfile, input: { origin: 
 export type AutomationEmailSetup = {
   route: { address: string; mailbox: string } | null
   receipt: { confirmation: { eventId: string; url: string } | null;
-    events: Array<{ eventId: string; status: string; createdAt: number }> }
+    events: Array<{ eventId: string; status: string; createdAt: number; subject?: string; result?: { reason?: string } }> }
 }
 
 export async function readAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }): Promise<AutomationEmailSetup> {
   const ownerRequest = await createAutomationOwnerRequest(profile, { action: "email", origin: input.origin,
     workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
   return await requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ownerRequest }) as AutomationEmailSetup
+}
+
+export async function retryAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }, eventId: string) {
+  const body = { retryEventId: eventId }
+  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "email", ...input, bodyHash: await automationBodyHash(body) }, await defaultProofStore.listCertificates())
+  return requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ...body, ownerRequest })
 }

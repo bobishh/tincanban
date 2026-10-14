@@ -15,6 +15,7 @@ import { type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord 
 import type { SyncConnection, SyncNode, DuplexStream } from "./transport"
 import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions } from "./durableMeshBase"
 import { DurableMeshAuthority } from "./durableMeshAuthority"
+import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 
 type InstallSessionArguments = [
   workspaceId: string,
@@ -44,18 +45,21 @@ type IncomingPeer = {
 }
 
 export abstract class DurableMeshHandshake extends DurableMeshAuthority {
+  protected readonly identityPreferenceConnections = new WeakSet<SyncConnection>()
+  private readonly identityPreferenceCredentials = new WeakMap<WorkspaceMeshCredential, boolean>()
   private offlineHandler: (() => void) | undefined
   private authenticatedSessions: RustMeshAuthenticatedSessions | undefined
 
   protected abstract publishWorkspace(workspaceId: string): Promise<void>
 
   private subscribeWorkspaceUpdates() {
+    const stopPreferences = subscribeIdentityDevicePreferences(() => { void this.publishAll() })
     const scoped = this.options.workspace.subscribeWorkspace
-    if (scoped) return scoped(workspaceId => {
+    const stopWorkspace = scoped ? scoped(workspaceId => {
       if (workspaceId) void this.publishWorkspace(workspaceId)
       else void this.publishAll()
-    })
-    return this.options.workspace.subscribe?.(() => { void this.publishAll() })
+    }) : this.options.workspace.subscribe?.(() => { void this.publishAll() })
+    return () => { stopPreferences(); stopWorkspace?.() }
   }
 
   protected rustAuthenticatedSessions(): RustMeshAuthenticatedSessions {
@@ -265,11 +269,14 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     ownBundle: credential => this.ownBundle(credential),
     response: (credential, remotePersonId) => this.incomingResponse(credential, remotePersonId),
     putVerifiedBundle: (credential, bundle) => this.putVerifiedBundle(credential, bundle),
-    install: ({ credential, remote, connection, features, connectionId }) => this.installSession(
+    install: ({ credential, remote, connection, features, connectionId }) => {
+      if (this.identityPreferenceCredentials.get(credential)) this.identityPreferenceConnections.add(connection as SyncConnection)
+      return this.installSession(
       credential.workspaceId, remote.deviceId, remote.instanceId, remote.issuedAt, remote.routeSequence,
       "incoming", connection as SyncConnection, features.heartbeatSupported,
       connectionId, features.ownershipReceiptSupported, remote.personId, features.ownerWorkspaceSupported, features.ownerWorkspaceOfferFrame,
-      features.blobTransferSupported, remote.endpoint),
+      features.blobTransferSupported, remote.endpoint)
+    },
     afterInstalled: ({ credential, remote, request, connection, features }) => this.afterIncomingInstall(
       credential, remote, request.ownerWorkspaceIds, connection as SyncConnection, features.ownerWorkspaceOfferFrame),
     trace: (event, detail, level) => this.trace(event, detail, level),
@@ -314,7 +321,9 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       await effect()
     }
     await this.reclassifyWorkspaceAuthority(workspaceId)
-    return await this.store.getWorkspaceCredential(workspaceId) ?? credential
+    const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
+    this.identityPreferenceCredentials.set(current, request.capabilities?.includes("identity-device-preferences-v1") ?? false)
+    return current
   }
 
   protected async verifyIncomingPeer(credential: WorkspaceMeshCredential, bundle: WorkspaceMemberBundle): Promise<IncomingPeer> {
@@ -335,7 +344,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
       revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),
-      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY] }, credential.workspaceId)
+      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1"] }, credential.workspaceId)
   }
 
   protected async afterIncomingInstall(credential: WorkspaceMeshCredential, remote: IncomingPeer,

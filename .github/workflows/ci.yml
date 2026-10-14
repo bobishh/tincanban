@@ -257,7 +257,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: bobishh/rusty
-          ref: 772f65ef49988cff805a51c12a930401e9146833
+          ref: 6619c4cdbc174906327c6fe9be746c03c3cdda86
           path: .ci/rusty
           persist-credentials: false
       - uses: actions/setup-node@v7

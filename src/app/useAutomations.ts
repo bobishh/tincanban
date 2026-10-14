@@ -3,7 +3,7 @@ import type { LocalProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
 import type { BlindReplicationController } from "./blindReplication"
 import type { AutomationConfiguration, AutomationWorkerIdentity } from "./automation"
-import { activateAutomation, automationOrigin, enrollAutomation, observeAutomation, readAutomationEmail, type AutomationEmailSetup } from "./automationClient"
+import { activateAutomation, automationOrigin, enrollAutomation, observeAutomation, readAutomationEmail, retryAutomationEmail, type AutomationEmailSetup } from "./automationClient"
 import { automationLifecycle, type AutomationDesiredState } from "../domain/automationLifecycle"
 import { parseAutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind } from "../domain/model"
@@ -115,10 +115,19 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
       await observeAll()
     })
   }
+  async function retryEmail(record: typeof records.value[number], eventId: string) {
+    await run(async () => {
+      const profile = workspace.getCurrentProfile()
+      if (!profile) throw new Error("Identity unavailable")
+      await retryAutomationEmail(profile, { origin: record.entity.executor.origin, integrationId: record.definition.id, workspaceId: record.definition.scope.workspaceId }, eventId)
+      emailChecked.delete(record.entity.id)
+      await observeAll()
+    })
+  }
   const stop = watch(() => { void workspace.docVersion.value; return workspace.getActiveDoc()?.id }, () => { void observeAll() }, { immediate: true })
   const interval = setInterval(() => { now.value = Date.now(); void observeAll() }, 3_000)
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(interval) })
-  return { records, storage, email, busy, failure, observationErrors, confirmation, add, retry, setState }
+  return { records, storage, email, busy, failure, observationErrors, confirmation, add, retry, retryEmail, setState }
 }
 export type AutomationWorkspace = ReturnType<typeof useTincanban>
 export type AutomationManagement = ReturnType<typeof useAutomations>

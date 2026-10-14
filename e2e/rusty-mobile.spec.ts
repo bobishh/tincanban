@@ -1,0 +1,82 @@
+import { expect, test } from "./support/coverage"
+import { ensureJobSearchWorkspace } from "./support/workspaces"
+import { startRustyService } from "./support/rustyService"
+
+test("Given an already enrolled phone, when desktop connects Rusty and later changes its photo while offline from the phone, then the phone inherits Rusty and receives the photo with desktop closed", async ({ page, playwright, baseURL }, info) => {
+  test.setTimeout(120_000)
+  const browser = await (process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+  const phone = await context.newPage()
+  await page.goto("/")
+  await ensureJobSearchWorkspace(page)
+  const trustedOwner = await page.evaluate(async () => {
+    const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+    const profile = await bootstrapIdentity()
+    return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
+  })
+  const rusty = await startRustyService(trustedOwner, baseURL!)
+  try {
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const host = page.getByRole("dialog", { name: "Device sync" })
+    await host.getByRole("button", { name: "Add someone", exact: true }).click()
+    await host.getByRole("button", { name: "Add my device", exact: true }).click()
+    await phone.goto(await host.getByLabel("Pairing link").inputValue())
+    const join = phone.getByRole("dialog", { name: "Device sync" })
+    const replace = join.getByRole("checkbox", { name: /Replace this device.s identity/ })
+    await join.getByRole("button", { name: "Add this device", exact: true }).waitFor({ state: "visible" })
+    if (await replace.count()) await replace.check()
+    await join.getByRole("button", { name: "Add this device", exact: true }).click()
+    await host.getByRole("button", { name: "Approve device", exact: true }).click()
+    await expect(join.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await join.getByRole("button", { name: "Close", exact: true }).click()
+    await host.getByRole("button", { name: "Close", exact: true }).click()
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+    const panel = page.getByRole("region", { name: "Rusty", exact: true })
+    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
+    await panel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(panel.getByText("Synced", { exact: true })).toBeVisible()
+    await phone.getByRole("button", { name: "Menu", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
+    await phone.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await expect(phone.getByRole("region", { name: "Rusty", exact: true }).getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await phone.goto("about:blank")
+    await host.getByRole("button", { name: "Close", exact: true }).click()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    const data = await page.evaluate(() => {
+      const canvas = document.createElement("canvas")
+      canvas.width = canvas.height = 128
+      canvas.getContext("2d")!.fillRect(0, 0, 128, 128)
+      return canvas.toDataURL("image/png").split(",")[1]!
+    })
+    await page.getByLabel("Choose photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") })
+    await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
+    await page.getByRole("button", { name: "Save profile", exact: true }).click()
+    await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
+    const source = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    await page.getByRole("button", { name: "Dismiss", exact: true }).click()
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
+    await panel.getByRole("button", { name: "Sync now", exact: true }).click()
+    await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
+    await page.goto("about:blank")
+    await phone.goto(baseURL!)
+    await phone.getByRole("button", { name: "Menu", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
+    await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", source!, { timeout: 30_000 })
+    await phone.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await expect(phone.getByRole("region", { name: "Rusty", exact: true }).getByText("Synced", { exact: true })).toBeVisible()
+    await phone.screenshot({ path: info.outputPath("rusty-and-photo-on-phone.png") })
+    const publication = await phone.evaluate(async origin => {
+      const { readPublicBoardManagementState } = await import("/src/public/publicationClient.ts")
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { useTincanban } = await import("/src/state.ts")
+      const board = Object.values(useTincanban().getActiveDoc()!.entities).find(entity => entity.kind === "board")!
+      return readPublicBoardManagementState({ origin, boardId: board.id, profile: await bootstrapIdentity() })
+    }, rusty.origin)
+    expect(publication).toMatchObject({ published: false, revision: 0 })
+  } finally { await context.close(); await browser.close(); await rusty.close() }
+})
+

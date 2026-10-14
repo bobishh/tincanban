@@ -1,10 +1,11 @@
 import { onBeforeUnmount, ref, watch, type Ref } from "vue"
 import type { useTincanban } from "../state"
 import type { LocalProfile } from "../domain/identity"
-import { readLocal, writeLocal } from "../localDb"
+import { canonicalizeJson } from "../domain/identity"
+import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { subscribeChat } from "../chat/service"
-import { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes, encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "./blindEnvelope"
+import { loadReplicaConfigs } from "./blindReplicaSettings"
 import type { BlindReplica, BlindReplicaConfig } from "./blindReplication"
 import { replicaKey, type ReplicaHealth } from "./replicationHealth"
 import type { AutomationConfiguration } from "../app/automation"
@@ -26,12 +27,12 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   let running: Promise<void> | undefined
   let disposed = false
   const replicas = new Map<string, BlindReplica>()
-  const storageKey = (personId: string) => `tincanban.blind-replicas.v1.${personId}`
   const personId = () => tincanban.getCurrentProfile()?.identity.personId ?? ""
   async function persist(config: BlindReplicaConfig, owner: string) {
+    const next = await persistReplicaCursor(owner, config, () => {
+      if (disposed || identity !== owner || personId() !== owner) throw new Error("Identity changed during Rusty replication")
+    })
     if (disposed || identity !== owner || personId() !== owner) throw new Error("Identity changed during Rusty replication")
-    const next = configs.value.map(value => value.scopeId === config.scopeId && value.origin === config.origin ? { ...config } : value)
-    await writeLocal(storageKey(owner), JSON.stringify(next))
     configs.value = next
   }
   async function replica(config: BlindReplicaConfig): Promise<BlindReplica> {
@@ -87,17 +88,16 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     if (!profile || profile.identity.personId !== owner) throw new Error("Identity unavailable")
     config.policyRevision = await approveScope(config, profile)
     if (owner !== identity || owner !== personId()) throw new Error("Identity changed during Rusty setup")
-    const next = [...configs.value, config]
-    await writeLocal(storageKey(owner), JSON.stringify(next))
-    configs.value = next
+    await recordReplicaPreference(owner, config)
+    configs.value = await loadReplicaConfigs(owner)
   }
   async function revoke(config: BlindReplicaConfig) {
     const profile = tincanban.getCurrentProfile()
     if (!profile || profile.identity.personId !== identity) throw new Error("Identity unavailable")
     await approveScope(config, profile, true)
     if (personId() !== profile.identity.personId) throw new Error("Identity changed during Rusty removal")
-    const next = configs.value.filter(value => value.scopeId !== config.scopeId || value.origin !== config.origin)
-    await writeLocal(storageKey(identity), JSON.stringify(next))
+    await recordReplicaPreference(identity, config, true)
+    const next = await loadReplicaConfigs(identity)
     replicas.delete(`${config.origin}/${config.scopeId}`)
     configs.value = next
     const nextStatuses = { ...statuses.value }
@@ -109,7 +109,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     notice.value = ""
     error.value = ""
     busy.value = true
-    try { await persist({ ...config, removalPending: true }, identity); await revoke(config); notice.value = "Rusty removed. Your board stays on this device." }
+    try { await recordReplicaPreference(identity, { ...config, removalPending: true }); await revoke(config); notice.value = "Rusty removed. Your board stays on this device." }
     catch (cause) { error.value = "Removal pending. Rusty must confirm that access was revoked."; throw cause }
     finally { busy.value = false }
   }
@@ -137,7 +137,8 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const timer = setInterval(() => { void syncNow() }, 15000)
   const stopWorkspace = tincanban.subscribeLocalChanges(() => { void syncNow() })
   const stopChat = subscribeChat(() => { void syncNow() })
-  onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat() })
+  const stopPreferences = watchReplicaSettings(() => identity, () => disposed, () => running, configs, error, replicas, syncNow)
+  onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
   return { configs, statuses, now, busy, error, notice, attach, exportAutomationAccess, remove, syncNow }
 }
 
@@ -146,18 +147,19 @@ async function approveScope(config: BlindReplicaConfig, profile: LocalProfile, r
   return approveRustyScope(config, profile, revoked)
 }
 
+async function recordReplicaPreference(owner: string, config: BlindReplicaConfig, removed = false) {
+  return (await import("./identityDevicePreferences")).recordReplicaPreference(owner, config, removed)
+}
+async function persistReplicaCursor(owner: string, config: BlindReplicaConfig, ensureIdentity: () => void) {
+  return (await import("./identityDevicePreferences")).persistReplicaCursor(owner, config, ensureIdentity)
+}
+
 async function createReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig) => Promise<void>) {
   const { createBlindReplica } = await import("./blindReplicaStore")
   return createBlindReplica(config, tincanban, ensureIdentity, persist)
 }
 
-async function loadReplicaConfigs(owner: string): Promise<BlindReplicaConfig[]> {
-  const saved = await readLocal(`tincanban.blind-replicas.v1.${owner}`)
-  const values: unknown = saved ? JSON.parse(saved) as unknown : []
-  if (!Array.isArray(values) || values.length > 128) throw new Error("Invalid Rusty local settings")
-  return values.map(value => parseConfig(JSON.stringify(value)))
-}
 
 async function recordReplicaHealth(config: BlindReplicaConfig, statuses: Ref<Record<string, ReplicaHealth>>,
   operation: () => Promise<boolean | void>, isCurrent: () => boolean): Promise<string | undefined> {
@@ -179,21 +181,18 @@ async function recordReplicaHealth(config: BlindReplicaConfig, statuses: Ref<Rec
 }
 
 
-function parseConfig(text: string): BlindReplicaConfig {
-  const input = JSON.parse(text) as BlindReplicaConfig
-  if (!input || typeof input !== "object") throw new Error("Invalid Rusty local settings")
-  const validId = (value: unknown) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value)
-  const positive = (value: number) => Number.isSafeInteger(value) && value > 0
-  const validToken = (value: string) => validId(value) && value.length >= 43
-  const validWorkspace = typeof input.workspaceId === "string" && input.workspaceId.length > 0 && input.workspaceId.length <= 256
-  const validEpoch = positive(input.keyEpoch) && positive(input.policyRevision)
-  const validCursor = Number.isSafeInteger(input.cursor) && input.cursor >= 0
-  const validHash = typeof input.lastUploaded === "string" && (input.lastUploaded === "" || /^[A-Za-z0-9_-]{43}$/.test(input.lastUploaded))
-  if ([validId(input.scopeId), validWorkspace, validEpoch, validCursor, validHash, validToken(input.readToken), validToken(input.writeToken)].some(valid => !valid)) {
-    throw new Error("Invalid Rusty local settings")
-  }
-  if (decodeBlindBytes(input.contentKey).length !== 32 || decodeBlindBytes(input.servicePublicKey).length !== 32) throw new Error("Invalid Rusty key")
-  if (input.removalPending !== undefined && typeof input.removalPending !== "boolean") throw new Error("Invalid Rusty removal state")
-  return { origin: blindOrigin(input.origin), scopeId: input.scopeId, workspaceId: input.workspaceId, servicePublicKey: input.servicePublicKey,
-    readToken: input.readToken, writeToken: input.writeToken, contentKey: input.contentKey, keyEpoch: input.keyEpoch, policyRevision: input.policyRevision, cursor: input.cursor, lastUploaded: input.lastUploaded, ...(input.removalPending ? { removalPending: true } : {}) }
+
+function watchReplicaSettings(identity: () => string, disposed: () => boolean, running: () => Promise<void> | undefined,
+  configs: Ref<BlindReplicaConfig[]>, error: Ref<string>, replicas: Map<string, BlindReplica>, syncNow: () => Promise<void>) {
+  return subscribeIdentityDevicePreferences(owner => {
+    if (owner !== identity() || disposed()) return
+    void (async () => {
+      await running()?.catch(() => {})
+      const saved = await loadReplicaConfigs(owner)
+      if (disposed() || owner !== identity()) return
+      if (canonicalizeJson(saved) === canonicalizeJson(configs.value)) return
+      configs.value = saved; replicas.clear()
+      await syncNow()
+    })().catch(cause => { if (!disposed() && owner === identity()) error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable" })
+  })
 }

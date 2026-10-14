@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
+import { createExecutionContext, waitOnExecutionContext, runInDurableObject } from "cloudflare:test";
 import worker, { type WorkerEnv } from "../src/index";
 import { runPipeline } from "../src/pipeline";
 import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
@@ -229,6 +229,29 @@ describe("automation Worker", () => {
     }));
 
     expect(response.status, await response.clone().text()).toBe(403);
+  });
+
+  it("Given an email needing review, when its bound owner retries, then requeue the same event and preserve applied-event deduplication", async () => {
+    const stub = testEnv.AUTOMATION.getByName("retry-email-integration");
+    const owner = { ownerPersonId: "retry-owner", workspaceId: "retry-workspace", integrationId: "retry-email-integration" };
+    const eventId = await digestIdForTest("upvest-review-retry");
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id) VALUES (1, ?, ?, ?)", owner.ownerPersonId, owner.workspaceId, owner.integrationId);
+    });
+    await stub.enqueueEmail({ eventId, sourceId: "upvest-review-retry", bodyHash: "fixed-body", payload: "encrypted-original" });
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec("UPDATE events SET status = 'review', result = ? WHERE event_id = ?", JSON.stringify({ reason: "Company context does not identify a role" }), eventId);
+    });
+    const retry = stub as unknown as { retryEmail: (registration: typeof owner, eventId: string) => Promise<{ status: string }> };
+    await expect(retry.retryEmail(owner, eventId)).resolves.toMatchObject({ status: "pending" });
+    expect(await stub.getEvent(eventId)).toMatchObject({ eventId, status: "pending" });
+    const denied = await runInDurableObject(stub, async instance => {
+      try { await instance.retryEmail({ ...owner, ownerPersonId: "foreign-owner" }, eventId); return false; }
+      catch { return true; }
+    });
+    expect(denied).toBe(true);
+    await runInDurableObject(stub, (_instance, state) => { state.storage.sql.exec("UPDATE events SET status = 'applied' WHERE event_id = ?", eventId); });
+    await expect(retry.retryEmail(owner, eventId)).resolves.toMatchObject({ status: "applied" });
   });
 
   it("Given an approved forwarder and recipient, When forwarded email arrives, Then it is durably queued for that integration", async () => {

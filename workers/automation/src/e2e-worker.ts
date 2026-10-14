@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import productionWorker, { AutomationCoordinator as ProductionCoordinator, type WorkerEnv } from "./index";
 import { MAX_RAW_EMAIL_BYTES } from "./email";
+import type { JobPageFetcher } from "./extraction";
 
 const testAi = {
   async run(_model: string, input: unknown): Promise<unknown> {
@@ -46,6 +47,14 @@ export class AutomationE2eConfig extends DurableObject<E2EEnv> {
 export class AutomationCoordinator extends ProductionCoordinator {
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, { ...env, AI: testAi as unknown as Ai });
+  }
+  protected override jobPageFetcher(): JobPageFetcher {
+    return async (input, init) => {
+      const url = String(input);
+      if (url === "https://jobs.example.test/nacre/systems") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Principal Systems Engineer","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>', { headers: { "content-type": "text/html" } });
+      if (url === "https://jobs.example.test/upvest/product") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
+      return fetch(input, init);
+    };
   }
 }
 

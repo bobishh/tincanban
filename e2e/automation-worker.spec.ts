@@ -89,6 +89,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     const intakeBody = {
       company: "Nacre Light Integration GmbH",
       role: "Principal Systems Engineer",
+      jobUrl: "https://jobs.example.test/nacre/systems",
       contact: "automation-e2e-contact-secret@example.test",
       message: "automation-e2e-source-secret: please consider this systems role.",
       humanCheckToken: challenge.token,
@@ -172,7 +173,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
       "We would like to invite you to an interview for Principal Systems Engineer at Nacre Light Integration GmbH.",
       new Date("2000-01-01T00:00:00.000Z").toUTCString())
     const staleInterview = await waitForReviewEvent(workerOrigin, staleInterviewId)
-    expect(staleInterview).toMatchObject({ result: { reason: "Message needs a unique approved application match and scoped status-move authoring" } })
+    expect(staleInterview).toMatchObject({ result: { reason: "Email is older than the latest application status" } })
     await syncFromBlindRusty(page)
     expect(await rustyObjectCount(rustyDirectory)).toBe(afterRejection)
     await expectStatusColumn(page, "Rejected", "Nacre Light Integration GmbH — Principal Systems Engineer")
@@ -275,7 +276,7 @@ async function postForwardedMail(origin: string, messageId: string, subject: str
   let raw = forwardedMessages.get(messageId)
   if (!raw) {
     raw = [
-      "From: owner@example.test", "To: intake@example.test", `Message-ID: ${messageId}`,
+      "From: owner@example.test", "To: intake@example.test", `Message-ID: ${messageId}`, "In-Reply-To: <automation-applied-1@example.test>",
       `Date: ${date}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "",
       text, "",
     ].join("\r\n")
@@ -453,7 +454,7 @@ async function readRustyFiles(directory: string): Promise<string[]> {
 }
 
 test("Given an owner and connected Rusty, when an automation is added, paused, resumed and removed, then Worker confirms each CRDT state and failed setup stays explicit", async ({ browser, baseURL }) => {
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const rustyDirectory = await mkdtemp(join(tmpdir(), "automation-management-rusty-"))
   const workerDirectory = await mkdtemp(join(tmpdir(), "automation-management-worker-"))
   let rusty: ChildProcess | undefined
@@ -475,6 +476,13 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     rusty = rustySetup.process
     await connectBlindRusty(page, rustySetup.origin)
     const workspace = await inspectWorkspace(page)
+    await page.evaluate(async bindings => {
+      const { useTincanban } = await import("/src/state.ts")
+      await useTincanban().executeCommandAsync({ kind: "createItem", id: "upvest-review-card", parentId: bindings.columns.applied,
+        title: "Upvest — Senior Software Engineer (f/m/d)", values: {
+          [bindings.fieldBindings.company]: "Upvest", [bindings.fieldBindings.role]: "Senior Software Engineer (f/m/d)",
+        } })
+    }, workspace)
     await fetch(`${setup.origin}/__test/configure`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId, columns: workspace.columns,
         fieldIds: workspace.fieldBindings, ownerPersonId: trustedOwner.identity.personId }) })
@@ -508,6 +516,32 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     await automation.getByRole("button", { name: "Enable email and Applied", exact: true }).click()
     await expect(automation.getByText("Email enabled · Waiting for first email", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(automation.getByRole("button", { name: "Enable email and Applied", exact: true })).toHaveCount(0)
+    const raw = ["From: owner@example.test", `To: ${privateAddress}`, "Message-ID: <upvest-role-review@example.test>",
+      `Date: ${new Date().toUTCString()}`, "Subject: Sorry, it’s not a match this time", "Content-Type: text/plain; charset=utf-8", "",
+      "Thank you for applying to Upvest for Senior Product Engineer (f/m/d). We decided to proceed with other candidates; your application was declined."].join("\r\n")
+    const received = await fetch(`${setup.origin}/__test/email`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from: "owner@example.test", to: privateAddress, raw }) })
+    expect(received.status).toBe(202)
+    const mail = automation.getByRole("list", { name: "Recent email processing" }).getByRole("listitem").filter({ hasText: "Sorry, it’s not a match this time" })
+    await expect(mail).toContainText("Needs review", { timeout: 45_000 })
+    await expect(mail).toContainText("Application has no vacancy URL to read its original role")
+    await page.evaluate(async urlFieldId => {
+      const { useTincanban } = await import("/src/state.ts")
+      await useTincanban().executeCommandAsync({ kind: "patchItem", entityId: "upvest-review-card",
+        values: { [urlFieldId]: "https://jobs.example.test/upvest/product" } })
+    }, workspace.fieldBindings.jobUrl)
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
+    await syncFromBlindRusty(page)
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
+    await mail.getByRole("button", { name: "Retry processing", exact: true }).click()
+    await expect(mail).toContainText("Application moved to Rejected", { timeout: 45_000 })
+    await expect(mail.getByRole("button", { name: "Retry processing", exact: true })).toHaveCount(0)
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
+    await syncFromBlindRusty(page)
+    await expectStatusColumn(page, "Rejected", "Upvest — Senior Software Engineer (f/m/d)")
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
     await automation.getByRole("button", { name: "Pause", exact: true }).click()
     await expect(automation.getByText("Paused · confirmed by Worker", { exact: true })).toBeVisible({ timeout: 30_000 })
     await automation.getByRole("button", { name: "Resume", exact: true }).click()

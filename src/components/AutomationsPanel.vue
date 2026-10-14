@@ -9,6 +9,7 @@ const address = ref("https://automation.meta-uber-engineer.dev")
 const consent = ref(false)
 const removing = ref("")
 const stateLabel = { active: "Active", paused: "Paused", deleted: "Removed" }
+const emailStateLabel: Record<string, string> = { pending: "Queued", processing: "Processing", applied: "Applied", review: "Needs review", failed: "Failed" }
 async function connect() {
   try {
     await props.management.add(address.value, { name: name.value, type: "job-intake", typeVersion: 1, parameters: { sources: ["website"] } }, consent.value)
@@ -24,6 +25,9 @@ async function enableEmail(record: AutomationManagement["records"]["value"][numb
 }
 async function retry(record: AutomationManagement["records"]["value"][number]) {
   try { await props.management.retry(record) } catch { /* Keep failed activation visible. */ }
+}
+async function retryEmail(record: AutomationManagement["records"]["value"][number], eventId: string) {
+  try { await props.management.retryEmail(record, eventId) } catch { /* Keep failed processing retry visible. */ }
 }
 </script>
 <template>
@@ -53,6 +57,15 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
         <button v-if="!record.definition.parameters.sources.includes('email')" class="button button-small" type="button" :disabled="management.busy.value" @click="enableEmail(record)">Enable email and Applied</button>
         <p v-else-if="!management.confirmation(record)" role="status">Email activation pending</p>
         <p v-else role="status">Email enabled · {{ management.email.value[record.entity.id]?.receipt.events.length ? 'Mail received' : 'Waiting for first email' }}</p>
+        <ul v-if="management.email.value[record.entity.id]?.receipt.events.length" aria-label="Recent email processing" class="automation-email-events">
+          <li v-for="event in management.email.value[record.entity.id]?.receipt.events" :key="event.eventId">
+            <strong>{{ event.subject || 'Forwarded email' }}</strong>
+            <span>{{ emailStateLabel[event.status] || event.status }} · {{ new Date(event.createdAt).toLocaleString() }}</span>
+            <p v-if="event.result?.reason"><template v-if="event.status === 'pending' || event.status === 'processing'">Last attempt: </template>{{ event.result.reason }}</p>
+            <button v-if="event.status === 'review' || event.status === 'failed'" class="button button-small" type="button"
+              :disabled="management.busy.value || record.control.state !== 'active' || !management.confirmation(record)" @click="retryEmail(record, event.eventId)">Retry processing</button>
+          </li>
+        </ul>
         <a v-if="management.email.value[record.entity.id]?.receipt.confirmation" :href="management.email.value[record.entity.id]?.receipt.confirmation?.url" target="_blank" rel="noopener noreferrer">Confirm Gmail forwarding</a>
       </section>
       <div v-if="owner && record.control.state !== 'deleted'" class="automation-actions">
@@ -67,6 +80,9 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
   </section>
 </template>
 <style scoped>
+.automation-email-events { display: grid; gap: 12px; margin: 0; padding-left: 20px; }
+.automation-email-events li > span { display: block; color: var(--muted); }
+.automation-email-events p { margin: 4px 0 0; }
 .automations { display: grid; gap: 14px; margin-top: 24px; }
 .automation-heading, .automation-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 h3, h4, p { margin: 0; }

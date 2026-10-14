@@ -26,7 +26,7 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
   catch { return json({ error: "Owner signature is unauthorized, expired or invalid" }, 401, cors); }
   const action = operation === "identity" ? "enroll" : operation === "activation" ? "activate" : operation === "email" ? "email" : "observe";
   if (intent.action !== action || intent.integrationId !== match[1] ||
-    (action !== "activate" && intent.bodyHash !== null)) return json({ error: "Owner request does not match this operation" }, 400, cors);
+    (action !== "activate" && action !== "email" && intent.bodyHash !== null)) return json({ error: "Owner request does not match this operation" }, 400, cors);
   const coordinator = env.AUTOMATION.getByName(intent.integrationId);
   const registration = { integrationId: intent.integrationId, workspaceId: intent.workspaceId, ownerPersonId: intent.personId };
   try {
@@ -37,7 +37,10 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
         deviceCertificate: profile.deviceCertificate }, 200, cors);
     }
     if (operation === "email") {
+      if (intent.bodyHash !== null && (typeof input.retryEventId !== "string" || !/^[A-Za-z0-9_-]{20,64}$/.test(input.retryEventId) ||
+        intent.bodyHash !== await automationBodyHash({ retryEventId: input.retryEventId }))) return json({ error: "Email retry does not match its owner signature" }, 400, cors);
       await coordinator.observeOwner(registration, intent.nonce, url.origin);
+      if (intent.bodyHash !== null) return json(await coordinator.retryEmail(registration, input.retryEventId as string), 200, cors);
       const route = privateEmailRoutes(env).find(value => value.id === intent.integrationId);
       return json({ route: route ?? null, receipt: await coordinator.emailSetup() }, 200, cors);
     }

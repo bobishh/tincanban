@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
-import { certHashDefault } from "../domain/proofs"
+import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { InvitationService, resetInvitationStorageForTest } from "./invitations"
 import { createDeviceEnrollmentInvite } from "@meta-uber/mesh-pairing"
 import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest } from "./enrollment"
@@ -10,7 +10,7 @@ import { verifyDeviceChain } from "./meshRecords"
 
 vi.mock("../storage", () => ({ defaultStorage: { loadPersonalRoot: vi.fn(async () => null), savePersonalRoot: vi.fn(async () => {}) } }))
 
-async function fixture() {
+async function fixture(photo?: { avatarData: string | null; changedAt: string }) {
   const owner = await bootstrapIdentity("Owner")
   resetIdentityStorageForTest()
   const guest = await bootstrapIdentity("New device")
@@ -22,6 +22,7 @@ async function fixture() {
   if (!result.ok) throw new Error(result.error)
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
   root.displayNamePreset = "Owner preset"
+  if (photo) root.photo = photo
   const bytes = await enrollmentPayload(invite, owner, result.certificate, root, [{ id: "ws", title: "Board" }],
     "ws", [{ workspaceId: "ws", ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], [], new TextEncoder().encode("[]"))
   return { owner, guest, service, invite, bytes, certificate: result.certificate }
@@ -30,6 +31,12 @@ async function fixture() {
 beforeEach(() => { resetIdentityStorageForTest(); resetInvitationStorageForTest() })
 
 describe("device enrollment boundary", () => {
+  it("Given an owner photo, when a phone enrolls, then its personal catalog retains that photo", async () => {
+    const photo = { avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA", changedAt: "2026-10-14T07:00:00.000Z" }
+    const { guest, invite, bytes } = await fixture(photo)
+    const enrolled = await installEnrollment(bytes, invite, guest, guest.identity.personId)
+    expect(enrolled.personalRoot.photo).toEqual(photo)
+  })
   it("rejects replacement of another identity without explicit consent before writing anything", async () => {
     const { guest, invite, bytes } = await fixture()
     vi.mocked(defaultStorage.savePersonalRoot).mockClear()
@@ -68,7 +75,7 @@ describe("device enrollment boundary", () => {
     expect(restored.device.deviceId).toBe(guest.device.deviceId)
     expect(restored.privateKeys.identityPrivateKey).toBeUndefined()
     expect(await verifyDeviceChain({ personId: owner.identity.personId, publicKey: owner.identity.publicKey,
-      deviceId: guest.device.deviceId, certificates: [restored.certificate] })).toBe(guest.device.publicKey)
+      deviceId: guest.device.deviceId, certificates: [restored.certificate, ...await defaultProofStore.listCertificates()] })).toBe(guest.device.publicKey)
   })
 
   it("carries the sender's active workspace for the enrolled device", async () => {
@@ -121,7 +128,7 @@ describe("device enrollment boundary", () => {
     if (!result.ok) throw new Error(result.error)
     expect(result.certificate.payload.issuerCertificateHash).toBe(await certHashDefault(enrolled.certificate))
     expect(await verifyDeviceChain({ personId: owner.identity.personId, publicKey: owner.identity.publicKey,
-      deviceId: third.device.deviceId, certificates: [result.certificate, enrolled.certificate] })).toBe(third.device.publicKey)
+      deviceId: third.device.deviceId, certificates: [result.certificate, enrolled.certificate, ...await defaultProofStore.listCertificates()] })).toBe(third.device.publicKey)
     expect((await service.approveEnrollment(thirdInvite.invitationId, third.device, enrolled.profile)).ok).toBe(false)
   })
 })

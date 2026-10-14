@@ -84,13 +84,29 @@ The JSON describes routing and stable scope bindings; it is not a signed owner g
 
 ## Owner-managed activation
 
-The ordinary setup is **Settings → Connections → Automations → Add automation**.
+The ordinary setup is **Settings → Workspace → Automations → Add automation**.
 Owner selects the supported type, names the instance, enters the Worker origin,
 and explicitly accepts reading access to the whole workspace. Rusty must already
 be connected. The browser enrolls an independent Worker identity, signs the
 versioned type definition and exact 30-day Automation grant, commits the public
 approval/desired state to CRDT, then privately sends the admitted snapshot and
 storage access to the selected Worker. Operator bearer tokens never enter this UI.
+Email forwarding shows the latest message subjects, processing states and reasons.
+A clear classification can still need review when vacancy-page matching fails,
+the original email date is missing or stale, or the next status is not authorized.
+These stops preserve the current card instead of reporting a completed move.
+Thread references and exact vacancy URLs take precedence. Otherwise the Worker
+reads the saved vacancy URL and matches the email against its original company
+and role. Card titles and Role fields cannot authorize a match. Company labels
+and company tokens in URLs narrow the page lookup; up to eight distinct pages
+are fetched with the existing HTTPS, redirect, timeout and size checks. Missing,
+unavailable or ambiguous sources stay in review with an explicit reason. This
+also means a renamed role in the rejection still needs review if it differs from
+the employer's published vacancy title.
+After resolving the source problem, **Retry processing** requeues that saved email event with
+an owner signature bound to its exact event ID. It keeps the original MIME bytes
+and event ID, preserves applied-event deduplication, and rechecks the current
+grant, matching, original email date and concurrent workflow before writing.
 
 Deployment variable `AUTOMATION_OWNER_IDS` is a comma-separated allowlist of public
 root person IDs permitted to enroll instances. Empty disables browser enrollment.

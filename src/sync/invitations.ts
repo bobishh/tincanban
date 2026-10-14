@@ -121,12 +121,11 @@ export class InvitationService {
       personId: profile.identity.personId,
       deviceId: recipientDevice.deviceId,
       devicePublicKey: recipientDevice.publicKey,
-      issuerCertificateHash: profile.privateKeys.identityPrivateKey ? null : await certHashDefault(profile.certificate),
+      issuerCertificateHash: await certHashDefault(profile.certificate),
       canEnrollDevices: true as const,
     }
 
-    const signingKey = profile.privateKeys.identityPrivateKey || profile.privateKeys.devicePrivateKey
-    const signedCert = await signEnvelope(signingKey, certPayload, profile.privateKeys.identityPrivateKey ? profile.identity.personId : profile.device.deviceId)
+    const signedCert = await signEnvelope(profile.privateKeys.devicePrivateKey, certPayload, profile.device.deviceId)
 
     invite.status = "consumed"
     invite.approvedAt = new Date().toISOString()

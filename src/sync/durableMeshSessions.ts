@@ -15,6 +15,7 @@ import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync} from "./workspaceSe
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
 import { DurableMeshHandshake } from "./durableMeshHandshake"
+import { lazyIdentityDevicePreferences } from "./lazyIdentityDevicePreferences"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -174,6 +175,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       this.throwIfDialCancelled(signal, routeSignal, node)
       connection = await this.openPeerConnection(peer, route, key, connectionId, node)
       const handshake = await this.exchangeOutgoingHandshake(connection, peer, credential, connectionId)
+      if (handshake.response.capabilities?.includes("identity-device-preferences-v1")) this.identityPreferenceConnections.add(connection)
       credential = handshake.credential
       if (Array.isArray(handshake.response.revocations)) await this.mergeRevocations(credential, handshake.response.revocations)
       this.throwIfDialCancelled(signal, routeSignal, node)
@@ -220,7 +222,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
       revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),
-      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY] }, peer.workspaceId)
+      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1"] }, peer.workspaceId)
   }
 
   protected async verifyOutgoingHandshakePeer(credential: WorkspaceMeshCredential, bundle: WorkspaceMemberBundle) {
@@ -258,7 +260,12 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     create: input => {
       const credential = input.credential as WorkspaceMeshCredential
       const stage = `Workspace ${input.workspaceId.slice(0, 8)} from ${input.deviceId.slice(0, 8)}`
-      const session = liveAutomergeWorkspaceSync(input.connection, credential.transportSecret, this.options.workspaceStore,
+      const store = this.identityPreferenceConnections.has(input.connection) && input.remotePersonId === input.profile.identity.personId
+        ? lazyIdentityDevicePreferences(this.options.workspaceStore, input.profile, input.remotePersonId, input.deviceId,
+          () => !this.stopped && this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection === input.connection)
+        : this.options.workspaceStore
+      const session = liveAutomergeWorkspaceSync(input.connection, credential.transportSecret,
+        store,
         input.workspaceId, input.profile.device.deviceId, input.deviceId, error => {
           if (error) {
             this.trace("document.rejected", { connectionId: input.connectionId, workspaceId: input.workspaceId,

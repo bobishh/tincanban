@@ -7,7 +7,7 @@
     "dev:e2e": "wrangler dev --local --config wrangler.e2e.jsonc",
     "types": "wrangler types",
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/clef.test.ts tests/intake.test.ts tests/extraction.test.ts tests/email.test.ts",
+    "test": "node --experimental-strip-types --test tests/clef.test.ts tests/intake.test.ts tests/extraction.test.ts tests/email.test.ts tests/applicationMove.test.ts",
     "test:runtime": "vitest run --config vitest.config.ts",
     "build": "wrangler deploy --dry-run"
   },

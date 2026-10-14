@@ -2,11 +2,13 @@ import { DurableObject } from "cloudflare:workers";
 import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from "./pipeline";
 import type { WorkerEnv, AutomationIntegration } from "./index";
 import { correlateApplication, gmailForwardingConfirmationUrl } from "./email";
+import type { JobPageFetcher } from "./extraction";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, signEnvelope } from "../../../src/domain/identity";
 import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
 import type { DeviceCertificate } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
+import { planApplicationMove } from "./applicationMove";
 
 /** Publish a complete encrypted generation atomically; callers encrypt before entering this sync transaction. */
 export function writeReplicaChunksAtomically(storage: DurableObjectStorage, generation: string, chunks: string[], updatedAt: number): void {
@@ -359,16 +361,33 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     return { eventId: input.eventId, status: "pending", duplicate: false };
   }
 
+  retryEmail(owner: OwnerRegistration, eventId: string): Promise<EnqueueSuccess> {
+    return this.serializeMutation(async () => {
+      this.assertOwnerRegistration(owner);
+      const row = this.findById(eventId);
+      if (!row || row.source !== "email") throw new Error("Saved email event was not found");
+      if (row.status === "applied" || row.status === "processing" || row.status === "pending") {
+        return { eventId, status: row.status, duplicate: true };
+      }
+      const now = Date.now();
+      this.ctx.storage.sql.exec("UPDATE events SET status = 'pending', attempt = 0, claimed_at = NULL, next_attempt_at = ?, updated_at = ? WHERE event_id = ?", now, now, eventId);
+      await this.scheduleEarlierAlarm(now + 1_000);
+      return { eventId, status: "pending", duplicate: false };
+    });
+  }
+
   async emailSetup() {
     const rows = this.ctx.storage.sql.exec<EventRow>("SELECT * FROM events WHERE source = 'email' ORDER BY created_at DESC LIMIT 10").toArray();
     let confirmation: { eventId: string; url: string } | null = null;
+    const events = [];
     for (const row of rows) {
       const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET!, row.event_id, row.payload);
       if (event.source !== "email") continue;
+      events.push({ ...this.getEvent(row.event_id)!, subject: event.message.subject });
       const url = gmailForwardingConfirmationUrl(event.message);
-      if (url) { confirmation = { eventId: row.event_id, url }; break; }
+      if (url && !confirmation) confirmation = { eventId: row.event_id, url };
     }
-    return { confirmation, events: rows.map(row => this.getEvent(row.event_id)) };
+    return { confirmation, events };
   }
 
   getEvent(eventId: string): { eventId: string; source: string; status: StoredEventStatus; createdAt: number; result?: unknown } | null {
@@ -446,10 +465,12 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       const event = await decryptEventPayload(this.env.EVENT_STORAGE_SECRET, row.event_id, row.payload);
       const emailCandidates = event.source === "email" ? replica?.candidates() : undefined;
       const definition = replica?.definitionForRuntime();
-      const result = await (definition ? runRegisteredAutomation(definition, event, this.env.AI, replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime()) : runPipeline(event, this.env.AI, undefined, replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime()));
+      const result = await (definition ? runRegisteredAutomation(definition, event, this.env.AI, replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime(), this.jobPageFetcher()) : runPipeline(event, this.env.AI, this.jobPageFetcher(), replica?.employeeProfileForRuntime(), replica?.priorityBandsForRuntime()));
       const action = await this.applyScopedDecision(row.event_id, event, result, emailCandidates, replica);
-      this.saveResult(row.event_id, action ? "applied" : "review", attempt,
-        action ? { ...result, status: "applied", reason: action.message, action } : result);
+      const applied = action && action.kind !== "review";
+      this.saveResult(row.event_id, applied ? "applied" : "review", attempt,
+        applied ? { ...result, status: "applied", reason: action.message, action }
+          : action?.kind === "review" ? { ...result, reason: action.reason } : result);
     } catch (error) {
       if (error instanceof AutomationControlError) {
         this.ctx.storage.sql.exec("UPDATE events SET status = ?, attempt = ?, claimed_at = NULL, updated_at = ?, result = ? WHERE event_id = ?",
@@ -546,7 +567,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   private async applyScopedDecision(eventId: string, event: AutomationEvent, result: AutomationPipelineResult,
     emailCandidates: AutomationCandidate[] | undefined, replica: AutomationReplica | null): Promise<{
     kind: "created-lead" | "moved-application"; cardId: string; columnId?: string; message: string;
-  } | null> {
+  } | { kind: "review"; reason: string } | null> {
     const recorded = replica?.appliedForRuntime(eventId);
     if (recorded && replica) {
       await replica.sync();
@@ -559,7 +580,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     const isLeadProposal = leadDecision?.relevance === "yes";
     const isApplicationMove = mailDecision?.event === "applied" || mailDecision?.event === "interview" || mailDecision?.event === "rejection";
     if (!isLeadProposal && !isApplicationMove) return null;
-    if (isApplicationMove && !emailCandidates) return null;
+    if (isApplicationMove && !emailCandidates) return { kind: "review", reason: "No admitted workspace is available to match this email" };
     if (isLeadProposal) {
       const opportunity = leadDecision!.distributions.job_opportunity;
       const sorted = Object.values(opportunity.probabilities).sort((left, right) => right - left);
@@ -589,7 +610,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
 
     if (event.source === "email" && isLeadProposal && leadDecision && result.extraction) {
       const incoming = { ...event.message, urls: [...event.message.urls, result.extraction.finalUrl] };
-      const correlation = correlateApplication(incoming, replica.candidates());
+      const correlation = correlateApplication(incoming, replica.candidates().map(({ cardId, jobUrl, messageIds }) => ({ cardId, jobUrl, messageIds })));
       if (correlation.kind === "review" && correlation.reason === "No existing application matched") {
         const columns = replica.bindingsForRuntime();
         const columnId = mailDecision?.event === "applied" ? columns.applied : columns.lead;
@@ -604,20 +625,13 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     }
 
     if (event.source === "email" && isApplicationMove && mailDecision) {
-      const correlation = correlateApplication(event.message, emailCandidates!);
-      if (correlation.kind !== "matched") return null;
-      const candidate = emailCandidates!.find((item) => item.cardId === correlation.cardId);
-      if (!candidate) return null;
-      const messageTime = event.message.date ? Date.parse(event.message.date) : Number.NaN;
-      const changedTime = candidate.workflow ? Date.parse(candidate.workflow.changedAt) : Number.NaN;
-      if (!Number.isFinite(messageTime) || !Number.isFinite(changedTime) || messageTime < changedTime) return null;
-      const columnId = mailDecision.event === "applied" ? replica.bindingsForRuntime().applied : mailDecision.event === "interview" ? replica.bindingsForRuntime().interview : replica.bindingsForRuntime().rejected;
-      if (!columnId) return null;
-      const columns = replica.bindingsForRuntime();
-      const canAdvance = candidate.columnId === columns.lead && (columnId === columns.applied || columnId === columns.interview || columnId === columns.rejected) ||
-        candidate.columnId === columns.applied && (columnId === columns.interview || columnId === columns.rejected) ||
-        candidate.columnId === columns.interview && columnId === columns.rejected;
-      if (!canAdvance) return null;
+      const plan = await planApplicationMove(event.message, emailCandidates!, replica.bindingsForRuntime(),
+        mailDecision.event as "applied" | "interview" | "rejection", this.jobPageFetcher());
+      if (plan.kind === "review") return plan;
+      const { candidate, columnId } = plan;
+      if (replica.candidates().find(current => current.cardId === candidate.cardId)?.jobUrl !== candidate.jobUrl) {
+        return { kind: "review", reason: "Vacancy URL changed while processing this email" };
+      }
       const moved = await replica.moveCard(eventId, candidate.cardId, columnId,
         { columnId: candidate.columnId, ...(candidate.workflow ? { changedAt: candidate.workflow.changedAt } : {}) });
       await replica.sync();
@@ -627,6 +641,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     return null;
   }
 
+  protected jobPageFetcher(): JobPageFetcher { return fetch; }
 }
 
 function backoffMs(attempt: number): number {

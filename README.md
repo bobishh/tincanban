@@ -71,6 +71,14 @@ shared document.
 **Add my device** is a separate flow: it enrolls another device as the same user.
 Compare the authentication codes and approve on the existing device. Use a fresh
 profile for a demo so you do not enroll someone else's browser into your identity.
+Enrollment preserves the identity photo and the approving device's certificate
+chain. Confirmed devices of the same identity also exchange private Rusty
+connections over their authenticated device channel, including connections added
+later. Each device keeps its own replication cursor; removals retain a tombstone.
+These credentials never enter shared boards, public copies, or another person's
+session. Update both devices once to repair older enrollments and receive the
+connection; afterward an online Rusty can deliver board and photo changes with
+the other device closed.
 
 The header and tab icon follow the active board's confirmed connections. Green
 means a live device channel or a successful Rusty replication pass within 45
