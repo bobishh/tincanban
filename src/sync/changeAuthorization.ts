@@ -70,7 +70,7 @@ function uniqueCertificates(profile: LocalProfile, certificates: DeviceCertifica
 
 export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile): Promise<Authorization[]> {
   const creator = { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
-    certificates: [profile.certificate] }
+    certificates: uniqueCertificates(profile, await defaultProofStore.listCertificates()) }
   const payload = meshRustRuntime().state.planScopeGenesis({ scopeId: doc.id,
     documentOwnerPersonId: doc.ownerPersonId, creator }) as {
     kind: "scope-genesis"; version: 1; scopeId: string; creator: typeof creator; controlEpoch: 1
@@ -92,7 +92,7 @@ export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumen
   const authority: WorkspaceAuthorityRecord & { scopeAuthoritySnapshot: typeof scopeAuthoritySnapshot } = {
     version: 1, workspaceId: doc.id, genesisOwnerPersonId: profile.identity.personId,
     ownerPersonId: profile.identity.personId, ownerPublicKey: profile.identity.publicKey,
-    ownerCertificates: [profile.certificate], epoch: 1,
+    ownerCertificates: creator.certificates, epoch: 1,
     updatedAt: new Date().toISOString(), catalog: {}, scopeAuthoritySnapshot,
   }
   await peerStore.putWorkspaceAuthority(authority)

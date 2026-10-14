@@ -7,7 +7,7 @@ import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
 import { createWorkspaceDoc } from "../domain/seeds"
-import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant } from "../domain/proofs"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { publicKeyId, toBase64Url } from "../domain/identity"
 import { createWorkspaceOwnershipTransfer, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"
 import { executeCommand, type Command } from "../domain/commands"
@@ -99,6 +99,18 @@ it("exports the same fresh authorization evidence from a hydrated document witho
   const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Hydrated proofs", owner.identity.personId, "blank"))
   expect(await exportDocumentAuthorizationBundle(doc, owner)).toEqual(await exportAuthorizationBundle(Automerge.save(doc), owner))
   expect(Automerge.change(doc, draft => { draft.title = "Still writable" }).title).toBe("Still writable")
+})
+
+it("Given an enrolled owner device with a delegated certificate, when creating a workspace, then genesis includes the complete verified issuer chain", async () => {
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId, owner.identity.personId, member.device.deviceId,
+    member.device.publicKey, await certHashDefault(owner.certificate))
+  await defaultProofStore.putCertificate(await certHashDefault(owner.certificate), owner.certificate)
+  const enrolled = { ...member, identity: owner.identity, certificate,
+    privateKeys: { devicePrivateKey: member.privateKeys.devicePrivateKey } }
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Enrolled owner's board", owner.identity.personId, "blank"))
+  await expect(recordGenesisAuthority(doc, enrolled)).resolves.toHaveLength(1)
+  const bundle = await exportDocumentAuthorizationBundle(doc, enrolled)
+  expect(bundle.authority?.genesisOwner.certificates).toEqual(expect.arrayContaining([certificate, owner.certificate]))
 })
 
 it("Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints", async () => {

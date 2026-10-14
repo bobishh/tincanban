@@ -871,44 +871,45 @@ app-unit	src/sync/blindSnapshotRevision.test.ts	30	yes		Given changed %s, When p
 app-unit	src/sync/blindSnapshotRevision.test.ts	39	yes		Given %s changes during the read, When binding a snapshot revision, Then reuse is unavailable
 app-unit	src/sync/blindSnapshotRevision.test.ts	48	no		Given an old journal without a revision, When polling, Then revision reuse is disabled without loading historical document metadata
 app-unit	src/sync/changeAuthorization.test.ts	98	no		exports the same fresh authorization evidence from a hydrated document without consuming it
-app-unit	src/sync/changeAuthorization.test.ts	104	no		Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints
-app-unit	src/sync/changeAuthorization.test.ts	123	no		reports admission phase costs without changing the authorized result
-app-unit	src/sync/changeAuthorization.test.ts	133	no		Given one raw document used as local and remote, When reclassifying it, Then avoid a full clone and keep the caller document usable
-app-unit	src/sync/changeAuthorization.test.ts	146	no		Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again
-app-unit	src/sync/changeAuthorization.test.ts	175	no		admits a signed owner bootstrap with long text without expanding it into text patches
-app-unit	src/sync/changeAuthorization.test.ts	189	no		checks a signed item edit without materializing unrelated whole-document historical views
-app-unit	src/sync/changeAuthorization.test.ts	199	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
-app-unit	src/sync/changeAuthorization.test.ts	251	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
-app-unit	src/sync/changeAuthorization.test.ts	260	no		quarantines an unsigned received branch without materializing it in the authorized projection
-app-unit	src/sync/changeAuthorization.test.ts	283	no		admits a visitor's signed change only for their own avatar profile
-app-unit	src/sync/changeAuthorization.test.ts	290	no		defaults an omitted optional departures list before calling Rust
-app-unit	src/sync/changeAuthorization.test.ts	298	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
-app-unit	src/sync/changeAuthorization.test.ts	319	no		admits a valid editor bundle when optional departures are omitted
-app-unit	src/sync/changeAuthorization.test.ts	326	no		rejects malformed present departures evidence before Rust
-app-unit	src/sync/changeAuthorization.test.ts	332	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
-app-unit	src/sync/changeAuthorization.test.ts	337	no		accepts an owner-root grant and rejects a forged root grant
-app-unit	src/sync/changeAuthorization.test.ts	355	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
-app-unit	src/sync/changeAuthorization.test.ts	387	no		repairs a current-owner signed revocation bound only to quarantined raw history
-app-unit	src/sync/changeAuthorization.test.ts	417	no		does not repair a missing boundary with a foreign-owner signature
-app-unit	src/sync/changeAuthorization.test.ts	436	no		does not repair owner boundaries from a revoked owner device
-app-unit	src/sync/changeAuthorization.test.ts	455	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
-app-unit	src/sync/changeAuthorization.test.ts	490	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
-app-unit	src/sync/changeAuthorization.test.ts	533	no		reports a proof change only once when the same authorization is replayed
-app-unit	src/sync/changeAuthorization.test.ts	538	no		keeps a later local owner boundary when admitting a peer's older history
-app-unit	src/sync/changeAuthorization.test.ts	571	no		does not persist a proof while validating an incoming workspace
-app-unit	src/sync/changeAuthorization.test.ts	576	no		reports a proof change once when a replay enriches certificates around the same change signature
-app-unit	src/sync/changeAuthorization.test.ts	586	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
-app-unit	src/sync/changeAuthorization.test.ts	603	no		accepts an editor changing only workspace title casing
-app-unit	src/sync/changeAuthorization.test.ts	610	no		rejects editor board-structure changes through the same policy used for local commands
-app-unit	src/sync/changeAuthorization.test.ts	615	no		rejects a valid signature over a different change hash
-app-unit	src/sync/changeAuthorization.test.ts	622	no		rejects a forged owner-issued role
-app-unit	src/sync/changeAuthorization.test.ts	628	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
-app-unit	src/sync/changeAuthorization.test.ts	643	no		Given malformed stored authority and an owner profile, When local admission binds its context, Then profile fallback cannot hide the invalid authority
-app-unit	src/sync/changeAuthorization.test.ts	651	no		Given a real signed automation grant, When its exact expiry arrives without changed authority, Then the Rust access policy removes automation access immediately
-app-unit	src/sync/changeAuthorization.test.ts	671	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
-app-unit	src/sync/changeAuthorization.test.ts	688	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
-app-unit	src/sync/changeAuthorization.test.ts	702	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
-app-unit	src/sync/changeAuthorization.test.ts	720	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
+app-unit	src/sync/changeAuthorization.test.ts	104	no		Given an enrolled owner device with a delegated certificate, when creating a workspace, then genesis includes the complete verified issuer chain
+app-unit	src/sync/changeAuthorization.test.ts	116	no		Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints
+app-unit	src/sync/changeAuthorization.test.ts	135	no		reports admission phase costs without changing the authorized result
+app-unit	src/sync/changeAuthorization.test.ts	145	no		Given one raw document used as local and remote, When reclassifying it, Then avoid a full clone and keep the caller document usable
+app-unit	src/sync/changeAuthorization.test.ts	158	no		Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again
+app-unit	src/sync/changeAuthorization.test.ts	187	no		admits a signed owner bootstrap with long text without expanding it into text patches
+app-unit	src/sync/changeAuthorization.test.ts	201	no		checks a signed item edit without materializing unrelated whole-document historical views
+app-unit	src/sync/changeAuthorization.test.ts	211	no		benchmarks complete TS/WASM admission and one delta on deterministic signed histories
+app-unit	src/sync/changeAuthorization.test.ts	263	no		rejects visitor writes even with a valid device signature and owner-issued visitor grant
+app-unit	src/sync/changeAuthorization.test.ts	272	no		quarantines an unsigned received branch without materializing it in the authorized projection
+app-unit	src/sync/changeAuthorization.test.ts	295	no		admits a visitor's signed change only for their own avatar profile
+app-unit	src/sync/changeAuthorization.test.ts	302	no		defaults an omitted optional departures list before calling Rust
+app-unit	src/sync/changeAuthorization.test.ts	310	no		Given divergent durable branches, metadata admission retains dependency coverage and rejects missing parent proof
+app-unit	src/sync/changeAuthorization.test.ts	331	no		admits a valid editor bundle when optional departures are omitted
+app-unit	src/sync/changeAuthorization.test.ts	338	no		rejects malformed present departures evidence before Rust
+app-unit	src/sync/changeAuthorization.test.ts	344	no		accepts signed editor item changes with a delegated-device grant, including when forwarded by another peer
+app-unit	src/sync/changeAuthorization.test.ts	349	no		accepts an owner-root grant and rejects a forged root grant
+app-unit	src/sync/changeAuthorization.test.ts	367	no		derives local owner, editor, visitor, revocation, departure, renewal, and device removal from Rust
+app-unit	src/sync/changeAuthorization.test.ts	399	no		repairs a current-owner signed revocation bound only to quarantined raw history
+app-unit	src/sync/changeAuthorization.test.ts	429	no		does not repair a missing boundary with a foreign-owner signature
+app-unit	src/sync/changeAuthorization.test.ts	448	no		does not repair owner boundaries from a revoked owner device
+app-unit	src/sync/changeAuthorization.test.ts	467	no		admits a revoked device's signed change at its revocation frontier and rejects a later signed change
+app-unit	src/sync/changeAuthorization.test.ts	502	no		accepts transferred-owner history on a clean replica only when the supplied authority chain verifies
+app-unit	src/sync/changeAuthorization.test.ts	545	no		reports a proof change only once when the same authorization is replayed
+app-unit	src/sync/changeAuthorization.test.ts	550	no		keeps a later local owner boundary when admitting a peer's older history
+app-unit	src/sync/changeAuthorization.test.ts	583	no		does not persist a proof while validating an incoming workspace
+app-unit	src/sync/changeAuthorization.test.ts	588	no		reports a proof change once when a replay enriches certificates around the same change signature
+app-unit	src/sync/changeAuthorization.test.ts	598	no		accepts a historical editor grant when its signed authorization carries a missing owner device certificate
+app-unit	src/sync/changeAuthorization.test.ts	615	no		accepts an editor changing only workspace title casing
+app-unit	src/sync/changeAuthorization.test.ts	622	no		rejects editor board-structure changes through the same policy used for local commands
+app-unit	src/sync/changeAuthorization.test.ts	627	no		rejects a valid signature over a different change hash
+app-unit	src/sync/changeAuthorization.test.ts	634	no		rejects a forged owner-issued role
+app-unit	src/sync/changeAuthorization.test.ts	640	no		Given a forged durable authority and a valid active credential, when role is recovered, then the forged authority cannot grant editor access
+app-unit	src/sync/changeAuthorization.test.ts	655	no		Given malformed stored authority and an owner profile, When local admission binds its context, Then profile fallback cannot hide the invalid authority
+app-unit	src/sync/changeAuthorization.test.ts	663	no		Given a real signed automation grant, When its exact expiry arrives without changed authority, Then the Rust access policy removes automation access immediately
+app-unit	src/sync/changeAuthorization.test.ts	683	no		Given a current owner authority with a historical owner grant, when role is recovered, then the legitimate historical grant remains editor access
+app-unit	src/sync/changeAuthorization.test.ts	700	no		Given two manual transfers from one owner at one epoch, when authorization checks the workspace, then writes stay frozen
+app-unit	src/sync/changeAuthorization.test.ts	714	no		Given one local ownership transfer before mesh startup, when write access is checked, then Rust runtime is not required
+app-unit	src/sync/changeAuthorization.test.ts	732	no		Given split owners wrote on separate partitions, when the branches meet, then neither branch is admitted under ambiguous authority
 app-unit	src/sync/controlFrames.test.ts	8	no	bounded control snapshots	withholds incomplete snapshots and reassembles out-of-order parts exactly
 app-unit	src/sync/controlFrames.test.ts	16	yes	bounded control snapshots	rejects invalid chunk metadata or length: %j
 app-unit	src/sync/controlFrames.test.ts	22	no	bounded control snapshots	rejects duplicates and overlapping transfers instead of growing the receive buffer
