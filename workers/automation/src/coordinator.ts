@@ -589,10 +589,15 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         !(event.source === "website" ? event.submission.role || result.extraction?.role : result.extraction?.role)?.trim()) return null;
     }
     if (!replica) return null;
+    const applicationMovePlan = event.source === "email" && isApplicationMove && mailDecision
+      ? await planApplicationMove(event.message, emailCandidates!, replica.bindingsForRuntime(),
+        mailDecision.event as "applied" | "interview" | "rejection", this.jobPageFetcher()) : undefined;
+    // Refresh after the external page lookup so changed URLs and workflows cannot use stale evidence.
     await replica.sync();
     const control = replica.controlForRuntime();
     if (control.state !== "active") throw new AutomationControlError(control.state);
     if (!replica.allowsSource(event.source)) return null;
+    if (applicationMovePlan?.kind === "review") return applicationMovePlan;
 
     if (event.source === "website" && isLeadProposal && leadDecision) {
       const company = event.submission.company || result.extraction?.company || "";
@@ -625,10 +630,8 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     }
 
     if (event.source === "email" && isApplicationMove && mailDecision) {
-      const plan = await planApplicationMove(event.message, emailCandidates!, replica.bindingsForRuntime(),
-        mailDecision.event as "applied" | "interview" | "rejection", this.jobPageFetcher());
-      if (plan.kind === "review") return plan;
-      const { candidate, columnId } = plan;
+      if (applicationMovePlan?.kind !== "move") return null;
+      const { candidate, columnId } = applicationMovePlan;
       if (replica.candidates().find(current => current.cardId === candidate.cardId)?.jobUrl !== candidate.jobUrl) {
         return { kind: "review", reason: "Vacancy URL changed while processing this email" };
       }
