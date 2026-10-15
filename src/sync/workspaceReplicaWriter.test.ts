@@ -94,6 +94,17 @@ test("Given legacy file discovery and confirmed progress, when the owner upgrade
   } finally { f.close() }
 })
 
+test("Given a legacy local marker but an already-current signed floor-2 policy, when writer migration runs, then publish the marker at the same revision", async () => {
+  const f = await fixture()
+  try {
+    f.approval.mockImplementation(async (_access, _profile, _revoked, options) => f.confirmScope(f.config.policyRevision, options))
+    const next = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})
+    expect(next).toMatchObject({ minimumWriterVersion: 2, policyRevision: f.config.policyRevision, cursor: 9,
+      lastUploaded: "A".repeat(43) })
+    expect(await runtime.getPrivateReplicaProgress(f.owner, next)).toMatchObject({ cursor: 9, uploadedRevision: "confirmed-content" })
+  } finally { f.close() }
+})
+
 test("Given a writer upgrade finishes after a caller captured old access, when maintenance enters its lock, then adopt only the newer same-key repository revision", async () => {
   const f = await fixture()
   try {

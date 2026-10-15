@@ -62,9 +62,12 @@ async function verifySetupReceipt(setup: Setup): Promise<void> {
   const receipt = setup.receipt!
   const payload = receipt.payload
   const serviceId = await blindHash(decodeBlindBytes(setup.config.servicePublicKey))
+  const writerFloorMatches = setup.config.minimumWriterVersion === 2
+    ? payload.minimumWriterVersion === 2
+    : payload.minimumWriterVersion === undefined || payload.minimumWriterVersion === 2
   if (receipt.signerKeyId !== serviceId || payload.serviceId !== serviceId || payload.personId !== setup.personId ||
     payload.scopeId !== setup.config.scopeId || payload.revoked || payload.revision !== setup.config.policyRevision ||
-    !await verifyEnvelope(receipt, setup.config.servicePublicKey, "RUSTY/2")) throw new Error("Saved board connection receipt binding or signature invalid")
+    !writerFloorMatches || !await verifyEnvelope(receipt, setup.config.servicePublicKey, "RUSTY/2")) throw new Error("Saved board connection receipt binding or signature invalid")
 }
 
 function sameCredentials(left: BlindReplicaConfig, right: BlindReplicaConfig): boolean {
@@ -98,7 +101,7 @@ async function persistInitialSetup(context: ConnectionContext, profileRaw: strin
   const random = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
   const config: BlindReplicaConfig = { purpose: "workspace", workspaceId: context.workspaceId, origin: context.service.origin,
     servicePublicKey: context.service.servicePublicKey, scopeId: random(), contentKey: random(), readToken: random(), writeToken: random(),
-    keyEpoch: 1, policyRevision: 1, cursor: 0, lastUploaded: "" }
+    keyEpoch: 1, policyRevision: 1, cursor: 0, lastUploaded: "", minimumWriterVersion: 2 }
   const next = JSON.stringify({ version: 1, personId: context.personId, stage: "enroll", config } satisfies Setup)
   if (!await compareAndSwapLocal({ conditions: [{ key: context.key, value: null }, { key: profileKey, value: profileRaw }, context.freeze],
     writes: [{ key: context.key, value: next }] }, context.guard)) throw new Error("Board connection setup changed; retry required")
@@ -108,7 +111,8 @@ async function persistInitialSetup(context: ConnectionContext, profileRaw: strin
 async function finishEnrollment(context: ConnectionContext, setup: Setup, expected: string, profileRaw: string): Promise<{ setup: Setup; raw: string }> {
   if (setup.stage !== "enroll") return { setup, raw: expected }
   const enrolling = setup
-  await approveRustyScope(setup.config, context.profile, false, { ensureCurrent: context.guard, confirmed: async receipt => {
+  await approveRustyScope(setup.config, context.profile, false, { ensureCurrent: context.guard,
+    ...(setup.config.minimumWriterVersion === 2 ? { minimumWriterVersion: 2 as const } : {}), confirmed: async receipt => {
     context.guard()
     await assertReplicaCredentialsUnfrozen(context.personId, context.service)
     const confirmed: Setup = { ...enrolling, stage: "activate", config: { ...enrolling.config, policyRevision: receipt.payload.revision }, receipt }

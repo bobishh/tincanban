@@ -259,3 +259,22 @@ test("Given Rusty confirmed a floor upgrade before Worker maintenance fails, whe
   const updated = await upgrades().completeReplicaWriterUpgrade(owner, confirmed, 4)
   expect(updated).toMatchObject({ policyRevision: 4, minimumWriterVersion: 2, cursor: 17 })
 })
+
+test("Given a legacy saved config whose current Rusty scope already has floor 2, when migrating it, then accept and publish the exact no-op revision", async () => {
+  const identity = await import("../domain/identity")
+  const service = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+  const rawKey = new Uint8Array(await crypto.subtle.exportKey("raw", service.publicKey))
+  const servicePublicKey = identity.toBase64Url(rawKey), serviceId = await identity.sha256Base64Url(rawKey)
+  const { owner, selected } = await fixture(false, servicePublicKey)
+  const intent = await upgrades().prepareReplicaWriterUpgrade(owner, selected)
+  const receipt = await identity.signEnvelope(service.privateKey, { kind: "rusty-scope-policy-receipt" as const, version: 1 as const,
+    serviceId, scopeId: selected.scopeId, personId: owner, revision: selected.policyRevision, revoked: false,
+    challengeId: "already-floor-two", authorizationHash: token, minimumWriterVersion: 2 as const }, serviceId, "RUSTY/2")
+
+  await expect(upgrades().completeReplicaWriterUpgrade(owner, intent, selected.policyRevision)).rejects.toThrow(/confirmed|revision/i)
+  const confirmed = await repository.confirmReplicaWriterUpgrade(owner, intent, receipt)
+  expect(confirmed.confirmed).toEqual(receipt)
+  const updated = await upgrades().completeReplicaWriterUpgrade(owner, confirmed, selected.policyRevision)
+  expect(updated).toMatchObject({ policyRevision: selected.policyRevision, minimumWriterVersion: 2, cursor: 17, lastUploaded: token })
+  expect(await upgrades().readReplicaWriterUpgrade(owner, updated)).toBeUndefined()
+})

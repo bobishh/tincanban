@@ -325,7 +325,7 @@ export async function confirmReplicaWriterUpgrade(owner: string, upgrade: Replic
   const capturedReceipt = structuredClone(value)
   ensureIdentity()
   const receipt = await verifyRustyWriterPolicyReceipt(capturedReceipt, upgrade.config, owner,
-    Math.max(upgrade.config.policyRevision + 1, upgrade.confirmed?.payload.revision ?? 0))
+    Math.max(upgrade.config.policyRevision, upgrade.confirmed?.payload.revision ?? 0))
   ensureIdentity()
   const key = scopeKey(upgrade.config)
   const state = await mutate(owner, current => {
@@ -337,19 +337,27 @@ export async function confirmReplicaWriterUpgrade(owner: string, upgrade: Replic
 }
 
 /** Caller has verified Rusty's signed floor-2 receipt. Publish new causal credentials and retained progress in one transaction. */
+function assertConfirmedWriterRevision(revision: number, currentRevision: number, upgrade: ReplicaWriterUpgrade): void {
+  const noOpConfirmed = upgrade.confirmed?.payload.minimumWriterVersion === 2 && upgrade.confirmed.payload.revision === revision
+  if (!Number.isSafeInteger(revision) || revision < currentRevision || (revision === currentRevision && !noOpConfirmed)) {
+    throw new Error("Writer upgrade policy revision did not confirm current credentials")
+  }
+}
+
 export async function completeReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, policyRevision: number,
   ensureIdentity: () => void = () => {}): Promise<BlindReplicaConfig> {
   upgrade = structuredClone(upgrade)
   const freeze = await replicaCredentialFreezeCondition(owner, upgrade.config)
   const config = parseReplicaConfig(serialize(upgrade.config))
-  if (!Number.isSafeInteger(policyRevision) || policyRevision <= config.policyRevision) throw new Error("Writer upgrade policy revision did not advance")
+  assertConfirmedWriterRevision(policyRevision, config.policyRevision, upgrade)
+  if (policyRevision === config.policyRevision) await verifyRustyWriterPolicyReceipt(upgrade.confirmed!, config, owner, config.policyRevision)
   const key = scopeKey(config)
   const state = await mutate(owner, current => {
     const pending = current.writerUpgrades?.[key]
     if (!pending || canonicalizeJson(pending) !== canonicalizeJson(upgrade)) throw new Error("Writer upgrade intent is no longer pending")
     const selected = writerUpgradeSelection(current, config)
     const progress = current.progress[key]
-    if (policyRevision <= selected.policyRevision) throw new Error("Writer upgrade policy revision did not advance current credentials")
+    assertConfirmedWriterRevision(policyRevision, selected.policyRevision, upgrade)
     if (progress?.replication?.pending) throw new Error("Pending Rusty upload prevents writer upgrade completion")
     const next = changeReplicaPreference(current, { ...selected, policyRevision, minimumWriterVersion: 2 } as BlindReplicaConfig)
     const [updated] = effectiveReplicaConfigs(next).filter(value => scopeKey(value) === key)

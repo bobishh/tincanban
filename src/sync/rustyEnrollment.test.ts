@@ -3,6 +3,8 @@ import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha25
 import { approveRustyScope } from "./rustyEnrollment"
 import type { BlindAccess } from "./blindClient"
 import { RustyManagementRepository } from "./rustyManagementRepository"
+import { readScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
+import { verifySavedScopeEnrollmentConfirmation } from "./rustyEnrollment"
 
 afterEach(() => { vi.unstubAllGlobals(); resetIdentityStorageForTest() })
 
@@ -158,6 +160,115 @@ test("Given writer policy v2, when enrolling a scope, then authorization and sig
       await expect(approveRustyScope(access, profile, true)).rejects.toThrow(/receipt|connection/i)
     }
   } finally { vi.unstubAllGlobals() }
+})
+
+test("Given an already-v2 Rusty scope, when the owner reaffirms the same policy, then only the exact current-revision receipt is accepted", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("V2 policy owner")
+  const service = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]) as CryptoKeyPair
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", service.publicKey))
+  const servicePublicKey = toBase64Url(raw), serviceId = await sha256Base64Url(raw)
+  const access: BlindAccess = { origin: "https://rusty.example", scopeId: "scope-v2-noop", servicePublicKey,
+    readToken: "read-token", writeToken: "write-token", policyRevision: 8 }
+  let receiptRevision = 8, receiptFloor: unknown = 2, receiptRevoked = false, currentChallenge = "v2-noop"
+  let receiptChallenge = currentChallenge, receiptHash: string | undefined
+  let receiptServiceId = serviceId, receiptScopeId = access.scopeId, receiptPersonId = profile.identity.personId
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/.well-known/mesh-lighthouse")) return Response.json({ protocolVersions: [2], publicOrigin: access.origin,
+      service: { serviceId, publicKey: servicePublicKey }, capabilities: { modes: ["blind"], applicationWrites: false,
+        classification: false, writerPolicy: { version: 1, maximumWriterVersion: 2 } } })
+    const body = JSON.parse(String(init.body))
+    if (url.endsWith("/challenge")) return Response.json({ challenge: await signEnvelope(service.privateKey, {
+      kind: "rusty-enrollment-challenge", version: 1, challengeId: currentChallenge, nonce: `nonce-${currentChallenge}`, serviceId,
+      publicOrigin: access.origin, scopeId: access.scopeId, personId: profile.identity.personId, deviceId: profile.device.deviceId,
+      deviceKeyId: profile.device.deviceId, expectedRevision: 8, issuedAt: Date.now(), expiresAt: Date.now() + 60_000,
+    }, serviceId, "RUSTY/2") })
+    expect(body.authorization.payload).toMatchObject({ expectedRevision: 8, minimumWriterVersion: 2, revoked: false })
+    const exactHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(body.authorization)))
+    return Response.json({ receipt: await signEnvelope(service.privateKey, {
+      kind: "rusty-scope-policy-receipt", version: 1, serviceId: receiptServiceId, scopeId: receiptScopeId,
+      personId: receiptPersonId, revision: receiptRevision, revoked: receiptRevoked,
+      challengeId: receiptChallenge, authorizationHash: receiptHash ?? exactHash,
+      ...(receiptFloor === undefined ? {} : { minimumWriterVersion: receiptFloor }),
+    }, serviceId, "RUSTY/2") })
+  }))
+
+  expect(await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })).toBe(8)
+  receiptRevision = 9
+  expect(await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })).toBe(9)
+  for (const invalid of [
+    () => { receiptRevision = 7 },
+    () => { receiptRevision = 10 },
+    () => { receiptRevision = 8; receiptFloor = 1 },
+    () => { receiptFloor = 2; receiptRevoked = true },
+    () => { receiptRevoked = false; receiptServiceId = "C".repeat(43) },
+    () => { receiptServiceId = serviceId; receiptScopeId = "other-scope" },
+    () => { receiptScopeId = access.scopeId; receiptPersonId = "other-person" },
+    () => { receiptPersonId = profile.identity.personId; receiptChallenge = "wrong-challenge" },
+    () => { receiptChallenge = crypto.randomUUID(); receiptHash = "A".repeat(43) },
+  ]) {
+    receiptRevision = 8
+    receiptFloor = 2
+    receiptRevoked = false
+    receiptHash = undefined
+    receiptServiceId = serviceId
+    receiptScopeId = access.scopeId
+    receiptPersonId = profile.identity.personId
+    currentChallenge = crypto.randomUUID()
+    receiptChallenge = currentChallenge
+    invalid()
+    await expect(approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })).rejects.toThrow(/receipt|connection/i)
+  }
+})
+
+test("Given a retained v2 enrollment request, when verifying its signed no-op receipt after restart, then accept only its exact request binding", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Retained no-op owner")
+  const service = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]) as CryptoKeyPair
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", service.publicKey))
+  const servicePublicKey = toBase64Url(raw), serviceId = await sha256Base64Url(raw)
+  const access: BlindAccess = { origin: "https://rusty.example", scopeId: "scope-v2-retry", servicePublicKey,
+    readToken: "read-token", writeToken: "write-token", policyRevision: 8 }
+  const managementBinding = { origin: access.origin, servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
+  const capability = await signEnvelope(service.privateKey, { kind: "rusty-scope-management-capability" as const, version: 1 as const,
+    serviceId, origin: access.origin, personId: profile.identity.personId, resourceKind: "scope" as const, resourceId: access.scopeId,
+    revision: 2, operations: ["management.update", "scope.policy"], revokedDeviceIds: [], requestId: "saved-policy",
+    authorizationHash: "A".repeat(43), issuedAt: Date.now() }, serviceId, "RUSTY/2")
+  await new RustyManagementRepository(profile.identity.personId).observe(managementBinding, capability)
+  let savedReceipt: Awaited<ReturnType<typeof signEnvelope>> | undefined
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+    if (url.endsWith("/.well-known/mesh-lighthouse")) return Response.json({ protocolVersions: [2], publicOrigin: access.origin,
+      service: { serviceId, publicKey: servicePublicKey }, capabilities: { modes: ["blind"], applicationWrites: false,
+        classification: false, scopeManagement: { version: 1 }, scopeEnrollmentRetry: { version: 1 },
+        writerPolicy: { version: 1, maximumWriterVersion: 2 } } })
+    const body = JSON.parse(String(init.body))
+    const hash = (value: unknown) => sha256Base64Url(new TextEncoder().encode(canonicalizeJson(value)))
+    if (url.endsWith("/status")) return Response.json({ capability, migrationPending: false, receipt: await signEnvelope(service.privateKey, {
+      kind: "rusty-management-policy-status-receipt", version: 1, serviceId, origin: access.origin, personId: profile.identity.personId,
+      deviceId: profile.device.deviceId, resourceKind: "scope", resourceId: access.scopeId,
+      requestId: body.authorization.payload.requestId, authorizationHash: await hash(body.authorization),
+      capabilityHash: await hash(capability), revision: 2, migrationPending: false, issuedAt: Date.now(),
+    }, serviceId, "RUSTY/2") })
+    if (url.endsWith("/challenge")) return Response.json({ challenge: await signEnvelope(service.privateKey, {
+      kind: "rusty-enrollment-challenge", version: 1, challengeId: "retained-noop", nonce: "retained-noop-nonce", serviceId,
+      publicOrigin: access.origin, scopeId: access.scopeId, personId: profile.identity.personId, deviceId: profile.device.deviceId,
+      deviceKeyId: profile.device.deviceId, expectedRevision: 8, issuedAt: Date.now(), expiresAt: Date.now() + 60_000,
+    }, serviceId, "RUSTY/2") })
+    const authorizationHash = await hash(body.authorization)
+    savedReceipt = await signEnvelope(service.privateKey, { kind: "rusty-scope-policy-receipt", version: 1, serviceId,
+      scopeId: access.scopeId, personId: profile.identity.personId, revision: 8, revoked: false,
+      challengeId: "retained-noop", authorizationHash, minimumWriterVersion: 2 }, serviceId, "RUSTY/2")
+    return Response.json({ receipt: savedReceipt })
+  }))
+  await expect(approveRustyScope(access, profile, false, { minimumWriterVersion: 2, confirmed: () => {
+    throw new Error("simulate interrupted receipt persistence")
+  } })).rejects.toThrow(/interrupted/i)
+  const binding = { origin: access.origin, scopeId: access.scopeId, servicePublicKey, personId: profile.identity.personId,
+    deviceId: profile.device.deviceId, readTokenHash: await sha256Base64Url(new TextEncoder().encode(access.readToken)),
+    writeTokenHash: await sha256Base64Url(new TextEncoder().encode(access.writeToken)), revoked: false, minimumWriterVersion: 2 as const }
+  const saved = await readScopeEnrollmentIntent(binding)
+  expect(saved).toBeDefined()
+  expect(await verifySavedScopeEnrollmentConfirmation(access, profile, saved!, savedReceipt)).toEqual(savedReceipt)
 })
 
 test("Given identity changes while the challenge is in flight, when enrolling, then scope credentials are never submitted", async () => {

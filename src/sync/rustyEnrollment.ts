@@ -161,7 +161,7 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
   const result = receipt.payload
   const authorizationHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(request.authorization)))
   if (!receiptCoversEnrollment(result, { serviceId, scopeId: access.scopeId, personId: profile.identity.personId,
-    revision: request.authorization.payload.expectedRevision + 1, revoked, challengeId: request.authorization.payload.challengeId,
+    revision: request.authorization.payload.expectedRevision, revoked, challengeId: request.authorization.payload.challengeId,
     authorizationHash, minimumWriterVersion })) {
     throw new Error("Rusty receipt does not cover this connection")
   }
@@ -293,11 +293,13 @@ function assertEnrollmentAuthorization(proof: EnrollmentAuthorization, challenge
 
 function receiptCoversEnrollment(receipt: PolicyReceipt, expected: { serviceId: string; scopeId: string; personId: string;
   revision: number; revoked: boolean; challengeId: string; authorizationHash: string; minimumWriterVersion?: 2 }): boolean {
+  const revisionMatches = receipt.revision === expected.revision + 1 ||
+    (expected.minimumWriterVersion === 2 && receipt.revision === expected.revision)
   const writerVersionMatches = expected.minimumWriterVersion === 2
     ? receipt.minimumWriterVersion === 2
     : !Object.hasOwn(receipt, "minimumWriterVersion") || receipt.minimumWriterVersion === 2
   return receipt.kind === "rusty-scope-policy-receipt" && receipt.version === 1 && receipt.serviceId === expected.serviceId &&
-    receipt.scopeId === expected.scopeId && receipt.personId === expected.personId && receipt.revision === expected.revision &&
+    receipt.scopeId === expected.scopeId && receipt.personId === expected.personId && revisionMatches &&
     receipt.revoked === expected.revoked && receipt.challengeId === expected.challengeId &&
     receipt.authorizationHash === expected.authorizationHash && writerVersionMatches
 }
@@ -323,7 +325,7 @@ export async function verifySavedScopeEnrollmentConfirmation(access: BlindAccess
   const request = await verifyEnrollmentRequest(saved.body, access, profile, serviceId, raw.managementCapability, expected, true)
   await verifyService(receipt, access, serviceId)
   if (!receiptCoversEnrollment(receipt.payload, { serviceId, scopeId: access.scopeId, personId: profile.identity.personId,
-    revision: request.authorization.payload.expectedRevision + 1, revoked: false, challengeId: request.challenge.payload.challengeId,
+    revision: request.authorization.payload.expectedRevision, revoked: false, challengeId: request.challenge.payload.challengeId,
     authorizationHash: await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(request.authorization))),
     minimumWriterVersion: expected.minimumWriterVersion })) throw new Error("Retained scope receipt does not confirm the original credential request")
   return receipt

@@ -498,6 +498,20 @@ renew the grant.
 - **AND** the durable local intent retains the exact service receipt and the union of discovered Worker routes, including routes removed from the document during a retry
 - **AND** local activation waits for verified nonce-bound Worker confirmations; newly discovered Workers are captured and confirmed before completion, and a changing cohort retains its intent for a bounded retry.
 
+#### Scenario: Own devices reaffirm the same writer policy
+- **GIVEN** two authorized own devices retain the same Rusty scope credentials
+- **WHEN** one device confirms floor 2 and the other obtains a fresh challenge for that already-confirmed target
+- **THEN** Rusty signs confirmation at the current policy revision without rewriting the policy or replacing the original completed mutation receipt
+- **AND** each receipt remains bound to the exact current device, service, scope, challenge, authorization hash, token commitments and requested floor
+- **AND** settings do not diverge merely because another device reconfirmed identical access
+- **AND** changed credentials, revocation or writer policy still require the normal revision transition; stale incompatible targets remain rejected.
+
+#### Scenario: A new board connection starts at the current writer floor
+- **GIVEN** a newly prepared board connection with no previous enrollment intent
+- **WHEN** its owner enrolls and publishes access to another own device
+- **THEN** the persisted setup and verified receipt require floor 2 before activation, with no intermediate floor-1 connection shared between devices
+- **AND** an existing pending floor-1 intent resumes with its original credentials and request semantics rather than being rewritten.
+
 ### Requirement 8: Stable application source and explicit mail binding
 Applications SHALL retain original source observations independently of editable
 card labels. Email matching SHALL use specific source/thread references or retained

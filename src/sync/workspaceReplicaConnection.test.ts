@@ -23,18 +23,20 @@ async function serviceFixture() {
     servicePrivateKey: keys.privateKey, serviceId: await sha256Base64Url(publicKey) }
 }
 
-async function receipt(config: BlindReplicaConfig, personId: string, service: Awaited<ReturnType<typeof serviceFixture>>) {
+async function receipt(config: BlindReplicaConfig, personId: string, service: Awaited<ReturnType<typeof serviceFixture>>,
+  minimumWriterVersion: unknown = 2) {
   return await signEnvelope(service.servicePrivateKey, {
     kind: "rusty-scope-policy-receipt" as const, version: 1 as const, serviceId: service.serviceId, scopeId: config.scopeId,
     personId, revision: 2, revoked: false, challengeId: "challenge-1", authorizationHash: "A".repeat(43),
-  }, service.serviceId, "RUSTY/2") as RustyScopePolicyReceipt
+    ...(minimumWriterVersion === undefined || minimumWriterVersion === null ? {} : { minimumWriterVersion }),
+  }, service.serviceId, "RUSTY/2") as unknown as RustyScopePolicyReceipt
 }
 
 function approveAndConfirm(service: Awaited<ReturnType<typeof serviceFixture>>) {
   remote.approve.mockImplementation(async (config, profile, _revoked, rawOptions) => {
     const identity = profile as { identity: { personId: string } }
     const options = rawOptions as RustyScopeEnrollmentOptions | undefined
-    await options?.confirmed?.(await receipt(config, identity.identity.personId, service))
+    await options?.confirmed?.(await receipt(config, identity.identity.personId, service, options.minimumWriterVersion ?? null))
     return 2
   })
 }
@@ -43,6 +45,45 @@ afterEach(() => {
   resetIdentityStorageForTest()
   remote.approve.mockReset().mockResolvedValue(2)
   vi.restoreAllMocks()
+})
+
+it("Given a saved legacy enrollment, when setup resumes, then preserve its v1 request and accept its signed legacy receipt", async () => {
+  const service = await serviceFixture()
+  const profile = await bootstrapIdentity("Legacy setup resume")
+  remote.approve.mockRejectedValueOnce(new Error("approval reply lost"))
+  await expect(ensureWorkspaceReplicaConnection(service, workspaceId, profile, () => {})).rejects.toThrow("reply lost")
+  const key = await workspaceReplicaSetupKey(profile.identity.personId, service.origin, workspaceId)
+  const raw = (await localDb.readLocal(key))!
+  const saved = JSON.parse(raw) as { config: BlindReplicaConfig }
+  const legacyConfig = { ...saved.config }
+  delete legacyConfig.minimumWriterVersion
+  const legacyRaw = JSON.stringify({ ...JSON.parse(raw), config: legacyConfig })
+  await localDb.writeLocal(key, legacyRaw)
+
+  approveAndConfirm(service)
+  const result = await ensureWorkspaceReplicaConnection(service, workspaceId, profile, () => {})
+  expect(remote.approve).toHaveBeenCalledWith(legacyConfig, expect.anything(), false,
+    expect.objectContaining({ ensureCurrent: expect.any(Function), confirmed: expect.any(Function) }))
+  expect(remote.approve.mock.calls[1]?.[3]).not.toHaveProperty("minimumWriterVersion")
+  expect(result).toMatchObject({ ...legacyConfig, policyRevision: 2 })
+})
+
+it("Given a new v2 setup, when a saved receipt omits or downgrades its floor, then do not activate its credentials", async () => {
+  for (const receiptFloor of [undefined, 1]) {
+    resetIdentityStorageForTest()
+    remote.approve.mockReset()
+    const service = await serviceFixture()
+    const profile = await bootstrapIdentity("V2 setup receipt floor")
+    remote.approve.mockImplementation(async (config, _profile, _revoked, rawOptions) => {
+      const options = rawOptions as RustyScopeEnrollmentOptions | undefined
+      await options?.confirmed?.(await receipt(config, profile.identity.personId, service, receiptFloor ?? null))
+      return 2
+    })
+    await expect(ensureWorkspaceReplicaConnection(service, workspaceId, profile, () => {})).rejects.toThrow(/receipt binding|invalid/i)
+    expect(await getReplicaConfigurations(profile.identity.personId)).toEqual([])
+    const key = await workspaceReplicaSetupKey(profile.identity.personId, service.origin, workspaceId)
+    expect(JSON.parse((await localDb.readLocal(key))!).stage).toBe("enroll")
+  }
 })
 
 it("Given Rusty enrollment loses its reply, when setup retries, then reuse the exact persisted scope and credentials", async () => {
@@ -55,11 +96,15 @@ it("Given Rusty enrollment loses its reply, when setup retries, then reuse the e
   const pendingRaw = await localDb.readLocal(key)
   expect(pendingRaw).not.toBeNull()
   const pendingConfig = (JSON.parse(pendingRaw!) as { config: BlindReplicaConfig }).config
+  expect(pendingConfig.minimumWriterVersion).toBe(2)
   expect(await getReplicaConfigurations(profile.identity.personId)).toEqual([])
 
   approveAndConfirm(service)
   const result = await ensureWorkspaceReplicaConnection(service, workspaceId, profile, () => {})
   expect(remote.approve.mock.calls.map(([config]) => config)).toEqual([pendingConfig, pendingConfig])
+  expect(remote.approve.mock.calls.map(([, , , options]) => options)).toEqual([
+    expect.objectContaining({ minimumWriterVersion: 2 }), expect.objectContaining({ minimumWriterVersion: 2 }),
+  ])
   expect(result).toMatchObject({ ...pendingConfig, policyRevision: 2 })
   expect(await localDb.readLocal(key)).toBeNull()
 })

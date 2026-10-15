@@ -324,3 +324,21 @@ racing the generic five-second enabled assertion. The test now awaits the exact
 unpublish PUT response under the existing thirty-second network bound, requires
 200, then keeps its original UI and anonymous board/file 404 assertions. Chromium
 and WebKit both pass locally. No production code or UI interaction limit changed.
+
+Matrix [38817292855](https://github.com/bobishh/tincanban/actions/runs/38817292855)
+passed 28 job groups but exposed a real two-device connection conflict. Equivalent
+fresh floor-2 confirmations advanced the same Rusty policy twice; concurrent
+private preferences then correctly detected differing policy revisions. Rusty now
+confirms an unchanged explicit floor-2 policy at its current revision, after the
+same current-controller, signature and fresh-challenge checks. Genuine policy
+changes retain compare-and-set semantics. New board setup starts at floor 2;
+pending legacy setup retains its original request semantics. Clients accept the
+signed unchanged revision only for an explicit floor-2 confirmation, including
+interrupted writer migration. No private-preference conflict is silently resolved.
+
+The native regression failed before this correction and passes afterward; the
+full Rusty suite passes 86 cases. The exact desktop-to-phone scenario passes
+against the rebuilt release binary in 14.4 seconds
+(`/tmp/tincanban-rusty-mobile-client-repair`), including inherited Rusty access,
+the latest photo after closing the desktop, and phone publication authorization.
+Final hosted verification and exact production activation remain required.

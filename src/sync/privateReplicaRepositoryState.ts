@@ -68,7 +68,7 @@ function parseWriterUpgradeConfirmation(value: unknown, config: BlindReplicaConf
   const receipt = parseRustyScopePolicyReceipt(value)
   const payload = receipt.payload
   if (payload.scopeId !== config.scopeId || payload.minimumWriterVersion !== 2 || payload.revoked ||
-    payload.revision <= config.policyRevision) throw new Error("Invalid confirmed writer upgrade intent")
+    payload.revision < config.policyRevision) throw new Error("Invalid confirmed writer upgrade intent")
   return receipt
 }
 

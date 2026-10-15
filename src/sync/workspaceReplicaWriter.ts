@@ -127,7 +127,7 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
   await guard()
   await createWorkspaceAttachmentIndex(owner, intent.config, guardIdentity).read()
   await guard()
-  if (!intent.confirmed || intent.confirmed.payload.revision <= config.policyRevision) {
+  if (!intent.confirmed || intent.confirmed.payload.revision < config.policyRevision || intent.confirmed.payload.minimumWriterVersion !== 2) {
     await approveRustyScope(intent.config, profile, false, { minimumWriterVersion: 2, ensureCurrent: guard,
       confirmed: async receipt => {
         await guard()
@@ -137,7 +137,7 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
   }
   await guard()
   if (!intent.confirmed) throw new Error("Rusty writer upgrade has no durable policy confirmation")
-  const receipt = await verifyRustyWriterPolicyReceipt(intent.confirmed, intent.config, owner, config.policyRevision + 1)
+  const receipt = await verifyRustyWriterPolicyReceipt(intent.confirmed, intent.config, owner, config.policyRevision)
   await guard()
   // Reinspect after maintenance so Workers introduced during the transition cannot be silently omitted.
   for (let round = 0; round < 4; round++) {
