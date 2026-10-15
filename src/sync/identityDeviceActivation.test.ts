@@ -6,6 +6,7 @@ import { defaultStorage } from "../storage"
 import * as local from "../localDb"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { resumeIdentityDeviceActivation } from "./identityDeviceActivation"
+import { readIdentityStateRevision } from "../identityStateRevision"
 
 beforeEach(() => resetIdentityStorageForTest())
 
@@ -18,6 +19,14 @@ async function fixture() {
   const transfer = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, [owner.certificate]), owner.identity.personId)
   return { owner, root, transfer }
 }
+
+it("Given a new identity catalog reference, When its authenticated state is applied twice, Then report only its first portable content change", async () => {
+  const { transfer } = await fixture()
+  expect(await applyIdentityDeviceTransfer(transfer, () => {})).toBe(true)
+  const revision = await readIdentityStateRevision()
+  expect(await applyIdentityDeviceTransfer(transfer, () => {})).toBe(false)
+  expect(await readIdentityStateRevision()).toBe(revision)
+})
 
 it("Given one existing component is invalid, when importing a validated device bundle, then leave every component unchanged", async () => {
   const { owner, root, transfer } = await fixture()

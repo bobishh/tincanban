@@ -173,15 +173,15 @@ async function saveCrop() {
 
 <style scoped>
 .avatar-crop-dialog { width: min(520px, calc(100vw - 24px)); }
-.avatar-crop-controls { display: grid; justify-items: center; gap: 16px; }
+.avatar-crop-controls { display: grid; justify-items: center; gap: var(--space-4); }
 .avatar-crop-frame { position: relative; box-sizing: border-box; width: 256px; max-width: 76vw; aspect-ratio: 1; overflow: hidden; border: 2px solid var(--ink); border-radius: 50%; background: var(--panel); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .avatar-crop-frame:active { cursor: grabbing; }
 .avatar-crop-frame:focus-visible { outline: 3px solid var(--yellow); outline-offset: 4px; }
 .avatar-crop-image { position: absolute; max-width: none; max-height: none; user-select: none; -webkit-user-drag: none; -webkit-user-select: none; pointer-events: none; }
 .avatar-crop-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: 700 .8rem var(--site-font-sans); }
-.avatar-crop-zoom { display: grid; width: min(320px, 100%); gap: 8px; font: 700 .8rem var(--site-font-sans); }
+.avatar-crop-zoom { display: grid; width: min(320px, 100%); gap: var(--space-2); font: 700 .8rem var(--site-font-sans); }
 .avatar-crop-zoom input { width: 100%; accent-color: var(--ink); }
-.avatar-crop-dialog .dialog-actions { display: flex; justify-content: end; gap: 10px; margin-top: 22px; }
+.avatar-crop-dialog .dialog-actions { display: flex; justify-content: end; gap: var(--space-2); margin-top: var(--space-5); }
 .avatar-crop-dialog button:disabled { cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) { .avatar-crop-dialog * { scroll-behavior: auto; } }
 </style>

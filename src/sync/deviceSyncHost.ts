@@ -15,7 +15,7 @@ import { BrowserWorkspaceJoinHandoffHost, BrowserWorkspaceJoinHost } from "@meta
 import { WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff } from "../iroh"
 import type { SyncAcceptor, SyncConnection, SyncNode } from "./transport"
 import type { WorkspaceReplica } from "./workspaceSet"
-import { liveWorkspaceSetSync, workspaceSet, type LiveWorkspaceSync } from "./workspaceSet"
+import { createPeerHistoryObjectReader, liveWorkspaceSetSync, workspaceSet, type LiveWorkspaceSync } from "./workspaceSet"
 import { startPersistentNode } from "./persistentNode"
 import { userMessage } from "./deviceSyncState"
 import { showInviteQr } from "./deviceSyncInviteView"
@@ -24,6 +24,7 @@ import type { JoinDecision } from "./deviceSyncJoinApproval"
 import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from "./keeperCommitReceipt"
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
+import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
@@ -254,6 +255,8 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
   let heartbeat: (() => void) | undefined
   let personId = ""
   let verifyKeeperCommit: KeeperCommitReceiptVerifier | undefined
+  let remoteDeviceId: string | undefined
+  let remoteMeshPeers: unknown
   const timeout = setTimeout(() => { void connection.close() }, 600_000)
   runtime.connections.add(connection)
   try {
@@ -271,19 +274,29 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
       request: payload => {
         const guest = readWorkspaceRequest(runtime, payload)
         personId = guest.personId
+        remoteMeshPeers = guest.meshPeers
         return guest
       },
-      approve: guest => approveWorkspaceAccess(runtime, guest),
+      approve: async guest => {
+        const approval = await approveWorkspaceAccess(runtime, guest)
+        if (approval.ok) remoteDeviceId = approval.value.deviceId
+        return approval
+      },
       prepare: result => prepareWorkspaceAccess(runtime, result, runtime.keeperAdmission ? async snapshot => {
         verifyKeeperCommit = await keeperCommitReceiptVerifier(runtime.keeperAdmission!.workspaceIds, snapshot)
       } : undefined),
-      beforeAckFrame: (frame, stream) => runtime.replica.serveProofPage(frame, stream, runtime.invite.secret),
+      beforeAckFrame: (frame, stream) => serveJoinAuxiliaryFrame(runtime, frame, stream,
+        personId, remoteDeviceId, remoteMeshPeers),
       acknowledged: async payload => {
         if (runtime.keeperAdmission) {
           if (!verifyKeeperCommit) throw new Error("Keeper commit receipt was not negotiated")
           verifyKeeperCommit(payload)
         } else {
-          await runtime.replica.receive(await runtime.replica.resolveProofs(payload, connection, runtime.invite.secret))
+          const guard = () => {
+            if (runtime.run !== runtime.context.currentRun() || runtime.stopped()) throw new Error("Invitation superseded")
+          }
+          await runtime.replica.receive(await runtime.replica.resolveProofs(payload, connection, runtime.invite.secret), true,
+            remoteDeviceId ? createPeerHistoryObjectReader(connection, guard) : undefined)
         }
       },
     })
@@ -291,7 +304,7 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
     admitted = true
     personId = result.value.personId
     clearTimeout(timeout)
-    session = await startPeerSession(runtime, connection, personId)
+    session = await startPeerSession(runtime, connection, personId, remoteDeviceId, remoteMeshPeers)
     heartbeat = startMeshHeartbeat(session, () => { void session?.close() })
     connected()
     await runtime.group.publish()
@@ -331,10 +344,13 @@ async function approveWorkspaceAccess(runtime: HostRuntime, guest: WorkspaceGues
   if (guest.personId === runtime.profile.identity.personId) {
     return { ok: false as const, error: "This invite is for another person, but this browser uses the owner's identity. Use a separate identity to join as an editor." }
   }
-  try { await runtime.context.durableMesh?.checkGuestDevices(runtime.workspaces.map(item => item.id), guest.personId, guest.meshPeers) }
+  let deviceId: string | undefined
+  if (!runtime.context.durableMesh) return { ok: false as const, error: "Couldn’t verify guest device." }
+  try { deviceId = await runtime.context.durableMesh.checkGuestDevices(runtime.workspaces.map(item => item.id), guest.personId, guest.meshPeers) }
   catch (error) { return { ok: false as const, error: userMessage(error, "Couldn’t verify guest device.") } }
+  if (!deviceId) return { ok: false as const, error: "Couldn’t verify guest device." }
   const existing = runtime.grants.get(guest.personId)
-  if (existing) return { ok: true as const, value: { personId: guest.personId, grants: existing.grants,
+  if (existing) return { ok: true as const, value: { personId: guest.personId, deviceId, grants: existing.grants,
     ownerConnection: existing.ownerConnection } }
   if (Date.parse(runtime.invite.expiresAt) <= Date.now()) {
     return { ok: false as const, error: "This invitation has expired." }
@@ -349,7 +365,7 @@ async function approveWorkspaceAccess(runtime: HostRuntime, guest: WorkspaceGues
   const ownerConnection = decision.followOwner
     ? { controllerPersonId: runtime.profile.identity.personId } satisfies OwnerConnection : undefined
   const grants = await issueWorkspaceGrants(runtime, guest.personId, decision.role)
-  return acceptApprovedGuest(runtime, guest, grants, decision.role, ownerConnection)
+  return acceptApprovedGuest(runtime, guest, grants, decision.role, ownerConnection, deviceId)
 }
 
 async function decideWorkspaceJoin(runtime: HostRuntime, guest: WorkspaceGuest): Promise<JoinDecision | null> {
@@ -385,7 +401,7 @@ async function issueWorkspaceGrants(runtime: HostRuntime, personId: string, role
 }
 
 async function acceptApprovedGuest(runtime: HostRuntime, guest: { personId: string; meshPeers?: unknown },
-  grants: WorkspaceGrant[], role: JoinDecision["role"], ownerConnection?: OwnerConnection) {
+  grants: WorkspaceGrant[], role: JoinDecision["role"], ownerConnection?: OwnerConnection, deviceId?: string) {
   try { await runtime.context.durableMesh?.acceptGuest(runtime.workspaces.map(item => item.id), guest.meshPeers, grants) }
   catch (error) {
     if (error instanceof Error && /Device access revoked/i.test(error.message)) return { ok: false as const, error: error.message }
@@ -395,7 +411,7 @@ async function acceptApprovedGuest(runtime: HostRuntime, guest: { personId: stri
     await runtime.context.durableMesh?.connectOwnerKeeper(guest.personId, role)
   }
   runtime.grants.set(guest.personId, { ok: true, grants, ownerConnection })
-  return { ok: true as const, value: { personId: guest.personId, grants, ownerConnection } }
+  return { ok: true as const, value: { personId: guest.personId, deviceId, grants, ownerConnection } }
 }
 
 function matchesKeeperAdmission(runtime: HostRuntime, personId: string) {
@@ -421,10 +437,42 @@ async function prepareWorkspaceAccess(runtime: HostRuntime, approval: {
   }))
 }
 
-async function startPeerSession(runtime: HostRuntime, connection: SyncConnection, personId: string) {
+async function serveJoinAuxiliaryFrame(runtime: HostRuntime, frame: Uint8Array,
+  stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>, personId: string,
+  remoteDeviceId: string | undefined, advertisements: unknown): Promise<boolean> {
+  const guard = async () => {
+    if (!remoteDeviceId || advertisements === undefined || !runtime.context.durableMesh) {
+      throw new Error("Verified guest device is required for history transfer")
+    }
+    await hostPeerHistoryGuard(runtime, personId, remoteDeviceId, advertisements)()
+  }
+  if (await runtime.replica.servePeerHistoryBaselineRead(frame, stream, remoteDeviceId, guard)) return true
+  if (await runtime.replica.servePeerHistoryDocumentRead(frame, stream, remoteDeviceId, guard)) return true
+  if (await runtime.replica.servePeerHistoryObjectRead(frame, stream, remoteDeviceId, guard)) return true
+  return runtime.replica.serveProofPage(frame, stream, runtime.invite.secret, guard)
+}
+
+function hostPeerHistoryGuard(runtime: HostRuntime, personId: string, remoteDeviceId: string, remoteMeshPeers: unknown) {
+  return createPeerHistoryAuthorizationGuard({ workspaceIds: runtime.workspaces.map(workspace => workspace.id),
+    personId, deviceId: remoteDeviceId, advertisements: remoteMeshPeers,
+    isSessionCurrent: () => runtime.run === runtime.context.currentRun() && !runtime.stopped(),
+    checkGuestDevices: (workspaces, person, advertisements) => {
+      const grants = runtime.grants.get(person)?.grants
+      if (!grants) throw new Error("Workspace access authorization is no longer current")
+      return runtime.context.durableMesh!.checkGuestDevices(workspaces, person, advertisements, grants)
+    },
+  })
+}
+
+async function startPeerSession(runtime: HostRuntime, connection: SyncConnection, personId: string, remoteDeviceId?: string,
+  remoteMeshPeers?: unknown) {
   if (runtime.run !== runtime.context.currentRun() || runtime.stopped()) throw new Error("Invitation superseded")
+  if (!remoteDeviceId || remoteMeshPeers === undefined || !runtime.context.durableMesh) throw new Error("Verified guest device is required")
   const handoff = new BrowserWorkspaceJoinHandoffHost(new WasmWorkspaceJoinHandoff(runtime.invite.secret, "host"))
+  const ensureCurrent = hostPeerHistoryGuard(runtime, personId, remoteDeviceId, remoteMeshPeers)
   const session = liveWorkspaceSetSync(connection, runtime.invite.secret, runtime.replica, {
+    remoteDeviceId,
+    ensureCurrent,
     onHandoffRequest: async (stream, requestFrame, acceptConfirmation) => {
       await handoff.run(stream, requestFrame, { ...connection, acceptStream: acceptConfirmation })
       await runtime.handoff()

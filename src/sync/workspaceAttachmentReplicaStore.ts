@@ -13,6 +13,8 @@ import { WorkspaceAttachmentReplication } from "./workspaceAttachmentReplication
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import { getPrivateReplicaProgress } from "./privateReplicaRepository"
+import { parseReplicaContentKeys } from "./replicaContentKeys"
+import { selectWorkspaceAttachmentTransfer, type WorkspaceAttachmentTransfer } from "./workspaceAttachmentTransfers"
 
 type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
 
@@ -32,12 +34,20 @@ export function createWorkspaceAttachmentReplication(app: AttachmentApp, configI
     guardIdentity()
   }
   const index = createWorkspaceAttachmentIndex(owner, config, guardIdentity)
-  const repository = async (descriptor: BlobDescriptor) => {
-    const storageId = await blindHash(new TextEncoder().encode(canonicalBlindJson(["upload", attachmentIndexBinding(owner, config), descriptor])))
+  const repository = async (descriptor: BlobDescriptor, context = config) => {
+    const storageId = await blindHash(new TextEncoder().encode(canonicalBlindJson(["upload", attachmentIndexBinding(owner, context), descriptor])))
     guardIdentity()
     return createAttachmentRepository(storageId, guardIdentity)
   }
-  const scope = { workspaceId: config.workspaceId, scopeId: config.scopeId, keyEpoch: config.keyEpoch, contentKey: config.contentKey }
+  const scope = { workspaceId: config.workspaceId, scopeId: config.scopeId, ...parseReplicaContentKeys(config) }
+  const transfers = new Map<string, WorkspaceAttachmentTransfer>()
+  const descriptorKey = (descriptor: BlobDescriptor) => canonicalBlindJson(descriptor)
+  const selectTransfer = async (descriptor: BlobDescriptor) => {
+    const selected = await selectWorkspaceAttachmentTransfer(config, Math.ceil(descriptor.size / BLOB_CHUNK_BYTES),
+      context => repository(descriptor, context), current)
+    transfers.set(descriptorKey(descriptor), selected)
+    return selected
+  }
   let coverageSupport: Promise<boolean> | undefined
   return new WorkspaceAttachmentReplication(config.workspaceId, {
     current,
@@ -45,13 +55,15 @@ export function createWorkspaceAttachmentReplication(app: AttachmentApp, configI
     locators: () => index.read(),
     guard: (descriptor, mode) => createAttachmentAccessGuard(app, config, descriptor, mode, guardIdentity),
     prepared: async descriptor => {
-      const stored = await repository(descriptor)
-      if (await stored.read()) return true
-      const pending = await stored.preparation!.read()
-      return pending?.chunks.length === Math.ceil(descriptor.size / BLOB_CHUNK_BYTES)
+      return (await selectTransfer(descriptor)).prepared
     },
     local: readStoredAttachmentStream,
-    upload: async (descriptor, source, guard) => new AttachmentTransfer(scope, config, await repository(descriptor), guard).uploadStream(descriptor, source),
+    upload: async (descriptor, source, guard) => {
+      await current()
+      const selected = transfers.get(descriptorKey(descriptor)) ?? await selectTransfer(descriptor)
+      const context = { workspaceId: config.workspaceId, scopeId: config.scopeId, ...parseReplicaContentKeys(selected.config) }
+      return new AttachmentTransfer(context, config, selected.repository, guard).uploadStream(descriptor, source)
+    },
     confirm: async (descriptor, locator, guard) => { await confirmRustyAttachmentCoverage(scope, config, descriptor, locator, guard) },
     publish: async locator => { await current(); await index.merge([locator]); await current() },
     flush,

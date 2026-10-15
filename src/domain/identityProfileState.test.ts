@@ -90,6 +90,24 @@ it("Given incompatible legacy names, when merging in either order, then preserve
   expect(identityProfileValue(resolved, "name")).toEqual({ status: "value", values: ["Chosen"] })
 })
 
+it("Given concurrent signed profile values, when canonicalizing on a runtime with different locale collation, then produce the same ordinal order", async () => {
+  const f = await fixture(), second = await secondContext(f.profile)
+  const a = await createIdentityProfileOperation(f.context, f.state, f.identity, "name", "Zeta")
+  const b = await createIdentityProfileOperation(second, f.state, f.identity, "name", "Alpha")
+  const original = Object.getOwnPropertyDescriptor(String.prototype, "localeCompare")!
+  Object.defineProperty(String.prototype, "localeCompare", { configurable: true, value() {
+    throw new Error("Locale-dependent sorting is forbidden for portable profile state")
+  } })
+  try {
+    const merged = await mergeIdentityProfileState({ ...f.state, operations: [a] }, { ...f.state, operations: [b] }, f.identity)
+    expect(merged.operations.map(operation => operation.signed.payload.deviceId)).toEqual(
+      [...merged.operations.map(operation => operation.signed.payload.deviceId)].sort((left, right) => left < right ? -1 : left > right ? 1 : 0))
+    expect(identityProfileValue(merged, "name").values).toEqual(["Alpha", "Zeta"])
+  } finally {
+    Object.defineProperty(String.prototype, "localeCompare", original)
+  }
+})
+
 it("Given a signed name update, when the next update observes it, then retain original signed evidence and select only the causal successor", async () => {
   const f = await fixture()
   const first = await createIdentityProfileOperation(f.context, f.state, f.identity, "name", "First")

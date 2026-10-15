@@ -9,6 +9,10 @@ import "./styles/design-system/chrome.css"
 import "./styles/design-system/icons.css"
 import "../public/assets/primitive.css"
 import "./style.css"
+import { beginReleaseMonitor } from "./release/runtimeRelease"
+
+const stopReleaseMonitor = beginReleaseMonitor()
+window.addEventListener("pagehide", event => { if (!event.persisted) stopReleaseMonitor() })
 
 const publicBoardRoute = /^\/boards(?:\/|$)/u.test(window.location.pathname)
 const publicBoardId = window.location.pathname.match(/^\/boards\/([^/]+)\/?$/u)?.[1] ?? ""

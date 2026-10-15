@@ -18,6 +18,7 @@ import { useAppMesh } from "./useAppMesh"
 import { configureAttachmentFetcher, readStoredAttachment, writeStoredAttachment } from "../attachments"
 import { workspaceBlobDescriptor, workspaceChatRoomId } from "./workspaceMetadata"
 import { useIdentityProfileRecovery } from "./useIdentityProfileRecovery"
+import { createLazyWorkspacePeerHistorySource } from "../sync/workspacePeerHistorySourceLoader"
 
 type ArchiveUndo = { workspaceId: string; itemId: string; title: string }
 
@@ -89,6 +90,7 @@ function useAppDrafts() {
 }
 
 function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>) {
+  const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile() })
   configureChat(
     async id => (await tincanban.readWorkspaceDoc(id)).ownerPersonId,
     async id => workspaceChatRoomId(await tincanban.readWorkspaceDoc(id)),
@@ -109,15 +111,38 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
       read: id => timedWorkspaceStoreStage("read", id, () => tincanban.readWorkspaceBytes(id)),
       readAuthorityHeads: id => timedWorkspaceStoreStage("authority-heads", id, () => tincanban.readWorkspaceHeads(id)),
       reclassify: id => timedWorkspaceStoreStage("reclassify", id, () => tincanban.reclassifyWorkspace(id)),
-      validate: (id, bytes, authorization) => timedWorkspaceStoreStage("validate", id, async () => {
-        await tincanban.validateAuthorizedWorkspace(id, bytes, authorization)
+      validate: (id, bytes, authorization, receivedBasis) => timedWorkspaceStoreStage("validate", id, async () => {
+        await tincanban.validateAuthorizedWorkspace(id, bytes, authorization, undefined, receivedBasis)
       }),
-      merge: (id, bytes, authorization) => timedWorkspaceStoreStage("merge", id, () =>
-        tincanban.mergeAuthorizedWorkspace(id, bytes, authorization)),
+      merge: (id, bytes, authorization, receivedBasis) => timedWorkspaceStoreStage("merge", id, () =>
+        tincanban.mergeAuthorizedWorkspace(id, bytes, authorization, undefined, receivedBasis)),
+      receiveHistoryBaseline: async (id, workspaceBytes, authorization, descriptor, reader, baselineDocument) => {
+        const profile = tincanban.getCurrentProfile()
+        if (!profile) throw new Error("Identity unavailable during peer history receive")
+        return (await import("../sync/browserPeerHistoryBaselineReceive")).receivePeerBrowserHistoryBaseline({
+          workspaceId: id, workspaceBytes, authorization, descriptor, baselineDocument, reader, tincanban,
+          ensureCurrent: () => {
+            if (tincanban.getCurrentProfile()?.identity.personId !== profile.identity.personId ||
+                tincanban.getCurrentProfile()?.device.deviceId !== profile.device.deviceId) throw new Error("Identity changed during peer history receive")
+          },
+        })
+      },
+      activateHistoryBaseline: async (id, candidate) => {
+        const profile = tincanban.getCurrentProfile()
+        if (!profile) throw new Error("Identity unavailable during peer history activation")
+        return (await import("../sync/browserPeerHistoryBaselineReceive")).activatePeerBrowserHistoryBaseline({
+          workspaceId: id, candidate, tincanban,
+          ensureCurrent: () => {
+            if (tincanban.getCurrentProfile()?.identity.personId !== profile.identity.personId ||
+                tincanban.getCurrentProfile()?.device.deviceId !== profile.device.deviceId) throw new Error("Identity changed during peer history activation")
+          },
+        })
+      },
       recordVerifiedOwnerWorkspace: id => tincanban.recordVerifiedOwnerWorkspace(id),
       readAuthorization: (bytes, id) => timedWorkspaceStoreStage("read-authorization", id ?? "unknown", () =>
         // The exchanged bytes include quarantined history; export proofs for that raw evidence.
         exportAuthorizationBundle(bytes)),
+      ...peerHistorySource,
       activate: tincanban.switchWorkspace,
       readChat: exportChat,
       mergeChat: receiveChat,

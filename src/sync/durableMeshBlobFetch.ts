@@ -1,6 +1,8 @@
 import { requestBlob, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
 import type { LocalProfile } from "../domain/identity"
 import type { SessionEntry } from "./durableMeshBase"
+import { blobRequestSigning } from "./blobRequestSigning"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 
 type BlobCache = {
   read(descriptor: BlobDescriptor): Promise<Uint8Array | undefined>
@@ -52,20 +54,29 @@ export async function fetchBlobFromCurrentSessions(input: {
     }
 
     let replaced = false
+    let retryNetwork = false
     for (const entry of sessions) {
       if (!input.isCurrent(entry, runId)) { replaced = true; continue }
       const controller = new AbortController()
       const stopMonitor = monitorBlobAttempt(input, entry, runId, originalAuthority, controller)
       try {
+        const ensureCurrent = async () => {
+          if (controller.signal.aborted) throw controller.signal.reason
+          if (Date.now() >= deadline) throw new Error("Blob transfer deadline exceeded")
+          assertRuntime(input, runId)
+          await readUnchangedAuthority(input, originalAuthority)
+          if (!input.isCurrent(entry, runId)) throw new BlobFetchSessionReplaced()
+        }
+        const signing = await blobRequestSigning(before.profile, input.workspaceId, descriptor.blobId, async () => {
+          await ensureCurrent()
+          return JSON.stringify([originalAuthority.identity, originalAuthority.credential, runId, entry.connectionId])
+        })
         const bytes = await requestBlob(entry.connection, before.transportSecret, before.profile,
           input.workspaceId, descriptor, {
+            signing,
             signal: controller.signal,
             deadlineAt: deadline,
-            ensureCurrent: async () => {
-              assertRuntime(input, runId)
-              await readUnchangedAuthority(input, originalAuthority)
-              if (!input.isCurrent(entry, runId)) throw new BlobFetchSessionReplaced()
-            },
+            ensureCurrent,
           } satisfies RequestBlobOptions)
         assertRuntime(input, runId)
         await readUnchangedAuthority(input, originalAuthority)
@@ -84,11 +95,17 @@ export async function fetchBlobFromCurrentSessions(input: {
         await readUnchangedAuthority(input, originalAuthority)
         lastError = error
         if (!input.isCurrent(entry, runId)) replaced = true
+        if (error instanceof MeshNetworkError) retryNetwork = true
       } finally {
         stopMonitor()
       }
     }
     if (replaced) continue
+    if (retryNetwork) {
+      // Stream failure can precede the session receive loop's eviction callback.
+      await waitForNextSession()
+      continue
+    }
     break
   }
 

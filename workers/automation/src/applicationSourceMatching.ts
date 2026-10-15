@@ -7,6 +7,10 @@ export type SourceBackedApplicationCandidate = ApplicationCandidate & { sources:
 export function correlateApplicationSources(mail: ForwardedMail,
   candidates: SourceBackedApplicationCandidate[]): CorrelationResult {
   const prepared = candidates.map(candidate => prepareCandidate(candidate));
+  const threadResult = correlateApplication(mail, prepared.map(candidate => ({ cardId: candidate.cardId, messageIds: candidate.messageIds })));
+  if (threadResult.kind === "matched" && threadResult.method === "thread") return threadResult;
+  if (threadResult.kind === "review" && threadResult.reason === "Message thread references multiple applications") return threadResult;
+
   const urls = prepared.flatMap(value => value.originals.map(source => ({
     cardId: value.cardId,
     ...(source.observation.jobUrl ? { jobUrl: source.observation.jobUrl } : {}),
@@ -20,6 +24,11 @@ export function correlateApplicationSources(mail: ForwardedMail,
   if (urlResult.kind === "review" && urlResult.reason === "Job URL matches multiple applications") {
     return urlResult;
   }
+
+  const context = `${mail.subject}\n${mail.text}`.normalize("NFKC").toLocaleLowerCase();
+  const atsMatches = prepared.filter(value => value.atsIds.some(id => containsExactToken(context, id)));
+  if (atsMatches.length === 1) return { kind: "matched", cardId: atsMatches[0]!.cardId, method: "ats-id" };
+  if (atsMatches.length > 1) return review("ATS identifier matches multiple applications", atsMatches.map(value => value.cardId));
 
   if (prepared.some(value => value.unknownEvidence || value.availableOriginals.length === 0)) {
     return review("Original posting evidence is missing or unavailable; choose an application", prepared.map(value => value.cardId));
@@ -40,6 +49,8 @@ export function correlateApplicationSources(mail: ForwardedMail,
 
 type PreparedCandidate = {
   cardId: string;
+  messageIds: string[];
+  atsIds: string[];
   originals: ApplicationSourceData[];
   availableOriginals: ApplicationSourceData[];
   conflictingOriginals: boolean;
@@ -60,8 +71,18 @@ function prepareCandidate(candidate: SourceBackedApplicationCandidate): Prepared
   }
   const originals = [...new Map(parsed.map(source => [semanticOriginalKey(source), source])).values()];
   const availableOriginals = originals.filter(source => source.observation.status === "available");
-  return { cardId: candidate.cardId, originals, availableOriginals,
+  const originalReferences = parsed.filter(source => source.observation.phase === "original");
+  const messageIds = [...new Set(originalReferences.flatMap(source => source.messageIds ?? []))];
+  const atsIds = [...new Set(originalReferences.flatMap(source => source.atsId ? [source.atsId] : []))];
+  return { cardId: candidate.cardId, messageIds, atsIds, originals, availableOriginals,
     conflictingOriginals: originals.length > 1, unknownEvidence };
+}
+
+function containsExactToken(context: string, value: string): boolean {
+  const token = value.normalize("NFKC").toLocaleLowerCase().trim();
+  if (token.length < 3) return false;
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "u").test(context);
 }
 
 function semanticOriginalKey(source: ApplicationSourceData): string {

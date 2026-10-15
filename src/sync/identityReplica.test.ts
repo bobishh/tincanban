@@ -6,8 +6,8 @@ import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
 import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { createIdentityReplicaRecord, type readIdentityReplicaRecord } from "./identityReplicaProtocol"
-import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
-import { blindHash, blindObjectId, type BlindReceipt } from "./blindClient"
+import { encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from "./blindEnvelope"
+import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"
 import { IdentityReplica } from "./identityReplica"
 import type { IdentityReplicaConfig } from "./blindReplication"
 
@@ -67,6 +67,51 @@ it("Given Rusty retained an encrypted identity package, when its source closes, 
   expect(receiver.progress().cursor).toBe(1)
   expect(JSON.stringify(f.objects)).not.toContain("avatarData")
 })
+
+it("Given a cold identity replica retains the epoch-one key, when it reads the epoch-one signed package under active epoch two, then admit without source capture", async () => {
+  const f = await fixture()
+  const sender = f.store("sender")
+  await new IdentityReplica(f.config, "sender", sender, f.transport).push()
+  sender.capture.mockRejectedValue(new Error("source closed"))
+  const receiver = f.store("receiver")
+  const activeConfig = { ...f.config, keyEpoch: 2, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
+    historicalContentKeys: { "1": f.config.contentKey } } as IdentityReplicaConfig
+
+  expect(await new IdentityReplica(activeConfig, "receiver", receiver, f.transport).pull()).toBe(true)
+  expect(receiver.merge).toHaveBeenCalledOnce()
+  expect(receiver.capture).not.toHaveBeenCalled()
+  expect(receiver.progress().cursor).toBe(1)
+  expect(sender.capture).toHaveBeenCalledTimes(1)
+})
+
+it.each(["missing-history", "future-epoch", "wrong-history-key"] as const)(
+  "Given an identity reader has %s, when the old or unknown-epoch package arrives, then reject before merge or cursor acknowledgement", async scenario => {
+    const f = await fixture()
+    const sender = f.store("sender")
+    await new IdentityReplica(f.config, "sender", sender, f.transport).push()
+    const receiver = f.store("receiver")
+    const activeConfig = { ...f.config, keyEpoch: 2, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
+      ...(scenario === "missing-history" ? {} : { historicalContentKeys: {
+        "1": encodeBlindBytes(scenario === "wrong-history-key" ? crypto.getRandomValues(new Uint8Array(32))
+          : new Uint8Array(32).fill(1)),
+      } }) } as IdentityReplicaConfig
+    if (scenario === "future-epoch") {
+      const futureKey = crypto.getRandomValues(new Uint8Array(32))
+      const futureObject = await encryptPurposeBoundObject({ purpose: "identity-state", subjectId: f.config.personId,
+        scopeId: f.config.scopeId, keyEpoch: 3 }, futureKey, new TextEncoder().encode(canonicalBlindJson(f.record)))
+      const id = await blindObjectId(futureObject)
+      f.objects.splice(0, f.objects.length, { objectId: id, sequence: 1, object: futureObject })
+    }
+    const replica = new IdentityReplica(activeConfig, "receiver", receiver, f.transport)
+
+    const outcome = replica.pull()
+    if (scenario === "wrong-history-key") await expect(outcome).rejects.toThrow()
+    else await expect(outcome).rejects.toThrow(/update required/i)
+    expect(receiver.merge).not.toHaveBeenCalled()
+    expect(receiver.capture).not.toHaveBeenCalled()
+    expect(receiver.progress().cursor).toBe(0)
+  }
+)
 
 it("Given an upload reply is lost, when the replica reopens, then retry exact persisted ciphertext before reading current content", async () => {
   const f = await fixture()

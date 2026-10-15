@@ -21,6 +21,49 @@ beforeAll(async () => {
 })
 
 describe("Confirmed ownership delivery", () => {
+  it.each(["pairing", "durable"])("reads an exact history object through the authenticated %s peer session", async mode => {
+    const payload = new Uint8Array([7, 8, 9])
+    const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
+    const response = new Uint8Array([...magic, 0, ...payload])
+    const send = vi.fn()
+    const connection = {
+      openStream: async () => ({ send, closeSend: vi.fn(), read: async () => response, reset: vi.fn() }),
+      acceptStream: async () => new Promise<never>(() => {}), close: vi.fn(),
+    } as unknown as SyncConnection
+    const store = { read: vi.fn(), merge: vi.fn(), activate: vi.fn() }
+    const session = mode === "pairing" ? liveWorkspaceSetSync(connection, "secret", workspaceSet(store, ["workspace"]))
+      : liveAutomergeWorkspaceSync(connection, "secret", store, "workspace", "local", "remote")
+    const binding = { workspaceId: "workspace", historyEpoch: 3, indexId: "catalogue", objectKind: "page" as const,
+      partIndex: 0, partCount: 1 }
+
+    await expect(session.readHistoryObject!("A".repeat(43), "B".repeat(43), binding)).resolves.toEqual(payload)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(new TextDecoder().decode(send.mock.calls[0]![0])).toContain('"baselineId":"' + "A".repeat(43) + '"')
+    await session.close()
+  })
+
+  it("Given a durable document session receives a plain archive RPC, when the peer remains authorized, then route it before pairing-frame classification", async () => {
+    const magic = "tincanban-peer-history-v1\n", bytes = new Uint8Array([3, 4, 5])
+    const binding = { workspaceId: "workspace", historyEpoch: 1, indexId: "catalogue", objectKind: "page",
+      partIndex: 0, partCount: 1 }
+    const frame = new TextEncoder().encode(magic + JSON.stringify({ version: 1, kind: "workspace-history-object-read",
+      baselineId: "A".repeat(43), objectId: "B".repeat(43), binding }))
+    const send = vi.fn(), stream = { read: async () => frame, send, closeSend: vi.fn() }
+    let accepted = false
+    const connection = { openStream: vi.fn(), close: vi.fn(), acceptStream: async () => {
+      if (!accepted) { accepted = true; return stream }
+      return new Promise<never>(() => {})
+    } }
+    const read = vi.fn(async () => bytes)
+    const session = liveAutomergeWorkspaceSync(connection, "secret", { read: vi.fn(), merge: vi.fn(), activate: vi.fn(),
+      readHistoryArchiveObject: read }, "workspace", "local", "remote")
+    try {
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce())
+      expect(send.mock.calls[0]![0]).toEqual(new Uint8Array([...new TextEncoder().encode(magic), 0, ...bytes]))
+      expect(read).toHaveBeenCalledWith("workspace", "A".repeat(43), "B".repeat(43), binding, "remote")
+    } finally { await session.close() }
+  })
+
   it("waits for a matching receipt instead of treating a sent frame as a durable save", async () => {
     const bytes = new Uint8Array([1, 2, 3])
     let acknowledge!: (bytes: Uint8Array) => void
@@ -695,5 +738,48 @@ describe("paged initial snapshot transport", () => {
     expect(inspectPairingFrame(stream.send.mock.calls[0]![0]).type).toBe("mesh-durable-ack")
     await session.close()
     await clearProofPages(f.id)
+  }, 20_000)
+
+  it("does not send an authorization page when device access is revoked during its source read", async () => {
+    const doc = Automerge.from({ id: crypto.randomUUID(), title: "Guarded pages" })
+    const document = Automerge.save(doc)
+    const hash = Automerge.decodeChange(Automerge.getLastLocalChange(doc)!).hash
+    const authorization = { version: 1, authority: { genesisOwner: { personId: "fixture-owner" } },
+      records: Array.from({ length: 20_001 }, (_, index) => ({ signed: { signature: `signature-${String(index).padStart(6, "0")}`,
+        payload: { hashes: [hash] } } })) }
+    let authorizePage!: () => void
+    let releasePage!: () => void
+    const pageReadStarted = new Promise<void>(resolve => { authorizePage = resolve })
+    const pageReadGate = new Promise<void>(resolve => { releasePage = resolve })
+    const readAuthorization = vi.fn(async () => {
+      if (readAuthorization.mock.calls.length >= 2) {
+        authorizePage()
+        await pageReadGate
+      }
+      return authorization
+    })
+    const source = workspaceSet({ read: async () => document, readAuthorization,
+      merge: vi.fn(), activate: vi.fn() }, [doc.id])
+    const target = workspaceSet({ read: async () => { throw new Error("Absent snapshot") }, merge: vi.fn(), activate: vi.fn() }, [doc.id])
+    let authorityCurrent = true
+    const responses: Uint8Array[] = []
+    const connection = { openStream: async () => {
+      let request!: Uint8Array
+      return { send: async (frame: Uint8Array) => { request = frame }, closeSend: async () => {},
+        read: async () => {
+          let reply!: Uint8Array
+          await source.serveProofPage(request, { read: vi.fn(), send: async frame => { reply = frame; responses.push(frame) }, closeSend: async () => {} },
+            "secret", () => { if (!authorityCurrent) throw new Error("Device access revoked") })
+          return reply
+        } }
+    }, acceptStream: vi.fn(), close: vi.fn() } as SyncConnection
+    const snapshot = await source.snapshot()
+    const resolving = target.resolveProofs(snapshot, connection, "secret")
+    await pageReadStarted
+    authorityCurrent = false
+    releasePage()
+
+    await expect(resolving).rejects.toThrow("Device access revoked")
+    expect(responses).toHaveLength(0)
   }, 20_000)
 })

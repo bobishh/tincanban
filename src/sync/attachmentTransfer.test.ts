@@ -3,6 +3,8 @@ import { AttachmentTransfer } from "./attachmentTransfer"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
 import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
 import { fixture, repository } from "./attachmentTransfer.testSupport"
+import { selectWorkspaceAttachmentTransfer } from "./workspaceAttachmentTransfers"
+import type { BlindReplicaConfig } from "./blindReplication"
 
 it("Given lost upload confirmation, when durable transfer restarts, then retry identical ciphertext/request and recover a multi-chunk file without its source", async () => {
   const f = await fixture()
@@ -119,6 +121,39 @@ it("Given a partially confirmed upload, when policy and tokens change, then reta
   expect(sender.state()!.objects).toEqual(prepared.objects)
   expect(sender.state()!.receipts[prepared.objects[0]!.objectId]).toEqual(prepared.receipts[prepared.objects[0]!.objectId])
   expect(Object.keys(sender.state()!.receipts)).toHaveLength(prepared.objects.length)
+})
+
+it("Given key rotation after a lost chunk reply, When the background adapter resumes without source, Then retain original ciphertext, requests and historical receipts under current access", async () => {
+  const f = await fixture(), old = repository(), active = repository()
+  let calls = 0
+  const upload = vi.fn(async (access: BlindAccess, object: BlindObject, requestId: string) => {
+    const receipt = await f.upload(access, object, requestId)
+    if (++calls === 2) throw new Error("Confirmation lost before rotation")
+    return receipt
+  })
+  await expect(new AttachmentTransfer(f.scope, f.access, old.port, async () => {}, { upload, download: f.download })
+    .upload(f.descriptor, f.bytes)).rejects.toThrow("Confirmation lost before rotation")
+  const saved = structuredClone(old.state()!), ciphertext = structuredClone([...old.objects])
+  const pending = upload.mock.calls[1]!
+  const rotated: BlindReplicaConfig = { ...f.access, purpose: "workspace", workspaceId: f.scope.workspaceId,
+    keyEpoch: f.scope.keyEpoch + 1, contentKey: encodeBlindBytes(new Uint8Array(32).fill(91)),
+    historicalContentKeys: { [String(f.scope.keyEpoch)]: f.scope.contentKey },
+    readToken: encodeBlindBytes(new Uint8Array(32).fill(92)), writeToken: encodeBlindBytes(new Uint8Array(32).fill(93)),
+    policyRevision: f.access.policyRevision + 1, cursor: 0, lastUploaded: "" }
+  const selected = await selectWorkspaceAttachmentTransfer(rotated, 2,
+    async candidate => candidate.keyEpoch === f.scope.keyEpoch ? old.port : active.port, async () => {})
+  // Test transport signs new replies under the currently installed server policy.
+  Object.assign(f.access, { ...rotated })
+  const locator = await new AttachmentTransfer({ workspaceId: rotated.workspaceId, scopeId: rotated.scopeId,
+    keyEpoch: selected.config.keyEpoch, contentKey: selected.config.contentKey }, rotated,
+  selected.repository, async () => {}, { upload, download: f.download }).upload(f.descriptor)
+  expect(selected.prepared).toBe(true)
+  expect(locator).toEqual(saved.locator)
+  expect(upload.mock.calls[2]!.slice(1)).toEqual(pending.slice(1))
+  expect(upload.mock.calls[2]![0]).toMatchObject({ readToken: rotated.readToken, writeToken: rotated.writeToken })
+  expect([...old.objects]).toEqual(ciphertext)
+  expect(old.state()!.receipts[saved.objects[0]!.objectId]).toEqual(saved.receipts[saved.objects[0]!.objectId])
+  expect(active.state()).toBeNull()
 })
 
 it("Given an older valid receipt, when it arrives as a new reply under current policy, then reject it instead of treating it as stored historical confirmation", async () => {

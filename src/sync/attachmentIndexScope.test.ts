@@ -64,6 +64,28 @@ it("Given a legacy writer adds another locator after migration, then preserve an
   expect(await current.read()).toHaveLength(2)
 })
 
+it("Given retained old encryption keys after rotation, when opening discovery, then union old epoch indices without modifying their original records", async () => {
+  const f = await fixture()
+  await f.createWorkspaceAttachmentIndex(f.owner, f.config, () => {}).read()
+  const changed: BlindReplicaConfig = { ...f.config, keyEpoch: 2, contentKey: `${"C".repeat(42)}A`,
+    historicalContentKeys: { "1": f.config.contentKey }, policyRevision: 2, preferenceRevision: "device:2" }
+  const rotated = f.createWorkspaceAttachmentIndex(f.owner, changed, () => {})
+  expect(await rotated.read()).toEqual([f.locator])
+  const later: AttachmentLocator = { ...f.locator, transferId: "old-epoch-later", manifestId: "D".repeat(43) }
+  await f.createWorkspaceAttachmentIndex(f.owner, f.config, () => {}).merge([later])
+  expect(await rotated.read()).toEqual(expect.arrayContaining([f.locator, later]))
+  expect(await f.local.readLocal(f.sourceKey)).toBe(f.sourceRaw)
+})
+
+it("Given a retained key for a different scope or workspace, when opening rotated discovery, then do not inherit its index", async () => {
+  const f = await fixture()
+  await f.createWorkspaceAttachmentIndex(f.owner, f.config, () => {}).read()
+  for (const changes of [{ scopeId: "different-scope" }, { workspaceId: "different-board" }]) {
+    const changed = { ...f.config, ...changes, keyEpoch: 2, contentKey: `${"C".repeat(42)}A`, historicalContentKeys: { "1": f.config.contentKey } }
+    expect(await f.createWorkspaceAttachmentIndex(f.owner, changed, () => {}).read()).toEqual([])
+  }
+})
+
 it("Given migration storage fails, then retain the exact source index and retry its complete union", async () => {
   const f = await fixture()
   const index = f.createWorkspaceAttachmentIndex(f.owner, f.config, () => {})

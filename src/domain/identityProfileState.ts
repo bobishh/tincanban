@@ -27,6 +27,7 @@ const stateSchema = z.object({ version: z.literal(1), personId: id,
   operations: z.array(operationSchema).max(512),
   legacy: z.array(z.object({ id, field: fieldSchema, value: z.unknown() }).strict()).max(512) }).strict()
 const operationId = (operation: IdentityProfileOperation) => `${operation.signed.payload.deviceId}:${operation.signed.payload.counter}`
+const compareOrdinal = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0
 const precedes = (before: IdentityProfileOperation, after: IdentityProfileOperation) =>
   (after.signed.payload.context[before.signed.payload.deviceId] ?? 0) >= before.signed.payload.counter
 
@@ -75,8 +76,8 @@ export async function readIdentityProfileState(value: unknown, identity: Identit
     legacy.set(observation.id, observation)
   }
   const result: IdentityProfileState = { version: 1, personId: state.personId,
-    operations: [...operations.values()].sort((a, b) => operationId(a).localeCompare(operationId(b))),
-    legacy: [...legacy.values()].sort((a, b) => a.id.localeCompare(b.id)) }
+    operations: [...operations.values()].sort((a, b) => compareOrdinal(operationId(a), operationId(b))),
+    legacy: [...legacy.values()].sort((a, b) => compareOrdinal(a.id, b.id)) }
   validateCausality(result.operations)
   validateLegacyReferences(result.operations, legacy)
   return result
@@ -163,6 +164,6 @@ export function identityProfileValue(state: IdentityProfileState, field: Profile
   const values = [...operations.filter(item => !operations.some(other => precedes(item, other))).map(item => item.signed.payload.value),
     ...state.legacy.filter(item => item.field === field && !superseded.has(item.id)).map(item => item.value)]
   const distinct = new Map(values.map(value => [typeof value === "string" ? value : value.avatarData ?? "", value]))
-  const selected = [...distinct.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value)
+  const selected = [...distinct.entries()].sort(([a], [b]) => compareOrdinal(a, b)).map(([, value]) => value)
   return { status: selected.length > 1 ? "conflict" : selected.length ? "value" : "empty", values: selected }
 }

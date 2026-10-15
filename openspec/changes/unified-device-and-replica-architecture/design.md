@@ -97,6 +97,23 @@ A legacy phone that never received a content key needs an existing key-holding
 device or a valid recovery package once. That holder need not be a privileged
 primary device. After migration, operations must not depend on its availability.
 
+Recovery uses the same manifest as enrollment and later private synchronization.
+The `tincanban-identity-device-recovery@1` JSON package carries an existing v3
+words-wrapped root envelope and AES-GCM ciphertext of the complete manifest.
+HKDF-SHA256 derives a separate key from the recovered root with a random 32-byte
+salt and `tincanban/identity-device-recovery/v1` context. Authentication binds the
+exact package header, including the wrapped root, person, version, salt and IV.
+The bounded reader verifies the embedded device chains, profile state and service
+capabilities before adopting any state. Identity/profile/catalog/private credentials,
+backup of the replaced profile and activation intent commit in one local CAS.
+Certificate publication and workspace profile projection resume after restart.
+Same-person root-key import preserves the active device; cold recovery issues a
+fresh root-certified device. Existing seed-only files remain readable and are
+identified as identity-key-only, never treated as complete state. Neither package
+includes device private keys, local replication progress, board history or attachment
+bytes. Workspace references and credentials are not proof that those bytes still
+exist on a reachable Rusty; separate workspace backups remain necessary.
+
 Workspace profile observations have two distinct admission boundaries. The private
 same-person manifest validates the original profile signature, complete author
 chain, exact person/root key and declared workspace reference; it does not treat
@@ -230,6 +247,116 @@ compatibility with older deployed readers.
 
 ## 2. Consistent Authority
 
+Content-key retention is explicit in private replica credentials. Active
+`keyEpoch`/`contentKey` selects the writer key; `historicalContentKeys` stores
+unique old keys. `historicalContentKeyVariants` stores bounded, canonical,
+deduplicated candidate arrays when different old keys share an epoch. The maps
+cannot overlap. Authenticated snapshot, identity, attachment and history readers
+try the ciphertext epoch's retained candidates; no string ordering chooses the
+meaning of an encrypted object. Missing keys fail before admission or cursor
+acknowledgment. Every causal successor retains every candidate per epoch.
+
+Ambiguous history requires private wire5 and required identity component
+`private-rusty-connections@5`; the Worker storage reader is version4. Releases
+advertise these actual reader floors. Older supported formats remain readable
+only without hidden variant fields. Unrotated and unique-history state keep their
+older compatible wire shapes.
+
+An explicit Owner recovery proposes fresh independent tokens and an active key
+at max observed epoch+1. It captures exact causal source and original outbox,
+freezes ordinary origin writes and every approved Worker, then uses the signed
+current service revision for scope-policy CAS. Original pending ciphertext and
+request ID replay unchanged with confirmed fresh transport credentials; signed
+receipts and uncertain requests remain in the restartable journal. Frozen Workers
+receive the retained key set before causal activation. Completion needs a fresh
+snapshot receipt; the completed journal remains immutable audit evidence. No data
+is deleted, no timestamp supplies authority and no conflicting key is discarded.
+Source implementations include the shared exact-source repository activation,
+controller forwarding and restart-visible recovery action. Authored logic, Worker
+receiver and UI scenarios remain unrun until the final verification gate.
+
+Rusty's `scopeEnrollmentRetry@1` capability preserves the latest completed
+enrollment receipt and normalized request hash in the same atomic scope-policy
+write as token MACs. No bearer token is persisted. An exact authorized retry can
+return the original signed receipt after challenge cleanup or restart, including
+an expired challenge only when this exact policy was already committed. Current
+person/resource/device authorization, original signatures, token hashes and exact
+policy revision still apply; substituted requests or superseded policies cannot
+reuse that receipt. A retry reasserts directory durability after a failed fsync.
+The browser persists the exact signed enrollment body before its first mutation
+when this capability is advertised. Its device-local journal is excluded from
+identity transfer. Changed tokens/device/service pin/revocation/writer floor,
+corrupt signatures and capability downgrade cannot replace a pending request.
+Receipt or activation-callback failure retains it. Successful retry validates
+the original signature, current profile, current management authority and exact
+service receipt before clearing the intent. Callers can require this capability
+before any enrollment or management mutation.
+
+A never-committed expired request first retries its original body. Only after a
+410 response can a fresh signed challenge replace it, and only when its policy
+revision is unchanged and the server's signed issuance time is at or beyond the
+old expiry. That proves the old request cannot now commit. Revision/time conflict
+retains the original intent; one call makes at most one such replacement. Full
+credential rotation still needs the durable freeze/drain/activation journal and
+approved automation maintenance path.
+
+`replicaCredentialFreeze.ts` now persists one device-local person/origin transition
+before any server mutation. It captures every current pinned workspace/identity
+scope, the target device, and freshly generated future epoch/key/tokens exactly
+once, retaining all older keys. CAS includes the exact current profile, private
+repository and legacy inputs. Conflicts, removal, a pending writer upgrade, a
+different target/service/signer or changed source block preparation. The journal
+is not portable identity content. Ordinary progress, credential edits, changed
+portable imports, late legacy reconciliation and writer-policy transitions check
+its exact storage key in their transaction; unrelated origins remain independent.
+`replicaCredentialDrain.ts` is the maintenance exception: it binds the original
+resource and exact journal, then gives the shared engine only the saved outbox and
+upload/receipt ports. It has no capture, inventory, seal or admission path. These
+are source implementations with authored, unrun scenarios. Person revocation,
+receipt retention, all-scope atomic activation and product recovery orchestration
+are still required before this becomes an exposed device-removal operation.
+
+Worker maintenance has separate signed `prepare-storage-rotation` and
+`rotate-storage` actions. Preparation pulls current authority, drains its exact
+outbox and durably freezes execution in the serialized integration queue. Queued
+events remain saved. Rotation requires the exact transition, same pinned scope,
+one newer key epoch, every retained old key, new tokens and a newer signed Rusty
+policy receipt. It preserves the original grant, expiry, definition, document,
+events, chat, attachments and cursor; it never renews approval or re-encrypts an
+uncertain snapshot. Current authority is reacquired using the new access before
+atomic replica publication and freeze removal. A bounded latest-completion marker
+allows a fresh signed request to recover a lost response. Client helpers verify
+the signed public storage/freeze acknowledgment. HTTP/DO failure/race acceptance
+is being authored; no verification has executed. The browser transition controller
+must still coordinate these phases before changing any scope token.
+The rotation identity acknowledgment confirms installed credentials, not a newly
+uploaded snapshot. Expired, paused or deleted Worker approval is not made
+executable by maintenance. Its upload acknowledgment is invalidated so a later
+normally authorized sync must use the new epoch. The browser controller must
+separately obtain its own fresh-epoch receipt before reporting the full transition
+complete.
+
+The shared replica engine exposes `drainPending()` for this transition. It retries
+only already persisted ciphertext/request IDs, verifies the receipt and commits
+acknowledgment under the current binding. It does not read local content revision,
+capture/hash/seal new state, prepare attachments or fetch inventory. New local
+changes remain for a later normal push under the new epoch. Browser workspace and
+identity adapters expose the same operation. Worker management inspection also
+exposes it behind a caller-supplied current Owner guard and admitted-state check;
+historical grant inspection does not renew the grant or create new content.
+The extended policy record requires the compatible Rusty rollback reader in the
+final release cohort; older `deny_unknown_fields` readers cannot open it.
+
+Initial board setup now retains complete random scope/key/token credentials in
+`workspaceReplicaConnection.ts` before enrollment. Its confirmation callback saves
+the original signed receipt and activation stage before the exact-request journal
+can clear. Activation publishes private preferences and removes the setup record
+in one CAS conditioned on original setup/profile/private-state bytes. Failed
+approval, receipt persistence or activation keeps the same credentials for retry.
+An already activated competing scope or removal of the pending scope prevents
+automatic resurrection. Explicit Connect may create a new opaque scope after
+removal while retaining the old tombstone; background-style setup does not.
+
 ### Person policy and creation of new resources
 
 The remaining first-resource ancestry dependency is closed with a separate
@@ -241,6 +368,20 @@ with a distinct `rusty-person-management-capability@1` discriminator and exactly
 operator-approved controller proof; after its confirmation, every non-revoked
 certified device of that person can use those explicit rights without the original
 controller being online or present in its certificate ancestry.
+
+Existing connections expose that migration through **Sync → Rusty → Update device
+access**, with its same-person scope explained beside the action. Background
+profile setup and identity synchronization return a typed action-required state
+when no person policy exists; they cannot create a fresh legacy migration.
+Connecting a new Rusty is an explicit owner action and may establish its initial
+person policy. A saved authorized policy request may recover through a fresh
+signed status or its exact retry without asking the owner to authorize it again.
+The app keeps the service pin, scope, bearer credentials, content key, local cursor
+and current device certificate unchanged. It rechecks current workspace ownership
+and the exact saved connection revision around migration. Private preference
+exchange no longer generates or installs a controller-delegated replacement
+certificate; an obsolete signed `delegation` extra is inert data and cannot gain
+authority or enter the proof store.
 
 A first scope/board policy request presents `personManagementCapability` and binds
 its exact `personManagementRevision` inside the signed update. A stale/substituted
@@ -275,14 +416,12 @@ same-person device without its root private key. The server suite includes
 pending-policy status/retry after restart and global revocation cases. These are
 scoped implementation results, not full requirement or product proof.
 
-Earlier person-policy increment evidence: all 58 Rust tests, formatting and required binary build
-passed; three native HTTP cases passed; six focused client files passed 63 tests,
-plus 14 management-capability verifier and 6 discovery tests. Current person
-revocation enforcement is implemented in the service and identity-replication
-client, but global revocation UI, future content-key/token rotation, explicit
-migration/recovery UI, old-reader rollback compatibility, and full browser
-acceptance remain open. This does not complete the architecture gate or approve
-release.
+Current person revocation enforcement is implemented in the service and
+identity-replication client. Explicit migration UI, typed background state and
+certificate-stability cases are authored in the working tree and unrun. Global
+revocation UI, future content-key/token rotation, old-reader rollback compatibility
+and full browser acceptance remain open. This does not complete the architecture
+gate or approve release.
 
 Separate `DeviceIdentityProof` from explicit `ScopeManagementCapability`.
 Certificate chains prove the caller's device belongs to the trusted person.
@@ -417,6 +556,21 @@ and migration before Requirement 3 is complete.
 
 ## 4. Transactional Private Preferences
 
+Initial local migration now compares both raw legacy stores in the same CAS that
+publishes the authoritative private record. Concurrent old-tab writes cause a
+fresh read and retry. Divergent same-scope settings and registry values become
+concurrent candidates, including duplicate variants within either source;
+timestamps never imply that one superseded another. A removal dominates without
+discarding retained original legacy bytes. Identical credentials with divergent
+local cursors resume from the earliest cursor and reset a conflicting upload
+acknowledgment. Conflict summaries expose only origin, scope and affected subject
+metadata; the UI shows paused delivery without sending credential values into
+presentation. These source paths are implemented; final migration/race/browser
+acceptance remain unrun. Explicit conflict-recovery source now retains every
+same-epoch key and exact original outbox through the dedicated origin freeze,
+signed scope-policy CAS, shared activation and restart-visible Owner action.
+These source paths remain unverified until final execution.
+
 Replace the registry/effective-config pair with one authoritative transactional
 record containing portable credential state, durable tombstones, version vector
 or logical revision, and separate per-device replication progress. Effective
@@ -462,8 +616,10 @@ authority/bootstrap behavior or browser/device acceptance.
 
 The [history archive contract](history-archive-contract.md) specifies the concrete
 record boundaries, bounded catalogue/index shape, bootstrap trust, activation
-transaction and old-basis/offline-edit recovery requirements. It remains a target
-contract; no history-baseline network capability is enabled by that document.
+transaction and old-basis/offline-edit recovery requirements. Browser and Worker
+producer/receiver paths, atomic activation, lazy archived history and private
+recovery now exist in the working tree. The document describes their contract;
+it does not establish final acceptance or production capability activation.
 
 Distinguish an opaque storage checkpoint from an authorized document-history
 baseline. The former prunes redundant ciphertext copies; the latter bounds active
@@ -686,6 +842,16 @@ current policy revision. A dedicated compare-and-swap migration updates only the
 binding and generation, preserving the prepared ciphertext, request IDs, verified
 receipts and progress. Resuming an older journal still requires its original
 Rusty access so the previous binding can be authenticated before migration.
+
+The production background adapter now searches the current and retained epoch
+repositories for an existing transfer before reading source bytes or preparing
+new ciphertext. A historical complete or partial preparation retains its original
+encryption context; uploads use the current connection's bearer tokens and policy.
+Original request IDs, ciphertext and historical receipts stay unchanged. A partial
+preparation still requires source continuation; corruption or current-access loss
+cannot silently start a replacement. With no retained preparation, future uploads
+use only the active key. Selection and actual lost-reply/rotation scenarios are
+authored and unrun.
 
 `attachmentRepository.ts` keeps the final transfer journal in one bounded
 256-KiB metadata record plus separate immutable ciphertext records.
@@ -1122,6 +1288,52 @@ component failure prevents release completion and produces an actionable recover
 record; it cannot cause a successful frontend-only release to be reported as all
 nine requirements deployed.
 
+### Release source status (unverified working tree)
+
+`scripts/release-cohort.mjs` seals exact file sets, independently declared component
+reader/writer support, SDK/source revisions and digest-addressed Rusty image plus
+executable. `release/contract.json` is the required compatibility floor;
+`release/readers.json` is actual frontend/Worker support embedded in their code.
+The action-enum reader floor includes storage-rotation maintenance actions even
+though their transport capability remains `instanceManagement.version: 1`.
+Changing a source SHA alone cannot satisfy artifact identity.
+
+CI captures compiled automation output and points runtime verification at its
+no-bundle config. The frontend artifact includes verified retained chunks; a
+changed production predecessor rejects activation rather than dropping a tab's
+intermediate chunks. Native CI seals the executable extracted from the exact
+pushed image. The coordinator downloads these trusted successful-run artifacts,
+stages exact Cloudflare UUIDs without rebuilding, saves a staged journal, then
+activates native storage, automation and frontend in order. Confirmation requires
+the running executable/artifact, SDK, provider version, reader floors and
+capabilities; final confirmation also hashes served frontend files. Interrupted
+attempts preserve the cohort/version journal and never clear application storage.
+
+`release/implementation-gate.json` deliberately remains false. Preparation and
+activation cannot proceed until all architecture implementation blocks close.
+The ssh-compose native adapter requires the actual existing host, project,
+service, origin, SSH key and known-host configuration; it overrides only the
+image digest and confirms retained mounts. That external configuration has not
+been established here. Exact-run/attempt archives retain all sealed component
+bytes and provider UUIDs. The CI recovery workflow resumes an interrupted cohort,
+confirms uncertain stages before retry, stages only missing UUIDs and refuses
+stale recovery after another cohort activates. Compatible rollback selects a
+previously confirmed cohort only when its readers, writers and capabilities cover
+retained current floors. The old UI entry is composed with current-tab chunks,
+existing expiries are preserved and the derived artifact names both parent seals.
+Captured rollback bundles are restaged without recompilation to bind the new
+cohort metadata; original UUIDs remain provenance. Schema floors and migration
+identifiers remain monotonic. Missing/expired archives require a checked forward
+release; no raw old-version or mutable-tag fallback is available.
+
+The browser's no-store cohort monitor distinguishes this tab's compiled candidate
+from the active artifact. Incompatible reader/writer floors create a sticky
+verified-signing barrier while retaining local state and read/recovery access.
+The banner offers reload; its acknowledgement covers only that tab. Clients
+predating this monitor need reload and remain subject to native writer-floor
+enforcement. Source implementation and authored scenarios are not executed
+acceptance, production activation or evidence that a phone upgraded.
+
 ## 10. Typography and Readability
 
 Keep Caveat for the existing board, cards, card titles/company/location/priority/
@@ -1142,10 +1354,11 @@ must not remove status or navigation information.
 
 ## Verification Strategy
 
-During implementation: write acceptance scenarios and E2E tests without running
-them; run focused logic, Rust policy, repository transaction, process/protocol and
-Worker runtime tests, plus required type/lint/build/size checks. Exercise failures
-before implementation where applicable. Final phase: run the authored isolated
+The latest user timing instruction controls: while source blocks remain open,
+author acceptance scenarios and tests without executing tests, checks or builds.
+Do not commit during that phase. After all source blocks close, run the focused
+logic, Rust policy, repository transaction, process/protocol and Worker runtime
+coverage plus required type/lint/build/size checks. Then run the authored isolated
 browser suite (Chromium and WebKit explicitly, including Linux WebKit), then the
 required CI suites and coordinated production release verification. Do not infer
 iPhone success solely from a mobile viewport in Chromium.

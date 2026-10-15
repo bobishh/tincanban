@@ -482,8 +482,15 @@ test("Given approved enrollment but failed storage, when receiving identity, the
     await expect(dialog.getByRole("button", { name: "Add this device" })).toBeVisible()
     const original = await stored(guest)
     await guest.evaluate(async () => {
-      const { setStorageFailureHookForTest } = await import('/src/storage.ts')
-      setStorageFailureHookForTest(true)
+      // Identity adoption now commits in the local-state transaction; fail that
+      // actual write, rather than the later workspace projection.
+      const put = IDBObjectStore.prototype.put
+      IDBObjectStore.prototype.put = function(value: unknown, key?: IDBValidKey) {
+        if (this.name === "kv" && key === "tincanban.local_profile.v1") {
+          throw new DOMException("Identity storage failure injected", "QuotaExceededError")
+        }
+        return put.call(this, value, key)
+      }
     })
     await dialog.getByRole("button", { name: "Add this device" }).waitFor({ state: "visible" })
     if (await dialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).count()) await dialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).check()

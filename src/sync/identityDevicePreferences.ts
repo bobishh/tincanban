@@ -7,12 +7,12 @@ import type { BlindReplicaConfig } from "./blindReplication"
 import { verifyDeviceChain } from "./meshRecords"
 import type { WorkspaceSetStore } from "./workspaceSet"
 import { identityDevicePreferencesChanged as changed } from "./identityDevicePreferenceEvents"
-import { controllerDelegation, installControllerDelegation, type ControllerDelegation } from "./deviceEnrollmentDelegation"
 import { parsePrivateReplicaWire, type PrivateReplicaWire } from "./privateReplicaPreferences"
 import { exportPrivateReplicaState, persistPrivateReplicaProgress, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
 import { createIdentityDeviceTransfer, readIdentityDeviceTransfer, applyIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import type { IdentityDeviceState } from "./identityDeviceStateCodec"
 import { defaultStorage } from "../storage"
+import { assertIdentityDevicePrivateExchangeAllowed, PrivateIdentityExchangeDeniedError } from "./identityDevicePrivateExchange"
 
 export function parseReplicaPreferences(raw: unknown): PrivateReplicaWire {
   if (Array.isArray(raw)) throw new Error("The other device needs an update before private connections can synchronize")
@@ -32,29 +32,42 @@ export async function receiveReplicaPreferences(owner: string, raw: unknown) {
 export const persistReplicaCursor = persistPrivateReplicaProgress
 
 type PreferencePayload = { kind: "identity-device-preferences"; version: 3; personId: string; state: IdentityDeviceState;
-  certificates: DeviceCertificate[]; delegation?: ControllerDelegation }
+  certificates: DeviceCertificate[] }
 export function withIdentityDevicePreferences(store: WorkspaceSetStore, profile: LocalProfile, remotePersonId: string, remoteDeviceId: string,
   isCurrent: () => boolean = () => true): WorkspaceSetStore {
   if (remotePersonId !== profile.identity.personId) return store
   const ensureCurrent = () => { if (!isCurrent()) throw new Error("Device session is no longer authorized") }
+  const privateExchangeAllowed = async () => {
+    try { await assertIdentityDevicePrivateExchangeAllowed(profile, remoteDeviceId, ensureCurrent); return true }
+    catch (error) {
+      if (!(error instanceof PrivateIdentityExchangeDeniedError)) throw error
+      ensureCurrent()
+      return false
+    }
+  }
   return { ...store,
     readMesh: async id => {
       const signer = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
         certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
       ensureCurrent()
+      if (!await privateExchangeAllowed()) return store.readMesh?.(id)
       const context = await resolveLocalSigningContext(signer, "identity-device-preferences",
         { personId: signer.identity.personId }, { ensureCurrent })
+      const mesh = await store.readMesh?.(id)
+      ensureCurrent()
       const root = await defaultStorage.loadPersonalRoot()
       if (root?.identity.personId !== signer.identity.personId) throw new Error("Complete identity catalog is unavailable for device sync")
       const certificates = (await defaultProofStore.listCertificates()).filter(cert => cert.payload.personId === signer.identity.personId)
+      ensureCurrent()
+      if (!await privateExchangeAllowed()) return mesh
       const payload: PreferencePayload = { kind: "identity-device-preferences", version: 3, personId: signer.identity.personId,
         certificates: signingEvidence(context).certificates,
-        state: await createIdentityDeviceTransfer(root, [signer.certificate, ...certificates]),
-        ...await controllerDelegation(signer, remoteDeviceId).then(delegation => delegation ? { delegation } : {}) }
-      const mesh = await store.readMesh?.(id)
+        state: await createIdentityDeviceTransfer(root, [signer.certificate, ...certificates]) }
       ensureCurrent()
+      if (!await privateExchangeAllowed()) return mesh
       const record = await signWithContext(context, payload)
       ensureCurrent()
+      if (!await privateExchangeAllowed()) return mesh
       return { ...mesh as object, identityDevicePreferences: record }
     },
     mergeMesh: async (id, raw) => {
@@ -71,9 +84,8 @@ export function withIdentityDevicePreferences(store: WorkspaceSetStore, profile:
       ensureCurrent()
       await store.mergeMesh?.(id, mesh)
       ensureCurrent()
-      await installControllerDelegation(profile, remoteDeviceId, record.payload.delegation)
-      await applyIdentityDeviceTransfer(transfer, ensureCurrent)
-      changed(profile.identity.personId)
+      if (!await privateExchangeAllowed()) return
+      if (await applyIdentityDeviceTransfer(transfer, ensureCurrent)) changed(profile.identity.personId)
     },
   }
 }

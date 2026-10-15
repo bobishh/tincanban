@@ -1,15 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { reactive } from "vue"
 import { createWorkspaceDoc } from "../domain/seeds"
 import type { LocalProfile } from "../domain/identity"
 import { exportApprovedAutomation } from "./automationActivation"
 
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), resolveContext: vi.fn(), exportAuthorization: vi.fn(),
-  workspaceRole: vi.fn(), admissionAuthority: vi.fn() }))
+  workspaceRole: vi.fn(), admissionAuthority: vi.fn(), assertUnfrozen: vi.fn(async () => {}), freezeKey: vi.fn(async () => "freeze-key"),
+  assertHistoryReader: vi.fn(async () => {}), ensureWriter: vi.fn(), savedConfigs: vi.fn() }))
 
 vi.mock("../app/automation", () => ({ prepareAutomationActivation: mocks.prepare }))
 vi.mock("../domain/localSigningContext", () => ({ resolveLocalSigningContext: mocks.resolveContext }))
 vi.mock("../sync/changeAuthorization", () => ({ exportAuthorizationBundle: mocks.exportAuthorization,
   workspaceRole: mocks.workspaceRole, localWorkspaceAdmissionAuthority: mocks.admissionAuthority }))
+vi.mock("../sync/replicaCredentialFreeze", () => ({ assertReplicaCredentialsUnfrozen: mocks.assertUnfrozen,
+  replicaCredentialFreezeKey: mocks.freezeKey }))
+vi.mock("./automationInstanceClient", () => ({ assertAutomationKeyHistorySupported: mocks.assertHistoryReader }))
+vi.mock("../sync/workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: mocks.ensureWriter }))
+vi.mock("../sync/privateReplicaRepository", () => ({ getReplicaConfigurations: mocks.savedConfigs }))
 
 type Fixture = ReturnType<typeof fixture>
 function fixture() {
@@ -35,7 +42,7 @@ function fixture() {
   const authority = { authority: { currentOwner: { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
     certificates: [profile.certificate, { signature: "owner-ancestor" }] }, currentEpoch: 7 },
     credentialFingerprint: "credential-v1", fingerprint: "admission-v1" }
-  const packet = { version: 2, workspaceId: doc.id, definition: { payload: { id: "typed-definition", name: "Job intake" } },
+  const packet = { version: 2, workspaceId: doc.id, blind: config, definition: { payload: { id: "typed-definition", name: "Job intake" } },
     grant: { payload: { grantId: "grant-1", accessEpoch: 7 } }, bindings: { boardId: "board-1" },
     initial: { document: "AQ", authorization: { authority: { currentOwner: { personId: profile.identity.personId,
       certificates: [{ signature: "prepared-leaf" }] } } }, chat: null } }
@@ -43,6 +50,8 @@ function fixture() {
 }
 
 function readyMocks(state: Fixture) {
+  mocks.savedConfigs.mockResolvedValue([state.config])
+  mocks.ensureWriter.mockImplementation(async (_app: unknown, config: unknown) => config)
   mocks.workspaceRole.mockResolvedValue("owner")
   mocks.admissionAuthority.mockResolvedValue(state.authority)
   mocks.exportAuthorization.mockResolvedValue({ version: 1, records: [], authority: state.authority.authority })
@@ -63,7 +72,50 @@ function readyMocks(state: Fixture) {
 }
 
 describe("automation activation signing boundary", () => {
-  beforeEach(() => { vi.clearAllMocks() })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.assertUnfrozen.mockReset().mockResolvedValue(undefined)
+    mocks.freezeKey.mockReset().mockResolvedValue("freeze-key")
+    mocks.ensureWriter.mockReset()
+    mocks.savedConfigs.mockReset()
+  })
+
+  it("Given a pending credential transition, When exporting Worker access, Then refuse before reading board state or executing an approval", async () => {
+    const state = fixture()
+    readyMocks(state)
+    mocks.assertUnfrozen.mockRejectedValueOnce(new Error("Rusty credential transition is pending"))
+    await expect(exportApprovedAutomation(state.host as never, state.config, "{}"))
+      .rejects.toThrow(/credential transition/i)
+    expect(mocks.assertUnfrozen).toHaveBeenCalledWith(state.profile.identity.personId, state.config)
+    expect(state.host.readWorkspaceDoc).not.toHaveBeenCalled()
+    expect(state.host.readWorkspaceBytes).not.toHaveBeenCalled()
+    expect(state.host.executeCommandAsync).not.toHaveBeenCalled()
+  })
+
+  it("Given historical key variants, When the destination Worker reader is too old, Then refuse before workspace mutation or key export", async () => {
+    const state = fixture()
+    Object.assign(state.config, { historicalContentKeyVariants: { "1": ["older-key-a", "older-key-b"] } })
+    readyMocks(state)
+    mocks.assertHistoryReader.mockRejectedValueOnce(new Error("Worker cannot read multi-key history"))
+    const worker = { origin: "https://worker.example.test", integrationId: "legacy-route", definitionId: "typed-definition",
+      personId: "worker-person", identityPublicKey: "worker-public", deviceId: "worker-device",
+      devicePublicKey: "worker-device-public", deviceCertificate: { signature: "worker-cert" } }
+    await expect(exportApprovedAutomation(state.host as never, state.config, JSON.stringify(worker)))
+      .rejects.toThrow(/cannot read multi-key history/i)
+    expect(mocks.assertHistoryReader).toHaveBeenCalledWith(worker.origin)
+    expect(state.host.executeCommandAsync).not.toHaveBeenCalled()
+  })
+
+  it("Given ordinary or unique historical keys, When exporting Worker access, Then preserve old-reader compatibility", async () => {
+    const state = fixture()
+    Object.assign(state.config, { historicalContentKeys: { "1": "older-key" } })
+    readyMocks(state)
+    const worker = { origin: "https://worker.example.test", integrationId: "legacy-route", definitionId: "typed-definition",
+      personId: "worker-person", identityPublicKey: "worker-public", deviceId: "worker-device",
+      devicePublicKey: "worker-device-public", deviceCertificate: { signature: "worker-cert" } }
+    await exportApprovedAutomation(state.host as never, state.config, JSON.stringify(worker))
+    expect(mocks.assertHistoryReader).not.toHaveBeenCalled()
+  })
 
   it("Given an admitted native owner, When exporting approval, Then pass live context factory and full owner certificate evidence", async () => {
     const state = fixture()
@@ -87,6 +139,35 @@ describe("automation activation signing boundary", () => {
       await expect(options.ensureCurrent()).resolves.toBeUndefined()
       await expect(options.currentAuthority()).resolves.toContain("admission-v1")
     }
+  })
+
+  it("Given a reactive Rusty config from app state, When exporting approval, Then snapshot JSON values before async work", async () => {
+    const state = fixture()
+    readyMocks(state)
+    const worker = { origin: "https://worker.example.test", integrationId: "legacy-route", definitionId: "typed-definition",
+      personId: "worker-person", identityPublicKey: "worker-public", deviceId: "worker-device",
+      devicePublicKey: "worker-device-public", deviceCertificate: { signature: "worker-cert" } }
+    const reactiveConfig = reactive(state.config)
+    await expect(exportApprovedAutomation(state.host as never, reactiveConfig, JSON.stringify(worker))).resolves.toBeTruthy()
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ blind: state.config }))
+  })
+
+  it("Given a stale Vue config after the repository confirms a newer Rusty policy, When exporting approval, Then sign the repository revision", async () => {
+    const state = fixture()
+    readyMocks(state)
+    const latest = { ...state.config, policyRevision: 2, minimumWriterVersion: 2 as const }
+    mocks.savedConfigs.mockResolvedValue([latest])
+    mocks.ensureWriter.mockResolvedValue(latest)
+    mocks.prepare.mockImplementation(async (input: Record<string, unknown>) => ({
+      ...structuredClone(state.packet), blind: structuredClone(input.blind),
+    }))
+    const worker = { origin: "https://worker.example.test", integrationId: "legacy-route", definitionId: "typed-definition",
+      personId: "worker-person", identityPublicKey: "worker-public", deviceId: "worker-device",
+      devicePublicKey: "worker-device-public", deviceCertificate: { signature: "worker-cert" } }
+    const result = await exportApprovedAutomation(state.host as never, state.config, JSON.stringify(worker))
+    expect(mocks.ensureWriter).toHaveBeenCalledWith(state.host, latest, expect.any(Function))
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ blind: latest }))
+    expect(JSON.parse(result).blind).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
   })
 
   it("Given visible owner UI but native visitor authority, When exporting, Then refuse before activation or command", async () => {

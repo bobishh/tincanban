@@ -7,6 +7,7 @@ import { createAttachmentAccessGuard } from "./attachmentAccess"
 import { AttachmentTransfer } from "./attachmentTransfer"
 import { blindHash, canonicalBlindJson } from "./blindClient"
 import { readStoredAttachment, writeStoredAttachmentStream } from "../attachments"
+import { parseReplicaContentKeys } from "./replicaContentKeys"
 
 type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "readWorkspaceDoc" | "getCurrentProfile">
 
@@ -43,8 +44,7 @@ async function fetchAttachmentBytes(app: AttachmentApp, workspaceId: string, des
     ensureCurrent()
     if (!locators.length) continue
     const guard = await createAttachmentAccessGuard(app, config, requested, "read", ensureCurrent)
-    const scope = { workspaceId: config.workspaceId, scopeId: config.scopeId,
-      keyEpoch: config.keyEpoch, contentKey: config.contentKey }
+    const scope = { workspaceId: config.workspaceId, scopeId: config.scopeId, ...parseReplicaContentKeys(config) }
     lastGuard = guard
     for (const locator of locators) {
       await guard()

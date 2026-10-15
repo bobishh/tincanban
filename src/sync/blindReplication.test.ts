@@ -30,6 +30,7 @@ test("Given an older uncertain snapshot, when attachment discovery is flushed, t
   attachmentRevision = "with-file-locator"
   await replica.flushCurrentSnapshot()
   expect(upload).toHaveBeenCalledTimes(3)
+  expect(upload.mock.calls[0]!.at(3)).toBe(0)
   expect(upload.mock.calls[1]).toEqual(upload.mock.calls[0])
   expect(upload.mock.calls[2]![2]).not.toBe(upload.mock.calls[0]![2])
   await replica.push()
@@ -191,6 +192,64 @@ test("Given encrypted signed history, when admission fails, replication never ad
   expect(config.cursor).toBe(1)
   expect(persisted).toBe(1)
 })
+
+test("Given a cold reader has the previous epoch key, when admitting an epoch-one snapshot under active epoch two, then merge before acknowledging it", async () => {
+  const oldKey = crypto.getRandomValues(new Uint8Array(32))
+  const activeKey = crypto.getRandomValues(new Uint8Array(32))
+  const base: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey,
+    readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 2, contentKey: encodeBlindBytes(activeKey),
+    workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const config = { ...base, historicalContentKeys: { "1": encodeBlindBytes(oldKey) } } as BlindReplicaConfig
+  const snapshot = { version: 1, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([4, 5])), authorization: { signed: true }, chat: null }
+  const object = await encryptBlindObject(config.scopeId, 1, oldKey, new TextEncoder().encode(JSON.stringify(snapshot)))
+  const id = await blindObjectId(object)
+  const merge = vi.fn(async () => {})
+  const persist = vi.fn(async () => {})
+  const replica = new BlindReplica(config, { read: async () => new Uint8Array([1]), authorization: async () => ({}),
+    readChat: async () => null, mergeChat: async () => {}, merge, persist }, {
+    inventory: async (_access, cursor) => cursor < 1 ? { objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false }
+      : { objects: [], cursor, hasMore: false }, download: async () => object,
+    upload: async () => { throw new Error("Unexpected upload") },
+  })
+
+  expect(await replica.pull()).toBe(true)
+  expect(merge).toHaveBeenCalledOnce()
+  expect(merge).toHaveBeenCalledWith("board", new Uint8Array([4, 5]), snapshot.authorization)
+  expect(config.cursor).toBe(1)
+  expect(persist).toHaveBeenCalledOnce()
+})
+
+test.each(["missing-history", "future-epoch", "wrong-history-key"] as const)(
+  "Given a cold reader has %s, when an old or unknown-epoch snapshot arrives, then reject before merge or cursor acknowledgement", async scenario => {
+    const oldKey = crypto.getRandomValues(new Uint8Array(32))
+    const activeKey = crypto.getRandomValues(new Uint8Array(32))
+    const replacementKey = crypto.getRandomValues(new Uint8Array(32))
+    const base: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey,
+      readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 2, contentKey: encodeBlindBytes(activeKey),
+      workspaceId: "board", cursor: 0, lastUploaded: "" }
+    const config = { ...base, ...(scenario === "missing-history" ? {} : { historicalContentKeys: {
+      "1": encodeBlindBytes(scenario === "wrong-history-key" ? replacementKey : oldKey),
+    } }) } as BlindReplicaConfig
+    const snapshot = { version: 1, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([4, 5])), authorization: { signed: true }, chat: null }
+    const objectEpoch = scenario === "future-epoch" ? 3 : 1
+    const objectKey = scenario === "future-epoch" ? crypto.getRandomValues(new Uint8Array(32)) : oldKey
+    const object = await encryptBlindObject(config.scopeId, objectEpoch, objectKey, new TextEncoder().encode(JSON.stringify(snapshot)))
+    const id = await blindObjectId(object)
+    const merge = vi.fn(async () => {})
+    const persist = vi.fn(async () => {})
+    const replica = new BlindReplica(config, { read: async () => new Uint8Array([1]), authorization: async () => ({}),
+      readChat: async () => null, mergeChat: async () => {}, merge, persist }, {
+      inventory: async (_access, cursor) => cursor < 1 ? { objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false }
+        : { objects: [], cursor, hasMore: false }, download: async () => object,
+      upload: async () => { throw new Error("Unexpected upload") },
+    })
+
+    await expect(replica.pull()).rejects.toThrow()
+    expect(merge).not.toHaveBeenCalled()
+    expect(config.cursor).toBe(0)
+    expect(persist).not.toHaveBeenCalled()
+  }
+)
 
 test("Given an uncertain durable receipt, when uploading retries, the same immutable ciphertext is reused", async () => {
   const key = crypto.getRandomValues(new Uint8Array(32))

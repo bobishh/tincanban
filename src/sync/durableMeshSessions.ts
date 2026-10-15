@@ -9,14 +9,18 @@ import { defaultProofStore } from "../domain/proofs"
 import { respondToBlobRequest, type BlobDescriptor } from "@meta-uber/mesh-blob"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
-import { canonicalAuthorityJson, workspaceAuthorityFingerprint } from "./authorityFingerprint"
+import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import type { SyncConnection, SyncNode } from "./transport"
-import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync} from "./workspaceSet"
+import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync, type PeerHistoryBaselineDescriptor} from "./workspaceSet"
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
 import { DurableMeshHandshake } from "./durableMeshHandshake"
 import { lazyIdentityDevicePreferences } from "./lazyIdentityDevicePreferences"
-import { fetchBlobFromCurrentSessions, type BlobAuthoritySnapshot } from "./durableMeshBlobFetch"
+import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
+import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
+import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
+import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
+import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -265,6 +269,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         ? lazyIdentityDevicePreferences(this.options.workspaceStore, input.profile, input.remotePersonId, input.deviceId,
           () => !this.stopped && this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection === input.connection)
         : this.options.workspaceStore
+      const ensurePeerHistoryCurrent = createDurablePeerHistoryGuard({ workspaceId: input.workspaceId, deviceId: input.deviceId,
+        remotePersonId: input.remotePersonId, transportSecret: credential.transportSecret, profile: input.profile, store: this.store,
+        profileProvider: () => this.options.getProfile(), assertSession: () => {
+          if (this.stopped || this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection !== input.connection) {
+            throw new Error("Direct peer session is no longer current")
+          }
+        } })
       const session = liveAutomergeWorkspaceSync(input.connection, credential.transportSecret,
         store,
         input.workspaceId, input.profile.device.deviceId, input.deviceId, error => {
@@ -277,6 +288,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
             this.options.onDiagnostic?.("")
           }
         }, {
+          remoteDeviceId: input.deviceId,
+          ensureCurrent: ensurePeerHistoryCurrent,
           ownerWorkspaceOfferFrame: input.ownerWorkspaceOfferFrame,
           onOwnerWorkspaceOffer: input.ownerWorkspaceOfferFrame && input.remotePersonId === input.profile.identity.personId
             ? bytes => this.receiveOwnerWorkspaceOffer(bytes, input.remotePersonId,
@@ -344,45 +357,38 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     })
   }
 
-  private async currentBlobAuthority(workspaceId: string): Promise<BlobAuthoritySnapshot> {
-    const [rawProfile, rawCredential] = await Promise.all([
-      this.options.getProfile(), this.store.getWorkspaceCredential(workspaceId),
-    ])
-    if (!rawCredential) throw new Error("Workspace mesh credential is unavailable")
-    const profile = structuredClone(rawProfile)
-    const credential = structuredClone(rawCredential)
-    if ((await this.revokedWorkspaceIds([credential], profile)).includes(workspaceId)) {
-      throw new Error("Workspace access was revoked during blob transfer")
-    }
-    const partition = meshRustRuntime().state.partitionCredentials({ credentials: [credential],
-      personId: profile.identity.personId, publicKey: profile.identity.publicKey, deviceId: profile.device.deviceId })
-    if (!partition.activeIndices.includes(0)) {
-      throw new Error("Workspace mesh identity changed during blob transfer")
-    }
-    const credentialAuthority: Record<string, unknown> = { ...credential }
-    delete credentialAuthority.updatedAt
-    return {
-      profile,
-      identity: canonicalAuthorityJson({ identity: profile.identity, device: profile.device,
-        certificate: profile.certificate }),
-      credential: canonicalAuthorityJson(credentialAuthority),
-      transportSecret: credential.transportSecret,
-    }
-  }
-
   async fetchBlob(workspaceId: string, descriptor: BlobDescriptor): Promise<Uint8Array | undefined> {
+    descriptor = structuredClone(descriptor)
     const blob = this.options.workspaceStore.blob
     if (!blob) return undefined
     return fetchBlobFromCurrentSessions({
       workspaceId, descriptor, blob,
-      readAuthority: () => this.currentBlobAuthority(workspaceId),
-      sessions: () => [...this.sessions.values()].filter(entry =>
-        entry.workspaceId === workspaceId && entry.blobTransferSupported),
-      isCurrent: (entry, runId) => this.currentRunId === runId &&
-        this.sessions.get(this.peerKey(workspaceId, entry.deviceId, entry.instanceId)) === entry,
-      currentRunId: () => this.currentRunId,
-      isRunning: () => !this.stopped,
+      readAuthority: () => readDurableMeshTransferAuthority({ workspaceId, descriptor, getProfile: () => this.options.getProfile(),
+        store: this.store, blob: this.options.workspaceStore.blob, revokedWorkspaceIds: (credentials, profile) => this.revokedWorkspaceIds(credentials, profile) }),
+      sessions: () => [...this.sessions.values()].filter(entry => entry.workspaceId === workspaceId && entry.blobTransferSupported),
+      isCurrent: (entry, runId) => this.currentRunId === runId && this.sessions.get(this.peerKey(workspaceId, entry.deviceId, entry.instanceId)) === entry,
+      currentRunId: () => this.currentRunId, isRunning: () => !this.stopped,
     })
+  }
+
+  async fetchHistoryObject(workspaceId: string, baselineId: string, objectId: string,
+    binding: ArchiveObjectReadBinding): Promise<Uint8Array | undefined> {
+    return fetchDurableMeshHistoryObject({ ...this.historyReadContext(workspaceId), baselineId, objectId, binding })
+  }
+
+  fetchHistoryBaseline(workspaceId: string, baselineId: string) { return fetchDurableMeshHistoryBaseline({ ...this.historyReadContext(workspaceId), baselineId }) }
+
+  async fetchHistoryDocument(workspaceId: string, descriptor: PeerHistoryBaselineDescriptor) {
+    return fetchDurableMeshHistoryDocument({ ...this.historyReadContext(workspaceId), descriptor })
+  }
+
+  private historyReadContext(workspaceId: string) {
+    return { workspaceId, currentRunId: () => this.currentRunId, isRunning: () => !this.stopped,
+      sessions: () => [...this.sessions.values()],
+      isCurrent: (entry: SessionEntry, runId: number) => this.currentRunId === runId &&
+        this.sessions.get(this.peerKey(workspaceId, entry.deviceId, entry.instanceId)) === entry,
+      readAuthority: () => readDurableMeshTransferAuthority({ workspaceId, getProfile: () => this.options.getProfile(),
+        store: this.store, revokedWorkspaceIds: (credentials, profile) => this.revokedWorkspaceIds(credentials, profile) }) }
   }
 
   protected async publishRecoveredSession(key: string, entry: SessionEntry) {

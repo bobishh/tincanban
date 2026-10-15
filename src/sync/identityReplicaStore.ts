@@ -14,6 +14,7 @@ import { readRustyManagementStatus } from "./rustyManagementClient"
 import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { discoverBlindKeeper } from "./blindClient"
+import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
 export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void) {
@@ -76,8 +77,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     },
     merge: async transfer => {
       await guard()
-      await applyIdentityDeviceTransfer(transfer, ensureCurrent)
-      identityDevicePreferencesChanged(personId)
+      if (await applyIdentityDeviceTransfer(transfer, ensureCurrent)) identityDevicePreferencesChanged(personId)
     }, authorize, guard,
   })
   const refresh = async () => {
@@ -86,7 +86,8 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     if (service.servicePublicKey !== config.servicePublicKey) throw new Error("Private identity service pin changed")
     if (service.personManagement === 1) {
       const status = await readRustyManagementStatus(personBinding, profile, { ensureCurrent })
-      if (status.migrationPending || !status.capability) throw new Error("Person policy migration is unfinished")
+      if (status.migrationPending) throw new Error("Person policy migration is unfinished")
+      if (!status.capability) throw new RustyPermissionMigrationRequiredError()
     } else if (await repository.read(personBinding)) throw new Error("Rusty upgrade required for saved person authority")
     const status = await readRustyManagementStatus(management, profile, { ensureCurrent })
     if (status.migrationPending || !status.capability) throw new Error("Private identity policy migration is unfinished")

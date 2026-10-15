@@ -8,7 +8,7 @@ import { json, readJson } from "./http";
 /** Manage an existing executor under current workspace Owner rights, independently of bootstrap enrollment. */
 export async function handleAutomationInstanceApi(request: Request, env: WorkerEnv, cors: Headers): Promise<Response> {
   const url = new URL(request.url);
-  const match = url.pathname.match(/^\/v2\/automation-instances\/(discover|identity|activate|refresh-access)$/);
+  const match = url.pathname.match(/^\/v2\/automation-instances\/(discover|identity|activate|refresh-access|prepare-storage-rotation|rotate-storage|prepare-history-baseline|activate-history-baseline)$/);
   if (!match) return json({ error: "Not found" }, 404, cors);
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405, cors);
   if (!env.EVENT_STORAGE_SECRET || !env.IDENTITY_STORAGE_SECRET) return json({ error: "Automation storage is not configured" }, 503, cors);

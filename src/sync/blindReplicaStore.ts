@@ -7,6 +7,7 @@ import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { checkpointHooks } from "./blindCheckpointAdmission"
 import { createBlindSnapshotRevision } from "./blindSnapshotRevision"
 import { getPrivateReplicaProgress, persistPrivateReplicaState, privateReplicaBinding } from "./privateReplicaRepository"
+import { createBlindHistoryStoreHooks } from "./blindReplicaHistoryStore"
 import { assertWorkspaceReplicaPurpose } from "./replicaPurpose"
 import type { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
@@ -43,6 +44,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
   let attachmentWork: Promise<void> | undefined
   const replica: BlindReplica = new BlindReplica({ ...config }, {
     replicaBinding: privateReplicaBinding(owner, config),
+    ensureIdentity: guardIdentity,
     readReplicaProgress,
     ensureCurrent: async () => { await readReplicaProgress() },
     prepareAttachments: async () => {
@@ -79,6 +81,26 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
       await guardAttachmentScope(workspaceId)
       return revision
     },
+    readHistoryBaseline: async workspaceId => {
+      guardIdentity()
+      if (workspaceId !== config.workspaceId) throw new Error("History baseline workspace changed during Rusty replication")
+      const repository = await import("./historyBaselinePublicationRepository")
+      guardIdentity()
+      await readReplicaProgress()
+      const publication = await repository.readPublishedHistoryBaseline(workspaceId, config, guardIdentity)
+      guardIdentity()
+      return publication?.wire
+    },
+    readHistoryRevision: async workspaceId => {
+      guardIdentity()
+      if (workspaceId !== config.workspaceId) throw new Error("History baseline workspace changed during Rusty replication")
+      const repository = await import("./historyBaselinePublicationRepository")
+      guardIdentity()
+      await readReplicaProgress()
+      const publication = await repository.readPublishedHistoryBaseline(workspaceId, config, guardIdentity)
+      guardIdentity()
+      return publication?.baselineId
+    },
     persistReplicaProgress: async (expected, next) => {
       guardIdentity()
       const configurations = await persistPrivateReplicaState(owner, config, expected, next, guardIdentity)
@@ -89,7 +111,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
     read: async id => { guardIdentity(); return tincanban.readWorkspaceBytes(id) },
     readSnapshotRevision: async id => { guardIdentity(); return readSnapshotRevision(id) },
     authorization: bytes => exportAuthorizationBundle(bytes),
-    merge: async (id, bytes, authorization) => { guardIdentity(); await tincanban.mergeAuthorizedWorkspace(id, bytes, authorization) },
+    ...createBlindHistoryStoreHooks({ config, tincanban, owner, guardIdentity, readReplicaProgress, readSnapshotRevision }),
     readChat: async id => { guardIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },
     mergeChat: async (id, chat) => { guardIdentity(); await receiveChat(id, chat, true) },
     documentRevision: async bytes => {

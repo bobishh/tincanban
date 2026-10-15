@@ -3,6 +3,7 @@ import { MAX_APPLICATION_SOURCE_BYTES, readApplicationSourceData, type Applicati
 import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identity.ts";
 
 const EXTRACTOR_VERSION = "job-page-v1";
+export type ApplicationSourceReferences = { messageIds?: string[]; atsId?: string };
 
 /** Capture only extracted page evidence. Submission labels never enter this module. */
 export async function captureApplicationSource(
@@ -12,13 +13,18 @@ export async function captureApplicationSource(
   origin: "website" | "email",
   page: JobPageResult | undefined,
   jobUrl?: string,
+  references?: ApplicationSourceReferences,
 ): Promise<ApplicationSourceData> {
   page = page ? structuredClone(page) : undefined;
+  const capturedReferences = captureReferences(references);
+  if (page && page.status !== null && page.status >= 200 && page.status < 300 && page.source !== "unavailable" && page.atsId) {
+    capturedReferences.atsId = captureReferences({ atsId: page.atsId }).atsId;
+  }
   const recordId = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson([workspaceId, eventId, "original"])));
   const sourceUrl = resolveJobUrl(page?.url, jobUrl);
 
   if (!page || page.status === null || page.status < 200 || page.status >= 300 || page.source === "unavailable") {
-    return unavailable(workspaceId, cardId, recordId, origin, sourceUrl, "Original posting page is unavailable");
+    return unavailable(workspaceId, cardId, recordId, origin, sourceUrl, "Original posting page is unavailable", capturedReferences);
   }
 
   const company = page.company;
@@ -26,17 +32,18 @@ export async function captureApplicationSource(
   const text = page.body || page.description;
   if (!sourceUrl || !company.trim() || !title.trim() || !text.trim()) {
     return unavailable(workspaceId, cardId, recordId, origin, sourceUrl,
-      "Original posting is missing a safe URL, company, title, or text");
+      "Original posting is missing a safe URL, company, title, or text", capturedReferences);
   }
 
   try {
     const candidate = {
       kind: "application-source-observation" as const,
-      version: 1 as const,
+      version: sourceVersion(capturedReferences),
       recordId,
       workspaceId,
       cardId,
       applicationId: `${workspaceId}:${cardId}`,
+      ...capturedReferences,
       observation: {
         phase: "original" as const,
         origin,
@@ -56,19 +63,21 @@ export async function captureApplicationSource(
     }
     return readApplicationSourceData(encoded);
   } catch (error) {
-    return unavailable(workspaceId, cardId, recordId, origin, sourceUrl, boundedReason(error));
+    return unavailable(workspaceId, cardId, recordId, origin, sourceUrl, boundedReason(error), capturedReferences);
   }
 }
 
 function unavailable(workspaceId: string, cardId: string, recordId: string,
-  origin: "website" | "email", jobUrl: string | undefined, reason: string): ApplicationSourceData {
+  origin: "website" | "email", jobUrl: string | undefined, reason: string,
+  references: ApplicationSourceReferences): ApplicationSourceData {
   const data: ApplicationSourceData = {
     kind: "application-source-observation",
-    version: 1,
+    version: sourceVersion(references),
     recordId,
     workspaceId,
     cardId,
     applicationId: `${workspaceId}:${cardId}`,
+    ...references,
     observation: {
       phase: "original",
       origin,
@@ -79,6 +88,33 @@ function unavailable(workspaceId: string, cardId: string, recordId: string,
     },
   };
   return readApplicationSourceData(canonicalizeJson(data));
+}
+
+function sourceVersion(references: ApplicationSourceReferences): 1 | 2 {
+  return references.messageIds?.length || references.atsId ? 2 : 1;
+}
+
+function captureReferences(value: ApplicationSourceReferences | undefined): ApplicationSourceReferences {
+  if (value === undefined) return {};
+  let snapshot: unknown;
+  try { snapshot = structuredClone(value); }
+  catch { throw new TypeError("Application source references are not cloneable"); }
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) throw new TypeError("Application source references are invalid");
+  const input = snapshot as Record<string, unknown>;
+  if (Object.keys(input).some(key => key !== "messageIds" && key !== "atsId")) throw new TypeError("Application source references contain unknown fields");
+  const messageIds = input.messageIds;
+  if (messageIds !== undefined && (!Array.isArray(messageIds) || messageIds.length > 40 ||
+    messageIds.some(id => typeof id !== "string" || id.length < 1 || id.length > 500 || !id.trim()))) {
+    throw new TypeError("Application source message references are invalid");
+  }
+  const atsId = input.atsId;
+  if (atsId !== undefined && (typeof atsId !== "string" || atsId.length < 1 || atsId.length > 256 || !atsId.trim())) {
+    throw new TypeError("Application source ATS reference is invalid");
+  }
+  return {
+    ...(Array.isArray(messageIds) && messageIds.length ? { messageIds: [...new Set(messageIds as string[])] } : {}),
+    ...(typeof atsId === "string" ? { atsId } : {}),
+  };
 }
 
 function resolveJobUrl(pageUrl: string | undefined, fallbackUrl: string | undefined): string | undefined {

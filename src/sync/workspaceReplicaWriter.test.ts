@@ -94,6 +94,30 @@ test("Given legacy file discovery and confirmed progress, when the owner upgrade
   } finally { f.close() }
 })
 
+test("Given a writer upgrade finishes after a caller captured old access, when maintenance enters its lock, then adopt only the newer same-key repository revision", async () => {
+  const f = await fixture()
+  try {
+    const current = { ...f.config, policyRevision: f.config.policyRevision + 1, minimumWriterVersion: 2 as const,
+      cursor: 17, lastUploaded: "B".repeat(43) }
+    await runtime.setReplicaPreference(f.owner, current)
+    expect(await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).toMatchObject({
+      policyRevision: current.policyRevision, minimumWriterVersion: current.minimumWriterVersion,
+      cursor: 9, lastUploaded: "A".repeat(43),
+    })
+    expect(f.approval).not.toHaveBeenCalled()
+  } finally { f.close() }
+})
+
+test("Given the repository changed a stored write credential, when a stale writer request resumes, then reject instead of adopting it", async () => {
+  const f = await fixture()
+  try {
+    const changed = { ...f.config, policyRevision: f.config.policyRevision + 1, writeToken: "B".repeat(43), minimumWriterVersion: 2 as const }
+    await runtime.setReplicaPreference(f.owner, changed)
+    await expect(runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).rejects.toThrow(/credential revision changed/i)
+    expect(f.approval).not.toHaveBeenCalled()
+  } finally { f.close() }
+})
+
 test("Given a lost enrollment response, when retrying after restart, then reuse the frozen source credentials and finish from a fresh monotonic receipt", async () => {
   const f = await fixture()
   try {

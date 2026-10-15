@@ -6,6 +6,7 @@ import type {
   FieldValue,
   FileReference,
   Heads,
+  Item,
   TransactionReceipt,
   WorkspaceDocumentV2,
 } from "./model";
@@ -27,7 +28,8 @@ export type Command =
   | { kind: "createItem"; id?: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null }
   | { kind: "createItemWithApplicationSource"; id: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null; data: ApplicationSourceData }
   | { kind: "patchItem"; entityId: string; title?: string; body?: string; values?: Record<string, FieldValue>; foldNarrativeSources?: NarrativeFoldSources }
-  | { kind: "restoreItemVersion"; entityId: string; changeHash: string }
+  | { kind: "restoreItemVersion"; entityId: string; changeHash: string;
+      archived?: { baselineId: string; historyEpoch: number; observation: "admitted" | "pending" | "quarantined"; item: Item } }
   | { kind: "moveEntity"; entityId: string; parentId: string; beforeId?: string | null }
   | { kind: "renameEntity"; entityId: string; title: string; collapsible?: boolean }
   | { kind: "setEntityArchived"; entityId: string; archived: boolean }

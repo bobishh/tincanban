@@ -1,5 +1,5 @@
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
-import { compareAndSwapLocal, readLocal, updateLocal } from "../localDb"
+import { compareAndSwapLocal, readLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { blindHash } from "./blindClient"
 import { blindOrigin } from "./blindOrigin"
@@ -12,6 +12,7 @@ import { RustyManagementRepository } from "./rustyManagementRepository"
 import { ensureRustyPersonPolicy, readRustyManagementStatus, retryRustyManagementUpdate, updateRustyManagementPolicy } from "./rustyManagementClient"
 import { approveRustyScope } from "./rustyEnrollment"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
+import { assertReplicaCredentialsUnfrozen, replicaCredentialOriginCondition, replicaCredentialFreezeKey } from "./replicaCredentialFreeze"
 
 type Service = { origin: string; servicePublicKey: string; scopeManagement?: 1; personManagement?: 1 }
 type Setup = { version: 1; personId: string; config: IdentityReplicaConfig; stage: "policy" | "activate" }
@@ -72,7 +73,9 @@ async function activateSetup(key: string, raw: string, setup: Setup, profileRaw:
   const changed = changeReplicaPreference({ ...wire, actorId: crypto.randomUUID(), progress: {}, migrated: true }, setup.config)
   const plan = await planPrivateReplicaImport(setup.personId, portableReplicaState(changed))
   guard()
-  if (!await compareAndSwapLocal({ conditions: [...plan.conditions, { key, value: raw },
+  const freeze = await replicaCredentialOriginCondition(setup.personId, setup.config.origin)
+  guard()
+  if (!await compareAndSwapLocal({ conditions: [...plan.conditions, freeze, { key, value: raw },
     { key: "tincanban.local_profile.v1", value: profileRaw }], writes: [...plan.writes, { key, value: null }] }, guard)) {
     throw new Error("Private scope activation changed; retry required")
   }
@@ -84,39 +87,53 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
   service = { ...service, origin: blindOrigin(service.origin) }
   profile = structuredClone(profile)
   ensureCurrent()
-  const profileRaw = await readLocal("tincanban.local_profile.v1")
-  assertStoredProfile(profileRaw, profile)
   const personId = profile.identity.personId, key = await identityReplicaSetupKey(personId, service.origin)
-  return withLocalStateWriteLock(key, async () => {
+  const transitionKey = await replicaCredentialFreezeKey(personId, service.origin)
+  return withLocalStateWriteLock(transitionKey, async () => {
+    ensureCurrent()
+    const freeze = await replicaCredentialOriginCondition(personId, service.origin)
+    ensureCurrent()
+    await assertReplicaCredentialsUnfrozen(personId, service)
+    const profileRaw = await readLocal("tincanban.local_profile.v1")
+    assertStoredProfile(profileRaw, profile)
+    return withLocalStateWriteLock(key, async () => {
     ensureCurrent()
     const existing = await selectedConnection(service, personId)
     ensureCurrent()
     if (existing) return existing
     if (service.scopeManagement !== 1) throw new Error("Rusty upgrade required for private profile delivery")
-    const raw = await updateLocal(key, previous => {
-      ensureCurrent()
-      if (previous) { parseSetup(previous, service, personId); return previous }
+    let raw = await readLocal(key)
+    if (raw !== null) parseSetup(raw, service, personId)
+    else {
       const random = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
       const config: IdentityReplicaConfig = { purpose: "identity", personId, origin: service.origin, servicePublicKey: service.servicePublicKey,
         scopeId: `identity-${random()}`, contentKey: random(), readToken: random(), writeToken: random(),
         keyEpoch: 1, policyRevision: 1, cursor: 0, lastUploaded: "" }
       const next = JSON.stringify({ version: 1, personId, config, stage: "policy" } satisfies Setup)
       parseSetup(next, service, personId)
-      return next
-    })
+      ensureCurrent()
+      if (!await compareAndSwapLocal({ conditions: [{ key, value: null }, { key: "tincanban.local_profile.v1", value: profileRaw }, freeze],
+        writes: [{ key, value: next }] }, ensureCurrent)) throw new Error("Private scope setup changed; retry required")
+      raw = next
+    }
     const setup = parseSetup(raw, service, personId)
     let activationRaw = raw
+    await assertReplicaCredentialsUnfrozen(personId, service)
     await confirmPolicy(service, profile, setup.config, ensureCurrent)
+    await assertReplicaCredentialsUnfrozen(personId, service)
     if (setup.stage === "policy") {
       setup.config.policyRevision = await approveRustyScope(setup.config, profile)
       ensureCurrent()
+      await assertReplicaCredentialsUnfrozen(personId, service)
       setup.stage = "activate"
       activationRaw = JSON.stringify(setup)
-      if (!await compareAndSwapLocal({ conditions: [{ key, value: raw }], writes: [{ key, value: activationRaw }] }, ensureCurrent)) {
+      const currentFreeze = await replicaCredentialOriginCondition(personId, service.origin)
+      if (!await compareAndSwapLocal({ conditions: [{ key, value: raw }, { key: "tincanban.local_profile.v1", value: profileRaw }, currentFreeze], writes: [{ key, value: activationRaw }] }, ensureCurrent)) {
         throw new Error("Private scope setup changed before activation")
       }
     }
     ensureCurrent()
+    await assertReplicaCredentialsUnfrozen(personId, service)
     const selected = await selectedConnection(service, personId)
     if (selected && selected.scopeId !== setup.config.scopeId) throw new Error("Another private scope was activated; owner review required")
     await activateSetup(key, activationRaw, setup, profileRaw, ensureCurrent)
@@ -132,5 +149,6 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
       throw new Error("Private scope activation was superseded")
     }
     return result
+    })
   })
 }

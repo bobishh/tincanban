@@ -1,4 +1,4 @@
 {
-  "compilerOptions": { "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "skipLibCheck": true, "noEmit": true, "allowImportingTsExtensions": true, "types": ["./worker-configuration.d.ts", "node"], "lib": ["ESNext", "WebWorker", "DOM"] },
+  "compilerOptions": { "target": "ES2022", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "skipLibCheck": true, "noEmit": true, "allowImportingTsExtensions": true, "resolveJsonModule": true, "types": ["./worker-configuration.d.ts", "node"], "lib": ["ESNext", "WebWorker", "DOM"] },
   "include": ["../../src/build.d.ts", "src/**/*.ts", "worker-configuration.d.ts"]
 }

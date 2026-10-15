@@ -4,11 +4,8 @@ import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 
 /**
- * Product contract for the planned encrypted attachment transport:
- * the attachment row exposes a status named "Encrypted attachment coverage"
- * and says "Complete on Rusty" only after the manifest and every chunk have
- * verified durable receipts. This is intentionally an outer acceptance test;
- * current UI does not yet expose that indicator.
+ * Complete coverage requires verified receipts for the manifest and every chunk.
+ * The source may close before the recipient requests its first attachment byte.
  */
 test("Given confirmed Rusty attachment coverage, when the source browser closes, then a fresh same-person device previews and downloads verified bytes", async ({ browser, baseURL }) => {
   test.setTimeout(120_000)
@@ -41,8 +38,10 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await recipient.goto(await ownerSync.getByLabel("Pairing link").inputValue())
     const enrollment = recipient.getByRole("dialog", { name: "Device sync" })
     const replace = enrollment.getByRole("checkbox", { name: /Replace this device.s identity/ })
+    await expect(enrollment.getByRole("button", { name: "Add this device", exact: true })).toBeVisible()
     if (await replace.count()) await replace.check()
     await enrollment.getByRole("button", { name: "Add this device", exact: true }).click()
+    await expect(ownerSync.getByRole("button", { name: "Approve device", exact: true })).toBeVisible({ timeout: 30_000 })
     await ownerSync.getByRole("button", { name: "Approve device", exact: true }).click()
     await expect(enrollment.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
     await enrollment.getByRole("button", { name: "Close", exact: true }).click()
@@ -57,7 +56,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
 
     const previewText = "Encrypted attachment survives source shutdown.\n"
     const payload = Buffer.concat([Buffer.from(previewText), Buffer.alloc(384 * 1024 + 19, 0x5a)])
-    const detail = source.getByRole("dialog", { name: "Item overview" })
+    const detail = source.getByRole("dialog", { name: "Lead details" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const fileForm = detail.getByRole("form", { name: "Attach document" })
     await fileForm.getByLabel("Title").fill("Private transfer fixture")
@@ -74,10 +73,10 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await rustyPanel.getByLabel("Address", { exact: true }).fill(service.origin)
     await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(rustyPanel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await source.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await source.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const sourceDetail = source.getByRole("dialog", { name: "Item overview" })
+    const sourceDetail = source.getByRole("dialog", { name: "Lead details" })
     const attachment = sourceDetail.getByRole("group", { name: "Private transfer fixture" })
     await expect(attachment.getByRole("status", { name: "Encrypted attachment coverage" }))
       .toHaveText("Complete on Rusty", { timeout: 30_000 })
@@ -86,12 +85,12 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await recipient.getByRole("button", { name: "Sync & backups", exact: true }).click()
     await recipient.getByRole("tab", { name: "Rusty", exact: true }).click()
     const recipientRusty = recipient.getByRole("region", { name: "Rusty", exact: true })
-    await expect(recipientRusty.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(recipientRusty.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await recipient.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await expect(recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }))
       .toBeVisible({ timeout: 30_000 })
     await recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const recipientDetail = recipient.getByRole("dialog", { name: "Item overview" })
+    const recipientDetail = recipient.getByRole("dialog", { name: "Lead details" })
     const recipientAttachment = recipientDetail.getByRole("group", { name: "Private transfer fixture" })
     await expect(recipientAttachment.getByRole("status", { name: "Encrypted attachment coverage" }))
       .toHaveText("Complete on Rusty")
@@ -112,10 +111,12 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await sourceContext.close()
     sourceClosed = true
     await recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const remoteDetail = recipient.getByRole("dialog", { name: "Item overview" })
+    const remoteDetail = recipient.getByRole("dialog", { name: "Lead details" })
     const remoteAttachment = remoteDetail.getByRole("group", { name: "Private transfer fixture" })
     await remoteAttachment.getByRole("button", { name: "Preview", exact: true }).click()
     await expect(recipient.getByRole("dialog", { name: "Document preview" })).toContainText(previewText.trim(), { timeout: 30_000 })
+    await expect(recipient.getByRole("dialog", { name: "Document preview" })).toContainText("Showing the beginning of this file")
+    expect(await recipient.locator(".document-preview-text").textContent()).toHaveLength(32 * 1024)
     await recipient.getByRole("dialog", { name: "Document preview" }).getByRole("button", { name: "Close", exact: true }).click()
 
     const downloadStarted = recipient.waitForEvent("download")
@@ -159,7 +160,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
     await create.getByRole("button", { name: "Create item", exact: true }).click()
     const open = page.getByRole("button", { name: "Open File failure fixture — Independent card save", exact: true })
     await open.click()
-    const detail = page.getByRole("dialog", { name: "Item overview" })
+    const detail = page.getByRole("dialog", { name: "Lead details" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const form = detail.getByRole("form", { name: "Attach document" })
     await form.getByLabel("Title").fill("Pending private file")
@@ -172,7 +173,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(panel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(panel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await open.click()
     const status = detail.getByRole("group", { name: "Pending private file" }).getByRole("status", { name: "Encrypted attachment coverage" })

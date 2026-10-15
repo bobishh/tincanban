@@ -6,22 +6,29 @@ import type { useTincanban } from "../state"
 import type { useDeviceSync } from "../sync/useDeviceSync"
 import type { WorkspaceAccessResult } from "./workspaceAccessState"
 import { diagnoseStartupStep } from "../sync/startupDiagnostics"
+import { withWorkspaceAuthorityRaceRetry } from "./workspaceAuthorityRetry"
 
 type ActiveAccess = { role: WorkspaceRole; ownerId: string; access: Record<string, WorkspaceAccessResult> }
 
 export async function loadWorkspaceAccess(tincanban: ReturnType<typeof useTincanban>, doc: WorkspaceDocumentV2,
   sync: ReturnType<typeof useDeviceSync>, includeOthers = true, onActive?: (result: ActiveAccess) => void): Promise<ActiveAccess> {
   const profile = await bootstrapIdentity("My Device")
+  const ensureCurrent = () => {
+    if (tincanban.activeWorkspace.id !== doc.id) throw new Error("Workspace access request was replaced")
+    const current = tincanban.getCurrentProfile()
+    if (!current || current.identity.personId !== profile.identity.personId ||
+      current.device.deviceId !== profile.device.deviceId) throw new Error("Workspace access identity changed")
+  }
   const resolve = async (item: { id: string; title: string }) => {
     try {
       let role: WorkspaceRole
       if (item.id === doc.id) {
-        role = await workspaceRole(doc, profile).catch(async cause => {
+        role = await withWorkspaceAuthorityRaceRetry(() => workspaceRole(doc, profile), ensureCurrent).catch(async cause => {
           const { repairOwnerRevocationBoundary } = await import("../sync/ownerRevocationBoundaryRepair")
           await repairOwnerRevocationBoundary(cause, doc, profile, personId => sync.revokePeer(personId))
-          return workspaceRole(doc, profile)
+          return withWorkspaceAuthorityRaceRetry(() => workspaceRole(doc, profile), ensureCurrent)
         })
-      } else role = await tincanban.getWorkspaceRole(item.id)
+      } else role = await withWorkspaceAuthorityRaceRetry(() => tincanban.getWorkspaceRole(item.id), ensureCurrent)
       return [item.id, { role, blocked: await workspaceWritesBlocked(item.id) }] as const
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause)

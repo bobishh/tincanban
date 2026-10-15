@@ -105,6 +105,16 @@ export async function prepareLocalState(storage = defaultStorage): Promise<void>
     console.info("[tincanban.startup] prepare", "identity")
     stateRuntime.currentProfile = await diagnoseStartupStep("identity-load", bootstrapIdentity);
     setStartupDiagnosticDevice(stateRuntime.currentProfile.device.deviceId);
+    const recoveryProfile = stateRuntime.currentProfile;
+    await diagnoseStartupStep("workspace-backup-recovery", async () => {
+      const { resumeWorkspaceHistoryRecoveryProjection } = await import("./sync/workspaceHistoryRecoveryProjection");
+      await resumeWorkspaceHistoryRecoveryProjection(recoveryProfile.identity.personId, () => {
+        if (stateRuntime.currentProfile?.identity.personId !== recoveryProfile.identity.personId ||
+          stateRuntime.currentProfile?.device.deviceId !== recoveryProfile.device.deviceId) {
+          throw new Error("Identity changed during workspace recovery");
+        }
+      });
+    });
     console.info("[tincanban.startup] prepare", "catalog")
     await refreshAvailableWorkspaces(storage);
   } catch (error) {
@@ -256,6 +266,7 @@ async function persistNewLocalChange(
     return deltaDoc
   }
   const bundle = await exportDocumentAuthorizationBundle(base, profile)
+  const receivedBasis = await storage.getVerifiedReceivedHistoryBaseline(base.id)
   const previousEvidence = await storage.loadCausalEvidence(base.id)
   bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
   // An all-admitted evidence snapshot is already represented by the authorized
@@ -267,7 +278,7 @@ async function persistNewLocalChange(
   let admission: Awaited<ReturnType<typeof evaluateIncomingWorkspaceAdmission>>
   try {
     admission = await evaluateIncomingWorkspaceAdmission(rawBase, created.newDoc, bundle,
-      (previousEvidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[])
+      (previousEvidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], receivedBasis)
   } finally {
     if (preserveRawHistory) Automerge.free(rawBase)
   }
@@ -506,21 +517,9 @@ function replaceWorkspaceProjection(
 ): void {
   const workspace = stateRuntime.workspace;
   workspace.leads.splice(0, workspace.leads.length, ...projected.leads);
-  workspace.documents.splice(
-    0,
-    workspace.documents.length,
-    ...projected.documents,
-  );
-  workspace.templates.splice(
-    0,
-    workspace.templates.length,
-    ...projected.templates,
-  );
-  workspace.artifacts.splice(
-    0,
-    workspace.artifacts.length,
-    ...projected.artifacts,
-  );
+  workspace.documents.splice(0, workspace.documents.length, ...projected.documents);
+  workspace.templates.splice(0, workspace.templates.length, ...projected.templates);
+  workspace.artifacts.splice(0, workspace.artifacts.length, ...projected.artifacts);
 }
 
 stateRuntime.storageChannel?.addEventListener("message", (event: MessageEvent<{ type?: unknown; workspaceId?: unknown }>) => {

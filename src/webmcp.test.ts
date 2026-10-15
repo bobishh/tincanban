@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
 import { defaultStorage } from "./storage"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -11,6 +12,8 @@ import { clearMeshTrace, meshTrace } from "./sync/meshTrace"
 import { itemLifecycle } from "./domain/archive"
 
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()

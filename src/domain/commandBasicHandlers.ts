@@ -8,6 +8,7 @@ import { validateItemValues } from "./fields"
 import { isInlineNarrativeNote } from "./narrative"
 import { seedBoard } from "./seeds"
 import { err } from "./commandTypes"
+import { entitySchema } from "./entitySchemas"
 import type { CommandByKind, CommandContext, CommandHandler, PreparedCommand } from "./commandHandlerTypes"
 import { applyRenumbering, computeInsertionRank, findRootBoardId } from "./commandSupport"
 
@@ -140,15 +141,31 @@ function patchItemInDraft(draft: WorkspaceDocumentV2, command: CommandByKind<"pa
 export const restoreItemVersion: CommandHandler<"restoreItemVersion"> = (doc, command, context) => {
   const item = doc.entities[command.entityId]
   if (!isItem(item)) return err("not_found", `Item ${command.entityId} not found`)
-  const change = Automerge.getChangesMetaSince(doc, []).find(entry => entry.hash === command.changeHash)
-  if (!change) return err("not_found", "Recorded item version is unavailable")
-  const historical = workspaceEntitiesAtHeads(doc, [change.hash])[command.entityId]
+  let historical: WorkspaceEntity | undefined
+  if (command.archived) {
+    historical = archivedItemVersion(command)
+    if (!historical) return err("invalid_input", "Archived item version or source binding is invalid")
+  } else {
+    const change = Automerge.getChangesMetaSince(doc, []).find(entry => entry.hash === command.changeHash)
+    if (!change) return err("not_found", "Recorded item version is unavailable")
+    historical = workspaceEntitiesAtHeads(doc, [change.hash])[command.entityId]
+  }
   if (!isItem(historical)) return err("not_found", "Recorded item version is unavailable")
   const parent = historical.placement.parentId ? doc.entities[historical.placement.parentId] : undefined
   if (!parent || !validatePlacementParent("item", entityKind(parent)).ok) return err("invalid_parent", "Recorded item parent is unavailable")
   const restored = JSON.parse(JSON.stringify(historical)) as Item
   const changedEntityIds = [command.entityId, ...Object.values(doc.entities).filter(candidate => isItem(candidate) && candidate.id !== command.entityId && getAncestryPath(doc.entities, candidate.id).path.includes(command.entityId)).map(candidate => candidate.id)]
   return { ok: true, value: { changedEntityIds, apply: draft => restoreItemInDraft(draft, command.entityId, restored, context.nowIso) } }
+}
+
+function archivedItemVersion(command: CommandByKind<"restoreItemVersion">): Item | undefined {
+  const source = command.archived
+  if (!source) return
+  const parsed = entitySchema.safeParse(source.item)
+  if (!/^[A-Za-z0-9_-]{43}$/.test(source.baselineId) || !Number.isSafeInteger(source.historyEpoch) || source.historyEpoch < 1 ||
+      !/^[a-f0-9]{64}$/.test(command.changeHash) || !["admitted", "pending", "quarantined"].includes(source.observation) ||
+      !parsed.success || !isItem(parsed.data) || parsed.data.id !== command.entityId) return
+  return parsed.data
 }
 
 function restoreItemInDraft(draft: WorkspaceDocumentV2, id: string, restored: Item, nowIso: string) {

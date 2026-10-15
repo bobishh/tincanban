@@ -4,6 +4,7 @@ import { createAttachmentIndexRepository, planAttachmentIndexMigration } from ".
 import { parseReplicaConfig } from "./blindReplicaConfig"
 import { canonicalBlindJson } from "./blindClient"
 import type { AttachmentLocator } from "./attachmentCodec"
+import { replicaContentKeyEntries } from "./replicaContentKeys"
 import type { LocalStatePlan } from "../localDb"
 
 /** File discovery follows the encryption context, independently of replaceable access tokens and local cursors. */
@@ -18,17 +19,24 @@ export function createWorkspaceAttachmentIndex(owner: string, config: BlindRepli
   ensureCurrent()
   const captured = parseReplicaConfig(JSON.stringify(config))
   const current = createAttachmentIndexRepository(attachmentIndexBinding(owner, captured), ensureCurrent)
-  const legacy = createAttachmentIndexRepository(privateReplicaBinding(owner, captured), ensureCurrent)
-  let copiedRevision: string | undefined
+  // Key-history configurations require the newer reader; no legacy preference-bound index existed for them.
+  const legacy = captured.historicalContentKeys || captured.historicalContentKeyVariants ? undefined : createAttachmentIndexRepository(privateReplicaBinding(owner, captured), ensureCurrent)
+  const retained = replicaContentKeyEntries(captured).filter(([epoch]) => epoch !== captured.keyEpoch).map(([keyEpoch, contentKey]) =>
+    createAttachmentIndexRepository(attachmentIndexBinding(owner, { ...captured, keyEpoch, contentKey,
+      historicalContentKeys: undefined, historicalContentKeyVariants: undefined }), ensureCurrent))
+  const copiedRevisions = new Map<number, string | undefined>()
   let migrating: Promise<void> | undefined
   const migrateLegacy = async () => {
     if (!migrating) migrating = (async () => {
-      const revision = await legacy.revision()
-      if (revision === copiedRevision) return
-      const locators = await legacy.read()
-      await current.merge(locators)
-      ensureCurrent()
-      copiedRevision = revision
+      const sources = legacy ? [legacy, ...retained] : retained
+      for (const [index, source] of sources.entries()) {
+        const revision = await source.revision()
+        if (copiedRevisions.has(index) && revision === copiedRevisions.get(index)) continue
+        const locators = await source.read()
+        await current.merge(locators)
+        ensureCurrent()
+        copiedRevisions.set(index, revision)
+      }
     })().finally(() => { migrating = undefined })
     await migrating
     ensureCurrent()
@@ -43,5 +51,6 @@ export function createWorkspaceAttachmentIndex(owner: string, config: BlindRepli
 /** Plan an additive legacy-index migration for one exact workspace encryption context. */
 export async function planWorkspaceAttachmentIndexMigration(owner: string, config: BlindReplicaConfig): Promise<LocalStatePlan> {
   const captured = parseReplicaConfig(JSON.stringify(config))
+  if (captured.historicalContentKeys || captured.historicalContentKeyVariants) return { conditions: [], writes: [] }
   return planAttachmentIndexMigration(privateReplicaBinding(owner, captured), attachmentIndexBinding(owner, captured))
 }

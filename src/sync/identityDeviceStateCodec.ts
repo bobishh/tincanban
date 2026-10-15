@@ -15,17 +15,18 @@ const supportedSchemas: Record<IdentityDeviceComponentName, string> = {
   identityCatalog: "identity-catalog@1",
   profileObservations: "profile-observations@3",
   workspaceReferences: "entitled-workspaces@1",
-  privateConnections: "private-rusty-connections@3",
+  privateConnections: "private-rusty-connections@5",
   ownerCapabilities: "owner-capabilities@2",
   recoveryEvidence: "identity-recovery-evidence@1",
 }
 const componentNames = Object.keys(supportedSchemas) as IdentityDeviceComponentName[]
 const legacySchemas: Partial<Record<IdentityDeviceComponentName, readonly string[]>> = {
-  privateConnections: ["private-rusty-connections@2"], ownerCapabilities: ["owner-capabilities@1"], profileObservations: ["profile-observations@1", "profile-observations@2"],
+  privateConnections: ["private-rusty-connections@2", "private-rusty-connections@3", "private-rusty-connections@4"], ownerCapabilities: ["owner-capabilities@1"], profileObservations: ["profile-observations@1", "profile-observations@2"],
 }
-const rawPrivateFieldNames = new Set(["privatekey", "privatekeys", "identityprivatekey", "deviceprivatekey", "recoverykey", "identityseed", "deviceseed"])
+const rawPrivateFieldNames = new Set(["privatekey", "privatekeys", "identityprivatekey", "deviceprivatekey", "recoverykey", "identityseed", "deviceseed",
+  "privatekeypkcs", "identityprivatekeypkcs", "deviceprivatekeypkcs", "privatekeyjwk", "identityprivatekeyjwk", "deviceprivatekeyjwk"])
 const localProgressFieldNames = new Set(["cursor", "lastuploaded", "uploadedrevision", "contentidentity", "replication", "progress"])
-const portableCredentialFieldNames = new Set(["readtoken", "writetoken", "contentkey"])
+const portableCredentialFieldNames = new Set(["readtoken", "writetoken", "contentkey", "historicalcontentkeys", "historicalcontentkeyvariants"])
 const maximumManifestBytes = 1024 * 1024
 
 export class IdentityDeviceStateUpgradeRequiredError extends Error {
@@ -103,6 +104,7 @@ function validateRequiredList(name: IdentityDeviceComponentName, value: Record<s
   if (field && !Array.isArray(value[field])) throw new Error(`Invalid ${name} component`)
 }
 
+const privateWireVersions: Record<string, number> = { "private-rusty-connections@2": 2, "private-rusty-connections@3": 3, "private-rusty-connections@4": 4 }
 function validateComponent(name: string, component: IdentityDeviceComponent, personId: string): IdentityDeviceComponent {
   validateComponentShape(name, component)
   const expected = Object.hasOwn(supportedSchemas, name) ? supportedSchemas[name as IdentityDeviceComponentName] : undefined
@@ -117,7 +119,8 @@ function validateComponent(name: string, component: IdentityDeviceComponent, per
   if (name === "ownerCapabilities" && legacy && containsPersonCapability(component.value)) {
     throw new IdentityDeviceStateUpgradeRequiredError("Person management capabilities require owner-capabilities@2")
   }
-  if (name === "privateConnections" && component.value.version !== (legacy ? 2 : 3)) {
+  const privateWireVersion = privateWireVersions[component.schema] ?? 5
+  if (name === "privateConnections" && component.value.version !== privateWireVersion) {
     throw new IdentityDeviceStateUpgradeRequiredError("Private connection wire version does not match its schema")
   }
   if (component.required !== true) throw new Error(`Required identity device-state component ${name} cannot be optional`)

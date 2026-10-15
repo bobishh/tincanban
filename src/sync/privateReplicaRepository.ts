@@ -1,235 +1,27 @@
 import { canonicalizeJson } from "../domain/identity"
-import { compareAndSwapLocal, readLocal, updateLocal, type LocalStatePlan } from "../localDb"
+import { compareAndSwapLocal,readLocal,type LocalStatePlan } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
-import { parsePrivateReplicaConfig, parseReplicaConfig } from "./blindReplicaConfig"
-import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "./blindReplication"
-import { emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
-import { decodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { parsePrivateReplicaConfig,parseReplicaConfig } from "./blindReplicaConfig"
+import type { BlindReplicaConfig,IdentityReplicaConfig,PrivateReplicaConfig } from "./blindReplication"
+import { emptyReplicaState,parseReplicaState,type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
+import { type BlindObject } from "./blindEnvelope"
 import { privateReplicaBinding } from "./privateReplicaBinding"
-import { parseRustyScopePolicyReceipt, verifyRustyWriterPolicyReceipt } from "./rustyScopePolicy"
+import { verifyRustyWriterPolicyReceipt } from "./rustyScopePolicy"
 import { parseReplicaWriterWorkers } from "./replicaWriterWorkersState"
+import { replicaCredentialFreezeCondition,replicaCredentialOriginCondition,type ReplicaCredentialFreeze } from "./replicaCredentialFreezeState"
+import { replicaCredentialFreezeKey } from "./replicaCredentialFreezeState"
+import { parseReplicaCredentialConflictFreeze,type ReplicaCredentialConflictFreeze } from "./replicaCredentialConflictFreeze"
+import { assertRetainsReplicaContentKeys } from "./replicaContentKeys"
+import { verifyBlindReceipt,type BlindReceipt } from "./blindClient"
+import {
+changeReplicaPreference,effectiveIdentityReplicaConfigs,effectivePrivateReplicaConfigs,effectiveReplicaConfigs,mergePrivateReplicaState,
+parsePrivateReplicaWire,portableReplicaState,replicaPreferenceConflicts,updateReplicaProgress,
+type PrivateReplicaState,type PrivateReplicaWire,type ReplicaWriterUpgrade
+} from "./privateReplicaPreferences"
 export { privateReplicaBinding } from "./privateReplicaBinding"
-import { changeReplicaPreference, effectiveIdentityReplicaConfigs, effectivePrivateReplicaConfigs, effectiveReplicaConfigs, emptyPrivateReplicaState, mergePrivateReplicaState,
-  parsePrivateReplicaWire, portableReplicaState, removeReplicaPreference, replicaPreferenceConflicts, updateReplicaProgress,
-  type PrivateReplicaState, type ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 
-const stateKey = (owner: string) => `tincanban.private-replica-state.v2.${owner}`
-const settingsKey = (owner: string) => `tincanban.blind-replicas.v1.${owner}`
-const preferenceKey = (owner: string) => `tincanban.device-replica-preferences.v1.${owner}`
-const scopeKey = (value: { origin: string; scopeId: string }) => `${value.origin}/${value.scopeId}`
-type LegacyPreference = { origin: string; scopeId: string; changedAt: number; config: BlindReplicaConfig | null }
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const prototype = Object.getPrototypeOf(value as object) as object | null
-  return prototype === Object.prototype || prototype === null
-}
-
-function parseState(raw: string, owner: string): PrivateReplicaState {
-  const value = JSON.parse(raw) as PrivateReplicaState
-  const wire = parsePrivateReplicaWire(value)
-  if (wire.personId !== owner || typeof value.actorId !== "string" || !value.progress || typeof value.progress !== "object" ||
-    Array.isArray(value.progress) || value.migrated !== true) throw new Error("Invalid private replica repository")
-  const progress = validateProgress(value.progress, wire.entries)
-  const state = { ...emptyPrivateReplicaState(owner, value.actorId), ...wire, progress, migrated: true }
-  if (value.writerUpgrades !== undefined) state.writerUpgrades = parseWriterUpgrades(value.writerUpgrades, wire.entries)
-  for (const config of effectivePrivateReplicaConfigs(state)) parsePrivateReplicaConfig(JSON.stringify(config), owner)
-  migrateLegacyReplicaBindings(state, owner)
-  return state
-}
-
-function parseWriterUpgrades(value: unknown, entries: PrivateReplicaState["entries"]): Record<string, ReplicaWriterUpgrade> {
-  if (!isPlainRecord(value) || Object.keys(value).length > 128) throw new Error("Invalid writer upgrade journal")
-  const upgrades: Record<string, ReplicaWriterUpgrade> = {}
-  for (const [key, raw] of Object.entries(value)) {
-    const parsed = parseWriterUpgrade(raw)
-    if (scopeKey(parsed.config) !== key || !entries.some(entry => scopeKey(entry) === key)) throw new Error("Invalid writer upgrade intent scope")
-    upgrades[key] = parsed
-  }
-  return upgrades
-}
-
-function parseWriterUpgrade(raw: unknown): ReplicaWriterUpgrade {
-  if (!isPlainRecord(raw) || Object.keys(raw).some(field => !["id", "config", "confirmed", "workers"].includes(field)) || typeof raw.id !== "string" ||
-    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.id)) throw new Error("Invalid writer upgrade intent")
-  const config = parseReplicaConfig(serialize(raw.config))
-  if (config.minimumWriterVersion !== undefined || config.removalPending || !config.preferenceRevision) throw new Error("Invalid writer upgrade intent scope")
-  const confirmed = parseWriterUpgradeConfirmation(raw.confirmed, config)
-  const workers = raw.workers === undefined ? undefined : parseReplicaWriterWorkers(raw.workers, config.workspaceId)
-  return { id: raw.id, config, ...(confirmed ? { confirmed } : {}), ...(workers ? { workers } : {}) }
-}
-
-function parseWriterUpgradeConfirmation(value: unknown, config: BlindReplicaConfig) {
-  if (value === undefined) return undefined
-  const receipt = parseRustyScopePolicyReceipt(value)
-  const payload = receipt.payload
-  if (payload.scopeId !== config.scopeId || payload.minimumWriterVersion !== 2 || payload.revoked ||
-    payload.revision <= config.policyRevision) throw new Error("Invalid confirmed writer upgrade intent")
-  return receipt
-}
-
-function migrateLegacyReplicaBindings(state: PrivateReplicaState, owner: string): void {
-  for (const config of effectivePrivateReplicaConfigs(state)) {
-    const key = scopeKey(config)
-    const progress = state.progress[key]
-    if (!progress?.replication || progress.revision !== config.preferenceRevision) continue
-    const binding = privateReplicaBinding(owner, config)
-    let replica = progress.replication
-    if (replica.binding !== binding) {
-      const matchesLegacyWorkspaceBinding = config.purpose !== "identity" && replica.binding === canonicalizeJson([
-        owner, config.origin, config.scopeId, config.workspaceId, config.keyEpoch, config.policyRevision,
-        config.servicePublicKey, config.readToken, config.writeToken, config.contentKey, config.preferenceRevision,
-      ])
-      if (!matchesLegacyWorkspaceBinding) throw new Error("Invalid or changed replica binding")
-      replica = { ...replica, binding }
-      progress.replication = replica
-    }
-    progress.replication = parseReplicaState<BlindObject>(replica, binding)
-  }
-}
-
-function validateProgress(value: unknown, entries: PrivateReplicaState["entries"]): PrivateReplicaState["progress"] {
-  if (!isPlainRecord(value)) throw new Error("Invalid private replica progress")
-  const records = Object.entries(value)
-  if (records.length > 128) throw new Error("Too many private replica progress records")
-  const knownEntries = new Set(entries.map(scopeKey))
-  const progress: PrivateReplicaState["progress"] = {}
-  for (const [key, record] of records) {
-    if (key.length > 4_352 || !knownEntries.has(key)) throw new Error("Invalid private replica progress scope")
-    progress[key] = parseProgressRecord(record)
-  }
-  return progress
-}
-
-function parseProgressRecord(value: unknown): PrivateReplicaState["progress"][string] {
-  if (!isPlainRecord(value) || Object.keys(value).length < 3 || Object.keys(value).length > 4 ||
-    Object.keys(value).some(field => !["revision", "cursor", "lastUploaded", "replication"].includes(field))) {
-    throw new Error("Invalid private replica progress fields")
-  }
-  const revision = value.revision
-  const cursor = value.cursor
-  const lastUploaded = value.lastUploaded
-  if (!isProgressRevision(revision) || typeof cursor !== "number" || !Number.isSafeInteger(cursor) || cursor < 0 ||
-    typeof lastUploaded !== "string" || !(lastUploaded === "" || /^[A-Za-z0-9_-]{43}$/.test(lastUploaded))) {
-    throw new Error("Invalid private replica progress")
-  }
-  const replication = value.replication === undefined ? undefined : parseStoredReplica(value.replication, cursor, lastUploaded)
-  return { revision, cursor, lastUploaded, ...(replication ? { replication } : {}) }
-}
-
-function parseStoredReplica(value: unknown, cursor: number, lastUploaded: string): ReplicaState<BlindObject> {
-  if (!isPlainRecord(value) || typeof value.binding !== "string") throw new Error("Invalid local replica progress")
-  const state = parseReplicaState<BlindObject>(value, value.binding)
-  if (state.cursor !== cursor || state.lastUploaded !== lastUploaded) throw new Error("Divergent local replica progress")
-  const pending = state.pending
-  if (pending) {
-    const object = pending.object
-    if (!object || object.version !== 1 || typeof object.scopeId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(object.scopeId) ||
-      !Number.isSafeInteger(object.keyEpoch) || object.keyEpoch < 1 || decodeBlindBytes(object.nonce).length !== 12 ||
-      decodeBlindBytes(object.ciphertext).length !== pending.bytes + 16) throw new Error("Invalid local encrypted outbox")
-  }
-  return state
-}
-
-function assertNoWriterUpgrade(state: PrivateReplicaState, config: Pick<PrivateReplicaConfig, "origin" | "scopeId">): void {
-  if (state.writerUpgrades?.[scopeKey(config)]) throw new Error("Rusty writer policy upgrade is pending; retry the upgrade before replication")
-}
-
-function matchingConfig(state: PrivateReplicaState, config: PrivateReplicaConfig, allowUpgrade = false): PrivateReplicaConfig {
-  if (!allowUpgrade) assertNoWriterUpgrade(state, config)
-  const normalized = parsePrivateReplicaConfig(JSON.stringify(config), state.personId)
-  const selected = effectivePrivateReplicaConfigs(state).find(value => scopeKey(value) === scopeKey(normalized) &&
-    (value.purpose ?? "workspace") === (normalized.purpose ?? "workspace"))
-  if (!selected || privateReplicaBinding(state.personId, selected) !== privateReplicaBinding(state.personId, normalized)) {
-    throw new Error("Rusty credential revision changed during replication")
-  }
-  return selected
-}
-
-function isProgressRevision(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 8_192 &&
-    value.split("|").every(part => /^[A-Za-z0-9:_-]{1,128}:[1-9]\d*$/.test(part))
-}
-
-async function legacyRecords(owner: string): Promise<PrivateReplicaState> {
-  const [saved, preferences] = await Promise.all([readLocal(settingsKey(owner)), readLocal(preferenceKey(owner))])
-  return legacyRecordsFromRaw(owner, saved, preferences)
-}
-
-function legacyRecordsFromRaw(owner: string, saved: string | null, preferences: string | null): PrivateReplicaState {
-  const configs = parseLegacyConfigs(JSON.parse(saved ?? "[]"))
-  const records = parseLegacyPreferences(JSON.parse(preferences ?? "[]"))
-  const byScope = new Map<string, LegacyPreference>(configs.map(config => [scopeKey(config), { origin: config.origin, scopeId: config.scopeId, changedAt: 1, config }]))
-  for (const record of records) byScope.set(scopeKey(record), record)
-  return migrateLegacyRecords(owner, configs, [...byScope.values()])
-}
-
-function parseLegacyConfigs(value: unknown): BlindReplicaConfig[] {
-  if (!Array.isArray(value) || value.length > 128) throw new Error("Invalid older-format private replica state")
-  return (value as unknown[]).map(item => parseReplicaConfig(serialize(item)))
-}
-
-function parseLegacyPreferences(value: unknown): LegacyPreference[] {
-  if (!Array.isArray(value) || value.length > 128) throw new Error("Invalid older-format private replica state")
-  return (value as unknown[]).map(parseLegacyPreference)
-}
-
-function parseLegacyPreference(value: unknown): LegacyPreference {
-  if (!isPlainRecord(value) || typeof value.origin !== "string" || typeof value.scopeId !== "string" ||
-    typeof value.changedAt !== "number" || !Number.isSafeInteger(value.changedAt) || value.changedAt < 1) {
-    throw new Error("Invalid older-format replica preference")
-  }
-  const config = value.config === null ? null : parseReplicaConfig(serialize(value.config))
-  const record = { origin: value.origin, scopeId: value.scopeId, changedAt: value.changedAt, config }
-  if (config && scopeKey(config) !== scopeKey(record)) throw new Error("Older-format replica scope mismatch")
-  return record
-}
-
-function migrateLegacyRecords(owner: string, configs: BlindReplicaConfig[], records: LegacyPreference[]): PrivateReplicaState {
-  let state = emptyPrivateReplicaState(owner, crypto.randomUUID())
-  for (const record of [...records].sort((a, b) => scopeKey(a).localeCompare(scopeKey(b)))) {
-    if (!record.config) { state = removeReplicaPreference(state, record.origin, record.scopeId); continue }
-    state = changeReplicaPreference(state, record.config)
-    const effective = effectiveReplicaConfigs(state).find(value => scopeKey(value) === scopeKey(record))!
-    const old = configs.find(value => scopeKey(value) === scopeKey(record))
-    const portable = (value: BlindReplicaConfig) => ({ ...value, cursor: 0, lastUploaded: "", preferenceRevision: undefined })
-    if (old && canonicalizeJson(portable(old)) === canonicalizeJson(portable(record.config))) {
-      state = updateReplicaProgress(state, { ...effective, cursor: old.cursor, lastUploaded: old.lastUploaded })
-    }
-  }
-  return { ...state, migrated: true }
-}
-
-function serialize(value: unknown): string {
-  const text = JSON.stringify(value)
-  if (text === undefined) throw new Error("Invalid private replica value")
-  return text
-}
-
-async function mutate(owner: string, change: (current: PrivateReplicaState) => PrivateReplicaState,
-  ensureIdentity: () => void = () => {}): Promise<PrivateReplicaState> {
-  if (!owner || owner.length > 128) throw new Error("Invalid private replica identity")
-  return withLocalStateWriteLock(stateKey(owner), async () => {
-    ensureIdentity()
-    const initial = await readLocal(stateKey(owner)) ? undefined : await legacyRecords(owner)
-    const raw = await updateLocal(stateKey(owner), current => {
-      ensureIdentity()
-      const next = change(current ? parseState(current, owner) : initial!)
-      const encoded = JSON.stringify(next)
-      parseState(encoded, owner)
-      ensureIdentity()
-      return encoded
-    })
-    return parseState(raw, owner)
-  })
-}
-
-async function read(owner: string): Promise<PrivateReplicaState> {
-  const raw = await readLocal(stateKey(owner))
-  if (!raw) return mutate(owner, state => state)
-  const parsed = parseState(raw, owner)
-  return JSON.stringify(parsed) === raw ? parsed : mutate(owner, state => state)
-}
+import { stateKey,legacySnapshotKey,settingsKey,preferenceKey,scopeKey,isPlainRecord,parseState,assertNoWriterUpgrade,matchingConfig,legacyRecordsFromRaw,legacySourcesFingerprint,mergeNovelLegacyRecords,serialize,changedCredentialOrigins,mutate,read } from "./privateReplicaRepositoryState"
+export { stateKey as privateReplicaStateStorageKey } from "./privateReplicaRepositoryState"
 
 export async function getReplicaConfigurations(owner: string): Promise<BlindReplicaConfig[]> { return effectiveReplicaConfigs(await read(owner)) }
 export async function getPrivateReplicaConfigurations(owner: string): Promise<PrivateReplicaConfig[]> {
@@ -240,14 +32,172 @@ export async function getIdentityReplicaConfigurations(owner: string): Promise<I
 }
 export async function exportPrivateReplicaState(owner: string) { return portableReplicaState(await read(owner)) }
 export async function getReplicaPreferenceConflicts(owner: string) { return replicaPreferenceConflicts(await read(owner)) }
+export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
+export async function getPrivateReplicaConflictSummaries(owner: string): Promise<PrivateReplicaConflictSummary[]> {
+  const state = await read(owner)
+  const conflicts = new Set(replicaPreferenceConflicts(state).map(scopeKey))
+  return state.entries.filter(entry => conflicts.has(scopeKey(entry))).map(entry => ({ origin: entry.origin, scopeId: entry.scopeId,
+    workspaceIds: [...new Set(entry.operations.flatMap(operation => operation.config && operation.config.purpose !== "identity"
+      ? [operation.config.workspaceId] : []))].sort(),
+    identityState: entry.operations.some(operation => operation.purpose === "identity") }))
+}
+
+export type PrivateReplicaConflictCapture = {
+  sourceWire: PrivateReplicaWire
+  sourceRevision: string
+  previousVariants: PrivateReplicaConfig[]
+  progress?: ReplicaState<BlindObject>
+  progressConfig?: PrivateReplicaConfig
+  progressRecord?: PrivateReplicaState["progress"][string]
+  sourceConditions: LocalStatePlan["conditions"]
+}
+
+function progressKeyHistory(fields: unknown[]): Record<string, unknown> {
+  const history: Record<string, unknown> = {}
+  for (const extra of fields.slice(12)) {
+    if (!isPlainRecord(extra) || Object.keys(extra).length !== 1) throw new Error("Invalid original replica key history")
+    const name = Object.keys(extra)[0]!
+    if (!["historicalContentKeys", "historicalContentKeyVariants"].includes(name) || Object.hasOwn(history, name)) {
+      throw new Error("Invalid original replica key history")
+    }
+    history[name] = extra[name]
+  }
+  return history
+}
+
+function modernProgressConfig(owner: string, origin: string, scopeId: string, fields: unknown[],
+  record: PrivateReplicaState["progress"][string]): PrivateReplicaConfig {
+  if (fields.length < 12 || fields.length > 14 || fields[3] !== origin || fields[4] !== scopeId ||
+      (fields[1] !== "workspace" && fields[1] !== "identity")) throw new Error("Original replica scope binding changed")
+  return parsePrivateReplicaConfig(JSON.stringify({ purpose: fields[1], ...(fields[1] === "identity"
+    ? { personId: fields[2] } : { workspaceId: fields[2] }), origin, scopeId, keyEpoch: fields[5], policyRevision: fields[6],
+    servicePublicKey: fields[7], readToken: fields[8], writeToken: fields[9], contentKey: fields[10], preferenceRevision: fields[11],
+    ...progressKeyHistory(fields), cursor: record.cursor, lastUploaded: record.lastUploaded }), owner)
+}
+
+function configFromProgressBinding(owner: string, origin: string, scopeId: string,
+  record: PrivateReplicaState["progress"][string]): PrivateReplicaConfig {
+  const binding = record.replication?.binding
+  if (!binding) throw new Error("Original replica credential binding is missing")
+  const parsed: unknown = JSON.parse(binding)
+  if (!Array.isArray(parsed) || parsed[0] !== owner) throw new Error("Original replica identity binding changed")
+  const fields: unknown[] = parsed
+  const legacy = fields.length === 11 && fields[1] === origin && fields[2] === scopeId
+  const config = legacy ? parsePrivateReplicaConfig(JSON.stringify({ purpose: "workspace", origin, scopeId,
+    workspaceId: fields[3], keyEpoch: fields[4], policyRevision: fields[5], servicePublicKey: fields[6], readToken: fields[7],
+    writeToken: fields[8], contentKey: fields[9], preferenceRevision: fields[10], cursor: record.cursor, lastUploaded: record.lastUploaded }), owner)
+    : modernProgressConfig(owner, origin, scopeId, fields, record)
+  if ((legacy ? canonicalizeJson(fields) : privateReplicaBinding(owner, config)) !== binding) throw new Error("Noncanonical original replica binding")
+  if (config.preferenceRevision !== record.revision) throw new Error("Original replica progress revision changed")
+  return config
+}
+
+function conflictEntry(state: PrivateReplicaState, origin: string, scopeId: string) {
+  const entry = state.entries.find(entry => entry.origin === origin && entry.scopeId === scopeId)
+  if (!entry || !replicaPreferenceConflicts(state).some(entry => entry.origin === origin && entry.scopeId === scopeId) ||
+    entry.operations.some(operation => !operation.config || operation.config.removalPending) || state.writerUpgrades?.[scopeKey(entry)]) {
+    throw new Error("An unresolved active credential conflict without a writer upgrade is required")
+  }
+  return entry
+}
+
+function assertCapturedPending(progress: ReplicaState<BlindObject> | undefined, scopeId: string, config: PrivateReplicaConfig | undefined): void {
+  if (progress?.pending && (progress.pending.object.scopeId !== scopeId || progress.pending.object.keyEpoch > config!.keyEpoch)) {
+    throw new Error("Original outbox encrypted resource binding changed")
+  }
+}
+
+/** Capture one physical outbox, including its original binding even if causal preferences no longer select it. */
+export async function capturePrivateReplicaConflict(owner: string, origin: string, scopeId: string): Promise<PrivateReplicaConflictCapture> {
+  await read(owner)
+  const keys = [stateKey(owner), settingsKey(owner), preferenceKey(owner), legacySnapshotKey(owner)]
+  const values = await Promise.all(keys.map(key => readLocal(key)))
+  const [raw, settings, preferences, snapshot] = values
+  if (raw == null || snapshot !== await legacySourcesFingerprint(owner, settings ?? null, preferences ?? null)) {
+    throw new Error("Private replica source changed during conflict capture")
+  }
+  const state = parseState(raw, owner), sourceWire = portableReplicaState(state)
+  const entry = conflictEntry(state, origin, scopeId)
+  const previousVariants = entry.operations.map(operation => ({ ...structuredClone(operation.config!),
+    preferenceRevision: `${operation.dot.actorId}:${operation.dot.counter}` }))
+  const progressRecord = state.progress[scopeKey(entry)]
+  const progressConfig = progressRecord?.replication ? configFromProgressBinding(owner, origin, scopeId, progressRecord) : undefined
+  const progress = progressConfig && progressRecord?.replication
+    ? parseReplicaState<BlindObject>({ ...progressRecord.replication, binding: privateReplicaBinding(owner, progressConfig) }, privateReplicaBinding(owner, progressConfig)) : undefined
+  assertCapturedPending(progress, scopeId, progressConfig)
+  return { sourceWire, sourceRevision: canonicalizeJson([sourceWire.personId, sourceWire.clock, entry]), previousVariants,
+    ...(progressRecord ? { progressRecord: structuredClone(progressRecord) } : {}), ...(progress ? { progress, progressConfig } : {}),
+    sourceConditions: keys.map((key, index) => ({ key, value: values[index]! })) }
+}
+
+async function assertConflictOutboxDrained(capture: PrivateReplicaConflictCapture, replacement: PrivateReplicaConfig,
+  drained: { progress?: ReplicaState<BlindObject>; receipt?: BlindReceipt }): Promise<void> {
+  const original = capture.progress, pending = original?.pending
+  let expected = original && structuredClone(original)
+  if (pending) {
+    const receipt = drained.receipt
+    if (!receipt || !Number.isSafeInteger(receipt.payload.policyRevision) || receipt.payload.policyRevision < 1 ||
+      receipt.payload.policyRevision > replacement.policyRevision || original!.generation === Number.MAX_SAFE_INTEGER) {
+      throw new Error("Signed original outbox confirmation is required")
+    }
+    await verifyBlindReceipt(receipt, { ...replacement, policyRevision: receipt.payload.policyRevision }, pending.object, pending.requestId)
+    expected = { ...original!, generation: original!.generation + 1, lastUploaded: pending.hash,
+      ...(pending.revision === undefined ? {} : { uploadedRevision: pending.revision }),
+      ...(pending.identity === undefined ? {} : { contentIdentity: pending.identity }) }
+    delete expected.pending
+  } else if (drained.receipt) throw new Error("Recovery manufactured an original outbox receipt")
+  if (canonicalizeJson(expected ?? null) !== canonicalizeJson(drained.progress ?? null)) throw new Error("Original outbox drain progress changed")
+}
+
+function installRecoveredProgress(next: PrivateReplicaState, owner: string, config: PrivateReplicaConfig,
+  capture: PrivateReplicaConflictCapture, prior: ReplicaState<BlindObject> | undefined): void {
+  const cursor = prior?.cursor ?? capture.progressRecord?.cursor ?? 0
+  if (prior?.generation === Number.MAX_SAFE_INTEGER) throw new Error("Replica generation is exhausted")
+  const replication = { ...emptyReplicaState<BlindObject>(privateReplicaBinding(owner, config), cursor, ""), generation: prior ? prior.generation + 1 : 0,
+    ...(prior?.contentIdentity ? { contentIdentity: prior.contentIdentity } : {}) }
+  next.progress[scopeKey(config)] = { revision: config.preferenceRevision!, cursor, lastUploaded: "", replication }
+}
+
+/** Only exact signed drain evidence permits replacing conflicting credentials; activation never fabricates a new outbox. */
+export async function planPrivateReplicaConflictActivation(owner: string, capture: PrivateReplicaConflictCapture,
+  replacement: PrivateReplicaConfig, drained: { progress?: ReplicaState<BlindObject>; receipt?: BlindReceipt },
+  freeze: ReplicaCredentialConflictFreeze): Promise<{ config: PrivateReplicaConfig; plan: LocalStatePlan }> {
+  capture = structuredClone(capture); replacement = structuredClone(replacement); drained = structuredClone(drained)
+  freeze = parseReplicaCredentialConflictFreeze(freeze, owner, replacement.origin)
+  const current = await capturePrivateReplicaConflict(owner, replacement.origin, replacement.scopeId)
+  if (canonicalizeJson(current) !== canonicalizeJson(capture) || canonicalizeJson(capture.sourceWire) !== canonicalizeJson(freeze.proposal.sourceWire) ||
+    capture.sourceRevision !== freeze.proposal.sourceRevision || canonicalizeJson(replacement) !== canonicalizeJson(freeze.proposal.next)) {
+    throw new Error("Credential recovery source or exact proposal changed")
+  }
+  const freezeKey = await replicaCredentialFreezeKey(owner, replacement.origin), frozenRaw = await readLocal(freezeKey)
+  if (!frozenRaw || canonicalizeJson(parseReplicaCredentialConflictFreeze(frozenRaw, owner, replacement.origin)) !== canonicalizeJson(freeze)) {
+    throw new Error("Credential conflict freeze changed before activation")
+  }
+  for (const previous of [...capture.previousVariants, ...(capture.progressConfig ? [capture.progressConfig] : [])]) {
+    assertRetainsReplicaContentKeys(previous, replacement)
+  }
+  await assertConflictOutboxDrained(capture, replacement, drained)
+  const stateRaw = capture.sourceConditions.find(condition => condition.key === stateKey(owner))?.value
+  if (!stateRaw) throw new Error("Exact private replica source is missing")
+  const next = changeReplicaPreference(parseState(stateRaw, owner), replacement)
+  const config = effectivePrivateReplicaConfigs(next).find(value => scopeKey(value) === scopeKey(replacement))
+  if (!config?.preferenceRevision) throw new Error("Credential conflict recovery did not select one causal successor")
+  installRecoveredProgress(next, owner, config, capture, drained.progress)
+  const encoded = JSON.stringify(next)
+  parseState(encoded, owner)
+  const activated = effectivePrivateReplicaConfigs(next).find(value => scopeKey(value) === scopeKey(config))!
+  return { config: activated, plan: { conditions: [...capture.sourceConditions, { key: freezeKey, value: frozenRaw }],
+    writes: [{ key: stateKey(owner), value: encoded }] } }
+}
 
 export async function setReplicaPreference(owner: string, config: PrivateReplicaConfig, removed = false) {
   const checked = parsePrivateReplicaConfig(serialize(config), owner)
+  const freeze = await replicaCredentialFreezeCondition(owner, checked)
   const before = await read(owner)
   const after = await mutate(owner, state => {
     assertNoWriterUpgrade(state, checked)
-    return changeReplicaPreference(state, checked, removed)
-  })
+    return reconcileReplicaProgress(state, changeReplicaPreference(state, checked, removed))
+  }, undefined, [freeze])
   return canonicalizeJson(portableReplicaState(before)) !== canonicalizeJson(portableReplicaState(after))
 }
 
@@ -306,13 +256,16 @@ function reconcileReplicaProgress(previous: PrivateReplicaState, next: PrivateRe
 }
 
 export async function persistPrivateReplicaProgress(owner: string, config: PrivateReplicaConfig, ensureIdentity: () => void = () => {}) {
+  const freeze = await replicaCredentialFreezeCondition(owner, config)
   return effectiveReplicaConfigs(await mutate(owner, state => {
     assertNoWriterUpgrade(state, config)
     return updateReplicaProgress(state, config)
-  }, ensureIdentity))
+  }, ensureIdentity, [freeze]))
 }
 
-export async function getPrivateReplicaProgress(owner: string, config: PrivateReplicaConfig): Promise<ReplicaState<BlindObject>> {
+export async function getPrivateReplicaProgress(owner: string, config: PrivateReplicaConfig,
+  maintenance?: ReplicaCredentialFreeze): Promise<ReplicaState<BlindObject>> {
+  await replicaCredentialFreezeCondition(owner, config, maintenance)
   const state = await read(owner)
   const selected = matchingConfig(state, config)
   const saved = state.progress[scopeKey(config)]
@@ -326,6 +279,7 @@ export async function getPrivateReplicaProgress(owner: string, config: PrivateRe
 export async function prepareReplicaWriterUpgrade(owner: string, config: BlindReplicaConfig,
   ensureIdentity: () => void = () => {}): Promise<ReplicaWriterUpgrade> {
   config = parseReplicaConfig(serialize(config))
+  const freeze = await replicaCredentialFreezeCondition(owner, config)
   const state = await mutate(owner, current => {
     const selected = matchingConfig(current, config, true)
     if (selected.purpose === "identity" || config.minimumWriterVersion !== undefined || config.removalPending) throw new Error("Workspace writer upgrade is not applicable")
@@ -337,7 +291,7 @@ export async function prepareReplicaWriterUpgrade(owner: string, config: BlindRe
     }
     if (current.progress[key]?.replication?.pending) throw new Error("Pending Rusty upload must be acknowledged before writer upgrade")
     return { ...current, writerUpgrades: { ...current.writerUpgrades, [key]: { id: crypto.randomUUID(), config: selected as BlindReplicaConfig } } }
-  }, ensureIdentity)
+  }, ensureIdentity, [freeze])
   return structuredClone(state.writerUpgrades![scopeKey(config)]!)
 }
 
@@ -349,6 +303,7 @@ export async function readReplicaWriterUpgrade(owner: string, config: BlindRepli
 export async function captureReplicaWriterWorkers(owner: string, upgrade: ReplicaWriterUpgrade, incoming: unknown,
   ensureIdentity: () => void = () => {}): Promise<ReplicaWriterUpgrade> {
   upgrade = structuredClone(upgrade)
+  const freeze = await replicaCredentialFreezeCondition(owner, upgrade.config)
   const workers = parseReplicaWriterWorkers(incoming, upgrade.config.workspaceId)
   const key = scopeKey(upgrade.config)
   const state = await mutate(owner, current => {
@@ -358,7 +313,7 @@ export async function captureReplicaWriterWorkers(owner: string, upgrade: Replic
       [canonicalizeJson([worker.origin, worker.definitionId, worker.executorPersonId, worker.integrationId]), worker]))
     const union = parseReplicaWriterWorkers([...captured.values()], upgrade.config.workspaceId)
     return { ...current, writerUpgrades: { ...current.writerUpgrades, [key]: { ...upgrade, workers: union } } }
-  }, ensureIdentity)
+  }, ensureIdentity, [freeze])
   return structuredClone(state.writerUpgrades![key]!)
 }
 
@@ -366,6 +321,7 @@ export async function captureReplicaWriterWorkers(owner: string, upgrade: Replic
 export async function confirmReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, value: unknown,
   ensureIdentity: () => void = () => {}): Promise<ReplicaWriterUpgrade> {
   upgrade = structuredClone(upgrade)
+  const freeze = await replicaCredentialFreezeCondition(owner, upgrade.config)
   const capturedReceipt = structuredClone(value)
   ensureIdentity()
   const receipt = await verifyRustyWriterPolicyReceipt(capturedReceipt, upgrade.config, owner,
@@ -376,7 +332,7 @@ export async function confirmReplicaWriterUpgrade(owner: string, upgrade: Replic
     if (canonicalizeJson(current.writerUpgrades?.[key] ?? null) !== canonicalizeJson(upgrade)) throw new Error("Writer upgrade intent changed before confirmation")
     writerUpgradeSelection(current, upgrade.config)
     return { ...current, writerUpgrades: { ...current.writerUpgrades, [key]: { ...upgrade, confirmed: receipt } } }
-  }, ensureIdentity)
+  }, ensureIdentity, [freeze])
   return structuredClone(state.writerUpgrades![key]!)
 }
 
@@ -384,6 +340,7 @@ export async function confirmReplicaWriterUpgrade(owner: string, upgrade: Replic
 export async function completeReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, policyRevision: number,
   ensureIdentity: () => void = () => {}): Promise<BlindReplicaConfig> {
   upgrade = structuredClone(upgrade)
+  const freeze = await replicaCredentialFreezeCondition(owner, upgrade.config)
   const config = parseReplicaConfig(serialize(upgrade.config))
   if (!Number.isSafeInteger(policyRevision) || policyRevision <= config.policyRevision) throw new Error("Writer upgrade policy revision did not advance")
   const key = scopeKey(config)
@@ -406,20 +363,25 @@ export async function completeReplicaWriterUpgrade(owner: string, upgrade: Repli
     delete next.writerUpgrades![key]
     if (!Object.keys(next.writerUpgrades!).length) delete next.writerUpgrades
     return next
-  }, ensureIdentity)
+  }, ensureIdentity, [freeze])
   return effectiveReplicaConfigs(state).find(value => scopeKey(value) === key)!
 }
 
 /** Prepare a portable private-state merge against exact v2 and legacy bytes; never writes during planning. */
 export async function planPrivateReplicaImport(owner: string, incoming: unknown): Promise<LocalStatePlan> {
-  const snapshot = structuredClone(incoming)
-  const wire = parsePrivateReplicaWire(snapshot)
+  const incomingSnapshot = structuredClone(incoming)
+  const wire = parsePrivateReplicaWire(incomingSnapshot)
   if (wire.personId !== owner) throw new Error("Private replica identity mismatch")
 
-  const keys = [stateKey(owner), settingsKey(owner), preferenceKey(owner)]
-  const [stateRaw, settingsRaw, preferencesRaw] = await Promise.all(keys.map(key => readLocal(key)))
-  const state = stateRaw === null ? legacyRecordsFromRaw(owner, settingsRaw, preferencesRaw) : parseState(stateRaw, owner)
+  const keys = [stateKey(owner), settingsKey(owner), preferenceKey(owner), legacySnapshotKey(owner)]
+  const [stateRaw, settingsRaw, preferencesRaw, snapshotRaw] = await Promise.all(keys.map(key => readLocal(key)))
+  const snapshot = await legacySourcesFingerprint(owner, settingsRaw, preferencesRaw)
+  let state = stateRaw === null ? legacyRecordsFromRaw(owner, settingsRaw, preferencesRaw) : parseState(stateRaw, owner)
+  const originalEntries = stateRaw === null ? [] : state.entries
+  if (stateRaw !== null && snapshot !== snapshotRaw) state = mergeNovelLegacyRecords(state, owner, settingsRaw, preferencesRaw)
   const next = reconcileReplicaProgress(state, mergePrivateReplicaState(state, wire))
+  const changedOrigins = changedCredentialOrigins(originalEntries, next.entries)
+  const freezes = await Promise.all(changedOrigins.map(origin => replicaCredentialOriginCondition(owner, origin)))
   next.migrated = true
   const encoded = JSON.stringify(next)
   parseState(encoded, owner)
@@ -431,15 +393,75 @@ export async function planPrivateReplicaImport(owner: string, incoming: unknown)
   const migrations = changed.length ? await import("./attachmentIndexScope").then(module =>
     Promise.all(changed.map(config => module.planWorkspaceAttachmentIndexMigration(owner, config)))) : []
   return {
-    conditions: [...keys.map((key, index) => ({ key, value: [stateRaw, settingsRaw, preferencesRaw][index] })),
+    conditions: [...keys.map((key, index) => ({ key, value: [stateRaw, settingsRaw, preferencesRaw, snapshotRaw][index] })), ...freezes,
       ...migrations.flatMap(plan => plan.conditions)],
-    writes: [...(encoded === stateRaw ? [] : [{ key: stateKey(owner), value: encoded }]), ...migrations.flatMap(plan => plan.writes)],
+    writes: [...(encoded === stateRaw ? [] : [{ key: stateKey(owner), value: encoded }]),
+      ...(snapshot === snapshotRaw ? [] : [{ key: legacySnapshotKey(owner), value: snapshot }]), ...migrations.flatMap(plan => plan.writes)],
   }
+}
+
+function installActivatedResourceProgress(next: PrivateReplicaState, owner: string, selected: PrivateReplicaConfig,
+  progress: PrivateReplicaState["progress"][string] | undefined): void {
+    const activated = effectivePrivateReplicaConfigs(next).find(config => scopeKey(config) === scopeKey(selected))
+    if (!activated?.preferenceRevision) throw new Error("Credential activation produced a conflict")
+    const binding = privateReplicaBinding(owner, activated)
+    const previousReplica = progress?.replication
+    if (previousReplica?.generation === Number.MAX_SAFE_INTEGER) throw new Error("Replica generation is exhausted")
+    const replication = { ...emptyReplicaState<BlindObject>(binding, progress?.cursor ?? selected.cursor, ""),
+      generation: previousReplica ? previousReplica.generation + 1 : 0,
+      ...(previousReplica?.contentIdentity ? { contentIdentity: previousReplica.contentIdentity } : {}) }
+    next.progress[scopeKey(selected)] = { revision: activated.preferenceRevision, cursor: replication.cursor, lastUploaded: "", replication }
+}
+
+function activateFrozenResource(owner: string, state: PrivateReplicaState, next: PrivateReplicaState,
+  current: PrivateReplicaConfig[], resource: ReplicaCredentialFreeze["resources"][number], revision: number | undefined): PrivateReplicaState {
+    const previous = resource.previous
+    const selected = current.find(config => scopeKey(config) === scopeKey(previous))
+    if (!selected || privateReplicaBinding(owner, selected) !== privateReplicaBinding(owner, previous) ||
+      state.writerUpgrades?.[scopeKey(previous)]) throw new Error("Frozen credential revision or writer policy changed")
+    if (!Number.isSafeInteger(revision) || revision! <= previous.policyRevision) throw new Error("Confirmed scope policy did not advance")
+    const progress = state.progress[scopeKey(previous)]
+    if (progress && progress.revision !== selected.preferenceRevision || progress?.replication?.pending) {
+      throw new Error("Pending or changed Rusty outbox prevents credential activation")
+    }
+    const replacement: PrivateReplicaConfig = resource.next.purpose === "identity"
+      ? { ...resource.next, policyRevision: revision! }
+      : { ...resource.next, policyRevision: revision!, minimumWriterVersion: 2 }
+    next = changeReplicaPreference(next, replacement)
+    installActivatedResourceProgress(next, owner, previous, progress)
+    return next
+}
+
+/** A verified transition activates every captured scope together; old outboxes must already be acknowledged. */
+export async function planReplicaCredentialActivation(owner: string, pending: ReplicaCredentialFreeze,
+  revisions: Record<string, number>): Promise<{ plan: LocalStatePlan; configs: PrivateReplicaConfig[] }> {
+  pending = structuredClone(pending)
+  revisions = structuredClone(revisions)
+  if (pending.personId !== owner || Object.keys(revisions).length !== pending.resources.length) throw new Error("Credential activation must cover every frozen scope")
+  await read(owner)
+  const keys = [stateKey(owner), settingsKey(owner), preferenceKey(owner), legacySnapshotKey(owner)]
+  const [raw, settings, preferences, snapshot] = await Promise.all(keys.map(key => readLocal(key)))
+  if (raw === null || snapshot !== await legacySourcesFingerprint(owner, settings, preferences)) throw new Error("Previous credentials changed during the frozen transition")
+  const state = parseState(raw, owner)
+  const current = effectivePrivateReplicaConfigs(state).filter(config => config.origin === pending.origin)
+  if (current.length !== pending.resources.length) throw new Error("Frozen scope set changed before activation")
+  let next = structuredClone(state)
+  const freezes: LocalStatePlan["conditions"] = []
+  for (const resource of pending.resources) {
+    freezes.push(await replicaCredentialFreezeCondition(owner, resource.previous, pending))
+    next = activateFrozenResource(owner, state, next, current, resource, revisions[resource.previous.scopeId])
+  }
+  const encoded = JSON.stringify(next)
+  parseState(encoded, owner)
+  return { plan: { conditions: [...keys.map((key, index) => ({ key, value: [raw, settings, preferences, snapshot][index] })), ...freezes],
+    writes: [{ key: stateKey(owner), value: encoded }] },
+  configs: effectivePrivateReplicaConfigs(next).filter(config => config.origin === pending.origin) }
 }
 
 /** One transaction publishes cursor, acknowledgment and exact outbox under the current credential revision. */
 export async function persistPrivateReplicaState(owner: string, config: PrivateReplicaConfig, expectedGeneration: number,
-  incoming: ReplicaState<BlindObject>, ensureIdentity: () => void = () => {}) {
+  incoming: ReplicaState<BlindObject>, ensureIdentity: () => void = () => {}, maintenance?: ReplicaCredentialFreeze) {
+  const freeze = await replicaCredentialFreezeCondition(owner, config, maintenance)
   const updated = await mutate(owner, state => {
     const selected = matchingConfig(state, config)
     const binding = privateReplicaBinding(owner, selected)
@@ -451,6 +473,6 @@ export async function persistPrivateReplicaState(owner: string, config: PrivateR
     const copy = structuredClone(state)
     copy.progress[scopeKey(config)] = { revision: selected.preferenceRevision!, cursor: next.cursor, lastUploaded: next.lastUploaded, replication: next }
     return copy
-  }, ensureIdentity)
+  }, ensureIdentity, [freeze])
   return effectiveReplicaConfigs(updated)
 }

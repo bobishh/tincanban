@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { attachmentTextPreview } from "../attachmentTextPreview"
 import { MarkdownContent } from "../ui/markdownContent"
 import { computed, onBeforeUnmount, ref } from "vue"
 import {
@@ -8,6 +9,7 @@ import {
   readAttachment,
   storeAttachment,
 } from "../attachments"
+import type { FileReference } from "../domain/model"
 import type { Document, DocumentInput } from "../types"
 import { isInlineNarrativeNote } from "../domain/narrative"
 import ModalLayer from "./ModalLayer.vue"
@@ -20,6 +22,8 @@ const props = defineProps<{
   workspaceId?: string
   attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
+  readFile?: (file: FileReference) => Promise<Uint8Array | undefined>
+  downloadUrl?: (document: Document) => string
   save: (document: DocumentDraft) => Promise<void>
   update: (documentId: string, content: string) => Promise<void>
 }>()
@@ -35,6 +39,8 @@ const previewUrl = ref("")
 const previewError = ref("")
 const previewSaving = ref(false)
 const previewStatus = ref("")
+const previewTruncated = ref(false)
+let previewRequest = 0
 const visibleDocuments = computed(() => props.documents.filter(document => !isInlineNarrativeNote({ ...document, content: document.content ?? null, documentKind: document.kind })))
 
 function coverageFor(document: Document) {
@@ -79,6 +85,7 @@ function resetForm() {
 
 async function openPreview(document: Document) {
   closePreview()
+  const request = ++previewRequest
   preview.value = document
   previewError.value = ""
   previewStatus.value = ""
@@ -92,26 +99,34 @@ async function openPreview(document: Document) {
       : "No preview content is attached."
     return
   }
+  previewStatus.value = "Loading preview…"
   try {
-    const bytes = await readAttachment(document.file)
+    const bytes = await (props.readFile ?? readAttachment)(document.file)
+    if (request !== previewRequest) return
     if (!bytes) {
       previewError.value = "File is not available on this device."
       return
     }
     const mediaType = attachmentMediaType(document.file)
     if (isText(mediaType) || isMarkdown(document)) {
-      previewText.value = new TextDecoder().decode(bytes)
+      const decoded = attachmentTextPreview(bytes)
+      previewText.value = decoded.text
+      previewTruncated.value = decoded.truncated
     } else if (isEmbeddable(mediaType)) {
       previewUrl.value = URL.createObjectURL(blobFrom(bytes, mediaType))
     } else {
       previewError.value = "This file type has no inline preview. Download it to open it."
     }
   } catch (caught) {
-    previewError.value = caught instanceof Error ? caught.message : String(caught)
+    if (request === previewRequest) previewError.value = caught instanceof Error ? caught.message : String(caught)
+  } finally {
+    if (request === previewRequest) previewStatus.value = ""
   }
 }
 
 function closePreview() {
+  previewRequest += 1
+  previewTruncated.value = false
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   preview.value = null
   previewText.value = ""
@@ -144,7 +159,7 @@ async function download(document: Document) {
   if (!document.file) return
   error.value = ""
   try {
-    const bytes = await readAttachment(document.file)
+    const bytes = await (props.readFile ?? readAttachment)(document.file)
     if (!bytes) {
       error.value = "File is not available on this device."
       return
@@ -239,14 +254,15 @@ onBeforeUnmount(closePreview)
       <div>
         <strong>{{ document.title }}</strong>
         <span>{{ fileDescription(document) }}</span>
-        <span v-if="document.file?.type === 'blob'" class="attachment-coverage" role="status" aria-label="Encrypted attachment coverage">
+        <span v-if="document.file?.type === 'blob' && !readFile" class="attachment-coverage" role="status" aria-label="Encrypted attachment coverage">
           {{ coverageFor(document).label }}
           <small v-if="coverageFor(document).error">{{ coverageFor(document).error }}</small>
         </span>
       </div>
       <div class="document-actions">
         <button class="button button-small button-quiet" type="button" @click="openPreview(document)">Preview</button>
-        <button v-if="document.file?.type === 'blob'" class="button button-small" type="button" @click="download(document)">Download</button>
+        <a v-if="downloadUrl && document.file" class="button button-small" :href="downloadUrl(document)" :download="attachmentName(document.file)" :aria-label="`Download ${document.title}`">Download</a>
+        <button v-else-if="document.file?.type === 'blob'" class="button button-small" type="button" @click="download(document)">Download</button>
       </div>
     </div>
 
@@ -260,6 +276,7 @@ onBeforeUnmount(closePreview)
           <button class="icon-button" type="button" aria-label="Close" @click="closePreview">×</button>
         </div>
         <p v-if="previewError" class="document-preview-message">{{ previewError }}</p>
+        <p v-if="previewTruncated" class="document-preview-message">Showing the beginning of this file. Download to read the full text.</p>
         <p v-if="previewStatus" class="document-preview-message" role="status">{{ previewStatus }}</p>
         <iframe
           v-if="preview.content !== undefined && preview.format === 'html'"

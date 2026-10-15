@@ -22,8 +22,9 @@ type GuardAsync = () => void | Promise<void>
 
 /** Find typed automation routes whose currently authenticated Worker uses this exact Rusty scope. */
 export async function discoverWorkspaceReplicaWorkers(appPick: WorkspacePick, configValue: BlindReplicaConfig,
-  guardAsync: GuardAsync): Promise<ReplicaWriterWorker[]> {
+  guardAsync: GuardAsync, acceptedStorageVariants?: readonly BlindReplicaConfig[]): Promise<ReplicaWriterWorker[]> {
   const config = structuredClone(configValue)
+  const accepted = acceptedStorageVariants ? structuredClone([...acceptedStorageVariants]) : [config]
   const profileValue = appPick.getCurrentProfile()
   if (!profileValue) throw new Error("Current identity is unavailable for Worker discovery")
   const profile = structuredClone(profileValue)
@@ -50,7 +51,7 @@ export async function discoverWorkspaceReplicaWorkers(appPick: WorkspacePick, co
   for (const routeInfo of routeInfos) {
     routesInfo.add(routeInfo.grantId)
     executorIds.add(routeInfo.executorPersonId)
-    const route = await inspectAutomationRoute(profile, routeInfo, documentId, config, guardAsync)
+    const route = await inspectAutomationRoute(profile, routeInfo, documentId, config, guardAsync, accepted)
     if (route) routes.push(route)
     if (routes.length > 64) throw new Error("Automation Worker refresh cohort exceeds its limit")
   }
@@ -100,7 +101,7 @@ function readTypedAutomationRoute(entity: Extract<WorkspaceEntity, { kind: "auto
 }
 
 async function inspectAutomationRoute(profile: LocalProfile, route: AutomationRouteInfo, workspaceId: string,
-  config: BlindReplicaConfig, guard: GuardAsync): Promise<ReplicaWriterWorker | undefined> {
+  config: BlindReplicaConfig, guard: GuardAsync, accepted: readonly BlindReplicaConfig[]): Promise<ReplicaWriterWorker | undefined> {
   const { inspectExistingAutomation } = await import("../app/automationInstanceManagement")
   const inspected = await inspectExistingAutomation(profile, { origin: route.origin, workspaceId,
     definitionId: route.definition.id, executorPersonId: route.executorPersonId }, { ensureCurrent: guard })
@@ -113,7 +114,8 @@ async function inspectAutomationRoute(profile: LocalProfile, route: AutomationRo
   const storage = inspected.description.storage
   if (!storage) throw new Error("Automation instance does not expose its authenticated Rusty storage pin")
   if (storage.origin !== config.origin || storage.scopeId !== config.scopeId) return undefined
-  if (storage.keyEpoch !== config.keyEpoch || storage.servicePublicKey !== config.servicePublicKey) {
+  if (!accepted.some(candidate => candidate.workspaceId === workspaceId && candidate.origin === config.origin && candidate.scopeId === config.scopeId &&
+    storage.keyEpoch === candidate.keyEpoch && storage.servicePublicKey === candidate.servicePublicKey)) {
     throw new Error("Automation instance Rusty storage epoch or service pin does not match this scope")
   }
   return { origin: identity.origin, workspaceId, definitionId: route.definition.id,

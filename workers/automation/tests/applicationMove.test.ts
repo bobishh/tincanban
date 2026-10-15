@@ -21,39 +21,44 @@ test("Given explicit application binding, when mail is stale or status would rev
 });
 
 test("Given an Upvest rejection naming a different saved role, when matching, then report the missing source without moving another application", async () => {
-  assert.deepEqual(await planApplicationMove(mail, [candidate], columns, "rejection"), { kind: "review", reason: "Application has no vacancy URL to read its original role" });
+  assert.deepEqual(await planApplicationMove(mail, [candidate], columns, "rejection"), { kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application" });
 });
-test("Given a matching current rejection, when planning, then move to Rejected and explain stale or undated mail", async () => {
+test("Given a legacy message reference without immutable source evidence, when planning, then require explicit review", async () => {
   const threaded = { ...candidate, messageIds: ["upvest-original"] };
   const matched = { ...mail, inReplyTo: "upvest-original", text: "Upvest Senior Software Engineer (f/m/d) declined" };
-  assert.deepEqual(await planApplicationMove(matched, [threaded], columns, "rejection"), { kind: "move", candidate: threaded, columnId: "rejected" });
-  assert.deepEqual(await planApplicationMove({ ...matched, date: "2026-10-12T12:00:00Z" }, [threaded], columns, "rejection"), { kind: "review", reason: "Email is older than the latest application status" });
-  assert.deepEqual(await planApplicationMove({ ...matched, date: null }, [threaded], columns, "rejection"), { kind: "review", reason: "Email has no valid original date" });
+  assert.deepEqual(await planApplicationMove(matched, [threaded], columns, "rejection"), { kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application" });
 });
 
-test("Given an incorrect card role and an authoritative vacancy URL, when its page names the role in the rejection, then move without editing the card", async () => {
+test("Given a mutable card URL and a live page matching the email, when original evidence is absent, then review without fetching", async () => {
   const linked = { ...candidate, jobUrl: "https://jobs.example.test/upvest/product" };
-  const fetcher = async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
-  assert.deepEqual(await planApplicationMove(mail, [linked], columns, "rejection", fetcher), { kind: "move", candidate: linked, columnId: "rejected" });
+  let fetched = false;
+  const fetcher = async () => { fetched = true; return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } }); };
+  assert.deepEqual(await planApplicationMove(mail, [linked], columns, "rejection", fetcher), { kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application" });
+  assert.equal(fetched, false);
 });
 
-test("Given two same-company vacancy pages or an unavailable page, when resolving a rejection, then preserve ambiguity and never fall back to card text", async () => {
+test("Given mutable vacancy URLs or a changed page, when resolving a rejection without original evidence, then require review without lookup", async () => {
   const linked = { ...candidate, jobUrl: "https://jobs.example.test/upvest/product" };
   const duplicate = { ...linked, cardId: "upvest-other", jobUrl: "https://jobs.example.test/upvest/other" };
-  const fetcher = async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
-  assert.equal((await planApplicationMove(mail, [linked, duplicate], columns, "rejection", fetcher)).kind, "review");
-  const failed = await planApplicationMove({ ...mail, text: "Upvest Senior Software Engineer (f/m/d) declined" }, [linked], columns, "rejection", async () => new Response(null, { status: 404 }));
-  assert.equal(failed.kind, "review");
-  assert.match(failed.kind === "review" ? failed.reason : "", /404/);
+  let fetched = false;
+  const fetcher = async () => { fetched = true; return new Response(null, { status: 404 }); };
+  assert.deepEqual(await planApplicationMove(mail, [linked, duplicate], columns, "rejection", fetcher), {
+    kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application",
+  });
+  assert.equal(fetched, false);
 });
 
-test("Given two Upvest roles with incorrect card labels, when original pages identify distinct roles, then only the page matching the email can move", async () => {
+test("Given distinct live page titles but no retained originals, when rejection is processed, then require explicit review", async () => {
   const linked = { ...candidate, jobUrl: "https://jobs.example.test/upvest/product" };
   const other = { ...candidate, cardId: "upvest-designer", jobUrl: "https://jobs.example.test/upvest/designer", role: "Senior Product Engineer (f/m/d)" };
   const fetcher = async (input: RequestInfo | URL) => new Response(JSON.stringify(input).includes("designer")
     ? '<script type="application/ld+json">{"@type":"JobPosting","title":"Product Designer","hiringOrganization":{"name":"Upvest"}}</script>'
     : '<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
-  assert.deepEqual(await planApplicationMove(mail, [linked, other], columns, "rejection", fetcher), { kind: "move", candidate: linked, columnId: "rejected" });
+  assert.deepEqual(await planApplicationMove(mail, [linked, other], columns, "rejection", fetcher), {
+    kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application",
+  });
   const exact = { ...mail, urls: [linked.jobUrl] };
-  assert.equal((await planApplicationMove(exact, [linked], columns, "rejection", async () => { throw new Error("Exact URL needs no page fetch"); })).kind, "move");
+  assert.deepEqual(await planApplicationMove(exact, [linked], columns, "rejection", async () => { throw new Error("Page must not replace original evidence"); }), {
+    kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application",
+  });
 });

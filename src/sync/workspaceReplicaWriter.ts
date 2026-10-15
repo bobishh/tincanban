@@ -21,8 +21,28 @@ import type { LocalProfile } from "../domain/identity"
 type WriterApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
 
 function assertUpgradeCredentials(owner: string, config: BlindReplicaConfig, upgrade?: ReplicaWriterUpgrade) {
-  if (upgrade && privateReplicaBinding(owner, { ...upgrade.config, policyRevision: config.policyRevision,
-    preferenceRevision: config.preferenceRevision }) !== privateReplicaBinding(owner, config)) throw new Error("Pending writer upgrade credentials changed")
+  if (!upgrade) return
+  const rebased = { ...upgrade.config, policyRevision: config.policyRevision, preferenceRevision: config.preferenceRevision }
+  if (privateReplicaBinding(owner, rebased) !== privateReplicaBinding(owner, config)) {
+    const keys = ["origin", "scopeId", "workspaceId", "keyEpoch", "servicePublicKey", "readToken", "writeToken", "contentKey",
+      "historicalContentKeys", "historicalContentKeyVariants"] as const
+    const changed = keys.filter(key => canonicalizeJson(rebased[key] ?? null) !== canonicalizeJson(config[key] ?? null))
+    throw new Error(`Pending writer upgrade credentials changed${changed.length ? ` (${changed.join(", ")})` : ""}`)
+  }
+}
+
+function storageCredentialIdentity(config: BlindReplicaConfig): string {
+  return canonicalizeJson([config.purpose ?? "workspace", config.workspaceId, config.origin, config.scopeId, config.keyEpoch,
+    config.servicePublicKey, config.readToken, config.writeToken, config.contentKey,
+    config.historicalContentKeys ?? null, config.historicalContentKeyVariants ?? null, config.removalPending ?? false])
+}
+
+function canAdoptRepositoryConfig(requested: BlindReplicaConfig, saved: BlindReplicaConfig): boolean {
+  return saved.origin === requested.origin && saved.scopeId === requested.scopeId && saved.workspaceId === requested.workspaceId &&
+    !requested.removalPending && !saved.removalPending &&
+    saved.policyRevision >= requested.policyRevision &&
+    (requested.minimumWriterVersion !== 2 || saved.minimumWriterVersion === 2) &&
+    storageCredentialIdentity(saved) === storageCredentialIdentity(requested)
 }
 
 /** Freeze, copy legacy discovery, confirm the monotonic server floor, then atomically activate retained local progress. */
@@ -44,8 +64,13 @@ export async function ensureWorkspaceReplicaWriter(app: WriterApp,
   }
   return withLocalStateWriteLock(`rusty-writer-upgrade:${owner}:${config.origin}/${config.scopeId}`, async () => {
     guardIdentity()
-    const saved = (await getReplicaConfigurations(owner)).find(value => value.origin === config.origin && value.scopeId === config.scopeId)
-    if (!saved || privateReplicaBinding(owner, saved) !== privateReplicaBinding(owner, config)) throw new Error("Writer upgrade credential revision changed")
+    const saved = (await getReplicaConfigurations(owner)).find(value => value.origin === config.origin && value.scopeId === config.scopeId &&
+      value.workspaceId === config.workspaceId)
+    if (!saved) throw new Error("Writer upgrade credential revision changed")
+    if (privateReplicaBinding(owner, saved) !== privateReplicaBinding(owner, config)) {
+      if (!canAdoptRepositoryConfig(config, saved)) throw new Error("Writer upgrade credential revision changed")
+      config = saved
+    }
     const upgrade = await readReplicaWriterUpgrade(owner, config)
     if (config.minimumWriterVersion === 2 && !upgrade) return config
     assertUpgradeCredentials(owner, config, upgrade)

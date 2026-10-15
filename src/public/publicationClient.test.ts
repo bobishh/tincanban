@@ -30,6 +30,7 @@ let forgeReceipt = false
 let snapshotHash = ""
 let mutationCount = 0
 let publicStatus = 404
+let presentationVersion: number | undefined = 1
 let scopeManagement = false
 let managementCapability: SignedEnvelope<RustyManagementCapability> | null = null
 let managementStatusCount = 0
@@ -47,7 +48,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   resetIdentityStorageForTest(); owner = await bootstrapIdentity("Publication owner")
   revision = 0; withdrawn = false; challengePatch = {}; receiptPatch = {}; forgeChallenge = false; forgeReceipt = false; mutationCount = 0; publicStatus = 404
-  scopeManagement = false; managementCapability = null; managementStatusCount = 0; challengeBody = undefined; mutationBody = undefined; assetBody = undefined; assetCount = 0; mocks.includeAsset = false
+  presentationVersion = 1; scopeManagement = false; managementCapability = null; managementStatusCount = 0; challengeBody = undefined; mutationBody = undefined; assetBody = undefined; assetCount = 0; mocks.includeAsset = false
   snapshotHash = await hash(null)
   vi.stubGlobal("window", { location: { origin: "https://board.example" } })
   vi.stubGlobal("fetch", vi.fn(serve))
@@ -70,7 +71,7 @@ async function signed(payload: EnvelopePayload, forged = false): Promise<SignedE
 function json(value: unknown, status = 200): Response { return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } }) }
 async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input)
-  if (url.endsWith("/.well-known/mesh-lighthouse")) return json({ publicOrigin: origin, service: { serviceId: keeper.device.deviceId, publicKey: keeper.certificate.payload.devicePublicKey }, capabilities: { publicBoardPublication: { version: 1 }, ...(scopeManagement ? { scopeManagement: { version: 1 } } : {}) } })
+  if (url.endsWith("/.well-known/mesh-lighthouse")) return json({ publicOrigin: origin, service: { serviceId: keeper.device.deviceId, publicKey: keeper.certificate.payload.devicePublicKey }, capabilities: { publicBoardPublication: { version: 1, presentationVersion }, ...(scopeManagement ? { scopeManagement: { version: 1 } } : {}) } })
   if (url.endsWith(`/v2/management/board/${boardId}/status`)) {
     managementStatusCount++
     const request = JSON.parse(String(init?.body)) as { authorization: SignedEnvelope<EnvelopePayload> }
@@ -271,4 +272,12 @@ describe("publication client signed state and receipts", () => {
     forgeReceipt = true
     await expect(publish()).rejects.toThrow(/signature/i)
   })
+})
+
+it("Given an older publication service, When publishing visitor presentation, Then require upgrade before uploading files or changing a snapshot", async () => {
+  presentationVersion = undefined
+  await expect(publish()).rejects.toThrow(/upgrade.*visitor presentation/i)
+  expect(assetCount).toBe(0)
+  expect(mutationCount).toBe(0)
+  await expect(readPublicBoardManagementState({ origin, boardId, profile: owner })).resolves.toMatchObject({ published: false })
 })

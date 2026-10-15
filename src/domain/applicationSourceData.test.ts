@@ -44,6 +44,21 @@ describe("application source data reader", () => {
     })
   })
 
+  it("Given original intake references, When reading source data, Then preserve exact thread and ATS evidence without synthesizing it for older records", () => {
+    const referenced = sourceData({ version: 2, messageIds: ["<Applied-42@example.test>", "<reply-42@example.test>"], atsId: "REQ-0042" })
+    expect(parseApplicationSourceData(referenced)).toMatchObject({
+      messageIds: ["<Applied-42@example.test>", "<reply-42@example.test>"], atsId: "REQ-0042",
+    })
+    expect(parseApplicationSourceData(sourceData())).not.toHaveProperty("messageIds")
+    expect(parseApplicationSourceData(sourceData())).not.toHaveProperty("atsId")
+    expect(() => parseApplicationSourceData(sourceData({ messageIds: ["<old-reader@example.test>"] }))).toThrow(/version 2/i)
+    expect(() => parseApplicationSourceData(sourceData({ version: 2 }))).toThrow(/version 2/i)
+    expect(() => parseApplicationSourceData(sourceData({ version: 2, messageIds: [], atsId: "REQ-0042" }))).toThrow()
+    expect(() => parseApplicationSourceData(sourceData({ messageIds: [" "] }))).toThrow()
+    expect(() => parseApplicationSourceData(sourceData({ messageIds: Array.from({ length: 41 }, (_, index) => `id-${index}`) }))).toThrow()
+    expect(() => parseApplicationSourceData(sourceData({ atsId: "x".repeat(257) }))).toThrow()
+  })
+
   it("Given valid data, When JSON is noncanonical, oversized in UTF-8 bytes, or carries unknown/future fields, Then reject it", () => {
     const canonical = canonicalizeJson(sourceData())
     expect(() => readApplicationSourceData(` ${canonical}`)).toThrow(/canonical/i)
@@ -52,7 +67,7 @@ describe("application source data reader", () => {
     expect(new TextEncoder().encode(unicodeJson).length).toBeGreaterThan(MAX_APPLICATION_SOURCE_BYTES)
     expect(() => readApplicationSourceData(unicodeJson)).toThrow(/byte limit/i)
     expect(() => parseApplicationSourceData({ ...sourceData(), future: true })).toThrow()
-    expect(() => parseApplicationSourceData({ ...sourceData(), version: 2 })).toThrow()
+    expect(() => parseApplicationSourceData({ ...sourceData(), version: 3 })).toThrow()
     expect(() => parseApplicationSourceData({ ...sourceData(), observation: observation({ futureEvidence: "hidden" }) })).toThrow()
   })
 

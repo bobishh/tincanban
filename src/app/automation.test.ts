@@ -151,6 +151,41 @@ it("Given an expired paused approval, when owner explicitly renews, then keep ty
   expect(doc.entities[entityId]?.controls).toEqual({ [pausedHead]: JSON.stringify({ state: "paused", supersedes: [] }) })
 })
 
+it("Given an expired email approval, when the owner renews website-only access, then validate old scope before narrowing the new grant", async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date("2026-10-15T10:00:00.000Z"))
+  const owner = await bootstrapIdentity("Owner")
+  const doc = createWorkspaceDoc("automation-narrow-renewal", "Applications", owner.identity.personId, "job-search")
+  resetIdentityStorageForTest()
+  const worker = await bootstrapIdentity("Automation")
+  const workerDescriptor: AutomationWorkerIdentity = { origin: "https://automation.example.test", integrationId: "renewal-route",
+    definitionId: "narrow-renewal", personId: worker.identity.personId, identityPublicKey: worker.identity.publicKey,
+    deviceId: worker.device.deviceId, devicePublicKey: worker.device.publicKey, deviceCertificate: worker.certificate }
+  const input = { profile: owner, doc, bytes: new Uint8Array([1]),
+    authorization: { version: 1 as const, records: [], authority: { currentOwner: { personId: owner.identity.personId }, currentEpoch: 1 } },
+    blind: { workspaceId: doc.id }, worker: workerDescriptor, expiresAt: Date.now() + 1_000 }
+  const original = await prepareAutomationActivation({ ...input, configuration: {
+    name: "Email intake", type: "job-intake", typeVersion: 1, parameters: { sources: ["website", "email"] },
+  } })
+  const entityId = `automation:${workerDescriptor.definitionId}`
+  const controlId = crypto.randomUUID()
+  const priorApproval = JSON.stringify({ definition: original.definition, grant: original.grant })
+  doc.entities[entityId] = { id: entityId, kind: "automation", title: original.definition.payload.name,
+    definition: JSON.stringify(original.definition.payload), approval: priorApproval,
+    executor: { origin: workerDescriptor.origin, personId: worker.identity.personId },
+    controls: { [controlId]: JSON.stringify({ state: "paused", supersedes: [] }) },
+    placement: { parentId: original.bindings.boardId, rank: "0/1" }, archivedAt: null,
+    createdAt: "2026-10-15T10:00:00.000Z", updatedAt: "2026-10-15T10:00:00.000Z" }
+
+  vi.setSystemTime(new Date(Date.now() + 2_000))
+  const renewed = await prepareAutomationActivation({ ...input, expiresAt: Date.now() + 120_000, configuration: {
+    name: "Website-only intake", type: "job-intake", typeVersion: 1, parameters: { sources: ["website"] },
+  } })
+  expect(renewed.grant.payload.automation?.columns.applied).toBeUndefined()
+  expect(renewed.grant.payload.grantId).not.toBe(original.grant.payload.grantId)
+  expect(doc.entities[entityId]?.kind === "automation" && doc.entities[entityId].approval).toBe(priorApproval)
+})
+
 it("Given an owner profile with another device's private key, when preparing activation, then reject before returning signed approval", async () => {
   const owner = await bootstrapIdentity("Owner")
   const doc = createWorkspaceDoc("bad-owner-key", "Applications", owner.identity.personId, "job-search")

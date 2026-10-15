@@ -6,6 +6,7 @@ import type { ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type { BlindObject } from "./blindEnvelope"
 import type { RustyScopePolicyReceipt } from "./rustyScopePolicy"
 import type { ReplicaWriterWorker } from "./replicaWriterWorkersState"
+import { assertRetainsReplicaContentKeys } from "./replicaContentKeys"
 
 type Clock = Record<string, number>
 type Dot = { actorId: string; counter: number }
@@ -13,7 +14,7 @@ type ReplicaPurpose = "workspace" | "identity"
 type Operation = { dot: Dot; context: Clock; purpose: ReplicaPurpose; config: PrivateReplicaConfig | null }
 type Entry = { origin: string; scopeId: string; operations: Operation[] }
 type Progress = { revision: string; cursor: number; lastUploaded: string; replication?: ReplicaState<BlindObject> }
-export type PrivateReplicaWire = { version: 3; personId: string; clock: Clock; entries: Entry[] }
+export type PrivateReplicaWire = { version: 3 | 4 | 5; personId: string; clock: Clock; entries: Entry[] }
 export type ReplicaWriterUpgrade = { id: string; config: BlindReplicaConfig; confirmed?: RustyScopePolicyReceipt; workers?: ReplicaWriterWorker[] }
 export type PrivateReplicaState = PrivateReplicaWire & { actorId: string; progress: Record<string, Progress>; migrated: boolean;
   writerUpgrades?: Record<string, ReplicaWriterUpgrade> }
@@ -61,21 +62,23 @@ export function emptyPrivateReplicaState(personId: string, actorId: string): Pri
 
 export function parsePrivateReplicaWire(value: unknown): PrivateReplicaWire {
   const wire = isPlainRecord(value) ? value : undefined
-  if (!wire || (wire.version !== 2 && wire.version !== 3) || !Array.isArray(wire.entries) || wire.entries.length > 128) {
+  if (!wire || (wire.version !== 2 && wire.version !== 3 && wire.version !== 4 && wire.version !== 5) || !Array.isArray(wire.entries) || wire.entries.length > 128) {
     throw new Error("Invalid private replica state")
   }
   validatePerson(wire.personId)
-  const legacy = wire.version === 2
+  const version = wire.version
+  const legacy = version === 2
   const clock = validateClock(wire.clock)
   const dotEntries = new Map<string, string>()
-  const rawEntries = (wire.entries as unknown[]).map(value => parseWireEntry(value, clock, dotEntries, wire.personId as string, legacy))
+  const rawEntries = (wire.entries as unknown[]).map(value => parseWireEntry(value, clock, dotEntries, wire.personId as string, legacy, version >= 4, version >= 5))
   validateCausalOperations(rawEntries.flatMap(entry => entry.operations))
+  for (const entry of rawEntries) validateCausalContentKeys(entry.operations)
   const entries = rawEntries.map(entry => ({ ...entry, operations: maximalOperations(entry.operations) }))
   if (new Set(entries.map(entryKey)).size !== entries.length) throw new Error("Duplicate private replica scope")
-  return { version: 3, personId: wire.personId, clock, entries: entries.sort((a, b) => entryKey(a).localeCompare(entryKey(b))) }
+  return { version: wire.version === 5 ? 5 : wire.version === 4 ? 4 : 3, personId: wire.personId, clock, entries: entries.sort((a, b) => entryKey(a).localeCompare(entryKey(b))) }
 }
 
-function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, string>, personId: string, legacy: boolean): Entry {
+function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, string>, personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): Entry {
   if (!isPlainRecord(value) || typeof value.origin !== "string" || typeof value.scopeId !== "string" ||
     !Array.isArray(value.operations) || value.operations.length < 1 || value.operations.length > 32) {
     throw new Error("Invalid private replica entry")
@@ -84,17 +87,17 @@ function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, st
   if (blindOrigin(entry.origin) !== entry.origin || !/^[A-Za-z0-9_-]{1,128}$/.test(entry.scopeId)) {
     throw new Error("Invalid private replica scope")
   }
-  return { ...entry, operations: (value.operations as unknown[]).map(operation => parseWireOperation(operation, entry, clock, dotEntries, personId, legacy)) }
+  return { ...entry, operations: (value.operations as unknown[]).map(operation => parseWireOperation(operation, entry, clock, dotEntries, personId, legacy, keyHistory, keyVariants)) }
 }
 
 function parseWireOperation(value: unknown, entry: Pick<Entry, "origin" | "scopeId">, clock: Clock,
-  dotEntries: Map<string, string>, personId: string, legacy: boolean): Operation {
+  dotEntries: Map<string, string>, personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): Operation {
   const operation = wireOperationRecord(value)
   const purpose = parseOperationPurpose(operation, legacy)
   const dot = parseOperationDot(operation.dot)
   const context = validateClock(operation.context)
   validateCausalRevision(dot, context, clock)
-  const config = parseOperationConfig(operation.config, purpose, entry, personId, legacy)
+  const config = parseOperationConfig(operation.config, purpose, entry, personId, legacy, keyHistory, keyVariants)
   const revisionKey = dotKey(dot)
   const owner = dotEntries.get(revisionKey)
   if (owner && owner !== entryKey(entry)) throw new Error("Duplicate private-state dot across scopes")
@@ -112,8 +115,14 @@ function parseOperationPurpose(operation: Record<string, unknown>, legacy: boole
 }
 
 function parseOperationConfig(value: unknown, purpose: ReplicaPurpose, entry: Pick<Entry, "origin" | "scopeId">,
-  personId: string, legacy: boolean): PrivateReplicaConfig | null {
+  personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): PrivateReplicaConfig | null {
   if (value === null) return null
+  if (!keyVariants && isPlainRecord(value) && Object.hasOwn(value, "historicalContentKeyVariants")) {
+    throw new Error("Ambiguous private key history requires wire version 5; upgrade the required schema")
+  }
+  if (!keyHistory && isPlainRecord(value) && Object.hasOwn(value, "historicalContentKeys")) {
+    throw new Error("Private key history requires wire version 4; upgrade the required schema")
+  }
   if (legacy && isPlainRecord(value) && Object.hasOwn(value, "purpose")) {
     throw new Error("Identity or tagged credentials cannot appear in older-format private replica state")
   }
@@ -212,13 +221,14 @@ function serialize(value: unknown): string {
 }
 
 export function portableReplicaState(state: PrivateReplicaState): PrivateReplicaWire {
-  return parsePrivateReplicaWire(copy({ version: 3, personId: state.personId, clock: state.clock, entries: state.entries }))
+  return parsePrivateReplicaWire(copy({ version: state.version, personId: state.personId, clock: state.clock, entries: state.entries }))
 }
 
 export function mergePrivateReplicaState(state: PrivateReplicaState, incoming: unknown): PrivateReplicaState {
   const wire = parsePrivateReplicaWire(incoming)
   if (wire.personId !== state.personId) throw new Error("Private replica identity mismatch")
   const next = copy(state)
+  next.version = Math.max(next.version, wire.version) as PrivateReplicaWire["version"]
   for (const [actor, counter] of Object.entries(wire.clock)) next.clock[actor] = Math.max(counter, next.clock[actor] ?? 0)
   const entries = new Map(next.entries.map(entry => [entryKey(entry), entry]))
   for (const entry of wire.entries) {
@@ -229,6 +239,7 @@ export function mergePrivateReplicaState(state: PrivateReplicaState, incoming: u
   const combined = [...entries.values()]
   validateUniqueDots(combined)
   validateCausalOperations(combined.flatMap(entry => entry.operations))
+  for (const entry of combined) validateCausalContentKeys(entry.operations)
   next.entries = combined.map(entry => ({ ...entry, operations: maximalOperations(entry.operations) }))
     .sort((a, b) => entryKey(a).localeCompare(entryKey(b)))
   validateUniqueDots(next.entries)
@@ -241,6 +252,25 @@ function selectedConfig(entry: Entry): PrivateReplicaConfig | undefined {
   if (entry.operations.some(operation => operation.config === null)) return
   const configs = new Map(entry.operations.map(operation => [canonicalizeJson(operation.config), operation.config!]))
   return configs.size === 1 ? [...configs.values()][0] : undefined
+}
+
+function assertRetainedResourceKeys(previous: PrivateReplicaConfig, next: PrivateReplicaConfig): void {
+  const subject = (config: PrivateReplicaConfig) => config.purpose === "identity" ? config.personId : config.workspaceId
+  if (previous.origin === next.origin && previous.scopeId === next.scopeId && previous.purpose === next.purpose &&
+    subject(previous) === subject(next) && previous.servicePublicKey === next.servicePublicKey) {
+    assertRetainsReplicaContentKeys(previous, next)
+  }
+}
+
+function validateCausalContentKeys(operations: Operation[]): void {
+  for (const next of operations) {
+    if (!next.config) continue
+    for (const previous of operations) {
+      if (previous.config && (next.context[previous.dot.actorId] ?? 0) >= previous.dot.counter) {
+        assertRetainedResourceKeys(previous.config, next.config)
+      }
+    }
+  }
 }
 
 function entryRevision(entry: Entry): string { return entry.operations.map(operation => dotKey(operation.dot)).sort().join("|") }
@@ -277,22 +307,29 @@ export function changeReplicaPreference(state: PrivateReplicaState, config: Priv
   return applyPreferenceOperation(state, portable, removed ? null : portable, purpose)
 }
 
-export function removeReplicaPreference(state: PrivateReplicaState, origin: string, scopeId: string,
-  purpose: ReplicaPurpose = "workspace"): PrivateReplicaState {
-  if (blindOrigin(origin) !== origin || !/^[A-Za-z0-9_-]{1,128}$/.test(scopeId)) throw new Error("Invalid private replica scope")
-  if (purpose !== "workspace" && purpose !== "identity") throw new Error("Invalid private replica purpose")
-  return applyPreferenceOperation(state, { origin, scopeId }, null, purpose)
+function assertPreviousKeysRetained(previous: Entry | undefined, config: PrivateReplicaConfig | null): void {
+  if (!config) return
+  for (const operation of previous?.operations ?? []) {
+    if (operation.config) assertRetainedResourceKeys(operation.config, config)
+  }
+}
+
+function samePreference(previous: Entry, config: PrivateReplicaConfig | null, purpose: ReplicaPurpose): boolean {
+  return config === null ? previous.operations.every(operation => operation.config === null && operation.purpose === purpose)
+    : canonicalizeJson(selectedConfig(previous)) === canonicalizeJson(config)
 }
 
 function applyPreferenceOperation(state: PrivateReplicaState, portable: Pick<Entry, "origin" | "scopeId">,
   config: PrivateReplicaConfig | null, purpose: ReplicaPurpose): PrivateReplicaState {
   const previous = state.entries.find(entry => entryKey(entry) === entryKey(portable))
-  if (previous && (config === null ? previous.operations.every(operation => operation.config === null && operation.purpose === purpose)
-    : canonicalizeJson(selectedConfig(previous)) === canonicalizeJson(config))) return copy(state)
+  assertPreviousKeysRetained(previous, config)
+  if (previous && samePreference(previous, config, purpose)) return copy(state)
   const next = copy(state)
   const counter = (next.clock[next.actorId] ?? 0) + 1
   if (!Number.isSafeInteger(counter)) throw new Error("Private replica revision is exhausted")
   const operation = { dot: { actorId: next.actorId, counter }, context: copy(next.clock), purpose, config }
+  if (config?.historicalContentKeyVariants) next.version = 5
+  else if (config?.historicalContentKeys && next.version < 4) next.version = 4
   next.clock[next.actorId] = counter
   next.entries = [...next.entries.filter(entry => entryKey(entry) !== entryKey(portable)),
     { origin: portable.origin, scopeId: portable.scopeId, operations: [operation] }].sort((a, b) => entryKey(a).localeCompare(entryKey(b)))

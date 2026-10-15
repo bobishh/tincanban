@@ -1,0 +1,128 @@
+name: Recover compatible production cohort
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Resume an interrupted exact cohort, or select a compatible prior cohort
+        type: choice
+        options: [resume, rollback]
+        required: true
+      activation_run:
+        description: Production activation or recovery workflow run ID to recover
+        required: true
+        type: string
+      activation_attempt:
+        description: Exact attempt of that workflow run
+        required: true
+        type: string
+      rollback_target_run:
+        description: Previously confirmed production run ID (rollback only)
+        type: string
+      rollback_target_attempt:
+        description: Exact attempt of the target run (rollback only)
+        type: string
+
+concurrency:
+  group: tincanban-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      RECOVERY_OPERATION: ${{ inputs.operation }}
+      ACTIVATION_RUN: ${{ inputs.activation_run }}
+      ACTIVATION_ATTEMPT: ${{ inputs.activation_attempt }}
+      TARGET_RUN: ${{ inputs.rollback_target_run }}
+      TARGET_ATTEMPT: ${{ inputs.rollback_target_attempt }}
+      RUSTY_DEPLOY_SPEC: ${{ vars.RUSTY_DEPLOY_SPEC }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      DOCKER_REGISTRY_USERNAME: ${{ github.repository_owner }}
+      RUSTY_TRUSTED_OWNER: ${{ secrets.RUSTY_TRUSTED_OWNER }}
+      RUSTY_TELEMETRY_TOKEN: ${{ secrets.RUSTY_TELEMETRY_TOKEN }}
+      CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Fetch the exact existing Rusty config from Tangled
+        run: node scripts/fetch-rusty-deploy-config.mjs
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.7
+      - name: Install the pinned Kamal release tool
+        run: gem install kamal --version 2.10.1 --no-document
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workers/frontend/package-lock.json
+      - run: npm ci --prefix workers/frontend
+      - name: Recover exact trusted artifacts and protect retained schema floors
+        run: |
+          node scripts/release-recovery.mjs "$RECOVERY_OPERATION" "$ACTIVATION_RUN" "$ACTIVATION_ATTEMPT" "$TARGET_RUN" "$TARGET_ATTEMPT"
+          release_sha=$(node scripts/release-coordinator.mjs source-sha .release)
+          echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+      - name: Prepare existing Rusty host transport
+        env:
+          RUSTY_DEPLOY_SSH_KEY: ${{ secrets.RUSTY_DEPLOY_SSH_KEY }}
+          RUSTY_DEPLOY_KNOWN_HOSTS: ${{ secrets.RUSTY_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          test -n "$RUSTY_DEPLOY_SSH_KEY"
+          test -n "$RUSTY_DEPLOY_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$RUSTY_DEPLOY_SSH_KEY" > "$RUNNER_TEMP/rusty-deploy-key"
+          chmod 600 "$RUNNER_TEMP/rusty-deploy-key"
+          printf '%s\n' "$RUSTY_DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          echo "RUSTY_SSH_KEY_FILE=$RUNNER_TEMP/rusty-deploy-key" >> "$GITHUB_ENV"
+      - name: Prepare private Rusty runtime secrets for Kamal
+        env:
+          DEPLOY_CONFIG_DIR: .release-config/hetzner_playground
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RUSTY_TRUSTED_OWNER"
+          test -n "$RUSTY_TELEMETRY_TOKEN"
+          test -n "$CLICKHOUSE_PASSWORD"
+          case "$RUSTY_TELEMETRY_TOKEN$CLICKHOUSE_PASSWORD" in *$'\n'*|*$'\r'*) exit 1;; esac
+          install -m 700 -d "$DEPLOY_CONFIG_DIR/.kamal"
+          umask 077
+          printf 'RUSTY_TELEMETRY_TOKEN=%s\nCLICKHOUSE_PASSWORD=%s\n' "$RUSTY_TELEMETRY_TOKEN" "$CLICKHOUSE_PASSWORD" > "$DEPLOY_CONFIG_DIR/.kamal/secrets"
+          chmod 600 "$DEPLOY_CONFIG_DIR/.kamal/secrets"
+      - name: Stage only missing exact Worker versions without rebuilding
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN"
+          for component in automation frontend; do
+            if [ "$(node scripts/release-coordinator.mjs needs-stage .release "$component")" = true ]; then
+              upload_output="$RUNNER_TEMP/$component-upload.jsonl"
+              WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/frontend/node_modules/.bin/wrangler versions upload --config ".release/deploy/$component.json" --no-bundle --keep-vars --tag "$RELEASE_SHA"
+              node scripts/release-coordinator.mjs record-version .release "$component" "$upload_output"
+            fi
+          done
+      - uses: actions/upload-artifact@v6
+        with:
+          name: cohort-staged-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Confirm uncertain stages and resume ordered activation
+        run: node scripts/release-coordinator.mjs resume .release
+      - name: Preserve exact interrupted or completed recovery evidence
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: cohort-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14

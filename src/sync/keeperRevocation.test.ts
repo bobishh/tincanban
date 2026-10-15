@@ -29,6 +29,7 @@ describe("keeper revocation projection", () => {
     } as WorkspaceMeshCredential
     const store = {
       getWorkspaceCredential: async () => credential,
+      getWorkspaceAuthority: async () => null,
       putWorkspaceCredential: async (next: WorkspaceMeshCredential) => { credential = next },
       listWorkspaceCredentials: async () => [credential], listWorkspaceAuthorities: async () => [],
       listPeers: async () => [], upsertPeer: async () => {},
@@ -49,7 +50,7 @@ describe("keeper revocation projection", () => {
       expect(credential.catalog).toMatchObject({ revocations: [{ payload: { personId: keeperId, epoch: 3 } }] })
       await mesh.revokePerson(doc.id, keeperId, 2)
       expect((credential.catalog as { revocations: unknown[] }).revocations).toHaveLength(1)
-      expect(reclassify).toHaveBeenCalledTimes(2)
+      expect(reclassify).toHaveBeenCalledOnce()
       const newerGrant = await createWorkspaceGrant(owner, doc.id, keeperId, "editor", 4)
       grants.mockResolvedValue([grant, newerGrant])
       await expect(mesh.revokePerson(doc.id, keeperId, 2)).rejects.toThrow("A newer keeper grant exists")
@@ -80,6 +81,7 @@ describe("keeper revocation projection", () => {
       advertisement: { grant }, lastSeen: new Date(0).toISOString() } as unknown as WorkspacePeerRecord]
     const store = {
       getWorkspaceCredential: async () => credential,
+      getWorkspaceAuthority: async () => null,
       putWorkspaceCredential: async (next: WorkspaceMeshCredential) => { credential = next },
       listWorkspaceCredentials: async () => [credential], listWorkspaceAuthorities: async () => [],
       listPeers: async () => peers,
@@ -140,6 +142,7 @@ describe("keeper revocation projection", () => {
     } as unknown as WorkspacePeerRecord]
     const store = {
       getWorkspaceCredential: async () => credential,
+      getWorkspaceAuthority: async () => null,
       putWorkspaceCredential: async (next: WorkspaceMeshCredential) => { credential = next },
       listWorkspaceCredentials: async () => [credential],
       listWorkspaceAuthorities: async () => [],

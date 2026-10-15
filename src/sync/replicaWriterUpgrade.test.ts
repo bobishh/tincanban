@@ -85,7 +85,7 @@ test("Given a confirmed remote policy and a failed local transaction, when compl
   const { owner, selected } = await fixture()
   const upgrade = await upgrades().prepareReplicaWriterUpgrade(owner, selected)
   const raw = await local.readLocal(stateKey(owner))
-  const failure = vi.spyOn(local, "updateLocal").mockRejectedValueOnce(new Error("Disk transaction aborted"))
+  const failure = vi.spyOn(local, "compareAndSwapLocal").mockRejectedValueOnce(new Error("Disk transaction aborted"))
   try { await expect(upgrades().completeReplicaWriterUpgrade(owner, upgrade, 4)).rejects.toThrow("Disk transaction aborted") }
   finally { failure.mockRestore() }
   expect(await local.readLocal(stateKey(owner))).toBe(raw)
@@ -168,7 +168,7 @@ test("Given pending ciphertext under a content key, when a portable update chang
   const wire = await repository.exportPrivateReplicaState(owner)
   const peerState = { ...wire, actorId: "peer-key-rotation", progress: {}, migrated: true }
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(peerState,
-    { ...selected, contentKey: "B".repeat(42) + "A", keyEpoch: 2, policyRevision: 4 }))
+    { ...selected, contentKey: "B".repeat(42) + "A", keyEpoch: 2, historicalContentKeys: { "1": selected.contentKey }, policyRevision: 4 }))
   const raw = await local.readLocal(stateKey(owner))
 
   await expect(repository.receivePrivateReplicaState(owner, incoming)).rejects.toThrow(/pending.*migration|outbox/i)

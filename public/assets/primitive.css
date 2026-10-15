@@ -317,17 +317,9 @@ textarea) {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  :is(.button, .icon-button, .column-add-button):hover:not(:disabled):not(.reference-result) {
-    transform: rotate(-2.5deg);
-  }
-
   .lead-card:hover:not(.board-drag-preview):not(.board-drag-source):not(.board-dragging *) {
     transform: rotate(-1.25deg);
   }
-}
-
-:is(.button, .icon-button, .column-add-button):active:not(:disabled):not(.reference-result) {
-  transform: rotate(-.5deg);
 }
 
 /* Focus has a second, green contour outside the unchanged black frame.

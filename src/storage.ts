@@ -15,7 +15,9 @@ import { toBase64Url, fromBase64Url } from "./domain/identity"
 import { validateRekeyAuthorizations } from "./storageRekey"
 import { getStorageRaw, removeStorageRaw, setStorageRaw } from "./storageRaw"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
-import { StorageDeltaAccess } from "./storageDeltaAccess"
+import { StorageHistoryAccess } from "./storageHistoryAccess"
+import { activeHistoryDifference, appendLocalWorkspaceCommand, appendWorkspaceCommand, type WorkspaceCommitCommand } from "./storageCommitSupport"
+import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
 import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, type WorkspaceMeta } from "./storageCatalog"
 import {
   deleteWorkspaceJournal,
@@ -30,7 +32,12 @@ import {
   transactionDone,
   withLocalJournalLock,
   writeLocalJournal,
+  advanceHistoryProgress,
+  advanceLocalHistoryProgress,
+  HISTORY_ACTIVE_CHANGE_LIMIT,
+  HISTORY_ACTIVE_BYTE_LIMIT,
   type StoredChange,
+  type StoredHistoryProgress,
   type StoredProofRecord,
   type StoredReceiptRecord,
   type StoredCausalEvidence,
@@ -83,7 +90,7 @@ const memoryStore: InMemoryStore = {
 }
 
 
-export class WorkspaceStorage extends StorageDeltaAccess {
+export class WorkspaceStorage extends StorageHistoryAccess {
   private inMemory: InMemoryStore
   private personalRootStore: PersonalRootMapStore
   private loadedDocuments = new Map<string, Automerge.Doc<WorkspaceDocumentV2>>()
@@ -105,6 +112,14 @@ export class WorkspaceStorage extends StorageDeltaAccess {
       Automerge.free(this.loadedDocuments.get(oldest)!)
       this.loadedDocuments.delete(oldest)
     }
+  }
+
+  /** A recovery transaction replaces durable sources outside the ordinary command cache. */
+  invalidateWorkspaceCache(workspaceId: string): void {
+    this.delta.forget(workspaceId)
+    this.rememberDocument(workspaceId)
+    this.forgetReceivedHistory(workspaceId)
+    this.inMemory.snapshots.delete(workspaceId)
   }
 
   private decodeSnapshot(snapshot: StoredSnapshot, reusable?: Automerge.Doc<WorkspaceDocumentV2>) {
@@ -282,7 +297,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     doc: Automerge.Doc<WorkspaceDocumentV2>,
     bytes: Uint8Array,
     authorizations: WorkspaceChangeAuthorization[],
-    command?: { receipt: TransactionReceipt; changeBytes: Uint8Array; proof: ChangeProof },
+    command?: WorkspaceCommitCommand,
     causalEvidence?: StoredCausalEvidence,
     onPhase?: (phase: string) => void,
   ): Promise<{ proofChanged: boolean; causalChanged: boolean }> {
@@ -303,7 +318,9 @@ export class WorkspaceStorage extends StorageDeltaAccess {
       id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null,
       heads: Automerge.getHeads(doc).sort(), bytes: new Uint8Array(bytes), savedAt: new Date().toISOString(),
       causalEvidence: snapshotCausalEvidence(causalEvidence, previous?.causalEvidence),
+      receivedHistory: previous?.receivedHistory ? structuredClone(previous.receivedHistory) : undefined,
     }
+    const { activeTailChanges, activeTailBytes } = activeHistoryDifference(previous, doc, snapshot.heads)
     // Legacy proof storage is read-only during migration. The transaction also
     // rereads current proofs, so standalone proof updates cannot be overwritten.
     onPhase?.("proof-read")
@@ -315,16 +332,6 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     if (committed && !command && !causalChanged && !checkpointChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
       return this.reuseCommittedWorkspace(workspaceId, committed, doc)
     }
-    const addCommand = (journal: ReturnType<typeof readLocalJournal>) => {
-      if (!command) return
-      const { receipt, changeBytes, proof } = command
-      const saved = journal.receipts[receipt.transactionId]
-      if (saved && saved.changeHash !== receipt.changeHash) throw new Error("Transaction ID conflicts with a committed change")
-      if (saved) return
-      journal.changes.push({ workspaceId, changeHash: receipt.changeHash, bytesBase64: toBase64Url(changeBytes), addedAt: snapshot.savedAt })
-      journal.proofs[receipt.changeHash] = proof
-      journal.receipts[receipt.transactionId] = receipt
-    }
     if (typeof indexedDB === "undefined") {
       await withLocalJournalLock(workspaceId, async () => {
         const journal = readLocalJournal(workspaceId)
@@ -335,18 +342,27 @@ export class WorkspaceStorage extends StorageDeltaAccess {
         journal.frontier = undefined
         journal.deltas = []
         journal.authorizations = next
-        addCommand(journal)
+        appendLocalWorkspaceCommand(journal, workspaceId, snapshot.savedAt, command)
+        const progressBaselineId = previous?.receivedHistory?.baselineId ?? journal.historyProgress?.baselineId
+        if (progressBaselineId !== undefined && !journal.frontier) {
+          advanceLocalHistoryProgress(journal, workspaceId, progressBaselineId,
+            activeTailChanges, activeTailBytes)
+        }
         writeLocalJournal(workspaceId, journal)
       })
     } else {
       onPhase?.("journal-open")
       const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas", "revisions"], "readwrite")
+      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas", "revisions", "historyProgress"], "readwrite")
       const completion = transactionDone(transaction)
       try {
         const snapshotStore = transaction.objectStore("snapshots")
         onPhase?.("transaction-read")
         const existingSnapshot = await requestResult(snapshotStore.get(workspaceId)) as StoredWorkspaceSnapshot | undefined
+        const [existingFrontier, progress] = await Promise.all([
+          requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
+          requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as Promise<StoredHistoryProgress | undefined>,
+        ])
         const proofStore = transaction.objectStore("authorizations")
         const stored = await requestResult(proofStore.get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
         const existing = mergeAuthorizationRecords(previousProofs, stored?.records ?? [])
@@ -355,21 +371,18 @@ export class WorkspaceStorage extends StorageDeltaAccess {
         onPhase?.("transaction-write")
         if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged || checkpointChanged)
           snapshotStore.put(snapshot)
+        const progressBaselineId = existingSnapshot?.receivedHistory?.baselineId ?? progress?.baselineId
+        if (progressBaselineId !== undefined && !existingFrontier) {
+          const concurrentSnapshot = previous && existingSnapshot &&
+            existingSnapshot.heads.slice().sort().join() !== previous.heads.slice().sort().join()
+          advanceHistoryProgress(transaction, workspaceId, progressBaselineId,
+            concurrentSnapshot ? HISTORY_ACTIVE_CHANGE_LIMIT : activeTailChanges,
+            concurrentSnapshot ? HISTORY_ACTIVE_BYTE_LIMIT : activeTailBytes)
+        }
         if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
         await this.clearDeltaRows(transaction, workspaceId)
         advanceWorkspaceRevision(transaction, workspaceId)
-        if (command) {
-          const { receipt, changeBytes, proof } = command
-          const receiptKey = `${workspaceId}:${receipt.transactionId}`
-          const existingReceipt = await requestResult(transaction.objectStore("receipts").get(receiptKey)) as StoredReceiptRecord | undefined
-          if (existingReceipt && existingReceipt.receipt.changeHash !== receipt.changeHash) throw new Error("Transaction ID conflicts with a committed change")
-          if (!existingReceipt) {
-            const changeKey = `${workspaceId}:${receipt.changeHash}`
-            transaction.objectStore("changes").put({ id: changeKey, workspaceId, changeHash: receipt.changeHash, bytes: new Uint8Array(changeBytes), addedAt: snapshot.savedAt })
-            transaction.objectStore("proofs").put({ id: changeKey, workspaceId, changeHash: receipt.changeHash, proof })
-            transaction.objectStore("receipts").put({ id: receiptKey, workspaceId, transactionId: receipt.transactionId, receipt })
-          }
-        }
+        await appendWorkspaceCommand(transaction, workspaceId, snapshot.savedAt, command)
       } catch (error) {
         transaction.abort()
         await completion.catch(() => undefined)
@@ -399,6 +412,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
   async loadWorkspaceDoc(
     workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>
   ): Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null> {
+    await this.ensureReceivedHistory(workspaceId)
     const incremental = await this.delta.loadDocument(workspaceId, reusable)
     if (incremental) return incremental
     const committedSnapshot = await readWorkspaceSnapshot(workspaceId)
@@ -416,7 +430,7 @@ export class WorkspaceStorage extends StorageDeltaAccess {
     }
 
     const changes = await this.listChanges(workspaceId)
-    doc = replayAdmittedJournal(doc, changes, snapshot?.causalEvidence)
+    doc = replayAdmittedJournal(doc, changes, snapshot?.causalEvidence, snapshot?.receivedHistory?.excludedLocalChangeHashes)
 
     const heads = Automerge.getHeads(doc).sort()
     if (!snapshot && changes.length === 0) {

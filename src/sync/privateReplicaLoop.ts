@@ -2,12 +2,13 @@ import type { Ref } from "vue"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import type { useTincanban } from "../state"
 import { canonicalizeJson } from "../domain/identity"
-import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "./blindReplication"
+import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig, PrivateReplicaConflictSummary } from "./blindReplication"
 import type { ReplicaHealth } from "./replicationHealth"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 
 type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<IdentityReplicaConfig[]>;
-  statuses: Ref<Record<string, ReplicaHealth>>; profileSetupErrors: Ref<Record<string, string>>;
+  statuses: Ref<Record<string, ReplicaHealth>>; profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>;
+  preferenceConflicts?: Ref<PrivateReplicaConflictSummary[]>;
   attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>> }
 type Session = { identity: () => string; epoch: () => number; disposed: () => boolean }
 
@@ -36,7 +37,23 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
     return import("./rustyAttachmentDelivery").then(module => module.fetchRustyAttachment(app, workspaceId, requested, guard, fallback))
   }
   async function reload(owner: string, epoch: number) {
-    return import("./privateReplicaFactory").then(module => module.reloadPrivateReplicas(owner, state, replicas, () => current(owner, epoch)))
+    const knownOrigins = new Set([...state.configs.value, ...state.identityConfigs.value, ...(state.preferenceConflicts?.value ?? [])].map(value => value.origin))
+    const module = await import("./privateReplicaFactory")
+    await module.reloadPrivateReplicas(owner, state, replicas, () => current(owner, epoch))
+    if (!current(owner, epoch) || !state.preferenceConflicts) return
+    const profile = app.getCurrentProfile()
+    if (!profile || profile.identity.personId !== owner) return
+    for (const value of [...state.configs.value, ...state.identityConfigs.value, ...state.preferenceConflicts.value]) knownOrigins.add(value.origin)
+    const { readPendingRustyCredentialConflict } = await import("./replicaCredentialConflictWorkflow")
+    const pending: PrivateReplicaConflictSummary[] = []
+    for (const origin of knownOrigins) {
+      const summary = await readPendingRustyCredentialConflict(profile, origin)
+      if (!current(owner, epoch)) return
+      if (summary) pending.push(summary)
+    }
+    if (!current(owner, epoch)) return
+    state.preferenceConflicts.value = [...new Map([...state.preferenceConflicts.value, ...pending]
+      .map(value => [`${value.origin}/${value.scopeId}`, value])).values()]
   }
   async function replica(config: PrivateReplicaConfig) {
     const owner = session.identity(), epoch = session.epoch(), guard = captureSession()

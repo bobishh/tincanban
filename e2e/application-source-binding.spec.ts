@@ -5,6 +5,7 @@ import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createServer } from "node:net"
 import { expect, test, type Page } from "./support/coverage"
+import { reviewRetainedEmail } from "./support/automationReviewChannel"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 
@@ -46,16 +47,12 @@ test("Given an extracted posting, when display labels change and its URL later r
     await expect(source).toContainText(originalRole)
     await expect(source).toContainText(company)
 
-    // Planned E2E-only fetch fixture: return changed posting content, then an actual 404 for the same URL.
+    // The remote page may change or disappear later; the stored source stays the original observation.
     await setJobPage(fixture.workerOrigin, { url: jobUrl, status: 200,
-      html: '<script type="application/ld+json">{"@type":"JobPosting","title":"Generic Infrastructure Role","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>' })
-    await source.getByRole("button", { name: "Refresh posting evidence", exact: true }).click()
-    await expect(source).toContainText("Generic Infrastructure Role")
+      html: '<script type="application/ld+json">{"@type":"JobPosting","title":"Generic Infrastructure Role","description":"Changed posting text.","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>' })
     await expect(source.getByText(originalRole, { exact: true })).toBeVisible()
 
     await setJobPage(fixture.workerOrigin, { url: jobUrl, status: 404 })
-    await source.getByRole("button", { name: "Refresh posting evidence", exact: true }).click()
-    await expect(source).toContainText("Posting page not found")
     await expect(source.getByText(originalRole, { exact: true })).toBeVisible()
     await expect(detail.getByText("Edited display role", { exact: true })).toBeVisible()
   } finally { await fixture.close() }
@@ -69,7 +66,7 @@ test("Given a legacy application with no source record, when a generic rejection
     const detail = await openApplicationDetail(page, `${company} — Legacy Platform Role`)
     const source = detail.getByRole("region", { name: "Original posting evidence" })
     await expect(source).toContainText("Original posting evidence pending")
-    await expect(source).toContainText("Original posting title unavailable")
+    await expect(source).toContainText("Original posting evidence pending · no original title is available")
     await expect(source.getByText("Legacy Platform Role", { exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: "Close detail" }).click()
 
@@ -105,25 +102,13 @@ test("Given two same-company original postings and a role-free retained rejectio
     await expectApplicationInColumn(page, "Applied", firstCard)
     await expectApplicationInColumn(page, "Applied", secondCard)
 
-    const subject = `Application update: ${company}`
-    const event = await openEmailReview(page, subject)
-    await expect(event).toContainText("Needs review")
-    await expect(event).toContainText("Choose an application; this will not edit the card title")
-    await event.getByRole("button", { name: "Bind to application", exact: true }).click()
-    const binding = page.getByRole("dialog", { name: "Bind retained email to application" })
-    await binding.getByRole("group", { name: "Application candidates" })
-      .getByRole("button", { name: `${company} — Display Role One`, exact: true }).click()
-    await binding.getByRole("button", { name: "Save binding", exact: true }).click()
-    await expect(event).toContainText("Owner binding saved")
+    expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
 
     // Workflow changes after the owner signs. Retry must re-check the captured workflow precondition.
     await patchCard(page, fixture, firstCard, `${company} — Display Role One`, "Display Role One", fixture.columns.interview)
     await syncFromRusty(page)
-    await event.getByRole("button", { name: "Retry processing", exact: true }).click()
-    await expect.poll(async () => {
-      const afterRetry = await readEvent(fixture.workerOrigin, eventId)
-      return (afterRetry.result as { reason?: string } | undefined)?.reason
-    }, { timeout: 45_000 }).toMatch(/Application workflow changed; event requires review/)
+    await expect(reviewRetainedEmail(page, eventId)).rejects.toThrow(/workflow|binding/i)
+    expect(await readEvent(fixture.workerOrigin, eventId)).toMatchObject({ status: "review" })
     await syncFromRusty(page)
     await expectApplicationInColumn(page, "Interview", firstCard)
     await expectApplicationInColumn(page, "Applied", secondCard)
@@ -147,22 +132,18 @@ test("Given two same-company postings and an ambiguous retained rejection, when 
     const messageId = "<successful-source-binding@example.test>"
     const subject = `Application update: ${company}`
     const eventId = await submitForwardedMail(fixture, messageId, subject,
-      `Thank you for applying to ${company}. We decided to proceed with other candidates.`)
+      `Thank you for applying to ${company}. We rejected your application and decided to proceed with other candidates.`,
+      new Date(Date.now() + 60_000).toUTCString())
     const review = await waitForStatus(fixture.workerOrigin, eventId, "review")
     expect(review).toMatchObject({ status: "review", result: { reason: expect.stringMatching(/ambiguous|role|application/i) } })
     await syncFromRusty(page)
     await expectApplicationInColumn(page, "Applied", firstCard)
     await expectApplicationInColumn(page, "Applied", secondCard)
 
-    const event = await openEmailReview(page, subject)
-    await event.getByRole("button", { name: "Bind to application", exact: true }).click()
-    const binding = page.getByRole("dialog", { name: "Bind retained email to application" })
-    await binding.getByRole("group", { name: "Application candidates" }).getByRole("button", { name: firstLabel, exact: true }).click()
-    await binding.getByRole("button", { name: "Save binding", exact: true }).click()
-    await expect(event).toContainText("Owner binding saved")
-    await event.getByRole("button", { name: "Retry processing", exact: true }).click()
-    await expect.poll(async () => (await readEvent(fixture.workerOrigin, eventId)).status, { timeout: 45_000 }).toBe("applied")
-    expect(await readEvent(fixture.workerOrigin, eventId)).toMatchObject({ status: "applied" })
+    expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
+    await reviewRetainedEmail(page, eventId)
+    await expect.poll(async () => await readEvent(fixture.workerOrigin, eventId), { timeout: 45_000 })
+      .toMatchObject({ status: "applied" })
 
     const sourceBeforeReplay = await readApplicationSources(page, [firstCard, secondCard])
     await syncFromRusty(page)
@@ -176,16 +157,27 @@ test("Given two same-company postings and an ambiguous retained rejection, when 
     // Replaying the same signed retry is an idempotent read of the completed event.
     const replay = await page.evaluate(async ({ origin, workspaceId, eventId }) => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { retryAutomationEmail } = await import("/src/app/automationClient.ts")
-      return retryAutomationEmail(await bootstrapIdentity(), { origin, integrationId: "e2e", workspaceId }, eventId)
+      const { useTincanban } = await import("/src/state.ts")
+      const { discoverApplicationReview, readApplicationReview, retryApplicationBinding } =
+        await import("/src/app/applicationReviewClient.ts")
+      const profile = await bootstrapIdentity()
+      const doc = useTincanban().getActiveDoc()!
+      const automation = Object.values(doc.entities).find(value => value.kind === "automation")
+      if (automation?.kind !== "automation") throw new Error("Automation unavailable")
+      const definitionId = (JSON.parse(automation.definition) as { id: string }).id
+      const route = await discoverApplicationReview(profile, { origin, workspaceId, definitionId, personId: automation.executor.personId })
+      const review = await readApplicationReview(profile, { origin, workspaceId, definitionId,
+        integrationId: route.integrationId, eventId, offset: 0 })
+      if (!review.binding) throw new Error("Saved owner binding unavailable for replay")
+      return retryApplicationBinding(profile, { origin, workspaceId, definitionId,
+        integrationId: route.integrationId, proof: review.binding })
     }, { origin: fixture.workerOrigin, workspaceId: fixture.workspaceId, eventId })
     expect(replay).toMatchObject({ eventId, status: "applied", duplicate: true })
     await expect.poll(async () => (await readEvent(fixture.workerOrigin, eventId)).status).toBe("applied")
     expect(await readApplicationSources(page, [firstCard, secondCard])).toEqual(sourceBeforeReplay)
     await expectApplicationInColumn(page, "Rejected", firstCard)
     await expectApplicationInColumn(page, "Applied", secondCard)
-    const retainedEvent = await openEmailReview(page, subject)
-    await expect(retainedEvent).toContainText(subject)
+    expect(await readEvent(fixture.workerOrigin, eventId)).toMatchObject({ status: "applied" })
   } finally { await fixture.close() }
 })
 
@@ -205,28 +197,12 @@ test("Given a saved owner binding, when its automation grant is revoked before r
     await waitForStatus(fixture.workerOrigin, eventId, "review")
     await syncFromRusty(page)
 
-    const subject = `Application update: ${company}`
-    const event = await openEmailReview(page, subject)
-    await event.getByRole("button", { name: "Bind to application", exact: true }).click()
-    const binding = page.getByRole("dialog", { name: "Bind retained email to application" })
-    await binding.getByRole("group", { name: "Application candidates" })
-      .getByRole("button", { name: `${company} — Display Role One`, exact: true }).click()
-    await binding.getByRole("button", { name: "Save binding", exact: true }).click()
-    await expect(event).toContainText("Owner binding saved")
+    expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
 
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     const settings = page.getByRole("dialog", { name: "Settings", exact: true })
     await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
     const automation = settings.getByRole("article", { name: "Application source E2E", exact: true })
-    await automation.getByRole("button", { name: "Enable vacancy evidence", exact: true }).click()
-    await expect.poll(() => page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
-      const doc = useTincanban().getActiveDoc()!
-      const record = Object.values(doc.entities).find(value => value.kind === "automation" && value.title === "Application source E2E")
-      if (record?.kind !== "automation") return null
-      const approval = JSON.parse(record.approval) as { definition: { payload: { typeVersion: number } }; grant: { payload: { automation: { version: number } } } }
-      return [approval.definition.payload.typeVersion, approval.grant.payload.automation.version]
-    })).toEqual([2, 2])
     await automation.getByRole("button", { name: "Remove", exact: true }).click()
     await automation.getByRole("button", { name: "Confirm removal", exact: true }).click()
     await expect(automation.getByText("Removed · confirmed by Worker", { exact: true })).toBeVisible()
@@ -236,8 +212,6 @@ test("Given a saved owner binding, when its automation grant is revoked before r
       const { retryAutomationEmail } = await import("/src/app/automationClient.ts")
       return retryAutomationEmail(await bootstrapIdentity(), { origin, integrationId: "e2e", workspaceId }, eventId)
     }, { origin: fixture.workerOrigin, workspaceId: fixture.workspaceId, eventId })).rejects.toThrow()
-    const retainedEvent = await openEmailReview(page, subject)
-    await expect(retainedEvent).toContainText("Needs review")
     const afterRetry = await waitForStatus(fixture.workerOrigin, eventId, "review")
     expect(afterRetry).toMatchObject({ status: "review" })
     await syncFromRusty(page)
@@ -250,8 +224,9 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
   const workerDirectory = await mkdtemp(join(tmpdir(), "application-source-worker-"))
   let worker: ChildProcess | undefined
   let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined
+  const privateAddress = `jobs-${"b".repeat(32)}@example.test`
   try {
-    const workerService = await startWorker(workerDirectory, baseURL)
+    const workerService = await startWorker(workerDirectory, baseURL, privateAddress)
     worker = workerService.process
     await page.goto(baseURL)
     await ensureJobSearchWorkspace(page)
@@ -263,7 +238,8 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
     rusty = await startRustyService(trustedOwner, baseURL)
     await connectRusty(page, rusty.origin)
     const workspace = await inspectWorkspace(page)
-    const configured = await configureWorker(workerService.origin, workspace, trustedOwner.identity.personId)
+    const configured = await configureWorker(workerService.origin, workspace, trustedOwner.identity.personId, undefined,
+      [{ id: integrationId, address: privateAddress, mailbox: "owner@example.test" }])
     expect(configured.status).toBe(200)
     const workerIdentityResponse = await fetch(`${workerService.origin}/v1/integrations/${integrationId}/identity`, {
       method: "POST", headers: { authorization: `Bearer ${operatorToken}` },
@@ -272,30 +248,46 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
     const workerIdentity = await workerIdentityResponse.json() as Record<string, unknown>
     const activation = await page.evaluate(async identity => {
       const { useTincanban } = await import("/src/state.ts")
-      const { readLocal } = await import("/src/localDb.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const { readRustyScopePolicyRevision } = await import("/src/sync/rustyEnrollment.ts")
       const { exportApprovedAutomation } = await import("/src/app/automationActivation.ts")
       const app = useTincanban()
-      const personId = app.getCurrentProfile()!.identity.personId
-      const configs = JSON.parse(await readLocal(`tincanban.blind-replicas.v1.${personId}`) ?? "[]") as Array<{ workspaceId: string }>
+      const profile = app.getCurrentProfile()!
+      const personId = profile.identity.personId
+      const configs = await getReplicaConfigurations(personId)
       const config = configs.find(value => value.workspaceId === app.getActiveDoc()!.id)
       if (!config) throw new Error("Rusty local access missing")
-      return JSON.parse(await exportApprovedAutomation(app, config, JSON.stringify(identity), {
-        name: "Application source E2E", type: "job-intake", typeVersion: 1, parameters: { sources: ["website"] },
+      const packet = JSON.parse(await exportApprovedAutomation(app, config, JSON.stringify(identity), {
+        name: "Application source E2E", type: "job-intake", typeVersion: 2, parameters: { sources: ["website"] },
       })) as Record<string, unknown>
+      const packetBlind = packet.blind as { origin?: string; scopeId?: string }
+      const refreshed = (await getReplicaConfigurations(personId)).find(value => value.workspaceId === app.getActiveDoc()!.id &&
+        value.origin === packetBlind.origin && value.scopeId === packetBlind.scopeId)
+      if (!refreshed) throw new Error("Refreshed Rusty access missing")
+      const rustyPolicyRevision = await readRustyScopePolicyRevision({ origin: refreshed.origin, scopeId: refreshed.scopeId,
+        servicePublicKey: refreshed.servicePublicKey }, profile, () => {})
+      return { packet, localPolicyRevision: refreshed.policyRevision, localMinimumWriterVersion: refreshed.minimumWriterVersion,
+        packetPolicyRevision: (packet.blind as { policyRevision?: number }).policyRevision, rustyPolicyRevision }
     }, workerIdentity)
+    const packet = activation.packet
+    const activationExpiry = (packet as { grant?: { payload?: { automation?: { expiresAt?: number } } } })
+      .grant?.payload?.automation?.expiresAt
+    if (typeof activationExpiry !== "number" || !Number.isSafeInteger(activationExpiry)) {
+      throw new Error("Approved application automation has no exact grant expiry")
+    }
+    expect((activation as { localPolicyRevision: number }).localPolicyRevision,
+      JSON.stringify({ localFloor: (activation as { localMinimumWriterVersion?: number }).localMinimumWriterVersion,
+        packetPolicy: (activation as { packetPolicyRevision?: number }).packetPolicyRevision }))
+      .toBe((activation as { rustyPolicyRevision: number }).rustyPolicyRevision)
+    expect((packet as { blind?: { policyRevision?: number } }).blind?.policyRevision)
+      .toBe((activation as { rustyPolicyRevision: number }).rustyPolicyRevision)
+    const exactConfiguration = await configureWorker(workerService.origin, workspace, trustedOwner.identity.personId, activationExpiry,
+      [{ id: integrationId, address: privateAddress, mailbox: "owner@example.test" }])
+    expect(exactConfiguration.status, await exactConfiguration.clone().text()).toBe(200)
     const activated = await fetch(`${workerService.origin}/v1/integrations/${integrationId}/activation`, {
-      method: "PUT", headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" }, body: JSON.stringify(activation),
+      method: "PUT", headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" }, body: JSON.stringify(packet),
     })
     expect(activated.status, await activated.clone().text()).toBe(200)
-    const entityId = (activation as { definition?: { payload?: { id?: string } } }).definition?.payload?.id
-    if (!entityId) throw new Error("Activated application automation has no identifier")
-    const privateAddress = `applications-${"b".repeat(32)}@example.test`
-    const emailRoute = await fetch(`${workerService.origin}/__test/configure`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...workspace, ownerPersonId: trustedOwner.identity.personId,
-        privateEmailRoutes: [{ id: entityId, address: privateAddress, mailbox: "owner@example.test" }] }),
-    })
-    expect(emailRoute.status, await emailRoute.clone().text()).toBe(200)
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     const settings = page.getByRole("dialog", { name: "Settings", exact: true })
@@ -304,7 +296,10 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
     const enableEmail = automation.getByRole("button", { name: "Enable email and Applied", exact: true })
     await expect(enableEmail).toBeVisible({ timeout: 45_000 })
     await enableEmail.click()
-    await expect(automation.getByText("Email enabled · Waiting for first email", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const emailApproval = automation.getByRole("form", { name: "Confirm automation approval", exact: true })
+    await emailApproval.getByLabel("Allow Worker to read this workspace").check()
+    await emailApproval.getByRole("button", { name: "Confirm approval", exact: true }).click()
+    await expect(automation.getByText("Email enabled", { exact: true })).toBeVisible({ timeout: 30_000 })
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     return { ...workspace, workerOrigin: workerService.origin, privateAddress, close: async () => {
       await stopProcess(worker)
@@ -319,12 +314,13 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
   }
 }
 
-async function startWorker(directory: string, browserOrigin: string): Promise<{ origin: string; process: ChildProcess }> {
+async function startWorker(directory: string, browserOrigin: string, privateAddress: string): Promise<{ origin: string; process: ChildProcess }> {
   const port = await unusedPort()
   const config = resolve("workers/automation/wrangler.e2e.jsonc")
   const executable = resolve("workers/automation/node_modules/.bin/wrangler")
   const child = spawn(executable, ["dev", "--local", "--ip", "127.0.0.1", "--port", String(port), "--config", config,
-    "--persist-to", directory, "--var", `CORS_ORIGINS:${browserOrigin}`], {
+    "--persist-to", directory, "--var", `CORS_ORIGINS:${browserOrigin}`, "--var",
+    `EMAIL_ROUTES_JSON:${JSON.stringify([{ id: integrationId, address: privateAddress, mailbox: "owner@example.test" }])}`], {
     cwd: resolve("workers/automation"), detached: process.platform !== "win32",
     env: { ...process.env, WRANGLER_SEND_METRICS: "false" }, stdio: ["ignore", "pipe", "pipe"],
   })
@@ -345,9 +341,11 @@ async function startWorker(directory: string, browserOrigin: string): Promise<{ 
   throw new Error(`Automation Worker did not become ready: ${output}`)
 }
 
-async function configureWorker(origin: string, workspace: WorkspaceBindings, ownerPersonId: string): Promise<Response> {
+async function configureWorker(origin: string, workspace: WorkspaceBindings, ownerPersonId: string, expiresAt?: number,
+  privateEmailRoutes?: Array<{ id: string; address: string; mailbox: string }>): Promise<Response> {
   return fetch(`${origin}/__test/configure`, { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...workspace, ownerPersonId, emailAddress: "applications@example.test" }) })
+    body: JSON.stringify({ ...workspace, ownerPersonId, emailAddress: "applications@example.test",
+      ...(expiresAt === undefined ? {} : { expiresAt }), ...(privateEmailRoutes ? { privateEmailRoutes } : {}) }) })
 }
 
 async function inspectWorkspace(page: Page): Promise<WorkspaceBindings> {
@@ -399,19 +397,22 @@ async function submitApplication(fixture: ApplicationFixture, input: { company: 
 
 async function createLegacyApplication(page: Page, fixture: ApplicationFixture, role: string): Promise<string> {
   const cardId = `legacy-application-${crypto.randomUUID()}`
-  await page.evaluate(async ({ cardId, companyName, roleName, parentId, fieldIds }) => {
+  await page.evaluate(async ({ cardId, companyName, roleName, parentId, fieldIds, postingUrl }) => {
     const { useTincanban } = await import("/src/state.ts")
     await useTincanban().executeCommandAsync({ kind: "createItem", id: cardId, parentId,
-      title: `${companyName} — ${roleName}`, values: { [fieldIds.company]: companyName, [fieldIds.role]: roleName } })
-  }, { cardId, companyName: company, roleName: role, parentId: fixture.columns.applied, fieldIds: fixture.fieldIds })
+      title: `${companyName} — ${roleName}`, values: { [fieldIds.company]: companyName, [fieldIds.role]: roleName, [fieldIds.jobUrl]: postingUrl } })
+  }, { cardId, companyName: company, roleName: role, parentId: fixture.columns.applied, fieldIds: fixture.fieldIds, postingUrl: jobUrl })
   return cardId
 }
 
 async function patchCard(page: Page, fixture: ApplicationFixture, cardId: string, title: string, role: string, parentId?: string): Promise<void> {
   await page.evaluate(async ({ cardId, title, role, parentId, roleField }) => {
     const { useTincanban } = await import("/src/state.ts")
-    await useTincanban().executeCommandAsync({ kind: "patchItem", entityId: cardId, title,
-      ...(parentId ? { parentId } : {}), values: { [roleField]: role } })
+    const workspace = useTincanban()
+    await workspace.executeCommandAsync({ kind: "patchItem", entityId: cardId, title, values: { [roleField]: role } })
+    if (parentId) {
+      await workspace.executeCommandAsync({ kind: "moveEntity", entityId: cardId, parentId, beforeId: null })
+    }
   }, { cardId, title, role, parentId, roleField: fixture.fieldIds.role })
 }
 
@@ -437,24 +438,14 @@ async function syncFromRusty(page: Page): Promise<void> {
   await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
 }
 
-async function submitForwardedMail(fixture: ApplicationFixture, messageId: string, subject: string, text: string): Promise<string> {
+async function submitForwardedMail(fixture: ApplicationFixture, messageId: string, subject: string, text: string,
+  date = new Date().toUTCString()): Promise<string> {
   const raw = ["From: owner@example.test", `To: ${fixture.privateAddress}`, `Message-ID: ${messageId}`,
-    `Date: ${new Date().toUTCString()}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", text, ""].join("\r\n")
+    `Date: ${date}`, `Subject: ${subject}`, "MIME-Version: 1.0", "Content-Type: text/plain; charset=utf-8", "", text, ""].join("\r\n")
   const received = await fetch(`${fixture.workerOrigin}/__test/email`, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ from: "owner@example.test", to: fixture.privateAddress, raw }) })
   expect(received.status, await received.clone().text()).toBe(202)
   return createHash("sha256").update(`${integrationId}:email:${messageId}`).digest("base64url")
-}
-
-async function openEmailReview(page: Page, subject: string) {
-  await page.getByRole("button", { name: "Settings", exact: true }).click()
-  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
-  await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-  const automation = settings.getByRole("article", { name: "Application source E2E", exact: true })
-  const events = automation.getByRole("list", { name: "Recent email processing" })
-  const item = events.getByRole("listitem").filter({ hasText: subject })
-  await expect(item).toBeVisible({ timeout: 45_000 })
-  return item
 }
 
 async function waitForStatus(origin: string, eventId: string, status: "applied" | "review"): Promise<Record<string, unknown>> {

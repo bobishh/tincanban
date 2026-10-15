@@ -12,6 +12,7 @@ export interface HistoryEntry {
   authorLabel: string
   isLegacy: boolean
   message?: string | null
+  archive?: { sourceId: string; baselineId: string; historyEpoch: number; observation: "admitted" | "pending" | "quarantined" }
 }
 
 export function projectDocumentHistory(doc: Automerge.Doc<WorkspaceDocumentV2>): HistoryEntry[] {

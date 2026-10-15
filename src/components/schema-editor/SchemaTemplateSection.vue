@@ -42,7 +42,7 @@ async function persistTemplate() {
 
 <template>
   <div class="schema-tab-content">
-    <div class="templates-layout">
+    <div class="templates-layout ui-stack">
       <aside class="template-list" aria-label="Saved templates">
         <button
           class="button button-small"
@@ -105,15 +105,15 @@ async function persistTemplate() {
 </template>
 
 <style scoped>
-.templates-layout { display: grid; gap: 20px; min-width: 0; }
-.template-list { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.templates-layout { display: grid; gap: var(--space-4); min-width: 0; }
+.template-list { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .template-list .button, .template-item { max-width: 100%; overflow-wrap: anywhere; }
 .empty-template-list { margin: 0; }
-.template-editor { display: grid; gap: 12px; min-width: 0; }
-.template-form-fields { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.template-editor { display: grid; gap: var(--space-3); min-width: 0; }
+.template-form-fields { display: grid; gap: var(--space-3); min-width: 0; margin: 0; padding: 0; border: 0; }
 .template-editor label { color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
-.template-editor input { min-height: 42px; color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
+.template-editor input { min-height: var(--control-size); color: var(--ink); font: inherit; letter-spacing: 0; text-transform: none; }
 .template-editor textarea { height: 240px; min-height: 160px; }
 .template-editor .dialog-actions { margin-top: 0; }
-.template-editor h3 { margin: 8px 0; }
+.template-editor h3 { margin: var(--space-2) 0; }
 </style>

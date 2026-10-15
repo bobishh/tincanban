@@ -89,6 +89,22 @@ it("Given v3 connections disguised as the legacy schema, when decoding, then req
   expect(() => decodeIdentityDeviceState(disguised, personId)).toThrow(/schema|version|upgrade/i)
 })
 
+it("Given a key-history-capable connection schema, when decoding, then require version 5 while retaining older readers only for older wire shapes", () => {
+  expect(identityDeviceStateSchemas.privateConnections).toBe("private-rusty-connections@5")
+  const current = state()
+  current.components.privateConnections.schema = identityDeviceStateSchemas.privateConnections
+  current.components.privateConnections.value.version = 5
+  expect(decodeIdentityDeviceState(current, personId)).toEqual(current)
+  current.components.privateConnections.value.version = 3
+  expect(() => decodeIdentityDeviceState(current, personId)).toThrow(/version|schema|upgrade/i)
+})
+
+it("Given historical reading keys hidden outside private connections, when decoding, then reject the credential disclosure", () => {
+  const input = state()
+  input.components.extra = component("future@1", { historicalContentKeys: { "1": "A".repeat(43) } }, false)
+  expect(() => decodeIdentityDeviceState(input, personId)).toThrow(/private connection|credentials/i)
+})
+
 it("Given a missing portable component, when decoding, then fail closed instead of silently dropping device state", () => {
   const input = state()
   delete input.components.ownerCapabilities
@@ -135,6 +151,14 @@ it("Given a private key field in a portable component, when decoding, then rejec
   expect(() => decodeIdentityDeviceState(input, personId)).toThrow(/private key|secret|key material/i)
 })
 
+it("Given serialized PKCS8 or JWK private keys hidden in nested optional state, when decoding, then reject instead of forwarding key material", () => {
+  for (const field of ["identityPrivateKeyPkcs8", "devicePrivateKeyPkcs8", "private_key_pkcs8", "privateKeyJwk", "identityPrivateKeyJwk"]) {
+    const input = state()
+    input.components.future = component("future@1", { personId, nested: [{ [field]: "must-not-export" }] }, false)
+    expect(() => decodeIdentityDeviceState(input, personId)).toThrow(/private key|secret|key material/i)
+  }
+})
+
 it("Given a non-ASCII manifest larger than one MiB in UTF-8, when encoding or decoding, then enforce the same byte limit", () => {
   const input = state()
   input.components.profileObservations!.value.observations = ["é".repeat(550_000)]
@@ -152,4 +176,10 @@ it("Given an optional future component named __proto__, when decoding JSON, then
   expect(Object.getPrototypeOf(decoded.components)).toBe(Object.prototype)
   expect(Object.hasOwn(decoded.components, "__proto__")).toBe(true)
   expect(decoded.components["__proto__"]?.value).toEqual({ personId, marker: "kept" })
+})
+
+it('Given an older private connection schema with variant history, when decoding, then fail closed instead of ignoring candidates', () => {
+  const input = state()
+  input.components.privateConnections = component('private-rusty-connections@4', { personId: input.personId, version: 5, clock: {}, entries: [] }, true)
+  expect(() => decodeIdentityDeviceState(input, input.personId)).toThrow(/schema|version|upgrade/i)
 })

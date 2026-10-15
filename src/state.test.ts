@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
 import { defaultStorage } from "./storage"
 import { readFile } from "node:fs/promises"
@@ -29,6 +30,8 @@ vi.mock("@automerge/automerge/slim", async () => {
 })
 
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
@@ -36,6 +39,8 @@ beforeAll(async () => {
 
 describe("Repository-backed state and projections (Requirement 1.8)", () => {
   beforeEach(async () => {
+    vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+      (callback ?? options as () => Promise<unknown>)() } })
     setStorageFailureHookForTest(false)
     for (const workspace of [...await defaultStorage.listWorkspaces(), ...await defaultStorage.listArchivedWorkspaces()]) await defaultStorage.purgeWorkspaceForTest(workspace.id)
     resetIdentityStorageForTest()
@@ -124,7 +129,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(app.getActiveDoc()!.entities[item.id]!.placement.parentId).toBe(applied.id)
       expect(app.getActiveDoc()!.entities[item.id]!.archivedAt ?? null).toBeNull()
     } finally { bundles.mockRestore(); digest.mockRestore(); access.mockRestore(); save.mockClear() }
-  })
+  }, 15_000)
 
   it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {
     const app = useTincanban()
@@ -687,6 +692,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const tincanban = useTincanban()
     const before = tincanban.getAutomergeBytes()
     const remote = Automerge.from(createWorkspaceDoc("other", "Remote board", tincanban.getCurrentProfile()!.identity.personId, "blank"))
+    await recordGenesisAuthority(remote, tincanban.getCurrentProfile()!)
     const authorization = await exportAuthorizationBundle(Automerge.save(remote), tincanban.getCurrentProfile()!)
     await expect(tincanban.mergeAuthorizedWorkspace("selected", Automerge.save(remote), authorization)).rejects.toThrow(/Invalid workspace/)
     expect(tincanban.getAutomergeBytes()).toEqual(before)

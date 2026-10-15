@@ -50,9 +50,9 @@ async function createAutomationOwnerRequest(profile: Awaited<ReturnType<typeof p
   return createVerifiedOwnerRequest(context, input);
 }
 
-async function fetchWorker(request: Request): Promise<Response> {
+async function fetchWorker(request: Request, environment: WorkerEnv = testEnv): Promise<Response> {
   const context = createExecutionContext();
-  const response = await worker.fetch(request, testEnv, context);
+  const response = await worker.fetch(request, environment, context);
   await waitOnExecutionContext(context);
   return response;
 }
@@ -135,6 +135,27 @@ describe("automation Worker", () => {
 
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await response.json()).toMatchObject({ status: "ready" });
+  });
+
+  it("Given a Worker build has a commit SHA, When health and capabilities are read, Then both expose that exact build identity", async () => {
+    const sha = "a".repeat(40);
+    const buildEnv = { ...testEnv, RELEASE_SHA: sha };
+    const health = await fetchWorker(new Request("https://automation.test/health"), buildEnv);
+    const capabilities = await fetchWorker(new Request("https://automation.test/v2/capabilities"), buildEnv);
+
+    expect(await health.json()).toMatchObject({ status: "ready", buildSha: sha });
+    expect(await capabilities.json()).toMatchObject({ version: 2, buildSha: sha, readers: { automationState: 5 } });
+  });
+
+  it("Given a Worker has no valid build SHA, When health and capabilities are read, Then report unknown explicitly", async () => {
+    for (const configured of [undefined, "unknown", "not-a-commit"]) {
+      const buildEnv = { ...testEnv, RELEASE_SHA: configured } as WorkerEnv;
+      const health = await fetchWorker(new Request("https://automation.test/health"), buildEnv);
+      const capabilities = await fetchWorker(new Request("https://automation.test/v2/capabilities"), buildEnv);
+
+      expect(await health.json()).toMatchObject({ status: "ready", buildSha: null });
+      expect(await capabilities.json()).toMatchObject({ version: 2, buildSha: null, readers: { automationState: 5 } });
+    }
   });
 
   it("Given the configured browser origin, When activation preflight is requested, Then bearer and PUT are allowed", async () => {

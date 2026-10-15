@@ -4,25 +4,23 @@ import { decodeBlindBytes, type BlindObject } from "./blindEnvelope"
 import { downloadBlindBlob } from "./blindBlobClient"
 import { openAttachmentManifest, type AttachmentLocator, type AttachmentScope } from "./attachmentCodec"
 import { requestBlindBlobCoverage, type BlindBlobCoverageReceipt } from "./blindBlobCoverage"
+import { parseReplicaContentKeys } from "./replicaContentKeys"
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 const HASH = /^[A-Za-z0-9_-]{43}$/
 
 function captureScope(value: AttachmentScope): AttachmentScope {
   const scope = structuredClone(value)
-  if (!exactRecord(scope, ["workspaceId", "scopeId", "keyEpoch", "contentKey"])) throw new Error("Invalid attachment coverage scope")
+  if (!scope || typeof scope !== "object" || Array.isArray(scope) ||
+    !["workspaceId", "scopeId", "keyEpoch", "contentKey"].every(key => Object.hasOwn(scope, key)) ||
+    Object.keys(scope).some(key => !["workspaceId", "scopeId", "keyEpoch", "contentKey", "historicalContentKeys", "historicalContentKeyVariants"].includes(key))) {
+    throw new Error("Invalid attachment coverage scope")
+  }
   if (!validWorkspace(scope.workspaceId) || !validScope(scope.scopeId) || !validEpoch(scope.keyEpoch)) {
     throw new Error("Invalid attachment coverage scope")
   }
-  if (typeof scope.contentKey !== "string" || decodeBlindBytes(scope.contentKey).length !== 32) throw new Error("Invalid attachment coverage scope")
+  parseReplicaContentKeys(scope)
   return scope
-}
-
-function exactRecord(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
-  const prototype = Object.getPrototypeOf(value) as object | null
-  const actual = Object.keys(value)
-  return (prototype === Object.prototype || prototype === null) && actual.length === keys.length && keys.every(key => Object.hasOwn(value, key))
 }
 
 function validWorkspace(value: unknown): value is string {
@@ -77,8 +75,8 @@ export async function confirmRustyAttachmentCoverage(scopeInput: AttachmentScope
   await guard()
   const manifest = await openAttachmentManifest(scope, descriptor, locator, manifestObject)
   await guard()
-  const objects = [{ objectId: locator.manifestId, keyEpoch: scope.keyEpoch },
-    ...manifest.chunks.map(chunk => ({ objectId: chunk.objectId, keyEpoch: scope.keyEpoch }))]
+  const objects = [{ objectId: locator.manifestId, keyEpoch: manifestObject.keyEpoch },
+    ...manifest.chunks.map(chunk => ({ objectId: chunk.objectId, keyEpoch: manifestObject.keyEpoch }))]
   const receipt = await requestBlindBlobCoverage(access, objects)
   await guard()
   return receipt

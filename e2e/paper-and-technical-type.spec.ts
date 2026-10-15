@@ -8,15 +8,28 @@ async function angle(locator: Locator) {
   })
 }
 
-test("Given paper buttons and cards, when hovered, then rotation is visible and clicking still opens the card", async ({ page }, info) => {
+async function transformOffset(locator: Locator) {
+  return locator.evaluate(element => {
+    const transform = new DOMMatrix(getComputedStyle(element).transform)
+    return { x: transform.e, y: transform.f }
+  })
+}
+
+test("Given paper buttons and cards, when hovered, then controls stay steady and clicking still opens the card", async ({ page }, info) => {
   await page.emulateMedia({ reducedMotion: "no-preference" })
   await page.goto("/")
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Item details", exact: true })
   await form.getByLabel("Title *").fill("Paper card")
   const save = form.getByRole("button", { name: "Save item", exact: true })
+  const saveBefore = await save.boundingBox()
   await save.hover()
-  await expect.poll(async () => Math.abs(await angle(save))).toBeGreaterThan(2)
+  expect(await angle(save)).toBe(0)
+  expect(await transformOffset(save)).toEqual({ x: 0, y: 0 })
+  const saveAfter = await save.boundingBox()
+  expect(saveAfter).not.toBeNull()
+  expect(saveBefore).not.toBeNull()
+  expect(Math.abs(saveAfter!.x - saveBefore!.x)).toBeLessThan(1)
   await save.click()
   const card = page.locator(".lead-card").filter({ hasText: "Paper card" })
   await card.hover()
@@ -115,7 +128,7 @@ test("Given local device details and recovery words, when viewed or restore fail
   expect(await angle(restore)).toBe(0)
   await recovery.getByLabel("Recovery file").setInputFiles({ name: "invalid-recovery.json", mimeType: "application/json", buffer: Buffer.from("{}") })
   await recovery.getByRole("checkbox").check()
-  await restore.click()
+  await expect(restore).toBeDisabled()
   await expect(recovery.getByRole("alert")).toBeVisible()
   await expect(words).toHaveValue("IIl10 O0 abcdef0123456789")
   await page.screenshot({ path: info.outputPath("technical-type-failure.png") })

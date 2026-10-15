@@ -2,9 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from "./pipeline";
 import { parseIntegrations, type WorkerEnv, type AutomationIntegration } from "./index";
 import { privateEmailRoutes } from "./emailRoutes";
-import { correlateApplication, gmailForwardingConfirmationUrl } from "./email";
+import { gmailForwardingConfirmationUrl } from "./email";
 import type { JobPageFetcher } from "./extraction";
-import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate, type AutomationManagementInspector } from "./replica";
+import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
+  type AutomationManagementInspector, type ReplicaTransport } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identity";
 import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
@@ -23,7 +24,8 @@ import { automationBodyHash, parseAutomationObservationProof, type AutomationObs
 import { readApplicationEventClassification } from "./clef";
 import { FreshRequestLedger } from "./freshRequestLedger";
 import { verifyAutomationInstanceRequest, type AutomationInstanceAction, type AutomationInstanceRequestProof } from "../../../src/domain/automationInstanceProtocol";
-import { parseAutomationInstanceBody, type AutomationInstanceActivateBody, type AutomationInstanceRefreshBody } from "../../../src/domain/automationInstanceData";
+import { parseAutomationInstanceBody, type AutomationInstanceActivateBody, type AutomationInstanceRefreshBody,
+  type AutomationInstancePrepareHistoryBody, type AutomationInstanceActivateHistoryBody, type AutomationInstancePrepareRotationBody, type AutomationInstanceRotateStorageBody } from "../../../src/domain/automationInstanceData";
 import { createAutomationInstanceIdentity, verifyAutomationInstanceIdentity, type AutomationInstanceIdentityProof } from "../../../src/domain/automationInstanceIdentity";
 import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
@@ -119,6 +121,22 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         total_chunks INTEGER NOT NULL,
         data TEXT NOT NULL,
         PRIMARY KEY (kind, generation, chunk_index)
+      );
+      CREATE TABLE IF NOT EXISTS automation_storage_transition (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS automation_storage_transition_completed (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, target_hash TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS automation_history_transition (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, source_heads TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS automation_history_transition_completed (
+        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, baseline_id TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS events (
         event_id TEXT PRIMARY KEY,
@@ -267,11 +285,13 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       | { ok: true; status: "active" | "paused" | "deleted"; workspaceId: string; synced: true }
       | { ok: false; status: 422 | 503; error: string; detail?: string }
     > {
+    this.assertStorageNotFrozen();
     const profile = await this.getIdentityProfile(integrationId, identitySecret);
     if (packet.grant?.payload?.personId !== profile.identity.personId) {
       return { ok: false, status: 422, error: "Automation grant subject does not match this integration identity" };
     }
     const persist = (serialized: string) => this.saveReplicaState(storageSecret, serialized);
+    const activationPacket = this.packetWithTransport(packet);
     let replica: AutomationReplica;
     try {
       const existing = await this.loadReplicaState(storageSecret);
@@ -283,12 +303,12 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
           canonicalizeJson(state.definition ?? null) !== canonicalizeJson(packet.definition ?? null) ||
           canonicalizeJson(priorAccess) !== canonicalizeJson(nextAccess)) {
           if (!origin || packet.version !== 2) throw new Error("Scope renewal requires a signed enrolled owner request");
-          replica = await AutomationReplica.renew(existing, { ...packet, persist }, profile, origin);
+          replica = await AutomationReplica.renew(existing, { ...activationPacket, persist }, profile, origin);
         } else {
           replica = await this.restoreReplica(existing, profile, storageSecret);
           if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be reactivated");
         }
-      } else replica = await AutomationReplica.activate({ ...packet, persist }, profile, origin);
+      } else replica = await AutomationReplica.activate({ ...activationPacket, persist }, profile, origin);
       if (origin) replica.observationForRuntime(origin, crypto.randomUUID());
     }
     catch (error) {
@@ -531,7 +551,15 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         if (action === "discover" && error instanceof Error && /currently authorized owner|definition does not match/.test(error.message)) return null;
         throw error;
       }
-      await inspector.pull(guard);
+      const frozen = this.storageTransition();
+      const rotationAction = action === "prepare-storage-rotation" || action === "rotate-storage";
+      const historyAction = action === "prepare-history-baseline" || action === "activate-history-baseline";
+      const historyFrozen = this.historyTransition();
+      if (historyFrozen && !historyAction && action !== "identity" && action !== "discover") throw new Error("History transition is frozen; resume that transition first");
+      if (frozen && historyAction) throw new Error("Resume storage credential transition before history maintenance");
+      if (historyFrozen && rotationAction) throw new Error("Resume history transition before storage credential maintenance");
+      if (frozen && !rotationAction && action !== "identity" && action !== "discover") throw new Error("Storage credential transition is frozen; resume that transition first");
+      if (!frozen && !historyFrozen && !historyAction) await inspector.pull(guard);
       await guard();
       inspector.describe(origin, body.workspaceId, body.definitionId);
       if (action === "discover") return { integrationId: this.ctx.id.name! };
@@ -542,7 +570,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       if (cached) {
         const response: unknown = JSON.parse(await decryptReplicaValue(this.env.EVENT_STORAGE_SECRET!, this.ctx.id.name!, `instance-response:${payload.nonce}`, cached));
         await guard();
-        if (action === "identity" || action === "refresh-access") {
+        if (action === "identity" || action === "refresh-access" || rotationAction || historyAction) {
           await verifyAutomationInstanceIdentity(response, { origin, workspaceId: body.workspaceId, definitionId: body.definitionId,
             integrationId: this.ctx.id.name!, executorPersonId: body.executorPersonId, requestNonce: payload.nonce });
           return response as AutomationInstanceIdentityProof;
@@ -557,11 +585,27 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
         candidate.assertOwner(owner, payload.deviceId);
         await verifyAutomationInstanceRequest(proof, expected);
       };
-      if (action === "refresh-access" && "storage" in body) {
+      if (action === "refresh-access" && "receipt" in body && !("credentials" in body)) {
         inspector = await this.refreshManagedInstanceAccess(inspector.serialize(), profile, body, payload.personId, guard, publishGuard);
         await guard();
       }
-      if (action === "identity" || action === "refresh-access") {
+      if (action === "prepare-storage-rotation" && "transitionId" in body && !("credentials" in body)) {
+        inspector = await this.prepareManagedStorageRotation(inspector, body, guard);
+        await guard();
+      }
+      if (action === "rotate-storage" && "credentials" in body) {
+        inspector = await this.rotateManagedStorage(inspector, profile, body, payload.personId, guard, publishGuard, next => { inspector = next; });
+        await guard();
+      }
+      if (action === "prepare-history-baseline" && "scopeAuthoritySnapshot" in body) {
+        inspector = await this.prepareManagedHistory(inspector, body, guard);
+        await guard();
+      }
+      if (action === "activate-history-baseline" && "baselineId" in body) {
+        inspector = await this.activateManagedHistory(inspector, profile, body, guard, publishGuard, next => { inspector = next; });
+        await guard();
+      }
+      if (action === "identity" || action === "refresh-access" || rotationAction || historyAction) {
         const context = await resolveSigningContext({ profile, certificates: [profile.certificate],
           purpose: "automation-instance-identity", authorityRevision: requestHash, expiresAt: payload.expiresAt,
           binding: { origin, workspaceId: body.workspaceId, definitionId: body.definitionId, integrationId: this.ctx.id.name!, requestNonce: payload.nonce },
@@ -571,7 +615,11 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
           } });
         response = await createAutomationInstanceIdentity(context, { origin, workspaceId: body.workspaceId,
           definitionId: body.definitionId, integrationId: this.ctx.id.name!, requestNonce: payload.nonce,
-          description: inspector.describe(origin, body.workspaceId, body.definitionId) });
+          description: { ...inspector.describe(origin, body.workspaceId, body.definitionId),
+            ...(inspector.historyBaselineId() ? { historyBaselineId: inspector.historyBaselineId() } : {}),
+            ...(this.historyTransition() ? { historyTransition: { transitionId: this.historyTransition()!.transition_id,
+              state: "frozen" as const, sourceHeads: JSON.parse(this.historyTransition()!.source_heads) as string[] } } : {}),
+            ...(this.storageTransition() ? { storageTransition: { transitionId: this.storageTransition()!.transition_id, state: "frozen" as const } } : {}) } });
       } else if ("packet" in body) {
         response = await this.activateManagedInstanceNow(inspector.serialize(), profile, body, origin,
           guard, publishGuard, next => { inspector = next; });
@@ -581,6 +629,168 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       ledger.complete(payload.nonce, requestHash, encrypted);
       return response;
     });
+  }
+
+  private historyTransition(): { transition_id: string; storage_binding: string; source_heads: string } | undefined {
+    return this.ctx.storage.sql.exec<{ transition_id: string; storage_binding: string; source_heads: string }>(
+      "SELECT transition_id, storage_binding, source_heads FROM automation_history_transition WHERE singleton = 1").toArray()[0];
+  }
+
+  private historyStorageBinding(inspector: AutomationManagementInspector, storage: AutomationInstancePrepareHistoryBody["storage"]): string {
+    const { blind } = JSON.parse(inspector.serialize()) as { blind: AutomationActivationPacket["blind"] };
+    const binding = canonicalizeJson({ origin: blind.origin, scopeId: blind.scopeId, keyEpoch: blind.keyEpoch, servicePublicKey: blind.servicePublicKey });
+    if (binding !== canonicalizeJson(storage)) throw new Error("History maintenance targets another pinned storage scope");
+    return binding;
+  }
+
+  private async prepareManagedHistory(inspector: AutomationManagementInspector, body: AutomationInstancePrepareHistoryBody,
+    guard: () => Promise<void>): Promise<AutomationManagementInspector> {
+    const binding = this.historyStorageBinding(inspector, body.storage), frozen = this.historyTransition();
+    if (frozen) {
+      if (frozen.transition_id !== body.transitionId || frozen.storage_binding !== binding) throw new Error("Another history transition is pending");
+      await guard(); return inspector;
+    }
+    const completed = this.ctx.storage.sql.exec<{ transition_id: string }>(
+      "SELECT transition_id FROM automation_history_transition_completed WHERE singleton = 1").toArray()[0];
+    if (completed?.transition_id === body.transitionId) throw new Error("History transition already completed; use its exact activation acknowledgement");
+    const heads = await inspector.prepareHistory(body.scopeAuthoritySnapshot, guard);
+    await guard();
+    this.ctx.storage.sql.exec("INSERT INTO automation_history_transition (singleton, transition_id, storage_binding, source_heads) VALUES (1, ?, ?, ?)",
+      body.transitionId, binding, JSON.stringify(heads));
+    this.loadedReplica = undefined;
+    return inspector;
+  }
+
+  private async activateManagedHistory(inspector: AutomationManagementInspector,
+    profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>, body: AutomationInstanceActivateHistoryBody,
+    guard: () => Promise<void>, publishGuard: (next: string) => Promise<void>,
+    observe: (next: AutomationManagementInspector) => void): Promise<AutomationManagementInspector> {
+    const binding = this.historyStorageBinding(inspector, body.storage), frozen = this.historyTransition();
+    if (!frozen) {
+      const completed = this.ctx.storage.sql.exec<{ transition_id: string; storage_binding: string; baseline_id: string }>(
+        "SELECT transition_id, storage_binding, baseline_id FROM automation_history_transition_completed WHERE singleton = 1").toArray()[0];
+      if (completed?.transition_id !== body.transitionId || completed.storage_binding !== binding || completed.baseline_id !== body.baselineId ||
+        inspector.historyBaselineId() !== body.baselineId) throw new Error("History activation requires its exact prepared transition");
+      await guard(); return inspector;
+    }
+    if (frozen.transition_id !== body.transitionId || frozen.storage_binding !== binding) throw new Error("History activation requires its exact prepared transition");
+    const original = inspector.serialize(), secret = this.env.EVENT_STORAGE_SECRET!;
+    const generation = this.ctx.storage.sql.exec<{ state_generation: string | null }>(
+      "SELECT state_generation FROM automation_replica WHERE singleton = 1").one().state_generation;
+    let candidateBytes = original;
+    let candidate = await AutomationReplica.inspectForManagement(original, profile, async value => { candidateBytes = value; });
+    observe(candidate);
+    await candidate.drainPending(guard);
+    await candidate.pull(guard);
+    await candidate.verifyHistory(body.baselineId, JSON.parse(frozen.source_heads) as string[], guard);
+    candidateBytes = candidate.serialize();
+    await publishGuard(candidateBytes); await guard();
+    if (await this.loadReplicaState(secret) !== original) throw new Error("Stored Worker source changed during history activation");
+    await this.persistReplicaState(secret, candidateBytes, async () => { await publishGuard(candidateBytes); await guard(); }, () => {
+      const current = this.historyTransition();
+      if (current?.transition_id !== body.transitionId || current.storage_binding !== frozen.storage_binding || current.source_heads !== frozen.source_heads) throw new Error("History freeze changed before activation");
+      this.ctx.storage.sql.exec(`INSERT INTO automation_history_transition_completed (singleton, transition_id, storage_binding, baseline_id)
+        VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET transition_id = excluded.transition_id,
+        storage_binding = excluded.storage_binding, baseline_id = excluded.baseline_id`, body.transitionId, binding, body.baselineId);
+      this.ctx.storage.sql.exec("DELETE FROM automation_history_transition WHERE singleton = 1");
+    }, generation);
+    this.loadedReplica = undefined;
+    candidate = await AutomationReplica.inspectForManagement(candidateBytes, profile, value => this.saveReplicaState(secret, value));
+    observe(candidate);
+    await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
+    return candidate;
+  }
+
+  private storageTransition(): { transition_id: string; storage_binding: string } | undefined {
+    return this.ctx.storage.sql.exec<{ transition_id: string; storage_binding: string }>(
+      "SELECT transition_id, storage_binding FROM automation_storage_transition WHERE singleton = 1").toArray()[0];
+  }
+
+  private assertStorageNotFrozen(): void {
+    if (this.historyTransition()) throw new Error("History transition is frozen; queued events stay available");
+    if (this.storageTransition()) throw new Error("Storage credential transition is frozen; queued events stay available");
+  }
+
+  private async prepareManagedStorageRotation(inspector: AutomationManagementInspector, body: AutomationInstancePrepareRotationBody,
+    guard: () => Promise<void>): Promise<AutomationManagementInspector> {
+    const prior = JSON.parse(inspector.serialize()) as { blind: AutomationActivationPacket["blind"] };
+    const binding = canonicalizeJson({ origin: prior.blind.origin, scopeId: prior.blind.scopeId,
+      keyEpoch: prior.blind.keyEpoch, servicePublicKey: prior.blind.servicePublicKey });
+    if (binding !== canonicalizeJson(body.storage)) throw new Error("Storage rotation targets another Rusty scope or epoch");
+    const frozen = this.storageTransition();
+    if (frozen) {
+      if (frozen.transition_id !== body.transitionId || frozen.storage_binding !== binding) throw new Error("Another storage credential transition is pending");
+      await guard();
+      return inspector;
+    }
+    await inspector.drainPending(guard);
+    await guard();
+    this.ctx.storage.sql.exec("INSERT INTO automation_storage_transition (singleton, transition_id, storage_binding) VALUES (1, ?, ?)",
+      body.transitionId, binding);
+    this.loadedReplica = undefined;
+    // All execution and management share mutationQueue; no event can enter between the drain and durable freeze.
+    return inspector;
+  }
+
+  private async rotateManagedStorage(inspector: AutomationManagementInspector,
+    profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>, body: AutomationInstanceRotateStorageBody,
+    ownerPersonId: string, guard: () => Promise<void>, publishGuard: (next: string) => Promise<void>,
+    observeInspector: (next: AutomationManagementInspector) => void): Promise<AutomationManagementInspector> {
+    const next = body.credentials;
+    if (next.workspaceId !== body.workspaceId || next.origin !== body.storage.origin || next.scopeId !== body.storage.scopeId ||
+      next.servicePublicKey !== body.storage.servicePublicKey || next.keyEpoch <= body.storage.keyEpoch) throw new Error("Replacement storage changed scope, service or epoch");
+    const receipt = await verifyRustyWriterPolicyReceipt(body.receipt, next, ownerPersonId, next.policyRevision);
+    if (receipt.payload.revision !== next.policyRevision) throw new Error("Replacement storage policy differs from its confirmation");
+    await guard();
+    const targetHash = async (blind: AutomationActivationPacket["blind"]) => sha256Base64Url(new TextEncoder().encode(canonicalizeJson([
+      blind.workspaceId, blind.origin, blind.scopeId, blind.servicePublicKey, blind.policyRevision, blind.keyEpoch,
+      blind.contentKey, blind.historicalContentKeys ?? null, blind.historicalContentKeyVariants ?? null,
+      blind.readToken, blind.writeToken, blind.minimumWriterVersion ?? null,
+    ])));
+    const requestedTarget = await targetHash(next);
+    const frozen = this.storageTransition();
+    if (!frozen) {
+      const completed = this.ctx.storage.sql.exec<{ transition_id: string; storage_binding: string; target_hash: string }>(
+        "SELECT transition_id, storage_binding, target_hash FROM automation_storage_transition_completed WHERE singleton = 1").toArray()[0];
+      const current = JSON.parse(inspector.serialize()) as { blind: AutomationActivationPacket["blind"] };
+      if (completed?.transition_id !== body.transitionId || completed.storage_binding !== canonicalizeJson(body.storage) ||
+        completed.target_hash !== requestedTarget || await targetHash(current.blind) !== requestedTarget) {
+        throw new Error("Storage rotation requires its exact durable prepared transition");
+      }
+      await guard();
+      return inspector;
+    }
+    if (frozen.transition_id !== body.transitionId || frozen.storage_binding !== canonicalizeJson(body.storage)) {
+      throw new Error("Storage rotation requires its exact durable prepared transition");
+    }
+    const original = inspector.serialize();
+    const secret = this.env.EVENT_STORAGE_SECRET!;
+    const generation = this.ctx.storage.sql.exec<{ state_generation: string | null }>(
+      "SELECT state_generation FROM automation_replica WHERE singleton = 1").one().state_generation;
+    let candidateBytes: string | undefined;
+    let candidate = await inspector.rotateStorageCredentials(next,
+      async value => { candidateBytes = value; }, guard);
+    observeInspector(candidate);
+    // Reacquire current admitted Owner/control with the new access. Never depend on invalidated old tokens.
+    await candidate.pull(guard);
+    candidateBytes = candidate.serialize();
+    await publishGuard(candidateBytes);
+    await guard();
+    if (await this.loadReplicaState(secret) !== original) throw new Error("Stored Worker replica changed during credential rotation");
+    const beforeCommit = async () => { await publishGuard(candidateBytes!); await guard(); };
+    await this.persistReplicaState(secret, candidateBytes, beforeCommit, () => {
+      const current = this.storageTransition();
+      if (current?.transition_id !== body.transitionId || current.storage_binding !== frozen.storage_binding) throw new Error("Storage transition changed before publication");
+      this.ctx.storage.sql.exec(`INSERT INTO automation_storage_transition_completed (singleton, transition_id, storage_binding, target_hash)
+        VALUES (1, ?, ?, ?) ON CONFLICT(singleton) DO UPDATE SET transition_id = excluded.transition_id,
+        storage_binding = excluded.storage_binding, target_hash = excluded.target_hash`, body.transitionId, frozen.storage_binding, requestedTarget);
+      this.ctx.storage.sql.exec("DELETE FROM automation_storage_transition WHERE singleton = 1");
+    }, generation);
+    this.loadedReplica = undefined;
+    candidate = await AutomationReplica.inspectForManagement(candidateBytes, profile, value => this.saveReplicaState(secret, value));
+    observeInspector(candidate);
+    await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
+    return candidate;
   }
 
   private async refreshManagedInstanceAccess(serialized: string, profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>,
@@ -644,9 +854,10 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       });
     };
     await guard();
+    const activationPacket = this.packetWithTransport(packet);
     const replica = body.adoptLegacy
-      ? await AutomationReplica.adoptLegacy(serialized, { ...packet, persist }, profile, origin)
-      : await AutomationReplica.renew(serialized, { ...packet, persist }, profile, origin);
+      ? await AutomationReplica.adoptLegacy(serialized, { ...activationPacket, persist }, profile, origin)
+      : await AutomationReplica.renew(serialized, { ...activationPacket, persist }, profile, origin);
     observeInspector(await AutomationReplica.inspectForManagement(replica.serialize(), profile, value => this.saveReplicaState(storageSecret, value)));
     await guard();
     await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
@@ -727,7 +938,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   private async readApplicationReviewMailboxNow(replica: AutomationReplica, origin: string,
     workspaceId: string, definitionId: string, nonce: string): Promise<SignedReviewMailbox> {
     const id = this.ctx.id.name!;
-    const privateRoute = privateEmailRoutes(this.env).find(value => value.id === id);
+    const privateRoute = await this.resolvePrivateEmailRoute(id);
     const configured = (await this.getRegisteredIntegration()) ?? parseIntegrations(this.env).find(value => value.id === id);
     const route = privateRoute ? { address: privateRoute.address, mailbox: privateRoute.mailbox }
       : configured?.emailAddress && configured.allowedForwarders?.length === 1
@@ -743,6 +954,11 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     const observation = await replica.signObservationForRuntime(origin, nonce);
     return this.parseSignedReviewMailbox({ origin, workspaceId, definitionId, integrationId: id,
       route, receipt: { confirmation: setup.confirmation, events }, observation });
+  }
+
+  /** Resolve the private recipient through the current deployment configuration. */
+  protected async resolvePrivateEmailRoute(id: string): Promise<ReturnType<typeof privateEmailRoutes>[number] | undefined> {
+    return privateEmailRoutes(this.env).find(value => value.id === id);
   }
 
   private async readApplicationReviewNow(replica: AutomationReplica, eventId: string, offset: number, origin: string, workspaceId: string, definitionId: string) {
@@ -850,6 +1066,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   alarm(): Promise<void> { return this.serializeMutation(() => this.processAlarm()); }
 
   private async processAlarm(): Promise<void> {
+    if (this.storageTransition() || this.historyTransition()) { await this.ctx.storage.deleteAlarm(); return; }
     let replica: AutomationReplica | null;
     try { replica = await this.refreshReplica(); }
     catch (error) {
@@ -988,13 +1205,20 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
 
   private async restoreReplica(serialized: string, profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>,
     storageSecret: string): Promise<AutomationReplica> {
+    this.assertStorageNotFrozen();
     // Always read and decrypt durable evidence first. Only an exact match may reuse its verification.
     const cached = this.loadedReplica;
     if (cached?.serialized === serialized && cached.storageSecret === storageSecret &&
       cached.personId === profile.identity.personId && cached.deviceId === profile.device.deviceId) return cached.replica;
-    const replica = await AutomationReplica.restore(serialized, profile, value => this.saveReplicaState(storageSecret, value));
+    const replica = await AutomationReplica.restore(serialized, profile, value => this.saveReplicaState(storageSecret, value),
+      Reflect.get(this, "__tincanban_test_replica_transport__") as ReplicaTransport | undefined);
     this.loadedReplica = { serialized, storageSecret, personId: profile.identity.personId, deviceId: profile.device.deviceId, replica };
     return replica;
+  }
+
+  private packetWithTransport(packet: AutomationActivationPacket): AutomationActivationPacket {
+    const transport = Reflect.get(this, "__tincanban_test_replica_transport__") as ReplicaTransport | undefined;
+    return transport ? { ...packet, transport } : packet;
   }
 
   private findById(eventId: string): EventRow | undefined {
@@ -1073,9 +1297,8 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     if (event.source === "email" && isLeadProposal && leadDecision && result.extraction) {
       const incoming = { ...event.message, urls: [...event.message.urls, result.extraction.finalUrl] };
       const candidates = replica.candidates();
-      const correlation = replica.definitionForRuntime()?.typeVersion === 2 || candidates.some(candidate => candidate.sources !== undefined)
-        ? correlateApplicationSources(incoming, candidates.map(candidate => ({ ...candidate, sources: candidate.sources ?? [] })))
-        : correlateApplication(incoming, candidates.map(({ cardId, jobUrl, messageIds }) => ({ cardId, jobUrl, messageIds })));
+      const correlation = correlateApplicationSources(incoming,
+        candidates.map(candidate => ({ ...candidate, sources: candidate.sources ?? [] })));
       if (correlation.kind === "review" && correlation.reason === "No existing application matched") {
         const columns = replica.bindingsForRuntime();
         const columnId = mailDecision?.event === "applied" ? columns.applied : columns.lead;

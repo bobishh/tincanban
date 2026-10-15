@@ -141,13 +141,13 @@ async function restore(hash: string) {
 </template>
 
 <style scoped>
-.causal-review-banner { margin: 0 18px 12px; padding: 12px 16px; border: 1px solid var(--warning, #9a6b12); border-radius: 10px; background: var(--surface, white); }
-.causal-review-history { margin: 0 18px 12px; }
-.causal-review-save-error { margin: 0 18px 12px; padding: 8px 12px; border-left: 3px solid var(--danger, #9b2c2c); }
+.causal-review-banner { margin: 0 var(--space-4) var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--warning, #9a6b12); border-radius: 10px; background: var(--surface, white); }
+.causal-review-history { margin: 0 var(--space-4) var(--space-3); }
+.causal-review-save-error { margin: 0 var(--space-4) var(--space-3); padding: var(--space-2) var(--space-3); border-left: 3px solid var(--danger, #9b2c2c); }
 .causal-review-banner summary { cursor: pointer; font-weight: 700; }
-.causal-review-list { display: grid; gap: 12px; padding-left: 20px; }
-.causal-review-list li { display: grid; gap: 5px; }
-.causal-review-list li > div { display: flex; gap: 12px; align-items: baseline; }
+.causal-review-list { display: grid; gap: var(--space-3); padding-left: var(--space-4); }
+.causal-review-list li { display: grid; gap: var(--space-1); }
+.causal-review-list li > div { display: flex; gap: var(--space-3); align-items: baseline; }
 .causal-review-list small, .causal-review-list code { color: var(--muted); overflow-wrap: anywhere; }
 .causal-review-list p, .causal-review-error { margin: 0; }
 .causal-review-error { color: var(--danger, #9b2c2c); }

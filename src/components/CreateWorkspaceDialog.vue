@@ -58,7 +58,7 @@ async function handleCreate() {
       </div>
 
       <div class="workspace-create-content">
-        <div class="workspace-create-form">
+        <div class="workspace-create-form ui-stack">
           <label><span>Title</span><input v-model="title" autofocus required placeholder="e.g. Reading List" :disabled="creating" /></label>
           <fieldset class="workspace-preset" :disabled="creating">
             <legend>Preset</legend>
@@ -90,11 +90,11 @@ async function handleCreate() {
 .workspace-create-dialog { display: flex; flex-direction: column; overflow: hidden; }
 .workspace-create-dialog form { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .workspace-create-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-.workspace-create-actions { flex: 0 0 auto; margin-top: 0; padding-top: 16px; border-top: 2px solid var(--line); }
-.workspace-customize { display: grid; gap: 14px; }
-.workspace-customize-toggle { display: flex; width: 100%; min-width: 0; min-height: 54px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border: 2px solid var(--line); text-align: left; }
-.workspace-customize-toggle > span:first-child { display: grid; gap: 4px; min-width: 0; }
+.workspace-create-actions { flex: 0 0 auto; margin-top: 0; padding-top: var(--space-4); border-top: 2px solid var(--line); }
+.workspace-customize { display: grid; gap: var(--space-3); }
+.workspace-customize-toggle { display: flex; width: 100%; min-width: 0; min-height: 54px; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 2px solid var(--line); text-align: left; }
+.workspace-customize-toggle > span:first-child { display: grid; gap: var(--space-1); min-width: 0; }
 .workspace-customize-toggle small { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
-.workspace-create-content :deep(.creation-config) { padding-bottom: 4px; }
-@media (max-width: 520px) { .workspace-create-dialog { padding: 18px; } .workspace-create-form { margin: 14px 0; } }
+.workspace-create-content :deep(.creation-config) { padding-bottom: var(--space-1); }
+@media (max-width: 520px) { .workspace-create-dialog { padding: var(--space-4); } .workspace-create-form { margin: var(--space-3) 0; } }
 </style>

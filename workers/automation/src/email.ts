@@ -29,7 +29,7 @@ export interface ApplicationCandidate {
 }
 
 export type CorrelationResult =
-  | { kind: 'matched'; cardId: string; method: 'thread' | 'job-url' | 'company-role' }
+  | { kind: 'matched'; cardId: string; method: 'thread' | 'job-url' | 'ats-id' | 'company-role' }
   | { kind: 'review'; reason: string; candidates: string[] };
 
 export async function parseForwardedMail(input: ArrayBuffer | Uint8Array, nested = false): Promise<ForwardedMail> {

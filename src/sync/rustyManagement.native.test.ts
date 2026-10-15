@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
+import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../domain/seeds"
@@ -47,7 +48,7 @@ import { createBlindReplica } from "./blindReplicaStore"
 import { storeAttachment, blobDescriptor } from "../attachments"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import { writeArchiveBytes, readArchiveBytes, readArchiveIndex, type ArchiveObjectStore } from "@meta-uber/mesh-replication/history-archive"
-import { openArchiveObject, type ArchiveEncryptionBinding } from "@meta-uber/mesh-replication/history-archive-crypto"
+import { openArchiveObject, type ArchiveEncryptionBinding, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote"
 import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-archive-locators"
 import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locator-preparation"
@@ -292,6 +293,37 @@ test("Given original signed archive evidence and an uncertain upload, when Rusty
   }
 }, 30_000)
 
+function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number; key: Uint8Array }, transitionId: string) {
+  const controlJson = decodeBlindBytes(capturedHistory.originals.control)
+  const control = JSON.parse(new TextDecoder().decode(controlJson))
+  const authorizationJson = capturedHistory.originals.authorizations.map(decodeBlindBytes)
+  const records = authorizationJson.map(bytes => JSON.parse(new TextDecoder().decode(bytes)))
+  const signer = { personId: capturedHistory.expected.personId, deviceId: records[0].signed.signerKeyId,
+    certificates: records[0].certificates }
+  const source = { snapshot: { ...control, document: decodeBlindBytes(capturedHistory.originals.document) }, records,
+    pendingChangeBytes: capturedHistory.originals.pending.map(decodeBlindBytes), nowMs: 0 }
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, claimedOwner: true }, signer)).toThrow(/unknown field/i)
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, claimedOwner: true } }, signer)).toThrow(/unknown field/i)
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, document: [256] } }, signer)).toThrow()
+  const preparation = WasmStateCore.prepareWorkspaceHistory(source, signer)
+  try {
+    const capture = preparation.captureOriginals(capturedHistory.catalogue.context.historyEpoch, controlJson, authorizationJson)
+    try {
+      const objects: Array<{ ciphertextId: string; binding: ArchiveEncryptionBinding; object: EncryptedArchiveObject }> = []
+      const catalogue = capture.writeEncryptedCatalogue(scope.scopeId, scope.keyEpoch, scope.key,
+        () => crypto.getRandomValues(new Uint8Array(12)),
+        (ciphertextId: string, binding: ArchiveEncryptionBinding, object: EncryptedArchiveObject) => {
+          objects.push({ ciphertextId, binding: structuredClone(binding), object: structuredClone(object) })
+        }, () => {}) as typeof capturedHistory.catalogue
+      // Exercise the production Native-to-browser sink ABI, including its plaintext content address.
+      expect(objects.length).toBeGreaterThan(0)
+      expect(objects.every(entry => /^[A-Za-z0-9_-]{43}$/.test(entry.binding.objectId))).toBe(true)
+      const rebase = capture.rebase(catalogue.context.historyEpoch, transitionId)
+      try { return { catalogue, objects, document: rebase.document() } } finally { rebase.free() }
+    } finally { capture.free() }
+  } finally { preparation.free() }
+}
+
 test("Given a Native-derived original-history catalogue, when data and locator coverage survive Rusty restart, then Native binds the admitted basis to real receipts and a cold HTTP reader recovers originals without the sender journal", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   const profile = await bootstrapIdentity("Native catalogue storage owner")
@@ -301,16 +333,18 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `capture-${crypto.randomUUID()}`,
       readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
     access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
-    const context = capturedHistory.catalogue.context
     const scope = { scopeId: access.scopeId, keyEpoch: 1, key: crypto.getRandomValues(new Uint8Array(32)) }
-    const identity = { transitionId: crypto.randomUUID(), personId: profile.identity.personId, workspaceId: context.workspaceId, historyEpoch: context.historyEpoch,
-      sourceRevision: capturedHistory.catalogue.captureRevision, authorityRevision: capturedHistory.catalogue.authorityRevision,
+    const transitionId = crypto.randomUUID()
+    const current = deriveCurrentNativeCatalogue(scope, transitionId)
+    const context = current.catalogue.context
+    const identity = { transitionId, personId: profile.identity.personId, workspaceId: context.workspaceId, historyEpoch: context.historyEpoch,
+      sourceRevision: current.catalogue.captureRevision, authorityRevision: current.catalogue.authorityRevision,
       privateBinding: await blindHash(new TextEncoder().encode(canonicalBlindJson({ ...access, key: toBase64Url(scope.key) }))), previousBaselineId: null,
       storage: { origin: access.origin, scopeId: access.scopeId, policyRevision: access.policyRevision, servicePublicKey: access.servicePublicKey, keyEpoch: 1, keyDigest: await blindHash(scope.key) } }
     const journal = createWorkspaceHistoryPreparation(identity, () => {})
     await journal.capture([new TextEncoder().encode(canonicalBlindJson(capturedHistory.originals))])
-    for (const object of capturedHistory.objects) await journal.stage(scope, { ...object.binding, objectId: object.objectId } as ArchiveEncryptionBinding, decodeBlindBytes(object.bytes))
-    const rootBinding = { ...context, objectId: capturedHistory.catalogue.root.objectId, objectKind: "page" as const, partIndex: 0, partCount: 1 }
+    for (const entry of current.objects) await journal.stageSealed(scope, entry.binding, { ciphertextId: entry.ciphertextId, object: entry.object })
+    const rootBinding = { ...context, objectId: current.catalogue.root.objectId, objectKind: "page" as const, partIndex: 0, partCount: 1 }
     await journal.archive(rootBinding)
     const covered = await journal.cover(createArchiveRemote(access, { fetch, ensureCurrent: () => {} }))
     expect(covered.phase).toBe("covered")
@@ -339,14 +373,14 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       dataReceipt: JSON.stringify(covered.coverage), directoryReceipt: JSON.stringify(prepared.directory.coverage), objects }
     const verified = await verifyNativeArchive(nativeInput) as { ownerProposal: { kind: string; baselineId: string }; ownerAttestation: null; basis: { byteLength: number } }
     expect(verified).toEqual({ kind: "verified-history-archive-coverage", version: 1,
-      catalogueRoot: capturedHistory.catalogue.root, locatorRoot: prepared.root, captureRevision: capturedHistory.catalogue.captureRevision,
-      authorityRevision: capturedHistory.catalogue.authorityRevision, dataObjectCount: covered.objectCount, directoryObjectCount: prepared.directory.objectCount,
+      catalogueRoot: current.catalogue.root, locatorRoot: prepared.root, captureRevision: current.catalogue.captureRevision,
+      authorityRevision: current.catalogue.authorityRevision, dataObjectCount: covered.objectCount, directoryObjectCount: prepared.directory.objectCount,
       basis: { historyEpoch: context.historyEpoch, transitionId: identity.transitionId, nodeCount: 2, changeCount: 1,
         stateDigest: "_QpBD1OaSEhZVINBNeCj9Cui5FftSHLRzj39Uw7jjzE", documentDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         genesisHash: expect.stringMatching(/^[0-9a-f]{64}$/), byteLength: expect.any(Number) },
       ownerProposal: expect.objectContaining({ kind: "workspace-history-baseline", version: 1,
-        historyEpoch: 1, previousBaselineId: null, authorityRevision: capturedHistory.catalogue.authorityRevision,
-        archive: capturedHistory.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
+        historyEpoch: 1, previousBaselineId: null, authorityRevision: current.catalogue.authorityRevision,
+        archive: current.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
     expect(verified.basis.byteLength).toBeLessThan(2048)
     // Generated public fixture seed; never send a signing key to the Native adapter.
     const fixtureKey = new Uint8Array(48)
@@ -356,12 +390,42 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const signedBaseline = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
     expect(await verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(signedBaseline) })).toEqual({ ...verified,
       ownerAttestation: { baselineId: verified.ownerProposal.baselineId, historyEpoch: 1, deviceId: nativeInput.signer.deviceId } })
+    if (process.env.TINCANBAN_PRIOR_READER_PROBE === "1") {
+      const probe = await new Promise<string>((resolveProbe, reject) => {
+        const child = execFile(process.execPath, ["scripts/check-prior-history-reader.mjs"], { timeout: 20_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`Prior released reader probe failed: ${stderr || error.message}`))
+          else resolveProbe(stdout)
+        })
+        child.stdin?.end(JSON.stringify({ originals: capturedHistory.originals, admittedHash: capturedHistory.expected.admittedHash,
+          compactDocument: toBase64Url(current.document), signedBaseline: JSON.stringify(signedBaseline) }))
+      })
+      expect(JSON.parse(probe)).toMatchObject({ nativeHistoryAPI: "absent", originalHistory: "admitted-and-retained",
+        version2Receive: "rejected-before-merge-and-cursor" })
+      console.info("Prior released reader evidence", probe.trim())
+    }
+    // Cold cursors retain pre-compaction snapshots; acknowledge only exact archived originals.
+    const retainedObjects = new Map(objects.map(entry => [entry.ciphertextId, entry.object]))
+    const received = WasmStateCore.verifyReceivedHistoryBaseline(new TextEncoder().encode(JSON.stringify(signedBaseline)),
+      current.document, scope.scopeId, scope.keyEpoch, scope.key, nativeInput.authority, retainedObjects, () => {})
+    try {
+      const originalBytes = decodeBlindBytes(capturedHistory.originals.document)
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, retainedObjects, () => {})).not.toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        current.document, retainedObjects, () => {})).toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, new Map(), () => {})).toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, retainedObjects, () => { throw new Error("Session replaced") })).toThrow()
+      expect(() => received.verifyPreviousBaseline(received)).toThrow(/predecessor/)
+      expect(received.document()).toEqual(current.document)
+    } finally { received.free() }
     const wrongDomain = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MATCH/1")
     await expect(verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(wrongDomain) })).rejects.toThrow(/signature/)
     await expect(verifyNativeArchive({ ...nativeInput, directoryReceipt: nativeInput.dataReceipt })).rejects.toThrow(/exact Native set and preparation/)
     const cold = createLocatedArchiveStore(scope, prepared.root, { download: recipient.download, ensureCurrent: () => {} })
     const readOriginal = async (key: string, indexId: string) => {
-      const entry = (await readArchiveIndex(context, capturedHistory.catalogue.root, cold, { prefix: key })).entries.find(entry => entry.key === key)!
+      const entry = (await readArchiveIndex(context, current.catalogue.root, cold, { prefix: key })).entries.find(entry => entry.key === key)!
       const reference = JSON.parse(new TextDecoder().decode(await cold.read(entry.objectId, 64 * 1024, { ...context, objectKind: "record", partIndex: 0, partCount: 1 })))
       const parts: Uint8Array[] = []
       for await (const part of await readArchiveBytes({ ...context, indexId }, reference, cold)) parts.push(part)
@@ -698,7 +762,7 @@ test("Given an approved person policy, when controller pins are removed and an i
   try {
     const discovery = await discoverBlindKeeper(process.origin)
     expect(discovery.personManagement).toBe(1)
-    const person = await ensureRustyPersonPolicy(discovery, owner, true)
+    const person = await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
     expect(person?.payload.kind).toBe("rusty-person-management-capability")
     const port = Number(new URL(process.origin).port), stateDirectory = process.stateDirectory
     await stopRusty(process.child)
@@ -738,6 +802,7 @@ test("Given a cold enrolled device without its workspace, when its identity-scop
   const process = await startRusty(owner)
   try {
     const discovery = await discoverBlindKeeper(process.origin)
+    await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
     const sourceConfig = await ensureIdentityReplicaConnection(discovery, owner, () => {})
     expect(sourceConfig).toMatchObject({ purpose: "identity", personId: owner.identity.personId, policyRevision: 1 })
     expect(await ensureIdentityReplicaConnection(discovery, owner, () => {})).toEqual(sourceConfig)

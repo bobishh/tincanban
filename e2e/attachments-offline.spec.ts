@@ -6,6 +6,20 @@ test("Given file controls and streaming storage were preloaded online, when the 
   await page.goto(baseURL!)
   await ensureJobSearchWorkspace(page)
   await storageReady
+  await page.evaluate(async () => {
+    const [signing, spatial, detail, itemDetail, itemForm, documents, blobStore, fileStream] = await Promise.all([
+      import("/src/sync/localCommandSigning.ts"),
+      import("/src/components/SpatialWindow.vue"),
+      import("/src/components/LeadDetailWindow.vue"),
+      import("/src/components/ItemDetailDialog.vue"),
+      import("/src/components/ItemFormDialog.vue"),
+      import("/src/components/ItemDocuments.vue"),
+      import("/src/attachmentBlobStore.ts"),
+      import("/src/attachmentFileStream.ts"),
+    ])
+    void [signing, spatial, detail, itemDetail, itemForm, documents, blobStore]
+    await fileStream.preloadBlobStreamStorage()
+  })
   await page.evaluate(() => {
     File.prototype.arrayBuffer = async () => { throw new Error("Whole-file read is forbidden") }
   })
@@ -17,7 +31,7 @@ test("Given file controls and streaming storage were preloaded online, when the 
     await form.getByLabel("Role *").fill("Local file")
     await form.getByRole("button", { name: "Create item", exact: true }).click()
     await page.getByRole("button", { name: "Open Offline attachment — Local file", exact: true }).click()
-    const detail = page.getByRole("dialog", { name: "Item overview" })
+    const detail = page.getByRole("dialog", { name: "Lead details" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const attach = detail.getByRole("form", { name: "Attach document" })
     await attach.getByLabel("Title").fill("Offline file")
@@ -25,8 +39,11 @@ test("Given file controls and streaming storage were preloaded online, when the 
     await attach.getByLabel("File").setInputFiles({ name: "offline.txt", mimeType: "text/plain",
       buffer: Buffer.concat([Buffer.from(prefix), Buffer.alloc(256 * 1024 + 19, 0x5a)]) })
     await attach.getByRole("button", { name: "Attach", exact: true }).click()
+    await expect(page.getByText("Document attached", { exact: true })).toBeVisible()
     await detail.getByRole("group", { name: "Offline file", exact: true }).getByRole("button", { name: "Preview", exact: true }).click()
-    await expect(page.getByRole("dialog", { name: "Document preview" })).toContainText(prefix.trim())
+    const preview = page.getByRole("dialog", { name: "Document preview" })
+    await expect(preview.getByRole("status")).toHaveText("Loading preview…")
+    await expect(preview).toContainText(prefix.trim(), { timeout: 15_000 })
   } finally {
     await context.setOffline(false)
   }

@@ -197,8 +197,12 @@ export async function createWorkspaceGrant(
   subjectPersonId: PersonId,
   role: "owner" | "editor" | "visitor",
   accessEpoch = 1,
+  signingContext?: VerifiedSigningContext,
 ): Promise<WorkspaceGrant> {
   if (role !== "owner" && role !== "editor" && role !== "visitor") throw new TypeError("Use createAutomationWorkspaceGrant for automation access")
+  if (signingContext && (signingContext.personId !== profile.identity.personId || signingContext.deviceId !== profile.device.deviceId)) {
+    throw new Error("Workspace grant signing context belongs to another owner device")
+  }
   const payload = {
     kind: "workspace-grant" as const,
     version: 1 as const,
@@ -209,7 +213,7 @@ export async function createWorkspaceGrant(
     accessEpoch,
   }
 
-  return (await signEnvelope(
+  return (signingContext ? await signWithContext(signingContext, payload) : await signEnvelope(
     profile.privateKeys.devicePrivateKey,
     payload,
     profile.device.deviceId

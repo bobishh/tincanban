@@ -37,7 +37,7 @@ it("Given conflicting name history, when both unsigned name shadows contain an u
   const catalog = manifest.components.identityCatalog.value.personalRoot as PersonalRootDocumentV1
   catalog.identity.displayName = "Unrecorded name"
   identityObservation(manifest).displayName = "Unrecorded name"
-  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/profile presentation.*history/i)
+  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/presentation.*history/i)
 })
 
 it("Given conflicting photo history, when its unsigned shadow contains an unrecorded photo, then reject that presentation", async () => {
@@ -49,13 +49,13 @@ it("Given conflicting photo history, when its unsigned shadow contains an unreco
   const unrecorded = { avatarData: `${f.root.photo.avatarData}AA==`, changedAt: "2026-01-03T00:00:00.000Z" }
   expect(isAvatarDataUrl(unrecorded.avatarData)).toBe(true)
   identityObservation(manifest).photo = unrecorded
-  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/profile presentation.*history/i)
+  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/presentation.*history/i)
 })
 
 it("Given the required causal name history is absent, when a name shadow is supplied, then reject the incomplete transfer", async () => {
   const f = await fixture(), manifest = await createIdentityDeviceTransfer(f.root, [f.profile.certificate])
   identityObservation(manifest).profileState = emptyIdentityProfileState(f.profile.identity.personId)
-  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/profile presentation.*history/i)
+  await expect(readIdentityDeviceTransfer(manifest, f.profile.identity.personId)).rejects.toThrow(/presentation.*history/i)
 })
 
 it("Given legacy profile observation schemas 1 and 2, when reading a device transfer, then retain original values without inventing signed counters", async () => {

@@ -4,8 +4,12 @@ import type { StoredCausalEvidence, StoredChange } from "./storageJournal"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 
 /** Classified raw changes must not reappear through the legacy local journal. */
-export function replayAdmittedJournal(doc: Automerge.Doc<WorkspaceDocumentV2>, changes: StoredChange[], evidence?: StoredCausalEvidence) {
+export function replayAdmittedJournal(
+  doc: Automerge.Doc<WorkspaceDocumentV2>, changes: StoredChange[], evidence?: StoredCausalEvidence,
+  receivedBaselineHashes: readonly string[] = [],
+) {
   const excluded = new Set(evidence?.decisions.filter(decision => decision.status.type !== "admitted").map(decision => decision.hash))
+  for (const hash of receivedBaselineHashes) excluded.add(hash)
   const missing = changes.filter(change => !excluded.has(change.changeHash) && !Automerge.hasHeads(doc, [change.changeHash]))
   if (!missing.length) return doc
   try { return Automerge.applyChanges(doc, missing.map(change => change.bytes))[0] }

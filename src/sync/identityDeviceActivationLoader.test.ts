@@ -2,8 +2,11 @@ import { expect, it, vi } from "vitest"
 import { writeLocal } from "../localDb"
 import { recoverPendingIdentityDeviceActivation } from "./identityDeviceActivationLoader"
 
-const activation = vi.hoisted(() => ({ moduleLoaded: vi.fn(), resume: vi.fn(async (_personId: string, guard: () => void) => guard()) }))
-const projection = vi.hoisted(() => ({ moduleLoaded: vi.fn(), resume: vi.fn(async (_personId: string, guard: () => void) => guard()) }))
+const activation = vi.hoisted(() => ({ moduleLoaded: vi.fn(), resume: vi.fn(async (_personId: string, guard: () => void, _certificatesOnly?: boolean) => { void _certificatesOnly; guard() }) }))
+const projection = vi.hoisted(() => ({ moduleLoaded: vi.fn(), resume: vi.fn(async (_personId: string, guard: () => void) => {
+  guard()
+  return { projected: 0, pending: [] as Array<{ workspaceId: string; reason: string }> }
+}) }))
 vi.mock("./identityDeviceActivation", () => {
   activation.moduleLoaded()
   return { resumeIdentityDeviceActivation: activation.resume }
@@ -53,8 +56,21 @@ it("Given a pending identity bundle, when startup checks recovery, then await th
   await writeLocal(`tincanban.identity-device-activation.v1.${personId}`, "pending bytes")
   await recoverPendingIdentityDeviceActivation(personId, guard)
   expect(activation.moduleLoaded).toHaveBeenCalledOnce()
-  expect(activation.resume).toHaveBeenCalledWith(personId, guard)
+  expect(activation.resume).toHaveBeenCalledWith(personId, guard, true)
   expect(guard).toHaveBeenCalled()
+})
+
+it("Given pending activation and profile projections, when startup recovers, then finish certificate activation before retrying projections", async () => {
+  const personId = crypto.randomUUID(), guard = vi.fn()
+  await writeLocal(`tincanban.identity-device-activation.v1.${personId}`, "pending bytes")
+  await writeLocal(`tincanban.identity-profile-projections.v1.${personId}`, JSON.stringify({
+    version: 1, personId, observations: [{ workspaceId: "pending" }],
+  }))
+  projection.resume.mockResolvedValueOnce({ projected: 1, pending: [{ workspaceId: "later", reason: "Workspace not installed" }] })
+  const result = await recoverPendingIdentityDeviceActivation(personId, guard)
+  expect(activation.resume).toHaveBeenCalledWith(personId, guard, true)
+  expect(projection.resume).toHaveBeenCalledWith(personId, guard)
+  expect(result).toEqual({ projected: 1, pending: [{ workspaceId: "later", reason: "Workspace not installed" }] })
 })
 
 it("Given identity changes during the recovery read, when pending work is found, then reject before invoking activation", async () => {

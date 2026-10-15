@@ -97,11 +97,13 @@ async function save() {
 </script>
 
 <template>
-  <section class="identity-settings" aria-label="Identity settings">
+  <section class="identity-settings ui-stack" aria-label="Identity settings">
     <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
       <IdentityPhotoPanel :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
       <div class="identity-profile-fields">
         <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending()" @input="editName" /></label>
+      </div>
+      <div class="identity-profile-actions">
         <button class="button button-primary" type="submit" :disabled="saving || profilePending() || !name.trim() || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>
         <p v-if="profilePending()" class="dialog-copy" role="status">Loading saved profile…</p>
         <p v-if="saved && !profilePending()" class="dialog-copy" role="status">Profile saved.</p>
@@ -133,20 +135,22 @@ async function save() {
 </template>
 
 <style scoped>
-.identity-settings { display: grid; gap: 24px; }
-.identity-profile { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 24px; align-items: start; }
-.identity-profile-fields { display: grid; gap: 12px; width: 100%; max-width: 360px; }
-.identity-profile-fields label { display: grid; gap: 7px; min-width: 0; }
-.identity-profile input { box-sizing: border-box; width: 100%; min-height: 42px; padding: 8px 10px; }
-.identity-profile .button, .identity-recovery .button { justify-self: start; min-height: 42px; }
+.identity-settings { display: grid; gap: var(--section-gap); }
+.identity-profile { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.identity-profile-fields { display: grid; gap: var(--field-gap); width: 100%; max-width: var(--form-field-max); }
+.identity-profile-actions { grid-column: 1 / -1; display: grid; gap: var(--field-gap); justify-items: start; padding-top: var(--space-4); border-top: 1px solid var(--soft); }
+.identity-profile-actions p { margin: 0; }
+.identity-profile-fields label { display: grid; gap: var(--space-2); min-width: 0; }
+.identity-profile input { box-sizing: border-box; width: 100%; height: var(--control-size); padding: var(--space-2) var(--space-3); }
+.identity-profile .button, .identity-recovery .button { justify-self: start; }
 .identity-profile > .sync-error { grid-column: 1 / -1; margin: 0; }
-.profile-conflicts { display: grid; gap: 10px; }
+.profile-conflicts { display: grid; gap: var(--space-2); }
 .profile-conflicts > p { margin: 0; }
-.profile-choices { display: flex; flex-wrap: wrap; gap: 8px; }
-.profile-photo-choice { display: inline-flex; align-items: center; gap: 8px; }
+.profile-choices { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.profile-photo-choice { display: inline-flex; align-items: center; gap: var(--space-2); }
 .profile-photo-choice img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
 .profile-photo-choice small { color: var(--muted); }
-.identity-recovery { display: grid; gap: 10px; }
+.identity-recovery { display: grid; gap: var(--space-2); }
 .identity-recovery h3, .identity-recovery p { margin: 0; }
-@container (max-width: 460px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: 20px; } }
+@container (max-width: 460px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); } }
 </style>

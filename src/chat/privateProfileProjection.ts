@@ -23,6 +23,29 @@ async function currentAuthority(workspaceId: string, record: ChatRecord): Promis
   return canonicalizeJson([access, workspaceAuthorityFingerprint(credential ? [credential] : [], authority ? [authority] : [])])
 }
 
+/** Read-only replay check. Saved flags alone never prove that shared profile admission succeeded. */
+export async function isPrivateProfileObservationMaterialized(workspaceId: string, value: ChatRecord): Promise<boolean> {
+  const record = structuredClone(value)
+  try {
+    const before = await currentAuthority(workspaceId, record), access = await getChatProjectionAccess(workspaceId)
+    const verified = await verifyChatRecord(record, access.scope, access.ownerPersonId, workspaceId)
+    if (verified.signed.payload.kind !== "chat-profile") return false
+    const payload = verified.signed.payload
+    const saved = (await chatStore.loadProfiles(access.scope)).find(profile => profile.personId === payload.personId)
+    if (!saved) return false
+    const original = await verifyChatRecord(saved.record, access.scope, access.ownerPersonId, workspaceId)
+    const incoming: StoredChatProfile = { workspaceId: access.scope, personId: payload.personId, name: payload.text,
+      revision: payload.revision, record: verified }
+    return original.signed.payload.kind === "chat-profile" && saved.name === original.signed.payload.text &&
+      saved.revision === original.signed.payload.revision &&
+      (canonicalizeJson(saved.record) === canonicalizeJson(verified) || doesProfileWin(saved, incoming)) &&
+      before === await currentAuthority(workspaceId, record)
+  } catch {
+    // Unavailable or rejected shared evidence remains in the private queue for normal guarded projection.
+    return false
+  }
+}
+
 /** Private authorship alone never supplies the owner or room used by shared chat admission. */
 export async function projectPrivateProfileObservation(workspaceId: string, value: ChatRecord, ensureCurrent: () => void): Promise<void> {
   const record = structuredClone(value)

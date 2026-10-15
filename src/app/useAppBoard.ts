@@ -10,6 +10,9 @@ import type { Lead, LeadStatus } from "../types"
 import type { WorkspaceDocumentV2 } from "../domain/entitySchemas"
 import { orderItemsByPriority } from "../domain/priority"
 import { itemNarrative } from "../domain/narrative"
+import type { PeerHistoryRemoteRead } from "../sync/workspacePeerHistoryRecoverySources"
+import type { PeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
+import { useArchivedItemHistory } from "./useArchivedItemHistory"
 
 export type AppBoardContext = Pick<ReturnType<typeof useAppCore>,
   | "tincanban"
@@ -18,7 +21,9 @@ export type AppBoardContext = Pick<ReturnType<typeof useAppCore>,
   | "canEditItems" | "canEditBoard" | "notice" | "archiveUndo" | "boardRenderKey"
   | "selectedItemId" | "editingItemId" | "itemToMove" | "selectedLeadId" | "detailDialog"
   | "quickNoteDraft" | "quickNoteError"
->
+> & { sync?: { fetchHistoryObject: PeerHistoryRemoteRead
+  fetchHistoryBaseline?: (workspaceId: string, baselineId: string) => Promise<PeerHistoryBaselineDescriptor | undefined>
+  fetchHistoryDocument?: (workspaceId: string, descriptor: PeerHistoryBaselineDescriptor) => Promise<Uint8Array | undefined> } }
 
 export function useAppBoard(core: AppBoardContext) {
   const presentation = useBoardPresentation(core)
@@ -228,18 +233,22 @@ function visibleBoardColumns(columns: ReturnType<typeof useAppCore>["tincanban"]
 }
 
 function useBoardSelection(core: AppBoardContext) {
+  const archiveHistory = useArchivedItemHistory(core)
   const selectedItem = computed(() => readSelectedItem(core))
   const subitemsForSelectedItem = computed(() => selectedItem.value ? readSubitems(core, selectedItem.value.id) : [])
   const selectedItemHistory = computed(() => {
     void core.tincanban.docVersion.value
     const doc = core.tincanban.getActiveDoc()
-    return doc && core.selectedItemId.value ? projectEntityHistory(doc, core.selectedItemId.value) : []
+    const active = doc && archiveHistory.selectedHistoryItemId.value ? projectEntityHistory(doc, archiveHistory.selectedHistoryItemId.value) : []
+    const activeHashes = new Set(active.map(entry => entry.hash))
+    return [...archiveHistory.archivedItemHistory.value.filter(entry => !activeHashes.has(entry.hash))
+      .sort((left, right) => left.time - right.time || left.hash.localeCompare(right.hash)), ...active]
   })
   const editingItem = computed(() => core.editingItemId.value ? readItem(core, core.editingItemId.value) : null)
   const candidateParentsForMove = computed(() => itemParents(core))
   watch(core.selectedLeadId, async leadId => { if (leadId) { await nextTick(); core.detailDialog.value?.focus() } })
   watch([core.selectedLeadId, core.selectedItemId], () => { core.quickNoteDraft.value = ""; core.quickNoteError.value = "" })
-  return { selectedItem, subitemsForSelectedItem, selectedItemHistory, editingItem, candidateParentsForMove }
+  return { selectedItem, subitemsForSelectedItem, selectedItemHistory, editingItem, candidateParentsForMove, ...archiveHistory }
 }
 
 function readSelectedItem(core: AppBoardContext) {

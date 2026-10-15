@@ -28,7 +28,7 @@ const approvalSchema = z.object({
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
 export async function createEnrollmentRequest(invite: DeviceEnrollmentInvitation, profile: LocalProfile) {
-  const requestInvite = structuredClone(invite)
+  const requestInvite = { ...invite }
   const requestProfile = structuredClone(profile)
   const binding = { invitationId: requestInvite.invitationId, deviceId: requestProfile.device.deviceId,
     publicKey: requestProfile.device.publicKey }
@@ -54,7 +54,7 @@ export async function enrollmentPayload(invite: DeviceEnrollmentInvitation, prof
   activeWorkspaceId: string, meshWorkspaces: unknown[], grants: WorkspaceGrant[], snapshot: Uint8Array,
   suppliedContext?: VerifiedSigningContext) {
   invite = structuredClone(invite); profile = structuredClone(profile); certificate = structuredClone(certificate)
-  personalRoot = structuredClone(personalRoot); workspaces = structuredClone(workspaces)
+  personalRoot = structuredClone(personalRoot); workspaces = workspaces.map(({ id, title }) => ({ id, title }))
   meshWorkspaces = structuredClone(meshWorkspaces); grants = structuredClone(grants); snapshot = new Uint8Array(snapshot)
   const context = suppliedContext ?? await resolveLocalSigningContext(profile, "device-enrollment-approval", {
     invitationId: invite.invitationId, recipientDeviceId: certificate.payload.deviceId,

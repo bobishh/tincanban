@@ -141,7 +141,6 @@ export function createApplicationReviewManagement(host: ApplicationReviewHost) {
   function close() { closed = true; generation += 1; session = undefined; selected = undefined; pendingProof = undefined }
   return { review, busy, failure, saved, open, select, page, save, retry, close }
 }
-export type ApplicationReviewManagement = ReturnType<typeof createApplicationReviewManagement>
 
 async function reviewAuthorityRevision(state: { profile: LocalProfile; doc: WorkspaceDocumentV2;
   entity: Extract<WorkspaceDocumentV2["entities"][string], { kind: "automation" }> },

@@ -123,14 +123,17 @@ export async function restoreIdentityRecovery(
   displayName: string,
   replaceExisting = false,
   beforeRestore?: () => Promise<void>,
+  commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
   if (!identitySecurityForRecovery(recoveryKey)) throw new Error("Invalid recovery words")
-  const candidate = await openIdentityRecoveryEnvelope(envelope, recoveryKey, displayName)
   const current = await bootstrapIdentity(displayName)
+  const candidate = await openIdentityRecoveryEnvelope(envelope, recoveryKey, displayName)
+  if (!isCurrentIdentityProfile(current)) throw new Error("Identity changed during recovery")
   if (current.identity.personId !== candidate.identity.personId && !replaceExisting)
     throw new Error("Confirm identity replacement before restoring a different identity")
   await beforeRestore?.()
-  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName) as LocalProfile
+  if (!isCurrentIdentityProfile(current)) throw new Error("Identity changed during recovery")
+  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName, commit) as LocalProfile
 }
 
 export async function adoptEnrolledIdentity(

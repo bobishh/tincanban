@@ -6,7 +6,7 @@ export * from "./storageJournalRecords"
 const journalDatabaseName = "tincanban-workspace-state"
 const legacyJournalDatabaseName = "tincanban-workspace-journal-v1"
 const legacyMigrationMarkerId = "__meta__legacy-journal-migration-complete__"
-const journalStores = ["changes", "proofs", "receipts", "snapshots", "authorizations", "frontiers", "deltas", "revisions"] as const
+const journalStores = ["changes", "archivedChanges", "proofs", "receipts", "snapshots", "authorizations", "archivedAuthorizations", "frontiers", "deltas", "revisions", "receivedBaselines", "historyProgress"] as const
 type JournalStoreName = typeof journalStores[number]
 type JournalIndexedStoreName = JournalStoreName
 
@@ -15,7 +15,7 @@ let legacyJournalDatabasePromise: Promise<IDBDatabase | undefined> | undefined
 
 function openCurrentJournal(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(journalDatabaseName, 4)
+    const request = indexedDB.open(journalDatabaseName, 7)
     let settled = false
     let blockedTimer: ReturnType<typeof setTimeout> | undefined
     request.onupgradeneeded = () => {
@@ -25,6 +25,9 @@ function openCurrentJournal(): Promise<IDBDatabase> {
         const store = database.objectStoreNames.contains(name)
           ? request.transaction!.objectStore(name) : database.createObjectStore(name, { keyPath: "id" })
         if (!store.indexNames.contains("workspaceId")) store.createIndex("workspaceId", "workspaceId", { unique: false })
+        if (name === "archivedChanges" && !store.indexNames.contains("activeBaseline")) {
+          store.createIndex("activeBaseline", ["workspaceId", "archivedUnderBaselineId"], { unique: false })
+        }
         if (name === "deltas" && !store.indexNames.contains("sequence")) {
           store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
         }
@@ -361,17 +364,19 @@ export async function readWorkspaceBasisSnapshot(workspaceId: string): Promise<S
 export async function readWorkspaceDeltaAuthorizations(workspaceId: string): Promise<unknown[]> {
   if (typeof indexedDB === "undefined") {
     const journal = readLocalJournalReference(workspaceId)
-    return (journal.deltas ?? []).filter(delta => delta.generation === journal.frontier?.generation).flatMap(delta => delta.command.authorizations)
+    const frontier = journal.frontier
+    return frontier ? (journal.deltas ?? []).filter(delta => delta.generation === frontier.generation &&
+      delta.sequence <= frontier.revision).flatMap(delta => delta.command.authorizations) : []
   }
   const database = await openWorkspaceJournal()
   const transaction = database.transaction(["frontiers", "deltas"], "readonly")
   const done = transactionDone(transaction)
-  const [frontier, deltas] = await Promise.all([
-    requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
-    requestResult(transaction.objectStore("deltas").index("workspaceId").getAll(workspaceId)) as Promise<Array<{ generation: string; command: { authorizations: unknown[] } }>>,
-  ])
+  const frontier = await requestResult(transaction.objectStore("frontiers").get(workspaceId)) as WorkspaceDeltaFrontier | undefined
+  const deltas = frontier ? await requestResult(transaction.objectStore("deltas").index("sequence").getAll(
+    IDBKeyRange.bound([workspaceId, frontier.generation, 0], [workspaceId, frontier.generation, frontier.revision]),
+  )) as Array<{ generation: string; sequence: number; command: { authorizations: unknown[] } }> : []
   await done
-  return deltas.filter(delta => delta.generation === frontier?.generation).flatMap(delta => delta.command.authorizations)
+  return deltas.flatMap(delta => delta.command.authorizations)
 }
 
 export type CommittedWorkspaceMeta = { id: string; title: string; updatedAt: string; archivedAt?: string | null }

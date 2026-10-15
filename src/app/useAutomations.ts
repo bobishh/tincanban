@@ -8,7 +8,7 @@ import { automationLifecycle, type AutomationDesiredState } from "../domain/auto
 import { parseAutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind } from "../domain/model"
 import type { AutomationMailboxSetup } from "./automationMailbox"
-import type { ApplicationReviewRecord, ApplicationReviewManagement } from "./applicationReviewManagement"
+import type { ApplicationReviewRecord } from "./applicationReviewManagement"
 import type { AutomationObservation } from "../domain/automationProtocol"
 
 export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind: BlindReplicationController, owner: () => boolean) {
@@ -107,27 +107,10 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
       await observeAll()
     })
   }
-  async function retryEmail(record: typeof records.value[number], eventId: string) {
-    await run(async () => {
-      const profile = workspace.getCurrentProfile()
-      if (!profile) throw new Error("Identity unavailable")
-      await retryMailboxEvent(record, eventId, Boolean(email.value[record.entity.id]?.receipt.events.find(value => value.eventId === eventId)?.bindingId),
-        () => createReview(record), () => retryUnboundForScope(workspace, record, profile, owner, () => disposed, eventId))
-      emailChecked.delete(record.entity.id)
-      await observeAll()
-    })
-  }
-  const createReview = (record: ApplicationReviewRecord) => createLazyReview(workspace, blind, owner, () => disposed,
-    async () => { emailChecked.delete(`automation:${record.definition.id}`); await observeAll() })
-  async function reviewEmail(record: ApplicationReviewRecord, eventId: string) {
-    const management = await createReview(record)
-    void management.open(record, eventId)
-    return management
-  }
   const stop = watch(() => { void workspace.docVersion.value; return workspace.getActiveDoc()?.id }, () => { void observeAll() }, { immediate: true })
   const interval = setInterval(() => { now.value = Date.now(); void observeAll() }, 3_000)
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(interval) })
-  return { records, storage, email, busy, failure, observationErrors, confirmation, instanceDescription: instanceStatus.description, add, retry, retryEmail, reviewEmail, setState }
+  return { records, storage, email, busy, failure, observationErrors, confirmation, instanceDescription: instanceStatus.description, add, retry, setState }
 }
 export type AutomationWorkspace = ReturnType<typeof useTincanban>
 export type AutomationManagement = ReturnType<typeof useAutomations>
@@ -194,31 +177,11 @@ async function readMailboxForScope(workspace: AutomationWorkspace, record: Mailb
   guards.ensureCurrent()
   return mailbox
 }
-async function createLazyReview(workspace: AutomationWorkspace, blind: BlindReplicationController, owner: () => boolean,
-  disposed: () => boolean, changed: () => Promise<void>) {
-  const { createApplicationReviewManagement } = await import("./applicationReviewManagement")
-  if (disposed()) throw new Error("Automation view closed")
-  return createApplicationReviewManagement({ getActiveDoc: () => workspace.getActiveDoc(),
-    getCurrentProfile: () => workspace.getCurrentProfile(), owner, syncNow: () => blind.syncNow(), changed })
-}
-
 function confirmsAutomation(record: { definition: { scope: { grantId: string } }; control: { state: string; heads: string[] } },
   receipt: AutomationObservation | undefined, now: number): boolean {
   return !!receipt && receipt.grantId === record.definition.scope.grantId && now - receipt.issuedAt < 60_000 && receipt.state === record.control.state &&
     JSON.stringify([...receipt.heads].sort()) === JSON.stringify([...record.control.heads].sort())
 }
-async function retryMailboxEvent(record: ApplicationReviewRecord, eventId: string, bound: boolean,
-  createReview: () => Promise<ApplicationReviewManagement>, retryUnbound: () => Promise<unknown>) {
-  if (!bound) { await retryUnbound(); return }
-  const review = await createReview()
-  try {
-    await review.open(record, eventId)
-    if (review.failure.value) throw new Error(review.failure.value)
-    await review.retry()
-    if (review.failure.value) throw new Error(review.failure.value)
-  } finally { review.close() }
-}
-
 function readAutomationRecords(workspace: AutomationWorkspace) {
   return Object.values(workspace.getActiveDoc()?.entities ?? {}).filter(entity => hasEntityKind(entity, "automation"))
     .map(entity => ({ entity, definition: parseAutomationDefinition(JSON.parse(entity.definition)), control: automationLifecycle(entity) }))
@@ -243,11 +206,4 @@ function mailboxScopeGuards(workspace: AutomationWorkspace, record: MailboxRecor
     ensureCurrent()
     return authority.fingerprint
   } }
-}
-async function retryUnboundForScope(workspace: AutomationWorkspace, record: MailboxRecord, profile: LocalProfile,
-  owner: () => boolean, disposed: () => boolean, eventId: string) {
-  const { retryUnboundAutomationMailbox } = await import("./automationMailbox")
-  const guards = mailboxScopeGuards(workspace, record, profile, record.definition.scope.workspaceId, owner, disposed)
-  return retryUnboundAutomationMailbox(profile, { origin: record.entity.executor.origin, workspaceId: record.definition.scope.workspaceId,
-    definitionId: record.definition.id, personId: record.entity.executor.personId, grantId: record.definition.scope.grantId, eventId }, guards)
 }

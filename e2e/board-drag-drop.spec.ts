@@ -284,7 +284,14 @@ test.describe("Trello-like board dragging", () => {
     const source = page.locator('.lead-card[data-item-id]:has-text("Neighbor")')
     await page.evaluate(async () => {
       const { stateRuntime } = await import("/src/stateContext.ts")
-      ;(window as any).__dragVersionBefore = stateRuntime.docVersion.value
+      const workspaceId = stateRuntime.activeDoc?.id
+      if (!workspaceId) throw new Error("Workspace is unavailable")
+      const changes = ((window as any).__dragPersistedCommands = { workspaceId, count: 0 })
+      const listener = (changedWorkspaceId?: string) => {
+        if (changedWorkspaceId === workspaceId) changes.count += 1
+      }
+      changes.listener = listener
+      stateRuntime.localChangeListeners.add(listener)
     })
     await source.evaluate(element => Object.assign(window, { __dragSourceNode: element, __dragSourceParent: element.parentElement, __dragSourceNext: element.nextElementSibling }))
     const sourceBox = (await source.boundingBox())!
@@ -307,8 +314,15 @@ test.describe("Trello-like board dragging", () => {
     await expect(page.locator(".board-drag-preview, .board-drop-gap, .board-drag-source")).toHaveCount(0)
     await expect.poll(() => page.evaluate(async () => {
       const { stateRuntime } = await import("/src/stateContext.ts")
-      return stateRuntime.docVersion.value - (window as any).__dragVersionBefore
+      return (window as any).__dragPersistedCommands.count
     })).toBe(1)
+    await page.reload()
+    await expect(page.getByRole("region", { name: "To do", exact: true }).locator(".card-main > strong")).toHaveText(["Neighbor", "Keep here"])
+    await page.evaluate(async () => {
+      const { stateRuntime } = await import("/src/stateContext.ts")
+      const changes = (window as any).__dragPersistedCommands
+      if (changes?.listener) stateRuntime.localChangeListeners.delete(changes.listener)
+    })
   })
 
   test("Given an independent header selection, when a card border drag completes, then that selection remains intact", async ({ page }) => {

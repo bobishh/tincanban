@@ -3,6 +3,9 @@ import { ensureJobSearchWorkspace } from "./support/workspaces"
 
 test("owner promotes a visitor, then removes only their device through an explicit scope confirmation", async ({ page, browser }, testInfo) => {
   test.setTimeout(90000)
+  const transportErrors: string[] = []
+  const recordTransportError = (error: Error) => { if (/closure invoked.*dropped/.test(error.message)) transportErrors.push(error.message) }
+  page.on("pageerror", recordTransportError)
   await page.goto("/?syncTrace=1")
   await ensureJobSearchWorkspace(page)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -11,6 +14,7 @@ test("owner promotes a visitor, then removes only their device through an explic
   await host.getByRole("button", { name: "Generate link" }).click()
   const context = await browser.newContext()
   const guest = await context.newPage()
+  guest.on("pageerror", recordTransportError)
   const invitation = new URL(await host.getByLabel("Pairing link").inputValue())
   invitation.searchParams.set("syncTrace", "1")
   await guest.goto(invitation.toString())
@@ -78,5 +82,6 @@ test("owner promotes a visitor, then removes only their device through an explic
   await expect(guest.getByLabel("Workspace role: visitor")).toBeVisible()
   await guest.getByRole("button", { name: "Sync", exact: true }).click()
   await expect(guestDialog.getByRole("alert")).toHaveCount(0)
+  expect(transportErrors).toEqual([])
   await context.close()
 })

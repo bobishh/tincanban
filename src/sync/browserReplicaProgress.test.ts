@@ -96,7 +96,7 @@ it("Given a failed atomic local progress write, when storage aborts, then prior 
   const owner = crypto.randomUUID()
   const selected = await selectedConfig(owner)
   const before = await getPrivateReplicaProgress(owner, selected)
-  const failure = vi.spyOn(local, "updateLocal").mockRejectedValueOnce(new Error("Private progress transaction aborted"))
+  const failure = vi.spyOn(local, "compareAndSwapLocal").mockRejectedValueOnce(new Error("Private progress transaction aborted"))
   try {
     await expect(persistPrivateReplicaState(owner, selected, before.generation,
       { ...before, generation: before.generation + 1, pending: pending() }, () => {})).rejects.toThrow("transaction aborted")

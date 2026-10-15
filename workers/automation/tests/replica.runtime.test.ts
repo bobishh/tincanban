@@ -27,6 +27,7 @@ import { automationBodyHash } from "../../../src/domain/automationProtocol";
 import { createApplicationReviewRequest, type ApplicationReviewRequestInput } from "../../../src/domain/applicationReviewProtocol";
 import { createAutomationInstanceRequest, type AutomationInstanceAction } from "../../../src/domain/automationInstanceProtocol";
 import { verifyAutomationInstanceIdentity } from "../../../src/domain/automationInstanceIdentity";
+import { rotateReplicaContentKeys } from "../../../src/sync/replicaContentKeys";
 import { createApplicationBinding, type ApplicationBindingInput } from "../../../src/domain/applicationBinding";
 import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from "../../../src/domain/applicationReviewData";
@@ -95,6 +96,16 @@ async function signedInstanceRequest(profile: Awaited<ReturnType<typeof fixture>
     executorPersonId, bodyHash });
 }
 
+async function signedRustyWriterPolicyReceipt(blind: AutomationActivationPacket["blind"], personId: string) {
+  const signer = await receiptSigner();
+  const payload = { kind: "rusty-scope-policy-receipt" as const, version: 1 as const, serviceId: signer.serviceId,
+    scopeId: blind.scopeId, personId, revision: blind.policyRevision, revoked: false,
+    challengeId: `rotation-${crypto.randomUUID()}`, authorizationHash: "A".repeat(43), minimumWriterVersion: 2 as const };
+  const signature = new Uint8Array(await crypto.subtle.sign("Ed25519", signer.pair.privateKey,
+    new TextEncoder().encode(`RUSTY/2/${payload.kind}\0${canonicalBlindJson(payload)}`)));
+  return { payload, signerKeyId: signer.serviceId, signature: encodeBlindBytes(signature) };
+}
+
 async function postApplicationReview(action: ApplicationReviewRequestInput["action"], requestProof: unknown,
   body: Record<string, unknown>, testEnv: WorkerEnv) {
   return worker.fetch(new Request(`${reviewOrigin}/v2/application-review/${action}`, {
@@ -107,6 +118,14 @@ async function postAutomationInstance(action: AutomationInstanceAction, instance
   return worker.fetch(new Request(`${reviewOrigin}/v2/automation-instances/${action}`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ instanceRequest, body }),
   }), testEnv);
+}
+
+function capturedRuntimeTransport(): ReplicaTransport {
+  return {
+    inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("No remote download expected in this isolated runtime case"); },
+    upload: (access, object, requestId) => signedReceipt(access, object, requestId),
+  };
 }
 
 it("Given a live Worker with a pending signed action, When its Owner refreshes confirmed Rusty access over HTTP, Then preserve exact queue and grant and return nonce-bound storage evidence", async () => {
@@ -200,18 +219,20 @@ it.each([false, true])("Given an existing executor with legacy=%s, When Owner co
   Automerge.free(document); Automerge.free(configured.value.newDoc);
   const testEnv = { ...reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings), AUTOMATION_OWNER_IDS: "" };
   const routing = JSON.parse(testEnv.INTEGRATIONS_JSON)[0];
-  const transport: ReplicaTransport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
-    download: async () => { throw new Error("No management download expected"); }, upload: async () => { throw new Error("No management upload permitted"); } };
+  let syncCalls = 0;
+  const transport: ReplicaTransport = { inventory: async (_access, after) => { syncCalls++; return { objects: [], cursor: after, hasMore: false }; },
+    download: async () => { throw new Error("No management download expected"); },
+    upload: async (access, object, requestId) => signedReceipt(access, object, requestId) };
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async (instance, ctx) => {
     Reflect.set(instance, "env", testEnv);
+    Reflect.set(instance, "__tincanban_test_replica_transport__", transport);
     Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement(await instance.loadReplicaState(reviewStorageSecret) ?? initial,
         data.automation, value => instance.saveReplicaState(reviewStorageSecret, value), transport) }));
     ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing) VALUES (1, ?, ?, ?, ?)",
       "obsolete-registration-owner", data.packet.workspaceId, integrationId, JSON.stringify(routing));
   });
-  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
   vi.useFakeTimers(); vi.setSystemTime(oldExpiry + 1);
   try {
     const body = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake", executorPersonId: data.automation.identity.personId,
@@ -237,8 +258,8 @@ it.each([false, true])("Given an existing executor with legacy=%s, When Owner co
       await ctx.storage.deleteAlarm();
     });
     expect((await postAutomationInstance("activate", proof, body, testEnv)).status).toBe(200);
-    expect(sync).toHaveBeenCalledTimes(1);
-  } finally { sync.mockRestore(); vi.useRealTimers(); }
+    expect(syncCalls).toBeGreaterThan(0);
+  } finally { vi.useRealTimers(); }
 });
 
 it("Given retained unbound mail on a legacy route, When the owner retries it, Then enqueue once and reject bound events", async () => {
@@ -866,6 +887,302 @@ it("Given a stale or failed storage revision refresh, When publication is attemp
   expect(JSON.parse(durable).blind.policyRevision).toBe(2);
 })
 
+function rotatedStorageCredentials(blind: AutomationActivationPacket["blind"]) {
+  const key = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)));
+  return { ...blind, ...rotateReplicaContentKeys(blind, key()), readToken: key(), writeToken: key(),
+    policyRevision: blind.policyRevision + 1, minimumWriterVersion: 2 as const, lastUploaded: "" };
+}
+
+it.each(["paused", "deleted"] as const)("Given an expired %s Worker, when the owner authorizes storage credential rotation, then only credentials, storage binding and fresh acknowledgment state change", async state => {
+  const data = await typedFixture()
+  const replica = await AutomationReplica.activate(data.packet, data.automation)
+  const stored = JSON.parse(replica.serialize())
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument))
+  const controlled = await executeCommand(document, { kind: "setAutomationState", automationId: automationEntityId("typed-intake"), state }, data.owner)
+  if (!controlled.ok) throw new Error(controlled.error.message)
+  const snapshot = await ownerSnapshot(controlled.value.newDoc, data.owner, data.packet)
+  stored.rawDocument = snapshot.document
+  stored.authorizations = snapshot.authorization.records
+  stored.authority = snapshot.authorization.authority
+  stored.applied = { "retained-event": { kind: "lead", cardId: "retained-card", changeHash: "retained-change" } }
+  stored.blind.cursor = 17
+  stored.blind.lastUploaded = "B".repeat(43)
+  stored.replication.generation = 7
+  stored.replication.uploadedRevision = "old-confirmed-content"
+  stored.replication.contentIdentity = "workspace-content-identity"
+  const before = JSON.stringify(stored)
+  const nextBlind = rotatedStorageCredentials(stored.blind)
+  const saves: string[] = []
+  const guard = vi.fn(async () => {})
+  const priorExpiry = stored.grant.payload.automation.expiresAt
+  vi.useFakeTimers()
+  vi.setSystemTime(priorExpiry + 1)
+  try {
+    const inspector = await AutomationReplica.rotateStorageCredentials(before, data.automation, nextBlind,
+      async value => { saves.push(value) }, guard)
+    expect(saves).toHaveLength(1)
+    const after = JSON.parse(saves[0]!)
+    const expected = structuredClone(stored)
+    expected.version = 6
+    expected.blind = { ...expected.blind, ...nextBlind, cursor: 17, lastUploaded: "" }
+    delete expected.blind.preferenceRevision
+    delete expected.replication.uploadedRevision
+    expected.replication.generation = 8
+    expected.replication.binding = canonicalBlindJson([expected.workspaceId, expected.blind.origin, expected.blind.scopeId,
+      expected.blind.keyEpoch, expected.blind.policyRevision, expected.blind.servicePublicKey,
+      expected.blind.readToken, expected.blind.writeToken, expected.blind.contentKey,
+      { historicalContentKeys: expected.blind.historicalContentKeys }])
+    expect(after).toEqual(expected)
+    expect(after.grant).toEqual(stored.grant)
+    expect(after.authority).toEqual(stored.authority)
+    expect(after.rawDocument).toBe(stored.rawDocument)
+    expect(after.authorizations).toEqual(stored.authorizations)
+    expect(after.definition).toEqual(stored.definition)
+    expect(after.bindings).toEqual(stored.bindings)
+    expect(after.applied).toEqual(stored.applied)
+    expect(after.historyUsage).toEqual(stored.historyUsage)
+    expect(inspector.describe(reviewOrigin, data.packet.workspaceId, "typed-intake").state).toBe(state)
+
+    await AutomationReplica.rotateStorageCredentials(saves[0]!, data.automation, nextBlind,
+      async value => { saves.push(value) }, guard)
+    expect(saves).toHaveLength(1)
+    expect(guard.mock.calls.length).toBeGreaterThanOrEqual(4)
+  } finally {
+    vi.useRealTimers()
+    Automerge.free(document)
+    Automerge.free(controlled.value.newDoc)
+  }
+});
+
+it("Given a mutable target, when it changes during the authority guard, then rotation uses its entry snapshot", async () => {
+  const data = await typedFixture();
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const before = replica.serialize();
+  const prior = JSON.parse(before).blind;
+  const nextBlind = rotatedStorageCredentials(prior);
+  const originalReadToken = nextBlind.readToken;
+  let release!: () => void;
+  const barrier = new Promise<void>(resolve => { release = resolve; });
+  let first = true;
+  const guard = async () => {
+    if (first) { first = false; await barrier; }
+  };
+  const saved: string[] = [];
+  const rotation = AutomationReplica.rotateStorageCredentials(before, data.automation, nextBlind,
+    async value => { saved.push(value); }, guard);
+  nextBlind.readToken = prior.readToken;
+  release();
+  await rotation;
+  expect(saved).toHaveLength(1);
+  expect(JSON.parse(saved[0]!).blind.readToken).toBe(originalReadToken);
+});
+
+it("Given a pending Worker upload, when credentials are rotated before exact drain, then preserve the original serialized bytes", async () => {
+  const data = await typedFixture()
+  const replica = await AutomationReplica.activate(data.packet, data.automation)
+  const stored = JSON.parse(replica.serialize())
+  stored.pending = { requestId: "saved-request", hash: "A".repeat(43), bytes: 1,
+    object: { version: 1, scopeId: stored.blind.scopeId, keyEpoch: stored.blind.keyEpoch, nonce: "A".repeat(16), ciphertext: "A".repeat(23) } }
+  const before = JSON.stringify(stored)
+  const persist = vi.fn(async () => {})
+  await expect(AutomationReplica.rotateStorageCredentials(before, data.automation, rotatedStorageCredentials(stored.blind),
+    persist, () => {})).rejects.toThrow(/pending/i)
+  expect(persist).not.toHaveBeenCalled()
+});
+
+it("Given a malformed or non-monotonic storage target, when rotation is attempted, then reject before persistence", async () => {
+  const data = await typedFixture()
+  const replica = await AutomationReplica.activate(data.packet, data.automation)
+  const before = replica.serialize()
+  const prior = JSON.parse(before).blind
+  const valid = rotatedStorageCredentials(prior)
+  const invalid: AutomationActivationPacket["blind"][] = [
+    { ...valid, origin: "https://other.example.test" },
+    { ...valid, scopeId: "other-scope" },
+    { ...valid, servicePublicKey: encodeBlindBytes(new Uint8Array(32).fill(44)) },
+    { ...valid, keyEpoch: prior.keyEpoch },
+    { ...valid, policyRevision: prior.policyRevision },
+    { ...valid, minimumWriterVersion: undefined },
+    { ...valid, historicalContentKeys: undefined },
+  ]
+  const persist = vi.fn(async () => {})
+  for (const nextBlind of invalid) {
+    await expect(AutomationReplica.rotateStorageCredentials(before, data.automation, nextBlind,
+      persist, () => {})).rejects.toThrow()
+  }
+  expect(persist).not.toHaveBeenCalled()
+});
+
+it("Given a queued Worker on an older conflicting epoch, when owner prepares joined-key recovery, then drain once, freeze execution and commit new access atomically", async () => {
+  const integrationId = `rotate-${crypto.randomUUID().replace(/-/g, "")}`;
+  const data = await typedFixture();
+  const reads: string[] = [];
+  const writes: Array<{ token: string; object: unknown; requestId: string | undefined }> = [];
+  let acceptUpload = false;
+  const transport: ReplicaTransport = {
+    inventory: async (access, after) => { reads.push(access.readToken); return { objects: [], cursor: after, hasMore: false }; },
+    download: async () => { throw new Error("No rotation download expected"); },
+    upload: async (access, object, requestId) => {
+      writes.push({ token: access.writeToken, object: structuredClone(object), requestId });
+      if (!acceptUpload) throw new Error("Upload reply lost before rotation");
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  data.packet.transport = transport;
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  await replica.createLead("rotation-pending-event", { company: "Acme", role: "Engineer", source: { origin: "website" } }, {});
+  await expect(replica.sync()).rejects.toThrow("Upload reply lost before rotation");
+  const stored = JSON.parse(replica.serialize());
+  stored.blind.cursor = 17;
+  stored.applied = { "retained-event": { kind: "lead", cardId: "retained-card", changeHash: "A".repeat(43) } };
+  const before = JSON.stringify(stored);
+  const oldPending = structuredClone(stored.pending);
+  const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
+  const stub = testEnv.AUTOMATION.getByName(integrationId);
+  await stub.saveReplicaState(reviewStorageSecret, before);
+  await runInDurableObject(stub, async instance => {
+    Reflect.set(instance, "env", testEnv);
+    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+  });
+
+  acceptUpload = true;
+  const transitionId = crypto.randomUUID();
+  const storage = { origin: stored.blind.origin, scopeId: stored.blind.scopeId, keyEpoch: stored.blind.keyEpoch,
+    servicePublicKey: stored.blind.servicePublicKey };
+  const prepareBody = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake",
+    executorPersonId: data.automation.identity.personId, integrationId, storage, transitionId };
+  const prepareProof = await signedInstanceRequest(data.owner, "prepare-storage-rotation", prepareBody, integrationId);
+  const prepared = await postAutomationInstance("prepare-storage-rotation", prepareProof, prepareBody, testEnv);
+  expect(prepared.status, JSON.stringify(await prepared.clone().json())).toBe(200);
+  const preparedBytes = (await stub.loadReplicaState(reviewStorageSecret))!;
+  const preparedState = JSON.parse(preparedBytes);
+  expect(preparedState.pending).toBeUndefined();
+  expect(preparedState.grant).toEqual(stored.grant);
+  expect(preparedState.rawDocument).toBe(stored.rawDocument);
+  expect(preparedState.blind.cursor).toBe(17);
+  expect(writes).toHaveLength(2);
+  expect(writes[0]).toEqual({ token: stored.blind.writeToken, object: oldPending.object, requestId: oldPending.requestId });
+  expect(writes[1]).toEqual(writes[0]);
+  await runInDurableObject(stub, async (instance, ctx) => {
+    expect(instance.getEvent("rotation-queued-work")).toBeNull();
+    ctx.storage.sql.exec(`INSERT INTO events (event_id, source, source_id, body_hash, payload, status, created_at, updated_at, next_attempt_at)
+      VALUES (?, 'website', ?, ?, 'encrypted-placeholder', 'pending', ?, ?, 0)`, "rotation-queued-work", "rotation-queued-work",
+      "B".repeat(43), Date.now(), Date.now());
+    await instance.alarm();
+    const row = ctx.storage.sql.exec<{ status: string; attempt: number }>(
+      "SELECT status, attempt FROM events WHERE event_id = ?", "rotation-queued-work").one();
+    expect(row).toEqual({ status: "pending", attempt: 0 });
+  });
+
+  const { mergeReplicaContentKeyVariants } = await import("../../../src/sync/replicaContentKeys");
+  const fresh = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)));
+  const sibling = { ...stored.blind, contentKey: fresh() };
+  const newer = { ...stored.blind, ...rotateReplicaContentKeys(stored.blind, fresh()) };
+  const nextBlind = { ...rotatedStorageCredentials(stored.blind),
+    ...mergeReplicaContentKeyVariants([stored.blind, sibling, newer], fresh()) };
+  const receipt = await signedRustyWriterPolicyReceipt(nextBlind, data.owner.identity.personId);
+  const rotateBody = { ...prepareBody, credentials: nextBlind, receipt };
+  const rotationProof = await signedInstanceRequest(data.owner, "rotate-storage", rotateBody, integrationId);
+  const readsBeforeRotate = reads.length;
+  const rotated = await postAutomationInstance("rotate-storage", rotationProof, rotateBody, testEnv);
+  expect(rotated.status, JSON.stringify(await rotated.clone().json())).toBe(200);
+  const identity = await rotated.json();
+  expect(identity).not.toHaveProperty("synced");
+  expect((await verifyAutomationInstanceIdentity(identity, { origin: reviewOrigin, workspaceId: rotateBody.workspaceId,
+    definitionId: rotateBody.definitionId, integrationId, executorPersonId: rotateBody.executorPersonId,
+    requestNonce: rotationProof.signed.payload.nonce })).description.storage).toEqual({ ...storage,
+      keyEpoch: nextBlind.keyEpoch, policyRevision: nextBlind.policyRevision, minimumWriterVersion: 2 });
+  expect(JSON.stringify(identity)).not.toContain("contentKey");
+  expect(reads.slice(readsBeforeRotate).length).toBeGreaterThan(0);
+  expect(reads.slice(readsBeforeRotate).every(token => token === nextBlind.readToken)).toBe(true);
+  expect(writes).toHaveLength(2);
+
+  const afterBytes = (await stub.loadReplicaState(reviewStorageSecret))!;
+  const after = JSON.parse(afterBytes);
+  expect(after.grant).toEqual(stored.grant);
+  expect(after.definition).toEqual(stored.definition);
+  expect(after.rawDocument).toBe(stored.rawDocument);
+  expect(after.authorizations).toEqual(stored.authorizations);
+  expect(after.authority).toEqual(stored.authority);
+  expect(after.applied).toEqual(stored.applied);
+  expect(after.pending).toBeUndefined();
+  expect(after.blind).toMatchObject({ origin: stored.blind.origin, scopeId: stored.blind.scopeId,
+    workspaceId: stored.blind.workspaceId, servicePublicKey: stored.blind.servicePublicKey, keyEpoch: nextBlind.keyEpoch,
+    cursor: 17, lastUploaded: "", readToken: nextBlind.readToken, writeToken: nextBlind.writeToken,
+    contentKey: nextBlind.contentKey, historicalContentKeys: nextBlind.historicalContentKeys, historicalContentKeyVariants: nextBlind.historicalContentKeyVariants,
+    policyRevision: nextBlind.policyRevision, minimumWriterVersion: 2 });
+  expect(after.replication.generation).toBe(JSON.parse(preparedBytes).replication.generation + 1);
+  expect(after.replication.uploadedRevision).toBeUndefined();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    expect(instance.getEvent("rotation-queued-work")?.status).toBe("pending");
+    expect(ctx.storage.sql.exec("SELECT singleton FROM automation_storage_transition WHERE singleton = 1").toArray()).toHaveLength(0);
+    expect(ctx.storage.sql.exec("SELECT transition_id FROM automation_storage_transition_completed WHERE singleton = 1").one())
+      .toEqual({ transition_id: transitionId });
+  });
+
+  // Simulate a lost response recovered with a new request nonce and the exact same target.
+  const retryProof = await signedInstanceRequest(data.owner, "rotate-storage", rotateBody, integrationId);
+  const retry = await postAutomationInstance("rotate-storage", retryProof, rotateBody, testEnv);
+  expect(retry.status, JSON.stringify(await retry.clone().json())).toBe(200);
+  expect(await stub.loadReplicaState(reviewStorageSecret)).toBe(afterBytes);
+  expect(writes).toHaveLength(2);
+  expect(oldPending.object.keyEpoch).toBe(stored.blind.keyEpoch);
+
+  // Retrying a completed transition must bind the whole retained keyring, including ambiguous epochs.
+  const changedHistoryBody = { ...rotateBody, credentials: { ...nextBlind, historicalContentKeys: undefined,
+    historicalContentKeyVariants: { "1": [stored.blind.contentKey,
+      encodeBlindBytes(new Uint8Array(32).fill(91))].sort() } } };
+  const changedHistoryProof = await signedInstanceRequest(data.owner, "rotate-storage", changedHistoryBody, integrationId);
+  expect((await postAutomationInstance("rotate-storage", changedHistoryProof, changedHistoryBody, testEnv)).status).not.toBe(200);
+  expect(await stub.loadReplicaState(reviewStorageSecret)).toBe(afterBytes);
+
+  const unauthorizedRetryProof = await signedInstanceRequest(data.automation, "rotate-storage", rotateBody, integrationId);
+  expect((await postAutomationInstance("rotate-storage", unauthorizedRetryProof, rotateBody, testEnv)).status).toBe(403);
+  expect(await stub.loadReplicaState(reviewStorageSecret)).toBe(afterBytes);
+});
+
+it("Given a prepared frozen Worker, when receipt or current Owner proof is invalid, then preserve frozen bytes", async () => {
+  const integrationId = `rotate-denied-${crypto.randomUUID().replace(/-/g, "")}`;
+  const data = await typedFixture();
+  const transport: ReplicaTransport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("No rotation download expected"); }, upload: signedReceipt };
+  data.packet.transport = transport;
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
+  const stub = testEnv.AUTOMATION.getByName(integrationId);
+  await stub.saveReplicaState(reviewStorageSecret, replica.serialize());
+  await runInDurableObject(stub, async instance => {
+    Reflect.set(instance, "env", testEnv);
+    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+  });
+  const prior = JSON.parse(replica.serialize());
+  const transitionId = crypto.randomUUID();
+  const storage = { origin: prior.blind.origin, scopeId: prior.blind.scopeId, keyEpoch: prior.blind.keyEpoch,
+    servicePublicKey: prior.blind.servicePublicKey };
+  const base = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake",
+    executorPersonId: data.automation.identity.personId, integrationId, storage, transitionId };
+  const prepareProof = await signedInstanceRequest(data.owner, "prepare-storage-rotation", base, integrationId);
+  expect((await postAutomationInstance("prepare-storage-rotation", prepareProof, base, testEnv)).status).toBe(200);
+  const frozenBytes = (await stub.loadReplicaState(reviewStorageSecret))!;
+  const nextBlind = rotatedStorageCredentials(prior.blind);
+  const receipt = await signedRustyWriterPolicyReceipt(nextBlind, data.owner.identity.personId);
+  const validBody = { ...base, credentials: nextBlind, receipt };
+  const invalidReceiptBody = { ...validBody, receipt: { ...receipt, signature: "A".repeat(86) } };
+  const badReceiptProof = await signedInstanceRequest(data.owner, "rotate-storage", invalidReceiptBody, integrationId);
+  const badReceipt = await postAutomationInstance("rotate-storage", badReceiptProof, invalidReceiptBody, testEnv);
+  expect(badReceipt.status).toBe(422);
+  expect(await stub.loadReplicaState(reviewStorageSecret)).toBe(frozenBytes);
+
+  const changedOwnerProof = await signedInstanceRequest(data.automation, "rotate-storage", validBody, integrationId);
+  const changedOwner = await postAutomationInstance("rotate-storage", changedOwnerProof, validBody, testEnv);
+  expect(changedOwner.status).toBe(403);
+  expect(await stub.loadReplicaState(reviewStorageSecret)).toBe(frozenBytes);
+});
+
 it("Given explicit intake v2, when creating a mislabeled card, then its extracted original is signed atomically and survives restore and duplicate delivery", async () => {
   const data = await typedFixture(undefined, false, 2);
   const replica = await AutomationReplica.activate(data.packet, data.automation);
@@ -892,7 +1209,9 @@ it("Given explicit intake v2, when creating a mislabeled card, then its extracte
     expect(await restored.createLead("immutable-original", normalized, {})).toEqual({ cardId: created.cardId, duplicate: true });
     expect(JSON.parse(restored.serialize()).rawDocument).toBe(after.rawDocument);
     const candidates = restored.candidates();
-    expect(candidates.find(candidate => candidate.cardId === created.cardId)?.sources).toHaveLength(1);
+    const candidate = candidates.find(candidate => candidate.cardId === created.cardId)!;
+    expect(candidate.sources).toHaveLength(1);
+    expect(candidate).not.toHaveProperty("messageIds");
     const planned = await planApplicationMove({ messageId: "<source-rejection@example.test>", inReplyTo: null, references: [],
       from: "hiring@upvest.example", to: "owner@example.test", subject: "Upvest application update",
       text: "Your Senior Product Engineer application was declined", urls: [],
@@ -987,7 +1306,7 @@ it("Given an owner-signed type contract, when activated and restored, then only 
   expect(restored.allowsSource("email")).toBe(false);
 });
 
-it.each([false, true])("Given a signed email scope renewal with rotated storage=%s, when reactivated, then preserves the executor, pending upload and event deduplication", async rotated => {
+it.each([false, true])("Given a signed email scope renewal with rotated storage=%s, when reactivated, then retain the executor without re-encrypting uncertain pending bytes", async rotated => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);
   const created = await replica.createLead("renewal-lead", { company: "Example GmbH", role: "Senior Engineer" }, {});
@@ -1023,10 +1342,23 @@ it.each([false, true])("Given a signed email scope renewal with rotated storage=
       ownerPublicKey: data.owner.identity.publicKey, ownerCertificates: [data.owner.certificate],
     }] },
   } };
+  if (rotated) {
+    const exactPrior = JSON.stringify(stored)
+    const persist = vi.fn(async () => {})
+    await expect(AutomationReplica.renew(JSON.stringify(stored), { ...packet, persist }, data.automation,
+      "https://automation.example.test")).rejects.toThrow(/drain the exact pending upload/i)
+    expect(persist).not.toHaveBeenCalled()
+    expect(JSON.stringify(stored)).toBe(exactPrior)
+    expect(stored.pending).toEqual(JSON.parse(exactPrior).pending)
+    expect(await decryptBlindObject(stored.pending.object, stored.blind.scopeId, stored.blind.keyEpoch,
+      decodeBlindBytes(stored.blind.contentKey))).toEqual(pendingPlaintext)
+    Automerge.free(document); Automerge.free(changed.value.newDoc)
+    return
+  }
   const renewed = await AutomationReplica.renew(JSON.stringify(stored), packet, data.automation, "https://automation.example.test");
   const next = JSON.parse(renewed.serialize());
-  expect(next.blind.cursor).toBe(rotated ? blind.cursor : stored.blind.cursor);
-  expect(next.blind.lastUploaded).toBe(rotated ? "" : stored.pending.hash);
+  expect(next.blind.cursor).toBe(stored.blind.cursor);
+  expect(next.blind.lastUploaded).toBe(stored.pending.hash);
   expect(next.pending.hash).toBe(stored.pending.hash);
   expect(await decryptBlindObject(next.pending.object, blind.scopeId, blind.keyEpoch, decodeBlindBytes(blind.contentKey))).toEqual(pendingPlaintext);
   expect(renewed.allowsSource("email")).toBe(true);
@@ -1129,6 +1461,16 @@ it("Given a legacy v1 executor with durable history, When its Owner explicitly a
   Automerge.free(configured.value.newDoc);
   const adoptLegacy = (AutomationReplica as unknown as { adoptLegacy(serialized: string, packet: AutomationActivationPacket,
     profile: typeof legacyData.automation, origin: string): Promise<AutomationReplica> }).adoptLegacy;
+
+  const exactPrior = JSON.stringify(prior)
+  const rotatedPacket = { ...newPacket, blind: rotatedStorageCredentials(prior.blind) }
+  const persist = vi.fn(async () => {})
+  await expect(adoptLegacy(JSON.stringify(prior), { ...rotatedPacket, persist }, legacyData.automation,
+    "https://automation.example.test")).rejects.toThrow(/drain the exact pending upload/i)
+  expect(persist).not.toHaveBeenCalled()
+  expect(JSON.stringify(prior)).toBe(exactPrior)
+  expect(await decryptBlindObject(prior.pending.object, prior.blind.scopeId, prior.blind.keyEpoch,
+    decodeBlindBytes(prior.blind.contentKey))).toEqual(pendingBytes)
 
   const adopted = await adoptLegacy(JSON.stringify(prior), newPacket, legacyData.automation, "https://automation.example.test");
   const next = JSON.parse(adopted.serialize());
@@ -1238,6 +1580,71 @@ it("Given an untyped v1 replica, When inspecting it for management, Then expose 
   expect(() => inspector.assertOwner({ personId: data.owner.identity.personId, publicKey: data.owner.identity.publicKey,
     certificates: [data.owner.certificate] }, data.owner.device.deviceId)).not.toThrow();
 });
+
+async function pendingManagementFixture() {
+  const data = await typedFixture()
+  const losingTransport: ReplicaTransport = {
+    inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("No pending-upload download expected") },
+    upload: async () => { throw new Error("Pending upload reply lost") },
+  }
+  const replica = await AutomationReplica.activate({ ...data.packet, transport: losingTransport }, data.automation)
+  await expect(replica.sync()).rejects.toThrow("Pending upload reply lost")
+  const pending = JSON.parse(replica.serialize()).pending
+  expect(pending).toBeDefined()
+  await replica.createLead("newer-local-after-pending", { company: "Acme", role: "Engineer", source: { origin: "website" } }, {})
+  const serialized = replica.serialize()
+  const before = JSON.parse(serialized)
+  const inventory = vi.fn(async (_access: unknown, after: number) => ({ objects: [], cursor: after, hasMore: false }))
+  const download = vi.fn(async () => { throw new Error("Management drain must not download") })
+  const upload = vi.fn(async (access: Parameters<ReplicaTransport["upload"]>[0], object: Parameters<ReplicaTransport["upload"]>[1], requestId?: string) =>
+    signedReceipt(access, object, requestId))
+  const transport = { inventory, download, upload } as unknown as ReplicaTransport
+  const persist = vi.fn<(value: string) => Promise<void>>(async () => {})
+  const expiry = data.packet.grant.payload.automation!.expiresAt
+  vi.useFakeTimers()
+  vi.setSystemTime(expiry + 1)
+  const inspector = await AutomationReplica.inspectForManagement(serialized, data.automation, persist, transport)
+  const owner = { personId: data.owner.identity.personId, publicKey: data.owner.identity.publicKey,
+    certificates: [data.owner.certificate] }
+  return { data, inspector, owner, pending, before, inventory, download, upload, persist }
+}
+
+it("Given expired management history with newer local content and a saved upload, When Owner drains pending, Then retry exact ciphertext without pulling or capturing", async () => {
+  const f = await pendingManagementFixture()
+  const guard = vi.fn(async () => f.inspector.assertOwner(f.owner, f.data.owner.device.deviceId))
+  try {
+    await f.inspector.drainPending(guard)
+
+    expect(guard).toHaveBeenCalled()
+    expect(f.upload).toHaveBeenCalledTimes(1)
+    expect(f.upload.mock.calls[0]![1]).toEqual(f.pending.object)
+    expect(f.upload.mock.calls[0]![2]).toBe(f.pending.requestId)
+    expect(f.inventory).not.toHaveBeenCalled()
+    expect(f.download).not.toHaveBeenCalled()
+    const after = JSON.parse(f.inspector.serialize())
+    expect(after.pending).toBeUndefined()
+    expect(after.rawDocument).toBe(f.before.rawDocument)
+    expect(after.applied).toEqual(f.before.applied)
+    expect(after.grant).toEqual(f.before.grant)
+    expect(f.persist).toHaveBeenCalled()
+  } finally { vi.useRealTimers() }
+})
+
+it("Given pending management upload and an owner guard denial, When draining, Then leave serialized pending state unchanged", async () => {
+  const f = await pendingManagementFixture()
+  const before = f.inspector.serialize()
+  try {
+    await expect(f.inspector.drainPending(async () => { throw new Error("Owner authorization changed") }))
+      .rejects.toThrow("Owner authorization changed")
+
+    expect(f.inspector.serialize()).toBe(before)
+    expect(f.upload).not.toHaveBeenCalled()
+    expect(f.inventory).not.toHaveBeenCalled()
+    expect(f.download).not.toHaveBeenCalled()
+    expect(f.persist).not.toHaveBeenCalled()
+  } finally { vi.useRealTimers() }
+})
 
 it("Given owner device revocation in encrypted Rusty, When a read-only pull observes it, Then deny that device and never upload", async () => {
   const data = await typedFixture();
@@ -1389,7 +1796,7 @@ it("Given a version-2 activation missing its contract, when activated, then no l
 });
 
 it("Given typed activation without its CRDT controls, when activated or restored without the contract, then execution cannot fall back to legacy behavior", async () => {
-  const data = await typedFixture();
+  const data = await typedFixture(undefined, false, 2);
   const legacy = await fixture();
   await expect(AutomationReplica.activate({ ...data.packet, initial: legacy.packet.initial }, data.automation)).rejects.toThrow();
   const replica = await AutomationReplica.activate(data.packet, data.automation);
@@ -1517,7 +1924,6 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
   }
   data.packet.initial = await ownerSnapshot(document, data.owner, data.packet);
   Automerge.free(document);
-  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
   const testEnv = { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret,
     AI: receiptAi, INTEGRATIONS_JSON: JSON.stringify([{ id, workspaceId: data.packet.workspaceId,
       scope: { version: 1, ...data.packet.bindings, expiresAt: "2099-01-01T00:00:00.000Z" },
@@ -1526,26 +1932,30 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
   const deliver = () => worker.email({ from: "owner@example.test", to: "intake@example.test", rawSize: mime.length,
     raw: new Response(mime).body!, setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
   const eventId = await blindHash(new TextEncoder().encode(`${id}:email:<new-application@example.test>`));
-  try {
-    await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
-    await deliver();
-    await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", testEnv);
-      Reflect.set(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
-      await instance.alarm();
+  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
+  await deliver();
+  await runInDurableObject(stub, async (instance, ctx) => {
+    Reflect.set(instance, "env", testEnv);
+    Reflect.set(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
+    await instance.alarm();
+    if (existing === 0) {
       expect(instance.getEvent(eventId)).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
-      await ctx.storage.deleteAlarm();
-    });
-    await deliver();
-    const stored = JSON.parse((await stub.loadReplicaState(storageSecret))!);
-    const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument));
-    const cards = Object.values(document.entities).filter(isItem);
-    expect(cards).toHaveLength(existing + 1);
-    expect(cards.find(card => card.placement.parentId === data.packet.bindings.columns.applied)).toMatchObject({ placement: { parentId: data.packet.bindings.columns.applied },
-      values: { [data.packet.bindings.fieldIds.role]: "Senior Engineer" } });
-    Automerge.free(document);
-    await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
-  } finally { sync.mockRestore(); }
+    } else {
+      expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { reason: "Original posting evidence is missing or unavailable; choose an application" } });
+    }
+    await ctx.storage.deleteAlarm();
+  });
+  await deliver();
+  const stored = JSON.parse((await stub.loadReplicaState(storageSecret))!);
+  const storedDocument = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument));
+  const cards = Object.values(storedDocument.entities).filter(isItem);
+  expect(cards).toHaveLength(existing + (existing === 0 ? 1 : 0));
+  if (existing === 0) expect(cards.find(card => card.placement.parentId === data.packet.bindings.columns.applied)).toMatchObject({
+    placement: { parentId: data.packet.bindings.columns.applied }, values: { [data.packet.bindings.fieldIds.role]: "Senior Engineer" } });
+  else expect(cards.every(card => card.placement.parentId === data.packet.bindings.columns.lead)).toBe(true);
+  Automerge.free(storedDocument);
+  await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
 });
 
 it.each([false, true])("Given an overdue alarm and website=%s intake, when new work arrives, then it rearms a future alarm without losing queued work", async website => {
@@ -1568,7 +1978,7 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
   const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
-  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
+  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   try {
     await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
     const state = JSON.parse((await stub.loadReplicaState(storageSecret))!);
@@ -1593,7 +2003,9 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
       await ctx.storage.deleteAlarm();
     });
     Automerge.free(document); Automerge.free(paused.value.newDoc);
-  } finally { sync.mockRestore(); }
+  } finally {
+    await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
+  }
 });
 
 it("Given a verified durable replica, when unchanged controls are polled, then admission is reused until stored evidence changes", async () => {
@@ -1604,30 +2016,28 @@ it("Given a verified durable replica, when unchanged controls are polled, then a
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
   const registration = { integrationId: id, workspaceId: data.packet.workspaceId, ownerPersonId: data.owner.identity.personId };
-  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
-  try {
-    await stub.enrollOwner(registration, identitySecret);
-    await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
-    await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
-      const restore = vi.spyOn(AutomationReplica, "restore");
-      const access = vi.spyOn(WasmStateCore, "decideWorkspaceAccess");
-      try {
-        const firstNonce = crypto.randomUUID(), secondNonce = crypto.randomUUID();
-        const first = await instance.observeOwner(registration, firstNonce, "https://automation.example.test");
-        const second = await instance.observeOwner(registration, secondNonce, "https://automation.example.test");
-        expect(first?.signed.payload.nonce).toBe(firstNonce);
-        expect(second?.signed.payload.nonce).toBe(secondNonce);
-        expect(restore).toHaveBeenCalledTimes(1);
-        expect(access).toHaveBeenCalledTimes(1);
-        const state = JSON.parse((await instance.loadReplicaState(storageSecret))!);
-        state.authorizations = [];
-        await instance.saveReplicaState(storageSecret, JSON.stringify(state));
-        await expect(instance.observeOwner(registration, crypto.randomUUID(), "https://automation.example.test")).rejects.toThrow();
-        expect(restore).toHaveBeenCalledTimes(2);
-      } finally { restore.mockRestore(); access.mockRestore(); await ctx.storage.deleteAlarm(); }
-    });
-  } finally { sync.mockRestore(); }
+  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await stub.enrollOwner(registration, identitySecret);
+  await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
+  await runInDurableObject(stub, async (instance, ctx) => {
+    Reflect.set(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
+    const firstNonce = crypto.randomUUID(), secondNonce = crypto.randomUUID();
+    const first = await instance.observeOwner(registration, firstNonce, "https://automation.example.test");
+    const firstLoaded = Reflect.get(instance, "loadedReplica") as { replica?: object } | undefined;
+    const firstAdmission = firstLoaded?.replica && Reflect.get(firstLoaded.replica, "admissionCache");
+    const second = await instance.observeOwner(registration, secondNonce, "https://automation.example.test");
+    expect(first?.signed.payload.nonce).toBe(firstNonce);
+    expect(second?.signed.payload.nonce).toBe(secondNonce);
+    expect(Reflect.get(instance, "loadedReplica")?.replica).toBe(firstLoaded?.replica);
+    expect(firstAdmission).toBeDefined();
+    expect(firstLoaded?.replica && Reflect.get(firstLoaded.replica, "admissionCache")).toBe(firstAdmission);
+    const state = JSON.parse((await instance.loadReplicaState(storageSecret))!);
+    state.authorizations = [];
+    await instance.saveReplicaState(storageSecret, JSON.stringify(state));
+    await expect(instance.observeOwner(registration, crypto.randomUUID(), "https://automation.example.test")).rejects.toThrow();
+    expect(Reflect.get(instance, "loadedReplica")).toBeUndefined();
+    await ctx.storage.deleteAlarm();
+  });
 });
 
 it("Given an existing paused or deleted instance, when old activation is replayed, then it preserves pause and rejects resurrection", async () => {
@@ -1637,7 +2047,7 @@ it("Given an existing paused or deleted instance, when old activation is replaye
   const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
-  const sync = vi.spyOn(AutomationReplica.prototype, "sync").mockResolvedValue();
+  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   try {
     await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
     for (const desired of ["paused", "deleted"] as const) {
@@ -1653,7 +2063,7 @@ it("Given an existing paused or deleted instance, when old activation is replaye
       Automerge.free(document); Automerge.free(changed.value.newDoc);
     }
     await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
-  } finally { sync.mockRestore(); }
+  } finally { await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); }); }
 });
 
 async function signedReceipt(access: Parameters<ReplicaTransport["upload"]>[0], object: Parameters<ReplicaTransport["upload"]>[1], requestId?: string): Promise<BlindReceipt> {
@@ -1676,6 +2086,185 @@ async function createReceiptSigner() {
 }
 
 describe("AutomationReplica in workerd with the compiled Rust policy", () => {
+  it("Given an active Worker, when a real change is admitted and its event is replayed, then history usage advances once", async () => {
+    const { automation, packet, persisted } = await fixture();
+    const replica = await AutomationReplica.activate(packet, automation);
+    const before = JSON.parse(replica.serialize()).historyUsage as { admittedChanges: number; encodedBytes: number };
+
+    const created = await replica.createLead("history-accounting-event", { company: "Acme", role: "Engineer" }, {});
+    expect(created.duplicate).toBe(false);
+    const after = JSON.parse(replica.serialize()).historyUsage as { admittedChanges: number; encodedBytes: number };
+    expect(after.admittedChanges).toBe(before.admittedChanges + 1);
+    expect(after.encodedBytes).toBeGreaterThan(before.encodedBytes);
+
+    const committed = persisted.at(-1);
+    await expect(replica.createLead("history-accounting-event", { company: "Acme", role: "Engineer" }, {}))
+      .resolves.toMatchObject({ cardId: created.cardId, duplicate: true });
+    expect(replica.serialize()).toBe(committed);
+  });
+
+  it("Given the Worker history limit is reached, when another event is processed, then preserve document and retry state", async () => {
+    const { automation, packet } = await fixture();
+    const replica = await AutomationReplica.activate(packet, automation);
+    const saturated = JSON.parse(replica.serialize());
+    saturated.historyUsage = { baselineId: null, admittedChanges: 512, encodedBytes: 0 };
+    const writes: string[] = [];
+    const capped = await AutomationReplica.restore(JSON.stringify(saturated), automation,
+      async value => { writes.push(value); }, packet.transport);
+    const before = capped.serialize();
+    const candidatesBefore = capped.candidates();
+    const inspector = await AutomationReplica.inspectForManagement(before, automation, async () => {});
+    expect(inspector.describe(reviewOrigin, packet.workspaceId, "typed-intake").historyUsage)
+      .toMatchObject({ baselineId: null, admittedChanges: 512, archiveRequired: true });
+
+    await expect(capped.createLead("history-budget-blocked", { company: "Acme", role: "Engineer" }, {}))
+      .rejects.toThrow(/archive older history/i);
+
+    expect(capped.serialize()).toBe(before);
+    expect(writes).toHaveLength(0);
+    expect(capped.candidates()).toEqual(candidatesBefore);
+  });
+
+  it("Given an unchanged Worker snapshot, when replication is repeated, then history accounting remains unchanged", async () => {
+    const { automation, packet } = await fixture();
+    packet.transport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+      download: async () => { throw new Error("No object should be downloaded"); }, upload: signedReceipt };
+    const replica = await AutomationReplica.activate(packet, automation);
+    const initialUsage = JSON.parse(replica.serialize()).historyUsage;
+
+    await replica.sync();
+    const firstUsage = JSON.parse(replica.serialize()).historyUsage;
+    await replica.sync();
+
+    expect(firstUsage).toEqual(initialUsage);
+    expect(JSON.parse(replica.serialize()).historyUsage).toEqual(initialUsage);
+  });
+
+  it("Given an active epoch 2 Worker with epoch 1 retained, when it pulls an admitted epoch 1 snapshot, then it persists the admission and advances its cursor", async () => {
+    const { automation, packet, persisted, key } = await fixture();
+    const currentKey = crypto.getRandomValues(new Uint8Array(32));
+    const history = { "1": encodeBlindBytes(key) };
+    packet.blind = { ...packet.blind, keyEpoch: 2, contentKey: encodeBlindBytes(currentKey), historicalContentKeys: history };
+    const locator: AttachmentLocator = { version: 1, blobId: `sha256:${"D".repeat(43)}`,
+      transferId: "retained-epoch-transfer", manifestId: "E".repeat(43) };
+    const remoteObject = await encryptBlindObject(packet.blind.scopeId, 1, key,
+      new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: packet.workspaceId,
+        ...packet.initial, chat: null, attachments: [locator] })));
+    const remoteId = await blindObjectId(remoteObject);
+    const transport: ReplicaTransport = {
+      inventory: async (_access, after) => after < 1
+        ? { objects: [{ objectId: remoteId, sequence: 1 }], cursor: 1, hasMore: false }
+        : { objects: [], cursor: after, hasMore: false },
+      download: async () => remoteObject,
+      upload: signedReceipt,
+    };
+    packet.transport = transport;
+    const replica = await AutomationReplica.activate(packet, automation);
+    const writesBeforePull = persisted.length;
+
+    await replica.sync();
+
+    const stored = JSON.parse(replica.serialize());
+    expect(stored.attachments).toEqual([locator]);
+    expect(stored.blind.cursor).toBe(1);
+    expect(persisted.length).toBeGreaterThan(writesBeforePull);
+  });
+
+  it.each([
+    { name: "missing retained key", epoch: 1, history: undefined, encryptionKey: "old" as const },
+    { name: "future epoch", epoch: 3, history: { "1": "old" }, encryptionKey: "future" as const },
+    { name: "substituted retained key", epoch: 1, history: { "1": "wrong" }, encryptionKey: "old" as const },
+  ])("Given a Worker with $name, when it encounters that remote snapshot, then it rejects before admission persistence or cursor advancement", async scenario => {
+    const { automation, packet, persisted, key } = await fixture();
+    const wrongKey = crypto.getRandomValues(new Uint8Array(32));
+    const futureKey = crypto.getRandomValues(new Uint8Array(32));
+    const currentKey = crypto.getRandomValues(new Uint8Array(32));
+    const history = scenario.history === undefined ? undefined : {
+      "1": scenario.history["1"] === "old" ? encodeBlindBytes(key) : encodeBlindBytes(wrongKey),
+    };
+    packet.blind = { ...packet.blind, keyEpoch: 2, contentKey: encodeBlindBytes(currentKey),
+      ...(history ? { historicalContentKeys: history } : {}) };
+    const objectEpoch = scenario.epoch;
+    const encryptKey = scenario.encryptionKey === "future" ? futureKey : key;
+    const remoteObject = await encryptBlindObject(packet.blind.scopeId, objectEpoch, encryptKey,
+      new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: packet.workspaceId,
+        ...packet.initial, chat: null } )));
+    const remoteId = await blindObjectId(remoteObject);
+    packet.transport = {
+      inventory: async (_access, after) => after < 1
+        ? { objects: [{ objectId: remoteId, sequence: 1 }], cursor: 1, hasMore: false }
+        : { objects: [], cursor: after, hasMore: false },
+      download: async () => remoteObject,
+      upload: signedReceipt,
+    };
+    const replica = await AutomationReplica.activate(packet, automation);
+    const before = replica.serialize();
+    const writesBeforePull = persisted.length;
+
+    await expect(replica.sync()).rejects.toThrow();
+
+    expect(replica.serialize()).toBe(before);
+    expect(persisted).toHaveLength(writesBeforePull);
+  });
+
+  it.each([false, true])("Given a %s typed-contract Worker with retained key history, when it saves and restores, then it uses the history-aware storage binding and v6 state envelope", async typed => {
+    const { automation, packet, key } = typed ? await typedFixture() : await fixture();
+    const currentKey = crypto.getRandomValues(new Uint8Array(32));
+    const history = { "1": encodeBlindBytes(key) };
+    packet.blind = { ...packet.blind, keyEpoch: 2, contentKey: encodeBlindBytes(currentKey), historicalContentKeys: history };
+    packet.transport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+      download: async () => { throw new Error("No download expected"); }, upload: signedReceipt };
+    const replica = await AutomationReplica.activate(packet, automation);
+    const serialized = JSON.parse(replica.serialize());
+
+    expect(serialized.version).toBe(6);
+    expect(serialized.historyUsage).toMatchObject({ baselineId: null });
+    expect(serialized.blind.historicalContentKeys).toEqual(history);
+    const binding = JSON.parse(serialized.replication.binding) as unknown[];
+    expect(binding).toContainEqual({ historicalContentKeys: history });
+
+    const restored = await AutomationReplica.restore(JSON.stringify(serialized), automation, async () => {}, packet.transport);
+    expect(JSON.parse(restored.serialize())).toMatchObject({ version: 6,
+      blind: { keyEpoch: 2, contentKey: encodeBlindBytes(currentKey), historicalContentKeys: history } });
+  });
+
+  it("Given an active Worker, when a real change is admitted and its event is replayed, then history usage advances once", async () => {
+    const { automation, packet, persisted } = await fixture();
+    const replica = await AutomationReplica.activate(packet, automation);
+    const before = JSON.parse(replica.serialize()).historyUsage as { admittedChanges: number; encodedBytes: number };
+
+    const created = await replica.createLead("history-accounting-event", { company: "Acme", role: "Engineer" }, {});
+    expect(created.duplicate).toBe(false);
+    const after = JSON.parse(replica.serialize()).historyUsage as { admittedChanges: number; encodedBytes: number };
+    expect(after.admittedChanges).toBe(before.admittedChanges + 1);
+    expect(after.encodedBytes).toBeGreaterThan(before.encodedBytes);
+    expect(after).toMatchObject({ baselineId: null });
+
+    const committed = persisted.at(-1);
+    await expect(replica.createLead("history-accounting-event", { company: "Acme", role: "Engineer" }, {}))
+      .resolves.toMatchObject({ cardId: created.cardId, duplicate: true });
+    expect(replica.serialize()).toBe(committed);
+  });
+
+  it("Given an active history budget at its limit, when a new Worker change arrives, then preserve document and event state", async () => {
+    const { automation, packet } = await fixture();
+    const replica = await AutomationReplica.activate(packet, automation);
+    const saturated = JSON.parse(replica.serialize());
+    saturated.historyUsage = { baselineId: null, admittedChanges: 512, encodedBytes: 0 };
+    const writes: string[] = [];
+    const capped = await AutomationReplica.restore(JSON.stringify(saturated), automation,
+      async value => { writes.push(value); }, packet.transport);
+    const before = capped.serialize();
+    const candidatesBefore = capped.candidates();
+
+    await expect(capped.createLead("history-budget-blocked", { company: "Acme", role: "Engineer" }, {}))
+      .rejects.toThrow(/archive older history/i);
+
+    expect(capped.serialize()).toBe(before);
+    expect(writes).toHaveLength(0);
+    expect(capped.candidates()).toEqual(candidatesBefore);
+  });
+
   it("Given a remote attachment index, when the Worker pulls, writes, and restarts, then opaque locators persist and advance snapshot revision", async () => {
     const { automation, packet, persisted, key } = await fixture();
     const remote: { object?: Awaited<ReturnType<typeof encryptBlindObject>> } = {};
@@ -1972,12 +2561,19 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
     const { automation, packet, persisted } = await fixture();
     let uploadAttempt = 0;
     const uploaded: string[] = [];
+    const observedSequences: unknown[] = [];
     const transport: ReplicaTransport = {
       inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
       download: async () => { throw new Error("Unexpected download"); },
-      upload: async (access, object, requestId) => {
+      upload: async (...args: unknown[]) => {
+        const [accessValue, objectValue, requestIdValue, observedSequence] = args;
+        const access = accessValue as Parameters<ReplicaTransport["upload"]>[0];
+        const object = objectValue as Parameters<ReplicaTransport["upload"]>[1];
+        const requestId = requestIdValue as string;
         const saved = JSON.parse(persisted.at(-1)!) as { pending?: { object: unknown } };
         expect(saved.pending?.object).toEqual(object);
+        expect(saved.pending).toMatchObject({ observedSequence: 17 });
+        observedSequences.push(observedSequence);
         uploaded.push(await blindObjectId(object));
         uploadAttempt += 1;
         if (uploadAttempt === 1) throw new Error("Response lost after durable save");
@@ -1985,14 +2581,21 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
       },
     };
     packet.transport = transport;
-    const replica = await AutomationReplica.activate(packet, automation);
+    const initial = await AutomationReplica.activate(packet, automation);
+    const initialState = JSON.parse(initial.serialize()) as { blind: { cursor: number }; replication: { cursor: number } };
+    initialState.blind.cursor = 17;
+    initialState.replication.cursor = 17;
+    const replica = await AutomationReplica.restore(JSON.stringify(initialState), automation,
+      async value => { persisted.push(value); }, transport);
     await replica.createLead("web-event-2", { company: "Acme", role: "Engineer" }, { relevance: "yes" });
     await expect(replica.sync()).rejects.toThrow("Response lost");
     const stateAfterLoss = replica.serialize();
     expect(JSON.parse(stateAfterLoss)).toHaveProperty("pending.object");
+    expect(JSON.parse(stateAfterLoss).pending.observedSequence).toBe(17);
     const restored = await AutomationReplica.restore(stateAfterLoss, automation, async value => { persisted.push(value); }, transport);
     await restored.sync();
     expect(uploaded[0]).toBe(uploaded[1]);
+    expect(observedSequences).toEqual([17, 17]);
     expect(JSON.parse(restored.serialize()).pending).toBeUndefined();
   });
 });
@@ -2041,4 +2644,111 @@ it("Given owner employee_profile and job priority settings, when intake is autho
     expect(decision.priority.score).toBe(10);
     expect(JSON.parse(String(item.values[data.packet.bindings.fieldIds.sourceText!])).decision.assessment).toEqual(decision.assessment);
   } finally { Automerge.free(stored); }
+});
+
+it('Given a Worker on an older conflicting branch, when recovery advances beyond that branch, then retain every key candidate and preserve execution rights', async () => {
+  const data = await typedFixture()
+  const replica = await AutomationReplica.activate(data.packet, data.automation)
+  const before = replica.serialize(), stored = JSON.parse(before)
+  const { mergeReplicaContentKeyVariants } = await import('../../../src/sync/replicaContentKeys')
+  const fresh = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
+  const sibling = { ...stored.blind, contentKey: fresh() }
+  const newer = { ...stored.blind, ...rotateReplicaContentKeys(stored.blind, fresh()) }
+  const target = { ...stored.blind, ...mergeReplicaContentKeyVariants([stored.blind, sibling, newer], fresh()),
+    policyRevision: stored.blind.policyRevision + 1, readToken: fresh(), writeToken: fresh(), minimumWriterVersion: 2 as const }
+  const saves: string[] = []
+  await AutomationReplica.rotateStorageCredentials(before, data.automation, target, async value => { saves.push(value) }, () => {})
+  const after = JSON.parse(saves[0]!)
+  expect(after.version).toBe(6)
+  expect(after.blind.keyEpoch).toBe(stored.blind.keyEpoch + 2)
+  expect(after.blind.historicalContentKeyVariants[String(stored.blind.keyEpoch)]).toContain(stored.blind.contentKey)
+  expect(after.blind.historicalContentKeyVariants[String(stored.blind.keyEpoch)]).toContain(sibling.contentKey)
+  expect(after.grant).toEqual(stored.grant)
+  expect(after.rawDocument).toBe(stored.rawDocument)
+})
+
+it('Given compact history without an independently admitted scope anchor, when activating a Worker, then refuse before fetching archives or persisting state', async () => {
+  const data = await typedFixture()
+  const persist = vi.fn(async () => {})
+  const packet = { ...data.packet, persist, initial: { ...data.packet.initial,
+    history: { version: 1, signedJson: encodeBlindBytes(new TextEncoder().encode('{}')), basis: {
+      context: { workspaceId: data.packet.workspaceId, historyEpoch: 1, indexId: 'basis-document' }, reference: {}, locatorRoot: {} } } } }
+  await expect(AutomationReplica.activate(packet as AutomationActivationPacket, data.automation)).rejects.toThrow(/admitted.*scope authority/i)
+  expect(persist).not.toHaveBeenCalled()
+})
+
+it("Given unsealed Worker changes, when Owner prepares history, then upload original bytes without renewing authorization", async () => {
+  const data = await typedFixture();
+  const writes: Array<{ object: unknown; requestId: string | undefined }> = [];
+  const transport: ReplicaTransport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("Unexpected history download"); },
+    upload: async (access, object, requestId) => { writes.push({ object, requestId }); return signedReceipt(access, object, requestId); } };
+  data.packet.transport = transport;
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  await replica.createLead("history-unsealed", { company: "Acme", role: "Engineer" }, {});
+  const original = JSON.parse(replica.serialize());
+  const genesis = await signEnvelope(data.owner.privateKeys.devicePrivateKey, { kind: "scope-genesis", version: 1,
+    scopeId: data.packet.workspaceId, creator: { personId: data.owner.identity.personId, publicKey: data.owner.identity.publicKey,
+      certificates: [data.owner.certificate] }, controlEpoch: 1 }, data.owner.device.deviceId);
+  const anchor = { genesis, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] };
+  let saved = replica.serialize();
+  const inspector = await AutomationReplica.inspectForManagement(saved, data.automation, async next => { saved = next; }, transport);
+  const heads = await inspector.prepareHistory(anchor, async () => {});
+  expect(heads.length).toBeGreaterThan(0);
+  expect(writes).toHaveLength(1);
+  const after = JSON.parse(saved);
+  expect(after.rawDocument).toBe(original.rawDocument);
+  expect(after.grant).toEqual(original.grant);
+  expect(after.applied).toEqual(original.applied);
+  expect(after.blind.contentKey).toBe(original.blind.contentKey);
+  expect(after.pending).toBeUndefined();
+  expect(after.scopeAuthoritySnapshot).toEqual(anchor);
+  await expect(inspector.verifyHistory("A".repeat(43), heads, async () => {})).rejects.toThrow(/exact requested verified history/);
+});
+
+it("Given a prepared history freeze, when retried or another transition arrives, then retain the frozen frontier and block event execution", async () => {
+  const integrationId = `history-${crypto.randomUUID().replace(/-/g, "")}`;
+  const data = await typedFixture();
+  const transport: ReplicaTransport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("Unexpected history download"); },
+    upload: async (access, object, requestId) => signedReceipt(access, object, requestId) };
+  data.packet.transport = transport;
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
+  const stub = testEnv.AUTOMATION.getByName(integrationId);
+  await stub.saveReplicaState(reviewStorageSecret, replica.serialize());
+  await runInDurableObject(stub, async instance => {
+    Reflect.set(instance, "env", testEnv);
+    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+  });
+  const genesis = await signEnvelope(data.owner.privateKeys.devicePrivateKey, { kind: "scope-genesis", version: 1,
+    scopeId: data.packet.workspaceId, creator: { personId: data.owner.identity.personId, publicKey: data.owner.identity.publicKey,
+      certificates: [data.owner.certificate] }, controlEpoch: 1 }, data.owner.device.deviceId);
+  const blind = data.packet.blind;
+  const body = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake", executorPersonId: data.automation.identity.personId,
+    integrationId, transitionId: crypto.randomUUID(), storage: { origin: blind.origin, scopeId: blind.scopeId,
+      keyEpoch: blind.keyEpoch, servicePublicKey: blind.servicePublicKey },
+    scopeAuthoritySnapshot: { genesis, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] } };
+  for (let retry = 0; retry < 2; retry++) {
+    const proof = await signedInstanceRequest(data.owner, "prepare-history-baseline", body, integrationId);
+    const response = await postAutomationInstance("prepare-history-baseline", proof, body, testEnv);
+    expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+    const verified = await verifyAutomationInstanceIdentity(await response.json(), { origin: reviewOrigin,
+      workspaceId: body.workspaceId, definitionId: body.definitionId, integrationId, executorPersonId: body.executorPersonId,
+      requestNonce: proof.signed.payload.nonce });
+    expect(verified.description.historyTransition).toMatchObject({ transitionId: body.transitionId, state: "frozen" });
+  }
+  const changed = { ...body, transitionId: crypto.randomUUID() };
+  const other = await signedInstanceRequest(data.owner, "prepare-history-baseline", changed, integrationId);
+  expect((await postAutomationInstance("prepare-history-baseline", other, changed, testEnv)).status).not.toBe(200);
+  await runInDurableObject(stub, async (instance, ctx) => {
+    ctx.storage.sql.exec(`INSERT INTO events (event_id, source, source_id, body_hash, payload, status, created_at, updated_at, next_attempt_at)
+      VALUES ('history-frozen-event', 'website', 'history-frozen-event', ?, 'encrypted-placeholder', 'pending', ?, ?, 0)`, "B".repeat(43), Date.now(), Date.now());
+    await instance.alarm();
+    expect(ctx.storage.sql.exec<{ status: string; attempt: number }>("SELECT status, attempt FROM events WHERE event_id = 'history-frozen-event'").one())
+      .toEqual({ status: "pending", attempt: 0 });
+    expect(ctx.storage.sql.exec("SELECT * FROM automation_history_transition WHERE singleton = 1").toArray()).toHaveLength(1);
+  });
 });

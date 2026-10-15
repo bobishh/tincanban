@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: 5238a1bcc94bec99583c86710d6242cec306551d
+  RUSTY_REVISION: e95e1cc44594eaa11c74df2a20fb704ef5feb0bd
 
 jobs:
   verify:
@@ -47,8 +47,11 @@ jobs:
           retention-days: 14
       - name: Verify frontend deployment adapter
         run: node --test workers/frontend/*.test.mjs
+      - name: Verify cohort artifact and deployment contracts
+        run: node --test scripts/release-cohort.test.mjs scripts/release-coordinator.test.mjs scripts/release-recovery.test.mjs scripts/deploy-rusty-cohort.test.mjs scripts/fetch-rusty-deploy-config.test.mjs
       - name: Build checked production frontend
         env:
+          RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           VITE_PUBLIC_BOARD_ORIGIN: ${{ vars.VITE_PUBLIC_BOARD_ORIGIN }}
           VITE_SYNC_TELEMETRY_URL: ${{ vars.VITE_SYNC_TELEMETRY_URL }}
           VITE_SYNC_TELEMETRY_PROJECT: ${{ vars.VITE_SYNC_TELEMETRY_PROJECT || 'tincanban' }}
@@ -61,12 +64,17 @@ jobs:
       - run: npm audit --audit-level=moderate
       - name: Seal checked build
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: node workers/frontend/release.mjs seal "$GITHUB_SHA"
+        env:
+          RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          node workers/frontend/release.mjs seal "$GITHUB_SHA"
+          node workers/frontend/release.mjs retain "$GITHUB_SHA"
+          node scripts/capture-release-artifact.mjs frontend .release/frontend
       - uses: actions/upload-artifact@v6
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
-          name: tincanban-frontend-${{ github.sha }}
-          path: dist/
+          name: tincanban-frontend-cohort-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/frontend/
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
@@ -282,10 +290,15 @@ jobs:
         run: |
           cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
           cargo build --locked --manifest-path vendor/meta-mesh/Cargo.toml -p meta-mesh-core --example history_archive_verify
+      - name: Fetch the exact previously deployed reader artifacts
+        run: |
+          git fetch --no-tags --depth=1 origin 07242d4880821829026234ca1a3cb6bd07ee29fe
+          git -C vendor/meta-mesh fetch --no-tags --depth=1 origin 111943361d2c765557da00bbc568596ff1a5d047
       - name: Verify actual clients against restarted Native storage and policy
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           TINCANBAN_HISTORY_VERIFY_BINARY: ${{ github.workspace }}/vendor/meta-mesh/target/debug/examples/history_archive_verify
+          TINCANBAN_PRIOR_READER_PROBE: "1"
         run: npm run test:rusty-management
 
   automation-worker:
@@ -327,8 +340,24 @@ jobs:
         run: |
           npm run check
           npm test
-          npm run test:runtime
-          npm run build
+          npm run build -- --outdir .artifact
+      - name: Capture the checked immutable Worker bundle
+        env:
+          RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/capture-release-artifact.mjs automation .release/automation
+      - name: Verify the captured Worker artifact in the real runtime
+        working-directory: workers/automation
+        env:
+          TINCANBAN_AUTOMATION_RUNTIME_CONFIG: ../../.release/automation/wrangler.json
+        run: npm run test:runtime
+      - uses: actions/upload-artifact@v6
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: tincanban-automation-cohort-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/automation/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium webkit
@@ -356,4 +385,55 @@ jobs:
           path: |
             test-results-automation-worker/
             test-results/
+          retention-days: 3
+
+  browser-archives:
+    name: Browser (archives and attachments ${{ matrix.project }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        project:
+          - attachments-rusty
+          - attachments-rusty-webkit
+          - attachment-session-recovery
+          - attachment-session-recovery-webkit
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/checkout@v7
+        with:
+          repository: bobishh/rusty
+          ref: ${{ env.RUSTY_REVISION }}
+          path: .ci/rusty
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:meta-mesh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Move Rusty outside the application Cargo workspace
+        run: cp -a "$GITHUB_WORKSPACE/.ci/rusty" "$RUNNER_TEMP/tincanban-rusty"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ runner.temp }}/tincanban-rusty -> target
+      - name: Build the pinned blind storage service
+        run: cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
+      - name: Use Ubuntu primary archive mirror for browser dependencies
+        run: bash scripts/use-primary-ubuntu-mirror.sh
+      - run: npx playwright install --with-deps chromium webkit
+      - name: Verify archive recovery and attachment lifecycle
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+        run: npx playwright test --reporter=list --project=${{ matrix.project }}
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: archives-${{ matrix.project }}-failure
+          path: test-results/
           retention-days: 3

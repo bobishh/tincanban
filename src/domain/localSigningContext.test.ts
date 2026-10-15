@@ -1,12 +1,22 @@
-import { beforeEach, expect, it } from "vitest"
+import { afterEach, beforeEach, expect, it } from "vitest"
 import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, resetIdentityStorageForTest, toBase64Url, verifyEnvelope, type LocalProfile } from "./identity"
 import { resolveLocalSigningContext } from "./localSigningContext"
 import { signingEvidence, signWithContext } from "./signingContext"
 import { deleteLocal, readLocal, writeLocal } from "../localDb"
+import { applyReleaseObservation, resetReleaseStateForTest } from "../release/runtimeRelease"
 
 let profile: LocalProfile
 beforeEach(async () => { resetIdentityStorageForTest(); profile = await bootstrapIdentity("Owner") })
+afterEach(resetReleaseStateForTest)
+
+it("Given an already prepared local writer, when a newer incompatible cohort appears, then reject its final signature", async () => {
+  const context = await resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" })
+  applyReleaseObservation({ kind: "tincanban-release-cohort", version: 1, cohortId: "a".repeat(64),
+    components: { frontend: { candidateId: "new-build", artifactSha256: "b".repeat(64) } },
+    contract: { minimumWriterVersion: 3, readers: { frontend: { privateReplicas: 4 } } } }, "old-build")
+  await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/Update required/)
+})
 
 it("Given the active local identity, when resolving a bound owner request, then sign with verified evidence", async () => {
   const context = await resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" })

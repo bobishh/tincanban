@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import { IDBFactory } from "fake-indexeddb"
 import { afterEach, expect, it, vi } from "vitest"
 import { BLOB_CHUNK_BYTES, MeshBlobStore } from "@meta-uber/mesh-blob"
@@ -45,7 +46,7 @@ it("Given bounded source chunks, when preparation is interrupted after every chu
   expect(f.upload.mock.calls.slice(0, 2).map(call => call[2])).toEqual(staged!.chunks.map(chunk => chunk.requestId))
   expect(locator.transferId).toBe(staged!.transferId)
   expect(await f.reopen().preparation!.read()).toBeNull()
-  expect(await f.engine(f.reopen()).download(f.descriptor, locator)).toEqual(f.bytes)
+  expect(Buffer.compare(await f.engine(f.reopen()).download(f.descriptor, locator), f.bytes)).toBe(0)
 })
 
 it("Given an interrupted prefix, when a replacement source differs, then preserve the old encrypted prefix and require the original file", async () => {
@@ -75,7 +76,7 @@ it("Given a source with the right length and wrong digest, when staged completel
   expect(await f.repository.preparation.read()).toBeNull()
   expect((await f.local.listLocalKeys()).filter(key => key.startsWith("tincanban.attachment-object.v1."))).toEqual([])
   const locator = await f.engine(f.reopen()).uploadStream(f.descriptor, f.source())
-  expect(await f.engine(f.reopen()).download(f.descriptor, locator)).toEqual(f.bytes)
+  expect(Buffer.compare(await f.engine(f.reopen()).download(f.descriptor, locator), f.bytes)).toBe(0)
 })
 
 it("Given final journal publication succeeds but its response is lost, when restarted, then reuse the completed journal without reading the source", async () => {
@@ -112,7 +113,7 @@ it("Given a streamed download fails on its last chunk, when writing the local si
   f.download.mockClear()
   const retry = new AttachmentTransfer(f.scope, f.access, recipient, async () => {}, f)
   await store.putStream(f.descriptor, retry.downloadStream(f.descriptor, locator))
-  expect(await store.getVerified(f.descriptor)).toEqual(f.bytes)
+  expect(Buffer.compare((await store.getVerified(f.descriptor))!, f.bytes)).toBe(0)
   expect(f.download).toHaveBeenCalledOnce()
 })
 
@@ -126,5 +127,5 @@ it("Given a download iterator is created before caller mutation, when consumed l
   const chunks: Uint8Array[] = []
   for await (const chunk of iterator) chunks.push(chunk)
   expect(chunks.map(chunk => chunk.length)).toEqual([BLOB_CHUNK_BYTES, BLOB_CHUNK_BYTES])
-  expect(chunks[0]).toEqual(f.bytes.slice(0, BLOB_CHUNK_BYTES))
+  expect(Buffer.compare(chunks[0]!, f.bytes.slice(0, BLOB_CHUNK_BYTES))).toBe(0)
 })

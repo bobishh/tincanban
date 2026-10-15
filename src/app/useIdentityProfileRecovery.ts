@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref, watch } from "vue"
 import type { useTincanban } from "../state"
-import { retryPendingIdentityProfiles } from "../sync/identityDeviceActivationLoader"
+import { recoverPendingIdentityDeviceActivation } from "../sync/identityDeviceActivationLoader"
 import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
 import type { ProfileProjectionResult } from "../sync/identityProfileProjection"
 
@@ -24,7 +24,7 @@ export function useIdentityProfileRecovery(app: ReturnType<typeof useTincanban>)
       try {
         await app.refreshIdentity()
         guard()
-        const result = await retryPendingIdentityProfiles(personId, guard)
+        const result = await recoverPendingIdentityDeviceActivation(personId, guard)
         guard()
         pending.value = result?.pending ?? []
         error.value = ""

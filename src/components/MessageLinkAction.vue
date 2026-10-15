@@ -47,9 +47,9 @@ async function copyLink() {
 </template>
 
 <style scoped>
-.message-link-action { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.message-link-action { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); min-width: 0; max-width: 100%; }
 
 .message-link-action > span, .message-link-action small { color: var(--muted); font-size: .8rem; }
-.message-link-action label { display: grid; gap: 4px; width: 100%; min-width: 0; font-size: .8rem; }
+.message-link-action label { display: grid; gap: var(--space-1); width: 100%; min-width: 0; font-size: .8rem; }
 .message-link-action input { width: 100%; min-width: 0; box-sizing: border-box; }
 </style>

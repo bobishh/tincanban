@@ -1,11 +1,11 @@
 import * as Automerge from "@automerge/automerge/slim"
-import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
+import { WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "./workspaceAdmissionCore"
 
 /** Historical issuer evidence never substitutes for a currently authorized owner or a live execution grant. */
 export function admitHistoricalAutomationAuthority(input: {
-  workspaceId: string; epoch: number; bytes: Uint8Array; authorization: unknown
+  workspaceId: string; epoch: number; bytes: Uint8Array; authorization: unknown; receivedBasis?: WasmVerifiedReceivedHistoryBaseline
 }) {
   const captured = { ...input, bytes: input.bytes.slice(), authorization: structuredClone(input.authorization) }
   const bundle = historicalBundle(captured.authorization)
@@ -19,7 +19,7 @@ export function admitHistoricalAutomationAuthority(input: {
       throw new Error("Automation ownership history does not match its current owner")
     }
     const admission = computeWorkspaceDocumentAdmission({ workspaceId: captured.workspaceId,
-      authorization: { ...bundle, authority }, knownAuthority: null, now: Date.now() }, WasmStateCore as never, document)
+      authorization: { ...bundle, authority }, receivedBasis: captured.receivedBasis, knownAuthority: null, now: Date.now() }, WasmStateCore as never, document)
     if (admission.pendingHashes.length || admission.quarantinedHashes.length || admission.admittedHashes.length !== admission.neededHashes.length) {
       throw new Error("Automation approval history is not fully authorized")
     }

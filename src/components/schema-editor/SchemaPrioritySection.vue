@@ -309,8 +309,8 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
 </template>
 
 <style scoped>
-.priority-profile { display: grid; gap: 12px; min-width: 0; margin: 0; padding: 14px; }
-.priority-toggle { display: flex; align-items: center; gap: 8px; }
-.priority-profile-import { display: grid; gap: 8px; justify-items: start; }
-.priority-profile label { display: grid; gap: 0.35rem; }
+.priority-profile { display: grid; gap: var(--space-3); min-width: 0; margin: 0; padding: var(--space-3); }
+.priority-toggle { display: flex; align-items: center; gap: var(--space-2); }
+.priority-profile-import { display: grid; gap: var(--space-2); justify-items: start; }
+.priority-profile label { display: grid; gap: var(--space-2); }
 </style>

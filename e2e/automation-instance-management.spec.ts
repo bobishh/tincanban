@@ -74,13 +74,18 @@ async function prepareAutomationManagement(page: Page, baseURL: string, scenario
   await ensureJobSearchWorkspace(page)
   const fixture = await page.evaluate(async ({ workerOrigin, definitionId, scenario }) => {
     const { bootstrapIdentity, signEnvelope, publicKeyId, toBase64Url } = await import("/src/domain/identity.ts")
-    const { identitySeedFromPrivateKey, profileFromIdentitySeedForDevice } = await import("@meta-uber/mesh-identity")
+    const { identitySeedFromPrivateKey, profileFromIdentitySeedForDevice } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
     const { useTincanban } = await import("/src/state.ts")
+    const { recordReplicaPreference } = await import("/src/sync/identityDevicePreferences.ts")
     const { automationTypes, parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
     const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")
     const profile = await bootstrapIdentity()
     const doc = useTincanban().getActiveDoc()
     if (!doc) throw new Error("Workspace is unavailable")
+    const privateToken = () => toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    await recordReplicaPreference(profile.identity.personId, { origin: "https://automation-storage.example.test", workspaceId: doc.id,
+      scopeId: privateToken(), readToken: privateToken(), writeToken: privateToken(), contentKey: privateToken(),
+      servicePublicKey: profile.device.publicKey, keyEpoch: 1, policyRevision: 2, minimumWriterVersion: 2, cursor: 0, lastUploaded: "" })
     const board = Object.values(doc.entities).find(entity => entity.kind === "board" && entity.preset?.key === "job-search")
     if (!board || board.kind !== "board") throw new Error("Job-search board is missing")
     const bindings = board.preset.bindings

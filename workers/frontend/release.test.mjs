@@ -21,22 +21,24 @@ test('Given several deployments while a tab stays open, when retaining assets, t
 test('Given a repeated release tag, when CI publishes, then deploy the exact uploaded version rather than resolving the tag', async () => {
   const { readFileSync } = await import('node:fs');
   const workflow = readFileSync(new URL('../../.github/workflows/deploy-frontend.yml', import.meta.url), 'utf8');
+  const coordinator = readFileSync(new URL('../../scripts/release-coordinator.mjs', import.meta.url), 'utf8');
   assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$upload_output"/);
-  assert.match(workflow, /release\.mjs uploaded-version "\$upload_output"/);
-  assert.match(workflow, /versions deploy .*"\$version_id@100"/);
+  assert.match(workflow, /release-coordinator\.mjs record-version/);
+  assert.match(coordinator, /uploadedVersion\(readFileSync/);
+  assert.match(coordinator, /versionId\}@100/);
   assert.doesNotMatch(workflow, /--version-tag/);
 });
 
 test('Given a sealed build with Vite hidden manifest, when CI uploads dist, then include hidden files for deployment', async () => {
   const { readFileSync } = await import('node:fs');
   const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
-  const artifactName = 'name: tincanban-frontend-${{ github.sha }}';
+  const artifactName = 'name: tincanban-frontend-cohort-${{ github.sha }}';
   const artifactIndex = workflow.indexOf(artifactName);
   assert.notEqual(artifactIndex, -1, 'frontend artifact upload step must exist');
   const uploadStepStart = workflow.lastIndexOf('      - uses: actions/upload-artifact@v6', artifactIndex);
   const nextStepStart = workflow.indexOf('\n      - ', artifactIndex);
   const uploadStep = workflow.slice(uploadStepStart, nextStepStart < 0 ? undefined : nextStepStart);
-  assert.match(uploadStep, /path:\s*dist\//);
+  assert.match(uploadStep, /path:\s*\.release\/frontend\//);
   assert.match(uploadStep, /include-hidden-files:\s*true/);
 });
 

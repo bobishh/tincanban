@@ -1,6 +1,6 @@
 
-.topbar { position: sticky; top: 0; z-index: 20; min-height: 76px; padding: 0 max(var(--site-gutter), calc((100% - var(--site-content-max)) / 2 + var(--site-gutter))); border-bottom: 2px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 20px; background: var(--paper); }
-.brand { display: flex; align-items: center; gap: 10px; }
+.topbar { position: sticky; top: 0; z-index: 20; min-height: 76px; padding: 0 var(--site-gutter); border-bottom: 2px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); background: var(--paper); }
+.brand { display: flex; align-items: center; gap: var(--space-2); }
 .brand-button { min-height: 0; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; }
 .brand-button:hover { transform: none; }
 .brand-presence { position: relative; width: 32px; height: 40px; flex: 0 0 32px; }
@@ -22,8 +22,8 @@
 @media (max-width: 768px) {
   .topbar {
     min-height: 60px;
-    gap: 12px;
-    padding: max(10px, var(--safe-top)) max(16px, var(--safe-right)) 10px max(16px, var(--safe-left));
+    gap: var(--space-3);
+    padding: max(var(--space-2), var(--safe-top)) max(var(--space-4), var(--safe-right)) var(--space-2) max(var(--space-4), var(--safe-left));
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -38,7 +38,7 @@
     display: flex;
     flex-shrink: 0;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-2);
     margin-left: auto;
   }
 }
@@ -72,7 +72,7 @@
 }
 
 @media (max-width: 768px) {
-  .workspace-heading { margin-top: 3px; overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
+  .workspace-heading { margin-top: var(--space-1); overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
 }
 
 @media (max-width: 768px) {

@@ -17,23 +17,27 @@ export function workspaceProofTransfer(store: WorkspaceSetStore, ids: string[]) 
       for (const runtime of sources.values()) runtime.free?.()
       sources.clear()
     },
-    async serveProofPage(frame: Uint8Array, stream: DuplexStream, secret: string): Promise<boolean> {
+    async serveProofPage(frame: Uint8Array, stream: DuplexStream, secret: string,
+      ensureCurrent: () => void | Promise<void> = () => undefined): Promise<boolean> {
       const id = requestWorkspace(frame, secret, ids)
       if (!id) return false
       const key = `${id}:${secret}`
       const runtime = sourceRuntime(sources, key, id, secret)
       try {
+        await ensureCurrent()
         const effect = runtime.receiveFrame(frame)
         if (effect?.kind !== "proofSource") throw new Error("Invalid proof request")
         const payload = Uint8Array.from(effect.payload)
         const response = runtime.provideCachedProofPage(payload)
-          ?? await prepareSourcePage(store, id, runtime, payload)
+          ?? await prepareSourcePage(store, id, runtime, payload, ensureCurrent)
+        await ensureCurrent()
         await stream.send(Uint8Array.from(response))
         await stream.closeSend()
         return true
       } catch (error) {
         runtime.free?.()
         sources.delete(key)
+        try { await stream.reset?.() } catch { /* Preserve the authorization failure. */ }
         throw error
       }
     },
@@ -68,10 +72,15 @@ function sourceRuntime(sources: Map<string, RustMeshScopeRuntime>, key: string, 
   sources.set(key, runtime)
   return runtime
 }
-async function prepareSourcePage(store: WorkspaceSetStore, id: string, runtime: RustMeshScopeRuntime, payload: Uint8Array) {
+async function prepareSourcePage(store: WorkspaceSetStore, id: string, runtime: RustMeshScopeRuntime, payload: Uint8Array,
+  ensureCurrent: () => void | Promise<void>) {
   if (!store.readAuthorization) throw new Error("Proof workspace outside invitation scope")
+  await ensureCurrent()
   const document = await store.read(id)
-  return runtime.provideProofPage(payload, document, await store.readAuthorization(document, id))
+  await ensureCurrent()
+  const authorization = await store.readAuthorization(document, id)
+  await ensureCurrent()
+  return runtime.provideProofPage(payload, document, authorization)
 }
 async function localDocument(store: WorkspaceSetStore, id: string): Promise<Uint8Array> {
   try { return await store.read(id) }

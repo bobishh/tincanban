@@ -211,17 +211,17 @@ The full board typography remains unchanged.
 Four real HTTP/DO acceptance cases exercise routing, review/save/retry, unbound retry and mailbox
 reads/replays. Their network-sync fixture is replaced; separate replica-engine tests
 verify actual signed receipts. Full binding eviction/restart, old-reader and browser
-acceptance remain open. Unbound retry now discovers the typed executor's actual route, negotiates its
+acceptance are mapped in the [acceptance contract](../openspec/changes/unified-device-and-replica-architecture/verification-map.md). Unbound retry discovers the typed executor's actual route, negotiates its
 advertised action, uses a fresh Owner request and rejects bound messages. Missing
 capability alone permits the older reader; malformed action advertisements and
 permission/network/proof failures do not. Untyped legacy route adoption and
-activation routing still need explicit migration. These controls have not been
-verified in a browser or deployed.
-Immutable submission/ATS/thread references, manual first-Apply capture, legacy
-migration, recovery-fork provenance and source detail/refresh UI remain incomplete.
-Five browser scenarios are authored but unrun;
-their job-page fixture endpoint and remaining product controls are not yet
-implemented. No release or deployed phone behavior is established by this work.
+activation routing require explicit migration. Original URL-extracted posting
+evidence and available submission/ATS/thread references remain immutable; editable
+card titles do not replace them. Legacy applications without reliable original
+evidence remain pending. Browser acceptance covers original evidence, pending
+legacy records, explicit ambiguous binding/retry, stale workflow and revoked
+grant rejection. Universal Inbox and declarative CLEF processing remain
+specification-only. Exact production deployment is established by cohort evidence.
 
 ## Automation approval continuity
 
@@ -328,8 +328,7 @@ Identity settings submits name and optional photo together. One compare-and-swap
 commits signed operations, root presentation and local profile presentation.
 The form captures its reviewed revision when editing begins; an intervening
 profile update requires review before save can retry. Loading disables edits,
-failed saves keep drafts, and conflicts expose explicit choices. These browser
-scenarios are authored but remain unrun. Equal already-signed values do not create
+failed saves keep drafts, and conflicts expose explicit choices. Equal already-signed values do not create
 additional operations. Shared workspace avatars are outward projections or a
 display fallback; their timestamps cannot overwrite the private register.
 
@@ -341,23 +340,11 @@ objects, permits only display-label changes and can require the exact captured
 raw record. Enrollment continues through its guarded adoption transaction.
 
 The causal model's 512-operation, 512-legacy-value and 1 MiB bounds are local
-evidence caps, not the required archive/checkpoint policy. Historical archives,
-cross-path browser acceptance and coordinated reader rollout remain unfinished.
-
-The latest full app run passed 2,217 tests across 214 files, with one opt-in file
-and two tests skipped. It followed a fix for a UI-copy-policy assertion and a
-secondary-context fixture; the affected model/copy-policy files passed 432 focused
-cases with targeted lint before the full rerun. The pure causal model's six tests
-are included in the full count. Full quality passed types, lint, dead-code,
-dependency, duplication and pattern checks (591 modules / 2,107 dependencies)
-before the final duplicate-legacy/error-word/fixture edits; targeted lint passed
-for their affected files. Vendor SDK package-index lint is outside root quality and
-still reports four pre-existing untouched issues. Build-size checks after the
-name/model changes passed: private JS 237.23/239 KB, private CSS 10.74/10.75 KB,
-public JS 61.8/235 KB and public CSS 10.6/10.6 KB, plus Markdown and all three WASM
-budgets. Native Rusty was not rerun after this profile increment; the prior three
-HTTP cases remain earlier evidence. No E2E/browser verification or release-gate
-completion is claimed.
+evidence caps, separate from workspace history compaction and preserved archives.
+The [history contract](../openspec/changes/unified-device-and-replica-architecture/history-archive-contract.md)
+defines coverage, cold receivers, earlier revision reads and private recovery.
+The compatible release coordinator verifies deployed reader artifacts separately
+from local source and test results.
 
 Private identity-scope Rusty delivery now has a separate typed adapter. Identity
 credentials carry `purpose: "identity"` and `personId` without a workspace ID;

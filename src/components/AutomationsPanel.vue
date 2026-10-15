@@ -1,23 +1,8 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount, ref, shallowRef, type Component } from "vue"
-import type { ApplicationReviewManagement } from "../app/applicationReviewManagement"
+import { ref } from "vue"
 import { automationTypes } from "../domain/automationContract"
 import type { AutomationManagement } from "../app/useAutomations"
 const props = defineProps<{ management: AutomationManagement; owner: boolean }>()
-const ApplicationReviewDialog = defineAsyncComponent<Component>(() => import("./ApplicationReviewDialog.vue"))
-const applicationReview = shallowRef<ApplicationReviewManagement | null>(null)
-const reviewFailure = ref("")
-let reviewGeneration = 0
-function closeReview() { reviewGeneration += 1; applicationReview.value?.close(); applicationReview.value = null }
-onBeforeUnmount(closeReview)
-async function reviewEmail(record: AutomationManagement["records"]["value"][number], eventId: string) {
-  closeReview(); const generation = reviewGeneration; reviewFailure.value = ""
-  try {
-    const review = await props.management.reviewEmail(record, eventId)
-    if (generation !== reviewGeneration) { review.close(); return }
-    applicationReview.value = review
-  } catch (error) { if (generation === reviewGeneration) reviewFailure.value = error instanceof Error ? error.message : "Application review unavailable" }
-}
 const adding = ref(false)
 const name = ref("Job intake")
 const address = ref("https://automation.meta-uber-engineer.dev")
@@ -27,7 +12,6 @@ const approving = ref("")
 const approvalMode = ref<"renew" | "adopt" | "email" | "evidence">("renew")
 const approvalConsent = ref(false)
 const stateLabel = { active: "Active", paused: "Paused", deleted: "Removed" }
-const emailStateLabel: Record<string, string> = { pending: "Queued", processing: "Processing", applied: "Applied", review: "Needs review", failed: "Failed" }
 async function connect() {
   try {
     await props.management.add(address.value, { name: name.value, type: "job-intake", typeVersion: 2, parameters: { sources: ["website"] } }, consent.value)
@@ -67,9 +51,6 @@ async function confirmApproval(record: AutomationManagement["records"]["value"][
 async function retry(record: AutomationManagement["records"]["value"][number]) {
   try { await props.management.retry(record) } catch { /* Keep failed activation visible. */ }
 }
-async function retryEmail(record: AutomationManagement["records"]["value"][number], eventId: string) {
-  try { await props.management.retryEmail(record, eventId) } catch { /* Keep failed processing retry visible. */ }
-}
 </script>
 <template>
   <section class="automations" aria-label="Automations">
@@ -95,25 +76,13 @@ async function retryEmail(record: AutomationManagement["records"]["value"][numbe
         <p class="dialog-copy">Allow this automation to keep original vacancy evidence with new cards.</p>
         <button class="button button-small" type="button" :disabled="management.busy.value" @click="enableEvidence(record)">Enable vacancy evidence</button>
       </template>
-      <section v-if="owner && (management.email.value[record.entity.id]?.route || management.email.value[record.entity.id]?.receipt.events.length)" aria-label="Email forwarding" class="automation-record">
+      <section v-if="owner && management.email.value[record.entity.id]?.route" aria-label="Email forwarding" class="automation-record">
         <h4>Email forwarding</h4>
         <p v-if="management.email.value[record.entity.id]?.route" class="dialog-copy">Forward copies of job emails from {{ management.email.value[record.entity.id]?.route?.mailbox }} to this private address. Keep originals in your inbox.</p>
         <input v-if="management.email.value[record.entity.id]?.route" aria-label="Forwarding address" readonly :value="management.email.value[record.entity.id]?.route?.address" />
         <button v-if="!record.definition.parameters.sources.includes('email')" class="button button-small" type="button" :disabled="management.busy.value" @click="enableEmail(record)">Enable email and Applied</button>
         <p v-else-if="!management.confirmation(record)" role="status">Email activation pending</p>
-        <p v-else role="status">Email enabled · {{ management.email.value[record.entity.id]?.receipt.events.length ? 'Mail received' : 'Waiting for first email' }}</p>
-        <ul v-if="management.email.value[record.entity.id]?.receipt.events.length" aria-label="Recent email processing" class="automation-email-events">
-          <li v-for="event in management.email.value[record.entity.id]?.receipt.events" :key="event.eventId">
-            <strong>{{ event.subject || 'Forwarded email' }}</strong>
-            <span>{{ emailStateLabel[event.status] || event.status }} · {{ new Date(event.createdAt).toLocaleString() }}</span>
-            <p v-if="event.result?.reason"><template v-if="event.status === 'pending' || event.status === 'processing'">Last attempt: </template>{{ event.result.reason }}</p>
-            <p v-if="event.bindingId" role="status">Owner binding saved</p>
-            <button v-if="event.status === 'review' || event.status === 'failed' || event.bindingId" class="button button-small" type="button"
-              :disabled="management.busy.value" @click="reviewEmail(record, event.eventId)">Bind application</button>
-            <button v-if="event.status === 'review' || event.status === 'failed'" class="button button-small" type="button"
-              :disabled="management.busy.value || record.control.state !== 'active' || !management.confirmation(record)" @click="retryEmail(record, event.eventId)">Retry processing</button>
-          </li>
-        </ul>
+        <p v-else role="status">Email enabled</p>
         <a v-if="management.email.value[record.entity.id]?.receipt.confirmation" :href="management.email.value[record.entity.id]?.receipt.confirmation?.url" target="_blank" rel="noopener noreferrer">Confirm Gmail forwarding</a>
       </section>
       <div v-if="owner && record.control.state !== 'deleted'" class="automation-actions">
@@ -133,24 +102,17 @@ async function retryEmail(record: AutomationManagement["records"]["value"][numbe
     </article>
     <p v-if="management.busy.value" role="status">Saving automation…</p>
     <p v-if="management.failure.value" role="alert">{{ management.failure.value }}</p>
-    <p v-if="reviewFailure" role="alert">{{ reviewFailure }}</p>
-    <ApplicationReviewDialog v-if="applicationReview" :review="applicationReview.review.value" :busy="applicationReview.busy.value"
-      :failure="applicationReview.failure.value" :saved="applicationReview.saved.value" @close="closeReview"
-      @select="applicationReview.select" @page="applicationReview.page" @save="applicationReview.save" @retry="applicationReview.retry" />
   </section>
 </template>
 <style scoped>
-.automation-email-events { display: grid; gap: 12px; margin: 0; padding-left: 20px; }
-.automation-email-events li > span { display: block; color: var(--muted); }
-.automation-email-events p { margin: 4px 0 0; }
-.automations { display: grid; gap: 14px; margin-top: 24px; }
-.automation-heading, .automation-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.automations { display: grid; gap: var(--space-3); margin-top: var(--space-5); }
+.automation-heading, .automation-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
 h3, h4, p { margin: 0; }
 .automation-heading { justify-content: space-between; }
-.automation-form, .automation-record { display: grid; gap: 12px; border-top: 1px solid var(--ink, #333); padding-top: 16px; }
-label { display: grid; gap: 6px; }
+.automation-form, .automation-record { display: grid; gap: var(--space-3); border-top: 1px solid var(--ink, #333); padding-top: var(--space-4); }
+label { display: grid; gap: var(--space-1); }
 input { min-width: 0; }
-.automation-consent { display: flex; align-items: center; gap: 10px; }
+.automation-consent { display: flex; align-items: center; gap: var(--space-2); }
 .automation-state { color: var(--muted, #666); }
 .automation-state.confirmed { color: var(--green, #176b50); }
 </style>

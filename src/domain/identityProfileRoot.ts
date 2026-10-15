@@ -8,10 +8,29 @@ import { createIdentityProfileOperation, emptyIdentityProfileState, identityProf
 /** Migration retains original observations without inventing an author, counter or timestamp order. */
 export async function rootIdentityProfileState(root: PersonalRootDocumentV1): Promise<IdentityProfileState> {
   root = structuredClone(root)
-  if (root.profileState !== undefined) return readIdentityProfileState(root.profileState, root.identity)
+  if (root.profileState !== undefined) {
+    const state = await readIdentityProfileState(root.profileState, root.identity)
+    assertPresentationShadow(root, state)
+    return state
+  }
   let state = await observeLegacyIdentityProfile(emptyIdentityProfileState(root.identity.personId), root.identity, "name", root.identity.displayName)
   if (root.photo) state = await observeLegacyIdentityProfile(state, root.identity, "photo", root.photo)
   return state
+}
+
+function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityProfileState): void {
+  const name = identityProfileValue(state, "name")
+  if (!name.values.some(value => typeof value === "string" && value === root.identity.displayName)) {
+    throw new Error("Saved identity presentation does not match its profile history")
+  }
+  const photo = identityProfileValue(state, "photo")
+  if (root.photo !== undefined && !photo.values.some(value => typeof value !== "string" &&
+      value.avatarData === root.photo?.avatarData)) {
+    throw new Error("Saved identity presentation does not match its profile history")
+  }
+  if (photo.status === "value" && root.photo === undefined) {
+    throw new Error("Saved identity presentation does not match its profile history")
+  }
 }
 
 /** Shadows serve existing UI/export readers; a conflict never selects a new value for them. */

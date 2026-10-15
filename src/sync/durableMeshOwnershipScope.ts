@@ -1,5 +1,8 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { signEnvelope, type LocalProfile } from "../domain/identity"
+import { type LocalProfile } from "../domain/identity"
+import { signWithContext } from "../domain/signingContext"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
+import { meshRecordSigning } from "./meshRecordSigning"
 import type { DeviceCertificate } from "../domain/model"
 import type { WorkspaceSetStore } from "./workspaceSet"
 import { publishConfirmedWorkspace, workspaceSet } from "./workspaceSet"
@@ -259,12 +262,14 @@ export async function createOwnershipProposal(profile: LocalProfile, workspaceId
   const heads = await workspaceStore.readAuthorityHeads(workspaceId)
   const transfer = await createWorkspaceOwnershipTransfer(profile, workspaceId, {
     personId: target.payload.personId, publicKey: target.publicKey, certificates: target.certificates,
-  }, heads, credential.epoch + 1)
+  }, heads, credential.epoch + 1, new Date().toISOString(), await meshRecordSigning(profile, credential, { kind: "owner" }, store))
   const snapshot = (await store.getWorkspaceAuthority(workspaceId))?.scopeAuthoritySnapshot
   if (!snapshot) return { transfer, scopeAuthoritySnapshot: undefined }
   const payload = meshRustRuntime().state.createScopeControlTransferPayload({ snapshot,
     toController: { personId: target.payload.personId, publicKey: target.publicKey, certificates: target.certificates } }, Date.now()) as { kind: string }
-  const controlTransfer = await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId)
+  const context = await workspaceOwnerSigningContext(profile, workspaceId, payload.kind, {}, async () =>
+    await store.getWorkspaceAuthority(workspaceId) ?? await store.getWorkspaceCredential(workspaceId), "scopeId")
+  const controlTransfer = await signWithContext(context, payload)
   const scopeAuthoritySnapshot = { ...snapshot, controlTransfers: [...snapshot.controlTransfers, controlTransfer] }
   meshRustRuntime().state.validateScopeAuthority(scopeAuthoritySnapshot, Date.now())
   return { transfer, scopeAuthoritySnapshot }

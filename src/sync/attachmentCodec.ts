@@ -12,6 +12,7 @@ import {
   encryptPurposeBoundObject,
   type BlindObject,
 } from "./blindEnvelope"
+import { openWithReplicaContentKeys, parseReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder("utf-8", { fatal: true })
@@ -21,7 +22,7 @@ const transferIdPattern = /^[A-Za-z0-9_-]{1,128}$/
 const objectIdPattern = /^[A-Za-z0-9_-]{43}$/
 const descriptorKeys = new Set(["kind", "version", "blobId", "name", "mediaType", "size", "hash", "ticket"])
 
-export type AttachmentScope = { workspaceId: string; scopeId: string; keyEpoch: number; contentKey: string }
+export type AttachmentScope = { workspaceId: string; scopeId: string } & ReplicaContentKeys
 export type AttachmentLocator = { version: 1; blobId: string; transferId: string; manifestId: string }
 export type AttachmentManifest = {
   kind: "rusty-attachment-manifest"
@@ -119,10 +120,11 @@ export async function openAttachmentManifest(
   const object = captureObject(objectInput)
   validateScope(scope)
   validateLocator(locator, descriptor)
-  if (object.keyEpoch !== scope.keyEpoch || object.scopeId !== scope.scopeId || await blindObjectId(object) !== locator.manifestId) {
+  if (object.scopeId !== scope.scopeId || await blindObjectId(object) !== locator.manifestId) {
     throw new Error("Attachment manifest object does not match its scope or locator")
   }
-  const plaintext = await decryptPurposeBoundObject(object, manifestBinding(scope, descriptor, locator.transferId), readContentKey(scope.contentKey))
+  const plaintext = await openWithReplicaContentKeys(scope, object.keyEpoch, contentKey => decryptPurposeBoundObject(object,
+    manifestBinding(scope, descriptor, locator.transferId, object.keyEpoch), readContentKey(contentKey)))
   if (plaintext.byteLength > maxManifestBytes) throw new Error("Attachment manifest exceeds its size limit")
   let parsed: unknown
   try { parsed = JSON.parse(decoder.decode(plaintext)) as unknown }
@@ -153,10 +155,11 @@ export async function openAttachmentChunk(
     throw new Error("Attachment chunk index is outside its manifest")
   }
   const entry = validManifest.chunks[index]!
-  if (object.scopeId !== scope.scopeId || object.keyEpoch !== scope.keyEpoch || await blindObjectId(object) !== entry.objectId) {
+  if (object.scopeId !== scope.scopeId || await blindObjectId(object) !== entry.objectId) {
     throw new Error("Attachment chunk object does not match its manifest")
   }
-  const plaintext = await decryptPurposeBoundObject(object, chunkBinding(scope, descriptor, locator.transferId, index, validManifest.chunks.length), readContentKey(scope.contentKey))
+  const plaintext = await openWithReplicaContentKeys(scope, object.keyEpoch, contentKey => decryptPurposeBoundObject(object,
+    chunkBinding(scope, descriptor, locator.transferId, index, validManifest.chunks.length, object.keyEpoch), readContentKey(contentKey)))
   if (plaintext.byteLength !== entry.bytes) throw new Error("Attachment chunk length does not match its manifest")
   return plaintext
 }
@@ -243,27 +246,28 @@ function validateManifest(value: unknown, scope: AttachmentScope, descriptor: Bl
     transferId: locator.transferId, descriptor: storedDescriptor, chunks }
 }
 
-function manifestBinding(scope: AttachmentScope, descriptor: BlobDescriptor, transferId: string) {
+function manifestBinding(scope: AttachmentScope, descriptor: BlobDescriptor, transferId: string, keyEpoch = scope.keyEpoch) {
   return { purpose: "attachment" as const,
     subjectId: JSON.stringify([scope.workspaceId, descriptor.blobId, transferId, "manifest"]),
-    scopeId: scope.scopeId, keyEpoch: scope.keyEpoch }
+    scopeId: scope.scopeId, keyEpoch }
 }
 
-function chunkBinding(scope: AttachmentScope, descriptor: BlobDescriptor, transferId: string, index: number, count: number) {
+function chunkBinding(scope: AttachmentScope, descriptor: BlobDescriptor, transferId: string, index: number, count: number,
+  keyEpoch = scope.keyEpoch) {
   return { purpose: "attachment" as const,
     subjectId: JSON.stringify([scope.workspaceId, descriptor.blobId, transferId, "chunk", index, count]),
-    scopeId: scope.scopeId, keyEpoch: scope.keyEpoch }
+    scopeId: scope.scopeId, keyEpoch }
 }
 
 function validateScope(scope: AttachmentScope): void {
   if (!scope || typeof scope !== "object" || Array.isArray(scope) ||
-      !hasExactKeys(scope, ["workspaceId", "scopeId", "keyEpoch", "contentKey"]) ||
+      !hasContentKeyScopeKeys(scope) ||
       typeof scope.workspaceId !== "string" || !scope.workspaceId.trim() || scope.workspaceId.length > 256 ||
       typeof scope.scopeId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(scope.scopeId) ||
       !Number.isSafeInteger(scope.keyEpoch) || scope.keyEpoch < 1) {
     throw new Error("Invalid attachment scope")
   }
-  readContentKey(scope.contentKey)
+  parseReplicaContentKeys(scope)
 }
 
 function readContentKey(value: string): Uint8Array {
@@ -300,4 +304,10 @@ function manifestDescriptor(descriptor: BlobDescriptor): BlobDescriptor {
 function hasExactKeys(value: object, keys: string[]): boolean {
   const actual = Object.keys(value)
   return actual.length === keys.length && keys.every(key => Object.hasOwn(value, key))
+}
+
+function hasContentKeyScopeKeys(scope: object): boolean {
+  const required = ["workspaceId", "scopeId", "keyEpoch", "contentKey"]
+  const optional = ["historicalContentKeys", "historicalContentKeyVariants"]
+  return required.every(key => Object.hasOwn(scope, key)) && Object.keys(scope).every(key => required.includes(key) || optional.includes(key))
 }

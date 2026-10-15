@@ -1,12 +1,22 @@
 # History baseline and archive contract
 
-Status: full implementation contract. Content-addressed archive, purpose-bound
-encryption codecs, portable locator directories, Native original capture/catalogue
-and storage correspondence, admitted-state rebase and local Owner-attestation
-foundations exist; host integration,
-baseline activation, and deployed capability remain incomplete. Requirement 6
-stays open. Existing opaque Rusty snapshot checkpoints do not satisfy this contract
+Status: implementation contract with connected working-tree source. Native original
+capture/catalogue, per-entity indexes, storage correspondence, Owner attestation,
+cold receive/tail admission, browser/Worker activation, lazy history and private
+recovery paths exist. Final acceptance and coordinated production activation have
+not been established; Requirement 6 stays open for that evidence. Existing opaque
+Rusty snapshot checkpoints do not satisfy this contract
 and must not be interpreted as history baselines.
+
+The browser producer is `src/sync/historyBaselineCapture.ts`, with durable Worker
+coordination in `historyBaselineTransition.ts` and atomic local publication in
+`receivedHistoryBaselineRepository.ts`. `historyBaselineReceiver.ts` and
+`peerHistoryBaselineReceiver.ts` invoke the Native verifier for encrypted storage
+and authorized peer evidence respectively. `historyArchiveReader.ts` supplies lazy
+per-entity reads; app restore creates a fresh authorized command. Private recovery
+is connected through `src/app/workspaceHistoryRecovery.ts` and re-admits original
+signed evidence before replacing local state. These source paths do not substitute
+for the required execution evidence below.
 
 ## Trust and retained evidence
 
@@ -131,7 +141,7 @@ sink. Its root references `change/<original-hash>`, `control`, `document`,
 the exact Automerge save and every pending original are retained separately.
 Duplicate pending originals are not dropped. Each change's hash/dependencies come
 from parsed Automerge bytes; its observation comes from the Native admission plan,
-with policy ID `mesh-causal-admission@2` and bound admission/authority/capture
+with the current policy ID `mesh-causal-admission@3` and bound admission/authority/capture
 revisions. A pending-only record retains its compressed original encoding when
 present. Loaded change bytes are extracted from Automerge; the complete original
 save is also retained to preserve its encoding. Proof references and dependency
@@ -142,6 +152,18 @@ is bounded; the preparation and its change/proof maps still scale with the sourc
 history. A sink failure returns without changing or retiring the source, and a
 retry derives identical plaintext objects. This is not an active-history bound.
 
+Per-entity version indexes use original transaction entity IDs when present and
+derive affected entities from the original change/dependency frontier for legacy
+records. They retain original time, actor, action, hash and classification; missing
+author metadata is marked imported, never replaced with an invented identity.
+Index metadata is a lookup aid. Selected-version reads reconstruct the original
+dependency closure and independently confirm entity membership in Native policy
+before a fresh restore command can use that content.
+
+Causal policy revision 3 adds exact application-source v2 admission for retained original
+message/ATS references. Existing `@1`/`@2` archive observations and shared fixture
+metadata remain original evidence; upgrading the verifier never relabels them.
+
 `examples/history_capture_fixture.rs` reproducibly generates the shared
 `history-capture-v1.json` vector. SDK tests lazily read one pending change and its
 original proof without reading the source document, then separately reconstruct
@@ -150,10 +172,11 @@ classifications. Another test stages Native-produced bytes through the existing
 IndexedDB journal and reopens/decrypts without resealing. Native HTTP acceptance
 uploads that vector through the app repository, confirms real Rusty coverage and
 cold-reads pending bytes, original signature and control evidence. These are
-Native format/transport integration tests, not a live WASM preparation handle or
-ordinary application/Worker scheduling. Per-entity history indexing, network Owner
-transition admission and activation remain incomplete. Native local signing
-proposals and exact signature confirmation are implemented separately below.
+Native format/transport integration tests. Live WASM preparation handles,
+per-entity history indexing, network Owner transition admission and
+application/Worker activation now have separate source implementations; the final
+acceptance run must establish their composition. Native local signing proposals
+and exact signature confirmation are described separately below.
 
 Rusty now provides a separate opaque archive namespace. Discovery advertises
 `encryptedArchives@1` with a 262,160-byte maximum ciphertext and
@@ -226,11 +249,12 @@ The journal checks record integrity and retains caller-supplied source/authority
 fingerprints; those fingerprints do not establish Native admission. It implements captured,
 archived and covered phases. Native capture now consumes the private preparation
 token and emits source-derived catalogue content, but the journal's
-ordinary host API does not require that token. Test vectors bridge those layers;
-the live WASM handle/host producer integration is still absent. Neither a serialized
-catalogue nor its bare content hash is Owner baseline authorization.
-Ordinary host scheduling, signed Owner transition, atomic active-
-pointer activation, restore/export and history-size bounding remain unimplemented.
+ordinary host API does not require that token. The connected host producer uses
+the opaque Native preparation, capture, storage and attestation handles; test
+vectors alone cannot authorize that flow. Neither a serialized catalogue nor its
+bare content hash is Owner baseline authorization. Ordinary host scheduling,
+signed Owner transition, atomic active-pointer activation, restore/export and
+active-history accounting have source implementations awaiting final acceptance.
 The preparation token is not baseline activation authority. Rust index verification
 and encryption opening do not verify original author signatures or causal policy;
 the preparation evaluator does not publish or activate an archive. Requirement 6
@@ -484,8 +508,9 @@ form a composite archive coverage proof, pinned to the same service/scope/key an
 policy revision. Neither proof alone suffices. Owner authorization must check the
 Native-derived catalogue against the directory and bind both complete expected
 sets. The Native correspondence method below supplies content evidence; ordinary
-host/Owner integration and atomic activation remain absent. Source history cannot
-retire. The directory must be portable in recovery exports and the
+host/Owner integration and atomic activation consume that evidence in the current
+source. Activation retains original source history; it does not authorize its
+deletion. The directory must be portable in recovery exports and the
 critical baseline reader capability, including compatible old-reader rejection.
 
 Native correspondence verification consumes an existing private
@@ -574,8 +599,10 @@ Aggregation composes prior durable service attestations without rereading every
 underlying archive file. It proves what each batch confirmed at receipt time, not
 that bytes remain available after later corruption. A read or fresh batch is needed
 to detect missing/corrupt bytes. Completeness is relative to the caller's captured
-expected object source; production integration of the authenticated preparation
-catalogue with that source remains incomplete. Retained local originals and
+expected object source. The host producer now derives that source from the Native
+capture and verifies complete data/directory correspondence before attestation;
+the final acceptance run still needs to establish this composition. Retained local
+originals and
 immutable remote archive objects remain the recovery boundary; this protocol adds
 no destructive cleanup or baseline authority.
 
@@ -617,11 +644,23 @@ preparation check. The test adapter reads bounded stdin and prints only a small
 result; this serialized result is not an authority token and cannot authorize
 activation. The adapter now also joins an admitted-state basis, returns an explicit
 initial Owner proposal and verifies the JavaScript identity SDK's signed reply.
-It rejects a valid key's wrong-domain signature. This confirms local Owner
-attestation only. Live WASM handles, ordinary host integration, cold receiver
-control/frontier validation and atomic activation remain unimplemented.
+It rejects a valid key's wrong-domain signature. That adapter exercises local
+Owner attestation only. Live WASM handles, ordinary host integration, cold receiver
+control/frontier validation and atomic activation are separately implemented;
+their authored acceptance cases remain to be executed at the final gate.
 
 ## Prepare, publish, activate, recover
+
+The application coordinates active Automation writers through current-Owner
+signed `prepare-history-baseline` and `activate-history-baseline` management
+actions. Prepare flushes exact pending ciphertext and the current unsealed original
+snapshot, then durably freezes authoring and reports signed source heads. The
+Owner drains all frozen heads before capture/publication. Activate verifies the
+exact transition and expected baseline, Native authority/tail evidence and frozen
+head coverage, then publishes the new state and unfreezes atomically. Failed or
+uncertain phases keep the durable source and journal for retry. Grants, expiry,
+definitions and pending events remain unchanged; Worker and storage credentials
+cannot authorize the Owner attestation.
 
 The durable preparation journal has a stable transition ID and these phases:
 
@@ -659,6 +698,24 @@ snapshots, Worker activation and storage writer/checkpoint policy. Unsupported
 readers retain their original local data and show an explicit upgrade state;
 unsupported writers cannot overwrite or prune the new basis. A successful frontend
 deploy is not evidence that an already-open phone tab supports the capability.
+This prerelease targets one coordinated current cohort, with all user tabs
+explicitly reloaded at release. It does not introduce a writer-version migration
+program or a claim of support for arbitrary combinations of old components.
+
+The bounded signed envelope and current-content document have separate budgets:
+the legacy envelope is at most 64 KiB, the Owner-attested envelope at most 256 KiB,
+and the compact current document at most 256 MiB. The 4 MiB active-history trigger
+does not constrain the size of current card/document content.
+
+Authorized direct workspace sessions may relay plaintext content-addressed
+archive proof/data over their authenticated encrypted channel without sending
+Rusty keys, tokens or private settings. The same Native Owner/control and signed
+scope-anchor verification produces the opaque received basis. Peer evidence
+verifies signed public storage receipts and plaintext catalogue/source coverage;
+it explicitly does not assert AES/ciphertext correspondence. Encrypted Rusty
+receivers verify that additional storage correspondence separately. Startup
+reverifies retained evidence in its original mode; no persisted host-verified flag
+grants authority.
 
 Raw changes authored against an old basis cannot be applied directly to rebased
 Automerge object IDs. Upgrade retains those exact signed originals and their old

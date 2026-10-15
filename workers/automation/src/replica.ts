@@ -2,7 +2,7 @@ import { emptyEmployeeProfile, type EmployeeProfile } from "../../../src/domain/
 import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
-import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
+import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, type LocalProfile } from "../../../src/domain/identity";
@@ -30,6 +30,13 @@ import type { ApplicationReviewOption } from "../../../src/domain/applicationRev
 import { admitHistoricalAutomationAuthority } from "../../../src/sync/historicalAutomationAuthority";
 import { mergeAttachmentLocators, parseAttachmentLocators } from "../../../src/sync/attachmentIndex";
 import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
+import { assertRetainsReplicaContentKeys, openWithReplicaContentKeys, parseReplicaContentKeys } from "../../../src/sync/replicaContentKeys";
+import { parseReplicaConfig } from "../../../src/sync/blindReplicaConfig";
+import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote";
+import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../../../src/sync/historyBaselineReceiver";
+import { parseWireHistoryBaseline } from "../../../src/sync/historyBaselineReceiver";
+import { assertWorkerHistoryCoversHeads, receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority,
+  type StoredWorkerHistoryBasis } from "./historyBaseline";
 
 initSync({ module: wasmModule });
 
@@ -41,6 +48,15 @@ function initializeAutomerge(): Promise<void> {
 
 
 const maximumSnapshotBytes = 16 * 1024 * 1024 - 16;
+
+function automationStorageBinding(workspaceId: string, blind: BlindReplicaConfig): string {
+  const keys = parseReplicaContentKeys(blind);
+  const fields: unknown[] = [workspaceId, blind.origin, blind.scopeId, keys.keyEpoch, blind.policyRevision,
+    blind.servicePublicKey, blind.readToken, blind.writeToken, keys.contentKey];
+  if (keys.historicalContentKeys) fields.push({ historicalContentKeys: keys.historicalContentKeys });
+  if (keys.historicalContentKeyVariants) fields.push({ historicalContentKeyVariants: keys.historicalContentKeyVariants });
+  return canonicalizeJson(fields);
+}
 
 export class AutomationControlError extends Error {
   constructor(readonly state: "paused" | "deleted") { super(`Automation is ${state}`); }
@@ -64,6 +80,8 @@ export type AutomationReplicaBindings = {
 
 export type AutomationInitialSnapshot = {
   document: string;
+  history?: WireHistoryBaseline;
+  scopeAuthoritySnapshot?: unknown;
   authorization: IncomingAuthorizationBundle;
   chat?: unknown;
   attachments?: unknown;
@@ -72,15 +90,23 @@ export type AutomationInitialSnapshot = {
 export type ReplicaTransport = {
   inventory: typeof inventoryBlindObjects;
   download: typeof downloadBlindObject;
-  upload: (access: BlindAccess, object: BlindObject, requestId?: string) => Promise<BlindReceipt>;
+  upload: (access: BlindAccess, object: BlindObject, requestId?: string, observedSequence?: number) => Promise<BlindReceipt>;
+  archive?: (access: BlindAccess, guard: () => void | Promise<void>) => HistoryBaselineFetchPort;
 };
 
 export type AutomationManagementInspector = {
   pull: (guard: () => Promise<void>) => Promise<void>;
+  drainPending: (guard: () => Promise<void>) => Promise<void>;
+  rotateStorageCredentials: (nextBlind: BlindReplicaConfig, persist: (serialized: string) => Promise<void>,
+    guard: () => void | Promise<void>) => Promise<AutomationManagementInspector>;
+  prepareHistory: (snapshot: unknown, guard: () => Promise<void>) => Promise<string[]>;
+  verifyHistory: (baselineId: string, sourceHeads: string[], guard: () => Promise<void>) => Promise<void>;
+  historyBaselineId: () => string | undefined;
   assertOwner: (identity: WorkspaceWriteAuthorityEvidence["currentOwner"], deviceId: string) => void;
   describe: (origin: string, workspaceId: string, definitionId: string) => {
     workspaceId: string; boardId: string; definitionId: string | null; executorPersonId: string;
     grantId: string; expiresAt: number; state: AutomationDesiredState; adoptionRequired: boolean;
+    historyUsage: ActiveHistoryUsage & { archiveRequired: boolean };
     storage: { origin: string; scopeId: string; keyEpoch: number; servicePublicKey: string;
       policyRevision: number; minimumWriterVersion?: 2 };
   };
@@ -125,16 +151,63 @@ export type AutomationCandidate = {
   jobUrl?: string;
   columnId: string;
   workflow?: { columnId: string; changedAt: string };
-  messageIds: string[];
+  messageIds?: string[];
   sources?: ApplicationSourceData[];
 };
 
 type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }) & { changeHash?: string };
-type PendingUpload = { hash: string; object: BlindObject; requestId?: string; bytes?: number; revision?: string; identity?: string };
+type PendingUpload = { hash: string; object: BlindObject; requestId?: string; observedSequence?: number; bytes?: number; revision?: string; identity?: string };
+type ActiveHistoryUsage = { baselineId: string | null; admittedChanges: number; encodedBytes: number };
+const activeHistoryChangeLimit = 512;
+const activeHistoryByteLimit = 4 * 1024 * 1024;
+function historyBaselineId(wire: WireHistoryBaseline): string {
+  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decodeBlindBytes(wire.signedJson))) as { payload?: { baselineId?: unknown } };
+  if (typeof value.payload?.baselineId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value.payload.baselineId)) {
+    throw new Error("Worker history baseline identifier is invalid");
+  }
+  return value.payload.baselineId;
+}
+function parseActiveHistoryUsage(value: unknown, baselineId: string | null): ActiveHistoryUsage | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const row = value as Record<string, unknown>;
+  if (Object.keys(row).length !== 3 || !["baselineId", "admittedChanges", "encodedBytes"].every(key => Object.hasOwn(row, key)) ||
+      row.baselineId !== baselineId || !(row.baselineId === null || typeof row.baselineId === "string" && /^[A-Za-z0-9_-]{43}$/.test(row.baselineId)) ||
+      !Number.isSafeInteger(row.admittedChanges) || (row.admittedChanges as number) < 0 || (row.admittedChanges as number) > activeHistoryChangeLimit ||
+      !Number.isSafeInteger(row.encodedBytes) || (row.encodedBytes as number) < 0 || (row.encodedBytes as number) > activeHistoryByteLimit) return undefined;
+  return { baselineId, admittedChanges: row.admittedChanges as number, encodedBytes: row.encodedBytes as number };
+}
+function countChanges(changes: Uint8Array[], baselineId: string | null): ActiveHistoryUsage {
+  return { baselineId, admittedChanges: Math.min(activeHistoryChangeLimit, changes.length),
+    encodedBytes: Math.min(activeHistoryByteLimit, changes.reduce((total, change) => total + change.byteLength, 0)) };
+}
+function historyBudgetExceeded(value: ActiveHistoryUsage): boolean {
+  return value.admittedChanges >= activeHistoryChangeLimit || value.encodedBytes >= activeHistoryByteLimit;
+}
+function ensureHistoryBudget(current: ActiveHistoryUsage, changes: Uint8Array[]): ActiveHistoryUsage {
+  const addedBytes = changes.reduce((total, change) => total + change.byteLength, 0);
+  const admittedChanges = current.admittedChanges + changes.length;
+  const encodedBytes = current.encodedBytes + addedBytes;
+  if (admittedChanges > activeHistoryChangeLimit || encodedBytes > activeHistoryByteLimit) {
+    throw new Error("Archive older history before this automation can add more changes");
+  }
+  return { baselineId: current.baselineId, admittedChanges, encodedBytes };
+}
+function measureInitialHistoryUsage(documentBytes: Uint8Array, baselineBytes?: Uint8Array, baselineId: string | null = null): ActiveHistoryUsage {
+  const document = Automerge.load<WorkspaceDocumentV2>(documentBytes);
+  try {
+    if (!baselineBytes) return countChanges(Automerge.getAllChanges(document), null);
+    const baseline = Automerge.load<WorkspaceDocumentV2>(baselineBytes);
+    try { return countChanges(Automerge.getChanges(baseline, document), baselineId); }
+    finally { Automerge.free(baseline); }
+  } finally { Automerge.free(document); }
+}
 type ReplicaMetadata = Omit<ReplicaState<BlindObject>, "cursor" | "lastUploaded" | "pending"> & { contentRevision: string };
 type OpaqueChatBatch = { version: 1 | 2; capabilities?: string[]; upgradeRequired?: boolean; messages: unknown[]; profiles: unknown[]; typing: unknown[] };
 type SerializedReplica = {
-  version: 1 | 2;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
+  history?: StoredWorkerHistoryBasis;
+  historyUsage?: ActiveHistoryUsage;
+  scopeAuthoritySnapshot?: unknown;
   workspaceId: string;
   blind: BlindReplicaConfig;
   grant: WorkspaceGrant;
@@ -150,17 +223,21 @@ type SerializedReplica = {
   replication?: ReplicaMetadata;
   applied: Record<string, AppliedEvent>;
 };
-type WireSnapshot = { version: 1; workspaceId: string; document: string; authorization: IncomingAuthorizationBundle;
+type WireSnapshot = { version: 1 | 2; history?: WireHistoryBaseline; workspaceId: string; document: string; authorization: IncomingAuthorizationBundle;
   chat: OpaqueChatBatch | null; attachments?: AttachmentLocator[] };
 
 const defaultTransport: ReplicaTransport = {
   inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after),
   download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id),
-  upload: (access, object, requestId) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId),
+  upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence),
 };
 
 /** Owner-approved, bounded Automerge writer for one existing workspace. */
 export class AutomationReplica {
+  private history?: StoredWorkerHistoryBasis;
+  private historyBasis?: WasmVerifiedReceivedHistoryBaseline;
+  private historyUsage: ActiveHistoryUsage = { baselineId: null, admittedChanges: 0, encodedBytes: 0 };
+  private scopeAuthoritySnapshot?: unknown;
   private rawDocument: string;
   private authorizations: WorkspaceChangeAuthorization[];
   private chat: OpaqueChatBatch | null;
@@ -198,6 +275,12 @@ export class AutomationReplica {
     this.profile = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
       certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } };
     this.rawDocument = serialized?.rawDocument ?? "";
+    this.history = structuredClone(serialized?.history);
+    const baselineId = this.history?.wire ? historyBaselineId(this.history.wire) : null;
+    this.historyUsage = parseActiveHistoryUsage(serialized?.historyUsage, baselineId) ?? {
+      baselineId, admittedChanges: activeHistoryChangeLimit, encodedBytes: activeHistoryByteLimit,
+    };
+    this.scopeAuthoritySnapshot = structuredClone(serialized?.scopeAuthoritySnapshot);
     this.authorizations = structuredClone(serialized?.authorizations ?? []);
     this.chat = structuredClone(serialized ? parseOpaqueChat(serialized.chat) : initialChat);
     this.attachments = parseAttachmentLocators(serialized?.attachments);
@@ -216,25 +299,38 @@ export class AutomationReplica {
   static async activate(packet: AutomationActivationPacket, profile: LocalProfile, expectedOrigin?: string): Promise<AutomationReplica> {
     await initializeAutomerge();
     if (!packet.persist) throw new Error("Automation activation requires durable replica persistence");
-    await validateActivation(packet, profile);
     const sourceBytes = decodeBlindBytes(packet.initial.document);
     if (sourceBytes.length > maximumSnapshotBytes) throw new Error("Initial workspace snapshot exceeds the size limit");
-    const admission = computeWorkspaceAdmission({ workspaceId: packet.workspaceId, remote: sourceBytes,
-      authorization: packet.initial.authorization, knownAuthority: null, now: Date.now() }, WasmStateCore as never);
-    assertFullyAdmitted(admission, sourceBytes);
-    const authorityFromAdmission = mergeAuthority(packet.initial.authorization.authority, null);
+    const authorityFromAdmission = await validateActivation(packet, profile);
     const replica = new AutomationReplica(profile, packet.workspaceId, { ...packet.blind }, packet.grant,
       packet.bindings, authorityFromAdmission, packet.blind.cursor, packet.blind.lastUploaded,
       packet.persist, packet.transport, undefined, parseOpaqueChat(packet.initial.chat));
-    replica.rawDocument = encodeBlindBytes(sourceBytes);
-    replica.definition = packet.definition;
-    replica.authorizations = mergeAuthorizationRecords([], admission.verifiedAuthorizations);
-    replica.attachments = mergeAttachmentLocators(packet.initial.attachments);
-    const control = replica.controlForRuntime();
-    replica.tombstoned = control.state === "deleted";
-    if (expectedOrigin) replica.observationForRuntime(expectedOrigin, crypto.randomUUID());
-    await replica.persistState();
-    return replica;
+    if (packet.initial.scopeAuthoritySnapshot) replica.scopeAuthoritySnapshot = validateWorkerHistoryAuthority(packet.initial.scopeAuthoritySnapshot,
+      packet.workspaceId, authorityFromAdmission.currentOwner);
+    if (packet.initial.history) {
+      if (!replica.scopeAuthoritySnapshot) throw new Error("Worker history requires an admitted signed scope authority");
+      const guard = async () => { replica.assertActive(); };
+      const received = await receiveWorkerHistoryBasis({ wire: packet.initial.history, workspaceId: packet.workspaceId,
+        config: replica.blind, trustedScopeAuthority: replica.scopeAuthoritySnapshot,
+        fetch: replica.archiveReader(guard), guard, ensureCurrent: () => replica.assertActive() });
+      replica.history = received.stored; replica.historyBasis = received.basis;
+    }
+    try {
+      const admission = computeWorkspaceAdmission({ workspaceId: packet.workspaceId, remote: sourceBytes,
+        authorization: packet.initial.authorization, knownAuthority: null, receivedBasis: replica.historyBasis, now: Date.now() }, WasmStateCore as never);
+      assertFullyAdmitted(admission, sourceBytes);
+      replica.rawDocument = encodeBlindBytes(sourceBytes);
+      replica.definition = packet.definition;
+      replica.authorizations = mergeAuthorizationRecords([], admission.verifiedAuthorizations);
+      replica.attachments = mergeAttachmentLocators(packet.initial.attachments);
+      replica.historyUsage = measureInitialHistoryUsage(sourceBytes, replica.historyBasis?.document(),
+        replica.history ? historyBaselineId(replica.history.wire) : null);
+      const control = replica.controlForRuntime();
+      replica.tombstoned = control.state === "deleted";
+      if (expectedOrigin) replica.observationForRuntime(expectedOrigin, crypto.randomUUID());
+      await replica.persistState();
+      return replica;
+    } catch (error) { replica.historyBasis?.free(); throw error; }
   }
 
   static async renew(serialized: string, packet: AutomationActivationPacket, profile: LocalProfile, expectedOrigin: string): Promise<AutomationReplica> {
@@ -251,7 +347,12 @@ export class AutomationReplica {
     await initializeAutomerge();
     if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
     const prior = JSON.parse(serialized) as SerializedReplica;
-    await validateSerialized(prior, profile, "renewal");
+    const priorBasis = await restoreSerializedHistory(prior, () => {});
+    await validateSerialized(prior, profile, "renewal", priorBasis);
+    priorBasis?.free();
+    if (canonicalizeJson(prior.history?.wire ?? null) !== canonicalizeJson(packet.initial.history ?? null)) {
+      throw new Error("Synchronize the verified history basis before renewing automation approval");
+    }
     if (adoptLegacy && (prior.definition || packet.version !== 2 || !packet.definition)) {
       throw new Error("Explicit adoption requires an untyped replica and a new signed definition");
     }
@@ -271,11 +372,10 @@ export class AutomationReplica {
     } }, profile, expectedOrigin);
     if (replica.controlForRuntime().state === "deleted") throw new Error("Deleted automation cannot be renewed");
     replica.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, prior.applied);
-    // Only the enrolled owner's signed activation can supply replacement keys.
-    // Re-encrypt an unacknowledged upload before persisting its new binding.
-    replica.pending = prior.pending && rotatedStorage ? { hash: prior.pending.hash,
-      object: await encryptBlindObject(packet.blind.scopeId, packet.blind.keyEpoch, decodeBlindBytes(packet.blind.contentKey),
-        await decryptBlindObject(prior.pending.object, prior.blind.scopeId, prior.blind.keyEpoch, decodeBlindBytes(prior.blind.contentKey))) } : prior.pending;
+    replica.historyUsage = structuredClone(prior.historyUsage ?? { baselineId: prior.history ? historyBaselineId(prior.history.wire) : null,
+      admittedChanges: activeHistoryChangeLimit, encodedBytes: activeHistoryByteLimit });
+    if (prior.pending && rotatedStorage) throw new Error("Drain the exact pending upload before renewing approval with different storage credentials");
+    replica.pending = prior.pending;
     replica.cursor = rotatedStorage ? packet.blind.cursor : prior.blind.cursor;
     replica.lastUploaded = rotatedStorage ? "" : prior.blind.lastUploaded;
     publish = true;
@@ -289,10 +389,12 @@ export class AutomationReplica {
     if (!persist) throw new Error("Automation restore requires durable replica persistence");
     if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
     const value = JSON.parse(serialized) as SerializedReplica;
-    await validateSerialized(value, profile);
+    const basis = await restoreSerializedHistory(value, () => { if (Date.now() >= value.grant.payload.automation!.expiresAt) throw new Error("Automation grant has expired"); });
+    await validateSerialized(value, profile, "restore", basis);
     const replica = new AutomationReplica(profile, value.workspaceId, { ...value.blind }, value.grant,
       value.bindings, value.authority, value.blind.cursor, value.blind.lastUploaded,
       persist, transport, value);
+    replica.historyBasis = basis;
     assertFullyAdmitted(await replica.revalidate(), decodeBlindBytes(replica.rawDocument));
     replica.controlForRuntime();
     await replica.validateStoredProgress();
@@ -306,9 +408,11 @@ export class AutomationReplica {
     if (!persist) throw new Error("Automation management requires durable replica persistence");
     if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
     const value = JSON.parse(serialized) as SerializedReplica;
-    const admission = await validateSerialized(value, profile, "management");
+    const basis = await restoreSerializedHistory(value, () => {});
+    const admission = await validateSerialized(value, profile, "management", basis);
     const replica = new AutomationReplica(profile, value.workspaceId, value.blind, value.grant,
       value.bindings, value.authority, value.blind.cursor, value.blind.lastUploaded, persist, transport, value);
+    replica.historyBasis = basis;
     replica.admissionCache = { rawDocument: replica.rawDocument, authorizations: replica.authorizations,
       authority: replica.authority, result: admission! };
     return Object.freeze({
@@ -319,6 +423,46 @@ export class AutomationReplica {
         });
         if (!await engine.pull()) throw new Error("Automation management is still catching up; retry inspection");
       }),
+      drainPending: (guard: () => Promise<void>) => replica.enqueue(async () => {
+        const engine = replica.createEngine(async () => {
+          await guard();
+          assertFullyAdmitted(replica.admission(), decodeBlindBytes(replica.rawDocument));
+        });
+        await engine.drainPending();
+      }),
+      rotateStorageCredentials: (nextBlind: BlindReplicaConfig, persist: (serialized: string) => Promise<void>,
+        guard: () => void | Promise<void>) => AutomationReplica.rotateStorageCredentials(
+        replica.serialize(), profile, nextBlind, persist, guard, replica.transport),
+      prepareHistory: (snapshot: unknown, guard: () => Promise<void>) => replica.enqueue(async () => {
+        await guard();
+        const anchor = validateWorkerHistoryAuthority(snapshot, replica.workspaceId, replica.authority.currentOwner);
+        const previous = replica.scopeAuthoritySnapshot;
+        // Preserve the original admitted anchor so older signed baselines still reverify after control advances.
+        if (previous && canonicalizeJson((previous as { genesis?: unknown }).genesis) !==
+          canonicalizeJson((anchor as { genesis?: unknown }).genesis)) throw new Error("History preparation cannot replace the admitted scope root");
+        replica.scopeAuthoritySnapshot = previous ?? anchor;
+        try { await guard(); await replica.persistState(); }
+        catch (error) { replica.scopeAuthoritySnapshot = previous; throw error; }
+        const engine = replica.createEngine(async () => { await guard(); assertFullyAdmitted(replica.admission(), decodeBlindBytes(replica.rawDocument)); });
+        await engine.drainPending();
+        await engine.push();
+        await guard();
+        if (replica.progress.pending) throw new Error("Worker history preparation still has an unconfirmed original snapshot");
+        const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(replica.rawDocument));
+        try {
+          const heads = Automerge.getHeads(document).sort();
+          if (heads.length > 256) throw new Error("Worker history frontier exceeds transition bound");
+          return heads;
+        } finally { Automerge.free(document); }
+      }),
+      verifyHistory: (baselineId: string, sourceHeads: string[], guard: () => Promise<void>) => replica.enqueue(async () => {
+        await guard();
+        if (!replica.historyBasis || replica.historyBasis.envelope().payload.baselineId !== baselineId) throw new Error("Worker has not received the exact requested verified history baseline");
+        assertFullyAdmitted(replica.admission(), decodeBlindBytes(replica.rawDocument));
+        await assertWorkerHistoryCoversHeads(replica.historyBasis, sourceHeads, replica.blind, replica.archiveReader(guard), guard);
+        await guard();
+      }),
+      historyBaselineId: () => replica.historyBasis?.envelope().payload.baselineId,
       assertOwner: (identity: WorkspaceWriteAuthorityEvidence["currentOwner"], deviceId: string) =>
         replica.assertOwnerDeviceForRuntime(identity, deviceId),
       describe: (origin: string, workspaceId: string, definitionId: string) =>
@@ -351,9 +495,7 @@ export class AutomationReplica {
       next.blind.policyRevision = policyRevision;
       next.blind.minimumWriterVersion = 2;
       if (next.replication) {
-        next.replication.binding = canonicalizeJson([next.workspaceId, next.blind.origin, next.blind.scopeId,
-          next.blind.keyEpoch, next.blind.policyRevision, next.blind.servicePublicKey, next.blind.readToken,
-          next.blind.writeToken, next.blind.contentKey]);
+        next.replication.binding = automationStorageBinding(next.workspaceId, next.blind);
       }
       nextSerialized = JSON.stringify(next);
       await AutomationReplica.inspectForManagement(nextSerialized, profileSnapshot, async () => {});
@@ -363,6 +505,78 @@ export class AutomationReplica {
     }
 
     const inspector = await AutomationReplica.inspectForManagement(nextSerialized, profileSnapshot, async () => {});
+    await checkCurrent();
+    return inspector;
+  }
+
+  /** Replace frozen Rusty storage credentials without changing grant, content, or executor provenance. */
+  static async rotateStorageCredentials(serialized: string, profile: LocalProfile, nextBlind: BlindReplicaConfig,
+    persist: (serialized: string) => Promise<void>, ensureCurrent: () => void | Promise<void>,
+    transport: ReplicaTransport = defaultTransport): Promise<AutomationManagementInspector> {
+    const targetSnapshot = structuredClone(nextBlind);
+    const profileSnapshot = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
+      certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } };
+    const checkCurrent = ensureCurrent;
+    await checkCurrent();
+    if (!persist) throw new Error("Automation credential rotation requires durable persistence");
+    if (new TextEncoder().encode(serialized).byteLength > 32 * 1024 * 1024) throw new Error("Serialized automation replica is too large");
+
+    // Management mode validates retained authority, including expired, paused, or deleted executors.
+    await AutomationReplica.inspectForManagement(serialized, profileSnapshot, async () => {}, transport);
+    await checkCurrent();
+    const prior = JSON.parse(serialized) as SerializedReplica;
+    const target = parseReplicaConfig(JSON.stringify(targetSnapshot));
+    if (target.origin !== prior.blind.origin || target.scopeId !== prior.blind.scopeId ||
+      target.workspaceId !== prior.workspaceId || target.servicePublicKey !== prior.blind.servicePublicKey ||
+      target.removalPending || target.minimumWriterVersion !== 2) {
+      throw new Error("Rusty credential rotation must preserve the pinned Worker storage scope and require writer version 2");
+    }
+    const credentials = (value: BlindReplicaConfig) => canonicalizeJson([value.origin, value.scopeId, value.workspaceId,
+      value.servicePublicKey, value.policyRevision, value.keyEpoch, value.contentKey, value.historicalContentKeys ?? null, value.historicalContentKeyVariants ?? null,
+      value.readToken, value.writeToken, value.minimumWriterVersion ?? null]);
+    if (credentials(prior.blind) === credentials(target)) {
+      const inspector = await AutomationReplica.inspectForManagement(serialized, profileSnapshot, async () => {}, transport);
+      await checkCurrent();
+      return inspector;
+    }
+    if (!Number.isSafeInteger(prior.blind.policyRevision) || prior.blind.policyRevision < 1 ||
+      !Number.isSafeInteger(target.policyRevision) || target.policyRevision <= prior.blind.policyRevision ||
+      prior.blind.keyEpoch >= Number.MAX_SAFE_INTEGER || target.keyEpoch <= prior.blind.keyEpoch ||
+      target.readToken === prior.blind.readToken || target.writeToken === prior.blind.writeToken) {
+      throw new Error("Rusty credential rotation must advance policy and the content-key epoch while retaining every old key");
+    }
+    assertRetainsReplicaContentKeys(prior.blind, target);
+    if (prior.pending || prior.replication && Object.hasOwn(prior.replication, "pending")) {
+      throw new Error("Drain the exact pending Worker upload before rotating storage credentials");
+    }
+
+    const next = structuredClone(prior);
+    // Keep the current Worker-state reader and its active-history accounting
+    // across credential rotation. Older versions restore conservatively at the
+    // archive threshold, which is safe but would force needless maintenance.
+    next.version = 6;
+    const activeBaselineId = next.history ? historyBaselineId(next.history.wire) : null;
+    next.historyUsage = parseActiveHistoryUsage(next.historyUsage, activeBaselineId) ?? {
+      baselineId: activeBaselineId, admittedChanges: activeHistoryChangeLimit, encodedBytes: activeHistoryByteLimit,
+    };
+    const { purpose: _purpose, preferenceRevision: _preferenceRevision, ...targetCredentials } = target;
+    next.blind = { ...targetCredentials, cursor: prior.blind.cursor, lastUploaded: "" };
+    const oldBinding = automationStorageBinding(prior.workspaceId, prior.blind);
+    const nextBinding = automationStorageBinding(next.workspaceId, next.blind);
+    const replication = structuredClone(prior.replication ?? { version: 1 as const, binding: oldBinding,
+      generation: 0, contentRevision: crypto.randomUUID() });
+    if (replication.generation >= Number.MAX_SAFE_INTEGER) throw new Error("Worker replica generation is exhausted");
+    replication.binding = nextBinding;
+    replication.generation++;
+    delete replication.uploadedRevision;
+    next.replication = replication;
+    const nextSerialized = JSON.stringify(next);
+
+    await AutomationReplica.inspectForManagement(nextSerialized, profileSnapshot, async () => {}, transport);
+    await checkCurrent();
+    await persist(nextSerialized);
+    await checkCurrent();
+    const inspector = await AutomationReplica.inspectForManagement(nextSerialized, profileSnapshot, async () => {}, transport);
     await checkCurrent();
     return inspector;
   }
@@ -389,6 +603,7 @@ export class AutomationReplica {
       definitionId: this.definition?.payload.id ?? null, executorPersonId: this.profile.identity.personId,
       grantId: this.grant.payload.grantId, expiresAt: this.grant.payload.automation!.expiresAt,
       state, adoptionRequired: !this.definition,
+      historyUsage: { ...this.historyUsage, archiveRequired: historyBudgetExceeded(this.historyUsage) },
       storage: { origin: this.blind.origin, scopeId: this.blind.scopeId, keyEpoch: this.blind.keyEpoch,
         servicePublicKey: this.blind.servicePublicKey, policyRevision: this.blind.policyRevision,
         ...(this.blind.minimumWriterVersion === 2 ? { minimumWriterVersion: 2 as const } : {}) } };
@@ -398,6 +613,12 @@ export class AutomationReplica {
     return this.enqueue(async () => {
       this.assertActive();
       this.assertPersistence();
+      // A sync that starts with an uncertain old upload only resolves that
+      // exact outbox. Newer local content waits for the next sync pass.
+      if (this.progress.pending) {
+        await this.engine.drainPending();
+        return;
+      }
       await this.engine.pull();
       if (!this.tombstoned && this.controlForRuntime().state === "deleted") {
         this.tombstoned = true;
@@ -439,7 +660,8 @@ export class AutomationReplica {
         if (this.grant.payload.automation!.version === 2 && !normalized.source) throw new Error("Source capture context is required for intake v2");
         const command = this.grant.payload.automation!.version === 2
           ? { ...card, kind: "createItemWithApplicationSource" as const, data: await captureApplicationSource(this.workspaceId,
-            cardId, eventId, normalized.source!.origin, normalized.source!.page, normalized.jobUrl) }
+            cardId, eventId, normalized.source!.origin, normalized.source!.page, normalized.jobUrl,
+            { messageIds: normalized.messageIds }) }
           : { ...card, kind: "createItem" as const };
         const result = await executeOwnedCommand(document, command, this.profile, actorIdForProfile(this.profile), await this.grantHash(),
           (purpose, binding) => this.executionSigningContext(purpose, binding));
@@ -447,14 +669,16 @@ export class AutomationReplica {
         const previousRaw = this.rawDocument;
         const previousAuthorizations = this.authorizations;
         const previousApplied = this.applied;
+        const previousHistoryUsage = this.historyUsage;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-        await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
+        await this.acceptAuthoredDocument(document, result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
         this.applied[eventId] = { kind: "lead", cardId };
         try { await this.persistState(); }
         catch (error) {
           this.rawDocument = previousRaw;
           this.authorizations = previousAuthorizations;
           this.applied = previousApplied;
+          this.historyUsage = previousHistoryUsage;
           throw error;
         }
         return { cardId, duplicate: false };
@@ -494,14 +718,16 @@ export class AutomationReplica {
         const previousRaw = this.rawDocument;
         const previousAuthorizations = this.authorizations;
         const previousApplied = this.applied;
+        const previousHistoryUsage = this.historyUsage;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-        await this.acceptAuthoredDocument(result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
+        await this.acceptAuthoredDocument(document, result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
         this.applied[eventId] = { kind: "move", cardId, columnId, changeHash: result.value.receipt.changeHash };
         try { await this.persistState(); }
         catch (error) {
           this.rawDocument = previousRaw;
           this.authorizations = previousAuthorizations;
           this.applied = previousApplied;
+          this.historyUsage = previousHistoryUsage;
           throw error;
         }
         return { cardId, duplicate: false };
@@ -525,8 +751,10 @@ export class AutomationReplica {
           role: stringValue(item.values[this.bindings.fieldIds.role]),
           ...(this.bindings.fieldIds.jobUrl && stringValue(item.values[this.bindings.fieldIds.jobUrl])
             ? { jobUrl: stringValue(item.values[this.bindings.fieldIds.jobUrl]) } : {}),
+          ...(this.grant.payload.automation!.version === 1 && !sources.has(item.id)
+            ? { messageIds: sourceMessageIds(stringValue(item.values[this.bindings.fieldIds.sourceText ?? ""])) } : {}),
           columnId: workflowColumnId(document.entities, item.id) ?? item.placement.parentId ?? "",
-          ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}), messageIds: sourceMessageIds(stringValue(item.values[this.bindings.fieldIds.sourceText ?? ""])),
+          ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}),
           ...(this.grant.payload.automation!.version === 2 || sources.has(item.id) ? { sources: sources.get(item.id) ?? [] } : {}),
         }));
     } finally { Automerge.free(document); }
@@ -721,7 +949,10 @@ export class AutomationReplica {
   }
 
   serialize(): string {
-    return JSON.stringify({ version: this.definition ? 2 : 1, workspaceId: this.workspaceId, blind: { ...this.blind, cursor: this.cursor, lastUploaded: this.lastUploaded },
+    return JSON.stringify({ version: 6,
+      workspaceId: this.workspaceId, blind: { ...this.blind, cursor: this.cursor, lastUploaded: this.lastUploaded },
+      ...(this.history ? { history: this.history } : {}), ...(this.scopeAuthoritySnapshot ? { scopeAuthoritySnapshot: this.scopeAuthoritySnapshot } : {}),
+      historyUsage: this.historyUsage,
       grant: this.grant, ...(this.definition ? { definition: this.definition } : {}), bindings: this.bindings, authority: this.authority, rawDocument: this.rawDocument,
       authorizations: this.authorizations, chat: this.chat, ...(this.tombstoned ? { tombstoned: true as const } : {}),
       ...(this.attachments.length ? { attachments: this.attachments } : {}),
@@ -752,9 +983,7 @@ export class AutomationReplica {
   }
 
   private storageBinding(): string {
-    const blind = this.blind;
-    return canonicalizeJson([this.workspaceId, blind.origin, blind.scopeId, blind.keyEpoch, blind.policyRevision,
-      blind.servicePublicKey, blind.readToken, blind.writeToken, blind.contentKey]);
+    return automationStorageBinding(this.workspaceId, this.blind);
   }
 
   private createEngine(managementGuard?: () => Promise<void>): ReplicaEngine<Uint8Array, BlindObject, BlindReceipt> {
@@ -771,15 +1000,15 @@ export class AutomationReplica {
       },
       content: {
         revision: async () => this.contentRevision,
-        capture: () => this.captureSnapshot(),
+        capture: () => this.captureSnapshot(Boolean(managementGuard)),
         seal: plaintext => encryptBlindObject(this.blind.scopeId, this.blind.keyEpoch, decodeBlindBytes(this.blind.contentKey), plaintext),
       },
       transport: {
         inventory: cursor => this.transport.inventory({ ...this.blind }, cursor),
         download: id => this.transport.download({ ...this.blind }, id),
-        upload: (object, requestId) => this.transport.upload({ ...this.blind }, object, requestId),
+        upload: (object, requestId, observedSequence) => this.transport.upload({ ...this.blind }, object, requestId, observedSequence),
       },
-      admit: object => this.receiveSnapshot(object),
+      admit: object => this.receiveSnapshot(object, managementGuard),
       verifyReceipt: (receipt, object, requestId) => verifyBlindReceipt(receipt, this.blind, object, requestId),
       guard: async () => {
         if (managementGuard) await managementGuard();
@@ -790,14 +1019,21 @@ export class AutomationReplica {
     });
   }
 
+  private archiveReader(guard: () => void | Promise<void>): HistoryBaselineFetchPort {
+    if (this.transport.archive) return this.transport.archive({ ...this.blind }, guard);
+    const remote = createArchiveRemote({ ...this.blind }, { fetch, ensureCurrent: guard });
+    return { download: id => remote.download(id), ensureCurrent: guard };
+  }
+
   private wireSnapshot(): WireSnapshot {
-    return { version: 1, workspaceId: this.workspaceId, document: this.rawDocument,
+    return { version: this.history ? 2 : 1, workspaceId: this.workspaceId, document: this.rawDocument,
+      ...(this.history ? { history: this.history.wire } : {}),
       authorization: { version: 1, records: normalizeWireAuthorizations(this.authorizations), authority: this.authority }, chat: this.chat,
       ...(this.attachments.length ? { attachments: this.attachments } : {}) };
   }
 
-  private async captureSnapshot() {
-    const admission = await this.revalidate();
+  private async captureSnapshot(management = false) {
+    const admission = management ? this.admission() : await this.revalidate();
     if (admission.quarantinedHashes.length || admission.pendingHashes.length) throw new Error("Unadmitted workspace changes prevent replica upload");
     const plaintext = new TextEncoder().encode(canonicalizeJson(this.wireSnapshot()));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Automation snapshot exceeds the Rusty object limit");
@@ -818,30 +1054,83 @@ export class AutomationReplica {
     this.admissionCache = undefined;
   }
 
-  private async receiveSnapshot(object: BlindObject): Promise<{ hash: string }> {
-    const plaintext = await decryptBlindObject(object, this.blind.scopeId, this.blind.keyEpoch, decodeBlindBytes(this.blind.contentKey));
+  private async receiveSnapshot(object: BlindObject, managementGuard?: () => Promise<void>): Promise<{ hash: string }> {
+    const plaintext = await openWithReplicaContentKeys(this.blind, object.keyEpoch,
+      key => decryptBlindObject(object, this.blind.scopeId, object.keyEpoch, decodeBlindBytes(key)));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Encrypted automation snapshot exceeds the size limit");
     const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) as WireSnapshot;
-    if (snapshot.version !== 1 || snapshot.workspaceId !== this.workspaceId || typeof snapshot.document !== "string" ||
-      !snapshot.authorization) throw new Error("Encrypted snapshot is invalid");
+    if ((snapshot.version !== 1 && snapshot.version !== 2) || (snapshot.version === 2) !== Boolean(snapshot.history) ||
+      snapshot.workspaceId !== this.workspaceId || typeof snapshot.document !== "string" || !snapshot.authorization) throw new Error("Encrypted snapshot is invalid");
+    if (this.history && !snapshot.history) throw new Error("A compact Worker requires the verified history descriptor; original source retained");
+    const revision = this.contentRevision;
+    const ensureCurrent = () => {
+      if (revision !== this.contentRevision) throw new Error("Worker content changed during history receive");
+      if (!managementGuard) this.assertActive();
+    };
+    const guard = async () => { ensureCurrent(); if (managementGuard) await managementGuard(); ensureCurrent(); };
     const nextChat = mergeOpaqueChat(this.chat, parseOpaqueChat(snapshot.chat));
     const nextAttachments = mergeAttachmentLocators(this.attachments, snapshot.attachments);
-    const incoming = decodeBlindBytes(snapshot.document);
-    const local = decodeBlindBytes(this.rawDocument);
-    const merged = mergeDocuments(local, incoming, actorIdForProfile(this.profile));
-    const bundle = normalizeBundle(snapshot.authorization, this.authorizations);
-    const authority = prepareAuthority(bundle.authority, this.authority, merged, this.workspaceId);
-    const admission = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: merged,
-      authorization: { ...bundle, authority }, knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never);
+    const incoming = decodeBlindBytes(snapshot.document), local = decodeBlindBytes(this.rawDocument);
+    let nextHistory = this.history, nextBasis = this.historyBasis, switching = false;
+    if (snapshot.history && canonicalizeJson(parseWireHistoryBaseline(snapshot.history)) !== canonicalizeJson(this.history?.wire ?? null)) {
+      if (!this.scopeAuthoritySnapshot) throw new Error("Worker history requires an admitted signed scope authority");
+      if (this.progress.pending) throw new Error("Confirm the exact original Worker outbox before switching history basis");
+      const reader = this.archiveReader(guard);
+      const received = await receiveWorkerHistoryBasis({ wire: snapshot.history, workspaceId: this.workspaceId, config: this.blind,
+        trustedScopeAuthority: this.scopeAuthoritySnapshot, previous: this.historyBasis, fetch: reader, guard, ensureCurrent });
+      try {
+        const document = Automerge.load<WorkspaceDocumentV2>(local);
+        try { await assertWorkerHistoryCoversHeads(received.basis, Automerge.getHeads(document), this.blind, reader, guard); }
+        finally { Automerge.free(document); }
+      } catch (error) { received.basis.free(); throw error; }
+      nextHistory = received.stored; nextBasis = received.basis; switching = true;
+    }
+    const merged = switching ? incoming : mergeDocuments(local, incoming, actorIdForProfile(this.profile));
+    const bundle = switching ? snapshot.authorization : normalizeBundle(snapshot.authorization, this.authorizations);
+    const authority = nextBasis ? mergeAuthority(bundle.authority, this.authority) : prepareAuthority(bundle.authority, this.authority, merged, this.workspaceId);
+    let admission: WorkspaceAdmissionResult;
+    try {
+      admission = computeWorkspaceAdmission({ workspaceId: this.workspaceId, remote: merged,
+        authorization: { ...bundle, authority }, knownAuthority: this.authority, receivedBasis: nextBasis, now: Date.now() }, WasmStateCore as never);
+      if (switching) assertFullyAdmitted(admission, merged);
+    } catch (error) { if (switching) nextBasis?.free(); throw error; }
+    let nextHistoryUsage = this.historyUsage;
+    const mergedDocument = Automerge.load<WorkspaceDocumentV2>(merged);
+    try {
+      const previousDocument = Automerge.load<WorkspaceDocumentV2>(local);
+      try {
+        const admitted = new Set(admission.admittedHashes);
+        if (switching && nextBasis) {
+          const baselineDocument = Automerge.load<WorkspaceDocumentV2>(nextBasis.document());
+          try {
+            const tail = Automerge.getChanges(baselineDocument, mergedDocument)
+              .filter(change => admitted.has(Automerge.decodeChange(change).hash));
+            nextHistoryUsage = ensureHistoryBudget({ baselineId: historyBaselineId(nextHistory!.wire),
+              admittedChanges: 0, encodedBytes: 0 }, tail);
+          } finally { Automerge.free(baselineDocument); }
+        } else {
+          const tail = Automerge.getChanges(previousDocument, mergedDocument)
+            .filter(change => admitted.has(Automerge.decodeChange(change).hash));
+          nextHistoryUsage = ensureHistoryBudget(this.historyUsage, tail);
+        }
+      } finally { Automerge.free(previousDocument); }
+    } catch (error) { if (switching) nextBasis?.free(); throw error; }
+    finally { Automerge.free(mergedDocument); }
     const previous = { authority: this.authority, authorizations: this.authorizations, rawDocument: this.rawDocument,
-      chat: this.chat, attachments: this.attachments };
-    this.replaceEvidence(encodeBlindBytes(merged), mergeAuthorizationRecords(this.authorizations, admission.verifiedAuthorizations),
+      chat: this.chat, attachments: this.attachments, history: this.history, basis: this.historyBasis, historyUsage: this.historyUsage };
+    this.history = nextHistory; this.historyBasis = nextBasis;
+    this.historyUsage = nextHistoryUsage;
+    this.replaceEvidence(encodeBlindBytes(merged), switching ? admission.verifiedAuthorizations : mergeAuthorizationRecords(this.authorizations, admission.verifiedAuthorizations),
       authority, nextChat, nextAttachments);
     try { await this.persistState(); }
     catch (error) {
+      this.history = previous.history; this.historyBasis = previous.basis;
+      this.historyUsage = previous.historyUsage;
       this.replaceEvidence(previous.rawDocument, previous.authorizations, previous.authority, previous.chat, previous.attachments);
+      if (switching) nextBasis?.free();
       throw error;
     }
+    if (switching) previous.basis?.free();
     return { hash: await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot))) };
   }
 
@@ -854,7 +1143,8 @@ export class AutomationReplica {
     }
     const pending = this.progress.pending;
     if (pending && pending.revision === undefined) {
-      const previousBytes = await decryptBlindObject(pending.object, this.blind.scopeId, this.blind.keyEpoch, decodeBlindBytes(this.blind.contentKey));
+      const previousBytes = await openWithReplicaContentKeys(this.blind, pending.object.keyEpoch,
+        key => decryptBlindObject(pending.object, this.blind.scopeId, pending.object.keyEpoch, decodeBlindBytes(key)));
       const previous = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(previousBytes)) as WireSnapshot;
       if (previous.authorization?.version !== 1 || !Array.isArray(previous.authorization.records)) return;
       const normalized = { ...previous, authorization: { ...previous.authorization,
@@ -877,7 +1167,7 @@ export class AutomationReplica {
     if (cached?.rawDocument === this.rawDocument && cached.authorizations === this.authorizations && cached.authority === this.authority) return cached.result;
     const input = { workspaceId: this.workspaceId,
       authorization: { version: 1, records: this.authorizations, authority: this.authority },
-      knownAuthority: this.authority, now: Date.now() } as const;
+      knownAuthority: this.authority, receivedBasis: this.historyBasis, now: Date.now() } as const;
     const result = document
       ? computeWorkspaceDocumentAdmission(input, WasmStateCore as never, document)
       : computeWorkspaceAdmission({ ...input, remote: decodeBlindBytes(this.rawDocument) }, WasmStateCore as never);
@@ -896,11 +1186,17 @@ export class AutomationReplica {
     } catch (error) { Automerge.free(document); throw error; }
   }
 
-  private async acceptAuthoredDocument(document: Automerge.Doc<WorkspaceDocumentV2>, changeHash: string, beforeHeads: string[]): Promise<void> {
+  private async acceptAuthoredDocument(previousDocument: Automerge.Doc<WorkspaceDocumentV2>, document: Automerge.Doc<WorkspaceDocumentV2>,
+    changeHash: string, beforeHeads: string[]): Promise<void> {
     const newChanges = Automerge.getChangesMetaSince(document, beforeHeads);
     if (newChanges.length !== 1 || newChanges[0]!.hash !== changeHash) {
       throw new Error("Automation authoring produced unexpected Automerge history");
     }
+    const authoredBytes = Automerge.getChanges(previousDocument, document);
+    if (authoredBytes.length !== 1 || Automerge.decodeChange(authoredBytes[0]!).hash !== changeHash) {
+      throw new Error("Automation authoring produced unexpected active history bytes");
+    }
+    const nextUsage = ensureHistoryBudget(this.historyUsage, authoredBytes);
     const context = await this.executionSigningContext("workspace-changes", { workspaceId: this.workspaceId,
       personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId });
     const evidence = signingEvidence(context);
@@ -915,12 +1211,13 @@ export class AutomationReplica {
     const candidateRaw = encodeBlindBytes(Automerge.save(document));
     const result = computeWorkspaceDocumentAdmission({ workspaceId: this.workspaceId,
       authorization: { version: 1, records: nextAuthorizations, authority: this.authority },
-      knownAuthority: this.authority, now: Date.now() }, WasmStateCore as never, document);
+      knownAuthority: this.authority, receivedBasis: this.historyBasis, now: Date.now() }, WasmStateCore as never, document);
     if (result.quarantinedHashes.includes(changeHash) || result.pendingHashes.includes(changeHash) || !result.admittedHashes.includes(changeHash)) {
       const decision = result.decisions.find(value => value.hash === changeHash);
       throw new Error(`Rust rejected the scoped automation change: ${JSON.stringify(decision?.status ?? "missing-admission")}`);
     }
     this.replaceEvidence(candidateRaw, nextAuthorizations, this.authority);
+    this.historyUsage = nextUsage;
     this.admissionCache = { rawDocument: this.rawDocument, authorizations: this.authorizations, authority: this.authority, result };
   }
 
@@ -989,6 +1286,7 @@ async function validateActivation(packet: AutomationActivationPacket, profile: L
     packet.grant.payload.workspaceId !== packet.workspaceId || packet.grant.payload.personId !== profile.identity.personId) {
     throw new Error("Automation activation packet is invalid");
   }
+  parseReplicaContentKeys(packet.blind);
   validateBindings(packet.bindings, packet.grant.payload.automation);
   parseOpaqueChat(packet.initial.chat);
   if (packet.blind.cursor < 0 || !Number.isSafeInteger(packet.blind.cursor) || packet.blind.lastUploaded && !/^[A-Za-z0-9_-]{43}$/.test(packet.blind.lastUploaded)) {
@@ -1015,7 +1313,7 @@ async function validateActivation(packet: AutomationActivationPacket, profile: L
   }
   if (grant.payload.automation!.version === 2 && !packet.definition) throw new Error("Source scope v2 requires its signed type contract");
   if (packet.definition) await validateDefinitionProof(packet.definition, packet.workspaceId, grant, owner);
-  return prepareAuthority(authority, null, decodeBlindBytes(packet.initial.document), packet.workspaceId);
+  return packet.initial.history ? mergeAuthority(authority, null) : prepareAuthority(authority, null, decodeBlindBytes(packet.initial.document), packet.workspaceId);
 }
 
 function validateBindings(bindings: AutomationReplicaBindings, scope?: AutomationGrantScope): void {
@@ -1029,12 +1327,26 @@ function validateBindings(bindings: AutomationReplicaBindings, scope?: Automatio
   }
 }
 
+async function restoreSerializedHistory(value: SerializedReplica, ensureCurrent: () => void): Promise<WasmVerifiedReceivedHistoryBaseline | undefined> {
+  if (!value.history) return undefined;
+  const anchor = validateWorkerHistoryAuthority(value.scopeAuthoritySnapshot, value.workspaceId);
+  return restoreWorkerHistoryBasis(value.history, value.workspaceId, value.blind, anchor, ensureCurrent, ensureCurrent);
+}
+
 async function validateSerialized(value: SerializedReplica, profile: LocalProfile,
-  purpose: "restore" | "renewal" | "management" = "restore"): Promise<WorkspaceAdmissionResult | undefined> {
-  if (!value || ![1, 2].includes(value.version) || value.workspaceId !== value.blind?.workspaceId ||
+  purpose: "restore" | "renewal" | "management" = "restore", receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<WorkspaceAdmissionResult | undefined> {
+  if (!value || ![1, 2, 3, 4, 5, 6].includes(value.version) || value.workspaceId !== value.blind?.workspaceId ||
     value.grant?.payload?.role !== "automation" || value.grant.payload.personId !== profile.identity.personId ||
     !value.rawDocument || !Array.isArray(value.authorizations) || !value.authority || !value.applied || typeof value.applied !== "object") {
     throw new Error("Serialized automation replica is invalid");
+  }
+  const keys = parseReplicaContentKeys(value.blind);
+  if (value.history ? value.version !== 5 && value.version !== 6 : value.version === 5 || (keys.historicalContentKeyVariants ? value.version !== 4 && value.version !== 6 : value.version === 4 || (value.version === 3) !== Boolean(keys.historicalContentKeys) && value.version !== 6)) {
+    throw new Error("Worker key history requires its complete compatible reader version");
+  }
+  const baselineId = value.history ? historyBaselineId(value.history.wire) : null;
+  if (value.version === 6 ? !parseActiveHistoryUsage(value.historyUsage, baselineId) : value.historyUsage !== undefined) {
+    throw new Error("Worker active history progress requires a compatible reader version");
   }
   if (value.version === 2 && !value.definition || value.version === 1 && value.definition ||
     value.tombstoned !== undefined && value.tombstoned !== true) throw new Error("Serialized automation contract version is invalid");
@@ -1051,7 +1363,7 @@ async function validateSerialized(value: SerializedReplica, profile: LocalProfil
     const epoch = value.grant.payload.accessEpoch;
     if (typeof epoch !== "number") throw new Error("Serialized automation grant epoch is missing");
     const history = admitHistoricalAutomationAuthority({ workspaceId: value.workspaceId, epoch, bytes: decodeBlindBytes(value.rawDocument),
-      authorization: { version: 1, records: value.authorizations, authority: value.authority } });
+      authorization: { version: 1, records: value.authorizations, authority: value.authority }, receivedBasis });
     admission = history.admission;
     owner = history.issuer;
   }

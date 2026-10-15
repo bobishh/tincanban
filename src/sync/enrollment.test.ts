@@ -9,8 +9,10 @@ import { defaultStorage } from "../storage"
 import { keyId, verifyDeviceChain } from "./meshRecords"
 import { resolveSigningContext } from "../domain/signingContext"
 import * as local from "../localDb"
+import { reactive } from "vue"
 
-async function fixture(photo?: { avatarData: string | null; changedAt: string }) {
+async function fixture(photo?: { avatarData: string | null; changedAt: string },
+  workspaceView: (value: { id: string; title: string }[]) => { id: string; title: string }[] = value => value) {
   const owner = await bootstrapIdentity("Owner")
   resetIdentityStorageForTest()
   const guest = await bootstrapIdentity("New device")
@@ -32,7 +34,7 @@ async function fixture(photo?: { avatarData: string | null; changedAt: string })
   const context = await resolveSigningContext({ profile: owner, certificates: [owner.certificate], purpose: "device-enrollment-approval",
     binding: { invitationId: invite.invitationId, recipientDeviceId: result.certificate.payload.deviceId }, authorityRevision: "fixture",
     current: async () => ({ personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision: "fixture" }) })
-  const bytes = await enrollmentPayload(invite, owner, result.certificate, root, [{ id: "ws", title: "Board" }],
+  const bytes = await enrollmentPayload(invite, owner, result.certificate, root, workspaceView([{ id: "ws", title: "Board" }]),
     "ws", [{ version: 1, workspaceId: "ws", ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey,
       ownerCertificates: [owner.certificate], transportSecret: "A".repeat(43), epoch: 1, peers: [], optionalMeshField: undefined }], [], new TextEncoder().encode("[]"), context)
   return { owner, guest, service, invite, bytes, certificate: result.certificate, root, context }
@@ -108,6 +110,21 @@ describe("device enrollment boundary", () => {
     const forged = JSON.parse(new TextDecoder().decode(bytes))
     forged.payload.displayName = "Forged"
     await expect(readEnrollmentRequest(new TextEncoder().encode(JSON.stringify(forged)), invite)).rejects.toThrow("Invalid")
+  })
+
+  it("Given a reactive enrollment invitation from the device dialog, when requesting enrollment, then sign its exact original binding", async () => {
+    const { guest, invite } = await fixture()
+    const bytes = await createEnrollmentRequest(reactive(invite), guest)
+    expect(await readEnrollmentRequest(bytes, invite)).toMatchObject({
+      invitationId: invite.invitationId, deviceId: guest.device.deviceId, publicKey: guest.device.publicKey,
+    })
+  })
+
+  it("Given reactive workspace summaries from the device dialog, when approving enrollment, then retain the exact signed portable workspace manifest", async () => {
+    const { invite, guest, bytes } = await fixture(undefined, reactive)
+    const prepared = await preflightEnrollment(bytes, invite, guest)
+    expect(prepared.payload.workspaces).toEqual([{ id: "ws", title: "Board" }])
+    expect(prepared.payload.activeWorkspaceId).toBe("ws")
   })
 
   it("Given a profile carrying another device's private key, when creating an enrollment request, then reject before emitting a request", async () => {

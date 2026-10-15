@@ -46,6 +46,10 @@ function candidate(cardId: string, sources: ApplicationSourceData[], overrides: 
     jobUrl: "https://display.example.test/wrong-role", messageIds: ["<wrong-thread@example.test>"], sources, ...overrides };
 }
 
+function sourceWithReferences(cardId: string, company: string, title: string, references: { messageIds?: string[]; atsId?: string }): ApplicationSourceData {
+  return { ...source(cardId, company, title), version: 2, ...structuredClone(references) };
+}
+
 describe("source-backed application matching", () => {
   it("Given incorrect editable labels and no page fetch, When mail names the original role, Then match from retained posting evidence", () => {
     const result = correlateApplicationSources(mail({ text: "Nacre Light will not proceed with Principal Systems Engineer.",
@@ -53,6 +57,65 @@ describe("source-backed application matching", () => {
       candidate("card-1", [source("card-1", "Nacre Light", "Principal Systems Engineer")]),
     ]);
     expect(result).toEqual({ kind: "matched", cardId: "card-1", method: "company-role" });
+  });
+
+  it("Given a legacy candidate without retained original evidence, When mail mentions its editable URL or labels, Then require explicit review", () => {
+    const result = correlateApplicationSources(mail({ text: "Editable display company rejected Editable display title.",
+      urls: ["https://display.example.test/wrong-role"] }), [
+      candidate("legacy-card", []),
+    ]);
+    expect(result).toEqual({ kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application",
+      candidates: ["legacy-card"] });
+  });
+
+  it("Given a retained application thread reference, When source-backed matching runs, Then the exact thread takes precedence over editable labels and posting context", () => {
+    const result = correlateApplicationSources(mail({ messageId: "<reply@example.test>",
+      text: "Your application update is ready.", urls: ["https://unrelated.example.test/role"] }), [
+      candidate("card-1", [sourceWithReferences("card-1", "Nacre Light", "Principal Systems Engineer", {
+        messageIds: ["<application-thread@example.test>"],
+      })], {
+        messageIds: ["<application-thread@example.test>"],
+      }),
+      candidate("card-2", [sourceWithReferences("card-2", "Nacre Light", "Product Designer", {
+        messageIds: ["<reply@example.test>"],
+      })], {
+        messageIds: ["<reply@example.test>"],
+      }),
+    ]);
+    expect(result).toEqual({ kind: "matched", cardId: "card-2", method: "thread" });
+  });
+
+  it("Given only an editable source-text thread reference matches, When source-backed matching runs, Then leave the email for explicit review", () => {
+    const result = correlateApplicationSources(mail({ messageId: "<editable-thread@example.test>",
+      text: "Your application update is ready." }), [
+      candidate("card-1", [source("card-1", "Nacre Light", "Principal Systems Engineer")], {
+        messageIds: ["<editable-thread@example.test>"],
+      }),
+    ]);
+    expect(result).toEqual({ kind: "review", reason: "No existing application matched", candidates: ["card-1"] });
+  });
+
+  it("Given a source record retains its submission thread, When a reply arrives, Then match by the stored source reference", () => {
+    const result = correlateApplicationSources(mail({ inReplyTo: "<submitted@example.test>", text: "Generic status update" }), [
+      candidate("card-1", [sourceWithReferences("card-1", "Nacre Light", "Principal Systems Engineer", {
+        messageIds: ["<submitted@example.test>"],
+      })]),
+      candidate("card-2", [source("card-2", "Nacre Light", "Product Designer")]),
+    ]);
+    expect(result).toEqual({ kind: "matched", cardId: "card-1", method: "thread" });
+  });
+
+  it("Given an original ATS reference, When mail contains its exact token, Then use it before role context", () => {
+    const result = correlateApplicationSources(mail({ text: "Please see application REQ-0042. We will not proceed." }), [
+      candidate("card-1", [sourceWithReferences("card-1", "Nacre Light", "Principal Systems Engineer", { atsId: "REQ-0042" })]),
+      candidate("card-2", [sourceWithReferences("card-2", "Nacre Light", "Product Designer", { atsId: "REQ-0099" })]),
+    ]);
+    expect(result).toEqual({ kind: "matched", cardId: "card-1", method: "ats-id" });
+
+    const substringOnly = correlateApplicationSources(mail({ text: "Application REQ-00420 is still pending." }), [
+      candidate("card-1", [sourceWithReferences("card-1", "Nacre Light", "Principal Systems Engineer", { atsId: "REQ-0042" })]),
+    ]);
+    expect(substringOnly).toMatchObject({ kind: "review", candidates: ["card-1"] });
   });
 
   it("Given a refresh reports a generic page or 404, When original posting text still matches, Then use only the original", () => {

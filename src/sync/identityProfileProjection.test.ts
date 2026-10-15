@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
-import { bootstrapIdentity, resetIdentityStorageForTest, toBase64Url } from "../domain/identity"
+import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
 import { defaultStorage } from "../storage"
@@ -16,6 +16,7 @@ import { projectPrivateProfileObservation } from "../chat/privateProfileProjecti
 import { resumeIdentityProfileProjections } from "./identityProfileProjection"
 import { createWorkspaceDeviceRevocation } from "./meshRecords"
 import { WorkspaceUnavailableError } from "../workspaceAvailability"
+import { readIdentityStateRevision } from "../identityStateRevision"
 
 beforeEach(() => {
   resetIdentityStorageForTest()
@@ -105,6 +106,19 @@ it("Given retained own profile and later installed workspace, when recovery retr
   ]))
 })
 
+it("Given a signed workspace profile is already projected, When its identity transfer is replayed, Then preserve the final portable content and revision without another sync notification", async () => {
+  const f = await fixture()
+  f.install()
+  const transfer = await readIdentityDeviceTransfer(f.manifest, f.owner.identity.personId)
+  await applyIdentityDeviceTransfer(transfer, () => {})
+  const capture = async () => canonicalizeJson(await createIdentityDeviceTransfer((await defaultStorage.loadPersonalRoot())!, [f.owner.certificate]))
+  const before = await capture(), revision = await readIdentityStateRevision()
+  const changed = await applyIdentityDeviceTransfer(transfer, () => {})
+  expect(await capture()).toBe(before)
+  expect(await readIdentityStateRevision()).toBe(revision)
+  expect(changed).toBe(false)
+})
+
 it("Given a declared workspace profile source has a storage failure, when capturing identity state, then report the failure rather than silently omit its observations", async () => {
   const f = await fixture()
   configureChat(async () => f.owner.identity.personId, async () => { throw new Error("Workspace history read failed") })
@@ -157,6 +171,24 @@ it("Given the owner device was revoked for the workspace, when its own private p
   expect(result.pending[0]?.reason).toBe("Workspace profile access is revoked")
   expect((await f.store.load(f.scope)).profiles).toEqual([])
   expect(JSON.parse((await local.readLocal(f.queueKey))!).observations).toHaveLength(1)
+})
+
+it("Given a profile was materialized before device revocation, When its old identity transfer is replayed, Then current access is rechecked and its original remains queued", async () => {
+  const f = await fixture()
+  f.install()
+  const transfer = await readIdentityDeviceTransfer(f.manifest, f.owner.identity.personId)
+  await applyIdentityDeviceTransfer(transfer, () => {})
+  expect(JSON.parse((await local.readLocal(f.queueKey))!).observations).toEqual([])
+  const removal = await createWorkspaceDeviceRevocation(f.owner, f.workspaceId, f.owner.identity.personId,
+    f.owner.device.deviceId, ["a".repeat(64)], [f.owner.certificate])
+  vi.mocked(peerStore.getWorkspaceAuthority).mockResolvedValue({ version: 1, workspaceId: f.workspaceId,
+    ownerPersonId: f.owner.identity.personId, ownerPublicKey: f.owner.identity.publicKey,
+    ownerCertificates: [f.owner.certificate], epoch: 1, updatedAt: new Date().toISOString(),
+    catalog: { deviceRevocations: [removal] } })
+  await applyIdentityDeviceTransfer(transfer, () => {})
+  expect(JSON.parse((await local.readLocal(f.queueKey))!).observations).toEqual([{ workspaceId: f.workspaceId, record: f.record }])
+  expect((await resumeIdentityProfileProjections(f.owner.identity.personId, () => {})).pending[0]?.reason)
+    .toBe("Workspace profile access is revoked")
 })
 
 it("Given shared storage resolves without retaining a profile, when projection confirms, then do not acknowledge or drop the original private record", async () => {

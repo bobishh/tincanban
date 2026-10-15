@@ -6,6 +6,7 @@ import { canonicalizeJson } from "../domain/identity"
 import { compareAndSwapLocal, readLocal, type LocalStatePlan } from "../localDb"
 import { IdentityDeviceStateUpgradeRequiredError } from "./identityDeviceStateCodec"
 import { identityProfileProjectionKey } from "./identityProfileProjectionState"
+import { isPrivateProfileObservationMaterialized } from "../chat/privateProfileProjection"
 
 type Identity = Pick<PublicIdentity, "personId" | "publicKey">
 export type PrivateProfileObservation = { workspaceId: string; record: ChatRecord }
@@ -51,7 +52,11 @@ export async function planIdentityProfileImport(identity: Identity, incoming: Pr
   incoming = structuredClone(incoming)
   const verified = await normalize(identity, incoming)
   const key = identityProfileProjectionKey(identity.personId), raw = await readLocal(key)
-  const observations = await normalize(identity, [...await parseRegistry(identity, raw), ...verified])
+  const pending = []
+  for (const observation of verified) {
+    if (!await isPrivateProfileObservationMaterialized(observation.workspaceId, observation.record)) pending.push(observation)
+  }
+  const observations = await normalize(identity, [...await parseRegistry(identity, raw), ...pending])
   const value = serialize(identity, observations)
   return { conditions: [{ key, value: raw }], writes: value === raw || (!observations.length && raw === null) ? [] : [{ key, value }] }
 }

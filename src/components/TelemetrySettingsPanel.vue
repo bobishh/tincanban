@@ -20,5 +20,5 @@ function change(event: Event) {
   </section>
 </template>
 <style scoped>
-.telemetry-toggle { display: flex; align-items: center; gap: 8px; }
+.telemetry-toggle { display: flex; align-items: center; gap: var(--space-2); }
 </style>

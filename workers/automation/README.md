@@ -27,6 +27,31 @@ activation. Older Workers need a compatible rollout first; live untyped grants
 require explicit route adoption/removal. This is working-tree protocol evidence,
 not a claim of coordinated production deployment.
 
+## Compact history maintenance
+
+Working-tree protocol provides `prepare-history-baseline` and
+`activate-history-baseline` under fresh signed current-Owner requests. Preparation
+persists a separately admitted scope trust anchor, confirms the exact original
+outbox, uploads any remaining admitted snapshot, then freezes execution with a
+durable transition ID and signed source frontier. It preserves grants, expiry,
+event deduplication, storage keys and desired state. Identity inspection remains
+available while alarms and other authoring/maintenance paths stop.
+
+The Owner drains these originals before publishing an archive-backed compact
+snapshot. Activation receives into an isolated candidate, verifies the Owner
+attestation and bounded signed tail through Native admission, and proves every
+frozen head exists in the authenticated archive catalogue. One generation-checked
+transaction publishes the encrypted candidate, writes the exact completed marker,
+and removes the freeze. Unavailable archives, uncovered branches, pending uploads
+or rejected evidence preserve the original durable state and freeze for retry.
+Fresh-nonce retries bind the original transition, pinned storage and baseline ID;
+they do not renew an automation grant or manufacture an Owner signature.
+
+State reader 5 and workspace snapshot reader 2 are required; the signed descriptor
+and encrypted basis/coverage evidence survive restart and are reverified offline.
+This describes implementation source; coordinated acceptance and production
+activation remain gated until the complete source work is finished.
+
 ## Application sources
 
 The current working tree supports `job-intake@2`. Its owner-signed automation scope
@@ -318,11 +343,12 @@ New intake returns HTTP 202 after the Durable Object has stored the event. Clef 
 
 The `Deploy production` GitHub workflow publishes both frontend and automation
 only after `Verify` succeeds for a push to the current `main` commit. Automation
-uploads a version tagged with that commit, deploys it to all traffic, preserves
-operator variables, and checks `/health`. It uses the production `wrangler.jsonc`;
-the local `wrangler.e2e.jsonc` is never published.
+uploads a version tagged with that commit, supplies the same commit as
+`RELEASE_SHA`, deploys it to all traffic, preserves operator variables, and
+requires `/health` to report both readiness and that exact SHA. It uses the
+production `wrangler.jsonc`; the local `wrangler.e2e.jsonc` is never published.
 
-The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready"}`. Its `workers.dev` route and preview URLs are disabled. Browser CORS allows `https://match.meta-uber-engineer.dev` and the public intake form at `https://meta-uber-engineer.dev`.
+The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready","buildSha":"<deployment release SHA>"}`. This SHA is supplied by the verified deployment job; it does not independently prove the uploaded artifact digest. Local builds without `RELEASE_SHA` return `buildSha: null`. Its `workers.dev` route and preview URLs are disabled. Browser CORS allows `https://match.meta-uber-engineer.dev` and the public intake form at `https://meta-uber-engineer.dev`.
 
 Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. The production proof activated one exact owner-approved scope and applied a synthetic Lead through Clef; no applicant or email content was used. Future integrations must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
 

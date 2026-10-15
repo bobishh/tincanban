@@ -95,6 +95,62 @@ describe("attachment codec", () => {
     await expect(sealAttachment(scope, descriptor, fixtureBytes(0), transferId)).rejects.toThrow()
   })
 
+  it("opens epoch-three manifests and chunks with retained key while new preparations use active epoch four", async () => {
+    const oldKey = new Uint8Array(32).fill(31)
+    const oldScope: AttachmentScope = { ...scope, keyEpoch: 3, contentKey: encodeBlindBytes(oldKey) }
+    const bytes = fixtureBytes()
+    const descriptor = await createBlobDescriptor(bytes, "rotated.bin", "application/octet-stream")
+    const oldSealed = await sealAttachment(oldScope, descriptor, bytes, transferId)
+    const rotatedScope = { ...scope, keyEpoch: 4, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
+      historicalContentKeys: { "3": oldScope.contentKey } } as AttachmentScope
+
+    const manifest = await openAttachmentManifest(rotatedScope, descriptor, oldSealed.locator, oldSealed.manifest)
+    expect(oldSealed.manifest.keyEpoch).toBe(3)
+    for (const [index, object] of oldSealed.chunks.entries()) {
+      expect(await openAttachmentChunk(rotatedScope, descriptor, oldSealed.locator, manifest, index, object))
+        .toEqual(bytes.slice(index * BLOB_CHUNK_BYTES, (index + 1) * BLOB_CHUNK_BYTES))
+    }
+
+    const newSealed = await sealAttachment(rotatedScope, descriptor, bytes, "new-transfer")
+    expect(newSealed.manifest.keyEpoch).toBe(4)
+    expect(newSealed.chunks.every(object => object.keyEpoch === 4)).toBe(true)
+  })
+
+  it.each(["missing-history", "future-epoch", "wrong-history-key"] as const)(
+    "rejects old attachment ciphertext when %s", async scenario => {
+      const oldKey = new Uint8Array(32).fill(31)
+      const oldScope: AttachmentScope = { ...scope, keyEpoch: 3, contentKey: encodeBlindBytes(oldKey) }
+      const bytes = fixtureBytes()
+      const descriptor = await createBlobDescriptor(bytes, "rotated.bin", "application/octet-stream")
+      const oldSealed = await sealAttachment(oldScope, descriptor, bytes, transferId)
+      const activeScope = { ...scope, keyEpoch: 4, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
+        ...(scenario === "missing-history" ? {} : { historicalContentKeys: {
+          "3": encodeBlindBytes(scenario === "wrong-history-key" ? new Uint8Array(32).fill(99) : oldKey),
+        } }) } as AttachmentScope
+
+      if (scenario === "future-epoch") {
+        const opened = await openAttachmentManifest(oldScope, descriptor, oldSealed.locator, oldSealed.manifest)
+        const futureKey = crypto.getRandomValues(new Uint8Array(32))
+        const futureObject = await encryptPurposeBoundObject({ purpose: "attachment",
+          subjectId: JSON.stringify([activeScope.workspaceId, descriptor.blobId, oldSealed.locator.transferId, "manifest"]),
+          scopeId: activeScope.scopeId, keyEpoch: 5 }, futureKey, new TextEncoder().encode(JSON.stringify(opened)))
+        const locator = { ...oldSealed.locator, manifestId: await blindObjectId(futureObject) }
+        await expect(openAttachmentManifest(activeScope, descriptor, locator, futureObject)).rejects.toThrow(/update required/i)
+        const futureChunk = await encryptPurposeBoundObject({ purpose: "attachment",
+          subjectId: JSON.stringify([activeScope.workspaceId, descriptor.blobId, oldSealed.locator.transferId,
+            "chunk", 0, opened.chunks.length]), scopeId: activeScope.scopeId, keyEpoch: 5 }, futureKey, bytes.slice(0, BLOB_CHUNK_BYTES))
+        const futureChunkManifest = structuredClone(opened)
+        futureChunkManifest.chunks[0]!.objectId = await blindObjectId(futureChunk)
+        await expect(openAttachmentChunk(activeScope, descriptor, oldSealed.locator, futureChunkManifest, 0, futureChunk))
+          .rejects.toThrow(/update required/i)
+        return
+      }
+
+      await expect(openAttachmentManifest(activeScope, descriptor, oldSealed.locator, oldSealed.manifest)).rejects.toThrow()
+      const manifest = await openAttachmentManifest(oldScope, descriptor, oldSealed.locator, oldSealed.manifest)
+      await expect(openAttachmentChunk(activeScope, descriptor, oldSealed.locator, manifest, 0, oldSealed.chunks[0]!)).rejects.toThrow()
+    })
+
   it("captures scope, descriptor, and file bytes before asynchronous hashing", async () => {
     const bytes = fixtureBytes()
     const descriptor = await createBlobDescriptor(bytes, "captured.txt", "text/plain")
@@ -136,4 +192,13 @@ describe("attachment codec", () => {
     const malformed = { ...sealed.manifest, ciphertext: `${cipher[0] === "A" ? "B" : "A"}${cipher.slice(1)}` } as BlindObject
     await expect(openAttachmentManifest(scope, descriptor, sealed.locator, malformed)).rejects.toThrow()
   })
+})
+
+it('Given a file encrypted by one of two same-epoch historical keys, when restored after conflict recovery, then authenticate its manifest and chunks with the matching candidate', async () => {
+  const { bytes, descriptor, sealed } = await sealedFixture()
+  const recovered: AttachmentScope = { ...scope, keyEpoch: 5, contentKey: encodeBlindBytes(new Uint8Array(32).fill(22)),
+    historicalContentKeyVariants: { '4': [encodeBlindBytes(new Uint8Array(32).fill(16)), scope.contentKey].sort() } }
+  const manifest = await openAttachmentManifest(recovered, descriptor, sealed.locator, sealed.manifest)
+  const first = await openAttachmentChunk(recovered, descriptor, sealed.locator, manifest, 0, sealed.chunks[0]!)
+  expect(first).toEqual(bytes.slice(0, BLOB_CHUNK_BYTES))
 })

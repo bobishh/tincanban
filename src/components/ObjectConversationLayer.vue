@@ -75,8 +75,8 @@ watch(() => props.chat.open.value, open => {
 
 <style scoped>
 .selection-discuss { position: fixed; z-index: 28; touch-action: manipulation; }
-.discussion-context-menu { position: fixed; z-index: 28; padding: 4px; background: var(--panel); border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.discussion-context-menu { position: fixed; z-index: 28; padding: var(--space-1); background: var(--panel); border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
 .discussion-context-menu button { width: 100%; }
-.source-feedback { position: fixed; bottom: 12px; left: 12px; z-index: 29; max-width: calc(100vw - 24px); padding: 8px 12px; background: var(--panel); border: 2px solid var(--ink); overflow-wrap: anywhere; }
-.chat-open-pending { position: fixed; z-index: 10001; inset: 50% auto auto 50%; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px); padding: 12px; transform: translate(-50%, -50%); background: var(--panel); color: var(--ink); border: 2px solid var(--line); box-shadow: 6px 6px 0 var(--ink); }
+.source-feedback { position: fixed; bottom: 12px; left: 12px; z-index: 29; max-width: calc(100vw - 24px); padding: var(--space-2) var(--space-3); background: var(--panel); border: 2px solid var(--ink); overflow-wrap: anywhere; }
+.chat-open-pending { position: fixed; z-index: 10001; inset: 50% auto auto 50%; display: flex; align-items: center; gap: var(--space-3); max-width: calc(100vw - 24px); padding: var(--space-3); transform: translate(-50%, -50%); background: var(--panel); color: var(--ink); border: 2px solid var(--line); box-shadow: 6px 6px 0 var(--ink); }
 </style>

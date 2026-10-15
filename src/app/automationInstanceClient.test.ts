@@ -8,7 +8,7 @@ import { automationBodyHash } from "../domain/automationProtocol"
 import { verifyAutomationInstanceRequest, type AutomationInstanceRequestInput } from "../domain/automationInstanceProtocol"
 import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
 import { activateExistingAutomation, discoverAutomationInstance, readAutomationInstance,
-  UnsupportedAutomationInstanceManagementError } from "./automationInstanceClient"
+  assertAutomationHistoryBaselineSupported, assertAutomationKeyHistorySupported, UnsupportedAutomationInstanceManagementError } from "./automationInstanceClient"
 
 const origin = "https://automation.example.test"
 const workspaceId = "workspace-1"
@@ -88,6 +88,49 @@ async function policyReceipt(revision = 4, signer: CryptoKeyPair = serviceKey, p
 }
 
 describe("automation instance HTTP client", () => {
+  it("Given supported rotation phases, When preparing, Then verify signed exact frozen state and refuse an ordinary identity acknowledgment", async () => {
+    const { prepareAutomationStorageRotation } = await import("./automationInstanceClient")
+    const transitionId = crypto.randomUUID()
+    let frozen = true
+    responder = async (url, _init, body) => {
+      if (url.endsWith("/v2/capabilities")) return Response.json({ origin, version: 2,
+        instanceManagement: { version: 1, actions: ["prepare-storage-rotation", "rotate-storage"] } })
+      const nonce = (body!.instanceRequest as { signed: { payload: { nonce: string } } }).signed.payload.nonce
+      return Response.json(await identityProof(nonce, { description: { workspaceId, boardId: "board-1", definitionId,
+        executorPersonId: workerExecutor.identity.personId, grantId: "unchanged-grant", expiresAt: 1, state: "paused", adoptionRequired: false,
+        storage: { ...storage, policyRevision: 3, minimumWriterVersion: 2 },
+        ...(frozen ? { storageTransition: { transitionId, state: "frozen" as const } } : {}) } }, workerExecutor))
+    }
+    const input = { origin, workspaceId, definitionId, executorPersonId: workerExecutor.identity.personId, integrationId, storage, transitionId }
+    expect((await prepareAutomationStorageRotation(owner, input)).identity.description.storageTransition).toEqual({ transitionId, state: "frozen" })
+    frozen = false
+    await expect(prepareAutomationStorageRotation(owner, input)).rejects.toThrow(/freeze/)
+  })
+
+  it("Given confirmed replacement keys, When rotating, Then bind private request and accept only exact new public storage with no grant renewal", async () => {
+    const { rotateAutomationStorageCredentials } = await import("./automationInstanceClient")
+    const credentials = { purpose: "workspace" as const, workspaceId, ...storage, keyEpoch: storage.keyEpoch + 1,
+      contentKey: toBase64Url(new Uint8Array(32).fill(3)), historicalContentKeys: { "2": toBase64Url(new Uint8Array(32).fill(2)) },
+      readToken: toBase64Url(new Uint8Array(32).fill(4)), writeToken: toBase64Url(new Uint8Array(32).fill(5)),
+      policyRevision: 4, minimumWriterVersion: 2 as const, cursor: 0, lastUploaded: "" }
+    let epoch = credentials.keyEpoch
+    responder = async (url, _init, body) => {
+      if (url.endsWith("/v2/capabilities")) return Response.json({ origin, version: 2,
+        instanceManagement: { version: 1, actions: ["rotate-storage"] } })
+      const nonce = (body!.instanceRequest as { signed: { payload: { nonce: string } } }).signed.payload.nonce
+      return Response.json(await identityProof(nonce, { description: { workspaceId, boardId: "board-1", definitionId,
+        executorPersonId: workerExecutor.identity.personId, grantId: "unchanged-grant", expiresAt: 1, state: "paused", adoptionRequired: false,
+        storage: { ...storage, keyEpoch: epoch, policyRevision: 4, minimumWriterVersion: 2 } } }, workerExecutor))
+    }
+    const input = { origin, workspaceId, definitionId, executorPersonId: workerExecutor.identity.personId, integrationId,
+      storage, transitionId: crypto.randomUUID(), credentials, receipt: await policyReceipt() }
+    expect((await rotateAutomationStorageCredentials(owner, input)).identity.description).toMatchObject({ grantId: "unchanged-grant", expiresAt: 1, state: "paused" })
+    const post = requests.find(request => request.url.endsWith("/rotate-storage"))!
+    await assertRequest(post, "rotate-storage", post.body!.body as Record<string, unknown>, integrationId, workerExecutor.identity.personId)
+    epoch--
+    await expect(rotateAutomationStorageCredentials(owner, input)).rejects.toThrow(/activated/)
+  })
+
   it("Given one matching integration route, When discovering, Then sign the exact body and select it", async () => {
     await expect(discoverAutomationInstance(owner, { origin, workspaceId, definitionId, executorPersonId }))
       .resolves.toEqual({ integrationId })
@@ -270,4 +313,48 @@ describe("automation instance HTTP client", () => {
       : new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(384 * 1024 + 1)); controller.close() } }))
     await expect(readAutomationInstance(owner, { origin, workspaceId, definitionId, executorPersonId, integrationId })).rejects.toThrow(/size/i)
   })
+
+  it("Given incomplete compact-history capability, when preparing maintenance, then refuse before exporting its signed authority", async () => {
+    const actions = ["prepare-history-baseline", "activate-history-baseline"]
+    responder = () => Response.json({ origin, version: 2, instanceManagement: { version: 1, actions },
+      readers: { automationState: 4, workspaceSnapshot: 1 } })
+    await expect(assertAutomationHistoryBaselineSupported(origin)).rejects.toThrow(/compact workspace history/)
+    expect(requests.every(request => request.url.endsWith("/v2/capabilities"))).toBe(true)
+    requests = []
+    responder = () => Response.json({ origin, version: 2, instanceManagement: { version: 1, actions },
+      readers: { automationState: 5, workspaceSnapshot: 2 } })
+    await expect(assertAutomationHistoryBaselineSupported(origin)).resolves.toBeUndefined()
+  })
+
+  it("Given a Worker reader version, When multi-key history is exported, Then require the exact advertised reader floor", async () => {
+    responder = () => Response.json({ origin, version: 2, readers: { automationState: 4 } })
+    await expect(assertAutomationKeyHistorySupported(origin)).resolves.toBeUndefined()
+    expect(requests.map(request => request.url)).toEqual([`${origin}/v2/capabilities`])
+
+    requests = []
+    responder = () => Response.json({ origin, version: 2, readers: { automationState: 3 } })
+    await expect(assertAutomationKeyHistorySupported(origin)).rejects.toThrow(/multi-key replica history/i)
+    expect(requests.map(request => request.url)).toEqual([`${origin}/v2/capabilities`])
+
+    responder = () => Response.json({ origin, version: 2 })
+    await expect(assertAutomationKeyHistorySupported(origin)).rejects.toThrow(/multi-key replica history/i)
+  })
+})
+
+it('Given a Worker without variant-history reader support, when recovery would rotate to ambiguous keys, then refuse before sending credentials', async () => {
+  const { rotateAutomationStorageCredentials } = await import('./automationInstanceClient')
+  responder = async url => {
+    if (url.endsWith('/v2/capabilities')) return Response.json({ origin, version: 2, readers: { automationState: 3 },
+      instanceManagement: { version: 1, actions: ['prepare-storage-rotation', 'rotate-storage'] } })
+    throw new Error('Credentials must not leave before compatible-reader preflight')
+  }
+  const credentials = { purpose: 'workspace' as const, workspaceId, origin: 'https://rusty.example.test', scopeId: 'scope',
+    servicePublicKey, keyEpoch: 3, contentKey: toBase64Url(new Uint8Array(32).fill(3)),
+    historicalContentKeyVariants: { '1': [toBase64Url(new Uint8Array(32).fill(1)), toBase64Url(new Uint8Array(32).fill(2))] },
+    readToken: toBase64Url(new Uint8Array(32).fill(4)), writeToken: toBase64Url(new Uint8Array(32).fill(5)),
+    policyRevision: 4, minimumWriterVersion: 2 as const, cursor: 0, lastUploaded: '' }
+  await expect(rotateAutomationStorageCredentials(owner, { origin, workspaceId, definitionId, executorPersonId: workerExecutor.identity.personId,
+    integrationId, storage: { origin: credentials.origin, scopeId: credentials.scopeId, keyEpoch: 1, servicePublicKey }, transitionId: crypto.randomUUID(),
+    credentials, receipt: {} as never })).rejects.toThrow(/multi-key|history/i)
+  expect(requests.some(request => request.url.endsWith('/rotate-storage'))).toBe(false)
 })

@@ -11,6 +11,7 @@ test("Given an offline editor change accepted before revocation, when the signed
     const { createWorkspaceGrant, createWorkspaceDeviceRevocation } = await import("/vendor/meta-mesh/packages/mesh-workspace/src/index.ts")
     const { profileFromIdentitySeedForDevice } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
     const { canonicalizeJson, sha256Base64Url, signEnvelope } = await import("/src/domain/identity.ts")
+    const { resolveSigningContext } = await import("/src/domain/signingContext.ts")
     const { exportAuthorizationBundle, prepareLocalChangeAuthorizations } = await import("/src/sync/changeAuthorization.ts")
     const { peerStore } = await import("/src/sync/peerStore.ts")
     const A = await import("/@id/@automerge/automerge/slim")
@@ -33,7 +34,10 @@ test("Given an offline editor change accepted before revocation, when the signed
     // Automerge actor IDs are hex strings; device IDs are base64url hashes.
     const editorBase = A.clone(base, crypto.randomUUID().replaceAll("-", ""))
     stage = "create editor change"
-    const command = await executeCommand(editorBase, { kind: "patchItem", entityId: item.id, title: "Offline editor draft" }, editor, editor.device.deviceId, grantHash)
+    const editorSigningContext = async (purpose: "actor-binding" | "change-proof", binding: Record<string, string | number>) =>
+      resolveSigningContext({ profile: editor, certificates: [editor.certificate], purpose, binding, authorityRevision: "fixture-authorized-editor",
+        current: async () => ({ personId: editor.identity.personId, deviceId: editor.device.deviceId, authorityRevision: "fixture-authorized-editor" }) })
+    const command = await executeCommand(editorBase, { kind: "patchItem", entityId: item.id, title: "Offline editor draft" }, editor, editor.device.deviceId, grantHash, editorSigningContext)
     if (!command.ok) throw new Error(command.error.message)
     const changeHash = command.value.receipt.changeHash
     const proof = await signEnvelope(editor.privateKeys.devicePrivateKey, {

@@ -26,6 +26,7 @@ const props = withDefaults(
     workspaceScope?: string
     windowId?: string
     title?: string
+    connectionLabel?: string
     initialContext?: MessageContext
     fieldTitles?: Record<string, string>
     referenceChoices?: readonly ReferenceChoice[]
@@ -329,7 +330,7 @@ function formatDisplayTime(createdAt: string): string {
 
 <template>
   <SpatialWindow :window-id="windowId ?? 'chat'" :workspace-id="workspaceId ?? ''" :title="title ?? (`Chat${workspaceTitle ? ` · ${workspaceTitle}` : ''}`)" resize-label="Resize chat" :aria-label="title ?? 'Workspace chat'" close-label="Close" :initial-width="680" :initial-height="720" @close="closeChat">
-    <template #header><div class="chat-window-heading"><strong>{{ title ?? (`Chat${workspaceTitle ? ` · ${workspaceTitle}` : ''}`) }}</strong><span class="chat-connection" :class="{ 'is-connected': connected }">{{ connected ? 'Connected' : 'Offline · saved locally' }}</span></div></template>
+    <template #header><div class="chat-window-heading"><strong>{{ title ?? (`Chat${workspaceTitle ? ` · ${workspaceTitle}` : ''}`) }}</strong><span class="chat-connection" :class="{ 'is-connected': connected }">{{ connectionLabel ?? (connected ? 'Connected' : 'Offline · saved locally') }}</span></div></template>
     <div class="chat-dialog conversation-content">
       <p v-if="navigationState" role="status">{{ navigationState }}</p>
       <div ref="messageListRef" class="chat-messages-log" role="log" aria-label="Messages" @scroll="handleScroll">
@@ -388,33 +389,33 @@ function formatDisplayTime(createdAt: string): string {
 <style src="./WorkspaceChat.css" scoped></style>
 <style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
-.conversation-content { width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; box-shadow: none; padding: 12px 16px; }
+.conversation-content { width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; box-shadow: none; padding: var(--space-3) var(--space-4); }
 .chat-message-meta { align-items: center; }
-.reference-chips, .message-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 6px; }
+.reference-chips, .message-actions { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-block: var(--space-1); }
 .draft-reference { display: inline-flex; align-items: center; }
 .reference-chips button { white-space: normal; overflow-wrap: anywhere; text-align: left; }
-.reply-quote { margin: 6px 0; padding: 4px 8px; border-left: 2px solid var(--muted); color: var(--muted); overflow-wrap: anywhere; }
-.mention-picker { margin-block: 6px; }
-.mention-picker button { display: inline-flex; align-items: center; gap: 4px; }
-.chat-composer-form { display: grid; gap: 6px; }
+.reply-quote { margin: var(--space-1) 0; padding: var(--space-1) var(--space-2); border-left: 2px solid var(--muted); color: var(--muted); overflow-wrap: anywhere; }
+.mention-picker { margin-block: var(--space-1); }
+.mention-picker button { display: inline-flex; align-items: center; gap: var(--space-1); }
+.chat-composer-form { display: grid; gap: var(--space-1); }
 .chat-tools-toggle { display: none; }
-.chat-window-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.chat-window-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
 .chat-window-heading .chat-connection { margin: 0; font-size: .65rem; letter-spacing: 0; }
 @media (max-width: 600px) {
-  .conversation-content { padding: 6px 8px; }
-  .chat-footer { position: relative; margin-top: 6px; padding-top: 6px; }
+  .conversation-content { padding: var(--space-1) var(--space-2); }
+  .chat-footer { position: relative; margin-top: var(--space-1); padding-top: var(--space-1); }
   .chat-footer > .reference-chips:empty { display: none; }
   .chat-composer-form { grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; }
   .chat-composer-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
-  .chat-tools-toggle { display: block; width: 40px; height: 48px; padding: 4px; }
-  .chat-textarea { grid-column: 2; height: 48px; min-height: 48px; max-height: 88px; resize: none; padding: 8px; }
-  .chat-submit-btn { grid-column: 3; width: auto; min-height: 48px; padding: 6px 10px; }
-  .chat-compose-tools { display: none; position: absolute; z-index: 3; bottom: calc(100% + 6px); left: 0; width: 100%; max-height: 40dvh; overflow: auto; padding: 10px; border: 2px solid var(--line); background: var(--panel); }
+  .chat-tools-toggle { display: block; width: 40px; height: 48px; padding: var(--space-1); }
+  .chat-textarea { grid-column: 2; height: 48px; min-height: var(--control-size); max-height: 88px; resize: none; padding: var(--space-2); }
+  .chat-submit-btn { grid-column: 3; width: auto; min-height: var(--control-size); padding: var(--space-1) var(--space-2); }
+  .chat-compose-tools { display: none; position: absolute; z-index: 3; bottom: calc(100% + 6px); left: 0; width: 100%; max-height: 40dvh; overflow: auto; padding: var(--space-2); border: 2px solid var(--line); background: var(--panel); }
   .chat-compose-tools.is-open { display: block; animation: panel-appear var(--motion-panel) var(--motion-ease); }
-  .chat-messages-log { gap: 10px; padding: 8px; }
-  .chat-message-item { padding: 8px 10px; gap: 3px; }
+  .chat-messages-log { gap: var(--space-2); padding: var(--space-2); }
+  .chat-message-item { padding: var(--space-2) var(--space-2); gap: var(--space-1); }
   .chat-author-tag { display: none; }
-  .chat-message-meta { gap: 4px; }
+  .chat-message-meta { gap: var(--space-1); }
   .chat-message-time { font-size: .65rem; }
 }
 </style>

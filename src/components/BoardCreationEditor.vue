@@ -82,7 +82,7 @@ onMounted(() => emit("update:modelValue", draft.value))
 
 <template>
   <fieldset class="creation-config-disabled" :disabled="disabled">
-  <section class="creation-config" aria-label="Board configuration" @input="markDirty" @change="markDirty">
+  <section class="creation-config ui-stack" aria-label="Board configuration" @input="markDirty" @change="markDirty">
     <label class="creation-config-item-name">
       <span>Item name</span>
       <input v-model="draft.entityName" aria-label="Item name" />
@@ -144,20 +144,20 @@ onMounted(() => emit("update:modelValue", draft.value))
 
 <style scoped>
 .creation-config-disabled { min-width: 0; margin: 0; padding: 0; border: 0; }
-.creation-config { display: grid; gap: 16px; min-width: 0; }
-.creation-config-item-name, .creation-config-field > label:not(.creation-config-required) { display: grid; gap: 6px; min-width: 0; color: var(--muted); font: 700 .8rem/1.3 var(--site-font-sans); letter-spacing: .06em; text-transform: uppercase; }
-.creation-config-list { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 12px; border: 2px solid var(--line); }
-.creation-config-list legend { padding: 0 6px; color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }
-.creation-config-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; }
+.creation-config { display: grid; gap: var(--space-4); min-width: 0; }
+.creation-config-item-name, .creation-config-field > label:not(.creation-config-required) { display: grid; gap: var(--space-1); min-width: 0; color: var(--muted); font: 700 .8rem/1.3 var(--site-font-sans); letter-spacing: .06em; text-transform: uppercase; }
+.creation-config-list { display: grid; gap: var(--space-2); min-width: 0; margin: 0; padding: var(--space-3); border: 2px solid var(--line); }
+.creation-config-list legend { padding: 0 var(--space-1); color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }
+.creation-config-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-2); min-width: 0; }
 .creation-config-column-row { grid-template-columns: minmax(0, 1fr) auto auto; }
-.creation-config-order { display: flex; gap: 4px; }
-.creation-config-row input, .creation-config-item-name input, .creation-config-field input, .creation-config-field select { width: 100%; min-width: 0; padding: 9px 10px; }
-.creation-config-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; min-width: 0; padding: 10px; border: 1px solid var(--line); }
+.creation-config-order { display: flex; gap: var(--space-1); }
+.creation-config-row input, .creation-config-item-name input, .creation-config-field input, .creation-config-field select { width: 100%; min-width: 0; padding: var(--space-2) var(--space-2); }
+.creation-config-field { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); min-width: 0; padding: var(--space-2); border: 1px solid var(--line); }
 .creation-config-field-name { min-width: 0; }
 .creation-config-field > label:not(.creation-config-required) { grid-column: 1 / -1; }
-.creation-config-required { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: .8rem; }
+.creation-config-required { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-size-compact); font-size: .8rem; }
 .creation-config-required input { width: 18px; height: 18px; accent-color: var(--ink); }
-.creation-config-options { grid-column: 1 / -1; display: grid; gap: 8px; }
-.creation-config-options-list { display: grid; gap: 8px; min-width: 0; }
+.creation-config-options { grid-column: 1 / -1; display: grid; gap: var(--space-2); }
+.creation-config-options-list { display: grid; gap: var(--space-2); min-width: 0; }
 @media (max-width: 520px) { .creation-config-field { grid-template-columns: minmax(0, 1fr); } .creation-config-field > label:not(.creation-config-required) { grid-column: auto; } .creation-config-options { grid-column: auto; } .creation-config-column-row { grid-template-columns: minmax(0, 1fr) auto; } .creation-config-column-row > label { grid-column: 1 / -1; } .creation-config-order { grid-column: 1; } .creation-config-column-remove { grid-column: 2; } }
 </style>

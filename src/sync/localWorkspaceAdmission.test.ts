@@ -13,6 +13,10 @@ import { putRecords } from "./workspaceChangeProofStore"
 import { peerStore, type WorkspaceAuthorityRecord } from "./peerStore"
 
 const stored = vi.hoisted(() => ({ authority: null as WorkspaceAuthorityRecord | null }))
+vi.mock("@automerge/automerge/slim", async importOriginal => {
+  const original = await importOriginal<typeof Automerge>()
+  return { ...original, save: vi.fn(original.save) }
+})
 vi.mock("./peerStore", () => ({ peerStore: {
   getWorkspaceAuthority: async () => stored.authority,
   getWorkspaceCredential: async () => null,
@@ -52,6 +56,18 @@ it.each(["rights", "proofs"])("Given changed %s after admission, When a local co
   if (changed === "rights") stored.authority = f.authority
   else await putRecords(f.base.id, f.authorizations)
   await expect(f.extend()).resolves.toBeUndefined()
+})
+
+it("Given an unchanged validated frontier, when the next command checks admission, then skip full saves and Native basis lookup", async () => {
+  const f = await fixture()
+  const basis = vi.spyOn(f.storage, "getVerifiedReceivedHistoryBaseline").mockRejectedValue(new Error("cold Native basis lookup"))
+  const save = vi.mocked(Automerge.save)
+  save.mockClear()
+  try {
+    await expect(reusableDeltaAdmission(f.base, f.storage, f.profile)).resolves.toBeDefined()
+    expect(basis).not.toHaveBeenCalled()
+    expect(save).not.toHaveBeenCalled()
+  } finally { basis.mockRestore() }
 })
 
 it("Given an unavailable legacy catalog writer, When a local delta commits, Then success and catalog recovery use the atomic frontier", async () => {

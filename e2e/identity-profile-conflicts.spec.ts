@@ -63,7 +63,7 @@ test("Given legacy name and photo conflicts, when selecting candidates and savin
   await names.getByRole("button", { name: `Choose name: ${fixture.originalName}`, exact: true }).click()
   await photos.getByRole("button", { name: "Choose photo: No photo", exact: true }).click()
   await settings.getByRole("button", { name: "Save profile", exact: true }).click()
-  await expect(settings.getByRole("status")).toContainText("Profile saved.")
+  await expect(settings.locator(".identity-profile-actions").getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
 
   const resolved = await page.evaluate(async personId => {
     const { defaultStorage } = await import("/src/storage.ts")
@@ -162,44 +162,64 @@ test("Given edited profile choices and a notified signed revision, when save use
 })
 
 test("Given private profile revision loading, when Identity settings opens, then keep editing and saving disabled until loaded", async ({ page }) => {
-  let releaseModule!: () => void
-  let signalRequest!: () => void
-  const held = new Promise<void>(resolve => { releaseModule = resolve })
-  const requested = new Promise<void>(resolve => { signalRequest = resolve })
-  await page.route("**/src/domain/identityProfileRoot.ts*", async route => {
-    signalRequest()
-    await held
-    await route.continue()
+  await page.goto("/")
+  await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
+  const personId = await page.evaluate(async () => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
+    const root = await defaultStorage.loadPersonalRoot()
+    if (!root) throw new Error("Expected startup to initialize a personal root")
+    const id = root.identity.personId
+    const original = defaultStorage.loadPersonalRoot.bind(defaultStorage)
+    ;(window as Window & { __PROFILE_ROOT_ORIGINAL__?: typeof original }).__PROFILE_ROOT_ORIGINAL__ = original
+    defaultStorage.loadPersonalRoot = async () => null
+    identityDevicePreferencesChanged(id)
+    return id
   })
-  try {
-    await page.goto("/")
-    await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
-      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { createPersonalRoot } = await import("/src/domain/personalRoot.ts")
-      const { defaultStorage } = await import("/src/storage.ts")
-      await useTincanban().whenReady()
-      if (!await defaultStorage.loadPersonalRoot()) {
-        const profile = await bootstrapIdentity()
-        await defaultStorage.savePersonalRoot(createPersonalRoot(profile, "e2e-certificate-hash"))
-      }
-      if (!await defaultStorage.loadPersonalRoot()) throw new Error("Expected an initialized personal root")
-    })
-    const settings = await openIdentitySettings(page)
-    await requested
-    const name = settings.getByRole("textbox", { name: "Name", exact: true })
-    const photo = settings.locator("#identity-avatar-file")
-    const save = settings.getByRole("button", { name: "Save profile", exact: true })
-    await expect(name).toBeDisabled()
-    await expect(photo).toBeDisabled()
-    await expect(save).toBeDisabled()
-    await expect(settings.getByRole("status").filter({ hasText: "Loading saved profile…" })).toBeVisible()
+  const settings = await openIdentitySettings(page)
+  await expect(settings.getByRole("status").filter({ hasText: "Loading saved profile…" })).toBeVisible()
 
-    releaseModule()
-    await expect(name).toBeEnabled()
-    await expect(photo).toBeEnabled()
-    await expect(save).toBeEnabled()
-  } finally {
-    releaseModule()
-  }
+  await page.evaluate(async owner => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
+    const windowState = window as Window & {
+      __PROFILE_ROOT_ORIGINAL__?: typeof defaultStorage.loadPersonalRoot
+      __PROFILE_ROOT_GATE__?: { started: () => void; release: () => void }
+    }
+    const original = windowState.__PROFILE_ROOT_ORIGINAL__
+    if (!original) throw new Error("Expected original profile reader")
+    let signalStarted!: () => void
+    let release!: () => void
+    const started = new Promise<void>(resolve => { signalStarted = resolve })
+    const held = new Promise<void>(resolve => { release = resolve })
+    windowState.__PROFILE_ROOT_GATE__ = { started: signalStarted, release }
+    defaultStorage.loadPersonalRoot = async (...args: Parameters<typeof original>) => {
+      signalStarted()
+      await held
+      return original(...args)
+    }
+    identityDevicePreferencesChanged(owner)
+    await started
+  }, personId)
+
+  const name = settings.getByRole("textbox", { name: "Name", exact: true })
+  const photo = settings.locator("#identity-avatar-file")
+  const save = settings.getByRole("button", { name: "Save profile", exact: true })
+  await expect(name).toBeDisabled()
+  await expect(photo).toBeDisabled()
+  await expect(save).toBeDisabled()
+  await expect(settings.getByRole("status").filter({ hasText: "Loading saved profile…" })).toBeVisible()
+
+  await page.evaluate(async () => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const windowState = window as Window & {
+      __PROFILE_ROOT_ORIGINAL__?: typeof defaultStorage.loadPersonalRoot
+      __PROFILE_ROOT_GATE__?: { release: () => void }
+    }
+    windowState.__PROFILE_ROOT_GATE__?.release()
+    if (windowState.__PROFILE_ROOT_ORIGINAL__) defaultStorage.loadPersonalRoot = windowState.__PROFILE_ROOT_ORIGINAL__
+  })
+  await expect(name).toBeEnabled()
+  await expect(photo).toBeEnabled()
+  await expect(save).toBeEnabled()
 })

@@ -13,6 +13,8 @@ import { exportIdentityDeviceExtensions } from "./identityDeviceExtensions"
 import { readIdentityProfileQueue } from "./identityProfileProjectionQueue"
 import { WorkspaceUnavailableError } from "../workspaceAvailability"
 import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/identityProfileRoot"
+import { projectLegacyEnrollmentCatalog } from "./legacyEnrollmentCatalog"
+import { readIdentityStateRevision } from "../identityStateRevision"
 export { readIdentityDeviceTransfer, requireEnrollmentTransfer, type DeviceWorkspaceTransfer } from "./identityDeviceTransferReader"
 
 async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ kind: "workspace-profile"; workspaceId: string; record: unknown }[]> {
@@ -38,6 +40,7 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
   certificates = structuredClone(certificates)
   enrollment = structuredClone(enrollment)
   certificates = await canonicalCertificates(certificates)
+  personalRoot = await projectLegacyEnrollmentCatalog(personalRoot, certificates)
   const personId = personalRoot.identity.personId
   const [replicas, capabilities, recovery, profiles, extensions] = await Promise.all([
     exportPrivateReplicaState(personId), new RustyManagementRepository(personId).export(), exportIdentityRecoveryEvidence(personId),
@@ -55,7 +58,7 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
     ] }),
     workspaceReferences: component(identityDeviceStateSchemas.workspaceReferences, { personId, workspaces: Object.values(workspaces),
       ...(enrollment ? { enrollment } : {}) }),
-    privateConnections: component(identityDeviceStateSchemas.privateConnections, replicas),
+    privateConnections: component(replicas.version === 5 ? identityDeviceStateSchemas.privateConnections : replicas.version === 4 ? "private-rusty-connections@4" : "private-rusty-connections@3", replicas),
     ownerCapabilities: component(identityDeviceStateSchemas.ownerCapabilities, { personId, capabilities }),
     recoveryEvidence: component(identityDeviceStateSchemas.recoveryEvidence, recovery),
   } }
@@ -81,8 +84,14 @@ async function canonicalCertificates(certificates: DeviceCertificate[]): Promise
   return [...unique.values()]
 }
 
-/** The caller authenticates the envelope and keeps its session guard live through every durable operation. */
+/** Always validate and apply under the caller's live session guard; report only portable content changes. */
 export async function applyIdentityDeviceTransfer(transfer: Awaited<ReturnType<typeof readIdentityDeviceTransfer>>,
-  ensureCurrent: () => void): Promise<void> {
+  ensureCurrent: () => void): Promise<boolean> {
+  ensureCurrent()
+  const before = await readIdentityStateRevision()
+  ensureCurrent()
   await activateIdentityDeviceTransfer(transfer, ensureCurrent)
+  const after = await readIdentityStateRevision()
+  ensureCurrent()
+  return after !== before
 }

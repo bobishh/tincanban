@@ -49,6 +49,10 @@ async function executeCommandInternal(doc: Automerge.Doc<WorkspaceDocumentV2>, c
   const prepared = prepareCommand(doc, command, new Date().toISOString(), beforeHeads, profile.identity.personId)
   if (!prepared.ok) return prepared
   const metadata = commandMetadata(transactionId, command.kind, prepared.value.changedEntityIds, profile, authorityGrantHash)
+  if (command.kind === "restoreItemVersion" && command.archived) metadata.restoredFrom = {
+    baselineId: command.archived.baselineId, historyEpoch: command.archived.historyEpoch,
+    changeHash: command.changeHash, observation: command.archived.observation,
+  }
   let owned = copy ? Automerge.clone(doc) : doc
   try {
     owned = Automerge.change(owned, { message: JSON.stringify(metadata) }, draft => prepared.value.apply(draft))

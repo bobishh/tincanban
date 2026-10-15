@@ -40,12 +40,13 @@ export async function reusableDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumen
   if (!checked || canonicalizeJson(checked.frontier) !== canonicalizeJson(frontier)) return
   // Another tab may have appended verified local commands to this exact basis.
   if (!matchesBasis(previous, frontier)) {
+    const receivedBasis = await storage.getVerifiedReceivedHistoryBaseline(doc.id)
     const basisDoc = Automerge.load<WorkspaceDocumentV2>(checked.basis.bytes)
     try {
       const proofs = await basisRecords(doc.id)
       const bundle = { version: 1 as const, records: mergeAuthorizationRecords(proofs,
         checked.basis.causalEvidence!.authorizationEvidence as typeof proofs ?? []), authority: current.authority }
-      if (!await storedWorkspaceAdmissionIsCurrent(basisDoc, checked.basis.causalEvidence!, bundle, proofs)) return
+      if (!await storedWorkspaceAdmissionIsCurrent(basisDoc, checked.basis.causalEvidence!, bundle, proofs, receivedBasis)) return
     } finally { Automerge.free(basisDoc) }
   }
   if ((await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== current.fingerprint) return
@@ -77,6 +78,7 @@ export async function persistDeltaCommand(base: Automerge.Doc<WorkspaceDocumentV
 }
 
 async function installDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumentV2>, storage: WorkspaceStorage, profile?: LocalProfile) {
+  const receivedBasis = await storage.getVerifiedReceivedHistoryBaseline(doc.id)
   const snapshot = await readWorkspaceBasisSnapshot(doc.id)
   const evidence = snapshot?.causalEvidence
   if (!snapshot || !evidence?.admissionCheckpoint || evidence.admissionCheckpoint.incremental ||
@@ -86,7 +88,7 @@ async function installDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumentV2>, st
   const proofs = await basisRecords(doc.id)
   const bundle = { version: 1 as const, records: mergeAuthorizationRecords(proofs,
     evidence.authorizationEvidence as typeof proofs ?? []), authority: current.authority }
-  if (!await storedWorkspaceAdmissionIsCurrent(doc, evidence, bundle, proofs)) return
+  if (!await storedWorkspaceAdmissionIsCurrent(doc, evidence, bundle, proofs, receivedBasis)) return
   const frontier = await createDeltaBasis(snapshot, current.fingerprint)
   if ((await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== current.fingerprint ||
     !await storage.installDeltaBasis(snapshot, frontier, proofs, doc)) return

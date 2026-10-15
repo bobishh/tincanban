@@ -100,3 +100,31 @@ it("Given a mismatched root key or forged catalog certificate, when preflighting
   identity.publicKey = "A".repeat(43)
   await expect(readIdentityDeviceTransfer(mismatched, owner.identity.personId)).rejects.toThrow(/identity|key/i)
 })
+
+it("Given a released catalog containing enrollment request metadata, when exporting, then project only the certified device fields and retain the durable original", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  const device = root.devices[owner.device.deviceId]!
+  Object.assign(device, { kind: "device-enrollment-request", version: 2, invitationId: "previous-enrollment" })
+  const original = JSON.stringify(root)
+  const parsed = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(root, [owner.certificate]), owner.identity.personId)
+  expect(parsed.personalRoot.devices[owner.device.deviceId]).toEqual({ deviceId: device.deviceId, publicKey: device.publicKey,
+    displayName: device.displayName, certificateHash: device.certificateHash, addedAt: device.addedAt })
+  expect(JSON.stringify(root)).toBe(original)
+})
+
+it.each(["certificateHash", "publicKey", "deviceId"] as const)("Given legacy enrollment metadata with mismatched %s, when exporting, then reject instead of laundering device evidence", async field => {
+  const owner = await bootstrapIdentity("Owner")
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  const device = root.devices[owner.device.deviceId]!
+  Object.assign(device, { kind: "device-enrollment-request", version: 2, invitationId: "previous-enrollment", [field]: "A".repeat(43) })
+  await expect(createIdentityDeviceTransfer(root, [owner.certificate])).rejects.toThrow(/certificate|device/i)
+})
+
+it("Given unknown legacy catalog fields, when exporting, then reject without silently stripping them", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  Object.assign(root.devices[owner.device.deviceId]!, { kind: "device-enrollment-request", version: 2,
+    invitationId: "previous-enrollment", revoked: true })
+  await expect(createIdentityDeviceTransfer(root, [owner.certificate])).rejects.toThrow()
+})

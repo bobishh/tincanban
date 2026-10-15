@@ -45,6 +45,32 @@ second device and keep working across both.
   windows can move and resize together.
 - Export a `.tincanban` workspace bundle. Identity secrets are not included.
 
+**Settings → Identity → Recovery backup** creates an encrypted recovery file for
+the identity root, profile, workspace references and private Rusty connections.
+Keep its recovery words separately. Restoration validates the complete package
+before atomically replacing local identity state; interrupted secondary projection
+can resume after reload. Restoring the same identity keeps this device's key and
+local replication progress. Older root-only recovery files remain readable, with
+their limited scope shown before restoration. Board history and attachment bytes
+still need a workspace backup or an available Rusty copy; credentials alone do
+not guarantee that a remote copy exists. Production availability follows the
+verified [compatible release cohort](docs/rusty-release-deployment.md), rather
+than the presence of implementation source.
+
+**Sync → Backups → Private recovery backup** serves the
+selected workspace. It encrypts original local evidence, retained archive sources
+and reading keys, and available attachment bytes with separate recovery words.
+A device that received its history directly from another device can back up that
+archive without Rusty credentials; missing parts are requested over the authorized
+device channel. Unavailable archive objects and attachments make the backup
+explicitly incomplete. Inspection authenticates the whole file, recomputes peer
+archive coverage from retained objects, and checks original signed workspace
+history before offering restoration. Restoring uses the same identity, requires
+explicit consent before replacing an existing workspace, preserves the previous
+local journal, and resumes interrupted private-state projection before startup
+opens that workspace. This connected source path still awaits final verification;
+it is not evidence of a production rollout.
+
 tincanban is an experimental application. Keep an independent backup of important
 work. Browser storage is a local copy, not a hosted backup service.
 
@@ -76,9 +102,12 @@ chain. Confirmed devices of the same identity also exchange private Rusty
 connections over their authenticated device channel, including connections added
 later. Each device keeps its own replication cursor; removals retain a tombstone.
 These credentials never enter shared boards, public copies, or another person's
-session. Update both devices once to repair older enrollments and receive the
-connection; afterward an online Rusty can deliver board and photo changes with
-the other device closed.
+session. Older Rusty connections may require **Sync → Rusty → Update device access**
+once from a device already approved by that server. This updates Rusty's signed
+permission policy and keeps device certificates, boards and private connection
+credentials unchanged. Background setup reports the required action; it does not
+silently migrate permissions. Afterward an online Rusty can deliver board and
+photo changes with the other device closed.
 
 The header and tab icon follow the active board's confirmed connections. Green
 means a live device channel or a successful Rusty replication pass within 45
@@ -94,12 +123,12 @@ invitation, content key, or Editor/Visitor application grant. Board history and
 chat are encrypted by clients, which still verify authorizations before merging.
 See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
 
-The [working-tree architecture diagram](openspec/changes/unified-device-and-replica-architecture/design.md#current-working-tree-boundaries)
+The [architecture diagram](openspec/changes/unified-device-and-replica-architecture/design.md#current-working-tree-boundaries)
 separates Rusty's HTTP storage, direct device sync, private identity state and the
-authorized automation Worker. Its implementation/verification gaps are explicit;
-it does not assert a coordinated production rollout.
+authorized automation Worker. Exact deployed revisions and artifact digests are
+recorded by the compatible release coordinator.
 
-The working-tree writer upgrade also coordinates existing automation Workers:
+The writer upgrade also coordinates existing automation Workers:
 it checks maintenance support before changing Rusty policy, retains the confirmed
 receipt through interrupted retries, and waits for signed Worker confirmations
 before activating local access. This refresh preserves each Worker's approval and
@@ -113,16 +142,22 @@ and the current bounded chat export. The local raw journal must contain no pendi
 or quarantined changes, including dismissed or resolved review records. Ownership
 changes and unfinished local writes prevent cleanup. Signed receipts bind the
 replacement and exact previous sequence; concurrent writers force another pull.
-Uncertain delivery retries keep the same ciphertext and authorization. Older
+Uncertain delivery retries keep the same ciphertext and authorization. Snapshot
+outboxes also retain their admitted storage sequence; after a checkpoint, Rusty
+refuses new writes prepared against its older storage prefix. Older
 services retain ordinary append-only replication, and automation write tokens
 cannot authorize checkpoint deletion.
 
 ### Public board links
 
-Owners can open **Settings → Workspace → Publish board** to review and publish
+Owners can open **Settings → Workspace → Public board** to review and publish
 that board's public copy. The public link is `/boards/<board-id>`. It shows active
 columns, fields and cards, selected-board/card discussion messages with display
-labels, and board/card attachments. Viewers can search, read and download; they
+labels, and board/card attachments. Public readers use the same board, filters,
+cards, detail windows and read-only discussion UI as invited visitors. The
+publication includes display bindings, column accents and folded descriptions;
+existing snapshots remain readable and gain those settings after an explicit update.
+Viewers can search, read and download; they
 cannot edit, comment, enroll, or join the mesh. A public copy is a separate snapshot:
 private edits do not change it until the owner chooses **Update**. **Unpublish**
 blocks new snapshot and file reads; it cannot recall copies already downloaded.
@@ -136,8 +171,14 @@ keys, storage tokens, local file paths, or other boards. The Rusty service can
 authorize its configured publication controller, but cannot inspect the encrypted
 workspace to independently prove current board ownership. Workspace owners should
 publish only through a client that confirms current owner rights. Rusty publication
-storage and its binary require a separate compatible service rollout; frontend CI
-does not deploy Rusty.
+storage and its binary require a compatible service image advertising
+`publicBoardPublication.presentationVersion: 1` before publishing or updating
+the shared visitor presentation. The working-tree
+release coordinator stages exact Rusty, automation and frontend artifacts and
+activates them in that order. The Rusty adapter follows the existing Kamal service
+config and verifies the sealed registry digest plus source and binary identity;
+the runner's pinned Hetzner checkout and deployment credentials remain external
+setup. See [Rusty release deployment](docs/rusty-release-deployment.md).
 
 Optional public-view events use the existing diagnostics endpoint and consent. They
 contain an ephemeral page session and public board entity ID, with viewer device and
@@ -157,9 +198,10 @@ restart/retry/cold-receiver recovery over real native HTTP,
 without a browser. The archive case also runs the Native verifier against actual
 Rusty receipts and recovered ciphertext, then binds a compact admitted-state basis
 to that exact archived preparation. The same case signs an initial Owner proposal
-through the JavaScript identity SDK and confirms it with Native policy. This is
-preparation evidence; cold-receiver validation and baseline activation remain
-incomplete. Build the current Rusty binary first,
+through the JavaScript identity SDK and confirms it with Native policy. That case
+exercises preparation; browser acceptance separately covers cold receiver
+validation, atomic local baseline activation, archived revision reads and offline
+recovery. Worker runtime checks cover freeze/activation. Build the current Rusty binary first,
 then build `history_archive_verify` with
 `cargo build -p meta-mesh-core --example history_archive_verify` from
 `vendor/meta-mesh`. Set `TINCANBAN_RUSTY_BINARY` or
@@ -243,9 +285,11 @@ inspect an expired approval without allowing the Worker to execute it. **Renew
 approval**, **Adopt existing Worker**, enabling email and enabling vacancy evidence
 show workspace-reading access and the new 30-day term before explicit confirmation.
 Adoption retains the same executor, routing address, saved events and pending
-replication; Retry connection does not silently renew an expired approval. These
-paths are implemented in the working tree; browser and coordinated-release
-acceptance remain pending.
+replication; Retry connection does not silently renew an expired approval.
+
+Automation settings show connection, approval and forwarding configuration. Retained
+email events, matching decisions, bindings and retries belong to the signed automation
+API; no processing history or manual email review queue is rendered in settings.
 
 ## Run locally
 
@@ -334,9 +378,7 @@ and Rust test identifiers. Regenerate it with
 Parameterized declarations are marked; they are not expanded execution counts.
 
 See [playwright.config.ts](playwright.config.ts) for all projects. CI runs the static
-checks, unit tests, bundle budgets, dependency audit, and browser suites. Historical
-measurements in [CODE_QUALITY_AUDIT.md](CODE_QUALITY_AUDIT.md) are dated snapshots,
-not a substitute for the current CI result.
+checks, unit tests, bundle budgets, dependency audit, and browser suites.
 The verification jobs start independently: browser suites do not wait for the
 unit/formal/UI jobs. The complete network project matrix remains automatic;
 manual dispatch runs the same checks. Browser processes remain isolated per
@@ -448,9 +490,9 @@ contains the detailed feature and tool catalog.
 
 ### Blind Rusty storage
 
-The standalone `../mesh-lighthouse` service now runs protocol 2 opaque storage. In **Sync → Rusty**, a board owner supplies the HTTPS origin and operator token. The browser generates the reading key locally and replicates encrypted board history, authorization proofs, and chat. Rusty receives no readable board invitation or application grant. Receivers still enforce signed causal admission. Attachments use existing device sync.
+The standalone `../mesh-lighthouse` service runs protocol 2 opaque storage. In **Sync → Rusty**, a board owner supplies the HTTPS origin and approves access with the device's signature. The browser generates reading keys locally and replicates encrypted board history, authorization proofs, chat and attachment chunks. Rusty receives no readable board invitation or application grant. Receivers still enforce signed causal admission. Verified receipts for every manifest and chunk establish attachment coverage; a recipient can fetch verified files after the source device closes.
 
-Private access files contain reading keys and storage tokens; transfer them privately to devices already authorized for the board. Settings are local to the identity on this device. Local disconnection does not revoke other storage credentials. Old plaintext Keeper volumes fail closed and require a fresh storage directory plus explicit client migration; old Keeper board grants must be revoked separately. Setup, quotas, storage-token revocation, and container configuration: [Rusty README](../mesh-lighthouse/README.md).
+Private access files contain reading keys and storage tokens; transfer them privately to devices already authorized for the board. Private Rusty settings travel between approved devices of the same identity through authenticated enrollment and encrypted identity replication; each device keeps its own cursor and upload progress. Local disconnection does not revoke other storage credentials. Old plaintext Keeper volumes fail closed and require a fresh storage directory plus explicit client migration; old Keeper board grants must be revoked separately. Setup, quotas, storage-token revocation, and container configuration: [Rusty README](../mesh-lighthouse/README.md).
 
 Cloudflare Worker + Clef ingestion uses an independent identity and an exact owner-signed Automation grant. **Settings → Workspace → Automations** enrolls the Worker by owner signature and privately sends its activation packet; its workspace-wide reading scope is disclosed before approval. The real production Worker has created a synthetic Lead through live Clef and blind Rusty. Interview/Rejected transitions are verified locally; Gmail forwarding and a real received email are still pending. See [implementation evidence and rollout limits](openspec/changes/blind-keeper-and-scoped-automation/implementation.md) and the [Worker setup](workers/automation/README.md).
 

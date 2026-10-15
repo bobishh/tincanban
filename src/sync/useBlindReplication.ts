@@ -1,47 +1,54 @@
-import { onBeforeUnmount, ref, watch } from "vue"
+import { createDeviceAccessRefresh } from "./privateDeviceAccessRefresh"
+import { createReplicationState,clearReplicationSessionState } from "./privateReplicationState"
+import { createPrivateReplicationActions } from "./privateReplicationActions"
+import { onBeforeUnmount,watch } from "vue"
 import type { useTincanban } from "../state"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { subscribeChat } from "../chat/service"
 import { createPrivateReplicaRuntime } from "./privateReplicaLoop"
-import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
-import type { ReplicaHealth } from "./replicationHealth"
-import type { AutomationConfiguration } from "../app/automation"
-import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
+import { defaultStorage } from "../storage"
+import { requiresRustyPermissionMigration } from "./rustyPermissionMigration"
+import { HISTORY_ACTIVE_BYTE_LIMIT,HISTORY_ACTIVE_CHANGE_LIMIT } from "../storageJournalRecords"
 
 export type BlindReplicationController = ReturnType<typeof useBlindReplication>
-
-function createReplicationState() {
-  return {
-    configs: ref<BlindReplicaConfig[]>([]), identityConfigs: ref<IdentityReplicaConfig[]>([]),
-    profileSetupErrors: ref<Record<string, string>>({}),
-    statuses: ref<Record<string, ReplicaHealth>>({}), now: ref(Date.now()),
-    attachmentCoverage: ref<Record<string, AttachmentCoverageStatus[]>>({}),
-    busy: ref(false), error: ref(""), notice: ref(""),
-  }
-}
-
-function clearReplicationSessionState(state: ReturnType<typeof createReplicationState>) {
-  state.configs.value = []
-  state.identityConfigs.value = []
-  state.profileSetupErrors.value = {}
-  state.statuses.value = {}
-  state.attachmentCoverage.value = {}
-  state.error.value = ""
-  state.notice.value = ""
-}
 
 /** Credentials remain in private local storage, never in the shared board. */
 export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) {
   const state = createReplicationState()
-  const { configs, identityConfigs, profileSetupErrors, statuses, attachmentCoverage, now, busy, error, notice } = state
+  const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice } = state
   let identity = ""
   let session = 0
   let running: Promise<void> | undefined
   let disposed = false
-  const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, profileSetupErrors, statuses, attachmentCoverage }, {
+  const automaticHistoryCompactions = new Set<string>()
+  const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, attachmentCoverage }, {
     identity: () => identity, epoch: () => session, disposed: () => disposed,
   })
-  const { personId, profileBinding, reload, replica, fetchAttachment } = runtime
+  const deviceAccess = createDeviceAccessRefresh(tincanban, state, runtime,
+    (owner, epoch) => identity === owner && session === epoch && !disposed)
+  const { personId, profileBinding, replica, fetchAttachment } = runtime
+  const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value
+  async function maybeCompactActiveHistory(owner: string, epoch: number) {
+    if (!canCompact(owner, epoch)) return
+    const workspaces = [...new Set(configs.value.filter(config => !config.removalPending).map(config => config.workspaceId))]
+    for (const workspaceId of workspaces) {
+      if (!canCompact(owner, epoch)) return
+      const matches = configs.value.filter(config => config.workspaceId === workspaceId && !config.removalPending)
+      if (matches.length !== 1 || automaticHistoryCompactions.has(workspaceId)) continue
+      const progress = await defaultStorage.ensureHistoryProgress(workspaceId)
+      if (!canCompact(owner, epoch)) return
+      if (!progress.transitionId && (progress.admittedChanges < HISTORY_ACTIVE_CHANGE_LIMIT &&
+          progress.encodedBytes < HISTORY_ACTIVE_BYTE_LIMIT)) continue
+      automaticHistoryCompactions.add(workspaceId)
+      void compactWorkspaceHistory(workspaceId).catch(() => undefined).finally(() => automaticHistoryCompactions.delete(workspaceId))
+      return
+    }
+  }
+  async function reload(owner: string, epoch: number) {
+    await runtime.reload(owner, epoch)
+    await deviceAccess.refresh(owner, epoch)
+  }
   function syncNow(): Promise<void> {
     if (running) return running
     if (busy.value || !identity || disposed || configs.value.length + identityConfigs.value.length === 0) return Promise.resolve()
@@ -58,7 +65,13 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       failures.push(...await syncReplicaConnections([...identityConfigs.value], isCurrent, config =>
         recordReplicaHealth(config, statuses, async () => {
           if (config.removalPending) throw new Error("Private connection removal is pending")
-          return (await replica(config)).sync()
+          try { return await (await replica(config)).sync() }
+          catch (cause) {
+            if (isCurrent() && requiresRustyPermissionMigration(cause)) {
+              profilePermissionUpdates.value = [...new Set([...profilePermissionUpdates.value, config.origin])]
+            }
+            throw cause
+          }
         }, isCurrent), "Profile"))
       if (!isCurrent()) return
       // A personal snapshot may introduce a workspace connection. Use it in this same pass.
@@ -74,52 +87,23 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     }
     running = run().catch(cause => {
       if (isCurrent()) error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable"
-    }).finally(() => { running = undefined; busy.value = false })
+    }).finally(() => {
+      running = undefined
+      busy.value = false
+      void maybeCompactActiveHistory(owner, epoch)
+    })
     return running
   }
-  async function attach(originInput: string, workspaceId: string) {
-    if (busy.value) throw new Error("Wait for current Rusty sync to finish")
-    busy.value = true
-    try { await connectScope(originInput, workspaceId) } finally { busy.value = false }
-    await syncNow()
-  }
-  async function connectScope(originInput: string, workspaceId: string) {
-    const owner = identity, epoch = session, guard = runtime.captureSession()
-    const { connectWorkspaceReplica } = await import("./replicaConnections")
-    await connectWorkspaceReplica(tincanban, originInput, workspaceId, guard)
-    await reload(owner, epoch)
-  }
-  async function revoke(config: BlindReplicaConfig) {
-    const guard = runtime.captureSession()
-    guard()
-    const profile = tincanban.getCurrentProfile()
-    if (!profile || profile.identity.personId !== identity) throw new Error("Identity unavailable")
-    const { revokeWorkspaceReplicaConnection } = await import("./replicaConnections")
-    const next = await revokeWorkspaceReplicaConnection(config, profile, guard)
-    await runtime.forget(config, guard)
-    configs.value = next
-  }
-  async function remove(config: BlindReplicaConfig) {
-    if (busy.value) throw new Error("Wait for current Rusty sync to finish")
-    notice.value = ""
-    error.value = ""
-    busy.value = true
-    try { await recordReplicaPreference(identity, { ...config, removalPending: true }); await revoke(config); notice.value = "Rusty removed. Your board stays on this device." }
-    catch (cause) { error.value = "Removal pending. Rusty must confirm that access was revoked."; throw cause }
-    finally { busy.value = false }
-  }
-  async function exportAutomationAccess(config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration): Promise<string> {
-    const guard = runtime.captureSession()
-    guard()
-    const { exportApprovedAutomation } = await import("../app/automationActivation")
-    guard()
-    return exportApprovedAutomation(tincanban, config, workerIdentity, configuration)
-  }
+  const { attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
+    exportAutomationAccess, compactWorkspaceHistory } = createPrivateReplicationActions(tincanban, state, runtime, {
+      identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow,
+    }, automaticHistoryCompactions)
   const stop = watch(profileBinding, async () => {
     const owner = tincanban.ready.value ? personId() : ""
     const epoch = ++session
     identity = owner
     clearReplicationSessionState(state)
+    deviceAccess.reset()
     runtime.clear()
     if (!owner) return
     try {
@@ -143,9 +127,8 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     })().catch(cause => { if (owner === identity && session === epoch && !disposed) error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable" })
   })
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
-  return { configs, identityConfigs, profileSetupErrors, statuses, attachmentCoverage, now, busy, error, notice, attach, exportAutomationAccess, remove, syncNow, fetchAttachment }
-}
-
-async function recordReplicaPreference(owner: string, config: BlindReplicaConfig, removed = false) {
-  return (await import("./identityDevicePreferences")).recordReplicaPreference(owner, config, removed)
+  return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice,
+    attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
+    remove, syncNow, fetchAttachment }
 }

@@ -36,7 +36,13 @@ export function registerDeviceInRoot(
   root: PersonalRootDocumentV1,
   device: RegisteredDevice
 ): void {
-  root.devices[device.deviceId] = { ...device }
+  root.devices[device.deviceId] = {
+    deviceId: device.deviceId,
+    publicKey: device.publicKey,
+    displayName: device.displayName,
+    certificateHash: device.certificateHash,
+    addedAt: device.addedAt,
+  }
 }
 
 export function registerWorkspaceInRoot(

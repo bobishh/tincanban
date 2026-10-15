@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { canonical } from '../../scripts/release-cohort.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const safePath = (path) => typeof path === 'string' && !path.startsWith('/') && path.split('/').every((part) => part && part !== '.' && part !== '..');
@@ -47,7 +48,7 @@ async function main() {
     console.log(uploadedVersion(readFileSync(sha, 'utf8')));
     return;
   }
-  const directory = resolve('dist');
+  const directory = resolve(process.argv[4] ?? 'dist');
   const manifestPath = join(directory, 'release.json');
   const origin = 'https://match.meta-uber-engineer.dev';
   if (command === 'seal') {
@@ -73,7 +74,7 @@ async function main() {
       retained[path] = hash;
       retainedUntil[path] = until;
     }
-    writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained, retainedUntil }));
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained, retainedUntil, previousSha: previous.sha ?? null, previousManifestSha256: digest(canonical(previous)) }));
     console.log(`Retained ${Object.keys(retained).length} previous chunks`);
   } else if (command === 'smoke') {
     let lastError;

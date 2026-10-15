@@ -28,6 +28,14 @@ it("Given an enrolled signer without a root private key, when resolving and sign
   expect(JSON.stringify(context)).not.toContain("privateKey")
 })
 
+it("Given history signer evidence repeated across owner authority and proof storage, when resolving, then export only the exact certified chain", async () => {
+  const original = structuredClone([owner.certificate, device.certificate, owner.certificate])
+  const context = await resolveSigningContext(request({ purpose: "workspace-history-baseline",
+    domain: "MESH-HISTORY/1", certificates: original }))
+  expect(signingEvidence(context).certificates).toEqual([device.certificate, owner.certificate])
+  expect(original).toEqual([owner.certificate, device.certificate, owner.certificate])
+})
+
 it("Given runtime-only private metadata in public evidence, when resolving, then reject it before evidence can be exported", async () => {
   const identityWithSecret = { ...device.identity, privateKeys: { devicePrivateKey: "must-not-leak" } }
   await expect(resolveSigningContext(request({ profile: { ...device, identity: identityWithSecret } })))

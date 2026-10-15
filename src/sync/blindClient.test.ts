@@ -3,6 +3,25 @@ import { blindHash, blindObjectId, canonicalBlindJson, discoverBlindKeeper, inve
   verifyBlindReceipt, type BlindAccess, type BlindReceipt } from "./blindClient"
 import { encodeBlindBytes, encryptBlindObject } from "./blindEnvelope"
 
+test("Given scope enrollment retry discovery, when advertised, then recognize only the exact v1 contract", async () => {
+  const key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key.publicKey))
+  const origin = "https://rusty.example"
+  const service = { serviceId: await blindHash(raw), publicKey: encodeBlindBytes(raw) }
+  let scopeEnrollmentRetry: unknown = { version: 1 }
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ protocolVersions: [2], publicOrigin: origin, service,
+    capabilities: { modes: ["blind"], applicationWrites: false, classification: false, scopeEnrollmentRetry } })))
+  try {
+    await expect(discoverBlindKeeper(origin)).resolves.toMatchObject({ scopeEnrollmentRetry: 1 })
+    for (const value of [null, {}, { version: 2 }, { version: 1, extra: true }, "v1"]) {
+      scopeEnrollmentRetry = value
+      await expect(discoverBlindKeeper(origin)).rejects.toThrow(/enrollment|upgrade/i)
+    }
+    scopeEnrollmentRetry = undefined
+    await expect(discoverBlindKeeper(origin)).resolves.not.toHaveProperty("scopeEnrollmentRetry")
+  } finally { vi.unstubAllGlobals() }
+})
+
 test("Given an advertised required management protocol, when its version is unknown, then do not interpret it as a legacy server", async () => {
   const key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key.publicKey))
@@ -67,8 +86,8 @@ test("Given a snapshot writer v2 client, when uploading, then select writer v2 w
   const fetch = vi.fn(async (input: RequestInfo | URL) => { uploadedUrl = String(input); return Response.json({}) })
   vi.stubGlobal("fetch", fetch)
   try {
-    await expect(uploadBlindObject(access, object, "request-writer-version-2")).rejects.toThrow()
-    expect(uploadedUrl).toMatch(/\/v2\/scopes\/scope\/objects\/[A-Za-z0-9_-]{43}\?writerVersion=2$/)
+    await expect(uploadBlindObject(access, object, "request-writer-version-2", 17)).rejects.toThrow()
+    expect(uploadedUrl).toMatch(/\/v2\/scopes\/scope\/objects\/[A-Za-z0-9_-]{43}\?writerVersion=2&observedSequence=17$/)
   }
   finally { vi.unstubAllGlobals() }
 })
@@ -168,5 +187,19 @@ test("Inventory permits one durable checkpoint repair slot above normal capacity
     await expect(inventoryBlindObjects(access, 10001)).resolves.toMatchObject({ objectCount: 10001 })
     objectCount = 10002
     await expect(inventoryBlindObjects(access, 10001)).rejects.toThrow("Invalid Rusty checkpoint inventory")
+  } finally { vi.unstubAllGlobals() }
+})
+
+test("Given a checkpoint service, when discovering storage fencing, then require its explicit observed-sequence capability", async () => {
+  const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+  const publicKey = encodeBlindBytes(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)))
+  const service = { publicKey, serviceId: await blindHash((await import("./blindEnvelope")).decodeBlindBytes(publicKey)) }
+  let snapshotCheckpoints: { version: number; observedSequence?: boolean } = { version: 1 }
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ protocolVersions: [2], publicOrigin: "https://rusty.example", service,
+    capabilities: { modes: ["blind"], applicationWrites: false, classification: false, snapshotCheckpoints } })))
+  try {
+    await expect(discoverBlindKeeper("https://rusty.example")).resolves.not.toHaveProperty("snapshotWriteFence")
+    snapshotCheckpoints = { version: 1, observedSequence: true }
+    await expect(discoverBlindKeeper("https://rusty.example")).resolves.toHaveProperty("snapshotWriteFence", 1)
   } finally { vi.unstubAllGlobals() }
 })

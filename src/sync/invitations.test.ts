@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import {
   InvitationService,
@@ -9,6 +10,7 @@ import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
 import { createDeviceEnrollmentInvite, createWorkspaceJoinInvite } from "@meta-uber/mesh-pairing"
 import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
+import { peerStore } from "./peerStore"
 
 describe("InvitationService (Requirements 3.2 - 3.4)", () => {
   beforeEach(() => {
@@ -224,6 +226,12 @@ describe("InvitationService (Requirements 3.2 - 3.4)", () => {
 
   it("issues signed workspace grants for every workspace in a selected fixed set", async () => {
     const owner = await bootstrapIdentity("Owner Alice")
+    for (const workspaceId of ["ws_1", "ws_2"]) await peerStore.putWorkspaceAuthority({
+      version: 1, workspaceId, genesisOwnerPersonId: owner.identity.personId,
+      ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey,
+      ownerCertificates: [owner.certificate], ownerHistory: [], epoch: 1,
+      updatedAt: new Date().toISOString(), catalog: {},
+    })
     const service = new InvitationService()
 
     const invite = createWorkspaceJoinInvite(
@@ -255,6 +263,46 @@ describe("InvitationService (Requirements 3.2 - 3.4)", () => {
     expect(res.grants[0].signerKeyId).toBe(owner.device.deviceId)
     await expect(verifyEnvelope(res.grants[0], owner.device.publicKey)).resolves.toBe(true)
     await expect(verifyEnvelope(res.grants[1], owner.device.publicKey)).resolves.toBe(true)
+  })
+
+  it("Given a cancelled workspace invitation, when approving a join, then issue no grant and preserve cancellation", async () => {
+    const owner = await bootstrapIdentity("Owner")
+    const service = new InvitationService()
+    const invite = createWorkspaceJoinInvite("endpoint", "secret", owner, [{ id: "workspace", title: "Board" }])
+    await service.saveIssuedInvitation(invite)
+    await service.cancelInvitation(invite.invitationId)
+    expect(await service.approveWorkspaceJoin(invite.invitationId, "member", "workspace", owner)).toMatchObject({ ok: false })
+    expect((await service.getInvitation(invite.invitationId))?.status).toBe("cancelled")
+  })
+
+  it("Given a fixed workspace invitation, when requesting another workspace, then reject without consuming the invitation", async () => {
+    const owner = await bootstrapIdentity("Owner")
+    const service = new InvitationService()
+    const invite = createWorkspaceJoinInvite("endpoint", "secret", owner, [{ id: "workspace", title: "Board" }])
+    await service.saveIssuedInvitation(invite)
+    expect(await service.approveWorkspaceJoinSet(invite.invitationId, "member", ["another"], owner)).toMatchObject({ ok: false })
+    expect((await service.getInvitation(invite.invitationId))?.status).toBe("pending")
+  })
+
+  it("Given an owner grant in flight, when the invitation is cancelled during signing, then return no grant and retain cancellation", async () => {
+    const owner = await bootstrapIdentity("Owner")
+    const service = new InvitationService()
+    const workspaceId = "cancel-grant-workspace"
+    await peerStore.putWorkspaceAuthority({ version: 1, workspaceId, genesisOwnerPersonId: owner.identity.personId,
+      ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+      ownerHistory: [], epoch: 1, updatedAt: new Date().toISOString(), catalog: {} })
+    const invite = createWorkspaceJoinInvite("endpoint", "secret", owner, [{ id: workspaceId, title: "Board" }])
+    await service.saveIssuedInvitation(invite)
+    const sign = crypto.subtle.sign.bind(crypto.subtle)
+    const spy = vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => {
+      const signature = await sign(...args)
+      if (new TextDecoder().decode(args[2] as Uint8Array).includes('"workspace-grant"')) await service.cancelInvitation(invite.invitationId)
+      return signature
+    })
+    try {
+      expect(await service.approveWorkspaceJoin(invite.invitationId, "member", workspaceId, owner)).toMatchObject({ ok: false })
+      expect((await service.getInvitation(invite.invitationId))?.status).toBe("cancelled")
+    } finally { spy.mockRestore() }
   })
 
   it("fails grant-set approval explicitly if issuer lacks ownership authority for any workspace", async () => {

@@ -33,7 +33,7 @@ async function fixture() {
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = new IDBFactory().open("delta-fixture", 1)
     request.onupgradeneeded = () => {
-      for (const name of ["snapshots", "authorizations", "frontiers", "deltas", "changes", "proofs", "receipts", "revisions"]) {
+      for (const name of ["snapshots", "authorizations", "frontiers", "deltas", "changes", "proofs", "receipts", "revisions", "historyProgress"]) {
         const store = request.result.createObjectStore(name, { keyPath: "id" })
         store.createIndex("workspaceId", "workspaceId")
         if (name === "deltas") store.createIndex("sequence", ["workspaceId", "generation", "sequence"], { unique: true })
@@ -77,6 +77,26 @@ it("Given an admitted basis, When one local command commits, Then only the delta
   expect(await requestResult(read.objectStore("changes").get(`${f.doc.id}:${f.delta.command.receipt.changeHash}`))).toMatchObject({ bytes: f.delta.command.changeBytes })
   await done
   f.database.close()
+})
+
+it("Given a compact history basis, When a new admitted delta commits, Then threshold counters advance by that exact change only", async () => {
+  const f = await fixture()
+  const prepare = f.database.transaction(["snapshots", "historyProgress"], "readwrite")
+  const prepareDone = transactionDone(prepare)
+  prepare.objectStore("snapshots").put({ ...f.snapshot, receivedHistory: { baselineId: "B".repeat(43), excludedLocalChangeHashes: [] } })
+  prepare.objectStore("historyProgress").put({ id: f.doc.id, workspaceId: f.doc.id, baselineId: "B".repeat(43),
+    admittedChanges: 7, encodedBytes: 1234 })
+  await prepareDone
+
+  await f.journal.append(f.frontier, f.delta)
+  const transaction = f.database.transaction("historyProgress", "readonly")
+  const done = transactionDone(transaction)
+  const progress = await requestResult(transaction.objectStore("historyProgress").get(f.doc.id)) as {
+    admittedChanges: number; encodedBytes: number
+  }
+  await done
+  expect(progress.admittedChanges).toBe(8)
+  expect(progress.encodedBytes).toBe(1234 + f.delta.command.changeBytes.byteLength)
 })
 
 async function appendRename(f: Awaited<ReturnType<typeof fixture>>, title: string) {

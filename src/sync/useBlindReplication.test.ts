@@ -1,3 +1,5 @@
+import type * as ManagementClient from "./rustyManagementClient"
+import type * as ConflictWorkflow from "./replicaCredentialConflictWorkflow"
 import { afterEach, expect, it, vi } from "vitest"
 import { ref, shallowRef } from "vue"
 import type * as Vue from "vue"
@@ -15,6 +17,10 @@ const runtime = vi.hoisted(() => ({
   identitySync: vi.fn(async () => true),
   workspaceSync: vi.fn(async () => true),
   provision: vi.fn(),
+  migrate: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+  revokeIdentityDevice: vi.fn<(app: unknown, origin: string, deviceId: string, guard: () => void) => Promise<void>>().mockResolvedValue(undefined),
+  recoverConflict: vi.fn<(app: unknown, origin: string, scopeId: string, workspaceId: string, guard: () => void) => Promise<void>>().mockResolvedValue(undefined),
+  readRustyStatus: vi.fn<(...args: unknown[]) => Promise<{ capability: undefined }>>().mockResolvedValue({ capability: undefined }),
   scopeApproval: vi.fn(async () => 1),
   writer: vi.fn(async (_app: unknown, config: BlindReplicaConfig, guard: () => void) => { guard(); return config }),
   fetchAttachment: vi.fn<(app: unknown, workspaceId: string, descriptor: BlobDescriptor,
@@ -37,10 +43,21 @@ vi.mock("./blindReplicaStore", () => ({ createBlindReplica: (config: BlindReplic
   return { sync: async () => { guard(); const result = await runtime.workspaceSync(); guard(); return result } }
 } }))
 vi.mock("./provisionIdentityReplica", () => ({ provisionIdentityReplica: runtime.provision }))
+vi.mock("./rustyDeviceAccess", () => ({ migrateRustyDeviceAccess: (...args: unknown[]) => runtime.migrate(...args) }))
+vi.mock("./rustyCredentialTransition", () => ({ revokeRustyIdentityDevice: (...args: Parameters<typeof runtime.revokeIdentityDevice>) => runtime.revokeIdentityDevice(...args) }))
+vi.mock("./replicaCredentialConflictWorkflow", async original => ({
+  ...await original<typeof ConflictWorkflow>(),
+  recoverRustyCredentialConflict: (...args: Parameters<typeof runtime.recoverConflict>) => runtime.recoverConflict(...args),
+}))
+vi.mock("./rustyManagementClient", async original => ({
+  ...await original<typeof ManagementClient>(),
+  readRustyManagementStatus: (...args: unknown[]) => runtime.readRustyStatus(...args),
+}))
 vi.mock("./rustyEnrollment", () => ({ approveRustyScope: runtime.scopeApproval }))
 vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runtime.writer }))
 
 import { useBlindReplication } from "./useBlindReplication"
+import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 
 afterEach(() => {
   for (const cleanup of runtime.cleanup.splice(0)) cleanup()
@@ -48,6 +65,10 @@ afterEach(() => {
   runtime.identitySync.mockReset().mockResolvedValue(true)
   runtime.workspaceSync.mockReset().mockResolvedValue(true)
   runtime.provision.mockReset()
+  runtime.migrate.mockReset().mockResolvedValue(undefined)
+  runtime.revokeIdentityDevice.mockReset().mockResolvedValue(undefined)
+  runtime.recoverConflict.mockReset().mockResolvedValue(undefined)
+  runtime.readRustyStatus.mockReset().mockResolvedValue({ capability: undefined })
   runtime.scopeApproval.mockReset().mockResolvedValue(1)
   runtime.writer.mockReset().mockImplementation(async (_app, config, guard) => { guard(); return config })
   runtime.fetchAttachment.mockReset()
@@ -88,7 +109,7 @@ it("Given a legacy workspace connection, when normal sync confirms writer migrat
     return (await getReplicaConfigurations(f.personId))[0]!
   })
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.calls.find(call => call.purpose === "workspace")?.config).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
   expect(controller.configs.value[0]).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
@@ -137,7 +158,7 @@ it("Given board and personal Rusty connections, when removal receives confirmed 
   await setReplicaPreference(f.personId, f.identity)
   await setReplicaPreference(f.personId, f.workspace)
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   await controller.remove(f.workspace)
   expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true)
@@ -150,7 +171,7 @@ it("Given Rusty rejects board removal, when revocation fails, then retain pendin
   await setReplicaPreference(f.personId, f.identity)
   await setReplicaPreference(f.personId, f.workspace)
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   runtime.scopeApproval.mockRejectedValue(new Error("Rusty unavailable"))
   await expect(controller.remove(f.workspace)).rejects.toThrow("Rusty unavailable")
@@ -188,11 +209,69 @@ it("Given private scope migration is unavailable, then expose its actual setup f
   await setReplicaPreference(f.personId, f.workspace)
   runtime.provision.mockRejectedValue(new Error("Owner policy migration required"))
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   expect(controller.profileSetupErrors.value[f.workspace.origin]).toBe("Owner policy migration required")
+  expect(controller.profilePermissionUpdates.value).toEqual([])
   expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
   expect(runtime.identitySync).not.toHaveBeenCalled()
+})
+
+it("Given private identity-scope provisioning requires a Rusty permission update, then mark that origin for explicit owner action", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  runtime.provision.mockRejectedValueOnce(new RustyPermissionMigrationRequiredError())
+  const controller = f.start()
+
+  await vi.waitFor(() => expect(controller.profilePermissionUpdates.value).toEqual([f.workspace.origin]))
+  expect(controller.profileSetupErrors.value[f.workspace.origin]).toMatch(/Update Rusty device access/i)
+  expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled()
+})
+
+it("Given an identity replica reports missing Rusty permission, then mark its origin for explicit owner action", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  runtime.identitySync.mockRejectedValueOnce(new RustyPermissionMigrationRequiredError())
+  const controller = f.start()
+
+  await vi.waitFor(() => expect(controller.profilePermissionUpdates.value).toEqual([f.identity.origin]))
+  await vi.waitFor(() => expect(controller.statuses.value[replicaKey(f.identity)]?.phase).toBe("error"))
+  expect(controller.statuses.value[replicaKey(f.identity)]).toMatchObject({
+    phase: "error", error: expect.stringMatching(/Update Rusty device access/i),
+  })
+})
+
+it("Given Rusty permission migration is required, when owner updates device access, then retry provisioning and clear the origin flag", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  runtime.provision.mockRejectedValueOnce(new RustyPermissionMigrationRequiredError())
+  const controller = f.start()
+  await vi.waitFor(() => expect(controller.profilePermissionUpdates.value).toEqual([f.workspace.origin]))
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  runtime.migrate.mockResolvedValue(undefined)
+
+  await controller.updateDeviceAccess(f.workspace.origin, f.workspace.workspaceId)
+
+  expect(runtime.migrate).toHaveBeenCalledWith(expect.anything(), f.workspace.origin, f.workspace.workspaceId, expect.any(Function))
+  expect(runtime.provision).toHaveBeenCalledTimes(2)
+  expect(controller.profilePermissionUpdates.value).toEqual([])
+  expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled()
+})
+
+it("Given permission migration remains unavailable, when explicit update fails, then preserve origin flag and user-visible error", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  runtime.identitySync.mockRejectedValueOnce(new RustyPermissionMigrationRequiredError())
+  const controller = f.start()
+  await vi.waitFor(() => expect(controller.profilePermissionUpdates.value).toEqual([f.identity.origin]))
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  runtime.migrate.mockRejectedValue(new Error("Owner approval denied"))
+
+  await expect(controller.updateDeviceAccess(f.identity.origin, f.workspace.workspaceId)).rejects.toThrow("Owner approval denied")
+
+  expect(controller.profilePermissionUpdates.value).toEqual([f.identity.origin])
+  expect(controller.error.value).toBe("Owner approval denied")
+  expect(runtime.identitySync).toHaveBeenCalledTimes(1)
 })
 
 it("Given a personal snapshot adds a board connection, when the normal pass pulls it, then that pass reloads settings and synchronizes the new board", async () => {
@@ -204,7 +283,7 @@ it("Given a personal snapshot adds a board connection, when the normal pass pull
     return true
   })
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.calls.map(call => call.purpose)).toEqual(["identity", "workspace"])
   expect(controller.configs.value[0]?.workspaceId).toBe("workspace-a")
@@ -216,12 +295,13 @@ it("Given personal replication fails, when a board sync succeeds, then health di
   await setReplicaPreference(f.personId, f.workspace)
   runtime.identitySync.mockRejectedValue(new Error("Private scope revoked"))
   const controller = f.start()
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
-  expect(runtime.workspaceSync).toHaveBeenCalled()
+  expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled()
   expect(controller.statuses.value[replicaKey(f.identity)]).toMatchObject({ phase: "error", error: "Private scope revoked" })
   expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
   expect(controller.error.value).toContain("Profile")
+  expect(controller.profilePermissionUpdates.value).toEqual([])
 })
 
 it("Given personal credentials change, when private settings notify the app, then the next pass creates a replica for the exact new credential revision", async () => {
@@ -230,10 +310,46 @@ it("Given personal credentials change, when private settings notify the app, the
   const controller = f.start()
   await vi.waitFor(() => expect(runtime.calls).toHaveLength(1))
   await controller.syncNow()
-  await setReplicaPreference(f.personId, { ...f.identity, contentKey: "B".repeat(42) + "A" })
+  await setReplicaPreference(f.personId, { ...f.identity, keyEpoch: 2, contentKey: "B".repeat(42) + "A",
+    historicalContentKeys: { "1": f.identity.contentKey } })
   identityDevicePreferencesChanged(f.personId)
-  await vi.waitFor(() => expect(runtime.calls).toHaveLength(2))
-  expect(runtime.calls[1]?.config).toMatchObject({ contentKey: "B".repeat(42) + "A" })
+  await vi.waitFor(() => expect(runtime.calls, controller.error.value).toHaveLength(2))
+  expect(runtime.calls[1]?.config).toMatchObject({ keyEpoch: 2, contentKey: "B".repeat(42) + "A",
+    historicalContentKeys: { "1": f.identity.contentKey } })
+})
+
+it("Given another registered identity device, when owner removes its Rusty access, then call the identity-wide transition with a live session guard", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  const controller = f.start()
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  await controller.revokeIdentityDevice(f.identity.origin, "other-registered-device")
+  expect(runtime.revokeIdentityDevice).toHaveBeenCalledTimes(1)
+  const [app, origin, deviceId, guard] = runtime.revokeIdentityDevice.mock.calls[0]!
+  expect(app).toBeDefined()
+  expect(origin).toBe(f.identity.origin)
+  expect(deviceId).toBe("other-registered-device")
+  expect(guard).toBeTypeOf("function")
+  expect(() => guard()).not.toThrow()
+  f.current.value = { ...f.profile, device: { ...f.profile.device, deviceId: "replacement-device" } }
+  expect(() => guard()).toThrow(/identity changed/i)
+})
+
+it("Given a paused credential conflict, when the owner resumes recovery, then bind it to the exact workspace session", async () => {
+  const f = await fixture()
+  const controller = f.start()
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  await controller.recoverCredentialConflict("https://rusty.example", "conflicted-scope", f.workspace.workspaceId)
+  expect(runtime.recoverConflict).toHaveBeenCalledTimes(1)
+  const [app, origin, scopeId, workspaceId, guard] = runtime.recoverConflict.mock.calls[0]!
+  expect(app).toBeDefined()
+  expect(origin).toBe("https://rusty.example")
+  expect(scopeId).toBe("conflicted-scope")
+  expect(workspaceId).toBe(f.workspace.workspaceId)
+  expect(guard).toBeTypeOf("function")
+  expect(() => guard()).not.toThrow()
+  f.activeWorkspace.id = "another-workspace"
+  expect(() => guard()).toThrow(/identity changed or workspace switched/i)
 })
 
 it("Given the same person's active device changes during sync, then the old replica cannot continue under the replacement device", async () => {
@@ -249,7 +365,7 @@ it("Given the same person's active device changes during sync, then the old repl
   await vi.waitFor(() => expect(() => old.guard()).toThrow("Identity changed"))
   release()
   await controller.syncNow()
-  await vi.waitFor(() => expect(runtime.calls.some(call => call.profile?.device.deviceId === "replacement-device")).toBe(true))
+  await vi.waitFor(() => expect(runtime.calls.some(call => call.profile?.device.deviceId === "replacement-device"), controller.error.value).toBe(true))
 })
 
 it("Given the app unmounts, then a cached private replica's identity guard rejects later work", async () => {

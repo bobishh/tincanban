@@ -18,8 +18,8 @@ watch(() => props.conflict, () => { confirmed.value = false })
   </div>
 </template>
 <style scoped>
-p { margin: 12px 0; line-height: 1.5; overflow-wrap: anywhere; }
-section { margin: 16px 0; padding: 16px; border: 2px solid var(--line); }
+p { margin: var(--space-3) 0; line-height: 1.5; overflow-wrap: anywhere; }
+section { margin: var(--space-4) 0; padding: var(--space-4); border: 2px solid var(--line); }
 label { display: block; }
-.button { margin-top: 16px; }
+.button { margin-top: var(--space-4); }
 </style>

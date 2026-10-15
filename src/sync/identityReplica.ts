@@ -4,6 +4,7 @@ import { encryptPurposeBoundObject, decryptPurposeBoundObject, decodeBlindBytes,
 import { blindHash, canonicalBlindJson, inventoryBlindObjects, downloadBlindObject, uploadBlindObject,
   verifyBlindReceipt, type BlindReceipt, type BlindAccess } from "./blindClient"
 import { readIdentityReplicaRecord, type IdentityReplicaRecord } from "./identityReplicaProtocol"
+import { openWithReplicaContentKeys } from "./replicaContentKeys"
 
 type Transfer = Awaited<ReturnType<typeof readIdentityReplicaRecord>>["transfer"]
 export type IdentityReplicaStore = {
@@ -42,8 +43,10 @@ export class IdentityReplica {
       transport: { inventory: cursor => transport.inventory(config, cursor), download: id => transport.download(config, id),
         upload: (object, requestId) => transport.upload(config, object, requestId) },
       admit: async object => {
-        const bytes = await decryptPurposeBoundObject(object, cryptoBinding, contentKey)
-        const parsed = await readIdentityReplicaRecord(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)), config, store.authorize)
+        const bytes = await openWithReplicaContentKeys(config, object.keyEpoch,
+          key => decryptPurposeBoundObject(object, { ...cryptoBinding, keyEpoch: object.keyEpoch }, decodeBlindBytes(key)))
+        const parsed = await readIdentityReplicaRecord(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
+          { ...config, keyEpoch: object.keyEpoch }, store.authorize)
         await store.guard()
         await store.merge(parsed.transfer)
         await store.guard()
@@ -55,5 +58,6 @@ export class IdentityReplica {
 
   pull(): Promise<boolean> { return this.engine.pull() }
   push(): Promise<boolean> { return this.engine.push() }
+  drainPending(): Promise<boolean> { return this.engine.drainPending() }
   sync(): Promise<boolean> { return this.engine.sync() }
 }

@@ -17,6 +17,8 @@ import { assertKeeperGrantGeneration, emptyRevocationGeneration, reconcilePriorP
 import { withWorkspaceMutation } from "../workspaceMutation"
 import { runKeeperRevocationActions } from "./keeperRevocationActions"
 import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
+import { meshRecordSigning } from "./meshRecordSigning"
 import { awaitOwnerDelivery, confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
   ownershipTransfersWithPending, persistScopeAuthoritySnapshot, planOwnershipMerge, preflightScopeAuthoritySnapshot, publishConfirmedToSessions,
   type OwnershipMergePlan, type OwnershipTransferState } from "./durableMeshOwnershipScope"
@@ -191,7 +193,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       successorPersonId: personId, eligibleEditorPersonIds: eligible })
     let policy!: WorkspaceSuccessionPolicy
     for (const action of actions) {
-      if (action === "createPolicy") policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, personId, eligible, credential!.epoch)
+      if (action === "createPolicy") policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, personId, eligible, credential!.epoch,
+        new Date().toISOString(), await meshRecordSigning(profile, credential!, { kind: "owner" }, this.store))
       if (action === "setPolicy") await this.store.putWorkspaceCredential({ ...credential!, updatedAt: new Date().toISOString(),
         catalog: { ...meshCatalog(credential!), successionPolicy: policy, successionVotes: [] } })
       if (action === "notify") await this.notify()
@@ -206,7 +209,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     const eligible = meshRustRuntime().state.eligibleEditorPersonIds(await this.store.listPeers(workspaceId))
     const refresh = meshRustRuntime().state.planSuccessionPolicyRefresh(current, eligible, credential.epoch)
     if (!refresh.changed) return
-    const policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, refresh.successorPersonId, eligible, credential.epoch)
+    const policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, refresh.successorPersonId, eligible, credential.epoch,
+      new Date().toISOString(), await meshRecordSigning(profile, credential, { kind: "owner" }, this.store))
     await this.store.putWorkspaceCredential({ ...credential, updatedAt: new Date().toISOString(),
       catalog: { ...meshCatalog(credential), successionPolicy: policy, successionVotes: [] } })
   }
@@ -231,7 +235,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   private async applySuccessionVoteAction(action: string, input: { profile: LocalProfile; credential: WorkspaceMeshCredential;
     policy: WorkspaceSuccessionPolicy; grant: WorkspaceGrant; candidatePersonId: string; vote?: WorkspaceSuccessionVote }) {
     if (action === "createVote") return createWorkspaceSuccessionVote(input.profile, input.policy, input.candidatePersonId, input.grant,
-      new Date().toISOString(), uniqueCertificates(input.profile, await defaultProofStore.listCertificates()))
+      new Date().toISOString(), uniqueCertificates(input.profile, await defaultProofStore.listCertificates()),
+      await meshRecordSigning(input.profile, input.credential, { kind: "vote", candidatePersonId: input.candidatePersonId }, this.store))
     if (action === "mergeVote") await this.mergeSuccessionState(input.credential, input.policy, [input.vote!], [])
     if (action === "notify") await this.notify()
     if (action === "publish") await this.publishAll()
@@ -252,7 +257,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       if (action === "createClaim") {
         claim = await createWorkspaceSuccessionClaim(profile, policy!, votes, grant!,
           await this.readAuthorityHeads(credential!.workspaceId), credential!.epoch + 1,
-          uniqueCertificates(profile, await defaultProofStore.listCertificates()))
+          uniqueCertificates(profile, await defaultProofStore.listCertificates()), new Date().toISOString(),
+          await meshRecordSigning(profile, credential!, { kind: "claim" }, this.store))
       }
       if (action === "mergeClaim") await this.mergeSuccessionState(credential!, policy!, votes, [claim])
       if (action === "notify") await this.notify()
@@ -323,7 +329,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     for (const workspaceId of new Set(workspaceIds)) {
       const credential = (await this.store.getWorkspaceCredential(workspaceId))!
       const heads = await this.readAuthorityHeads(workspaceId)
-      const record = await createWorkspaceDeviceRevocation(profile, workspaceId, personId, deviceId, heads, certificates)
+      const record = await createWorkspaceDeviceRevocation(profile, workspaceId, personId, deviceId, heads, certificates,
+        await meshRecordSigning(profile, credential, { kind: "device-revocation", personId, deviceId }, this.store))
       await this.mergeDeviceRevocations(credential, [record], false)
     }
     await this.publishAll()
@@ -353,7 +360,10 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     for (const action of actions) {
       if (action === "createGrant") {
         const epoch = await this.nextAccessEpoch(workspaceId)
-        grant = await createWorkspaceGrant(profile, workspaceId, personId, "editor", epoch)
+        const context = await workspaceOwnerSigningContext(profile, workspaceId, "workspace-grant",
+          { personId, role: "editor", accessEpoch: epoch }, async () =>
+            await this.store.getWorkspaceAuthority(workspaceId) ?? await this.store.getWorkspaceCredential(workspaceId))
+        grant = await createWorkspaceGrant(profile, workspaceId, personId, "editor", epoch, context)
       }
       if (action === "persistGrant") {
         if (!grant) throw new Error("Promotion grant was not created")
@@ -388,7 +398,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       await runKeeperRevocationActions(actions, {
         create: async () => {
           const revocationEpoch = nextKeeperRevocationEpoch(await this.nextAccessEpoch(workspaceId), expectedGrantEpoch)
-          const record = await createWorkspaceRevocation(profile, workspaceId, personId, revocationEpoch, await this.readAuthorityHeads(workspaceId))
+          const record = await createWorkspaceRevocation(profile, workspaceId, personId, revocationEpoch, await this.readAuthorityHeads(workspaceId),
+            new Date().toISOString(), await meshRecordSigning(profile, current!, { kind: "owner" }, this.store))
           if (expectedGrantEpoch !== undefined && record.payload.epoch <= expectedGrantEpoch) throw new Error("Revocation did not advance beyond the issued keeper grant.")
           meshTrace("authority.revoke.generation-created", { ...generation, newRevocationEpoch: record.payload.epoch }); return record
         },
@@ -484,7 +495,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     const workspaceHeads = await this.readAuthorityHeads(workspaceId)
     const departure = await createWorkspaceDeparture(profile, workspaceId, (credential.localGrant as WorkspaceGrant | undefined)?.payload.accessEpoch ?? 1,
       workspaceHeads,
-      uniqueCertificates(profile, await defaultProofStore.listCertificates()))
+      uniqueCertificates(profile, await defaultProofStore.listCertificates()),
+      await meshRecordSigning(profile, credential, { kind: "departure" }, this.store))
     await this.mergeDepartures(credential, [departure], false)
     await this.publishAll()
     const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
@@ -497,15 +509,11 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   }
 
   private async leaveWorkspaceHost(workspaceId: string): Promise<void> {
-    for (const [, entry] of [...this.sessions]) {
-      if (entry.workspaceId !== workspaceId) continue
-      await entry.evict("workspace left")
-    }
+    for (const [, entry] of [...this.sessions]) if (entry.workspaceId === workspaceId) await entry.evict("workspace left")
     this.gossip.close(workspaceId)
     await this.store.removeWorkspaceMeshData(workspaceId)
     await defaultProofStore.removeWorkspaceGrants(workspaceId)
-    this.lastDiagnostic = ""
-    this.options.onDiagnostic?.("")
+    this.lastDiagnostic = ""; this.options.onDiagnostic?.("")
     this.clearRouteReconnects(`${workspaceId}:`)
   }
 

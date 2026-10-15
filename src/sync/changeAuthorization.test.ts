@@ -5,7 +5,8 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber/mesh-workspace"
 import { initializeAutomerge } from "../crdt"
-import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
+import { readLocal, writeLocal } from "../localDb"
 import { createWorkspaceDoc } from "../domain/seeds"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { publicKeyId, toBase64Url } from "../domain/identity"
@@ -67,10 +68,12 @@ beforeAll(async () => {
   await initializeAutomerge()
 })
 let owner: LocalProfile, member: LocalProfile
+let ownerProfileRaw: string
 beforeEach(async () => {
   peerStoreState.credential = null
   peerStoreState.authority = null
   resetIdentityStorageForTest(); owner = await bootstrapIdentity("Owner")
+  ownerProfileRaw = (await readLocal("tincanban.local_profile.v1"))!
   resetIdentityStorageForTest(); member = await bootstrapIdentity("Member")
 })
 async function fixture(command: (board: string, column: string) => Command, role: "visitor" | "editor", title = "Permissions") {
@@ -188,6 +191,45 @@ it("Given one raw document used as local and remote, When reclassifying it, Then
     expect(Automerge.clone).not.toHaveBeenCalled()
     expect(Automerge.change(doc, draft => { draft.title = "Still writable" }).title).toBe("Still writable")
   } finally { Automerge.free(doc) }
+})
+
+it("Given a Native-verified compact basis, when shared admission runs, then pass its opaque handle and bind reuse to that exact baseline", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Compact basis", owner.identity.personId, "blank"))
+  await recordGenesisAuthority(doc, owner)
+  const bundle = await exportDocumentAuthorizationBundle(doc, owner)
+  const first = { envelope: () => ({ payload: { baselineId: "A".repeat(43), genesisHash: "a".repeat(64) } }) } as never
+  const second = { envelope: () => ({ payload: { baselineId: "B".repeat(43), genesisHash: "a".repeat(64) } }) } as never
+  const plan = { neededHashes: [], admittedHashes: [], verifiedAuthorizations: [], authorizationEvidence: [],
+    quarantinedHashes: [], pendingHashes: [], decisions: [], authorizedDocument: Automerge.save(doc), authorizedHeads: [] }
+  const admit = vi.spyOn(admissionClient, "runWorkspaceAdmission").mockResolvedValue(plan as never)
+  try {
+    await evaluateIncomingWorkspaceAdmission(doc, doc, bundle, [], first)
+    expect(admit.mock.calls[0]?.[0].receivedBasis).toBe(first)
+    await evaluateIncomingWorkspaceAdmission(doc, doc, bundle, [], first)
+    expect(admit).toHaveBeenCalledOnce()
+    await evaluateIncomingWorkspaceAdmission(doc, doc, bundle, [], second)
+    expect(admit).toHaveBeenCalledTimes(2)
+    expect(admit.mock.calls[1]?.[0].receivedBasis).toBe(second)
+  } finally { admit.mockRestore(); Automerge.free(doc) }
+})
+
+it("Given a compact transferred workspace, when preparing local authority, then preserve the immutable genesis owner", async () => {
+  resetIdentityStorageForTest(); const successor = await bootstrapIdentity("Successor")
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Transferred compact", owner.identity.personId, "blank"))
+  const transfer = await createWorkspaceOwnershipTransfer(owner, doc.id, {
+    personId: successor.identity.personId, publicKey: successor.identity.publicKey, certificates: [successor.certificate],
+  }, Automerge.getHeads(doc), 2)
+  const genesis = { personId: owner.identity.personId, publicKey: owner.identity.publicKey, certificates: [owner.certificate] }
+  peerStoreState.authority = { version: 1, workspaceId: doc.id, genesisOwnerPersonId: owner.identity.personId,
+    ownerPersonId: successor.identity.personId, ownerPublicKey: successor.identity.publicKey,
+    ownerCertificates: [successor.certificate], ownerHistory: [genesis], epoch: 2,
+    updatedAt: new Date().toISOString(), catalog: { ownershipTransfers: [transfer] } }
+
+  const compactProjection = { id: doc.id, ownerPersonId: successor.identity.personId }
+  const evidence = await localWorkspaceAdmissionAuthority(compactProjection)
+  expect(evidence.authority.genesisOwner).toEqual(genesis)
+  expect(evidence.authority.currentOwner.personId).toBe(successor.identity.personId)
+  Automerge.free(doc)
 })
 
 it("Given unproven raw history, When its missing signed proof arrives then repeated packets reuse admission, but invalid or revoked evidence is checked again", async () => {
@@ -446,6 +488,9 @@ it("repairs a current-owner signed revocation bound only to quarantined raw hist
   peerStoreState.authority.localGrant = await createWorkspaceGrant(owner, doc.id, owner.identity.personId, "owner")
 
   await expect(workspaceRole(doc, owner)).rejects.toThrow(/missing from the document/)
+  await writeLocal("tincanban.local_profile.v1", ownerProfileRaw)
+  clearInMemoryProfileForReloadTest()
+  await bootstrapIdentity()
   await reconcileOwnerRevocationBoundaries(doc, owner)
 
   const repairedAuthority = peerStoreState.authority!

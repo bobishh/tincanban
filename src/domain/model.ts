@@ -101,6 +101,7 @@ export type TransactionMetadataV1 = {
   personId: PersonId
   deviceId: DeviceId
   authorityGrantHash?: string
+  restoredFrom?: { baselineId: string; historyEpoch: number; changeHash: string; observation: "admitted" | "pending" | "quarantined" }
 }
 
 type SignedEnvelope<T> = {

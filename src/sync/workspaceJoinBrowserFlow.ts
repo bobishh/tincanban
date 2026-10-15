@@ -8,12 +8,12 @@ import { registerWorkspaceInRoot } from "../domain/personalRoot"
 import { defaultStorage } from "../storage"
 import { WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff } from "../iroh"
 import type { DeviceSyncState, WorkspaceJoinPayload } from "./deviceSyncState"
-import { meshOwnersMatch, userMessage, validWorkspaceJoinPayload } from "./deviceSyncState"
+import { meshOwnersMatch, validWorkspaceJoinPayload } from "./deviceSyncState"
 import type { DurableMesh } from "./durableMesh"
 import { offlineRetryDelay } from "./offlineRetry"
 import { startPersistentNode } from "./persistentNode"
 import type { SyncConnection, SyncNode, SyncTransport } from "./transport"
-import { liveWorkspaceSetSync, type LiveWorkspaceSync, type WorkspaceReplica, type WorkspaceSetStore, workspaceSet } from "./workspaceSet"
+import { createPeerHistoryObjectReader, liveWorkspaceSetSync, type LiveWorkspaceSync, type WorkspaceReplica, type WorkspaceSetStore, workspaceSet } from "./workspaceSet"
 
 export type WorkspaceJoinBrowserContext = {
   state: DeviceSyncState
@@ -34,13 +34,6 @@ export type WorkspaceJoinBrowserContext = {
 }
 
 type WorkspaceJoinInvite = Extract<ScopedInvitation, { kind: "workspace-join" }>
-
-export function isWorkspacePairingLocation(rawUrl: string, prepare: (url: string) => void) {
-  const url = new URL(rawUrl)
-  if (url.pathname.replace(/\/$/, "") !== "/pair" || !url.hash) return false
-  prepare(rawUrl)
-  return true
-}
 
 type GuestCycle = {
   node?: SyncNode
@@ -71,17 +64,6 @@ export async function connectWorkspaceJoin(context: WorkspaceJoinBrowserContext,
   }
 }
 
-export function reportWorkspaceJoinFailure(state: DeviceSyncState, currentRun: number, run: number, invite: WorkspaceJoinInvite, error: unknown) {
-  if (run !== currentRun) return
-  state.directLive.value = false
-  state.step.value = "error"
-  if (/access revoked/i.test(error instanceof Error ? error.message : String(error))) {
-    state.revokedWorkspaceIds.value = [...new Set([...state.revokedWorkspaceIds.value, ...invite.workspaces.map(item => item.id)])]
-  }
-  console.error("Workspace sync failed", error)
-  state.error.value = userMessage(error, "Couldn’t save the received workspaces.")
-}
-
 async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: number, invite: WorkspaceJoinInvite,
   profile: LocalProfile, replica: ReturnType<typeof workspaceSet>, attempts: number): Promise<GuestCycle> {
   const cycle: GuestCycle = { adopted: false }
@@ -100,7 +82,10 @@ async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: numb
     cycle.registered = true
     cycle.connection = meshNetworkConnection(await meshNetworkIO(dialGuest(cycle.node, invite.issuerEndpoint)))
     await installGuestInvitation(context, run, invite, profile, replica, cycle)
-    cycle.session = liveWorkspaceSetSync(cycle.connection, invite.secret, replica)
+    cycle.session = liveWorkspaceSetSync(cycle.connection, invite.secret, replica, {
+      remoteDeviceId: invite.issuerDeviceId,
+      ensureCurrent: () => { if (context.currentRun() !== run) throw new Error("Workspace join was cancelled") },
+    })
     context.setLiveSession(cycle.session)
     context.state.isEnabled.value = true
     context.state.revokedWorkspaceIds.value = context.state.revokedWorkspaceIds.value.filter(id => !invite.workspaces.some(item => item.id === id))
@@ -186,11 +171,14 @@ async function installReceivedInvitation(context: WorkspaceJoinBrowserContext, r
   if (context.currentRun() !== run) throw new Error("Workspace join was cancelled.")
   if (!meshOwnersMatch(received.meshWorkspaces, invite.issuerPersonId)) throw new Error("Invitation owner mismatch")
   const snapshot = await replica.resolveProofs(fromBase64Url(received.snapshot), connection, invite.secret)
-  await replica.validate(snapshot)
-  await context.durableMesh?.validateInvitation(received.meshWorkspaces, workspaceIds, profile, received.grants)
+  const admittedScopes = await context.durableMesh?.validateInvitation(received.meshWorkspaces, workspaceIds, profile, received.grants)
+  const historyReader = createPeerHistoryObjectReader(connection, () => {
+    if (context.currentRun() !== run) throw new Error("Workspace join was cancelled")
+  }, admittedScopes)
+  await replica.validate(snapshot, historyReader)
   for (const grant of received.grants) await defaultProofStore.putGrant(grant.payload.grantId, grant)
   await context.durableMesh?.receiveInvitation(received.meshWorkspaces, workspaceIds, profile, received.grants)
-  await replica.receive(snapshot)
+  await replica.receive(snapshot, true, historyReader)
   await defaultStorage.updatePersonalRootForIdentity(profile.identity.personId, personalRoot => {
     if (!personalRoot) return null
     personalRoot.workspaces ??= {}

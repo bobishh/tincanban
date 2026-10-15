@@ -115,7 +115,7 @@ test("Given identity photo settings, when one crop is saved and another workspac
   await expect(page.getByRole("region", { name: "Identity photo" }).locator(".identity-avatar-preview")).toHaveCount(0)
 })
 
-test("Given a photo draft, when file decode or save fails, then current avatar stays and draft can retry", async ({ page }) => {
+test("Given a photo draft, when workspace projection fails, then profile stays saved and projection retries after reload", async ({ page }) => {
   await openAvatarSettings(page)
   const input = page.getByLabel("Choose photo")
   await input.setInputFiles({ name: "broken.png", mimeType: "image/png", buffer: Buffer.from("not an image") })
@@ -126,13 +126,16 @@ test("Given a photo draft, when file decode or save fails, then current avatar s
   await page.evaluate(() => { (window as AvatarFailureWindow).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
   await crop.getByRole("button", { name: "Use photo" }).first().click()
   await page.getByRole("button", { name: "Save profile", exact: true }).click()
-  await expect(page.getByRole("alert")).toContainText("Storage failure injected")
+  await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Sharing to some workspaces is pending" })).toBeVisible()
   await expect(page.getByRole("img", { name: "Your profile photo" })).toBeVisible()
 
   await page.evaluate(() => { (window as AvatarFailureWindow).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
-  await page.getByRole("button", { name: "Save profile", exact: true }).click()
-  await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
+  await page.reload()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Identity", exact: true }).click()
   await expect(page.locator(".participant-avatar-photo")).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Sharing to some workspaces is pending" })).toHaveCount(0)
 })
 
 test("Given a visitor joins a workspace, when they save their avatar, then owner receives the CRDT profile", async ({ page, browser }) => {

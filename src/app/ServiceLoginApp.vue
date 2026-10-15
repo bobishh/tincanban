@@ -82,7 +82,7 @@ function sameProfile(left: LocalProfile, right: LocalProfile) {
 <template>
   <div class="keeper-admin">
     <header class="topbar"><div class="brand"><h1>tincanban</h1></div></header>
-    <main class="service-login">
+    <main class="service-login ui-stack">
       <h2>Sign in to TinSink</h2>
       <template v-if="request">
         <p>Service: <strong>{{ request.origin }}</strong></p>
@@ -91,13 +91,15 @@ function sameProfile(left: LocalProfile, right: LocalProfile) {
       <p v-if="error" role="alert">{{ error }}</p>
       <p v-else-if="!ready" role="status">Loading identity…</p>
       <p v-if="approved" role="status">Approval sent. Return to TinSink for the result.</p>
-      <button v-else class="button button-primary" :disabled="!ready || pending" @click="approve">{{ pending ? "Approving…" : "Approve sign-in" }}</button>
+      <div class="ui-actions">
+      <button v-if="!approved" class="button button-primary" :disabled="!ready || pending" @click="approve">{{ pending ? "Approving…" : "Approve sign-in" }}</button>
       <button class="button" @click="cancel">Cancel</button>
+      </div>
     </main>
   </div>
 </template>
 
 <style scoped>
-.service-login { max-width: 42rem; margin: 2rem auto; padding: 1.5rem; overflow-wrap: anywhere; }
-button + button { margin-left: .75rem; }
+.service-login { max-width: 42rem; margin: var(--space-6) auto; padding: var(--space-6); overflow-wrap: anywhere; }
+.service-login > :is(h2, p) { margin: 0; }
 </style>

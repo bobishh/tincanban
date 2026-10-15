@@ -1,10 +1,12 @@
 import type { useTincanban } from "../state"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { provisionIdentityReplica } from "./provisionIdentityReplica"
+import { requiresRustyPermissionMigration } from "./rustyPermissionMigration"
 
 /** Profile setup is network work; load its orchestration only for configured servers. */
 export async function provisionIdentityReplicas(app: Pick<ReturnType<typeof useTincanban>, "getCurrentProfile">,
-  configurations: BlindReplicaConfig[], identityOrigins: Set<string>, guard: () => void): Promise<Record<string, string>> {
+  configurations: BlindReplicaConfig[], identityOrigins: Set<string>, guard: () => void,
+  migrationRequired?: (origin: string) => void): Promise<Record<string, string>> {
   const errors: Record<string, string> = {}
   const origins = new Map(configurations.map(config => [config.origin, config]))
   for (const config of origins.values()) {
@@ -17,6 +19,7 @@ export async function provisionIdentityReplicas(app: Pick<ReturnType<typeof useT
       guard()
     } catch (cause) {
       guard()
+      if (requiresRustyPermissionMigration(cause)) migrationRequired?.(config.origin)
       errors[config.origin] = cause instanceof Error ? cause.message : "Private profile setup unavailable"
     }
   }

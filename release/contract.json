@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "minimumWriterVersion": 2,
+  "readers": {
+    "frontend": {
+      "identityDevice": 1,
+      "privateReplicas": 5,
+      "workspaceSnapshot": 2,
+      "instanceManagementActions": 3
+    },
+    "automation": {
+      "automationState": 5,
+      "workspaceSnapshot": 2,
+      "instanceManagementActions": 3
+    },
+    "rusty": {
+      "scopePolicy": 2,
+      "managementPolicy": 1,
+      "archiveStorage": 1
+    }
+  },
+  "capabilities": {
+    "rusty": {
+      "scopeEnrollmentRetry": 1,
+      "scopeManagement": 1,
+      "personManagement": 1,
+      "writerPolicy": 1,
+      "encryptedArchives": 1,
+      "snapshotCheckpoints": {
+        "version": 1,
+        "observedSequence": true
+      }
+    },
+    "automation": {
+      "instanceManagement": {
+        "version": 1,
+        "actions": [
+          "discover",
+          "identity",
+          "activate",
+          "refresh-access",
+          "prepare-storage-rotation",
+          "rotate-storage",
+          "prepare-history-baseline",
+          "activate-history-baseline"
+        ]
+      }
+    }
+  },
+  "migrations": [
+    "private-replica-wire@5",
+    "scope-policy-enrollment-receipt@1",
+    "automation-state@5",
+    "automation-instance-actions@3",
+    "workspace-history-snapshot@2"
+  ]
+}

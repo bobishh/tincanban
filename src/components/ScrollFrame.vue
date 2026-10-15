@@ -34,7 +34,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
 <style scoped>
 .scroll-frame { position: relative; flex: 1; min-height: 0; border: 2px solid var(--line); overflow: hidden; }
-.scroll-frame-viewport { height: 100%; overflow: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 12px 20px 12px 12px; }
+.scroll-frame-viewport { height: 100%; overflow: auto; overscroll-behavior: contain; scrollbar-width: none; padding: var(--space-3) var(--space-4) var(--space-3) var(--space-3); }
 .scroll-frame-viewport::-webkit-scrollbar { display: none; }
 .scroll-frame-track { position: absolute; inset: 6px 5px 6px auto; width: 5px; background: var(--soft); border-image: none !important; pointer-events: none; }
 .scroll-frame-thumb { position: absolute; right: 0; width: 100%; background: var(--muted); border-image: none !important; }

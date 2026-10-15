@@ -8,7 +8,7 @@ import { createPeerAdvertisement, verifyWorkspaceMemberBundle,
   type WorkspaceMemberBundle, type WorkspaceOwnershipTransfer,
   type WorkspaceSuccessionPolicy, type WorkspaceSuccessionVote, type WorkspaceSuccessionClaim,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
-import { type WorkspaceMeshCredential} from "./peerStore"
+import { type PeerStore, type WorkspaceMeshCredential} from "./peerStore"
 import type { SyncConnection} from "./transport"
 import { workspaceSet, publishOwnerWorkspaceOffer} from "./workspaceSet"
 import { exportWorkspaceProofs } from "./workspaceProofTransfer"
@@ -16,6 +16,8 @@ import { registerOwnerOfferProofs } from "./ownerOfferProofs"
 import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked, isGrantRevoked, uniqueCertificates, isEnvelope, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities,
   type MeshExport, type MeshWorkspaceEnvelope } from "./durableMeshBase"
 import { DurableMeshBase } from "./durableMeshBase"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
+import { workspaceRecordSigning } from "./meshRecordSigning"
 
 export type KeeperGrantScopeProof = { workspaceId: string; document: string; authorizationBundle: unknown; grant: WorkspaceGrant }
 
@@ -54,6 +56,42 @@ export async function ownerKeeperOfferPolicy(profile: LocalProfile, remotePerson
   return { allowed: true, keeper }
 }
 
+function captureAcceptedGuestGrants(workspaceIds: string[], personId: string, acceptedGrants?: WorkspaceGrant[]): Map<string, WorkspaceGrant> | undefined {
+  if (acceptedGrants === undefined) return undefined
+  const uniqueIds = new Set(workspaceIds)
+  if (uniqueIds.size !== workspaceIds.length) throw new Error("Workspace access authorization changed")
+  const grants = new Map<string, WorkspaceGrant>()
+  for (const grant of acceptedGrants) {
+    const workspaceId = grant?.payload?.workspaceId
+    if (grant?.payload?.personId !== personId || !workspaceIds.includes(workspaceId) || grants.has(workspaceId)) {
+      throw new Error("Workspace access authorization changed")
+    }
+    grants.set(workspaceId, grant)
+  }
+  if (grants.size !== uniqueIds.size) throw new Error("Workspace access authorization changed")
+  return grants
+}
+
+async function verifyGuestDeviceAdvertisement(raw: unknown, workspaceIds: string[], personId: string,
+  grants: Map<string, WorkspaceGrant> | undefined, seen: Set<string>, selectedDevice: string | undefined,
+  store: PeerStore): Promise<string> {
+  const verified = await verifyWorkspaceMemberBundle(raw)
+  const peer = verified.advertisement.payload
+  if (peer.personId !== personId || !workspaceIds.includes(peer.workspaceId)) throw new Error("Guest device does not match invitation")
+  if (seen.has(peer.workspaceId) || selectedDevice !== undefined && selectedDevice !== peer.deviceId) {
+    throw new Error("Invitation must be bound to one verified guest device across its workspace set")
+  }
+  seen.add(peer.workspaceId)
+  const credential = await store.getWorkspaceCredential(peer.workspaceId)
+  const grant = grants?.get(peer.workspaceId)
+  if (credential && isDeviceRevoked(credential, peer.personId, peer.deviceId)) throw new Error("Device access revoked")
+  if (credential && grant && (isGrantRevoked(credential, personId, grant) || hasLeftWorkspace(credential, personId, grant))) {
+    throw new Error("Workspace access revoked")
+  }
+  if (grants && !grant) throw new Error("Workspace access authorization changed")
+  return peer.deviceId
+}
+
 export abstract class DurableMeshCredentials extends DurableMeshBase {
   private readonly ownerWorkspaceOffers = new Map<string, Promise<void>>()
   protected abstract mergeDepartures(credential: WorkspaceMeshCredential, records: WorkspaceDeparture[], disconnect?: boolean): Promise<void>
@@ -73,7 +111,9 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       profile.identity.personId, certificates, new Date().toISOString()) as WorkspaceMeshCredential | null
     if (!next) return credential
     await this.store.putWorkspaceCredential(next)
-    return next
+    const committed = await this.store.getWorkspaceCredential(credential.workspaceId)
+    if (!committed) throw new Error("Workspace credential disappeared during certificate refresh")
+    return committed
   }
 
 
@@ -299,7 +339,11 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
           const issued = await defaultProofStore.listGrants(workspaceId)
           let grant = issued.find(record => record.payload.personId === remotePersonId && record.payload.role === keeper.role)
           if (!grant) {
-            grant = await createWorkspaceGrant(profile, workspaceId, remotePersonId, keeper.role, await this.nextAccessEpoch(workspaceId))
+            const accessEpoch = await this.nextAccessEpoch(workspaceId)
+            const context = await workspaceOwnerSigningContext(profile, workspaceId, "workspace-grant",
+              { personId: remotePersonId, role: keeper.role, accessEpoch }, async () =>
+                await this.store.getWorkspaceAuthority(workspaceId) ?? await this.store.getWorkspaceCredential(workspaceId))
+            grant = await createWorkspaceGrant(profile, workspaceId, remotePersonId, keeper.role, accessEpoch, context)
             await defaultProofStore.putGrant(grant.payload.grantId, grant)
           }
           const value = JSON.parse(new TextDecoder().decode(offer))
@@ -319,8 +363,9 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
   async createGuestAdvertisements(workspaceIds: string[], endpoint: string, profile: LocalProfile): Promise<WorkspaceMemberBundle[]> {
     await this.acquireInstance()
     const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())
-    return Promise.all(workspaceIds.map(workspaceId => createPeerAdvertisement(profile, workspaceId, endpoint,
-      { certificates, instanceId: this.instanceId })))
+    return Promise.all(workspaceIds.map(async workspaceId => createPeerAdvertisement(profile, workspaceId, endpoint,
+      { certificates, instanceId: this.instanceId, signing: await workspaceRecordSigning(profile, workspaceId,
+        async () => "unjoined-route", ["peer-advertisement"]) })))
   }
 
   async forgetEnrolledDevice(workspaceIds: string[], deviceId: string): Promise<void> {
@@ -344,15 +389,17 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       profile.identity.personId, profile.device.deviceId)
   }
 
-  async checkGuestDevices(workspaceIds: string[], personId: string, rawBundles: unknown): Promise<void> {
+  async checkGuestDevices(workspaceIds: string[], personId: string, rawBundles: unknown,
+    acceptedGrants?: WorkspaceGrant[]): Promise<string> {
     if (!Array.isArray(rawBundles)) throw new Error("Missing guest device advertisements")
+    const grantsByWorkspace = captureAcceptedGuestGrants(workspaceIds, personId, acceptedGrants)
+    const seenWorkspaces = new Set<string>()
+    let deviceId: string | undefined
     for (const raw of rawBundles) {
-      const verified = await verifyWorkspaceMemberBundle(raw)
-      const peer = verified.advertisement.payload
-      if (peer.personId !== personId || !workspaceIds.includes(peer.workspaceId)) throw new Error("Guest device does not match invitation")
-      const credential = await this.store.getWorkspaceCredential(peer.workspaceId)
-      if (credential && isDeviceRevoked(credential, peer.personId, peer.deviceId)) throw new Error("Device access revoked")
+      deviceId = await verifyGuestDeviceAdvertisement(raw, workspaceIds, personId, grantsByWorkspace, seenWorkspaces, deviceId, this.store)
     }
+    if (!deviceId || seenWorkspaces.size !== new Set(workspaceIds).size) throw new Error("Guest device advertisements do not cover the invitation")
+    return deviceId
   }
 
   async acceptGuest(workspaceIds: string[], rawBundles: unknown, grants: WorkspaceGrant[]): Promise<void> {
@@ -451,8 +498,20 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
     await this.notify()
   }
 
-  async validateInvitation(raw: unknown, workspaceIds: string[], profile: LocalProfile, grants: WorkspaceGrant[]): Promise<void> {
-    await this.prepareInvitation(raw, workspaceIds, profile, grants)
+  async validateInvitation(raw: unknown, workspaceIds: string[], profile: LocalProfile, grants: WorkspaceGrant[]): Promise<Map<string, unknown>> {
+    const entries = await this.prepareInvitation(raw, workspaceIds, profile, grants)
+    const scopes = new Map<string, unknown>()
+    for (const { workspaceId, envelope } of entries) {
+      if (!envelope.scopeAuthoritySnapshot) continue
+      const snapshot = structuredClone(envelope.scopeAuthoritySnapshot)
+      const authority = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
+        scopeId: string; controller: { personId: string; publicKey: string }
+      }
+      if (authority.scopeId !== workspaceId || authority.controller.personId !== envelope.ownerPersonId ||
+          authority.controller.publicKey !== envelope.ownerPublicKey) throw new Error("Invitation scope authority differs from its verified owner")
+      scopes.set(workspaceId, snapshot)
+    }
+    return scopes
   }
 
   private async prepareInvitation(raw: unknown, workspaceIds: string[], profile: LocalProfile, grants: WorkspaceGrant[]) {

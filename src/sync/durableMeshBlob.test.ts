@@ -11,6 +11,7 @@ import { createDelegatedCertificate } from "../domain/proofs"
 import { DurableMesh } from "./durableMesh"
 import type { WorkspaceMeshCredential } from "./peerStore"
 import type { SessionEntry } from "./durableMeshBase"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -38,9 +39,13 @@ async function fixture() {
   }
   let currentCredential = credential
   let currentProfile = profile
-  const blob = { read: vi.fn(async () => undefined), write: vi.fn(async () => {}) }
+  const descriptor: meshBlob.BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"A".repeat(43)}`,
+    name: "private.bin", mediaType: "application/octet-stream", size: fileBytes.byteLength }
+  const blob = { read: vi.fn(async () => undefined), write: vi.fn(async () => {}),
+    resolve: vi.fn(async (): Promise<meshBlob.BlobDescriptor | undefined> => descriptor) }
   const store = {
     getWorkspaceCredential: vi.fn(async () => currentCredential),
+    getWorkspaceAuthority: vi.fn(async () => null),
     listWorkspaceCredentials: vi.fn(async () => [currentCredential]),
     listWorkspaceAuthorities: vi.fn(async () => []),
     listPeers: vi.fn(async () => []),
@@ -70,8 +75,6 @@ async function fixture() {
   const original = makeSession("old")
   const sessionKey = `${workspaceId}:${original.deviceId}:${original.instanceId}`
   internals.sessions.set(sessionKey, original)
-  const descriptor: meshBlob.BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"A".repeat(43)}`,
-    name: "private.bin", mediaType: "application/octet-stream", size: fileBytes.byteLength }
   return {
     mesh, internals, profile, workspaceId, credential, doc, descriptor, original, sessionKey, blob, store, getProfile,
     mutableInternals,
@@ -93,6 +96,27 @@ function deferred<T>() {
   const promise = new Promise<T>((accept, fail) => { resolve = accept; reject = fail })
   return { promise, resolve, reject }
 }
+
+it("Given a missing or changed admitted attachment reference, when requesting mesh bytes, then send no peer request", async () => {
+  const f = await fixture()
+  const request = vi.spyOn(meshBlob, "requestBlob").mockResolvedValue(fileBytes)
+  try {
+    f.blob.resolve.mockResolvedValueOnce(undefined)
+    await expect(f.mesh.fetchBlob(f.workspaceId, f.descriptor)).rejects.toThrow(/reference.*missing|changed/i)
+    expect(request).not.toHaveBeenCalled()
+    expect(f.blob.write).not.toHaveBeenCalled()
+  } finally { await f.close() }
+})
+
+it("Given a referenced mesh attachment, when requesting bytes, then provide the verified chunk signer to the SDK", async () => {
+  const f = await fixture()
+  const request = vi.spyOn(meshBlob, "requestBlob").mockResolvedValue(fileBytes)
+  try {
+    await expect(f.mesh.fetchBlob(f.workspaceId, f.descriptor)).resolves.toEqual(fileBytes)
+    expect(request.mock.calls[0]?.[5]?.signing).toMatchObject({ personId: f.profile.identity.personId,
+      deviceId: f.profile.device.deviceId, sign: expect.any(Function) })
+  } finally { await f.close() }
+})
 
 async function settlesWithin(promise: Promise<unknown>, milliseconds: number): Promise<boolean> {
   return Promise.race([
@@ -117,6 +141,20 @@ it("Given a blob request on a closing peer session, when a replacement session b
     expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
     expect(f.blob.write).toHaveBeenCalledOnce()
   } finally { await f.close() }
+})
+
+it("Given a network failure arrives before session eviction, when a replacement is published later, then retry the attachment within the original deadline", async () => {
+  const f = await fixture()
+  const request = vi.spyOn(meshBlob, "requestBlob").mockRejectedValueOnce(new MeshNetworkError("connection lost"))
+    .mockResolvedValueOnce(fileBytes)
+  let replacement: SessionEntry | undefined
+  const replacementTimer = setTimeout(() => { replacement = f.replaceSession() }, 50)
+  try {
+    await expect(f.mesh.fetchBlob(f.workspaceId, f.descriptor)).resolves.toEqual(fileBytes)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[1]?.[0]).toBe(replacement?.connection)
+    expect(f.blob.write).toHaveBeenCalledExactlyOnceWith(f.descriptor, fileBytes)
+  } finally { clearTimeout(replacementTimer); await f.close() }
 })
 
 it("Given SDK request waits for a chunk, when the peer session is replaced, then abort it and retry with SDK options", async () => {

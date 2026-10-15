@@ -1,7 +1,9 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import * as localDb from "../localDb"
 import { readLocal, writeLocal } from "../localDb"
 import { getIdentityReplicaConfigurations, getReplicaConfigurations, setReplicaPreference } from "./privateReplicaRepository"
+import { prepareReplicaCredentialFreeze } from "./replicaCredentialFreeze"
 import type { IdentityReplicaConfig } from "./blindReplication"
 
 const service = { origin: "https://rusty.example", servicePublicKey: "A".repeat(43), scopeManagement: 1 as const }
@@ -27,11 +29,21 @@ afterEach(() => {
 
 it("Given a Rusty connection, when private profile setup succeeds, then register a separate identity scope without a workspace credential", async () => {
   const profile = await bootstrapIdentity("Profile setup")
+  const compareAndSwap = localDb.compareAndSwapLocal.bind(localDb)
+  const plans: Array<{ conditions: Array<{ key: string; value: string | null }>; writes: Array<{ key: string; value: string | null }> }> = []
+  vi.spyOn(localDb, "compareAndSwapLocal").mockImplementation(async (plan, guard) => {
+    plans.push(structuredClone(plan))
+    return compareAndSwap(plan, guard)
+  })
   const result = await ensureIdentityReplicaConnection(service, profile, () => {})
   expect(result).toMatchObject({ purpose: "identity", personId: profile.identity.personId, cursor: 0, lastUploaded: "" })
   expect(result).not.toHaveProperty("workspaceId")
   expect(await getIdentityReplicaConfigurations(profile.identity.personId)).toEqual([result])
   expect(await getReplicaConfigurations(profile.identity.personId)).toEqual([])
+  const activation = plans.find(plan => plan.writes.some(write => write.key.startsWith("tincanban.identity-replica-setup.v1.") && write.value === null))
+  expect(activation?.conditions).toContainEqual(expect.objectContaining({
+    key: expect.stringMatching(/^tincanban\.replica-credential-freeze\.v1\./), value: null,
+  }))
   expect(await readLocal(await identityReplicaSetupKey(profile.identity.personId, service.origin))).toBeNull()
   await ensureIdentityReplicaConnection(service, profile, () => {})
   expect(remote.approve).toHaveBeenCalledTimes(1)
@@ -80,7 +92,7 @@ it("Given private scope setup becomes stale after a network step, then neither c
   expect(await readLocal(await identityReplicaSetupKey(profile.identity.personId, service.origin))).not.toBeNull()
 })
 
-it("Given another tab replaces the durable profile during enrollment, then atomic activation fails and retry preserves its enrolled credentials", async () => {
+it("Given another tab replaces the durable profile during enrollment, then atomic activation fails and an exact enrollment retry preserves its credentials", async () => {
   const profile = await bootstrapIdentity("Concurrent tab")
   const profileKey = "tincanban.local_profile.v1"
   const original = (await readLocal(profileKey))!
@@ -90,12 +102,13 @@ it("Given another tab replaces the durable profile during enrollment, then atomi
     await writeLocal(profileKey, JSON.stringify(changed))
     return 1
   })
-  await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow("activation changed")
+  await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow(/changed.*activation/i)
   expect(await getIdentityReplicaConfigurations(profile.identity.personId)).toEqual([])
   const key = await identityReplicaSetupKey(profile.identity.personId, service.origin)
-  expect(JSON.parse((await readLocal(key))!) as unknown).toMatchObject({ stage: "activate" })
+  expect(JSON.parse((await readLocal(key))!) as unknown).toMatchObject({ stage: "policy" })
   await ensureIdentityReplicaConnection(service, profile, () => {})
-  expect(remote.approve).toHaveBeenCalledTimes(1)
+  expect(remote.approve).toHaveBeenCalledTimes(2)
+  expect(remote.approve.mock.calls[1][0]).toEqual(remote.approve.mock.calls[0][0])
   expect(await readLocal(key)).toBeNull()
   expect((JSON.parse((await readLocal(profileKey))!) as { identity: { displayName: string } }).identity.displayName).toBe("Updated in another tab")
 })
@@ -113,4 +126,22 @@ it("Given saved identity evidence is malformed or differs from the signer, then 
   }
   expect(remote.status).not.toHaveBeenCalled()
   expect(remote.approve).not.toHaveBeenCalled()
+})
+
+it("Given another private scope at the origin is frozen, when background profile setup runs, then do not query or mutate Rusty policy", async () => {
+  const profile = await bootstrapIdentity("Frozen profile setup")
+  const owner = profile.identity.personId
+  const workspace = { purpose: "workspace" as const, workspaceId: "board", scopeId: "workspace-scope", origin: service.origin,
+    servicePublicKey: service.servicePublicKey, contentKey: "A".repeat(43), readToken: "B".repeat(43), writeToken: "C".repeat(43),
+    keyEpoch: 1, policyRevision: 1, cursor: 0, lastUploaded: "", minimumWriterVersion: 2 as const }
+  await setReplicaPreference(owner, workspace)
+  await prepareReplicaCredentialFreeze(profile, service.origin, service.servicePublicKey, "revoked-device", () => {})
+  remote.status.mockClear(); remote.update.mockClear(); remote.retry.mockClear(); remote.approve.mockClear()
+
+  await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow(/transition|frozen/i)
+  expect(remote.status).not.toHaveBeenCalled()
+  expect(remote.update).not.toHaveBeenCalled()
+  expect(remote.retry).not.toHaveBeenCalled()
+  expect(remote.approve).not.toHaveBeenCalled()
+  expect(await getIdentityReplicaConfigurations(owner)).toEqual([])
 })

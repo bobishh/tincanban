@@ -47,6 +47,13 @@ function sourceObservationWireLiteral(node: ts.Node): boolean {
     ["phase", "origin"].includes(property.name.getText())
 }
 
+// Persisted storage keys are compatibility identifiers, never rendered copy.
+function storageKeyLiteral(node: ts.Node): boolean {
+  return ts.isTemplateExpression(node) && node.head.text === "tincanban.private-replica-legacy-snapshot.v1." &&
+    ts.isArrowFunction(node.parent) && ts.isVariableDeclaration(node.parent.parent) &&
+    node.parent.parent.name.getText() === "legacySnapshotKey"
+}
+
 function constantText(node: ts.Node): string | undefined {
   if (ts.isJsxText(node)) return node.text
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text
@@ -66,7 +73,7 @@ function scriptViolations(source: string, file: string): string[] {
   const violations: string[] = []
   function visit(node: ts.Node): void {
     const text = constantText(node)
-    if (text !== undefined && forbidden.test(text) && !protocolInstanceId(node) && !recoverySecurityEnum(node) && !diagnosticEvent(node) && !sourceObservationWireLiteral(node)) {
+    if (text !== undefined && forbidden.test(text) && !protocolInstanceId(node) && !recoverySecurityEnum(node) && !diagnosticEvent(node) && !sourceObservationWireLiteral(node) && !storageKeyLiteral(node)) {
       const { line } = ast.getLineAndCharacterOfPosition(node.getStart(ast))
       violations.push(`${file}:${line + 1}: ${text}`)
     }

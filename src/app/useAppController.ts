@@ -27,13 +27,13 @@ export function useAppController() {
 
 function boardContext(core: ReturnType<typeof useAppCore>): AppBoardContext {
   const {
-    tincanban, search, filters, isEditingBoard, itemFormParentId,
+    tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
   } = core
   return {
-    tincanban, search, filters, isEditingBoard, itemFormParentId,
+    tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,

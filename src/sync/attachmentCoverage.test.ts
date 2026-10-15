@@ -64,6 +64,27 @@ describe("cold attachment coverage adapter", () => {
     expect(guard).toHaveBeenCalled()
   })
 
+  it("Given a retained epoch-three attachment and active epoch four, when confirming coverage, then bind every object to manifest epoch three", async () => {
+    const f = await fixture()
+    const rotatedScope: AttachmentScope = { ...f.scope, keyEpoch: 4, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))),
+      historicalContentKeys: { "3": f.scope.contentKey } }
+    let requested: Array<{ objectId: string; keyEpoch: number }> = []
+    const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith(`/blobs/${f.locator.manifestId}`)) return Response.json(f.manifest)
+      const request = coverageRequest(JSON.parse(String(init?.body)))
+      requested = request.objects
+      return Response.json(await f.signCoverage(request.objects, request.requestId))
+    })
+    vi.stubGlobal("fetch", fetch)
+
+    await confirmRustyAttachmentCoverage(rotatedScope, f.access, f.descriptor, f.locator, async () => {})
+
+    const expected = [{ objectId: f.locator.manifestId, keyEpoch: f.manifest.keyEpoch },
+      ...await Promise.all(f.chunks.map(async chunk => ({ objectId: await blindObjectId(chunk), keyEpoch: f.manifest.keyEpoch })))]
+    expect(requested).toEqual(expected.sort((left, right) => left.objectId < right.objectId ? -1 : 1))
+  })
+
   it("Given caller mutation during manifest transfer, when coverage completes, then keep captured scope and locator", async () => {
     const f = await fixture()
     const scope = structuredClone(f.scope), descriptor = structuredClone(f.descriptor), locator = structuredClone(f.locator)

@@ -6,6 +6,7 @@ import { fetchBlind, readBlindJson } from "./blindClient"
 import { verifyRustyManagementCapability, verifyRustyManagementEvidence, type RustyManagementCapability } from "./rustyManagementCapability"
 import { verifyRustyManagementStatus, type ManagementStatusAuthorization, type RustyManagementStatusResponse } from "./rustyManagementStatus"
 import { RustyManagementRepository, validatePolicy, type ManagementBinding, type ManagementUpdateAuthorization, type ManagementUpdateRequest } from "./rustyManagementRepository"
+import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 
 export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string> }
 const encoder = new TextEncoder()
@@ -102,7 +103,7 @@ async function creationAuthority(binding: ManagementBinding, profile: LocalProfi
 
 /** One explicit migration establishes person creation rights. Subsequent devices read current signed policy without ancestry repair. */
 export async function ensureRustyPersonPolicy(access: Pick<ManagementBinding, "origin" | "servicePublicKey">, profile: LocalProfile,
-  supported: boolean, guard: ManagementClientGuard = {}) {
+  supported: boolean, guard: ManagementClientGuard & { allowLegacyMigration?: boolean } = {}) {
   const binding: ManagementBinding = { origin: access.origin, servicePublicKey: access.servicePublicKey,
     resourceKind: "person", resourceId: profile.identity.personId }
   const saved = await repo(profile).read(binding)
@@ -115,7 +116,10 @@ export async function ensureRustyPersonPolicy(access: Pick<ManagementBinding, "o
   let cap = status.capability ?? undefined
   if (current?.pending) cap = await retryRustyManagementUpdate(binding, profile, guard)
   else if (status.migrationPending) throw new Error("Person policy migration is pending; recover the saved request")
-  else if (!cap) cap = await updateRustyManagementPolicy(binding, profile, { operations: ["management.update", "resource.create"], revokedDeviceIds: [] }, guard)
+  else if (!cap) {
+    if (guard.allowLegacyMigration !== true) throw new RustyPermissionMigrationRequiredError()
+    cap = await updateRustyManagementPolicy(binding, profile, { operations: ["management.update", "resource.create"], revokedDeviceIds: [] }, guard)
+  }
   await verifyRustyManagementCapability(cap, binding, { personId: profile.identity.personId, deviceId: profile.device.deviceId,
     resourceKind: "person", resourceId: profile.identity.personId, operation: "management.update", minimumRevision: cap.payload.revision })
   return cap

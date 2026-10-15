@@ -8,7 +8,7 @@ import { captureFreshDeviceJson, createFreshDeviceRequest, freshDeviceRequestFie
 
 const identifier = z.string().min(1).max(256).refine(value => Boolean(value.trim()))
 const routeId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
-const actionSchema = z.enum(["discover", "identity", "activate", "refresh-access"])
+const actionSchema = z.enum(["discover", "identity", "activate", "refresh-access", "prepare-storage-rotation", "rotate-storage", "prepare-history-baseline", "activate-history-baseline"])
 const requestFields = {
   action: actionSchema,
   origin: z.string().refine(isAutomationOrigin),

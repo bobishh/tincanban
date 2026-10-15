@@ -13,6 +13,8 @@ import { createWorkspaceDeviceRevocation } from "./meshRecords"
 import { peerStore } from "./peerStore"
 import { readLocal, writeLocal } from "../localDb"
 import { records } from "./workspaceChangeProofStore"
+import { workspaceSigningContext } from "./workspaceSigning"
+import { readWorkspaceSigningAuthority, authorityValidationFingerprint } from "./changeAuthorization"
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -40,6 +42,18 @@ async function replaceStoredDeviceKey() {
   stored.privateKeys.devicePrivateKeyPkcs8 = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("pkcs8", replacement.privateKey)))
   await writeLocal("tincanban.local_profile.v1", JSON.stringify(stored))
 }
+
+it("Given current workspace access, when creating a private history-read guard, then bind it to the current authority and reject unrelated purposes", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const ports = { readAuthority: () => readWorkspaceSigningAuthority(doc.id), authorityFingerprint: authorityValidationFingerprint,
+      workspaceRole: async () => "owner" as const }
+    const result = await workspaceSigningContext(doc, profile, "history-recovery-read", "workspaceId", undefined, ports)
+    await expect(result.requireCurrent()).resolves.toBeTypeOf("string")
+    await expect(workspaceSigningContext(doc, profile, "unknown-history-operation", "workspaceId", undefined, ports)).rejects.toThrow(/permission/i)
+  } finally { Automerge.free(doc) }
+})
 
 it("Given unchanged public identity metadata and a replaced stored device key, when creating workspace genesis, then publish no owner authority", async () => {
   const { profile, doc } = await fixture()

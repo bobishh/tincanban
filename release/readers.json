@@ -1,0 +1,18 @@
+{
+  "frontend": {
+    "identityDevice": 1,
+    "privateReplicas": 5,
+    "workspaceSnapshot": 2,
+    "instanceManagementActions": 3
+  },
+  "automation": {
+    "automationState": 5,
+    "workspaceSnapshot": 2,
+    "instanceManagementActions": 3
+  },
+  "writerVersions": {
+    "frontend": 2,
+    "automation": 2,
+    "rusty": 2
+  }
+}

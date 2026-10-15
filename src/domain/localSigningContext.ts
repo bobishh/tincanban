@@ -3,6 +3,7 @@ import { defaultProofStore } from "./proofs"
 import type { DeviceCertificate } from "./model"
 import { resolveSigningContext } from "./signingContext"
 import { readLocal } from "../localDb"
+import { assertClientReleaseWritable } from "../release/runtimeRelease"
 
 type LocalSigningOptions = {
   certificates?: DeviceCertificate[]
@@ -28,6 +29,7 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
     certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
   const scope = structuredClone(binding)
   options = { ...options, ...(options.certificates ? { certificates: structuredClone(options.certificates) } : {}) }
+  assertClientReleaseWritable(purpose)
   await options.ensureCurrent?.()
   await assertDurableIdentityProfile(snapshot)
   const authority = options.currentAuthority ? await options.currentAuthority() : ""
@@ -35,12 +37,15 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
   return resolveSigningContext({ profile: snapshot, purpose, binding: scope, domain: options.domain, expiresAt: options.expiresAt,
     certificates: options.certificates ?? await defaultProofStore.listCertificates(), authorityRevision: revision(snapshot, authority),
     current: async () => {
+      assertClientReleaseWritable(purpose)
       await options.ensureCurrent?.()
       await assertDurableIdentityProfile(snapshot)
+      assertClientReleaseWritable(purpose)
       const current = await bootstrapIdentity()
       const rights = options.currentAuthority ? await options.currentAuthority() : ""
       await options.ensureCurrent?.()
       await assertDurableIdentityProfile(snapshot)
+      assertClientReleaseWritable(purpose)
       return { personId: current.identity.personId, deviceId: current.device.deviceId, authorityRevision: revision(current, rights) }
     },
   })

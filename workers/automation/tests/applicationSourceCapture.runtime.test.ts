@@ -44,11 +44,50 @@ describe("capture original application source", () => {
     input.company = "Changed after capture started";
     input.role = "Changed display role";
     input.body = "Caller replaced the posting text";
+    input.atsId = "REQ-CHANGED";
     input.url = "https://jobs.example.test/changed";
 
     const result = await pending;
     expect(result.observation).toMatchObject({ status: "available", jobUrl: "https://jobs.example.test/opening/42",
       company: "Nacre Light", title: "Principal Systems Engineer", text: "The employer's original posting text." });
+    expect(result.atsId).toBeUndefined();
+  });
+
+  it("Given the original fetched page explicitly identifies its ATS record, When capturing without an override, Then retain that identifier", async () => {
+    const captured = await captureApplicationSource("workspace-1", "card-1", "event-page-ats", "website",
+      page({ atsId: "REQ-42" }));
+
+    expect(captured).toMatchObject({ version: 2, atsId: "REQ-42" });
+  });
+
+  it("Given source references at intake, When capture finishes after caller mutation, Then persist only the entry snapshot", async () => {
+    const references = { messageIds: ["<submitted@example.test>"], atsId: "REQ-42" };
+    const pending = captureApplicationSource("workspace-1", "card-1", "event-reference", "email", page(), undefined, references);
+    references.messageIds[0] = "<edited@example.test>";
+    references.messageIds.push("<later@example.test>");
+    references.atsId = "REQ-99";
+
+    await expect(pending).resolves.toMatchObject({
+      version: 2, messageIds: ["<submitted@example.test>"], atsId: "REQ-42",
+    });
+  });
+
+  it("Given unavailable page evidence and explicit intake references, When retained, Then keep references without inventing posting fields", async () => {
+    const captured = await captureApplicationSource("workspace-1", "card-1", "event-reference-missing", "email", undefined,
+      "https://jobs.example.test/opening/42", { messageIds: ["<submitted@example.test>"] });
+
+    expect(captured).toMatchObject({ version: 2, messageIds: ["<submitted@example.test>"], observation: { status: "unavailable" } });
+    expect(captured).not.toHaveProperty("atsId");
+    expect(captured.observation).not.toHaveProperty("title");
+  });
+
+  it("Given an ATS-only reference and an empty message list, When captured, Then emit schema v2 without an empty messageIds field", async () => {
+    const captured = await captureApplicationSource("workspace-1", "card-1", "event-ats-only", "website", page(), undefined,
+      { messageIds: [], atsId: "REQ-0042" });
+
+    expect(captured.version).toBe(2);
+    expect(captured.atsId).toBe("REQ-0042");
+    expect(captured).not.toHaveProperty("messageIds");
   });
 
   it("Given absent or incomplete fetch evidence, When capturing, Then return unavailable without invented historical fields", async () => {

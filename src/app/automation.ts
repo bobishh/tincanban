@@ -46,7 +46,6 @@ export async function prepareAutomationActivation<
   }
   await validateWorkerIdentity(profile, worker)
   const bindings = selectAutomationBindings(doc)
-  if (input.configuration && !input.configuration.parameters.sources.includes("email")) delete bindings.columns.applied
   const definitionId = worker.definitionId ?? worker.integrationId ?? worker.personId
   const existing = doc.entities[automationEntityId(definitionId)]
   const expiresAt = input.expiresAt
@@ -60,6 +59,7 @@ export async function prepareAutomationActivation<
     if (!input.configuration) return { version: 2 as const, workspaceId: doc.id, blind, ...approval, bindings: legacyBindings, initial }
 
   }
+  if (input.configuration && !input.configuration.parameters.sources.includes("email")) delete bindings.columns.applied
   const typeVersion = input.configuration?.typeVersion ?? 1
   const type = automationTypes.find(value => value.type === (input.configuration?.type ?? "job-intake") && value.version === typeVersion)
   if (!type) throw new Error("Automation type version is unsupported")

@@ -1,11 +1,12 @@
 import { z } from "zod"
-import { canonicalizeJson } from "./identity"
 import type { WorkspaceEntity } from "./entitySchemas"
 
 export const MAX_APPLICATION_SOURCE_BYTES = 65_536
 const recordId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
 const identifier = z.string().min(1).max(256)
 const requiredText = (maximum: number) => z.string().min(1).max(maximum).refine(value => Boolean(value.trim()))
+const messageIds = z.array(requiredText(500)).min(1).max(40).optional()
+const atsId = requiredText(256).optional()
 const iso = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/)
   .refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value)
 const jobUrl = z.string().max(4096).refine(value => {
@@ -26,17 +27,32 @@ const observationSchema = z.union([
   (value.phase === "legacy" ? value.origin === "legacy" && value.status === "missing-evidence"
     : value.origin !== "legacy" && value.status !== "missing-evidence"))
 
-const dataSchema = z.strictObject({ kind: z.literal("application-source-observation"), version: z.literal(1),
-  recordId, workspaceId: identifier, cardId: identifier, applicationId: z.string().min(1).max(513), observation: observationSchema,
+const dataSchema = z.strictObject({ kind: z.literal("application-source-observation"), version: z.union([z.literal(1), z.literal(2)]),
+  recordId, workspaceId: identifier, cardId: identifier, applicationId: z.string().min(1).max(513),
+  messageIds, atsId, observation: observationSchema,
 }).refine(value => value.applicationId === `${value.workspaceId}:${value.cardId}`)
+  .refine(value => value.version === 1
+    ? value.messageIds === undefined && value.atsId === undefined
+    : Boolean(value.messageIds?.length || value.atsId),
+  "Application source references require schema version 2")
 
 export type ApplicationSourceData = z.infer<typeof dataSchema>
 export function parseApplicationSourceData(value: unknown): ApplicationSourceData { return dataSchema.parse(value) }
 export function readApplicationSourceData(data: string): ApplicationSourceData {
   if (new TextEncoder().encode(data).length > MAX_APPLICATION_SOURCE_BYTES) throw new Error("Application source exceeds byte limit")
   const parsed = parseApplicationSourceData(JSON.parse(data))
-  if (canonicalizeJson(parsed) !== data) throw new Error("Application source must use canonical JSON")
+  if (canonicalSourceJson(parsed) !== data) throw new Error("Application source must use canonical JSON")
   return parsed
+}
+
+function canonicalSourceJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    if (typeof value === "number" && !Number.isFinite(value)) throw new TypeError("Application source contains a non-finite number")
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalSourceJson).join(",")}]`
+  return `{${Object.keys(value as Record<string, unknown>).sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalSourceJson((value as Record<string, unknown>)[key])}`).join(",")}}`
 }
 
 export const applicationSourceEntitySchema = z.strictObject({

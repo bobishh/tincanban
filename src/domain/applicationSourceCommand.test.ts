@@ -56,6 +56,19 @@ describe("Signed application-source commands (Requirement 8)", () => {
     expect(() => assertWorkspaceTransition("editor", before, Automerge.toJS(next), profile.identity.personId)).not.toThrow()
   })
 
+  it("Given an original with explicit intake references, When recording v2 source data, Then retain references in the immutable signed entity", async () => {
+    const data = { ...await original("referenced-original"), version: 2 as const,
+      messageIds: ["<submission@example.test>"], atsId: "REQ-42" }
+    const result = await executeCommand(doc, { kind: "recordApplicationSource", data }, profile)
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const entity = result.value.newDoc.entities[`application-source:${data.recordId}`]
+    expect(entity?.kind).toBe("application_source")
+    if (entity?.kind !== "application_source") return
+    expect(JSON.parse(entity.data)).toEqual(data)
+  })
+
   it("Given a captured original, When retrying its ID or issuing generic edits, Then no replacement or fictitious new receipt is produced", async () => {
     const captured = await capture()
     expect(captured.ok).toBe(true)

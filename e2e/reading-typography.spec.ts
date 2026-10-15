@@ -26,10 +26,11 @@ async function makeLongBoard(page: Page) {
 async function assertNoHorizontalClipping(page: Page, selector: string) {
   const geometry = await page.locator(selector).evaluateAll(elements => elements.map(element => {
     const node = element as HTMLElement
-    return { width: node.clientWidth, scroll: node.scrollWidth }
+    return { tag: node.tagName, className: node.className, text: node.innerText.slice(0, 80), width: node.clientWidth, scroll: node.scrollWidth,
+      children: [...node.children].map(child => { const element = child as HTMLElement; return { tag: element.tagName, className: element.className, width: element.clientWidth, scroll: element.scrollWidth } }) }
   }))
   expect(geometry.length).toBeGreaterThan(0)
-  for (const item of geometry) expect(item.scroll).toBeLessThanOrEqual(item.width + 1)
+  for (const item of geometry) expect(item.scroll, `Horizontal overflow in ${JSON.stringify(item)}`).toBeLessThanOrEqual(item.width + 1)
 }
 
 async function assertNoHiddenVerticalOverflow(page: Page, selector: string) {
