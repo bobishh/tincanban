@@ -364,3 +364,18 @@ The acceptance test now retains at most 32 failure-only samples of stage names
 and counters, containing no workspace content, identifiers, keys or inputs, so a
 recurrence names the unresolved await. Marker execution is verified through the
 same full local recovery scenario; production source and timeout stay unchanged.
+
+Matrix [38822251442](https://github.com/bobishh/tincanban/actions/runs/38822251442)
+passed 28 groups, including the repaired attachment path and Chromium recovery.
+Its WebKit recovery samples isolate both failed attempts to the fresh read-only
+IndexedDB source-revision check, with unchanged counters for over fifty seconds.
+The precise browser-internal request/completion failure is not established.
+Recovery now bounds only its own read-only revision transaction to five seconds,
+aborts that stalled transaction and tries a fresh read, at most three attempts.
+Current identity is rechecked and the exact original revision must still match;
+no cached revision substitutes for storage. Ordinary storage errors fail directly,
+repeated stalls report an explicit storage error, and unrelated writes remain
+untouched. Nine injected fault cases and four real IndexedDB evidence cases pass;
+the former reader fails both request- and completion-stall regressions. The real
+two-generation WebKit recovery passes in 33.7 seconds with its sixty-second
+download bound unchanged. Exact final hosted and production gates remain required.

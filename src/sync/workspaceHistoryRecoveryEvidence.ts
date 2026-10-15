@@ -1,7 +1,8 @@
 import { canonicalizeJson, sha256Base64Url, toBase64Url } from "../domain/identity"
-import { openWorkspaceJournal, requestResult, transactionDone } from "../storageJournal"
+import { openWorkspaceJournal, transactionDone } from "../storageJournal"
 import type { HistoryRecoveryEvidencePart } from "./historyRecoveryArchive"
 import { WORKSPACE_RECOVERY_STORES } from "../workspaceRecoveryStores"
+import { readWorkspaceRecoveryRevision } from "./workspaceRecoveryRevision"
 
 const STORES = WORKSPACE_RECOVERY_STORES
 const PART_BYTES = 256 * 1024
@@ -45,13 +46,7 @@ export async function createWorkspaceHistoryRecoveryEvidence(workspaceId: string
   if (!workspaceId || workspaceId.length > 256 || typeof ensureCurrent !== "function") throw new Error("Invalid recovery workspace")
   ensureCurrent()
   const database = await openWorkspaceJournal()
-  const readRevision = async () => {
-    ensureCurrent()
-    const transaction = database.transaction("revisions", "readonly"), done = transactionDone(transaction)
-    const value: unknown = await requestResult(transaction.objectStore("revisions").get(workspaceId))
-    await done; ensureCurrent()
-    return canonicalizeJson(value ?? null)
-  }
+  const readRevision = () => readWorkspaceRecoveryRevision(database, workspaceId, ensureCurrent)
   const revision = await readRevision()
   const assertUnchanged = async () => {
     if (await readRevision() !== revision) throw new Error("Workspace changed during private recovery export; retry when changes settle")

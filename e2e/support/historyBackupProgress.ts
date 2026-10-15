@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from "@playwright/test"
 
 type BackupProgress = {
-  elapsedMs: number; phase: string; guard: string; guards: number
+  elapsedMs: number; phase: string; guard: string; guards: number; revisionRead: string
   exportPhase: string; records: number; evidenceParts: number; sources: number
 }
 
@@ -18,7 +18,7 @@ export async function captureHistoryBackupProgress(page: Page, info: TestInfo): 
       __captureHistoryBackupProgress?: (sample: BackupProgress) => Promise<void>
     }
     const started = performance.now()
-    const progress: BackupProgress = { elapsedMs: 0, phase: "not entered", guard: "idle", guards: 0,
+    const progress: BackupProgress = { elapsedMs: 0, phase: "not entered", guard: "idle", guards: 0, revisionRead: "idle",
       exportPhase: "idle", records: 0, evidenceParts: 0, sources: 0 }
     target.__historyBackupProgress = progress
     setInterval(() => {
@@ -34,6 +34,11 @@ export async function captureHistoryBackupProgress(page: Page, info: TestInfo): 
   await page.route("**/src/sync/historyRecoveryArchive.ts*", async route => {
     const response = await route.fetch()
     const body = instrumentArchiveExport(await response.text())
+    await route.fulfill({ response, body, headers: { ...response.headers(), "content-length": String(Buffer.byteLength(body)) } })
+  })
+  await page.route("**/src/sync/workspaceRecoveryRevision.ts*", async route => {
+    const response = await route.fetch()
+    const body = instrumentRevisionRead(await response.text())
     await route.fulfill({ response, body, headers: { ...response.headers(), "content-length": String(Buffer.byteLength(body)) } })
   })
   return async () => {
@@ -84,4 +89,15 @@ function instrumentArchiveExport(source: string): string {
   source = source.replace("  async write(record) {", "  async write(record) { __archiveProgress.records++; if (record.kind === 'local-evidence-part') __archiveProgress.evidenceParts++;")
   source = insertBefore(source, "  async finish() {", "")
   return source.replace("  async finish() {", "  async finish() { __archiveProgress.exportPhase = 'manifest';")
+}
+
+function instrumentRevisionRead(source: string): string {
+  source = insertBefore(source, '    const transaction = this.transaction = this.database.transaction("revisions", "readonly");',
+    '    globalThis.__historyBackupProgress.revisionRead = "request";')
+  const success = "    request.onsuccess = () => {"
+  if (source.split(success).length !== 2) throw new Error("Backup revision success diagnostic anchor changed")
+  source = source.replace(success, `${success} globalThis.__historyBackupProgress.revisionRead = "completion";`)
+  const complete = "    transaction.oncomplete = () => {"
+  if (source.split(complete).length !== 2) throw new Error("Backup revision completion diagnostic anchor changed")
+  return source.replace(complete, `${complete} globalThis.__historyBackupProgress.revisionRead = "complete";`)
 }
