@@ -285,3 +285,12 @@ passed in 27.3 seconds, including complete backup, phone inspection and restorat
 of an original version after closing the Owner device. Final source quality and
 Worker type checks pass. A new exact main matrix and production cohort proof are
 still required.
+
+Matrix [38812993919](https://github.com/bobishh/tincanban/actions/runs/38812993919)
+passed captured Worker runtime and the previously failing Chromium two-generation
+backup. Its full unit coverage run still timed out in the four-chunk test: stepping
+fake timers per chunk had not eliminated mixing real host I/O with virtual timers.
+That test now advances only its deadline clock; explicit request/chunk gates drive
+progress while WebCrypto, IndexedDB and session monitoring keep real host tasks.
+All deadline and exact cache-write assertions remain. The 22 attachment tests pass
+with coverage against this correction; production transfer behavior is unchanged.
