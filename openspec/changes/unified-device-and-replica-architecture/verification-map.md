@@ -342,3 +342,25 @@ against the rebuilt release binary in 14.4 seconds
 (`/tmp/tincanban-rusty-mobile-client-repair`), including inherited Rusty access,
 the latest photo after closing the desktop, and phone publication authorization.
 Final hosted verification and exact production activation remain required.
+
+Matrix [38819967900](https://github.com/bobishh/tincanban/actions/runs/38819967900)
+also exposed an attachment submission that lost its card selection when details
+closed during asynchronous file storage. The file never became a document; this
+was not a failed Rusty coverage receipt. Both lead and generic-item callbacks now
+capture their target card, workspace and identity before storage, then retain
+current-context and command authorization checks before committing. A delayed
+save cannot move to another selected card. The Chromium close/reopen, confirmed
+coverage and source-closed preview/download scenario passes in 22.4 seconds;
+the unavailable-upload scenario still replicates metadata without claiming
+complete coverage (4.9 seconds). Changed workspace/identity and deleted-target
+negatives pass in the focused helper tests.
+
+The same matrix's Chromium two-generation backup stayed in progress until its
+unchanged sixty-second download bound; WebKit passed. No native panic, module
+failure or completed download appears in either failing trace. The exact local
+Chromium case passes, with export taking 6.8 seconds and 3,531 live guards. This
+does not establish a cause or a production fix for that Linux observation.
+The acceptance test now retains at most 32 failure-only samples of stage names
+and counters, containing no workspace content, identifiers, keys or inputs, so a
+recurrence names the unresolved await. Marker execution is verified through the
+same full local recovery scenario; production source and timeout stay unchanged.

@@ -50,6 +50,7 @@ function coverageFor(document: Document) {
 async function attach() {
   const trimmedTitle = title.value.trim()
   if (!trimmedTitle || saving.value) return
+  const save = props.save
   saving.value = true
   error.value = ""
   try {
@@ -58,7 +59,7 @@ async function attach() {
       return
     }
     const reference = await storeAttachment(file.value)
-    await props.save({
+    await save({
       kind: "attachment",
       title: trimmedTitle,
       format: attachmentMediaType(reference) === "application/pdf" ? "pdf" : "file",

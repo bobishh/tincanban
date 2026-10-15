@@ -1,11 +1,11 @@
 <!-- Workspace role gates are enforced again at command and sync boundaries. -->
 <script setup lang="ts">
 import { useAppController } from "./app/useAppController"
+import { createAttachmentSaveForItem } from "./app/attachmentSave"
 import { isArchiveColumn, isItemArchived } from "./domain/archive"
 import { cardStageButtons } from "./domain/cardStageButtons"
 import { useCardAges } from "./app/useAgingClock"
 import { showEnteringElement, hideLeavingElement } from "./ui/modal"
-import type { DocumentInput } from "./types"
 import ModalLayer from "./components/ModalLayer.vue"
 import TincanbanPageLayout from "./components/TincanbanPageLayout.vue"
 import TincanbanHeading from "./components/TincanbanHeading.vue"
@@ -24,7 +24,7 @@ import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
 import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
-import { defineAsyncComponent, onBeforeUnmount, ref } from "vue"
+import { computed, defineAsyncComponent, onBeforeUnmount, ref } from "vue"
 import type { Component } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
 import { useColumnCollapse } from "./app/useColumnCollapse"
@@ -99,8 +99,25 @@ async function closeDetail() { if (!rejectionEditor.value || await rejectionEdit
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 
-function saveItemDocument(item: { id: string } | null | undefined, document: Omit<DocumentInput, "leadId">) { return item ? submitDocument(item.id, document) : Promise.reject(new Error("Item is no longer open")) }
-function saveSelectedLeadDocument(document: Omit<DocumentInput, "leadId">) { return saveItemDocument(selectedLeadItem.value, document) }
+function captureItemDocumentSave(itemId: string | null, workspaceId: string, personId: string | undefined) {
+  return createAttachmentSaveForItem({
+    itemId,
+    workspaceId,
+    personId,
+    current: () => ({
+      workspaceId: activeWorkspace.id,
+      personId: app.workspace.getCurrentProfile()?.identity.personId,
+      itemExists: itemId !== null && Boolean(getActiveDoc()?.entities[itemId]),
+    }),
+    save: submitDocument,
+  })
+}
+const saveSelectedLeadDocument = computed(() => captureItemDocumentSave(
+  selectedLeadItem.value?.id ?? null, activeWorkspace.id, app.workspace.getCurrentProfile()?.identity.personId,
+))
+const saveSelectedItemDocument = computed(() => captureItemDocumentSave(
+  selectedItem.value?.id ?? null, activeWorkspace.id, app.workspace.getCurrentProfile()?.identity.personId,
+))
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
   if (rejectionEditor.value && !(await rejectionEditor.value.flush())) return
   const { createNarrativeEditHandler } = await import("./app/narrativeEditor")
@@ -342,7 +359,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :subitems="subitemsForSelectedItem"
       :fields="boardFields.filter(field => field.id !== activeBoard?.preset?.bindings['field.notes'] || field.valueType !== 'text')"
       :documents="documentsFor(selectedItem.id)"
-      :save-document="(document: Omit<DocumentInput, 'leadId'>) => saveItemDocument(selectedItem, document)"
+      :save-document="saveSelectedItemDocument"
       :update-document="updateDocumentMarkdown"
       :history="selectedItemHistory"
       :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"

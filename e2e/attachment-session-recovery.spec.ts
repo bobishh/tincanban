@@ -3,6 +3,7 @@ import { expect, test, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
+import { captureHistoryBackupProgress } from "./support/historyBackupProgress"
 
 const attachmentTitle = "Session recovery file"
 const attachmentName = "session-recovery.txt"
@@ -460,11 +461,12 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   }
 })
 
-test("Given an owner with two archived history generations, when adding my phone, then its backup covers both generations and it restores an original version with the owner device closed", async ({ browser, baseURL }) => {
+test("Given an owner with two archived history generations, when adding my phone, then its backup covers both generations and it restores an original version with the owner device closed", async ({ browser, baseURL }, testInfo) => {
   test.setTimeout(210_000)
   const sourceContext = await browser.newContext({ acceptDownloads: true })
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const source = await sourceContext.newPage()
+  const attachBackupProgress = await captureHistoryBackupProgress(source, testInfo)
   const phone = await phoneContext.newPage()
   let workspaceRecoveryBytes: Buffer | undefined
   let workspaceRecoveryWords: string
@@ -548,7 +550,7 @@ test("Given an owner with two archived history generations, when adding my phone
     // Full recovery verifies both generations before publishing the encrypted file.
     const ownerBackupDownload = source.waitForEvent("download", { timeout: 60_000 })
     await ownerBackups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
-    const ownerBackup = await ownerBackupDownload
+    const ownerBackup = await ownerBackupDownload.catch(async error => { await attachBackupProgress(); throw error })
     workspaceRecoveryBytes = await readFile((await ownerBackup.path())!)
     workspaceRecoveryWords = await ownerBackups.getByLabel("Recovery words", { exact: true }).inputValue()
     await ownerBackups.locator('input[type="file"]').setInputFiles({ name: "two-generations.jsonl", mimeType: "application/x-tincanban-history-recovery+jsonl", buffer: workspaceRecoveryBytes })

@@ -437,6 +437,13 @@ renew the grant.
 - **WHEN** the source browser closes and another device opens preview/download
 - **THEN** verified bytes arrive through Rusty and match the original content.
 
+#### Scenario: Card details close while an attachment is being stored
+- **GIVEN** an attachment submission captured its target card, workspace and identity
+- **WHEN** file storage finishes after the card details close or another card opens
+- **THEN** the attachment is saved to its original card without depending on the current selection
+- **AND** a changed workspace, changed identity or missing original card rejects the stale submission
+- **AND** current command authorization still applies before the document is committed.
+
 #### Scenario: Session closes during a transfer
 - **WHEN** the direct runtime/session closes or is replaced during a file request
 - **THEN** the stale session is invalidated and the operation reacquires a current path
