@@ -113,8 +113,11 @@ export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumen
 
 type Authorization = WorkspaceChangeAuthorization
 
-export async function workspaceRole(doc: WorkspaceDocumentV2, profile: LocalProfile): Promise<WorkspaceRole> {
-  const stored = await storedWorkspaceAuthority(doc.id)
+export async function workspaceRole(doc: WorkspaceDocumentV2, profile: LocalProfile,
+  currentAuthority?: Awaited<ReturnType<typeof storedWorkspaceAuthority>>): Promise<WorkspaceRole> {
+  // Signing already read and validated this exact authority within the same guard.
+  // Role policy still checks live evidence and its post-await authority fingerprint.
+  const stored = currentAuthority ?? await storedWorkspaceAuthority(doc.id)
   if (stored.invalid) {
     traceWorkspaceAccess(doc, profile, stored.authority, "visitor", "invalid")
     return "visitor"

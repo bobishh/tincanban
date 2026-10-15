@@ -1778,7 +1778,20 @@ it("Given a signed workspace with over 312k text operations, when automation act
   expect(restored.controlForRuntime().state).toBe("active");
   const created = await restored.createLead("large-workspace-intake", { company: "Example", role: "Senior engineer" }, {});
   expect(restored.candidates().find(candidate => candidate.cardId === created.cardId)?.columnId).toBe(data.packet.bindings.columns.lead);
-  expect(initSync().memory.buffer.byteLength).toBeLessThanOrEqual(64 * 1024 * 1024);
+  const policyMemoryAfterFirstActivation = initSync().memory.buffer.byteLength;
+  const repeated = await AutomationReplica.activate(data.packet, data.automation);
+  expect(repeated.controlForRuntime().state).toBe("active");
+  const policyMemoryAfterRepeatedActivation = initSync().memory.buffer.byteLength;
+  // WebAssembly exposes its linear-memory high-water mark, including unused allocator pages.
+  // CI Linux measured 68 MiB for this workload; leave 48 MiB under the Worker's 128 MiB isolate limit.
+  const policyMemoryBudget = 80 * 1024 * 1024;
+  const memoryPages = (bytes: number) => `${bytes} bytes (${bytes / (64 * 1024)} WebAssembly pages)`;
+  expect(policyMemoryAfterRepeatedActivation,
+    `Policy memory after repeat: ${memoryPages(policyMemoryAfterRepeatedActivation)}; budget ${memoryPages(policyMemoryBudget)}`)
+    .toBeLessThanOrEqual(policyMemoryBudget);
+  expect(policyMemoryAfterRepeatedActivation - policyMemoryAfterFirstActivation,
+    `Repeated activation growth: ${memoryPages(policyMemoryAfterRepeatedActivation - policyMemoryAfterFirstActivation)}`)
+    .toBeLessThanOrEqual(8 * 1024 * 1024);
 }, 60_000);
 
 it("Given a modified type contract, when activated, then scope, signature and unsupported types are rejected", async () => {

@@ -15,7 +15,7 @@ export type WorkspaceSigningContextFactory = (purpose: string, binding: Record<s
 export type WorkspaceSigningPorts = {
   readAuthority: () => Promise<ReadAuthority>
   authorityFingerprint: (authority: StoredAuthority | null) => string
-  workspaceRole: (doc: WorkspaceDocumentV2, profile: LocalProfile) => Promise<WorkspaceRole>
+  workspaceRole: (doc: WorkspaceDocumentV2, profile: LocalProfile, stored?: ReadAuthority) => Promise<WorkspaceRole>
 }
 
 export async function workspaceSigningContext(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile,
@@ -23,7 +23,7 @@ export async function workspaceSigningContext(doc: Automerge.Doc<WorkspaceDocume
   const currentAuthority = async () => {
     const stored = await ports.readAuthority()
     if (stored.invalid) throw new Error("Workspace signing authority could not be verified")
-    await assertWorkspaceSigningAccess(doc, profile, stored.authority, purpose, ports.workspaceRole)
+    await assertWorkspaceSigningAccess(doc, profile, stored, purpose, ports.workspaceRole)
     return ports.authorityFingerprint(stored.authority)
   }
   const revision = await currentAuthority()
@@ -47,7 +47,8 @@ export async function workspaceSigningContext(doc: Automerge.Doc<WorkspaceDocume
 }
 
 async function assertWorkspaceSigningAccess(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile,
-  authority: StoredAuthority | null, purpose: string, workspaceRole: WorkspaceSigningPorts["workspaceRole"]) {
+  stored: ReadAuthority, purpose: string, workspaceRole: WorkspaceSigningPorts["workspaceRole"]) {
+  const authority = stored.authority
   const state = meshRustRuntime().state
   if (authority && (state.hasAuthorityConflict(authority) ||
       state.isDeviceRevoked(authority, profile.identity.personId, profile.device.deviceId) ||
@@ -58,7 +59,7 @@ async function assertWorkspaceSigningAccess(doc: Automerge.Doc<WorkspaceDocument
     if (doc.ownerPersonId === profile.identity.personId && (purpose === "scope-genesis" || typeof indexedDB === "undefined")) return
     throw new Error("Workspace signing permission is unavailable")
   }
-  const role = await workspaceRole(doc, profile)
+  const role = await workspaceRole(doc, profile, stored)
   if (signingRoleAllowed(role, purpose, authority, profile)) return
   throw new Error("Workspace signing permission is unavailable")
 }

@@ -250,3 +250,38 @@ restore, including unavailable-object and capacity failures. The complete
 two-generation enrollment/owner-closed original-version restore passed in 35.9
 seconds (`/tmp/tincanban-final-history-borrow-fixed.log`). Exact hosted CI and
 deployed-cohort verification remain required independently of those local proofs.
+
+Main matrix [38810841545](https://github.com/bobishh/tincanban/actions/runs/38810841545)
+exposed a test-clock race in the four-chunk regression: one twelve-second fake
+advance could finish before real WebCrypto authority checks scheduled the next
+chunk timer. The test now advances one chunk at a time and awaits each authority
+check. All 22 attachment unit tests pass with V8 coverage; transfer deadlines and
+live signature checks are unchanged. That matrix also found a Worker WASM memory
+budget failure and a two-generation backup download timeout. All other groups,
+including the full WebKit archive/recovery group, passed; this matrix did not.
+
+The 312k-operation Worker case measured policy-WASM linear-memory high-water at
+71,237,632 bytes in CI and 47,513,600 bytes against the exact captured artifact
+locally. Linear memory includes unused allocator pages; the near 1.5 ratio suggests
+reserve growth, without proving the allocator cause. The case now also repeats
+activation and checks growth stays within 8 MiB. Its component ceiling is 80 MiB,
+reserving 48 MiB beneath the Worker's unchanged 128 MiB isolate limit. This is a
+policy-WASM budget, not a measurement of total isolate heap. Both full captured
+runtime execution and the focused case pass locally; no production memory limit
+or admission rule was changed.
+
+The two-generation Chromium trace contained no archive HTTP requests because the
+Owner reads its locally retained encrypted objects. An isolated phase profile
+found 3,528 live guards during an 8.23-second backup; signing consumed 5.51 seconds,
+private preferences 1.45 seconds and encrypted writing only 33 ms. Signing and role
+derivation redundantly read the same initial authority. Role derivation now reuses
+that guard's already validated authority while retaining its separate post-policy
+fingerprint read. There is no authority cache across guards. Regression coverage
+checks the two remaining reads, changed fingerprints and signed device revocation.
+The same profile then measured signing at 3.93 seconds and backup at 6.65 seconds;
+the sixty-second hosted acceptance bound remains unchanged.
+After temporary probes were removed, the exact Chromium two-generation scenario
+passed in 27.3 seconds, including complete backup, phone inspection and restoration
+of an original version after closing the Owner device. Final source quality and
+Worker type checks pass. A new exact main matrix and production cohort proof are
+still required.

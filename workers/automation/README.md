@@ -12,7 +12,7 @@ pending ciphertext remains reusable across this normalization upgrade only when
 its full snapshot, including authorization and chat, matches current state. Actual
 document/proof/chat changes still require upload; expired grants still prevent sync.
 
-The working-tree instance API also supports `refresh-access` for a previously
+The instance API supports `refresh-access` for a previously
 approved Worker after its Rusty scope policy advances. A fresh signed current
 Owner request carries the existing public storage pin and a Rusty-signed floor-2
 receipt. The Worker verifies both authorities and commits only the policy revision,
@@ -24,12 +24,12 @@ not renew authorization, activate work or synchronize. Repeating the action is
 idempotent. Browser writer migration preflights compatible instances, durably
 retains receipt/route evidence and waits for those confirmations before local
 activation. Older Workers need a compatible rollout first; live untyped grants
-require explicit route adoption/removal. This is working-tree protocol evidence,
-not a claim of coordinated production deployment.
+require explicit route adoption/removal. Production identity comes from the sealed
+release cohort, not source presence.
 
 ## Compact history maintenance
 
-Working-tree protocol provides `prepare-history-baseline` and
+The protocol provides `prepare-history-baseline` and
 `activate-history-baseline` under fresh signed current-Owner requests. Preparation
 persists a separately admitted scope trust anchor, confirms the exact original
 outbox, uploads any remaining admitted snapshot, then freezes execution with a
@@ -49,13 +49,16 @@ they do not renew an automation grant or manufacture an Owner signature.
 
 State reader 5 and workspace snapshot reader 2 are required; the signed descriptor
 and encrypted basis/coverage evidence survive restart and are reverified offline.
-This describes implementation source; coordinated acceptance and production
-activation remain gated until the complete source work is finished.
+[Worker runtime tests](tests/replica.runtime.test.ts) cover frozen execution,
+Native verification and activation. Browser acceptance in
+[attachment-session-recovery.spec.ts](../../e2e/attachment-session-recovery.spec.ts)
+covers compact history, cold receivers and offline recovery. These checks do not
+establish which cohort is active in production.
 
 ## Application sources
 
-The current working tree supports `job-intake@2`. Its owner-signed automation scope
-is version 2 and declares `board.application.source.append` in addition to v1's
+The registry supports `job-intake@1` and `job-intake@2`; new browser approvals use v2.
+The v2 owner-signed automation scope declares `board.application.source.append` in addition to v1's
 three permissions. Card creation and its immutable original posting observation
 are one signed CRDT change. The source comes from extracted URL content, independent
 of display labels; missing/oversized evidence is recorded as unavailable without
@@ -78,65 +81,57 @@ SQL transaction; correction requires the current parent. Saving does not queue a
 action. Retry never reclassifies the message or bypasses date/forward-only rules.
 Lost upload receipts retain a pending event and exact signed action hash; applied
 audit and event success commit only after confirmed upload. The old unbound retry
-rejects bound events. The working-tree `/v2/application-review/{discover,list,review,bind,retry,retry-unbound}`
+rejects bound events. The `/v2/application-review/{discover,list,review,bind,retry,retry-unbound}`
 API authenticates a fresh complete-chain Owner request, exact action/body/origin and
 60-second nonce, then checks native current Owner/device rights after synchronization.
 Encrypted bounded nonce outcomes cannot bypass later device revocation. Discovery
 keeps typed definition and legacy routing IDs separate. Mailbox responses carry
 bounded retained subjects/reasons and a verified-context Worker observation bound
-to the request nonce. Browser settings now lazy-load mailbox and explicit selection/
-save/retry controls; their visual and browser acceptance remains unrun. Full eviction/
-restart, old-reader and untyped legacy routing adoption remain open. Unbound retry
-uses the exact discovered route and fresh Owner proof; it cannot bypass an existing
-binding. Action support is advertised separately; malformed capability metadata
-never enables an older API fallback. Historical expired grant integrity can be
-used only for renewal with a separately validated live approval. Pause state,
-pending ciphertext and event dedup survive renewal; ordinary expired restore
-continues to fail closed. Public expired-instance management is still pending. Immutable submission references and
-legacy migration also remain open; runtime tests do not establish browser or
-production deployment acceptance.
+to the request nonce. These are signed API/client operations. Settings intentionally
+has no retained-email processing feed, manual application-selection queue or
+save/retry controls; the broader Inbox/mail UI remains specification only.
+Unbound retry uses the exact discovered route and fresh Owner proof; it cannot
+bypass an existing binding. Action support is advertised separately; malformed
+capability metadata never enables an older API fallback. Historical expired-grant
+integrity can be used only for renewal with a separately validated live approval.
+Expired instances remain inspectable through current-Owner management; ordinary
+execution and restore still fail closed. Pause state, pending ciphertext and event
+deduplication survive renewal. Untyped legacy routing requires explicit adoption.
+API and durable binding behavior are covered in
+[applicationBindingStore.runtime.test.ts](tests/applicationBindingStore.runtime.test.ts),
+[applicationReceipt.runtime.test.ts](tests/applicationReceipt.runtime.test.ts) and
+[replica.runtime.test.ts](tests/replica.runtime.test.ts); they do not establish a
+production rollout or an Inbox UI.
 
 ## Archive transport evidence
 
-The shared archive SDK has focused Workerd execution evidence in
-`tests/archiveTransport.runtime.test.ts`: the native/browser encrypted fixture,
-archive sealing/opening, pinned storage, batch and aggregate receipts, complete-set
-verification, and live generation invalidation run through the same implementation.
-`historyArchiveCoverageSet.ts` streams sorted expected ciphertext IDs into leaves
-of 64 and branches of 8, promotes a short tail with unary branches, derives stable
-request IDs from the captured transition/authority/root/summary, and verifies the
-signed final root against the entire expected set. A signed subset is rejected
-even when its root object is present. Server aggregation composes receipts issued
-earlier; it does not reread every object or claim continued availability after
-later corruption. Focused evidence: Workerd archive tests 2/2 and the shared SDK
-suite 46 files / 499 tests. This is transport/runtime evidence only.
+The shared encrypted archive transport runs under Workerd in
+[archiveTransport.runtime.test.ts](tests/archiveTransport.runtime.test.ts):
+sealing/opening, pinned storage, batch/aggregate receipts, complete-set verification
+and live generation invalidation use the shared SDK implementation. Coverage trees
+stream sorted expected ciphertext IDs into leaves of 64 and branches of 8. A signed
+subset is rejected even when its root object is present. Receipt aggregation
+composes previously issued receipts; it does not promise availability after later
+storage corruption.
 
-The shared preparation journal now persists `captured`, `archived` and `covered`
-phases. The Worker Durable Object adapter encrypts each SQL value with AES-GCM and
-context-bound AAD, snapshots ciphertext before crypto awaits, rechecks raw
-ciphertext and the current guard inside `transactionSync`, syncs commits and scans
-bounded key pages while decrypting one record at a time. Three focused Workerd
-tests exercise the shared journal against actual Durable Object storage, including
-resume, competing CAS writers, rollback after an injected second write, encrypted
-at-rest values and scope/context/secret substitution
-(`/tmp/tincanban-history-preparation-workerd-final.log`). The full Worker runtime
-suite passes 10 files / 125 tests. The adapter is not
-connected to `AutomationReplica`. Journal inputs remain caller-provided. Native
-`VerifiedHistoryArchiveCapture` now consumes verified preparation, retains matched
-original JSON and emits a source-derived catalogue; SDK tests consume its shared
-vector, reopen encrypted journal state and rerun actual WASM causal admission.
-A live WASM capture handle and ordinary Worker producer/scheduling remain absent,
-as do signed Owner transition and baseline activation. The Native catalogue alone
-does not authorize activation or confer trust on serialized classifications.
+The preparation journal persists `captured`, `archived` and `covered` phases. Its
+[Durable Object storage adapter](src/historyPreparationStorage.ts) encrypts SQL
+values with context-bound AES-GCM, rechecks ciphertext and the live guard inside
+`transactionSync`, and scans bounded pages. The adapter's CAS, interrupted-resume,
+rollback and context-substitution cases run in
+[historyPreparation.runtime.test.ts](tests/historyPreparation.runtime.test.ts).
+This reusable preparation adapter is separate from ordinary automation scheduling.
 
-The same SDK now prepares a separate portable encrypted locator directory after
-data coverage. The encrypted SQL acceptance case loses a directory upload reply,
-reopens its journal, reuses the exact root ciphertext and cold-reads original bytes
-with the sender's storage disabled. Directory pages and data use separate complete
-coverage proofs under identical source/authority/private/storage bindings. This
-removes the cold reader's dependency on a flat sender-local locator list. It does
-not connect archive preparation to the ordinary automation scheduler or activate
-history baselines.
+The Owner browser uses the actual WASM capture handle to retain original signed
+records, emit the source-derived catalogue and verify encrypted locator/data
+coverage before confirming a compact basis. The Worker participates through the
+freeze/receive/activate protocol above; its restricted Automation grant cannot
+produce an Owner attestation. An encrypted locator directory supports cold readers
+without a sender-local flat locator list. Native/HTTP interoperability is exercised
+by [rustyManagement.native.test.ts](../../src/sync/rustyManagement.native.test.ts);
+browser acceptance covers lazy entity history, restoration through a fresh signed
+command, two archive generations and private offline recovery. Retained original
+classifications are evidence, never a serialized authorization flag.
 
 ## Job priority
 
@@ -217,7 +212,9 @@ be connected. The browser enrolls an independent Worker identity, signs the
 versioned type definition and exact 30-day Automation grant, commits the public
 approval/desired state to CRDT, then privately sends the admitted snapshot and
 storage access to the selected Worker. Operator bearer tokens never enter this UI.
-Email forwarding shows the latest message subjects, processing states and reasons.
+Email forwarding shows its private route and activation/confirmation status.
+Retained message subjects and processing reasons are available through the signed
+API, not a Settings message list.
 A clear classification can still need review when vacancy-page matching fails,
 the original email date is missing or stale, or the next status is not authorized.
 These stops preserve the current card instead of reporting a completed move.
@@ -229,10 +226,10 @@ are fetched with the existing HTTPS, redirect, timeout and size checks. Missing,
 unavailable or ambiguous sources stay in review with an explicit reason. This
 also means a renamed role in the rejection still needs review if it differs from
 the employer's published vacancy title.
-After resolving the source problem, **Retry processing** requeues that saved email event with
-an owner signature bound to its exact event ID. It keeps the original MIME bytes
-and event ID, preserves applied-event deduplication, and rechecks the current
-grant, matching, original email date and concurrent workflow before writing.
+After resolving a source problem, the signed application-review API can retry the
+retained event. It preserves original MIME bytes, the event ID and applied-event
+deduplication, and rechecks the current grant, matching, original email date and
+concurrent workflow before writing. Settings does not expose this as a retry button.
 
 Deployment variable `AUTOMATION_OWNER_IDS` is a comma-separated allowlist of public
 root person IDs permitted to enroll instances. Empty disables browser enrollment.
@@ -263,7 +260,8 @@ plan's default CPU limit.
 Pause preserves queued events without spending retries or AI calls. Removal is a
 terminal tombstone; retries and stale snapshots cannot resurrect execution.
 
-Current UI registry contains `job-intake@1`. Website intake is enabled initially.
+The registry retains `job-intake@1` and `job-intake@2`; the UI creates v2 instances
+with website intake enabled initially.
 For an owner-enrolled instance, an operator provisions a private email route in
 `EMAIL_ROUTES_JSON` (Worker secret), containing `{ id, address, mailbox }`. Addresses
 must contain a cryptographically random 32–48 hexadecimal character suffix:
@@ -276,9 +274,11 @@ Settings displays the private address only to the authenticated workspace owner.
 **Enable email and Applied** signs a revised definition and grant for the same
 instance, executor and board. Old grants without Applied remain valid. Renewal
 admits merged history before saving, retaining outbox and event deduplication.
-Owner-signed renewal can update the content key, key epoch and opaque scope at
-the same Rusty origin; pending uploads are re-encrypted before durable publication,
-and the new scope starts from the owner's supplied cursor.
+Storage-changing renewal requires the exact original pending upload to be drained
+first; it never replaces uncertain ciphertext with a new encryption. Explicit
+`prepare-storage-rotation` and `rotate-storage` management freeze authoring, drain
+originals, verify the signed policy transition and retain every old reading key
+before publishing fresh credentials. Renewal preserves the same Rusty origin.
 The mailbox provider keeps originals and forwards only the existing job filter;
 Gmail's verification message remains available for owner confirmation, without AI.
 
@@ -320,12 +320,16 @@ Each body is `{instanceRequest,body}` under
 complete device chain. Read requests are bounded to 384 KiB; activation is bounded
 to 24 MiB. Discovery/identity responses carry no private keys, storage credentials,
 retained email content or raw workspace history. Capabilities advertise
-`instanceManagement:{version:1,actions:["discover","identity","activate"]}`.
+`instanceManagement.version: 1` with actions `discover`, `identity`, `activate`,
+`refresh-access`, `prepare-storage-rotation`, `rotate-storage`,
+`prepare-history-baseline` and `activate-history-baseline`.
 Independent encrypted, 128-live-request nonce ledgers bind exact outcomes and
 reject nonce reuse for different proof/body content. Interrupted activation can
 retain a valid approval while reporting missing Rusty confirmation; retry the same
-existing instance. The current working tree has native HTTP acceptance for these
-paths; eviction/restart, browser and coordinated deployment acceptance remain open.
+existing instance. The signed management paths have Native/HTTP and Workerd
+acceptance; browser flows cover ordinary enrollment, approval renewal and explicit
+legacy adoption.
+Exact production revisions still require the release cohort evidence.
 
 - `GET /health` reports Worker readiness.
 - `POST /v1/challenge` with `{ "integrationId": "applications" }` returns an HMAC-signed arithmetic challenge.
@@ -341,15 +345,28 @@ New intake returns HTTP 202 after the Durable Object has stored the event. Clef 
 
 ## Production deployment
 
-The `Deploy production` GitHub workflow publishes both frontend and automation
-only after `Verify` succeeds for a push to the current `main` commit. Automation
-uploads a version tagged with that commit, supplies the same commit as
-`RELEASE_SHA`, deploys it to all traffic, preserves operator variables, and
-requires `/health` to report both readiness and that exact SHA. It uses the
-production `wrangler.jsonc`; the local `wrangler.e2e.jsonc` is never published.
+[Deploy compatible production cohort](../../.github/workflows/deploy-frontend.yml)
+runs after `Verify` succeeds for the current main push. It downloads the exact
+verified frontend and captured Worker artifacts, selects the sealed Rusty image
+for the pinned source/SDK revisions and requires successful verification of that
+same SDK revision. It stages immutable Worker versions without rebuilding, then
+activates and confirms Rusty, automation and frontend in that order. Final checks
+bind the cohort to artifact/image/binary digests, Cloudflare version IDs and served
+frontend bytes. [Recover compatible production cohort](../../.github/workflows/recover-release.yml)
+resumes an interrupted exact cohort or selects a compatible prior confirmed cohort;
+rollback still respects retained reader requirements and required capabilities.
 
-The Worker is deployed at [`https://automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev); `/health` returns `{"status":"ready","buildSha":"<deployment release SHA>"}`. This SHA is supplied by the verified deployment job; it does not independently prove the uploaded artifact digest. Local builds without `RELEASE_SHA` return `buildSha: null`. Its `workers.dev` route and preview URLs are disabled. Browser CORS allows `https://match.meta-uber-engineer.dev` and the public intake form at `https://meta-uber-engineer.dev`.
+The configured production route is
+[`automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev).
+`/health` reports readiness plus source SHA, artifact SHA-256, cohort ID, SDK SHA,
+Cloudflare version ID and reader/writer capabilities. Local builds without release
+bindings return null release identities. Source presence or a source SHA alone
+does not establish a current deployment: use the release coordinator's saved cohort
+and live identity/served-byte confirmations. Production uses `wrangler.jsonc`;
+`wrangler.e2e.jsonc` is local-only and never published. `workers.dev` is disabled.
+Configured browser CORS permits `https://match.meta-uber-engineer.dev` and the
+public intake form at `https://meta-uber-engineer.dev`.
 
-Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. The production proof activated one exact owner-approved scope and applied a synthetic Lead through Clef; no applicant or email content was used. Future integrations must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
+Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. Each integration must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
 
 On 2026-10-12, Cloudflare Email Routing for `inbox.meta-uber-engineer.dev` and an exact private-recipient Worker rule were provisioned. The public `jobs@inbox.meta-uber-engineer.dev` address is not an intake capability. Production uses the private route secret. Gmail forwarding confirmation and a real delivered board action must be verified separately before claiming end-to-end readiness.

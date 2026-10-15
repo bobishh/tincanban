@@ -176,6 +176,7 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   f.blob.resolve.mockResolvedValue(descriptor)
   const bytes = new Uint8Array(descriptor.size)
   let callCount = 0
+  let completedChunks = 0
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
     _requested, options) => {
     callCount += 1
@@ -186,6 +187,7 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
       for (let chunk = 0; chunk < 4; chunk += 1) {
         await new Promise(resolve => setTimeout(resolve, 3_000))
         await options?.ensureCurrent?.()
+        completedChunks += 1
       }
       return bytes
     })()
@@ -202,7 +204,12 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
     expect(deadline - Date.now()).toBeGreaterThanOrEqual(15_000)
     expect(deadline).toBeLessThanOrEqual(Date.now() + 16_000)
 
-    await vi.advanceTimersByTimeAsync(12_000)
+    // WebCrypto authority checks use real tasks even with fake timers. Let each
+    // check finish before advancing to the next sequential chunk's timer.
+    for (let chunk = 1; chunk <= 4; chunk += 1) {
+      await vi.advanceTimersByTimeAsync(3_000)
+      await vi.waitFor(() => expect(completedChunks).toBe(chunk))
+    }
     await expect(pending).resolves.toEqual(bytes)
     expect(f.blob.write).toHaveBeenCalledOnce()
   } finally {

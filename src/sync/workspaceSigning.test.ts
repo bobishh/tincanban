@@ -14,7 +14,7 @@ import { peerStore } from "./peerStore"
 import { readLocal, writeLocal } from "../localDb"
 import { records } from "./workspaceChangeProofStore"
 import { workspaceSigningContext } from "./workspaceSigning"
-import { readWorkspaceSigningAuthority, authorityValidationFingerprint } from "./changeAuthorization"
+import { readWorkspaceSigningAuthority, authorityValidationFingerprint, workspaceRole } from "./changeAuthorization"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -57,6 +57,33 @@ it("Given current workspace access, when creating a private history-read guard, 
     const result = await workspaceSigningContext(doc, profile, "history-recovery-read", "workspaceId", undefined, ports)
     await expect(result.requireCurrent()).resolves.toBeTypeOf("string")
     await expect(workspaceSigningContext(doc, profile, "unknown-history-operation", "workspaceId", undefined, ports)).rejects.toThrow(/permission/i)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given a live history-read guard, when validating again, then reuse its exact authority read for role derivation and still reject later revocation", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const readAuthority = vi.fn(() => readWorkspaceSigningAuthority(doc.id)), deriveRole = vi.fn(workspaceRole)
+    const fingerprint = vi.fn(authorityValidationFingerprint)
+    const signing = await workspaceSigningContext(doc, profile, "history-recovery-read", "workspaceId", undefined,
+      { readAuthority, authorityFingerprint: fingerprint, workspaceRole: deriveRole })
+    readAuthority.mockClear(); deriveRole.mockClear()
+    const reads = vi.spyOn(peerStore, "getWorkspaceAuthority")
+    await signing.requireCurrent()
+    expect(readAuthority).toHaveBeenCalledOnce()
+    expect(deriveRole).toHaveBeenCalledWith(doc, profile, await readAuthority.mock.results[0]!.value)
+    // One current input plus the existing post-policy race check; no duplicate initial role read.
+    expect(reads).toHaveBeenCalledTimes(2)
+    fingerprint.mockReturnValueOnce("changed-authority")
+    await expect(signing.requireCurrent()).rejects.toThrow(/authority is stale/i)
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Expected stored workspace authority")
+    const revocation = await createWorkspaceDeviceRevocation(profile, doc.id, profile.identity.personId,
+      profile.device.deviceId, Automerge.getHeads(doc), [profile.certificate])
+    await peerStore.putWorkspaceAuthority({ ...authority, updatedAt: new Date().toISOString(),
+      catalog: { ...authority.catalog as object, deviceRevocations: [revocation] } })
+    await expect(signing.requireCurrent()).rejects.toThrow(/revok|stale|permission/i)
   } finally { Automerge.free(doc) }
 })
 
