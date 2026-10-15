@@ -366,13 +366,14 @@ accessible. No automatic destructive retention is authorized by this change.
 - **AND** restoration re-verifies baseline authority independently, preserves original journal rows and lets item history read the restored archive offline
 - **AND** no Rusty credential is required or invented for the peer-only path.
 
-#### Scenario: Local revision reading stalls during private recovery export
-- **GIVEN** recovery must compare the exact originally captured journal revision
-- **WHEN** its own read-only IndexedDB revision request or transaction stops completing
-- **THEN** it aborts only that read-only transaction after a bounded wait and retries with a fresh read under current identity checks
-- **AND** a changed revision still rejects the export; no cached value substitutes for the fresh read
-- **AND** repeated stalls produce an explicit storage error instead of an indefinitely pending backup
-- **AND** unrelated transactions and writes remain untouched.
+#### Scenario: Private backup races an enrolled device's admission refresh
+- **GIVEN** approving a new device can refresh the selected workspace's admission checkpoint
+- **WHEN** that protected journal revision changes during private backup creation
+- **THEN** the incomplete export is refused and the existing Retry action remains available
+- **AND** retry captures the entire backup again under the current identity, workspace and authority
+- **AND** acceptance observes the explicit failure immediately and retries only this known source-change outcome after pending workspace mutations settle
+- **AND** retries remain finite within the original download budget; other errors fail without retry
+- **AND** complete coverage and original-version restoration with the owner closed remain required.
 
 #### Scenario: Add my device transfers an archived workspace
 - **GIVEN** an Owner has an active verified compact basis and retained original history

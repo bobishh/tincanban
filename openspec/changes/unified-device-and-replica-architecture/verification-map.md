@@ -355,27 +355,40 @@ the unavailable-upload scenario still replicates metadata without claiming
 complete coverage (4.9 seconds). Changed workspace/identity and deleted-target
 negatives pass in the focused helper tests.
 
-The same matrix's Chromium two-generation backup stayed in progress until its
-unchanged sixty-second download bound; WebKit passed. No native panic, module
-failure or completed download appears in either failing trace. The exact local
-Chromium case passes, with export taking 6.8 seconds and 3,531 live guards. This
-does not establish a cause or a production fix for that Linux observation.
-The acceptance test now retains at most 32 failure-only samples of stage names
-and counters, containing no workspace content, identifiers, keys or inputs, so a
-recurrence names the unresolved await. Marker execution is verified through the
-same full local recovery scenario; production source and timeout stay unchanged.
+The same matrix's Chromium two-generation backup did not download within the
+unchanged sixty-second bound. The retained final screenshot explicitly reports
+that the workspace changed during private recovery export and offers Retry.
+The last progress sample alone was initially misread as a suspended source-revision
+read. That diagnosis was incorrect: a rejected guard also leaves its last stage
+unchanged. The local Chromium export took 6.8 seconds with 3,531 live guards;
+local timing did not explain the hosted failure.
 
-Matrix [38822251442](https://github.com/bobishh/tincanban/actions/runs/38822251442)
-passed 28 groups, including the repaired attachment path and Chromium recovery.
-Its WebKit recovery samples isolate both failed attempts to the fresh read-only
-IndexedDB source-revision check, with unchanged counters for over fifty seconds.
-The precise browser-internal request/completion failure is not established.
-Recovery now bounds only its own read-only revision transaction to five seconds,
-aborts that stalled transaction and tries a fresh read, at most three attempts.
-Current identity is rechecked and the exact original revision must still match;
-no cached revision substitutes for storage. Ordinary storage errors fail directly,
-repeated stalls report an explicit storage error, and unrelated writes remain
-untouched. Nine injected fault cases and four real IndexedDB evidence cases pass;
-the former reader fails both request- and completion-stall regressions. The real
-two-generation WebKit recovery passes in 33.7 seconds with its sixty-second
-download bound unchanged. Exact final hosted and production gates remain required.
+The acceptance test retains at most 32 failure-only stage/counter samples without
+workspace content, identifiers, keys or inputs. Matrix
+[38822251442](https://github.com/bobishh/tincanban/actions/runs/38822251442)
+passed 28 groups but reported the same explicit source-change rejection in WebKit.
+A bounded revision-reader workaround was introduced on that mistaken diagnosis.
+Matrix [38824660794](https://github.com/bobishh/tincanban/actions/runs/38824660794)
+passed its other 28 groups and showed the same rejection in Chromium, with the
+revision-read completion marker proving that IndexedDB had answered. The unrelated
+reader workaround is removed; exact journal-revision and current-authority checks
+remain mandatory. Final proof must account for the concurrent source change and
+observe the explicit backup outcome instead of waiting for a nonexistent download.
+
+Temporary writer instrumentation on the exact enrollment flow observed an
+admission-checkpoint refresh after enrollment while document bytes, proof bytes,
+causal bytes and classifications remained unchanged. That protected journal
+change legitimately invalidates an in-flight capture; the writer and source guard
+are retained. The acceptance helper observes either download or the panel's
+explicit error, fails other errors immediately, and presses the existing Retry
+only for the exact source-change rejection after the source mutation queue settles.
+At most three complete attempts share the original sixty-second deadline. Seven
+focused observer cases cover exact-error filtering, retry/deadline bounds,
+identity/workspace changes, page closure and listener/timer cleanup. Each retry
+starts a full new capture; final file coverage and owner-closed restoration remain
+unchanged. CPU and storage probes are removed from production and acceptance.
+The exact full scenario passes in Chromium (26.5 seconds) and WebKit (36.7 seconds)
+at `/tmp/tincanban-backup-outcome-fixed-results`. The WebKit trace actually takes
+the existing Retry path, then verifies Complete backup and restores the original
+item version on the phone with the owner closed. Production source matches the
+pre-workaround implementation; final hosted verification remains required.

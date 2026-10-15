@@ -4,6 +4,7 @@ import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/wo
 import { startRustyService } from "./support/rustyService"
 import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
 import { captureHistoryBackupProgress } from "./support/historyBackupProgress"
+import { downloadPrivateWorkspaceRecovery } from "./support/workspaceRecoveryDownload"
 
 const attachmentTitle = "Session recovery file"
 const attachmentName = "session-recovery.txt"
@@ -548,9 +549,10 @@ test("Given an owner with two archived history generations, when adding my phone
     await ownerSync.getByRole("tab", { name: "Backups", exact: true }).click()
     const ownerBackups = ownerSync.getByRole("region", { name: "Private workspace recovery" })
     // Full recovery verifies both generations before publishing the encrypted file.
-    const ownerBackupDownload = source.waitForEvent("download", { timeout: 60_000 })
-    await ownerBackups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
-    const ownerBackup = await ownerBackupDownload.catch(async error => { await attachBackupProgress(); throw error })
+    // Enrollment may finish a protected admission-checkpoint refresh during capture.
+    // Observe that explicit rejection and retry a fresh full file; all attempts share 60 seconds.
+    const ownerBackup = await downloadPrivateWorkspaceRecovery(source, ownerBackups)
+      .catch(async error => { await attachBackupProgress(); throw error })
     workspaceRecoveryBytes = await readFile((await ownerBackup.path())!)
     workspaceRecoveryWords = await ownerBackups.getByLabel("Recovery words", { exact: true }).inputValue()
     await ownerBackups.locator('input[type="file"]').setInputFiles({ name: "two-generations.jsonl", mimeType: "application/x-tincanban-history-recovery+jsonl", buffer: workspaceRecoveryBytes })
