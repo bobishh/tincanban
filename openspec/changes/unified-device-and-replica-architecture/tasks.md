@@ -1,12 +1,10 @@
-# Remaining acceptance and release
+# Release completion contract
 
-Local final acceptance, source quality and production size checks have passed.
-The remaining gates are publishing exact dependency pins, hosted CI and the
-coordinated release.
-Completed checks are not retained here as a diary. Requirements and scenario mappings remain in
-[the specification](specs/device-and-replica-contracts/spec.md),
+Requirements and acceptance mappings remain in [the specification](specs/device-and-replica-contracts/spec.md),
 [architecture](design.md), [history contract](history-archive-contract.md) and
-[acceptance map](verification-map.md).
+[acceptance map](verification-map.md). Execution state belongs to the active goal,
+GitHub Actions runs and the release coordinator's retained activation evidence;
+this file does not keep a diary of completed checks.
 
 Universal Inbox and declarative processing remain specification-only, by explicit
 user decision. No new mail queue belongs in Settings. Existing signed application
@@ -14,16 +12,21 @@ binding and immutable posting-source behavior remain in this release. Board and
 card typography retains Caveat; long detail/chat prose uses Fira Sans, technical
 values use Fira Code. Existing writer policy remains unchanged.
 
-- [ ] Review all authorized worktree changes, including the other agent's UI
-  changes. Stage and commit the final SDK, Rusty and application changes only
-  after local acceptance passes; publish exact dependency pins. The gitlink
-  cleanliness check follows these commits, because dirty source cannot satisfy it.
-- [ ] Run required CI against the final immutable revisions, including actual
-  Linux WebKit and native/platform packaging checks.
-- [ ] Deploy the compatible Rusty/automation/frontend cohort through CI. Preserve
-  validated rollback state and interrupted-release recovery evidence.
-- [ ] Verify production component SHA/digest/capabilities and the served frontend
-  artifacts; reconcile operator instructions and the agent guide with observed
-  release behavior.
-- [ ] Complete the goal only after every required acceptance and release check
-  passes. Report exact deployed releases and any required device refresh.
+Completion requires all of the following:
+
+- Implementation and affected acceptance scenarios pass without weakening
+  interaction/Worker responsiveness, signature checks or exact attachment bytes.
+- All authorized SDK, Rusty and application worktree changes, including UI changes,
+  are committed and published with exact dependency pins and a clean gitlink.
+- Required hosted CI passes against the final immutable revisions, including
+  Linux WebKit UI, macOS WebKit device enrollment and native/platform packaging.
+  WebKitGTK cannot provide the required WebRTC bootstrap.
+- CI activates one compatible Rusty/automation/frontend cohort, retaining rollback
+  and interrupted-release recovery evidence.
+- Production source commits, executable/image digests, capabilities, Worker
+  versions and served frontend bytes match the checked artifacts. Operator
+  instructions and the agent guide describe that release accurately.
+
+A local pass or one deployed component cannot establish completion. Report the
+exact active cohort and any required device refresh only after production
+verification succeeds.

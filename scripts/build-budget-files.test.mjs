@@ -15,7 +15,7 @@ const manifest = {
 
 test("Given split startup, When measuring private board startup, Then entry and private static closure are counted once", () => {
   const files = startupBudgetFiles(manifest, "private")
-  assert.deepEqual(files.js, ["dist/assets/App.js", "dist/assets/berlin-tower.js", "dist/assets/diagnostics.js", "dist/assets/index.js", "dist/assets/private.js", "dist/assets/shared.js"])
+  assert.deepEqual(files.js, ["dist/assets/App.js", "dist/assets/diagnostics.js", "dist/assets/index.js", "dist/assets/private.js", "dist/assets/shared.js"])
   assert.deepEqual(files.css, ["dist/assets/App.css", "dist/assets/index.css", "dist/assets/private.css"])
 })
 

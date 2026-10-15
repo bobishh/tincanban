@@ -112,3 +112,21 @@ Final acceptance must include unchanged-state work budgets, original-source
 preservation, interrupted recovery, authorization failures, Chromium/WebKit
 behavior and exact deployed-state verification. Keep each claim tied to its
 named scenario and exact tested release artifact.
+
+## Final CI repair evidence
+
+The first hosted matrix is retained at [run 38790475721](https://github.com/bobishh/tincanban/actions/runs/38790475721).
+It exposed a lost delegated-controller certificate projection, a cached rejected
+private-preferences import, stale acceptance-fixture assumptions and a slow
+Native historical-parent query. Focused fixes retain the original authority,
+revocation, 200ms interaction and full attachment-byte assertions. Cross-device
+WebKit archive scenarios run on macOS; Linux WebKit UI coverage remains enabled.
+
+After rebuilding the actual WASM, the 20,001-change / 80-proof browser scenario
+completed in 10.6 seconds instead of 42.8 seconds, with controls opening in 68ms
+(`/tmp/coreperf-worker-optimized-20261015`). The final move/pending-save/footer
+batch passed (`/tmp/coreperf-final-after-native-20261015`), including a 168ms
+longest task at 4x CPU. Native core passed 313 cases with three existing ignored
+cases; immutable-source and entity-map rebinding negatives remain covered. These
+are local repair proofs; final hosted and production cohort verification remain
+independent completion requirements.

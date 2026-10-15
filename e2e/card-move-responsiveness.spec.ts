@@ -9,6 +9,22 @@ test.use({ trace: "off", reducedMotion: "no-preference" })
 test("Given 55 detailed cards, when a card moves, then persistence does not stall the next board interaction", async ({ page }, testInfo) => {
   test.setTimeout(120_000)
   await populatedBoard(page)
+  // Treat the seeded board like a real received workspace: cold admission
+  // commits its checkpoint, then startup installs the reusable delta frontier.
+  await page.reload()
+  await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
+  await expect(page.getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible({ timeout: 60_000 })
+  const hasCurrentFrontier = await page.evaluate(async () => {
+    const { useTincanban } = await import("/src/state.ts")
+    const { defaultStorage } = await import("/src/storage.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const app = useTincanban()
+    await app.whenReady()
+    const doc = app.getActiveDoc()!
+    const frontier = await defaultStorage.readDeltaFrontier(doc.id)
+    return Boolean(frontier && !frontier.invalidated && frontier.heads.join() === A.getHeads(doc).sort().join())
+  })
+  expect(hasCurrentFrontier).toBe(true)
   const session = await page.context().newCDPSession(page)
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
   await session.send("Profiler.enable")

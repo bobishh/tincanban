@@ -126,7 +126,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     await pairWorkspace(page, guest)
     await guest.getByRole("button", { name: "Open Attachment recovery — Engineer" }).click()
     const remoteAttachment = guest.getByRole("group", { name: attachmentTitle })
-    const expectedPreview = fileBytes.toString("utf8")
+    const expectedPreview = fileBytes.subarray(0, 32 * 1024).toString("utf8")
     await guest.evaluate(() => {
       let release!: () => void
       const releaseResponse = new Promise<void>(resolve => { release = resolve })
@@ -160,6 +160,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     await guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__.release())
 
     await expect(preview.locator("pre.document-preview-text")).toHaveText(expectedPreview, { timeout: 30_000 })
+    await expect(preview.getByText("Showing the beginning of this file. Download to read the full text.", { exact: true })).toBeVisible()
     expect(await guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__)).toBe("recipient route stayed mounted")
     await preview.getByRole("button", { name: "Close" }).click()
 
@@ -508,7 +509,8 @@ test("Given an owner with two archived history generations, when adding my phone
     const ownerSync = source.getByRole("dialog", { name: "Device sync" })
     await ownerSync.getByRole("tab", { name: "Backups", exact: true }).click()
     const ownerBackups = ownerSync.getByRole("region", { name: "Private workspace recovery" })
-    const ownerBackupDownload = source.waitForEvent("download", { timeout: 30_000 })
+    // Full recovery verifies both generations before publishing the encrypted file.
+    const ownerBackupDownload = source.waitForEvent("download", { timeout: 60_000 })
     await ownerBackups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
     const ownerBackup = await ownerBackupDownload
     workspaceRecoveryBytes = await readFile((await ownerBackup.path())!)

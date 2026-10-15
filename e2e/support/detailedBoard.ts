@@ -8,9 +8,7 @@ export async function populatedBoard(page: Page, jobSearch = false) {
   if (jobSearch) await createJobSearchWorkspace(page, "Detailed leads")
   await page.evaluate(async jobSearch => {
     const { useTincanban } = await import("/src/state.ts")
-    const { defaultStorage } = await import("/src/storage.ts")
-    const { prepareLocalChangeAuthorizations } = await import("/src/sync/changeAuthorization.ts")
-    const { updateReactiveState } = await import("/src/statePersistence.ts")
+    const { prepareLocalChangeAuthorizations, exportDocumentAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const tincanban = useTincanban()
     await tincanban.whenReady()
@@ -39,9 +37,14 @@ export async function populatedBoard(page: Page, jobSearch = false) {
           } : {} }
       }
     })
-    const proofs = await prepareLocalChangeAuthorizations(doc, tincanban.getCurrentProfile()!, [A.getHeads(doc)[0]!])
-    await defaultStorage.commitWorkspace(doc.id, doc, A.save(doc), proofs)
-    updateReactiveState(doc)
+    const profile = tincanban.getCurrentProfile()!
+    const hashes = A.getChangesMetaSince(doc, A.getHeads(base)).map(change => change.hash)
+    const proofs = await prepareLocalChangeAuthorizations(doc, profile, hashes)
+    const authorization = await exportDocumentAuthorizationBundle(base, profile)
+    await tincanban.mergeAuthorizedWorkspace(doc.id, A.save(doc), {
+      ...authorization,
+      records: [...authorization.records, ...proofs],
+    })
     await waitForPendingWorkspaceWrite()
   }, jobSearch)
   await expect(page.getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible()

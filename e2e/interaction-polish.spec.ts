@@ -156,6 +156,8 @@ test("Given a pending save, when the user tries to edit or submit again, then th
     }
   })
   await form.getByRole("button", { name: "Save item", exact: true }).click()
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__TINCANBAN_RELEASE_SAVE__))
+    .toBe("function")
   await expect(form.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled()
   await expect(form.getByLabel("Title *", { exact: true })).toBeDisabled()
   await expect(form.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled()

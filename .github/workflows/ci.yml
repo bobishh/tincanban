@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: e95e1cc44594eaa11c74df2a20fb704ef5feb0bd
+  RUSTY_REVISION: 1c64a9149b45a46cb971a816da3d09f7c94578cd
 
 jobs:
   verify:
@@ -389,7 +389,9 @@ jobs:
 
   browser-archives:
     name: Browser (archives and attachments ${{ matrix.project }})
-    runs-on: ubuntu-24.04
+    # WebKitGTK lacks the WebRTC bootstrap used by real device enrollment.
+    # Keep cross-device WebKit assertions on macOS; Linux still runs UI WebKit.
+    runs-on: ${{ endsWith(matrix.project, '-webkit') && 'macos-latest' || 'ubuntu-24.04' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -425,6 +427,7 @@ jobs:
       - name: Build the pinned blind storage service
         run: cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
       - name: Use Ubuntu primary archive mirror for browser dependencies
+        if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium webkit
       - name: Verify archive recovery and attachment lifecycle
