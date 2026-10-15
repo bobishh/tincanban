@@ -9,7 +9,7 @@ not the final implementation gate, production deployment or proof that any of th
 nine architecture requirements is complete. Local browser verification remains
 deferred. Production branches and deployment conditions remain unchanged.
 
-The review cohort pins SDK `1a322bbfcd83fe708f79cb26a6240d08e96293aa` and
+The review cohort pins SDK `96542208c4f44f80fb1fe934dc956cef3523ee11` and
 Rusty `5238a1bcc94bec99583c86710d6242cec306551d`. Rusty retains its independent
 existing exact core dependency revision; this checkpoint does not assert the
 final compatible-release manifest. CI now builds the Native archive verifier
@@ -35,6 +35,36 @@ name. The existing assertion remains unchanged; this production-flow regression
 requires investigation and is not recorded as complete. Evidence: app CI run
 `38710133121`, failed job `116339183361`, retained local log
 `/tmp/tincanban-checkpoint-chat-ci.log`.
+
+### Concurrent presentation refresh and name publication — 2026-10-15
+
+- Reproduced the chat failure outside the browser: `saveIdentityName` commits
+  the local profile, notifies private-state recovery, then refreshes its own
+  presentation. Recovery also refreshes presentation. Two reads of the same
+  unchanged profile replaced its cached object and made the second throw
+  `Identity changed during presentation refresh`, preventing shared name
+  publication after the local name was already durable. The production-path
+  regression test failed on this exact error before the SDK change.
+- SDK refresh now preserves the current profile for unchanged labels and shares
+  overlapping reads only for the same cached profile and exact expected bytes.
+  Changed identity/key/certificate and mismatched captured snapshots retain their
+  strict denial. Three new SDK cases cover unchanged concurrency, changed-label
+  concurrency and different captured bytes; the first two reproduced the defect.
+- `identityName.publication.test.ts` uses the actual identity store, profile root,
+  notification, signing and chat store to verify that concurrent settings/recovery
+  refresh succeeds and exports the newly signed chat name. Existing browser chat
+  acceptance now waits for the visible save confirmation before closing settings;
+  its cross-peer name equality assertion remains unchanged.
+- Verified: SDK 51 files / 528 tests plus types; app 288 files / 2,916 tests, one
+  opt-in file / two cases skipped; full six-category quality and production
+  build/size checks. Evidence: `/tmp/tincanban-presentation-refresh-red.log`,
+  `/tmp/tincanban-name-publication-red.log`,
+  `/tmp/tincanban-presentation-refresh-sdk-all.log`,
+  `/tmp/tincanban-presentation-refresh-app-all.log`,
+  `/tmp/tincanban-presentation-refresh-app-quality.log`,
+  `/tmp/tincanban-presentation-refresh-app-size.log`. No local browser execution
+  or production deployment occurred. Browser CI must verify the cross-peer flow;
+  this increment does not close full profile delivery/migration requirements.
 
 ## 0. Specification and Baseline
 
