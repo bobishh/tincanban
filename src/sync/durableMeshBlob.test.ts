@@ -162,8 +162,49 @@ it("Given a replacement arrives near the recovery limit, when its blob transfer 
     const retryDeadline = request.mock.calls[1]?.[5]?.deadlineAt
     if (typeof retryDeadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
     expect(retryDeadline - Date.now()).toBeGreaterThanOrEqual(9_000)
-    expect(retryDeadline).toBeLessThanOrEqual(startedAt + 20_000)
+    expect(retryDeadline).toBeLessThanOrEqual(startedAt + 26_000)
     await expect(pending).resolves.toEqual(fileBytes)
+  } finally {
+    vi.useRealTimers()
+    await f.close()
+  }
+})
+
+it("Given a late replacement and a four-chunk attachment, when each chunk makes bounded progress, then finish within the size-aware attempt budget", async () => {
+  const f = await fixture()
+  const descriptor = { ...f.descriptor, size: 960_000 }
+  f.blob.resolve.mockResolvedValue(descriptor)
+  const bytes = new Uint8Array(descriptor.size)
+  let callCount = 0
+  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
+    _requested, options) => {
+    callCount += 1
+    if (callCount === 1) return new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
+    })
+    return (async () => {
+      for (let chunk = 0; chunk < 4; chunk += 1) {
+        await new Promise(resolve => setTimeout(resolve, 3_000))
+        await options?.ensureCurrent?.()
+      }
+      return bytes
+    })()
+  })
+  vi.useFakeTimers()
+  try {
+    const pending = f.mesh.fetchBlob(f.workspaceId, descriptor)
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(9_000)
+    f.replaceSession()
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    const deadline = request.mock.calls[1]?.[5]?.deadlineAt
+    if (typeof deadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
+    expect(deadline - Date.now()).toBeGreaterThanOrEqual(15_000)
+    expect(deadline).toBeLessThanOrEqual(Date.now() + 16_000)
+
+    await vi.advanceTimersByTimeAsync(12_000)
+    await expect(pending).resolves.toEqual(bytes)
+    expect(f.blob.write).toHaveBeenCalledOnce()
   } finally {
     vi.useRealTimers()
     await f.close()
@@ -357,8 +398,8 @@ it("Given authority validation stalls past the transfer deadline, when it resume
   const resumeValidation = deferred<void>()
   let credentialReads = 0
   const readCredential = f.store.getWorkspaceCredential.getMockImplementation()!
-  f.store.getWorkspaceCredential.mockImplementation(async workspaceId => {
-    const credential = await readCredential(workspaceId)
+  f.store.getWorkspaceCredential.mockImplementation(async () => {
+    const credential = await readCredential()
     credentialReads += 1
     if (credentialReads === 3) {
       validationStarted.resolve()

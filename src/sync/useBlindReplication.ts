@@ -16,7 +16,7 @@ export type BlindReplicationController = ReturnType<typeof useBlindReplication>
 export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) {
   const state = createReplicationState()
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice } = state
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice, historyNotices } = state
   let identity = ""
   let session = 0
   let running: Promise<void> | undefined
@@ -128,7 +128,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   })
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice, historyNotices,
     attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
     remove, syncNow, fetchAttachment }
 }

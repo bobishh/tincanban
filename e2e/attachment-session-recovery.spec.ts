@@ -255,7 +255,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     const sync = editor.getByRole("dialog", { name: "Device sync" })
     await sync.getByRole("tab", { name: "Backups", exact: true }).click()
     const backups = sync.getByRole("region", { name: "Private workspace recovery" })
-    const downloadEvent = editor.waitForEvent("download", { timeout: 30_000 })
+    const downloadEvent = editor.waitForEvent("download", { timeout: 60_000 })
     await backups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
     const download = await downloadEvent
     const fileBytes = await readFile((await download.path())!)

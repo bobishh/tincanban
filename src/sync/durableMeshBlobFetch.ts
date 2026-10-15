@@ -1,4 +1,4 @@
-import { requestBlob, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
+import { BLOB_CHUNK_BYTES, requestBlob, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
 import type { LocalProfile } from "../domain/identity"
 import type { SessionEntry } from "./durableMeshBase"
 import { blobRequestSigning } from "./blobRequestSigning"
@@ -29,6 +29,7 @@ type BlobAttemptResult = { kind: "success"; bytes: Uint8Array } | {
 
 const MAX_BLOB_RECOVERY_MS = 10_000
 const MAX_BLOB_ATTEMPT_MS = 10_000
+const MAX_BLOB_CHUNK_ALLOWANCE_MS = 2_000
 
 class BlobFetchAuthorityChanged extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options) }
@@ -53,7 +54,8 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
   if (local) return local
 
   const recoveryDeadline = Date.now() + MAX_BLOB_RECOVERY_MS
-  const hardDeadline = recoveryDeadline + MAX_BLOB_ATTEMPT_MS
+  const attemptBudget = blobAttemptBudget(descriptor.size)
+  const hardDeadline = recoveryDeadline + attemptBudget
   assertRuntime(input, runId)
   const originalAuthority = await input.readAuthority()
   let lastError: unknown
@@ -74,7 +76,7 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
     for (const entry of sessions) {
       if (Date.now() >= recoveryDeadline) break
       if (!input.isCurrent(entry, runId)) { replaced = true; continue }
-      const attemptDeadline = Math.min(hardDeadline, Date.now() + MAX_BLOB_ATTEMPT_MS)
+      const attemptDeadline = Math.min(hardDeadline, Date.now() + attemptBudget)
       const result = await attemptBlobSession(input, entry, descriptor, before, originalAuthority, runId, attemptDeadline, hardDeadline)
       if (result.kind === "success") return result.bytes
       lastError = result.error
@@ -92,6 +94,12 @@ export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promi
 
   if (lastError) throw lastError
   throw new Error("No connected peer can provide this file")
+}
+
+function blobAttemptBudget(size: number): number {
+  // Keep one fixed setup allowance, then budget each remaining sequential SDK chunk.
+  const chunkCount = Math.ceil(size / BLOB_CHUNK_BYTES)
+  return MAX_BLOB_ATTEMPT_MS + Math.max(0, chunkCount - 1) * MAX_BLOB_CHUNK_ALLOWANCE_MS
 }
 
 async function attemptBlobSession(input: BlobFetchInput, entry: SessionEntry, descriptor: BlobDescriptor,

@@ -21,14 +21,21 @@ it("Given reactive Rusty settings, when syncing advances their policy, then arch
     cursor: 0, lastUploaded: "", policyRevision: 1 }
   const state = createReplicationState()
   state.configs.value = [config]
+  state.historyNotices.value.board = "Older history archived. Previous versions remain available."
+  state.historyNotices.value.other = "Other workspace completion"
   const guard = vi.fn()
   vi.spyOn(defaultStorage, "claimHistoryTransitionId").mockResolvedValue({ transitionId: "transition", previousBaselineId: null })
   const switchWorkspace = vi.fn(async () => undefined)
   vi.spyOn(defaultStorage, "completeHistoryTransition").mockImplementation(async () => {
     expect(switchWorkspace).toHaveBeenCalledWith("board")
+    expect(state.historyNotices.value.board).toBeUndefined()
   })
   const lifecycle = { identity: () => "owner", epoch: () => 1, disposed: () => false, reload: vi.fn(async () => undefined),
-    syncNow: vi.fn(async () => { state.configs.value[0]!.policyRevision = 2 }) }
+    syncNow: vi.fn(async () => {
+      expect(state.historyNotices.value.board).toBeUndefined()
+      expect(state.historyNotices.value.other).toBe("Other workspace completion")
+      state.configs.value[0]!.policyRevision = 2
+    }) }
   const compact = createHistoryCompactionAction({ getActiveDoc: () => ({ id: "board" }), switchWorkspace } as unknown as Parameters<typeof createHistoryCompactionAction>[0], state,
     { captureSession: () => guard } as unknown as Parameters<typeof createHistoryCompactionAction>[2],
     lifecycle as Parameters<typeof createHistoryCompactionAction>[3], new Set())
@@ -36,6 +43,7 @@ it("Given reactive Rusty settings, when syncing advances their policy, then arch
   expect(coordinate).toHaveBeenCalledWith(expect.objectContaining({ config: { ...config, policyRevision: 2 } }))
   expect(() => structuredClone(coordinate.mock.calls[0]![0].config)).not.toThrow()
   expect(state.busy.value).toBe(false)
+  expect(state.historyNotices.value.board).toBe("Older history archived. Previous versions remain available.")
 })
 
 it.each([true, false])("Given own upload advances Rusty after a pull, when caught-up=%s, then confirm a final pull before recording the admitted cursor fence", async caughtUp => {

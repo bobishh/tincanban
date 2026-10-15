@@ -14,7 +14,7 @@ export function createReplicationState() {
     currentDeviceId: ref(""),
     statuses: ref<Record<string, ReplicaHealth>>({}), now: ref(Date.now()),
     attachmentCoverage: ref<Record<string, AttachmentCoverageStatus[]>>({}),
-    busy: ref(false), error: ref(""), notice: ref(""),
+    busy: ref(false), error: ref(""), notice: ref(""), historyNotices: ref<Record<string, string>>({}),
   }
 }
 
@@ -32,6 +32,7 @@ export function clearReplicationSessionState(state: ReturnType<typeof createRepl
   state.attachmentCoverage.value = {}
   state.error.value = ""
   state.notice.value = ""
+  state.historyNotices.value = {}
 }
 
 export type PrivateReplicationState = ReturnType<typeof createReplicationState>

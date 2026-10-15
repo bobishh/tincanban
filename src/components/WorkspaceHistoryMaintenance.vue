@@ -5,8 +5,7 @@ import type { BlindReplicationController } from "../app/blindReplication"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
 const busy = ref(false)
 const error = ref("")
-const notice = computed(() => props.controller.notice.value === "Older history archived. Previous versions remain available."
-  ? props.controller.notice.value : "")
+const notice = computed(() => props.controller.historyNotices.value[props.workspaceId] ?? "")
 
 function presentError(cause: unknown) {
   if ((cause instanceof DOMException && cause.name === "QuotaExceededError") ||

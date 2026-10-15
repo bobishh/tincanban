@@ -119,6 +119,46 @@ describe("received history baseline activation", () => {
     await expect(storage.loadWorkspaceDoc("history-workspace")).resolves.toMatchObject({ doc: { title: "Incoming basis" } })
   })
 
+  it("Given a borrowed Native basis, when its cache entry is replaced, evicted or identity-invalidated, then keep the outstanding borrow alive without exposing stale authority", async () => {
+    const f = await setup()
+    const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
+    await f.repository.activate(stageId, f.candidate)
+    const { WorkspaceStorage } = await import("../storage")
+    const { stateRuntime } = await import("../stateContext")
+    const previousProfile = stateRuntime.currentProfile
+    stateRuntime.currentProfile = { identity: { personId: "owner" }, device: { deviceId: "device" } } as never
+    const storage = new class extends WorkspaceStorage { evict() { this.forgetReceivedHistory("history-workspace") } }()
+    const tracked = () => {
+      let alive = true
+      const candidate = Object.create(WasmVerifiedReceivedHistoryBaseline.prototype) as WasmVerifiedReceivedHistoryBaseline
+      for (const method of ["originalJson", "document", "envelope"] as const) Object.defineProperty(candidate, method, {
+        value: () => { if (!alive) throw new Error("null pointer passed to rust"); return f.candidate[method]() },
+      })
+      const free = vi.fn(() => { alive = false })
+      Object.defineProperty(candidate, "free", { value: free })
+      return { candidate, free }
+    }
+    try {
+      const first = tracked(), replacement = tracked()
+      await storage.acceptVerifiedReceivedHistoryBaseline(first.candidate, () => {})
+      const borrowed = await storage.getVerifiedReceivedHistoryBaseline("history-workspace")
+      await storage.acceptVerifiedReceivedHistoryBaseline(replacement.candidate, () => {})
+      expect(() => borrowed!.envelope()).not.toThrow()
+      expect(first.free).not.toHaveBeenCalled()
+      const nextBorrowed = await storage.getVerifiedReceivedHistoryBaseline("history-workspace")
+      expect(nextBorrowed).toBe(replacement.candidate)
+      storage.evict()
+      await expect(storage.getVerifiedReceivedHistoryBaseline("history-workspace")).resolves.toBeUndefined()
+      expect(() => nextBorrowed!.envelope()).not.toThrow()
+      expect(replacement.free).not.toHaveBeenCalled()
+      await storage.acceptVerifiedReceivedHistoryBaseline(replacement.candidate, () => {})
+      stateRuntime.currentProfile = { identity: { personId: "other" }, device: { deviceId: "other-device" } } as never
+      await expect(storage.getVerifiedReceivedHistoryBaseline("history-workspace")).resolves.toBeUndefined()
+      expect(() => nextBorrowed!.envelope()).not.toThrow()
+      expect(replacement.free).not.toHaveBeenCalled()
+    } finally { stateRuntime.currentProfile = previousProfile }
+  })
+
   it("Given a peer-admitted active basis, when Rusty repeats its exact signed baseline, then retain only the matching Rusty read route", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)

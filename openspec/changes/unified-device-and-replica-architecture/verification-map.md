@@ -177,10 +177,12 @@ The main matrix [38800806638](https://github.com/bobishh/tincanban/actions/runs/
 passed the complete-device transfer scenarios but exposed a shared attachment
 deadline: reconnecting consumed eight to nine seconds of the same ten-second
 budget needed to transfer the file. A deterministic late-session regression
-reproduces the exhausted budget. Recovery attempts may now begin within ten
-seconds and receive up to ten seconds each, bounded by an overall twenty-second
-network deadline. Expiry is checked before caching and returning bytes, with
-authority revalidated around asynchronous operations. The isolated
+reproduces the exhausted budget. Recovery attempts may begin within ten seconds.
+Each attempt has a ten-second setup allowance plus two seconds for each
+additional sequential SDK chunk; a four-chunk file gets sixteen seconds. The
+overall network deadline is recovery plus one attempt budget, at most 82 seconds
+for the existing 8 MiB file limit. Expiry is checked before caching and returning
+bytes, with authority revalidated around asynchronous operations. The isolated
 reconnect/preview/full-download WebKit scenario passed in
 20.3 seconds; exact preview and downloaded-byte assertions remain unchanged.
 
@@ -206,3 +208,45 @@ fix is claimed for that observation. The acceptance fixture now retains its
 bounded synthetic Native source input on such a trap, excluding signer seeds,
 so a recurrence can be reproduced independently of the browser. A final main
 pass remains required for the complete recovery scenarios.
+
+The subsequent main matrix [38806531629](https://github.com/bobishh/tincanban/actions/runs/38806531629)
+found a zero-argument mock signature mismatch in the new deadline regression;
+the corrected mock passes type checking. Its Rusty lifecycle traces also showed
+pending connection/removal work continuing through successful server responses
+after incidental five-second assertions expired. Those assertions now await the
+workspace's exact completed state within thirty seconds, including the durable
+server-revocation check. The two affected isolated scenarios passed together in
+21.9 seconds. Product interaction budgets and runtime code are unchanged by this
+acceptance-only repair.
+
+That matrix also exposed a completion-message race: after a successful storage
+checkpoint, ordinary background polling replaced the shared status message.
+History completion now has independent workspace-scoped state, cleared before
+the next accepted archive operation and on identity reset. Pending operations
+cannot inherit the previous success; other boards cannot display it.
+
+Full private-backup acceptance allows sixty seconds for the whole archive
+download, consistently with the two-generation scenario. The failed hosted
+traces showed continued transport work without a backup error; relay pings were
+286–366ms to the US and 737–820ms to Europe. This bound does not change product
+interaction limits, application I/O deadlines, complete-coverage verification,
+offline restoration or missing-object assertions. The four-chunk reconnect
+regression separately verifies that progressive transfers can complete after a
+late replacement session under the size-aware network deadline.
+
+The final two-generation device scenario then exposed a Native handle ownership
+race: cache replacement freed a baseline wrapper still borrowed by an operation
+across an await. A deterministic storage regression reproduces the null-pointer
+failure. Cache replacement, eviction and identity changes now drop only their
+cache reference; generated wasm-bindgen finalization releases an unreachable
+wrapper after its borrowers finish. The cache retains at most eight entries,
+identity changes still invalidate new lookups, and live authority guards remain
+required. Independently owned temporary verification handles still use explicit
+release. This fix does not establish the cause of the earlier unreproduced WASM
+capacity-overflow observation.
+
+After these fixes, isolated WebKit completed credential-free backup and offline
+restore, including unavailable-object and capacity failures. The complete
+two-generation enrollment/owner-closed original-version restore passed in 35.9
+seconds (`/tmp/tincanban-final-history-borrow-fixed.log`). Exact hosted CI and
+deployed-cohort verification remain required independently of those local proofs.

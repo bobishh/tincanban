@@ -99,6 +99,23 @@ async function fixture() {
 const file: BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"A".repeat(43)}`,
   name: "private.txt", mediaType: "text/plain", size: 2 }
 
+it("Given confirmed history completion, when background synchronization starts and finishes, then retain its workspace notice", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await controller.syncNow()
+  const message = "Older history archived. Previous versions remain available."
+  controller.historyNotices.value[f.workspace.workspaceId] = message
+  let release!: () => void
+  runtime.workspaceSync.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const pending = controller.syncNow()
+  await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+  expect(controller.historyNotices.value).toEqual({ [f.workspace.workspaceId]: message })
+  release(); await pending
+  expect(controller.historyNotices.value).toEqual({ [f.workspace.workspaceId]: message })
+})
+
 it("Given a legacy workspace connection, when normal sync confirms writer migration, then construct and display the replica with the new causal credentials", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)

@@ -7,11 +7,12 @@ import { defaultStorage } from "../storage"
 
 export function createHistoryCompactionAction(tincanban: ReturnType<typeof useTincanban>, state: PrivateReplicationState,
   runtime: ReturnType<typeof createPrivateReplicaRuntime>, lifecycle: ReplicationLifecycle, automaticHistoryCompactions: Set<string>) {
-  const { configs, busy, error, notice } = state
+  const { configs, busy, error, notice, historyNotices } = state
   return async function compactWorkspaceHistory(workspaceId: string): Promise<void> {
     if (busy.value) throw new Error("Wait for current Rusty sync to finish")
     const owner = lifecycle.identity(), epoch = lifecycle.epoch(), guard = runtime.captureSession(workspaceId, owner, epoch)
     guard()
+    delete historyNotices.value[workspaceId]
     await lifecycle.syncNow()
     guard()
     if (error.value) throw new Error(error.value)
@@ -82,6 +83,7 @@ export function createHistoryCompactionAction(tincanban: ReturnType<typeof useTi
       await defaultStorage.completeHistoryTransition(workspaceId, transition.transitionId)
       guard()
       notice.value = "Older history archived. Previous versions remain available."
+      historyNotices.value[workspaceId] = notice.value
     } catch (cause) {
       await recoverHistoryCaptureConflict(cause, { owner, config, workspaceId, attemptId,
         transitionId: pendingTransition?.transitionId, guard })

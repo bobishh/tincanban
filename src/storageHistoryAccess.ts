@@ -43,7 +43,8 @@ export abstract class StorageHistoryAccess extends StorageDeltaAccess {
   private verifiedReceivedHistory = new Map<string, VerifiedHistory>()
 
   protected forgetReceivedHistory(workspaceId: string) {
-    this.verifiedReceivedHistory.get(workspaceId)?.candidate.free()
+    // Readers borrow this wrapper across awaits. Drop only the cache reference;
+    // wasm-bindgen finalization owns release once every borrower is unreachable.
     this.verifiedReceivedHistory.delete(workspaceId)
   }
 
@@ -92,8 +93,6 @@ export abstract class StorageHistoryAccess extends StorageDeltaAccess {
     const personId = stateRuntime.currentProfile?.identity.personId, deviceId = stateRuntime.currentProfile?.device.deviceId
     const captured = await captureNativeHistory(candidate)
     await assertActiveHistory(captured, ensureCurrent)
-    const previous = this.verifiedReceivedHistory.get(captured.workspaceId)
-    if (previous?.candidate !== captured.candidate) previous?.candidate.free()
     this.verifiedReceivedHistory.delete(captured.workspaceId)
     this.verifiedReceivedHistory.set(captured.workspaceId, { baselineId: captured.baselineId, candidate: captured.candidate, personId, deviceId })
     while (this.verifiedReceivedHistory.size > 8) this.forgetReceivedHistory(this.verifiedReceivedHistory.keys().next().value!)
