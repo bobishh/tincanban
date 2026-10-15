@@ -28,7 +28,7 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   const original = session("old"), replacement = session("new")
   let currentSession = original
   const blob = { read: vi.fn(async () => undefined),
-    write: vi.fn(async (_descriptor: meshBlob.BlobDescriptor, _bytes: Uint8Array) => {}) }
+    write: vi.fn<(descriptor: meshBlob.BlobDescriptor, bytes: Uint8Array) => Promise<void>>(async () => {}) }
   let requestCount = 0
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
     _descriptor, options) => {
