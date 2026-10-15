@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import * as meshBlob from "@meta-uber/mesh-blob"
 import { afterEach, expect, it, vi } from "vitest"
 import type { LocalProfile } from "../domain/identity"
@@ -26,7 +27,8 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   const authority = { profile: {} as LocalProfile, identity: "identity", credential: "credential", transportSecret: "secret" }
   const original = session("old"), replacement = session("new")
   let currentSession = original
-  const blob = { read: vi.fn(async () => undefined), write: vi.fn(async () => {}) }
+  const blob = { read: vi.fn(async () => undefined),
+    write: vi.fn(async (_descriptor: meshBlob.BlobDescriptor, _bytes: Uint8Array) => {}) }
   let requestCount = 0
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
     _descriptor, options) => {
@@ -61,6 +63,10 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   await vi.advanceTimersByTimeAsync(12_000)
   const result = await outcome
   if ("error" in result) throw result.error
-  expect(result.value).toEqual(bytes)
-  expect(blob.write).toHaveBeenCalledExactlyOnceWith(descriptor, bytes)
+  if (!result.value) throw new Error("Transfer returned no verified bytes")
+  expect(Buffer.from(result.value).equals(Buffer.from(bytes))).toBe(true)
+  expect(blob.write).toHaveBeenCalledOnce()
+  const [cachedDescriptor, cachedBytes] = blob.write.mock.calls[0]!
+  expect(cachedDescriptor).toEqual(descriptor)
+  expect(Buffer.from(cachedBytes).equals(Buffer.from(bytes))).toBe(true)
 })

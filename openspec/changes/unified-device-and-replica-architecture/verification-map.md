@@ -309,3 +309,9 @@ locally created card. Worker correctly reported no matching application. The
 fixture now explicitly syncs before mail submission; its unchanged missing-source
 and unchanged-Applied assertions pass in the isolated browser case. No matcher,
 review reason or production code was changed by either acceptance repair.
+
+The isolated case also exposed assertion overhead: generic deep equality over
+960,000-byte typed arrays took about 1.5 seconds locally. Keeping the same full
+byte comparisons through native `Buffer.equals` reduces the case to 4 ms. Cache
+descriptor equality and exactly one write remain asserted separately. No byte
+sampling, shorter attachment or larger outer timeout replaces the original proof.
