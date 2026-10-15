@@ -78,6 +78,16 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
       - name: Seal the compatible cohort and protected reader floors
         run: node scripts/release-coordinator.mjs prepare .release "$RELEASE_SHA"
+      - name: Require successful verification of the exact shared SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_sha=$(node -p "JSON.parse(require('fs').readFileSync('.release/cohort.json', 'utf8')).components.frontend.sdkSha")
+          [[ "$sdk_sha" =~ ^[a-f0-9]{40}$ ]]
+          sdk_run=$(gh api --method GET repos/bobishh/meta-mesh/actions/workflows/ci.yml/runs -f head_sha="$sdk_sha" -f status=success -f event=push -f branch=main -f per_page=20 --jq '.workflow_runs[] | select(.head_repository.full_name == "bobishh/meta-mesh" and .head_sha == "'"$sdk_sha"'") | .id' | head -n 1)
+          [[ "$sdk_run" =~ ^[0-9]+$ ]]
+          SDK_SHA="$sdk_sha" SDK_RUN="$sdk_run" node -e "require('fs').writeFileSync('.release/sdk-verification.json', JSON.stringify({repository:'bobishh/meta-mesh',sourceSha:process.env.SDK_SHA,runId:process.env.SDK_RUN}) + '\\n')"
+          printf 'Verified SDK %s in run %s\n' "$sdk_sha" "$sdk_run"
       - name: Prepare the existing Rusty host transport
         env:
           RUSTY_DEPLOY_SSH_KEY: ${{ secrets.RUSTY_DEPLOY_SSH_KEY }}

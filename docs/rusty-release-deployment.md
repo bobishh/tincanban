@@ -8,6 +8,11 @@ proxy, service environment, ClickHouse accessory, and named storage volume. The
 release coordinator checks the running image's registry digest and then verifies
 Rusty's reported source commit and executable SHA-256 before activating Workers.
 
+Before staging or activating production, CI requires a successful main verification
+run for the cohort's exact SDK commit and retains its repository, commit and run
+ID with the activation artifacts. Rusty's image is separately selected from the
+exact successful main run for the pinned service commit.
+
 The repository workflow requires these external settings:
 
 - `RUSTY_DEPLOY_SPEC` repository variable: JSON with `kind: "kamal"`,
