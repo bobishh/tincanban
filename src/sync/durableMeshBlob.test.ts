@@ -143,6 +143,57 @@ it("Given a blob request on a closing peer session, when a replacement session b
   } finally { await f.close() }
 })
 
+it("Given a replacement arrives near the recovery limit, when its blob transfer starts, then it receives a fresh bounded attempt budget", async () => {
+  const f = await fixture()
+  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementationOnce((_connection, _secret, _profile, _scope,
+    _descriptor, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
+    })).mockResolvedValueOnce(fileBytes)
+  vi.useFakeTimers()
+  try {
+    const startedAt = Date.now()
+    const pending = f.mesh.fetchBlob(f.workspaceId, f.descriptor)
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(9_000)
+    const replacement = f.replaceSession()
+    await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+
+    expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
+    const retryDeadline = request.mock.calls[1]?.[5]?.deadlineAt
+    if (typeof retryDeadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
+    expect(retryDeadline - Date.now()).toBeGreaterThanOrEqual(9_000)
+    expect(retryDeadline).toBeLessThanOrEqual(startedAt + 20_000)
+    await expect(pending).resolves.toEqual(fileBytes)
+  } finally {
+    vi.useRealTimers()
+    await f.close()
+  }
+})
+
+it("Given recovery time is exhausted, when a session appears later, then do not start another transfer attempt", async () => {
+  const f = await fixture()
+  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
+    _descriptor, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
+    }))
+  vi.useFakeTimers()
+  try {
+    const pending = f.mesh.fetchBlob(f.workspaceId, f.descriptor)
+    const rejected = expect(pending).rejects.toThrow(/deadline|session changed/i)
+    await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(10_000)
+    f.replaceSession()
+    await vi.advanceTimersByTimeAsync(300)
+
+    expect(request).toHaveBeenCalledOnce()
+    await rejected
+    expect(f.blob.write).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+    await f.close()
+  }
+})
+
 it("Given a network failure arrives before session eviction, when a replacement is published later, then retry the attachment within the original deadline", async () => {
   const f = await fixture()
   const request = vi.spyOn(meshBlob, "requestBlob").mockRejectedValueOnce(new MeshNetworkError("connection lost"))
@@ -295,6 +346,39 @@ it("Given a request reaches the overall deadline, when its SDK attempt aborts, t
     await rejected
     expect(f.blob.write).not.toHaveBeenCalled()
   } finally {
+    vi.useRealTimers()
+    await f.close()
+  }
+})
+
+it("Given authority validation stalls past the transfer deadline, when it resumes, then do not cache returned bytes", async () => {
+  const f = await fixture()
+  const validationStarted = deferred<void>()
+  const resumeValidation = deferred<void>()
+  let credentialReads = 0
+  const readCredential = f.store.getWorkspaceCredential.getMockImplementation()!
+  f.store.getWorkspaceCredential.mockImplementation(async workspaceId => {
+    const credential = await readCredential(workspaceId)
+    credentialReads += 1
+    if (credentialReads === 3) {
+      validationStarted.resolve()
+      await resumeValidation.promise
+    }
+    return credential
+  })
+  vi.spyOn(meshBlob, "requestBlob").mockResolvedValue(fileBytes)
+  vi.useFakeTimers()
+  try {
+    const pending = f.mesh.fetchBlob(f.workspaceId, f.descriptor)
+    const rejected = expect(pending).rejects.toThrow(/deadline/i)
+    await validationStarted.promise
+    await vi.advanceTimersByTimeAsync(10_001)
+    resumeValidation.resolve()
+
+    await rejected
+    expect(f.blob.write).not.toHaveBeenCalled()
+  } finally {
+    resumeValidation.resolve()
     vi.useRealTimers()
     await f.close()
   }

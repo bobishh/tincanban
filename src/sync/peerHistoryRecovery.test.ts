@@ -86,6 +86,35 @@ it("Given every Native catalogue record kind, when exporting, then traverse cont
   }
 })
 
+it("Given independent signed catalogue leaves, when exporting over a delayed peer, then pipeline at most four reads while yielding the same canonical evidence", async () => {
+  const f = await completeFixture(), expected = []
+  for await (const part of createPeerHistoryRecoveryEvidence([f.source], () => {}).evidence) expected.push(part)
+  let active = 0, peak = 0
+  const delayed = { ...f.source, read: async (id: string, binding: { indexId: string }) => {
+    active++; peak = Math.max(peak, active)
+    try { await new Promise(resolve => setTimeout(resolve, 2)); return await f.source.read(id, binding) }
+    finally { active-- }
+  } }
+  const actual = []
+  for await (const part of createPeerHistoryRecoveryEvidence([delayed], () => {}).evidence) actual.push(part)
+  expect(peak).toBeGreaterThan(1)
+  expect(peak).toBeLessThanOrEqual(4)
+  expect(active).toBe(0)
+  expect(actual).toEqual(expected)
+})
+
+it("Given access is revoked during a queued leaf batch, when reads settle, then reject before yielding their cached plaintext", async () => {
+  const f = await completeFixture()
+  let current = true, records = 0
+  const archive = createPeerHistoryRecoveryEvidence([{ ...f.source, read: async (id, binding) => {
+    const bytes = await f.source.read(id, binding)
+    if (binding.objectKind === "record" && ++records === 2) current = false
+    return bytes
+  } }], () => { if (!current) throw new Error("Access revoked during batch") })
+  await expect(drain(archive.evidence)).rejects.toThrow("Access revoked during batch")
+  expect(archive.missingObjects()).toEqual([])
+})
+
 it("Given an entity version pointing outside its original catalogue change, when exporting, then refuse the corrupt reference", async () => {
   const f = await completeFixture(true), archive = createPeerHistoryRecoveryEvidence([f.source], () => {})
   await expect(drain(archive.evidence))

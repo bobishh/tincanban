@@ -202,7 +202,9 @@ jobs:
   browser-policy:
     name: Browser (production policy/transport packaging)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The full mobile WebKit matrix reaches this job only after browser setup and
+    # three policy scenarios; retain all 80 cases instead of timing out mid-shard.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:

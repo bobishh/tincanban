@@ -3,6 +3,7 @@ import { captureArchiveBytesReference, readArchiveIndexPage, validateArchiveObje
   type ArchiveTreeContext } from "@meta-uber/mesh-replication/history-archive"
 import { canonicalizeJson, sha256Base64Url, toBase64Url } from "../domain/identity"
 import type { HistoryRecoveryEvidencePart } from "./historyRecoveryArchive"
+import { PeerHistoryReadAhead, type PeerHistoryReadRequest, type PeerHistoryReadResult } from "./peerHistoryReadAhead"
 
 export type PeerHistoryRecoverySource = {
   workspaceId: string; baselineId: string; signedJson: Uint8Array
@@ -101,8 +102,10 @@ class PeerHistorySourceExport {
   readonly processedChanges = new Set<string>()
   readonly context: ArchiveTreeContext
   readonly store: ArchiveObjectStore
+  readonly readAhead: PeerHistoryReadAhead
   constructor(readonly source: PeerHistoryRecoverySource, readonly payload: SourcePayload, readonly budget: ExportBudget) {
     this.context = payload.archive.context
+    this.readAhead = new PeerHistoryReadAhead(requests => this.readSources(requests))
     this.store = { read: (id, maximumBytes, binding) => this.read(id, maximumBytes, binding),
       async write() { throw new Error("Private history export cannot write to a peer archive") } }
   }
@@ -112,19 +115,50 @@ class PeerHistorySourceExport {
     await this.budget.ensureCurrent()
     validateArchiveObjectId(objectId)
     assertReadBinding(this.source, this.payload, maximumBytes, binding)
-    const result = await this.source.read(objectId, structuredClone(binding!))
-    const bytes = result instanceof Uint8Array ? result.slice() : undefined
+    const request = { objectId, maximumBytes, binding: binding! }
+    const prefetched = this.readAhead.take(request)
+    const bytes = prefetched.found ? prefetched.bytes : await this.readSource(request)
     await this.budget.ensureCurrent()
-    if (result === undefined) this.budget.unavailable(this.source.baselineId, objectId)
-    if (!bytes || bytes.length > maximumBytes || await sha256Base64Url(bytes) !== objectId) {
-      throw new Error("Peer history recovery object hash integrity failure")
-    }
-    await this.budget.ensureCurrent()
+    if (bytes === undefined) this.budget.unavailable(this.source.baselineId, objectId)
     this.budget.retain(`${this.source.baselineId}:${objectId}`, bytes, this.pending)
     return bytes
   }
+  private async readSource(request: PeerHistoryReadRequest): Promise<Uint8Array | undefined> {
+    const result = (await this.readSources([request]))[0]!
+    if (result.failed) throw result.error
+    return result.bytes
+  }
+  private async readSources(requests: PeerHistoryReadRequest[]): Promise<PeerHistoryReadResult[]> {
+    await this.budget.ensureCurrent()
+    for (const { objectId, maximumBytes, binding } of requests) {
+      validateArchiveObjectId(objectId)
+      assertReadBinding(this.source, this.payload, maximumBytes, binding)
+    }
+    // Snapshot every response before any asynchronous host guard can mutate a
+    // sibling's returned buffer. All requests settle before the guard resumes.
+    const results = await Promise.all(requests.map(async ({ objectId, maximumBytes, binding }): Promise<PeerHistoryReadResult> => {
+      try {
+        const result = await this.source.read(objectId, structuredClone(binding))
+        if (result !== undefined && (!(result instanceof Uint8Array) || result.length > maximumBytes)) throw new Error("Peer history recovery object hash integrity failure")
+        return { failed: false, bytes: result?.slice() }
+      } catch (error) { return { failed: true, error } }
+    }))
+    await this.budget.ensureCurrent()
+    for (const [index, result] of results.entries()) {
+      if (result.bytes && await sha256Base64Url(result.bytes) !== requests[index]!.objectId) {
+        results[index] = { failed: true, error: new Error("Peer history recovery object hash integrity failure") }
+      }
+    }
+    await this.budget.ensureCurrent()
+    return results
+  }
+  private recordRead(entry: IndexEntry): PeerHistoryReadRequest {
+    return { objectId: entry.objectId, maximumBytes: 64 * 1024,
+      binding: { ...this.context, objectKind: "record", partIndex: 0, partCount: 1 } }
+  }
   // DFS retains at most one bounded page per level and continues available siblings.
-  async *indexEntries(context: ArchiveTreeContext, root: ArchiveIndexRoot, progress: IndexProgress = { complete: true, count: 0 }): AsyncGenerator<IndexEntry> {
+  async *indexEntries(context: ArchiveTreeContext, root: ArchiveIndexRoot, progress: IndexProgress = { complete: true, count: 0 },
+    readAhead?: (entry: IndexEntry) => PeerHistoryReadRequest): AsyncGenerator<IndexEntry> {
     assertRoot(root)
     const stack = [structuredClone(root)]
     while (stack.length) {
@@ -134,7 +168,11 @@ class PeerHistorySourceExport {
       try { page = await readArchiveIndexPage(context, pointer, this.store) }
       catch (error) { if (!(error instanceof MissingPeerObject)) throw error; progress.complete = false; continue }
       if ("entries" in page) {
-        for (const entry of page.entries) { this.budget.visitEntry(); progress.count++; yield entry }
+        for (let offset = 0; offset < page.entries.length; offset += 4) {
+          const entries = page.entries.slice(offset, offset + 4)
+          if (readAhead) await this.readAhead.batch(entries.map(readAhead))
+          for (const entry of entries) { this.budget.visitEntry(); progress.count++; yield entry }
+        }
       } else for (let index = page.children.length - 1; index >= 0; index--) stack.push(page.children[index]!)
     }
     if (progress.complete && progress.count !== root.count) throw new Error("Peer history index count differs from its root")
@@ -155,7 +193,10 @@ class PeerHistorySourceExport {
     if (this.byteTrees.size > MAX_OBJECTS || reference.byteLength > MAX_BYTES) throw new Error("Peer history byte tree exceeds its bound")
     let previous = -1
     const progress = { complete: true, count: 0 }
-    for await (const entry of this.indexEntries(this.child(indexId), reference.root, progress)) {
+    for await (const entry of this.indexEntries(this.child(indexId), reference.root, progress, entry => ({
+      objectId: entry.objectId, maximumBytes: 256 * 1024, binding: { ...this.child(indexId), objectKind: "part",
+        partIndex: archivePartIndex(entry, -1, reference), partCount: reference.partCount },
+    }))) {
       yield* this.flush()
       const index = archivePartIndex(entry, previous, reference)
       previous = index
@@ -177,7 +218,8 @@ class PeerHistorySourceExport {
     this.processedChanges.add(id)
     yield* this.byteTree(`change/${id}/bytes`, value.bytes)
     yield* this.byteTree(`change/${id}/dependencies`, value.dependencies)
-    for await (const proof of this.indexEntries(this.child(`change/${id}/authorizations`), value.authorizations as ArchiveIndexRoot)) {
+    for await (const proof of this.indexEntries(this.child(`change/${id}/authorizations`), value.authorizations as ArchiveIndexRoot,
+      undefined, entry => this.recordRead(entry))) {
       yield* this.flush()
       if (!/^[a-f0-9]{16}$/.test(proof.key)) throw new Error("Invalid peer original proof key")
       const reference = await this.record(proof.objectId)
@@ -188,7 +230,7 @@ class PeerHistorySourceExport {
   async *entityVersions(entry: IndexEntry, value: Record<string, unknown>, catalogueProgress: IndexProgress): AsyncGenerator<HistoryRecoveryEvidencePart> {
     const context = this.child(`${entry.key}/versions`)
     await assertEntityIndex(entry, value, context)
-    for await (const version of this.indexEntries(context, value.root as ArchiveIndexRoot)) {
+    for await (const version of this.indexEntries(context, value.root as ArchiveIndexRoot, undefined, entry => this.recordRead(entry))) {
       yield* this.flush()
       const match = /^([a-f0-9]{16})\/([a-f0-9]{64})$/.exec(version.key)
       const known = match ? this.capturedRecords.get(match[2]!) : undefined
@@ -220,7 +262,7 @@ class PeerHistorySourceExport {
     yield* parts("peer-history-source", this.source.baselineId, encoder.encode(canonicalizeJson({ version: 1,
       workspaceId: this.source.workspaceId, baselineId: this.source.baselineId, signedJson: toBase64Url(this.source.signedJson) })))
     const progress = { complete: true, count: 0 }
-    for await (const entry of this.indexEntries(this.context, this.payload.archive.root, progress)) {
+    for await (const entry of this.indexEntries(this.context, this.payload.archive.root, progress, entry => this.recordRead(entry))) {
       yield* this.flush()
       yield* this.catalogueEntry(entry, progress)
     }

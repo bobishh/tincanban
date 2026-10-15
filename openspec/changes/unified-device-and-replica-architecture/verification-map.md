@@ -172,3 +172,37 @@ private connection transfer with local progress retained, incompatible-component
 rejection, and other-person credential isolation passed through actual browser
 flows. The application-source binding suite passed all five retained-event
 cases (`/tmp/tincanban-app-source-binding-final`).
+
+The main matrix [38800806638](https://github.com/bobishh/tincanban/actions/runs/38800806638)
+passed the complete-device transfer scenarios but exposed a shared attachment
+deadline: reconnecting consumed eight to nine seconds of the same ten-second
+budget needed to transfer the file. A deterministic late-session regression
+reproduces the exhausted budget. Recovery attempts may now begin within ten
+seconds and receive up to ten seconds each, bounded by an overall twenty-second
+network deadline. Expiry is checked before caching and returning bytes, with
+authority revalidated around asynchronous operations. The isolated
+reconnect/preview/full-download WebKit scenario passed in
+20.3 seconds; exact preview and downloaded-byte assertions remain unchanged.
+
+That matrix's production-packaging job exhausted its ten-minute job allowance
+after sixty of eighty passing mobile WebKit cases. Its job allowance is twenty
+minutes; scenario counts and interaction limits remain unchanged. Address-only
+Rusty connection acceptance now waits for the board's completed sync state after
+discovery, preserving the same exact-state assertion. These repairs require a
+new successful main matrix before production activation.
+
+Backup profiling on that failure path isolated 87 sequential peer object reads
+taking 18.656 seconds of a 21.027-second export; encrypting 89 records took 38ms.
+Live signing, journal-revision and private-preference guards together took about
+two seconds, so their validation remains intact. Known leaf objects now load in
+batches of at most four with at most 2 MiB reserved for read-ahead. Responses are
+copied before asynchronous host guards, hash-checked and consumed in the original
+canonical order. Missing objects, changed authority, mutable source buffers and
+exact request bindings remain covered by focused negative tests.
+
+The same hosted WebKit job also recorded a Native WASM capacity-overflow trap
+during history preparation. Isolated repetitions have not reproduced it; no SDK
+fix is claimed for that observation. The acceptance fixture now retains its
+bounded synthetic Native source input on such a trap, excluding signer seeds,
+so a recurrence can be reproduced independently of the browser. A final main
+pass remains required for the complete recovery scenarios.

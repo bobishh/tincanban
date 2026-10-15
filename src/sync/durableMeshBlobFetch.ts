@@ -9,6 +9,27 @@ type BlobCache = {
   write(descriptor: BlobDescriptor, bytes: Uint8Array): Promise<void>
 }
 
+type BlobFetchInput = {
+  workspaceId: string
+  descriptor: BlobDescriptor
+  blob: BlobCache
+  readAuthority(): Promise<BlobAuthoritySnapshot>
+  sessions(): SessionEntry[]
+  isCurrent(entry: SessionEntry, runId: number): boolean
+  currentRunId(): number
+  isRunning(): boolean
+}
+
+type BlobAttemptResult = { kind: "success"; bytes: Uint8Array } | {
+  kind: "failure"
+  error: unknown
+  sessionReplaced: boolean
+  retryNetwork: boolean
+}
+
+const MAX_BLOB_RECOVERY_MS = 10_000
+const MAX_BLOB_ATTEMPT_MS = 10_000
+
 class BlobFetchAuthorityChanged extends Error {
   constructor(message: string, options?: ErrorOptions) { super(message, options) }
 }
@@ -25,26 +46,21 @@ export type BlobAuthoritySnapshot = {
 }
 
 /** Fetch from a current peer session, and cache only bytes returned under unchanged local authority. */
-export async function fetchBlobFromCurrentSessions(input: {
-  workspaceId: string
-  descriptor: BlobDescriptor
-  blob: BlobCache
-  readAuthority(): Promise<BlobAuthoritySnapshot>
-  sessions(): SessionEntry[]
-  isCurrent(entry: SessionEntry, runId: number): boolean
-  currentRunId(): number
-  isRunning(): boolean
-}): Promise<Uint8Array | undefined> {
+export async function fetchBlobFromCurrentSessions(input: BlobFetchInput): Promise<Uint8Array | undefined> {
   const descriptor = structuredClone(input.descriptor)
   const runId = input.currentRunId()
   const local = await input.blob.read(descriptor)
   if (local) return local
 
-  const deadline = Date.now() + 10_000
+  const recoveryDeadline = Date.now() + MAX_BLOB_RECOVERY_MS
+  const hardDeadline = recoveryDeadline + MAX_BLOB_ATTEMPT_MS
   assertRuntime(input, runId)
   const originalAuthority = await input.readAuthority()
   let lastError: unknown
-  while (Date.now() < deadline) {
+  while (Date.now() < hardDeadline) {
+    // Retries may begin only during the bounded recovery window. A request already
+    // started before this point may finish under its own bounded attempt deadline.
+    if (Date.now() >= recoveryDeadline) break
     assertRuntime(input, runId)
     const before = await readUnchangedAuthority(input, originalAuthority)
     const sessions = input.sessions()
@@ -56,49 +72,14 @@ export async function fetchBlobFromCurrentSessions(input: {
     let replaced = false
     let retryNetwork = false
     for (const entry of sessions) {
+      if (Date.now() >= recoveryDeadline) break
       if (!input.isCurrent(entry, runId)) { replaced = true; continue }
-      const controller = new AbortController()
-      const stopMonitor = monitorBlobAttempt(input, entry, runId, originalAuthority, controller)
-      try {
-        const ensureCurrent = async () => {
-          if (controller.signal.aborted) throw controller.signal.reason
-          if (Date.now() >= deadline) throw new Error("Blob transfer deadline exceeded")
-          assertRuntime(input, runId)
-          await readUnchangedAuthority(input, originalAuthority)
-          if (!input.isCurrent(entry, runId)) throw new BlobFetchSessionReplaced()
-        }
-        const signing = await blobRequestSigning(before.profile, input.workspaceId, descriptor.blobId, async () => {
-          await ensureCurrent()
-          return JSON.stringify([originalAuthority.identity, originalAuthority.credential, runId, entry.connectionId])
-        })
-        const bytes = await requestBlob(entry.connection, before.transportSecret, before.profile,
-          input.workspaceId, descriptor, {
-            signing,
-            signal: controller.signal,
-            deadlineAt: deadline,
-            ensureCurrent,
-          } satisfies RequestBlobOptions)
-        assertRuntime(input, runId)
-        await readUnchangedAuthority(input, originalAuthority)
-        if (!input.isCurrent(entry, runId)) { replaced = true; continue }
-        // The blob store has no compare-and-write/remove primitive. If authority changes
-        // while this awaited write commits, the post-write guards prevent a stale return,
-        // but cannot roll back bytes already committed by the store.
-        await input.blob.write(descriptor, bytes)
-        assertRuntime(input, runId)
-        await readUnchangedAuthority(input, originalAuthority)
-        if (!input.isCurrent(entry, runId)) throw new BlobFetchAuthorityChanged("Mesh session changed while caching blob")
-        return bytes
-      } catch (error) {
-        if (error instanceof BlobFetchAuthorityChanged) throw error
-        assertRuntime(input, runId)
-        await readUnchangedAuthority(input, originalAuthority)
-        lastError = error
-        if (!input.isCurrent(entry, runId)) replaced = true
-        if (error instanceof MeshNetworkError) retryNetwork = true
-      } finally {
-        stopMonitor()
-      }
+      const attemptDeadline = Math.min(hardDeadline, Date.now() + MAX_BLOB_ATTEMPT_MS)
+      const result = await attemptBlobSession(input, entry, descriptor, before, originalAuthority, runId, attemptDeadline, hardDeadline)
+      if (result.kind === "success") return result.bytes
+      lastError = result.error
+      replaced = replaced || result.sessionReplaced
+      retryNetwork = retryNetwork || result.retryNetwork
     }
     if (replaced) continue
     if (retryNetwork) {
@@ -111,6 +92,59 @@ export async function fetchBlobFromCurrentSessions(input: {
 
   if (lastError) throw lastError
   throw new Error("No connected peer can provide this file")
+}
+
+async function attemptBlobSession(input: BlobFetchInput, entry: SessionEntry, descriptor: BlobDescriptor,
+  profileAndSecret: BlobAuthoritySnapshot, originalAuthority: BlobAuthoritySnapshot, runId: number,
+  attemptDeadline: number, hardDeadline: number): Promise<BlobAttemptResult> {
+  const controller = new AbortController()
+  const stopMonitor = monitorBlobAttempt(input, entry, runId, originalAuthority, controller)
+  try {
+    const ensureCurrent = async () => {
+      if (controller.signal.aborted) throw controller.signal.reason
+      if (Date.now() >= attemptDeadline || Date.now() >= hardDeadline) throw new Error("Blob transfer deadline exceeded")
+      assertRuntime(input, runId)
+      await readUnchangedAuthority(input, originalAuthority)
+      if (!input.isCurrent(entry, runId)) throw new BlobFetchSessionReplaced()
+    }
+    const signing = await blobRequestSigning(profileAndSecret.profile, input.workspaceId, descriptor.blobId, async () => {
+      await ensureCurrent()
+      return JSON.stringify([originalAuthority.identity, originalAuthority.credential, runId, entry.connectionId])
+    })
+    const bytes = await requestBlob(entry.connection, profileAndSecret.transportSecret, profileAndSecret.profile,
+      input.workspaceId, descriptor, {
+        signing,
+        signal: controller.signal,
+        deadlineAt: attemptDeadline,
+        ensureCurrent,
+      } satisfies RequestBlobOptions)
+    assertRuntime(input, runId)
+    await readUnchangedAuthority(input, originalAuthority)
+    if (Date.now() >= attemptDeadline || Date.now() >= hardDeadline) throw new Error("Blob transfer deadline exceeded")
+    if (!input.isCurrent(entry, runId)) {
+      return { kind: "failure", error: new BlobFetchSessionReplaced(), sessionReplaced: true, retryNetwork: false }
+    }
+    // The blob store has no compare-and-write/remove primitive. If authority changes
+    // while this awaited write commits, the post-write guards prevent a stale return,
+    // but cannot roll back bytes already committed by the store.
+    await input.blob.write(descriptor, bytes)
+    assertRuntime(input, runId)
+    if (Date.now() >= attemptDeadline || Date.now() >= hardDeadline) throw new Error("Blob transfer deadline exceeded")
+    await readUnchangedAuthority(input, originalAuthority)
+    if (Date.now() >= attemptDeadline || Date.now() >= hardDeadline) throw new Error("Blob transfer deadline exceeded")
+    if (!input.isCurrent(entry, runId)) throw new BlobFetchAuthorityChanged("Mesh session changed while caching blob")
+    return { kind: "success", bytes }
+  } catch (error) {
+    if (error instanceof BlobFetchAuthorityChanged) throw error
+    assertRuntime(input, runId)
+    await readUnchangedAuthority(input, originalAuthority)
+    return {
+      kind: "failure", error, sessionReplaced: !input.isCurrent(entry, runId),
+      retryNetwork: error instanceof MeshNetworkError,
+    }
+  } finally {
+    stopMonitor()
+  }
 }
 
 function monitorBlobAttempt(

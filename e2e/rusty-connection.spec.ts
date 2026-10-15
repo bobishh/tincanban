@@ -39,7 +39,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await panel.getByLabel("Address", { exact: true }).fill(origin)
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible()
+    await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText(/^Last sync:/)).toBeVisible()
     await expect(page.locator(".brand-mark")).toHaveClass(/is-connected/)
     await expect(page.locator(".brand-mark")).toHaveAttribute("title", /Rusty synced at/)

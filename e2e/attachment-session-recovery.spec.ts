@@ -2,9 +2,31 @@ import { readFile } from "node:fs/promises"
 import { expect, test, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
 
 const attachmentTitle = "Session recovery file"
 const attachmentName = "session-recovery.txt"
+
+type AttachmentRecoveryGate = {
+  armed: boolean
+  started: boolean
+  held: boolean
+  resets: number
+  releaseResponse: Promise<void>
+  release(): void
+  closeConnection?: () => Promise<void>
+  firstConnection?: unknown
+  responseHeld?: boolean
+  reconnected?: boolean
+  failures?: Array<{ name?: string; message?: string }>
+}
+
+declare global {
+  interface Window {
+    __TINCANBAN_ATTACHMENT_RECOVERY_GATE__?: AttachmentRecoveryGate
+    __TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__?: string
+  }
+}
 
 async function addLead(page: Page, company: string) {
   await ensureJobSearchWorkspace(page)
@@ -57,7 +79,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     const doc = useTincanban().getActiveDoc()
     if (!doc) throw new Error("Active workspace document is missing")
     const document = Object.values(doc.entities)
-      .find((entity: any) => entity.kind === "document" && entity.title === title) as any
+      .find(entity => entity.kind === "document" && entity.title === title)
     if (!document?.file) throw new Error("Saved attachment reference is missing")
     const descriptor = (await import("/src/attachments.ts")).blobDescriptor(document.file)
     if (!descriptor) throw new Error("Saved attachment descriptor is missing")
@@ -77,14 +99,22 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     }
     const instrumented = `${source}\n;(() => {
       const originalRequestBlob = requestBlob
+      const observeRequest = async function(...args) {
+        try { return await originalRequestBlob.apply(this, args) }
+        catch (error) {
+          const gate = window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__
+          if (gate) (gate.failures ??= []).push({ message: String(error) })
+          throw error
+        }
+      }
       requestBlob = async function(connection, secret, profile, scopeId, descriptor, options) {
         const gate = window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__
         if (!gate?.armed || descriptor.name !== "${attachmentName}") {
-          return originalRequestBlob(connection, secret, profile, scopeId, descriptor, options)
+          return observeRequest.call(this, connection, secret, profile, scopeId, descriptor, options)
         }
         if (gate.started) {
           if (connection !== gate.firstConnection) gate.reconnected = true
-          return originalRequestBlob(connection, secret, profile, scopeId, descriptor, options)
+          return observeRequest.call(this, connection, secret, profile, scopeId, descriptor, options)
         }
         gate.started = true
         gate.firstConnection = connection
@@ -116,7 +146,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
             }
           }
         }
-        return originalRequestBlob(requestConnection, secret, profile, scopeId, descriptor, options)
+        return observeRequest.call(this, requestConnection, secret, profile, scopeId, descriptor, options)
       }
     })()`
     await route.fulfill({ response, body: instrumented })
@@ -130,7 +160,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
     await guest.evaluate(() => {
       let release!: () => void
       const releaseResponse = new Promise<void>(resolve => { release = resolve })
-      ;(window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__ = {
+      window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__ = {
         armed: true,
         started: false,
         held: false,
@@ -138,30 +168,35 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
         releaseResponse,
         release: () => release(),
       }
-      ;(window as any).__TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__ = "recipient route stayed mounted"
+      window.__TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__ = "recipient route stayed mounted"
     })
 
     await remoteAttachment.getByRole("button", { name: "Preview" }).click()
     const preview = guest.getByRole("dialog", { name: "Document preview" })
-    await expect.poll(() => guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.held)).toBe(true)
+    await expect.poll(() => guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.held)).toBe(true)
     await expect.poll(async () => guest.evaluate(async descriptorInput => {
       const { readStoredAttachment } = await import("/src/attachments.ts")
       return (await readStoredAttachment(descriptorInput)) !== undefined
     }, descriptor)).toBe(false)
 
     await guest.evaluate(async () => {
-      const gate = (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__
+      const gate = window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__
       if (!gate.closeConnection) throw new Error("The real stream connection was not captured")
       await gate.closeConnection()
     })
-    await expect.poll(() => guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.resets)).toBeGreaterThan(0)
-    await expect.poll(() => guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.reconnected)).toBe(true)
+    await expect.poll(() => guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.resets)).toBeGreaterThan(0)
+    await expect.poll(() => guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.reconnected)).toBe(true)
     await expect(guest.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
-    await guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__.release())
+    await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.release())
 
-    await expect(preview.locator("pre.document-preview-text")).toHaveText(expectedPreview, { timeout: 30_000 })
+    try {
+      await expect(preview.locator("pre.document-preview-text")).toHaveText(expectedPreview, { timeout: 30_000 })
+    } catch (error) {
+      const failures = await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.failures ?? [])
+      throw new Error(`Attachment preview failed after reconnect; request failures: ${JSON.stringify(failures)}`, { cause: error })
+    }
     await expect(preview.getByText("Showing the beginning of this file. Download to read the full text.", { exact: true })).toBeVisible()
-    expect(await guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__)).toBe("recipient route stayed mounted")
+    expect(await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_SENTINEL__)).toBe("recipient route stayed mounted")
     await preview.getByRole("button", { name: "Close" }).click()
 
     const downloadStarted = guest.waitForEvent("download")
@@ -178,7 +213,7 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
       return (await readStoredAttachment(descriptorInput)) !== undefined
     }, descriptor)).toBe(true)
   } finally {
-    await guest.evaluate(() => (window as any).__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.release?.()).catch(() => {})
+    await guest.evaluate(() => window.__TINCANBAN_ATTACHMENT_RECOVERY_GATE__?.release?.()).catch(() => {})
     await guestContext.close()
   }
 })
@@ -188,6 +223,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   const ownerContext = await browser.newContext()
   const editorContext = await browser.newContext({ acceptDownloads: true })
   const owner = await ownerContext.newPage()
+  await captureHistoryNativeFailures(owner, test.info())
   owner.on("console", message => {
     if (message.text().startsWith("Workspace history archiving failed:")) console.error(message.text())
   })
@@ -431,7 +467,7 @@ test("Given an owner with two archived history generations, when adding my phone
   const source = await sourceContext.newPage()
   const phone = await phoneContext.newPage()
   let workspaceRecoveryBytes: Buffer | undefined
-  let workspaceRecoveryWords = ""
+  let workspaceRecoveryWords: string
   let sourceClosed = false
   let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined
   try {
