@@ -294,3 +294,18 @@ That test now advances only its deadline clock; explicit request/chunk gates dri
 progress while WebCrypto, IndexedDB and session monitoring keep real host tasks.
 All deadline and exact cache-write assertions remain. The 22 attachment tests pass
 with coverage against this correction; production transfer behavior is unchanged.
+
+Matrix [38813996535](https://github.com/bobishh/tincanban/actions/runs/38813996535)
+still hit that integration fixture's outer timeout. Deadline regression now runs
+directly against `fetchBlobFromCurrentSessions` with pure authority/signer ports;
+it starts no mesh runtime or IndexedDB work. The other 21 mesh integration cases
+retain real certificate, signing and revocation checks. The isolated deadline case
+rejects the old ten-second attempt budget and passes the current four-chunk
+transfer, with bounded retry timing and exact cached bytes. Combined focused
+coverage still runs all 22 tests; final source quality passes.
+
+That matrix's legacy-application mail fixture also sent mail before uploading its
+locally created card. Worker correctly reported no matching application. The
+fixture now explicitly syncs before mail submission; its unchanged missing-source
+and unchanged-Applied assertions pass in the isolated browser case. No matcher,
+review reason or production code was changed by either acceptance repair.

@@ -63,6 +63,7 @@ test("Given a legacy application with no source record, when a generic rejection
   const fixture = await createApplicationFixture(page, baseURL!)
   try {
     await createLegacyApplication(page, fixture, "Legacy Platform Role")
+    await syncFromRusty(page)
     const detail = await openApplicationDetail(page, `${company} — Legacy Platform Role`)
     const source = detail.getByRole("region", { name: "Original posting evidence" })
     await expect(source).toContainText("Original posting evidence pending")

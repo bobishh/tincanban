@@ -170,68 +170,6 @@ it("Given a replacement arrives near the recovery limit, when its blob transfer 
   }
 })
 
-it("Given a late replacement and a four-chunk attachment, when each chunk makes bounded progress, then finish within the size-aware attempt budget", async () => {
-  const f = await fixture()
-  const descriptor = { ...f.descriptor, size: 960_000 }
-  f.blob.resolve.mockResolvedValue(descriptor)
-  const bytes = new Uint8Array(descriptor.size)
-  const chunks = Array.from({ length: 4 }, () => deferred<void>())
-  const completedChunks = Array.from({ length: 4 }, () => deferred<void>())
-  const started = [deferred<void>(), deferred<void>()]
-  let currentTime = Date.now()
-  vi.spyOn(Date, "now").mockImplementation(() => currentTime)
-  let callCount = 0
-  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
-    _requested, options) => {
-    callCount += 1
-    started[callCount - 1]?.resolve()
-    if (callCount === 1) return new Promise((_resolve, reject) => {
-      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
-    })
-    return (async () => {
-      for (let chunk = 0; chunk < 4; chunk += 1) {
-        await chunks[chunk]!.promise
-        await options?.ensureCurrent?.()
-        completedChunks[chunk]!.resolve()
-      }
-      return bytes
-    })()
-  })
-  try {
-    const pending = f.mesh.fetchBlob(f.workspaceId, descriptor)
-    const completePhase = async (phase: Promise<void>, label: string) => {
-      let timer!: ReturnType<typeof setTimeout>
-      try {
-        await Promise.race([phase, pending, new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(() => reject(new Error(`Blob test stalled during ${label}`)), 1_500)
-        })])
-      } finally { clearTimeout(timer) }
-    }
-    await completePhase(started[0]!.promise, "initial request")
-    expect(request).toHaveBeenCalledOnce()
-    currentTime += 9_000
-    f.replaceSession()
-    await completePhase(started[1]!.promise, "replacement request")
-    expect(request).toHaveBeenCalledTimes(2)
-    const deadline = request.mock.calls[1]?.[5]?.deadlineAt
-    if (typeof deadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
-    expect(deadline - Date.now()).toBeGreaterThanOrEqual(15_000)
-    expect(deadline).toBeLessThanOrEqual(Date.now() + 16_000)
-
-    // Advance the deadline clock independently of real WebCrypto/IndexedDB tasks.
-    // Explicit chunk gates model sequential progress without virtualizing host I/O.
-    for (let chunk = 1; chunk <= 4; chunk += 1) {
-      currentTime += 3_000
-      chunks[chunk - 1]!.resolve()
-      await completePhase(completedChunks[chunk - 1]!.promise, `chunk ${chunk}`)
-    }
-    await expect(pending).resolves.toEqual(bytes)
-    expect(f.blob.write).toHaveBeenCalledOnce()
-  } finally {
-    await f.close()
-  }
-})
-
 it("Given recovery time is exhausted, when a session appears later, then do not start another transfer attempt", async () => {
   const f = await fixture()
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
