@@ -9,7 +9,7 @@ not the final implementation gate, production deployment or proof that any of th
 nine architecture requirements is complete. Local browser verification remains
 deferred. Production branches and deployment conditions remain unchanged.
 
-The review cohort pins SDK `d19470dee8c4554cdf0c80ef7848b7d67f5efa1d` and
+The review cohort pins SDK `1a322bbfcd83fe708f79cb26a6240d08e96293aa` and
 Rusty `5238a1bcc94bec99583c86710d6242cec306551d`. Rusty retains its independent
 existing exact core dependency revision; this checkpoint does not assert the
 final compatible-release manifest. CI now builds the Native archive verifier
@@ -22,6 +22,19 @@ Evidence: `/tmp/tincanban-native-baseline-core-all-final.log`,
 `/tmp/tincanban-history-control-wasm-green-final.log`,
 `/tmp/tincanban-native-baseline-http-all-final.log`,
 `/tmp/tincanban-native-baseline-root-size-final.log`.
+
+The initial SDK review run reproduced a stale TLC checksum before model
+execution. Its correction verifies the downloaded replacement against both the
+official release API's SHA-256 and the release page's SHA-1, then updates all
+three formal runners without weakening checksum enforcement. The superseded
+SDK run was cancelled; replacement CI checks the exact new pin. The initial app
+run passed the new Native HTTP job and formal models. Browser chat acceptance
+failed at `e2e/chat.spec.ts:95`: after a real UI rename and peer message delivery,
+the recipient retained the sender's generated name instead of its saved custom
+name. The existing assertion remains unchanged; this production-flow regression
+requires investigation and is not recorded as complete. Evidence: app CI run
+`38710133121`, failed job `116339183361`, retained local log
+`/tmp/tincanban-checkpoint-chat-ci.log`.
 
 ## 0. Specification and Baseline
 
