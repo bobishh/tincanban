@@ -111,13 +111,14 @@ test("Given two signed participants share a name, when one profile disappears of
     const identityPath = "/src/domain/identity.ts"
     const meshIdentityPath = "/vendor/meta-mesh/packages/mesh-identity/src/index.ts"
     const proofPath = "/src/domain/proofs.ts"
-    const recordsPath = "/src/chat/records.ts"
+    const signingPath = "/src/chat/signing.ts"
     const servicePath = "/src/chat/service.ts"
     const statePath = "/src/state.ts"
     const { bootstrapIdentity } = await import(/* @vite-ignore */ identityPath)
     const { BrowserIdentityStore } = await import(/* @vite-ignore */ meshIdentityPath)
     const { createWorkspaceGrant } = await import(/* @vite-ignore */ proofPath)
-    const { createChatRecord } = await import(/* @vite-ignore */ recordsPath)
+    const { createChatRecord } = await import(/* @vite-ignore */ signingPath)
+    const { resolveSigningContext } = await import(/* @vite-ignore */ "/src/domain/signingContext.ts")
     const service = await import(/* @vite-ignore */ servicePath)
     const state = await import(/* @vite-ignore */ statePath)
     const owner = await bootstrapIdentity()
@@ -126,8 +127,15 @@ test("Given two signed participants share a name, when one profile disappears of
     const participant = await new BrowserIdentityStore({ storageKey: "test-avatar-peer", signatureDomain: "MATCH/1" }).bootstrap(owner.identity.displayName)
     const grant = await createWorkspaceGrant(owner, id, participant.identity.personId, "editor")
     const authority = { publicKey: owner.identity.publicKey, certificates: [owner.certificate], grant }
-    const profile = await createChatRecord(participant, [participant.certificate], authority, scope, "chat-profile", owner.identity.displayName, 1)
-    const message = await createChatRecord(participant, [participant.certificate], authority, scope, "chat-message", "Peer with shared name")
+    const recordFor = async (kind: "chat-profile" | "chat-message", text: string, revision = 0) => {
+      const authorityRevision = JSON.stringify({ owner: owner.identity.personId, scope })
+      const signingContext = await resolveSigningContext({ profile: participant, certificates: [participant.certificate], purpose: kind,
+        binding: { workspaceId: scope }, authorityRevision,
+        current: async () => ({ personId: participant.identity.personId, deviceId: participant.device.deviceId, authorityRevision }) })
+      return createChatRecord(participant, authority, scope, kind, text, revision, undefined, signingContext)
+    }
+    const profile = await recordFor("chat-profile", participant.identity.displayName, 1)
+    const message = await recordFor("chat-message", "Peer with shared name")
     await service.receiveChat(id, { version: 1, profiles: [profile], messages: [message], typing: [] }, true)
     return { scope, personId: participant.identity.personId }
   })

@@ -1,6 +1,7 @@
 import type { EmployeeProfile } from "../../../src/domain/jobPriority";
 import { classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification, type DecisionAi, type OpportunityClassification } from "./clef";
 import type { ForwardedMail } from "./email";
+import { emailVacancyUrls } from "./emailVacancy";
 import { extractJobPage, type JobPageFetcher, type JobPageResult } from "./extraction";
 import type { WebsiteSubmission } from "./intake";
 
@@ -31,10 +32,7 @@ async function processWebsite(
   bands?: Array<{ optionId: string; minScore: number }>,
 ): Promise<AutomationPipelineResult> {
   const submission = event.submission;
-  const extraction = submission.jobUrl ? await extractJobPage(submission.jobUrl, {
-    company: submission.company,
-    role: submission.role,
-  }, fetcher) : undefined;
+  const extraction = submission.jobUrl ? await extractJobPage(submission.jobUrl, {}, fetcher) : undefined;
   const state = [
     `Submitted company: ${submission.company || "(not supplied)"}`,
     `Submitted role: ${submission.role || "(not supplied)"}`,
@@ -84,15 +82,26 @@ async function processMail(
   if (mail.confirmation) {
     return { status: "review", reason: "Forwarding-address confirmation requires owner attention", source };
   }
+  const text = mail.text.replace(/\s+/g, " ");
+  const conditionalReminder = /if you have completed (?:the |your )?application/i.test(text) &&
+    /if you are still working on (?:the |your )?application/i.test(text) ||
+    /wenn du die bewerbung abgeschlossen hast/i.test(text) && /wenn du noch an der bewerbung arbeitest/i.test(text);
+  if (conditionalReminder) {
+    return { status: "review", reason: "Conditional application reminder does not confirm submission", source };
+  }
   const decision = await classifyApplicationEvent(ai, `${mail.subject}\n\n${mail.text}`);
   let extraction: JobPageResult | undefined;
   let opportunity: OpportunityClassification | undefined;
   const choice = decision.distributions.application_event;
   if ((decision.event === "applied" || choice.choice === "new_opportunity") && choice.probabilities[choice.choice]! >= 0.7) {
-    for (const address of mail.urls.filter(value => /jobs?|careers|positions|vacancies/i.test(value)).slice(0, 3)) {
+    for (const address of emailVacancyUrls(mail.urls).slice(0, 3)) {
       try {
         const job = await extractJobPage(address, {}, fetcher);
-        if (job.company.trim() && job.role.trim()) { extraction = job; break; }
+        const context = `${mail.subject}\n${mail.text}`.normalize("NFKC").toLowerCase().replace(/\s+/g, " ");
+        const role = job.role.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+        if (job.company.trim() && role && (job.source === "jobposting" || context.includes(role))) {
+          extraction = job; break;
+        }
       } catch { /* A blocked or unavailable link cannot invent vacancy fields. */ }
     }
     if (extraction) opportunity = await classifyOpportunity(ai, `${mail.subject}\n${mail.text}\n${extraction.body}`, employeeProfile, bands);

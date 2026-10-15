@@ -5,6 +5,22 @@ import { tasklist } from "@mdit/plugin-tasklist"
 const markdown = new MarkdownIt({ html: false, breaks: true, linkify: true })
   .use(tasklist, { disabled: false, label: false })
 
+markdown.renderer.rules.link_open = (tokens, index, options, _env, renderer) => {
+  const token = tokens[index]!
+  const href = String(token.attrGet("href") ?? "")
+  if (/^(?:https?:)?\/\//i.test(href)) {
+    const origin = globalThis.location?.origin
+    let external = true
+    try { external = !origin || new URL(href, origin).origin !== origin }
+    catch { /* An imperfect resource URL must not break the entire document. */ }
+    if (external) {
+      token.attrSet("target", "_blank")
+      token.attrSet("rel", "noopener noreferrer")
+    }
+  }
+  return renderer.renderToken(tokens, index, options)
+}
+
 // Card previews sit inside a button: do not nest links or input controls.
 const compact = new MarkdownIt({ html: false, breaks: true, linkify: true })
   .use(tasklist, { disabled: false, label: false })

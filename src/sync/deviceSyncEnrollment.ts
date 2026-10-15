@@ -14,7 +14,12 @@ import { defaultProofStore, certHashDefault } from "../domain/proofs"
 import { defaultStorage } from "../storage"
 import { registerDeviceInRoot } from "../domain/personalRoot"
 import { fromBase64Url, type LocalProfile } from "../domain/identity"
-import { workspaceSet } from "./workspaceSet"
+import { createPeerHistoryObjectReader, workspaceSet, type PeerHistoryObjectReader } from "./workspaceSet"
+import { createEnrollmentHistoryReader } from "./enrollmentHistoryReader"
+import { createEnrollmentHistoryAuthorizationGuard } from "./enrollmentHistoryAuthorization"
+import { awaitEnrollmentAcknowledgement, enrollmentRejection, sendEnrollmentRejection } from "./enrollmentAcknowledgement"
+export { sendEnrollmentRejection } from "./enrollmentAcknowledgement"
+import { peerStore } from "./peerStore"
 import type { WorkspaceGrant } from "../domain/model"
 import { startPersistentNode } from "./persistentNode"
 import type { SyncConnection, SyncNode } from "./transport"
@@ -275,7 +280,7 @@ async function completeEnrollmentCandidate(context: EnrollmentContext, run: numb
   }
   context.state.step.value = "enroll-syncing"
   traceEnrollment("host", "approved", run, { deviceId: guest.deviceId.slice(0, 8) })
-  await approveEnrollment(context, node, stream, connection, secret, invite, profile, guest)
+  await approveEnrollment(context, run, node, stream, connection, secret, invite, profile, guest)
   traceEnrollment("host", "completed", run, { deviceId: guest.deviceId.slice(0, 8) })
 }
 
@@ -314,6 +319,7 @@ async function acknowledgeEnrollmentDecline(connection: SyncConnection, secret: 
 
 async function approveEnrollment(
   context: EnrollmentContext,
+  run: number,
   node: SyncNode,
   stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>,
   connection: SyncConnection,
@@ -338,9 +344,16 @@ async function approveEnrollment(
   const active = selectActiveWorkspace(context, ids)
   await context.durableMesh?.forgetEnrolledDevice(ids, guest.deviceId)
   await context.durableMesh?.ensureOwnerWorkspaces(transfer.ownerIds, node.endpointId, profile)
-  const replica = workspaceSet(context.meshWorkspaceStore ?? context.workspaceStore!, workspaces)
+  const store = context.meshWorkspaceStore ?? context.workspaceStore!
+  const replica = workspaceSet(store, workspaces)
+  const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ids, profile,
+    remoteDeviceId: guest.deviceId, isCurrent: () => isCurrent(context, run), readProfile: context.getProfile,
+    readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
+  const acknowledgementHistory = createEnrollmentHistoryReader(store, ids, guest.deviceId, historyGuard)
+  await historyGuard()
   const payload = await enrollmentPayload(invite, profile, result.certificate, root, workspaces, active,
     await context.durableMesh!.invitationPayload(ids), transfer.grants, await replica.snapshot())
+  await historyGuard()
   await stream.send(encodePairingFrame("enroll-approved", secret, payload))
   await stream.closeSend()
   let ack: Awaited<ReturnType<SyncConnection["acceptStream"]>> | undefined
@@ -348,7 +361,11 @@ async function approveEnrollment(
   for (let rounds = 0; rounds < 4096; rounds++) {
     const incoming = await connection.acceptStream()
     const frame = await incoming.read()
-    if (await replica.serveProofPage(frame, incoming, secret)) continue
+    await historyGuard()
+    if (await replica.servePeerHistoryBaselineRead(frame, incoming, guest.deviceId, historyGuard)) continue
+    if (await replica.servePeerHistoryDocumentRead(frame, incoming, guest.deviceId, historyGuard)) continue
+    if (await replica.servePeerHistoryObjectRead(frame, incoming, guest.deviceId, historyGuard)) continue
+    if (await replica.serveProofPage(frame, incoming, secret, historyGuard)) continue
     ack = incoming
     acknowledgement = frame
     break
@@ -360,7 +377,9 @@ async function approveEnrollment(
     await ack.closeSend()
     throw new Error(`The new device rejected enrollment: ${reason}`)
   }
-  await replica.receive(decodePairingFrame(acknowledgement, "enroll-ack", secret))
+  await replica.receive(await replica.resolveProofs(decodePairingFrame(acknowledgement, "enroll-ack", secret), connection, secret),
+    true, acknowledgementHistory)
+  await historyGuard()
   await ack.send(encodePairingFrame("enroll-complete", secret, new Uint8Array()))
   await ack.closeSend()
   const confirmation = await connection.acceptStream()
@@ -465,28 +484,34 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
   let ids: string[]
   let replica: ReturnType<typeof workspaceSet>
   let snapshot: Uint8Array
+  let historyReader: PeerHistoryObjectReader
   try {
     prepared = await preflightEnrollment(response, invite, profile)
     ids = prepared.payload.workspaces.map(item => item.id)
     replica = workspaceSet(context.meshWorkspaceStore ?? context.workspaceStore!, prepared.payload.workspaces)
     snapshot = await replica.resolveProofs(fromBase64Url(prepared.payload.snapshot), connection, invite.secret)
-    await replica.validate(snapshot)
-    await context.durableMesh!.validateInvitation(prepared.payload.meshWorkspaces, ids, prepared.profile, prepared.payload.grants)
+    const scopes = await context.durableMesh!.validateInvitation(prepared.payload.meshWorkspaces, ids, prepared.profile, prepared.payload.grants)
+    historyReader = createPeerHistoryObjectReader(connection, () => {
+      if (!isCurrent(context, run)) throw new Error("Device enrollment was cancelled")
+    }, scopes)
+    await replica.validate(snapshot, historyReader)
   } catch (error) {
     await sendEnrollmentRejection(connection, invite.secret, error).catch(() => undefined)
     throw error
   }
   const enrolled = await installEnrollment(response, invite, profile, context.state.replacementPersonId.value)
   await context.identityChanged?.()
-  await replica.receive(snapshot)
   await context.durableMesh!.receiveInvitation(enrolled.meshWorkspaces, ids, enrolled.profile, enrolled.grants)
+  await replica.receive(snapshot, true, historyReader)
   const ownerIds = enrolled.meshWorkspaces.filter(item => item.ownerPersonId === enrolled.profile.identity.personId).map(item => item.workspaceId)
   await context.durableMesh!.ensureOwnerWorkspaces(ownerIds, node.endpointId, enrolled.profile)
   await context.workspaceStore!.activate(enrolled.activeWorkspaceId)
   const ack = await connection.openStream()
   await ack.send(encodePairingFrame("enroll-ack", invite.secret, await replica.snapshot()))
   await ack.closeSend()
-  decodePairingFrame(await ack.read(), "enroll-complete", invite.secret)
+  await awaitEnrollmentAcknowledgement(connection, ack, replica, invite.secret, () => {
+    if (!isCurrent(context, run)) throw new Error("Device enrollment was cancelled")
+  })
   await context.handoffNode("Enrollment finished")
   await context.durableMesh!.waitUntilListening()
   const confirmation = await connection.openStream()
@@ -502,25 +527,4 @@ function enrollmentDecline(bytes: Uint8Array) {
     const value: unknown = JSON.parse(new TextDecoder().decode(bytes))
     return value && typeof value === "object" && "error" in value && typeof value.error === "string" ? value.error : undefined
   } catch { return undefined }
-}
-
-export async function sendEnrollmentRejection(connection: SyncConnection, secret: string, error: unknown) {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  await Promise.race([
-    (async () => {
-      const stream = await connection.openStream()
-      const reason = error instanceof Error ? error.message : String(error)
-      await stream.send(encodePairingFrame("enroll-rejected", secret, new TextEncoder().encode(JSON.stringify({ reason }))))
-      await stream.closeSend()
-      decodePairingFrame(await stream.read(), "enroll-rejected-ack", secret)
-    })(),
-    new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Enrollment rejection was not acknowledged")), 12_000) }),
-  ]).finally(() => clearTimeout(timer))
-}
-
-function enrollmentRejection(bytes: Uint8Array) {
-  try {
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as { reason?: unknown }
-    return typeof value.reason === "string" ? value.reason : "the recipient could not validate the workspace"
-  } catch { return "the recipient could not validate the workspace" }
 }

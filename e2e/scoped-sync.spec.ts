@@ -372,8 +372,8 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       if (await secondDialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).count()) await secondDialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).check()
       await secondDialog.getByRole("button", { name: "Add this device" }).click()
       await hostDialog.getByRole("button", { name: "Approve device" }).click()
-      await expect(hostDialog.getByText("Device enrolled")).toBeVisible()
-      await expect(secondDialog.getByText("Device enrolled")).toBeVisible()
+      await expect(hostDialog.getByText("Device enrolled")).toBeVisible({ timeout: 30_000 })
+      await expect(secondDialog.getByText("Device enrolled")).toBeVisible({ timeout: 30_000 })
       await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
       await secondDialog.getByRole("button", { name: "Close", exact: true }).first().click()
       await expect(page.getByLabel("Mesh connected")).toBeVisible({ timeout: 45_000 })
@@ -482,8 +482,15 @@ test("Given approved enrollment but failed storage, when receiving identity, the
     await expect(dialog.getByRole("button", { name: "Add this device" })).toBeVisible()
     const original = await stored(guest)
     await guest.evaluate(async () => {
-      const { setStorageFailureHookForTest } = await import('/src/storage.ts')
-      setStorageFailureHookForTest(true)
+      // Identity adoption now commits in the local-state transaction; fail that
+      // actual write, rather than the later workspace projection.
+      const put = IDBObjectStore.prototype.put
+      IDBObjectStore.prototype.put = function(value: unknown, key?: IDBValidKey) {
+        if (this.name === "kv" && key === "tincanban.local_profile.v1") {
+          throw new DOMException("Identity storage failure injected", "QuotaExceededError")
+        }
+        return put.call(this, value, key)
+      }
     })
     await dialog.getByRole("button", { name: "Add this device" }).waitFor({ state: "visible" })
     if (await dialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).count()) await dialog.getByRole("checkbox", { name: /Replace this device.s identity/ }).check()

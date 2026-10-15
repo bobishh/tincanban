@@ -3,6 +3,8 @@ import { defineConfig } from "@playwright/test"
 const port = Number(process.env.TINCANBAN_E2E_PORT ?? 4244)
 
 const networkSpecs = [
+  "**/attachment-session-recovery.spec.ts",
+  "**/attachments-rusty.spec.ts",
   "**/mobile-profile-sync.spec.ts",
   "**/member-access.spec.ts",
   "**/browser-native.spec.ts",
@@ -15,6 +17,7 @@ const networkSpecs = [
   "**/workspace-roles.spec.ts",
   "**/workspace-sync-data.spec.ts",
   "**/workspace-schema-migration.spec.ts",
+  "**/complete-device-state.spec.ts",
 ]
 
 const groupedNetworkSpecs = networkSpecs.filter(spec =>
@@ -34,8 +37,10 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   projects: [
-    { name: "core", testIgnore: [...networkSpecs, "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/rusty-connection.spec.ts", "**/rusty-mobile.spec.ts", "**/public-board-keeper.spec.ts"] },
-    { name: "mobile-webkit", testMatch: ["**/settings-scope.spec.ts", "**/settings-layout.spec.ts", "**/automatic-priority.spec.ts", "**/ui-screen-audit.spec.ts", "**/sync-tabs.spec.ts", "**/avatar-crop-responsive.spec.ts", "**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts", "**/window-presentation.spec.ts", "**/mobile-chat-composer.spec.ts", "**/public-board.spec.ts", "**/focus-frames.spec.ts", "**/root-message-links.spec.ts"], use: { browserName: "webkit" } },
+    { name: "core", testIgnore: [...networkSpecs, "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/application-source-binding.spec.ts", "**/rusty-connection.spec.ts", "**/rusty-mobile.spec.ts", "**/public-board-keeper.spec.ts"] },
+    { name: "mobile-webkit", testMatch: ["**/shared-layout.spec.ts", "**/rusty-device-access.spec.ts", "**/identity-recovery-package.spec.ts", "**/settings-scope.spec.ts", "**/settings-layout.spec.ts", "**/automatic-priority.spec.ts", "**/ui-screen-audit.spec.ts", "**/sync-tabs.spec.ts", "**/avatar-crop-responsive.spec.ts", "**/mobile-overlay-safe-area.spec.ts", "**/brand-layout.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/startup-preview.spec.ts", "**/window-presentation.spec.ts", "**/mobile-chat-composer.spec.ts", "**/public-board.spec.ts", "**/focus-frames.spec.ts", "**/root-message-links.spec.ts", "**/reading-typography.spec.ts", "**/release-upgrade.spec.ts"], use: { browserName: "webkit" } },
+    { name: "attachments-rusty-webkit", testMatch: "**/attachments-rusty.spec.ts", use: { browserName: "webkit" } },
+    { name: "attachment-session-recovery-webkit", testMatch: "**/attachment-session-recovery.spec.ts", use: { browserName: "webkit" } },
     ...groupedNetworkSpecs.map(spec => ({
       name: spec.match(/([^/]+)\.spec\.ts$/)?.[1] ?? spec,
       testMatch: spec,

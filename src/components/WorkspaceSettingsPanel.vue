@@ -24,7 +24,7 @@ const logsUrl = computed(() => props.accessRole === "owner" || props.accessRole 
   </section>
   <slot />
   <AutomationsPanel :management="automations" :owner="owner" />
-  <section class="workspace-diagnostics" aria-label="Workspace diagnostics">
+  <section class="workspace-diagnostics ui-stack" aria-label="Workspace diagnostics">
     <h4>Diagnostics</h4>
     <TelemetrySettingsPanel />
     <TelemetryDeliveryPanel />
@@ -42,9 +42,9 @@ const logsUrl = computed(() => props.accessRole === "owner" || props.accessRole 
   </section>
 </template>
 <style scoped>
-.workspace-status, .workspace-diagnostics { display: grid; gap: 10px; }
+.workspace-status, .workspace-diagnostics { display: grid; gap: var(--space-2); }
 h4, p { margin: 0; }
-.workspace-diagnostics { padding-top: 16px; border-top: 1px solid var(--soft); }
+.workspace-diagnostics { padding-top: var(--space-4); border-top: 1px solid var(--soft); }
 .workspace-diagnostics details { font-size: .9rem; overflow-wrap: anywhere; }
 .workspace-diagnostics code { display: block; white-space: normal; }
 </style>

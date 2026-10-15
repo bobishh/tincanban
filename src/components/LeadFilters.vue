@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from "vue"
-import type { Column, FieldDefinition } from "../domain/model"
-import { compareRanks } from "../domain/ancestry"
+import { compareRanks } from "../domain/rank"
 import { activeFilterCount, type BoardFilters, type FilterRange } from "../filters"
 
+type FilterColumn = { id: string; title: string }
+type FilterField = { id: string; title: string; valueType: string; archivedAt?: string | null; min?: number | null; max?: number | null;
+  options?: Record<string, { id: string; title: string; rank: string; archivedAt?: string | null }> }
 const props = defineProps<{
   modelValue: BoardFilters
-  columns: Column[]
-  fields: FieldDefinition[]
+  columns: FilterColumn[]
+  fields: FilterField[]
 }>()
 const emit = defineEmits<{ "update:modelValue": [value: BoardFilters] }>()
 
@@ -41,9 +43,9 @@ function updateRange(kind: "numberRanges" | "dateRanges", fieldId: string, edge:
   })
 }
 
-function optionsFor(field: FieldDefinition) {
+function optionsFor(field: FilterField) {
   if (field.valueType !== "select") return []
-  return Object.values(field.options).filter((option) => !option.archivedAt).sort((a, b) => compareRanks(a.rank, b.rank))
+  return Object.values(field.options ?? {}).filter((option) => !option.archivedAt).sort((a, b) => compareRanks(a.rank, b.rank))
 }
 </script>
 

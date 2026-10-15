@@ -5,7 +5,7 @@ const port = Number(process.env.TINCANBAN_AUTOMATION_E2E_PORT ?? 4267)
 export default defineConfig({
   testDir: "./e2e",
   outputDir: process.env.TINCANBAN_AUTOMATION_TEST_RESULTS ?? "test-results-automation-worker",
-  testMatch: "automation-worker.spec.ts",
+  testMatch: ["automation-worker.spec.ts", "application-source-binding.spec.ts"],
   workers: 1,
   retries: 0,
   timeout: 180_000,

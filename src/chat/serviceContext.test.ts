@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type * as IdentityModule from "../domain/identity"
 const mocks = vi.hoisted(() => ({ load: vi.fn(), append: vi.fn(), merge: vi.fn(), peers: vi.fn(), create: vi.fn() }))
 vi.mock("./store", () => ({ chatStore: { load: mocks.load, append: mocks.append, merge: mocks.merge, putProfile: vi.fn() } }))
-vi.mock("../domain/identity", () => ({ bootstrapIdentity: async () => ({ identity: { personId: "person", publicKey: "public", displayName: "Person" }, device: { deviceId: "device" }, certificate: { payload: { deviceId: "device" } } }) }))
+vi.mock("../domain/identity", async importOriginal => ({ ...await importOriginal<typeof IdentityModule>(),
+  bootstrapIdentity: async () => ({ identity: { personId: "person", publicKey: "public", displayName: "Person" }, device: { deviceId: "device" }, certificate: { signature: "certificate", payload: { deviceId: "device" } } }) }))
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [], listGrants: async () => [] } }))
 vi.mock("../sync/peerStore", () => ({ peerStore: { listPeers: mocks.peers, getWorkspaceCredential: async () => null, getWorkspaceAuthority: async () => null } }))
-vi.mock("./records", () => ({ createChatRecord: mocks.create, verifyChatRecord: async (value: unknown) => value }))
+vi.mock("./records", () => ({ verifyChatRecord: async (value: unknown) => value }))
+vi.mock("./signing", () => ({ createSignedChatRecord: async (workspaceId: string, kind: string, text: string,
+  access: { readScope: (workspaceId: string) => Promise<string> }, revision: number, context?: unknown) =>
+  mocks.create(null, null, await access.readScope(workspaceId), kind, text, revision, context) }))
 import { configureChat, exportChat, getChatScope, receiveChat, sendChatMessage } from "./service"
 const previousIndexedDb = globalThis.indexedDB
 const previousNavigator = globalThis.navigator
@@ -16,7 +21,7 @@ function setup(scope: string) {
   mocks.append.mockResolvedValue(true)
   mocks.merge.mockResolvedValue({ changed: false, added: [] })
   mocks.peers.mockResolvedValue([])
-  mocks.create.mockImplementation(async (_profile, _chain, _authority, workspaceId, kind, text, revision, context) => ({ signed: { signature: "signature", payload: { kind, workspaceId, id: "device:message", personId: "person", createdAt: "2026-10-05T00:00:00.000Z", text, revision, version: context ? 2 : 1, ...(context ? { context } : {}) } } }))
+  mocks.create.mockImplementation(async (_profile, _authority, workspaceId, kind, text, revision, context) => ({ signed: { signature: "signature", payload: { kind, workspaceId, id: "device:message", personId: "person", createdAt: "2026-10-05T00:00:00.000Z", text, revision, version: context ? 2 : 1, ...(context ? { context } : {}) } } }))
 }
 afterEach(() => {
   Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: previousIndexedDb })

@@ -9,7 +9,7 @@ const definition = () => ({
 })
 
 it("Given the supported type registry, when creating a definition, then its version, parameters, rights and scope are explicit", () => {
-  expect(automationTypes.map(type => [type.type, type.version])).toEqual([["job-intake", 1]])
+  expect(automationTypes.map(type => [type.type, type.version])).toEqual([["job-intake", 1], ["job-intake", 2]])
   expect(parseAutomationDefinition(definition())).toEqual(definition())
 })
 

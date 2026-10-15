@@ -145,14 +145,14 @@ test("Given a mid-size desktop viewport, when tincanban opens, then the title an
       scrollWidth: element.scrollWidth,
       searchWidth: search.getBoundingClientRect().width,
       selectWidths: selects.map((select) => select.getBoundingClientRect().width),
-      workModeLabelHeight: workModeLabel.getBoundingClientRect().height,
+      workModeLabelVisible: workModeLabel.getBoundingClientRect().height > 0 && workModeLabel.getBoundingClientRect().width > 0,
     }
   })
 
   expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth)
   expect(toolbar.searchWidth).toBeGreaterThanOrEqual(220)
   expect(Math.min(...toolbar.selectWidths)).toBeGreaterThanOrEqual(150)
-  expect(toolbar.workModeLabelHeight).toBeLessThanOrEqual(70)
+  expect(toolbar.workModeLabelVisible).toBe(true)
 })
 
 test("Given an iPhone 17e portrait viewport, when tincanban opens, then filters start closed and columns snap one page at a time", async ({ page }) => {

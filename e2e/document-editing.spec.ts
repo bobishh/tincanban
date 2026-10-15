@@ -72,21 +72,24 @@ test("Given a real file attachment, when it is reopened, then tincanban can prev
 
 test("Given document controls fail to load, when item detail opens, then pending and error states preserve board access", async ({ page }) => {
   let firstLoad = true
+  let failModule!: () => void
+  const modulePending = new Promise<void>(resolve => { failModule = resolve })
   let pageReloaded = false
-  await createBlankWorkspace(page)
-  page.on("framenavigated", frame => { if (frame === page.mainFrame()) pageReloaded = true })
   await page.route("**/src/components/ItemDocuments.vue*", async route => {
     if (firstLoad) {
       firstLoad = false
-      await new Promise(resolve => setTimeout(resolve, 800))
+      await modulePending
       await route.abort()
     } else if (pageReloaded) await route.continue()
     else await route.abort()
   })
+  await createBlankWorkspace(page)
+  page.on("framenavigated", frame => { if (frame === page.mainFrame()) pageReloaded = true })
   await createGenericCard(page)
 
   const detail = page.getByRole("dialog", { name: "Item overview" })
   await expect(detail.getByRole("status")).toContainText("Loading document controls")
+  failModule()
   await expect(detail.getByRole("alert")).toContainText("Document controls could not load")
   await detail.getByRole("button", { name: "Dismiss", exact: true }).click()
   await page.getByRole("button", { name: "Open Ship document UX", exact: true }).click()

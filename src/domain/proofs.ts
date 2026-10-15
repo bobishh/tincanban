@@ -18,7 +18,8 @@ import {
   verifyEnvelope,
   type LocalProfile,
 } from "./identity"
-import { readLocal, writeLocal } from "../localDb"
+import { signWithContext, type VerifiedSigningContext } from "./signingContext"
+import { readLocal, updateLocal } from "../localDb"
 
 export type ChainValidationResult =
   | { ok: true }
@@ -29,6 +30,37 @@ export type StoredProofsV1 = {
   certificates: DeviceCertificate[]
   actorBindings: ActorBinding[]
   changeProofs: ChangeProof[]
+}
+
+type StoredProofData = {
+  actorBindings: Record<string, ActorBinding>
+  changeProofs: Record<string, ChangeProof>
+  certificates: Record<string, DeviceCertificate>
+  genesis: Record<string, WorkspaceGenesis>
+  grants: Record<string, WorkspaceGrant>
+}
+const proofStoreKey = "tincanban.v1.proof_store"
+
+function emptyStoredProofData(): StoredProofData {
+  return { grants: {}, certificates: {}, actorBindings: {}, changeProofs: {}, genesis: {} }
+}
+
+function decodeStoredProofData(raw: string | null): StoredProofData {
+  if (raw === null) return emptyStoredProofData()
+  let parsed: Partial<StoredProofData>
+  try { parsed = JSON.parse(raw) as Partial<StoredProofData> }
+  catch { throw new Error("Stored proof evidence is invalid") }
+  const known = ["actorBindings", "changeProofs", "certificates", "genesis", "grants"]
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).some(key => !known.includes(key))) {
+    throw new Error("Stored proof evidence requires an upgrade")
+  }
+  const records = <T>(value: unknown): Record<string, T> => {
+    if (value === undefined) return {}
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Stored proof evidence table is invalid")
+    return value as Record<string, T>
+  }
+  return { actorBindings: records(parsed.actorBindings), changeProofs: records(parsed.changeProofs),
+    certificates: records(parsed.certificates), genesis: records(parsed.genesis), grants: records(parsed.grants) }
 }
 
 export type ChainValidationOptions = {
@@ -165,8 +197,12 @@ export async function createWorkspaceGrant(
   subjectPersonId: PersonId,
   role: "owner" | "editor" | "visitor",
   accessEpoch = 1,
+  signingContext?: VerifiedSigningContext,
 ): Promise<WorkspaceGrant> {
   if (role !== "owner" && role !== "editor" && role !== "visitor") throw new TypeError("Use createAutomationWorkspaceGrant for automation access")
+  if (signingContext && (signingContext.personId !== profile.identity.personId || signingContext.deviceId !== profile.device.deviceId)) {
+    throw new Error("Workspace grant signing context belongs to another owner device")
+  }
   const payload = {
     kind: "workspace-grant" as const,
     version: 1 as const,
@@ -177,7 +213,7 @@ export async function createWorkspaceGrant(
     accessEpoch,
   }
 
-  return (await signEnvelope(
+  return (signingContext ? await signWithContext(signingContext, payload) : await signEnvelope(
     profile.privateKeys.devicePrivateKey,
     payload,
     profile.device.deviceId
@@ -190,7 +226,12 @@ export async function createAutomationWorkspaceGrant(
   subjectPersonId: PersonId,
   automation: AutomationGrantScope,
   accessEpoch = 1,
+  signingContext?: VerifiedSigningContext,
 ): Promise<WorkspaceGrant> {
+  if (signingContext && (signingContext.personId !== profile.identity.personId || signingContext.deviceId !== profile.device.deviceId)) {
+    throw new Error("Automation grant signing context belongs to another owner device")
+  }
+  automation = structuredClone(automation)
   assertAutomationGrantScope(automation, Date.now())
   if (!workspaceId || !subjectPersonId || !Number.isSafeInteger(accessEpoch) || accessEpoch < 1) {
     throw new TypeError("Invalid automation workspace grant")
@@ -205,7 +246,8 @@ export async function createAutomationWorkspaceGrant(
     accessEpoch,
     automation,
   }
-  return (await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId)) as unknown as WorkspaceGrant
+  return (signingContext ? await signWithContext(signingContext, payload)
+    : await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId)) as unknown as WorkspaceGrant
 }
 
 function exactAutomationKeys(value: object, expected: string[]): boolean {
@@ -223,7 +265,7 @@ function validAutomationFields(ids: AutomationGrantScope["fieldIds"]): boolean {
 }
 function assertAutomationGrantScope(scope: AutomationGrantScope, now: number): void {
   if (!scope || !exactAutomationKeys(scope, ["version", "boardId", "columns", "fieldIds", "expiresAt"]) ||
-    scope.version !== 1 || typeof scope.boardId !== "string" || !scope.boardId.trim() ||
+    ![1, 2].includes(scope.version) || typeof scope.boardId !== "string" || !scope.boardId.trim() ||
     !validAutomationColumns(scope.columns) || !validAutomationFields(scope.fieldIds) ||
     !Number.isSafeInteger(scope.expiresAt) || scope.expiresAt <= now) {
     throw new TypeError("Invalid automation grant scope")
@@ -256,112 +298,118 @@ export class ProofStore {
     this.loaded = persist ? this.load() : Promise.resolve()
   }
 
-  private async load() {
-    const raw = await readLocal("tincanban.v1.proof_store")
-    if (raw) {
-      try {
-        const data = JSON.parse(raw)
-        if (data.actorBindings) this.actorBindings = new Map(Object.entries(data.actorBindings))
-        if (data.changeProofs) this.changeProofs = new Map(Object.entries(data.changeProofs))
-        if (data.certificates) this.certificates = new Map(Object.entries(data.certificates))
-        if (data.genesis) this.genesis = new Map(Object.entries(data.genesis))
-        if (data.grants) this.grants = new Map(Object.entries(data.grants))
-      } catch { return }
-    }
+  private replace(data: StoredProofData): void {
+    this.actorBindings = new Map(Object.entries(data.actorBindings) as [string, ActorBinding][])
+    this.changeProofs = new Map(Object.entries(data.changeProofs) as [string, ChangeProof][])
+    this.certificates = new Map(Object.entries(data.certificates) as [string, DeviceCertificate][])
+    this.genesis = new Map(Object.entries(data.genesis) as [string, WorkspaceGenesis][])
+    this.grants = new Map(Object.entries(data.grants) as [string, WorkspaceGrant][])
   }
 
-  private async save() {
-    if (!this.persist) return
+  private async load() {
+    this.replace(decodeStoredProofData(await readLocal(proofStoreKey)))
+  }
+
+  private async mutate(change: (data: StoredProofData) => void): Promise<void> {
     await this.loaded
+    if (!this.persist) {
       const data = {
-        actorBindings: Object.fromEntries(this.actorBindings),
-        changeProofs: Object.fromEntries(this.changeProofs),
-        certificates: Object.fromEntries(this.certificates),
-        genesis: Object.fromEntries(this.genesis),
-        grants: Object.fromEntries(this.grants),
+        actorBindings: Object.fromEntries(this.actorBindings), changeProofs: Object.fromEntries(this.changeProofs),
+        certificates: Object.fromEntries(this.certificates), genesis: Object.fromEntries(this.genesis), grants: Object.fromEntries(this.grants),
       }
-      await writeLocal("tincanban.v1.proof_store", JSON.stringify(data))
+      change(data)
+      this.replace(data)
+      return
+    }
+    let updated: StoredProofData | undefined
+    await updateLocal(proofStoreKey, raw => {
+      const data = decodeStoredProofData(raw)
+      change(data)
+      updated = data
+      return JSON.stringify(data)
+    })
+    this.replace(updated!)
   }
 
   async putActorBinding(hash: string, binding: ActorBinding): Promise<void> {
-    await this.loaded
-    this.actorBindings.set(hash, binding)
-    await this.save()
+    const snapshot = structuredClone(binding)
+    await this.mutate(data => { data.actorBindings[hash] = snapshot })
   }
 
   async getActorBinding(hash: string): Promise<ActorBinding | null> {
     await this.loaded
-    return this.actorBindings.get(hash) ?? null
+    const value = this.actorBindings.get(hash)
+    return value ? structuredClone(value) : null
   }
 
   async putChangeProof(hash: string, proof: ChangeProof): Promise<void> {
-    await this.loaded
-    this.changeProofs.set(hash, proof)
-    await this.save()
+    const snapshot = structuredClone(proof)
+    await this.mutate(data => { data.changeProofs[hash] = snapshot })
   }
 
   async getChangeProof(hash: string): Promise<ChangeProof | null> {
     await this.loaded
-    return this.changeProofs.get(hash) ?? null
+    const value = this.changeProofs.get(hash)
+    return value ? structuredClone(value) : null
   }
 
   async listChangeProofs(): Promise<ChangeProof[]> {
     await this.loaded
-    return Array.from(this.changeProofs.values())
+    return structuredClone(Array.from(this.changeProofs.values()))
   }
 
   async putCertificate(hash: string, cert: DeviceCertificate): Promise<void> {
-    await this.loaded
-    this.certificates.set(hash, cert)
-    await this.save()
+    const snapshot = structuredClone(cert)
+    await this.mutate(data => { data.certificates[hash] = snapshot })
   }
 
   async getCertificate(hash: string): Promise<DeviceCertificate | null> {
     await this.loaded
-    return this.certificates.get(hash) ?? null
+    const value = this.certificates.get(hash)
+    return value ? structuredClone(value) : null
   }
 
   async listCertificates(): Promise<DeviceCertificate[]> {
     await this.loaded
-    return Array.from(this.certificates.values())
+    return structuredClone(Array.from(this.certificates.values()))
   }
 
   async putGenesis(workspaceId: string, gen: WorkspaceGenesis): Promise<void> {
-    await this.loaded
-    this.genesis.set(workspaceId, gen)
-    await this.save()
+    const snapshot = structuredClone(gen)
+    await this.mutate(data => { data.genesis[workspaceId] = snapshot })
   }
 
   async getGenesis(workspaceId: string): Promise<WorkspaceGenesis | null> {
     await this.loaded
-    return this.genesis.get(workspaceId) ?? null
+    const value = this.genesis.get(workspaceId)
+    return value ? structuredClone(value) : null
   }
 
   async putGrant(grantId: string, grant: WorkspaceGrant): Promise<void> {
-    await this.loaded
-    this.grants.set(grantId, grant)
-    await this.save()
+    const snapshot = structuredClone(grant)
+    await this.mutate(data => { data.grants[grantId] = snapshot })
   }
 
   async getGrant(grantId: string): Promise<WorkspaceGrant | null> {
     await this.loaded
-    return this.grants.get(grantId) ?? null
+    const value = this.grants.get(grantId)
+    return value ? structuredClone(value) : null
   }
 
   async listGrants(workspaceId?: string): Promise<WorkspaceGrant[]> {
     await this.loaded
-    const list = Array.from(this.grants.values())
+    const list = structuredClone(Array.from(this.grants.values()))
     if (!workspaceId) return list
     return list.filter((g) => g.payload.workspaceId === workspaceId)
   }
 
   async removeWorkspaceGrants(workspaceId: string): Promise<void> {
-    await this.loaded
     if (!workspaceId) throw new Error("Invalid workspaceId")
-    for (const [grantId, grant] of this.grants) {
-      if (grant.payload.workspaceId === workspaceId) this.grants.delete(grantId)
-    }
-    await this.save()
+    await this.mutate(data => {
+      for (const [grantId, grant] of Object.entries(data.grants)) {
+        if ((grant as WorkspaceGrant).payload.workspaceId === workspaceId) delete data.grants[grantId]
+      }
+    })
   }
 }
 

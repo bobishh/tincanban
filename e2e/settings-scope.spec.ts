@@ -73,7 +73,7 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when choosi
   await page.getByRole("button", { name: "Settings", exact: true }).filter({ visible: true }).click()
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
   const tabs = settings.getByRole("tablist", { name: "Settings views" })
-  await expect(tabs).toHaveAttribute("aria-orientation", "vertical")
+  await expect(tabs).toHaveAttribute("aria-orientation", width <= 600 ? "horizontal" : "vertical")
   await expect(tabs.getByRole("tab")).toHaveText(["Identity", "Workspace", "Document templates", "Priority rules", "settings.json"])
   const profile = settings.getByRole("group", { name: "Your profile", exact: true })
   await expect(profile.getByLabel("Name", { exact: true })).toBeVisible()

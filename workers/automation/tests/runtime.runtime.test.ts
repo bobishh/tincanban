@@ -4,7 +4,8 @@ import { createExecutionContext, waitOnExecutionContext, runInDurableObject } fr
 import worker, { type WorkerEnv } from "../src/index";
 import { runPipeline } from "../src/pipeline";
 import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
-import { createAutomationOwnerRequest } from "../../../src/domain/automationProtocol";
+import { createAutomationOwnerRequest as createVerifiedOwnerRequest, type AutomationOwnerRequestInput } from "../../../src/domain/automationProtocol";
+import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { writeReplicaChunksAtomically } from "../src/coordinator";
 
 const testEnv = {
@@ -40,14 +41,54 @@ const testEnv = {
   CORS_ORIGINS: "https://app.example.test",
 } as unknown as WorkerEnv;
 
-async function fetchWorker(request: Request): Promise<Response> {
+async function createAutomationOwnerRequest(profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>,
+  input: AutomationOwnerRequestInput) {
+  const context = await resolveSigningContext({ profile, certificates: [profile.certificate], purpose: "automation-owner-request",
+    binding: { origin: input.origin, workspaceId: input.workspaceId, integrationId: input.integrationId, action: input.action },
+    authorityRevision: "fixture-owner-policy", current: async () => ({ personId: profile.identity.personId,
+      deviceId: profile.device.deviceId, authorityRevision: "fixture-owner-policy" }) });
+  return createVerifiedOwnerRequest(context, input);
+}
+
+async function fetchWorker(request: Request, environment: WorkerEnv = testEnv): Promise<Response> {
   const context = createExecutionContext();
-  const response = await worker.fetch(request, testEnv, context);
+  const response = await worker.fetch(request, environment, context);
   await waitOnExecutionContext(context);
   return response;
 }
 
 describe("automation Worker", () => {
+  it("Given a concurrently replaced replica generation, When publishing access maintenance, Then reject its stale generation before any write", async () => {
+    const writes: string[] = [];
+    const storage = { transactionSync: <T>(run: () => T) => run(), sql: { exec(statement: string) {
+      if (!statement.includes("SELECT state_generation")) writes.push(statement);
+      return { toArray: () => [{ state_generation: "newer-generation" }] };
+    } } };
+    expect(() => Reflect.apply(writeReplicaChunksAtomically, undefined,
+      [storage, "maintenance-generation", ["ciphertext"], Date.now(), undefined, "captured-generation"])).toThrow(/changed|generation/i);
+    expect(writes).toEqual([]);
+  });
+
+  it("Given an existing replica generation, When routing publication fails, Then roll back the new chunks, pointer and registration together", async () => {
+    const stub = testEnv.AUTOMATION.getByName("managed-routing-rollback");
+    const secret = testEnv.EVENT_STORAGE_SECRET!;
+    const original = JSON.stringify({ retained: "original durable replica" });
+    await stub.saveReplicaState(secret, original);
+    await runInDurableObject(stub, async (instance, ctx) => {
+      const previous = ctx.storage.sql.exec<{ state_generation: string }>("SELECT state_generation FROM automation_replica WHERE singleton = 1").one().state_generation;
+      ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing) VALUES (1, 'old-owner', 'workspace', 'managed-routing-rollback', 'old-routing')");
+      expect(() => writeReplicaChunksAtomically(ctx.storage, "uncommitted-generation", ["uncommitted ciphertext"], Date.now(), () => {
+        ctx.storage.sql.exec("UPDATE automation_registration SET owner_id = 'new-owner', routing = 'new-routing' WHERE singleton = 1");
+        throw new Error("Routing publication interrupted");
+      })).toThrow("Routing publication interrupted");
+      expect(ctx.storage.sql.exec<{ state_generation: string }>("SELECT state_generation FROM automation_replica WHERE singleton = 1").one().state_generation).toBe(previous);
+      expect(ctx.storage.sql.exec("SELECT data FROM automation_replica_chunks WHERE generation = 'uncommitted-generation'").toArray()).toEqual([]);
+      expect(ctx.storage.sql.exec<{ owner_id: string; routing: string }>("SELECT owner_id, routing FROM automation_registration WHERE singleton = 1").one())
+        .toEqual({ owner_id: "old-owner", routing: "old-routing" });
+      expect(await instance.loadReplicaState(secret)).toBe(original);
+    });
+  });
+
   it("Given encrypted replica state larger than 2 MiB, When its chunks are committed, Then all chunks and generation pointer change in one synchronous transaction", () => {
     const operations: Array<{ sql: string; inTransaction: boolean }> = [];
     let inTransaction = false;
@@ -94,6 +135,27 @@ describe("automation Worker", () => {
 
     expect(response.status, await response.clone().text()).toBe(200);
     expect(await response.json()).toMatchObject({ status: "ready" });
+  });
+
+  it("Given a Worker build has a commit SHA, When health and capabilities are read, Then both expose that exact build identity", async () => {
+    const sha = "a".repeat(40);
+    const buildEnv = { ...testEnv, RELEASE_SHA: sha };
+    const health = await fetchWorker(new Request("https://automation.test/health"), buildEnv);
+    const capabilities = await fetchWorker(new Request("https://automation.test/v2/capabilities"), buildEnv);
+
+    expect(await health.json()).toMatchObject({ status: "ready", buildSha: sha });
+    expect(await capabilities.json()).toMatchObject({ version: 2, buildSha: sha, readers: { automationState: 5 } });
+  });
+
+  it("Given a Worker has no valid build SHA, When health and capabilities are read, Then report unknown explicitly", async () => {
+    for (const configured of [undefined, "unknown", "not-a-commit"]) {
+      const buildEnv = { ...testEnv, RELEASE_SHA: configured } as WorkerEnv;
+      const health = await fetchWorker(new Request("https://automation.test/health"), buildEnv);
+      const capabilities = await fetchWorker(new Request("https://automation.test/v2/capabilities"), buildEnv);
+
+      expect(await health.json()).toMatchObject({ status: "ready", buildSha: null });
+      expect(await capabilities.json()).toMatchObject({ version: 2, buildSha: null, readers: { automationState: 5 } });
+    }
   });
 
   it("Given the configured browser origin, When activation preflight is requested, Then bearer and PUT are allowed", async () => {

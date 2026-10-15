@@ -1,9 +1,10 @@
+import { readLocal, writeLocal } from "../localDb"
 import { withWorkspaceMutation } from "../workspaceMutation"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
-import { bootstrapIdentity, renewDeviceIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, renewDeviceIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createWorkspaceGrant } from "../domain/proofs"
 import { createWorkspaceDeparture, verifyWorkspaceDeparture, createPeerAdvertisement, createWorkspaceDeviceRevocation, verifyWorkspaceDeviceRevocation } from "./meshRecords"
 import { DurableMesh } from "./durableMesh"
@@ -18,7 +19,10 @@ beforeAll(async () => {
 beforeEach(() => resetIdentityStorageForTest())
 async function identity(name: string) { resetIdentityStorageForTest(); return bootstrapIdentity(name) }
 async function fixture() {
-  const owner = await identity("Owner"), visitor = await identity("Visitor")
+  const owner = await identity("Owner")
+  const ownerRaw = (await readLocal("tincanban.local_profile.v1"))!
+  const visitor = await identity("Visitor")
+  const visitorRaw = (await readLocal("tincanban.local_profile.v1"))!
   const doc = Automerge.change(Automerge.init(), draft => { (draft as any).value = "workspace" })
   const bytes = Automerge.save(doc)
   const grant = await createWorkspaceGrant(owner, "board", visitor.identity.personId, "visitor")
@@ -30,7 +34,7 @@ async function fixture() {
   let peer: any = { workspaceId: "board", personId: visitor.identity.personId, deviceId: visitor.device.deviceId,
     role: "visitor", endpoint: "endpoint", transportSecret: "secret", lastSeen: bundle.advertisement.payload.issuedAt, advertisement: bundle }
   const store: any = { getPeer: async () => peer, listPeers: async () => [peer],
-    getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [credential],
+    getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [credential], getWorkspaceAuthority: async () => null,
     putWorkspaceCredential: async (value: any) => { credential = value },
     upsertPeer: async (value: any) => { peer = mergePeerRecords(peer, value); return peer } }
   const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {
@@ -39,7 +43,10 @@ async function fixture() {
     store, getProfile: async () => owner })
   vi.spyOn(mesh as any, "notify").mockResolvedValue(undefined)
   vi.spyOn(mesh as any, "publishAll").mockResolvedValue(undefined)
-  return { mesh, owner, visitor, bundle, store, credential: () => credential, peer: () => peer }
+  await writeLocal("tincanban.local_profile.v1", ownerRaw)
+  clearInMemoryProfileForReloadTest()
+  return { mesh, owner, visitor, bundle, store, credential: () => credential, peer: () => peer,
+    activateVisitor: async () => { await writeLocal("tincanban.local_profile.v1", visitorRaw); clearInMemoryProfileForReloadTest() } }
 }
 
 describe("member access", () => {
@@ -76,16 +83,26 @@ describe("member access", () => {
     const write = vi.spyOn(f.store, "putWorkspaceCredential")
     await expect(f.mesh.checkGuestDevices(["board"], f.visitor.identity.personId, [f.bundle])).rejects.toThrow("Device access revoked")
     expect(write).not.toHaveBeenCalled()
+    await f.activateVisitor()
     const other = await renewDeviceIdentity()
     expect(other.identity.personId).toBe(f.visitor.identity.personId)
     expect(other.device.deviceId).not.toBe(f.visitor.device.deviceId)
     const bundle = await createPeerAdvertisement(other, { workspaceId: "board", endpoint: "new-endpoint" })
-    await expect(f.mesh.checkGuestDevices(["board"], other.identity.personId, [bundle])).resolves.toBeUndefined()
+    await expect(f.mesh.checkGuestDevices(["board"], other.identity.personId, [bundle])).resolves.toBe(other.device.deviceId)
     await expect(f.mesh.checkGuestDevices(["board"], f.owner.identity.personId, [bundle])).rejects.toThrow("does not match")
     const forged = structuredClone(bundle)
     forged.advertisement.payload.deviceId = "forged-device"
     await expect(f.mesh.checkGuestDevices(["board"], other.identity.personId, [forged])).rejects.toThrow()
     expect(write).not.toHaveBeenCalled()
+    await f.mesh.dispose()
+  })
+  it("rechecks an approved signed workspace grant and stops a live reader after person access is revoked", async () => {
+    const f = await fixture()
+    const grant = structuredClone(f.peer().advertisement.grant)
+    await f.mesh.revokePerson("board", f.visitor.identity.personId)
+
+    await expect(f.mesh.checkGuestDevices(["board"], f.visitor.identity.personId, [f.bundle], [grant]))
+      .rejects.toThrow(/workspace access revoked/i)
     await f.mesh.dispose()
   })
   it("refuses expanding confirmed removal to an unauthorized workspace before writing", async () => {

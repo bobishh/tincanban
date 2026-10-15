@@ -74,7 +74,7 @@ onBeforeUnmount(() => { disposed = true; discardSource() })
         <label class="button" for="identity-avatar-file">Choose photo</label>
         <input id="identity-avatar-file" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" :disabled="disabled || editorLoading" @change="choosePhoto" />
         <button v-if="editorFailed" class="button" type="button" @click="reloadApp">Reload app</button>
-        <button v-if="avatarData" class="button button-quiet button-small" type="button" :disabled="disabled" @click="emit('update:avatar', null)">Remove photo</button>
+        <button v-if="avatarData" class="button button-quiet button-small identity-remove-photo" type="button" :disabled="disabled" @click="emit('update:avatar', null)">Remove photo</button>
       </div>
       <p v-if="avatarError" class="sync-error" role="alert">{{ avatarError }}</p>
       <p v-if="editorLoading" role="status">Opening photo editor…</p>
@@ -82,9 +82,10 @@ onBeforeUnmount(() => { disposed = true; discardSource() })
     </section>
 </template>
 <style scoped>
-.identity-avatar-form { display: grid; justify-items: start; gap: 12px; min-width: 0; }
+.identity-avatar-form { display: grid; justify-items: start; gap: var(--space-3); min-width: 0; }
 .identity-avatar-placeholder { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: var(--soft); color: var(--muted); }
 .identity-avatar-preview { width: 72px; height: 72px; border-radius: 50%; object-fit: cover; }
-.identity-avatar-actions { display: grid; gap: 10px; width: 100%; max-width: 140px; }
-.identity-avatar-actions .button { min-height: 42px; padding: 8px 10px; font-size: .9rem; }
+.identity-avatar-actions { display: grid; gap: var(--space-2); width: 100%; max-width: 140px; }
+.identity-avatar-actions .button { padding: var(--space-2) var(--space-3); }
+.identity-remove-photo { justify-self: start; text-decoration: underline; text-underline-offset: 3px; }
 </style>

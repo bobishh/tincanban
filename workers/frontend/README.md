@@ -1,14 +1,18 @@
 # Frontend release
 
-Acceptance: Given a push to main, when **every Verify job** succeeds, then deploy
-that run's checked frontend artifact to `match.meta-uber-engineer.dev`. A failed,
-cancelled, PR, manual Verify, or superseded run cannot publish.
+Acceptance: Given a push to main, when **every Verify job** succeeds, stage that
+run's sealed frontend and compiled automation artifacts with the exact successful
+Rusty image artifact. Confirm Rusty, then automation, then frontend. A failed,
+cancelled, PR, manual Verify, or superseded run cannot activate production.
 
-`ci.yml` builds once with the production telemetry repository variables, checks
-size and audit, seals SHA/file checksums, and uploads the build. The separate
-`deploy-frontend.yml` downloads only that trusted main run's artifact, checks
-checksums, and deploys with pinned Wrangler. Its concurrency prevents overlapping
-production deployments. Verify's cancellation cannot interrupt this workflow.
+`ci.yml` builds with production telemetry variables, captures a sealed frontend
+including retained chunks and a compiled no-bundle automation package. Automation
+runtime checks target that captured package. Rusty CI captures the executable
+from the pushed immutable image. `release/contract.json` declares reader floors,
+writer version, required capabilities and migration identifiers. The coordinator
+rejects source/SDK mismatches, altered bytes and extra unsealed modules.
+`deploy-frontend.yml` stages and deploys these captured artifacts without rebuilding.
+Its concurrency prevents overlapping production mutations.
 Publishing uses the version ID from that upload's structured Wrangler output.
 Release tags may repeat after a manual publish or retry; tag lookup cannot select
 the uploaded artifact unambiguously.
@@ -19,10 +23,14 @@ telemetry disabled. Project defaults to `tincanban`; level, sample rate, batch s
 can also be set through same-named variables. These values are public browser
 configuration. Never place board keys or Rusty operator credentials here.
 
-`CLOUDFLARE_API_TOKEN` is a repository secret limited to editing the existing
-`meta-frontend-tincanban` Worker. Rotate before 2027-01-07 23:59:59 UTC. Versions
-upload/deploy preserve the existing Custom Domain; this config deliberately owns
-no DNS or routes. Rusty and automation are separate releases.
+`CLOUDFLARE_API_TOKEN` must stage/deploy both existing Workers. The native transport
+requires `RUSTY_DEPLOY_SPEC`, a repository variable describing the existing host:
+`{"kind":"ssh-compose","target":"deploy@host","directory":"/srv/existing-project","composeFile":"compose.yaml","project":"existing-project","service":"rusty","origin":"https://rusty.example"}`.
+Use actual existing project/service/volume configuration. `RUSTY_DEPLOY_SSH_KEY`
+and `RUSTY_DEPLOY_KNOWN_HOSTS` are repository secrets. The adapter only overrides
+the image by digest and updates that service without dependencies; it does not
+change volume configuration or delete storage. These production settings have
+not been established or verified by the current source implementation.
 
 The release manifest records the checked build. Before publishing, the adapter
 retains fingerprinted chunks from previous builds, checks their SHA-256, and
@@ -32,9 +40,41 @@ bootstrap manifest contains public hashes from the pre-CI production release.
 Old HTML never replaces new HTML. Older tabs may eventually need reload; browser
 board data stays on the same origin.
 
-Production verification checks `/health`, `/`, `/pair`, the entry JavaScript,
-and missing-asset 404, including the exact release SHA. Failure marks deployment
-red; it does not automatically roll back or alter browser data.
+Production verification requires actual artifact identities, provider version IDs,
+SDK, reader floors, Rusty capabilities and served frontend file hashes. The native
+identity is the SHA-256 of the running executable, not merely its source tag.
+Staged/result activation journals preserve the exact cohort and version IDs after
+failure. A release is active only after every component confirms. Failure does
+not clear data or automatically activate an incompatible rollback reader.
+
+`/release-cohort.json` returns a no-store public projection. A browser checks on
+focus and periodically, identifies a stale tab and blocks verified writes when
+its reader/writer contract is too old. Its acknowledgement applies to that tab;
+it is not proof that an offline phone upgraded. Tabs predating this monitor need
+reload; server writer floors remain the enforcement boundary for those clients.
+
+`Recover compatible production cohort` is the explicit CI recovery path. Select
+`resume` with the original activation run ID and attempt: the workflow recovers
+its exact archived bundles and UUIDs, confirms uncertain stages, stages only
+missing Worker versions, and resumes server-first activation. Archives retain
+all sealed component bytes, not just source identifiers. Recovery refuses a
+stale activation after a different production cohort becomes active.
+
+Select `rollback` with that current run plus a previously confirmed target run
+and attempt. The selector rejects readers, writers or declared capabilities below
+current retained floors. It preserves those floors and migration identifiers.
+The old UI entry point is composed with hash-checked current-tab chunks; existing
+retention expiries never extend. The derived frontend is resealed with both parent
+artifact digests. Captured rollback bundles are uploaded without rebuilding to
+bind the new cohort metadata, with original provider UUIDs retained as provenance.
+Never activate a prior frontend UUID directly: it omits newer tabs' chunks.
+
+Artifacts and recovery journals remain available for fourteen days. Exact run
+attempts prevent mixed frontend/Worker bundles after CI reruns; rerun all Verify
+jobs when a new attempt needs a complete cohort. Expired/missing archives require
+a new checked forward release, never a mutable-tag lookup or deletion of local
+state. A first schema migration may legitimately have no compatible prior rollback
+reader; the selected checked release remains the forward recovery artifact.
 
 Local verification:
 
@@ -48,7 +88,6 @@ Activate by committing/pushing these workflow and adapter files to main. The
 first actual GitHub run proves secret permissions and the production deployment;
 local tests and a dry run do not prove these.
 
-Production currently contains the uncommitted blind Rusty client. Deployment
-refuses a source revision without `src/sync/blindClient.ts` and
-`src/components/RustyPanel.vue`, preventing main from replacing it with the old
-readable-keeper client. Land the compatible client before the first release.
+Current source, authored acceptance cases, and CI definitions remain unverified
+until the owner's final verification/release gate. No CI workflow was started by
+authoring these files.

@@ -6,6 +6,7 @@ import { defaultProofStore } from "../domain/proofs"
 import { createWorkspaceRevocation, verifyWorkspaceRevocation } from "./meshRecords"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { peerStore, type WorkspaceAuthorityRecord, type WorkspaceMeshCredential } from "./peerStore"
+import { ownerWorkspaceRecordSigning } from "./meshRecordSigning"
 
 type StoredAuthority = WorkspaceAuthorityRecord | WorkspaceMeshCredential
 
@@ -25,7 +26,8 @@ function hasMissingAdmittedHeads(records: unknown[], headSet: Set<string>): bool
 async function repairRevocationGeneration(doc: WorkspaceDocumentV2, profile: LocalProfile, personId: string,
   records: unknown[], heads: string[]): Promise<void> {
   const nextEpoch = Math.max(...records.map(value => (value as { payload: { epoch: number } }).payload.epoch)) + 1
-  const replacement = await createWorkspaceRevocation(profile, doc.id, personId, nextEpoch, heads)
+  const replacement = await createWorkspaceRevocation(profile, doc.id, personId, nextEpoch, heads, new Date().toISOString(),
+    await ownerWorkspaceRecordSigning(profile, doc.id))
   await peerStore.replaceWorkspaceRevocationGeneration({ workspaceId: doc.id, personId, expected: records, replacements: [replacement] })
 }
 

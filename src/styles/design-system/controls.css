@@ -6,14 +6,15 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 button:disabled:hover { transform: none; }
 .button, .icon-button, .drawer-item-btn, .column-add-button { transition: transform var(--motion-fast) var(--motion-ease), background-color var(--motion-fast) ease; }
-.button { display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-size); border: 2px solid var(--line); border-radius: 0; padding: 10px 16px; color: inherit; font-weight: var(--site-ui-weight); text-decoration: none; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-size); border: 2px solid var(--line); border-radius: 0; padding: var(--space-2) var(--space-4); color: inherit; font-weight: var(--site-ui-weight); text-decoration: none; }
 .button-primary { color: white; }
 .button-danger { color: white; text-decoration: underline; text-underline-offset: 3px; }
-.button-small { min-height: var(--control-size-compact); padding: 8px 11px; font-size: .8rem; }
-.pairing-paste textarea { width: 100%; resize: vertical; padding: 10px 12px; text-transform: none; letter-spacing: 0; }
-.search-field input { width: 100%; min-height: 42px; border: 0; outline: 0; font-size: 1rem; }
-select, input, textarea { min-width: 0; border: 2px solid var(--line); border-radius: 0; background: white; }
-select { min-height: 42px; padding: 8px 26px 8px 10px; }
+.button-small { min-height: var(--control-size-compact); padding: var(--space-2) var(--space-3); font-size: .8rem; }
+.pairing-paste textarea { width: 100%; resize: vertical; padding: var(--space-2) var(--space-3); text-transform: none; letter-spacing: 0; }
+.search-field input { width: 100%; min-height: var(--control-size); border: 0; outline: 0; font-size: 1rem; }
+select, input, textarea { min-width: 0; max-width: 100%; border: 2px solid var(--line); border-radius: 0; background: white; }
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select) { min-height: var(--control-size); padding: var(--space-2) var(--space-3); line-height: 1.4; }
+select { min-height: var(--control-size); padding: var(--space-2) var(--space-5) var(--space-2) var(--space-2); }
 @supports (appearance: base-select) {
   select:not([multiple]):not([size]), select:not([multiple]):not([size])::picker(select) {
     appearance: base-select;
@@ -21,8 +22,8 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
   select:not([multiple]):not([size]) {
     background-image: none !important;
     align-items: center;
-    gap: 12px;
-    padding-inline-end: 12px;
+    gap: var(--space-3);
+    padding-inline-end: var(--space-3);
   }
   select::picker-icon {
     content: "";
@@ -39,8 +40,8 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
     min-inline-size: anchor-size(width);
     max-inline-size: calc(100vw - 24px);
     max-block-size: min(360px, 65dvh);
-    margin-block: 8px;
-    padding: 6px;
+    margin-block: var(--space-2);
+    padding: var(--space-1);
     border: 2px solid var(--ink);
     border-radius: 0;
     background: var(--panel);
@@ -54,10 +55,10 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
   }
   select option {
     display: flex;
-    gap: 10px;
+    gap: var(--space-2);
     align-items: center;
-    min-height: 44px;
-    padding: 8px 12px;
+    min-height: var(--icon-size);
+    padding: var(--space-2) var(--space-3);
     border: 1px solid transparent;
     border-radius: 0;
     overflow-wrap: anywhere;
@@ -69,10 +70,10 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
 }
 .lead-filters select { width: 100%; }
 .filter-range label, .filter-range input { min-width: 0; }
-.filter-range input { width: 100%; max-width: 100%; min-height: 42px; padding: 8px 10px; }
+.filter-range input { width: 100%; max-width: 100%; min-height: var(--control-size); padding: var(--space-2) var(--space-2); }
 .chat-toast > .button { flex: 1; min-width: 0; text-align: left; overflow-wrap: anywhere; }
 .chat-toast > .icon-button { flex-shrink: 0; }
-.add-column-card input:not([type="checkbox"]) { width: 100%; min-height: 42px; padding: 8px 10px; border: 2px solid var(--line); background: white; }
+.add-column-card input:not([type="checkbox"]) { width: 100%; min-height: var(--control-size); padding: var(--space-2) var(--space-2); border: 2px solid var(--line); background: white; }
 .add-column-card input[type="checkbox"] { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
 .column-archived .column-header button, .bin-column-open .column-header button { border-color: currentColor; color: var(--ink); background: transparent; }
 .column-archived .column-header button:hover, .bin-column-open .column-header button:hover { color: var(--focus); }
@@ -80,17 +81,17 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
 .dialog-head .icon-button { flex: 0 0 var(--icon-size); }
 .dialog input:not([type="checkbox"]):not([type="radio"]), .dialog select, .dialog textarea { color: var(--ink); font: 400 1rem/1.4 var(--site-font-sans); letter-spacing: 0; text-transform: none; }
 .dialog .technical-text, .dialog .pairing-paste textarea { font: 400 .75rem/1.5 var(--site-font-mono); font-variant-ligatures: none; }
-.dialog-body input, .dialog-body select, .dialog-body textarea { width: 100%; padding: 10px 12px; }
-.workspace-item-actions button { padding: 10px 12px; border: 0; background: transparent; font: 700 .8rem/1 var(--site-font-sans); text-transform: uppercase; }
+.dialog-body input, .dialog-body select, .dialog-body textarea { width: 100%; padding: var(--space-2) var(--space-3); }
+.workspace-item-actions button { padding: var(--space-2) var(--space-3); border: 0; background: transparent; font: 700 .8rem/1 var(--site-font-sans); text-transform: uppercase; }
 .workspace-item-actions button + button { border-left: 1px solid var(--line); }
 .workspace-item-actions button:disabled { opacity: .5; cursor: wait; }
 .workspace-item-actions button:hover:not(:disabled) { background: var(--yellow); }
-.workspace-rename-form input { width: 100%; height: 100%; min-height: 42px; padding: 8px 10px; }
-.workspace-create-form > label input { width: 100%; padding: 10px 12px; }
+.workspace-rename-form input { width: 100%; height: 100%; min-height: var(--control-size); padding: var(--space-2) var(--space-2); }
+.workspace-create-form > label input { width: 100%; padding: var(--space-2) var(--space-3); }
 .workspace-preset-options input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--ink); }
-.template-editor input, .template-editor select, .template-editor textarea { width: 100%; padding: 10px 12px; }
-.template-editor textarea { resize: vertical; color: var(--ink); font: .8rem/1.5 var(--site-font-sans); letter-spacing: 0; text-transform: none; }.icon-button { width: var(--icon-size); height: var(--icon-size); padding: 0; border: 2px solid var(--line); font-size: 1.5rem; line-height: 1; }.icon-button:hover { color: white; }.form-grid input, .form-grid select, .form-grid textarea, .document-form input, .document-form select, .document-form textarea { width: 100%; padding: 10px 12px; font-size: 1rem; }.form-grid textarea, .document-form textarea { resize: vertical; }
-.dialog .template-editor textarea, .dialog .schema-json-textarea { font: 400 1rem/1.6 var(--site-font-sans); }.status-strip button { border: 2px solid var(--line); padding: 8px 9px; color: var(--ink); font: 700 .8rem/1 var(--site-font-sans); text-transform: uppercase; }.status-strip button.active { color: white; }.quick-note-form textarea { width: 100%; resize: vertical; padding: 10px 12px; font-size: 1rem; }.quick-note-form .button { justify-self: end; }
+.template-editor input, .template-editor select, .template-editor textarea { width: 100%; padding: var(--space-2) var(--space-3); }
+.template-editor textarea { resize: vertical; color: var(--ink); font: .8rem/1.5 var(--site-font-sans); letter-spacing: 0; text-transform: none; }.icon-button { width: var(--icon-size); height: var(--icon-size); padding: 0; border: 2px solid var(--line); font-size: 1.5rem; line-height: 1; }.icon-button:hover { color: white; }.form-grid input:not([type="checkbox"]):not([type="radio"]), .form-grid select, .form-grid textarea, .document-form input:not([type="checkbox"]):not([type="radio"]), .document-form select, .document-form textarea { width: 100%; padding: var(--space-2) var(--space-3); font-size: 1rem; }.form-grid textarea, .document-form textarea { resize: vertical; }
+.dialog .template-editor textarea, .dialog .schema-json-textarea { font: 400 1rem/1.6 var(--site-font-sans); }.status-strip button { border: 2px solid var(--line); padding: var(--space-2) var(--space-2); color: var(--ink); font: 700 .8rem/1 var(--site-font-sans); text-transform: uppercase; }.status-strip button.active { color: white; }.quick-note-form textarea { width: 100%; resize: vertical; padding: var(--space-2) var(--space-3); font-size: 1rem; }.quick-note-form .button { justify-self: end; }
 
 @media (max-width: 768px) {
   .filter-label select {
@@ -99,7 +100,7 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
 }
 
 @media (max-width: 560px) {
-  .mobile-column-switcher .button { min-width: var(--control-size-compact); padding-inline: 8px; }
+  .mobile-column-switcher .button { min-width: var(--control-size-compact); padding-inline: var(--space-2); }
 }
 @media (max-width: 500px) {
   .workspace-item-actions button { flex: 1; }
@@ -117,6 +118,6 @@ select { min-height: 42px; padding: 8px 26px 8px 10px; }
 .keeper-dot[data-state="reconnecting"], .mesh-member-presence.is-reconnecting, .mesh-device-presence.is-reconnecting { background: var(--yellow); }
 
 /* Secondary chat actions stay quiet, with a compact keyboard focus ring. */
-.message-action { border: 0; background: transparent; padding: 4px 6px; min-height: 32px; color: var(--muted); font-size: .8rem; }
+.message-action { border: 0; background: transparent; padding: var(--space-1) var(--space-1); min-height: 32px; color: var(--muted); font-size: .8rem; }
 .message-action:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
 .message-action:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }

@@ -16,6 +16,7 @@ import type { SyncConnection, SyncNode, DuplexStream } from "./transport"
 import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions } from "./durableMeshBase"
 import { DurableMeshAuthority } from "./durableMeshAuthority"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
+import { meshRecordSigning } from "./meshRecordSigning"
 
 type InstallSessionArguments = [
   workspaceId: string,
@@ -411,6 +412,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       : Date.now()
     const now = Date.now()
     const next = await createPeerAdvertisement(profile, credential.workspaceId, endpoint, {
+      signing: await meshRecordSigning(profile, credential, { kind: "advertisement" }, this.store),
       certificates,
       grant: localGrant,
       ownerPublicKey: credential.ownerPublicKey,

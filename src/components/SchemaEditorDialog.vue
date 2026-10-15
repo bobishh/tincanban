@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useId, useSlots, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useId, useSlots, watch } from "vue";
 import "./SchemaEditorDialog.css";
 import ModalLayer from "./ModalLayer.vue";
 import SettingsIdentitySection from "./SettingsIdentitySection.vue";
@@ -75,6 +75,11 @@ watch(activeTab, async () => {
 });
 const templateEditor = ref({ id: null as string | null, newId: null as string | null, name: "", markdown: "", saving: false, error: "", notice: "" });
 const settingsId = useId();
+const compactQuery = window.matchMedia("(max-width: 600px)");
+const compactSettings = ref(compactQuery.matches);
+const updateCompactSettings = () => { compactSettings.value = compactQuery.matches; };
+compactQuery.addEventListener("change", updateCompactSettings);
+onBeforeUnmount(() => compactQuery.removeEventListener("change", updateCompactSettings));
 const settingsTabs = computed(() => [
   ...(slots.identity ? [{ key: "identity" as const, label: "Identity" }] : []),
   { key: "workspace" as const, label: "Workspace" },
@@ -329,7 +334,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
       />
 
       <div v-else class="settings-layout">
-        <nav class="settings-nav" role="tablist" aria-label="Settings views" aria-orientation="vertical" @keydown="navigateSettings">
+        <nav class="settings-nav" role="tablist" aria-label="Settings views" :aria-orientation="compactSettings ? 'horizontal' : 'vertical'" @keydown="navigateSettings">
           <button v-for="tab in settingsTabs" :id="`${settingsId}-${tab.key}-tab`" :key="tab.key"
             class="settings-nav-button" :class="{ active: activeTab === tab.key }" type="button" role="tab"
             :data-settings-tab="tab.key" :aria-selected="activeTab === tab.key"

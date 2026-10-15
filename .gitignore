@@ -17,3 +17,11 @@ tmp/
 test-results-automation-worker/
 
 .sloposcope/
+.release/
+workers/automation/.artifact/
+
+.recovery/
+
+# Retained local bundle for final runtime diagnosis.
+workers/automation/.artifact-stale-final/
+workers/automation/.artifact-stale-final-fence/

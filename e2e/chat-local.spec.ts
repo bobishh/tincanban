@@ -46,6 +46,9 @@ for (const width of [1280, 375]) {
     await expect(chat.getByText("Hello workspace <script>alert(1)</script>", { exact: true })).toBeVisible()
     await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("")
     await expect(chat.locator(".chat-message-author")).toHaveText("Тревожная мимоза")
+    // The optimistic row appears before IndexedDB persistence finishes. Wait
+    // for its pending marker to clear before reloading the page.
+    await expect(chat.locator(".chat-message-pending")).toHaveCount(0)
     const geometry = await chat.evaluate(el => ({ width: el.clientWidth, content: el.scrollWidth }))
     expect(geometry.content).toBeLessThanOrEqual(geometry.width)
     await page.reload()

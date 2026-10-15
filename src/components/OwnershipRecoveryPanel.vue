@@ -33,7 +33,7 @@ const canVote = computed(() => {
 const memberName = (id: string) => props.members.find(member => member.personId === id)?.name || "Unavailable member"
 </script>
 <template>
-  <section v-if="hasMesh" class="recovery-panel" aria-label="Ownership succession">
+  <section v-if="hasMesh" class="recovery-panel ui-stack" aria-label="Ownership succession">
     <h3 v-if="!embedded">Ownership succession</h3>
     <p v-if="succession?.conflicted" class="sync-error" role="alert">Conflicting recovery claims found. Workspace writes paused; inspect signed claims before transferring ownership.</p>
     <p v-if="succession" class="dialog-copy">
@@ -54,11 +54,11 @@ const memberName = (id: string) => props.members.find(member => member.personId 
   </section>
 </template>
 <style scoped>
-.recovery-panel { display: grid; gap: 12px; padding-block: 8px; }
+.recovery-panel { display: grid; gap: var(--space-3); padding-block: var(--space-2); }
 h3, p { margin: 0; }
-label { display: grid; gap: 6px; }
+label { display: grid; gap: var(--space-1); }
 select { min-width: 0; width: 100%; }
 .button { justify-self: start; }
-.sync-recovery-note { display: grid; gap: 4px; }
+.sync-recovery-note { display: grid; gap: var(--space-1); }
 .sync-helper-text { color: var(--muted); font-size: .9rem; line-height: 1.4; }
 </style>

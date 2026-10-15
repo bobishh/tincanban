@@ -9,18 +9,21 @@ import type { SyncNode, SyncTransport } from "./transport"
 import { type LiveWorkspaceSync, type WorkspaceReplica, type WorkspaceSetStore } from "./workspaceSet"
 import type { DurableMesh, DurableMeshOptions, MeshPeerView, MeshSuccessionView } from "./durableMesh"
 import { createDeviceSyncState, userMessage } from "./deviceSyncState"
-import { requestDeviceEnrollment, selectDeviceEnrollment } from "./deviceSyncEnrollment"
-import { generateWorkspaceInvite as generateHostInvite, WorkspaceAdmissionFailure, type WorkspaceHostContext } from "./deviceSyncHost"
+import type { selectDeviceEnrollment } from "./deviceSyncEnrollment"
+import { requestDeviceEnrollmentLazily, selectDeviceEnrollmentLazily } from "./lazyDeviceEnrollment"
+import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
+import type { WorkspaceHostContext } from "./deviceSyncHost"
 import { createKeeperOperations } from "./keeperOperations"
 import type { KeeperDiscovery } from "./keeperDiscovery"
 import type { KeeperPairing } from "./keeperPairing"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
-import { connectWorkspaceJoin, isWorkspacePairingLocation, reportWorkspaceJoinFailure } from "./workspaceJoinBrowserFlow"
+import { connectWorkspaceJoin, isWorkspacePairingLocation, reportWorkspaceJoinFailure } from "./workspaceJoinBrowserView"
 import { clearPairingLocation, copyInviteLink } from "./deviceSyncInviteView"
 import { recoverLiveSession } from "./deviceSyncLiveRecovery"
 import { meshTrace } from "./meshTrace"
 import { createDeviceSyncJoinApproval } from "./deviceSyncJoinApproval"
 import { AuthorityFingerprintTracker } from "./authorityFingerprint"
+import { createPeerHistoryReadActions } from "./peerHistoryRequestRouting"
 export type DeviceSyncOptions = {
   workspace: WorkspaceReplica
   workspaceStore?: WorkspaceSetStore
@@ -343,9 +346,8 @@ export class DeviceSyncController {
     }
   }
 
-  private async selectSyncAll() {
-    await this.ensureDurableMesh()
-    await selectDeviceEnrollment(this.enrollmentContext())
+  private selectSyncAll() {
+    return selectDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh())
   }
 
   private selectSyncWorkspace() {
@@ -354,8 +356,12 @@ export class DeviceSyncController {
   }
 
   private async generateWorkspaceInvite() {
+    const run = this.run
     await this.ensureDurableMesh()
-    await generateHostInvite(this.workspaceHostContext())
+    if (this.run !== run) return
+    const { generateWorkspaceInvite } = await import("./deviceSyncHost")
+    if (this.run !== run) return
+    await generateWorkspaceInvite(this.workspaceHostContext())
   }
 
   private workspaceHostContext(): WorkspaceHostContext {
@@ -447,17 +453,8 @@ export class DeviceSyncController {
       async () => await this.durableMesh?.revokedWorkspaceIds() ?? [])
   }
 
-  private async requestEnrollment(replaceIdentity = false) {
-    const invite = this.state.parsedInvite.value
-    if (!invite || invite.kind !== "device-enrollment" || this.state.step.value !== "enroll-guest") return
-    await this.ensureDurableMesh()
-    const profile = await this.getProfile()
-    if (profile.identity.personId !== invite.issuerPersonId && (!replaceIdentity || this.state.enrollmentConflict.value?.currentPersonId !== profile.identity.personId)) {
-      this.state.error.value = "Identity conflict: confirm the identity replacement first."
-      return
-    }
-    this.state.replacementPersonId.value = replaceIdentity ? profile.identity.personId : undefined
-    await requestDeviceEnrollment(this.enrollmentContext(), invite)
+  private requestEnrollment(replaceIdentity = false) {
+    return requestDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh(), replaceIdentity)
   }
 
   private async waitToReconnect(milliseconds: number) {
@@ -528,6 +525,8 @@ export class DeviceSyncController {
         identityChanged: this.identityChanged, refreshProfile: () => this.getProfile(), join: () => this.acceptWorkspaceJoin() }),
       joinFromLocation: (raw: string) => isWorkspacePairingLocation(raw, url => { void this.prepareJoin(url) }), startDurableMesh: () => this.startDurableMesh(), stopLiveSync: () => this.stopLiveSync(), addOwnerWorkspace: (id: string) => this.addOwnerWorkspace(id),
       fetchBlob: async (workspaceId: string, descriptor: BlobDescriptor) => (await this.ensureDurableMesh())?.fetchBlob(workspaceId, descriptor),
+      ...createPeerHistoryReadActions({ durableMesh: () => this.durableMesh, durableMeshPromise: () => this.durableMeshPromise,
+        directPeerSessions: () => new Set([...this.directPeerSessions.values(), ...(this.liveSession ? [this.liveSession] : [])]) }),
       ...deviceManagementActions(() => this.ensureDurableMesh(), this.availableWorkspaces, this.state.ownershipRevision),
       promotePeer: (personId: string) => this.withActiveWorkspace((id, mesh) => mesh.promotePerson(id, personId), true),
       shutdown: () => this.shutdown(), revokePeer: (personId: string) => this.revokePeer(personId),
@@ -539,9 +538,9 @@ export class DeviceSyncController {
         (await import("./keeperPolicyUpdate")).beginKeeperPolicyUpdate(personId, baselineWorkspaceIds),
       transferOwnership: (personId: string) => this.withActiveWorkspace((id, mesh) => mesh.transferOwnership(id, personId), true),
       setSuccessor: (personId: string | null) => this.withActiveWorkspace((id, mesh) => mesh.setSuccessor(id, personId)), voteForSuccessor: (personId: string) => this.withActiveWorkspace((id, mesh) => mesh.voteForSuccessor(id, personId)),
-      claimSuccession: () => this.withActiveWorkspace((id, mesh) => mesh.claimSuccession(id), true),
-      leaveMesh: () => this.leaveMesh(), leaveWorkspace: (workspaceId: string) => this.leaveWorkspace(workspaceId),
-      copyInvite: (target?: string) => copyInviteLink(state, target), close: () => this.close(), dismiss: () => this.dismiss(),
+      claimSuccession: () => this.withActiveWorkspace((id, mesh) => mesh.claimSuccession(id), true), leaveMesh: () => this.leaveMesh(),
+      leaveWorkspace: (workspaceId: string) => this.leaveWorkspace(workspaceId), copyInvite: (target?: string) => copyInviteLink(state, target),
+      close: () => this.close(), dismiss: () => this.dismiss(),
     }
   }
 }

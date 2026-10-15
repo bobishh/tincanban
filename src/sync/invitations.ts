@@ -1,11 +1,13 @@
-import { certHashDefault, createWorkspaceGrant } from "../domain/proofs"
+import { createWorkspaceGrant } from "../domain/proofs"
 import type { ScopedInvitation } from "@meta-uber/mesh-pairing"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import {
   sha256Base64Url,
-  signEnvelope,
+  canonicalizeJson,
   type LocalProfile,
 } from "../domain/identity"
+import { assertSigningContextCurrent, type VerifiedSigningContext } from "../domain/signingContext"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 
 type InvitationStatus = "pending" | "redeeming" | "consumed" | "cancelled" | "expired"
 
@@ -16,6 +18,17 @@ export type StoredInvitation = ScopedInvitation & {
 }
 
 let inMemoryInvitations = new Map<string, StoredInvitation>()
+
+function validWorkspaceGrantRequest(invite: StoredInvitation, workspaceIds: string[], profile: LocalProfile, recipient: string) {
+  return invite.kind === "workspace-join" && Boolean(recipient) && workspaceIds.length > 0 &&
+    new Set(workspaceIds).size === workspaceIds.length && workspaceIds.every(id => invite.workspaces.some(item => item.id === id)) &&
+    invite.issuerPersonId === profile.identity.personId && invite.issuerDeviceId === profile.device.deviceId &&
+    invite.issuerPublicKey === profile.device.publicKey
+}
+
+function unownedWorkspace(invite: StoredInvitation, workspaceIds: string[], profile: LocalProfile, owners?: Map<string, string>) {
+  return workspaceIds.find(id => profile.identity.personId !== (owners?.get(id) || invite.issuerPersonId))
+}
 
 export function resetInvitationStorageForTest() {
   inMemoryInvitations = new Map<string, StoredInvitation>()
@@ -100,37 +113,23 @@ export class InvitationService {
   async approveEnrollment(
     invitationId: string,
     recipientDevice: { deviceId: string; publicKey: string; displayName?: string },
-    profile: LocalProfile
+    profile: LocalProfile,
+    suppliedContext?: VerifiedSigningContext,
   ): Promise<{ ok: true; certificate: DeviceCertificate } | { ok: false; error: string }> {
-    const invite = await this.getInvitation(invitationId)
-    if (!invite) {
-      return { ok: false, error: "Invitation not found" }
-    }
-    if (invite.kind !== "device-enrollment") {
-      return { ok: false, error: "Not a device-enrollment invitation" }
-    }
-    if (invite.status !== "redeeming" || invite.claimedByDeviceId !== recipientDevice.deviceId) {
-      return { ok: false, error: "Invitation not currently redeeming for this device" }
-    }
-
-    if (!profile.certificate.payload.canEnrollDevices) return { ok: false, error: "This device cannot enroll other devices" }
-
-    const certPayload = {
-      kind: "device-certificate" as const,
-      version: 1 as const,
-      personId: profile.identity.personId,
-      deviceId: recipientDevice.deviceId,
-      devicePublicKey: recipientDevice.publicKey,
-      issuerCertificateHash: await certHashDefault(profile.certificate),
-      canEnrollDevices: true as const,
-    }
-
-    const signedCert = await signEnvelope(profile.privateKeys.devicePrivateKey, certPayload, profile.device.deviceId)
-
-    invite.status = "consumed"
-    invite.approvedAt = new Date().toISOString()
-
-    return { ok: true, certificate: signedCert }
+    const requestedDevice = structuredClone(recipientDevice)
+    const requestedProfile = structuredClone(profile)
+    const requestedInvitationId = invitationId
+    const { approveEnrollmentCertificate } = await import("./enrollmentCertificate")
+    return approveEnrollmentCertificate(requestedInvitationId, requestedDevice, requestedProfile, suppliedContext, {
+      getInvitation: id => this.getInvitation(id),
+      consume: (invite, approvedAt, stillCurrent) => {
+        const current = inMemoryInvitations.get(invite.invitationId) ?? null
+        if (!current || !stillCurrent(current, Date.now())) return false
+        current.status = "consumed"
+        current.approvedAt = approvedAt
+        return true
+      },
+    })
   }
 
   async approveWorkspaceJoin(
@@ -142,25 +141,10 @@ export class InvitationService {
     role: "editor" | "visitor" = "visitor",
     accessEpoch = 1,
   ): Promise<{ ok: true; grant: WorkspaceGrant } | { ok: false; error: string }> {
-    const invite = await this.getInvitation(invitationId)
-    if (!invite) {
-      return { ok: false, error: "Invitation not found" }
-    }
-    if (invite.kind !== "workspace-join") {
-      return { ok: false, error: "Not a workspace-join invitation" }
-    }
-
-    const ownerId = workspaceOwnerPersonId || invite.issuerPersonId
-    if (profile.identity.personId !== ownerId) {
-      return { ok: false, error: "Only the workspace owner can issue workspace grants" }
-    }
-
-    const signedGrant = await createWorkspaceGrant(profile, workspaceId, recipientPersonId, role, accessEpoch)
-
-    invite.status = "consumed"
-    invite.approvedAt = new Date().toISOString()
-
-    return { ok: true, grant: signedGrant }
+    const result = await this.approveWorkspaceJoinSet(invitationId, recipientPersonId, [workspaceId], profile,
+      workspaceOwnerPersonId ? new Map([[workspaceId, workspaceOwnerPersonId]]) : undefined, role,
+      new Map([[workspaceId, accessEpoch]]))
+    return result.ok ? { ok: true, grant: result.grants[0] } : result
   }
 
   async approveWorkspaceJoinSet(
@@ -179,25 +163,45 @@ export class InvitationService {
     if (invite.kind !== "workspace-join") {
       return { ok: false, error: "Not a workspace-join invitation" }
     }
+    const invitationSnapshot = canonicalizeJson(invite)
+    workspaceIds = workspaceIds.slice()
+    accessEpochs = accessEpochs ? new Map(accessEpochs) : undefined
+    const stillCurrent = () => {
+      const current = inMemoryInvitations.get(invitationId)
+      if (!current || canonicalizeJson(current) !== invitationSnapshot ||
+        !["pending", "redeeming"].includes(current.status) || Date.parse(current.expiresAt) <= Date.now()) {
+        throw new Error("Workspace invitation is cancelled, expired, consumed or changed")
+      }
+      return current
+    }
+    try { stillCurrent() } catch (error) { return { ok: false, error: (error as Error).message } }
+    if (!validWorkspaceGrantRequest(invite, workspaceIds, profile, recipientPersonId)) {
+      return { ok: false, error: "Workspace grant request does not match its invitation" }
+    }
 
     // Verify ownership for all requested workspaces
-    for (const wsId of workspaceIds) {
-      const ownerId = workspaceOwners?.get(wsId) || invite.issuerPersonId
-      if (profile.identity.personId !== ownerId) {
-        return { ok: false, error: `Only the workspace owner can issue workspace grants for workspace ${wsId}` }
+    const unowned = unownedWorkspace(invite, workspaceIds, profile, workspaceOwners)
+    if (unowned !== undefined) return { ok: false, error: `Only the workspace owner can issue workspace grants for workspace ${unowned}` }
+
+    try {
+      const grants: WorkspaceGrant[] = []
+      const contexts: VerifiedSigningContext[] = []
+      for (const wsId of workspaceIds) {
+        stillCurrent()
+        const accessEpoch = accessEpochs?.get(wsId) ?? 1
+        const context = await workspaceOwnerSigningContext(profile, wsId, "workspace-grant",
+          { personId: recipientPersonId, role, accessEpoch })
+        contexts.push(context)
+        grants.push(await createWorkspaceGrant(profile, wsId, recipientPersonId, role, accessEpoch, context))
       }
+      await Promise.all(contexts.map(context => assertSigningContextCurrent(context)))
+      const current = stillCurrent()
+      current.status = "consumed"
+      current.approvedAt = new Date().toISOString()
+      return { ok: true, grants }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "Workspace grant signing failed" }
     }
-
-    const grants: WorkspaceGrant[] = []
-
-    for (const wsId of workspaceIds) {
-      grants.push(await createWorkspaceGrant(profile, wsId, recipientPersonId, role, accessEpochs?.get(wsId) ?? 1))
-    }
-
-    invite.status = "consumed"
-    invite.approvedAt = new Date().toISOString()
-
-    return { ok: true, grants }
   }
 }
 

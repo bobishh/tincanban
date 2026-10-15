@@ -8,6 +8,7 @@ import type { WorkspaceSetStore } from "./workspaceSet"
 
 type Entry = { id: string; bytes: string; authorization?: unknown }
 type RequestEffect = Extract<RustMeshScopeFrameEffect, { kind: "proofRequest" }>
+const MAX_PROOF_FRAME_BYTES = 256 * 1024
 
 export function workspaceProofTransfer(store: WorkspaceSetStore, ids: string[]) {
   const sources = new Map<string, RustMeshScopeRuntime>()
@@ -16,23 +17,27 @@ export function workspaceProofTransfer(store: WorkspaceSetStore, ids: string[]) 
       for (const runtime of sources.values()) runtime.free?.()
       sources.clear()
     },
-    async serveProofPage(frame: Uint8Array, stream: DuplexStream, secret: string): Promise<boolean> {
+    async serveProofPage(frame: Uint8Array, stream: DuplexStream, secret: string,
+      ensureCurrent: () => void | Promise<void> = () => undefined): Promise<boolean> {
       const id = requestWorkspace(frame, secret, ids)
       if (!id) return false
       const key = `${id}:${secret}`
       const runtime = sourceRuntime(sources, key, id, secret)
       try {
+        await ensureCurrent()
         const effect = runtime.receiveFrame(frame)
         if (effect?.kind !== "proofSource") throw new Error("Invalid proof request")
         const payload = Uint8Array.from(effect.payload)
         const response = runtime.provideCachedProofPage(payload)
-          ?? await prepareSourcePage(store, id, runtime, payload)
+          ?? await prepareSourcePage(store, id, runtime, payload, ensureCurrent)
+        await ensureCurrent()
         await stream.send(Uint8Array.from(response))
         await stream.closeSend()
         return true
       } catch (error) {
         runtime.free?.()
         sources.delete(key)
+        try { await stream.reset?.() } catch { /* Preserve the authorization failure. */ }
         throw error
       }
     },
@@ -49,7 +54,7 @@ export function workspaceProofTransfer(store: WorkspaceSetStore, ids: string[]) 
 function requestWorkspace(frame: Uint8Array, secret: string, ids: string[]): string | undefined {
   const header = inspectPairingFrame(frame)
   if (header.type !== "mesh-proof-request-v1") return undefined
-  if (header.secret !== secret || frame.length > 256 * 1024) throw new Error("Unauthorized proof request")
+  if (header.secret !== secret || frame.length > MAX_PROOF_FRAME_BYTES) throw new Error("Unauthorized proof request")
   const request = JSON.parse(new TextDecoder().decode(frame.subarray(frame.indexOf(10) + 1))) as { manifest?: { workspaceId?: string } }
   const id = request.manifest?.workspaceId
   if (!id || !ids.includes(id)) throw new Error("Proof workspace outside invitation scope")
@@ -67,10 +72,15 @@ function sourceRuntime(sources: Map<string, RustMeshScopeRuntime>, key: string, 
   sources.set(key, runtime)
   return runtime
 }
-async function prepareSourcePage(store: WorkspaceSetStore, id: string, runtime: RustMeshScopeRuntime, payload: Uint8Array) {
+async function prepareSourcePage(store: WorkspaceSetStore, id: string, runtime: RustMeshScopeRuntime, payload: Uint8Array,
+  ensureCurrent: () => void | Promise<void>) {
   if (!store.readAuthorization) throw new Error("Proof workspace outside invitation scope")
+  await ensureCurrent()
   const document = await store.read(id)
-  return runtime.provideProofPage(payload, document, await store.readAuthorization(document, id))
+  await ensureCurrent()
+  const authorization = await store.readAuthorization(document, id)
+  await ensureCurrent()
+  return runtime.provideProofPage(payload, document, authorization)
 }
 async function localDocument(store: WorkspaceSetStore, id: string): Promise<Uint8Array> {
   try { return await store.read(id) }
@@ -103,12 +113,7 @@ async function receivePage(runtime: RustMeshScopeRuntime, id: string, effect: Re
     catch { await clearProofPages(id).catch(() => {}) }
   }
   if (!connection) throw new Error("Workspace authorization pages required before admission")
-  const frame = await proofTimeout(async () => {
-    const stream = await connection.openStream()
-    await stream.send(Uint8Array.from(effect.frame))
-    await stream.closeSend()
-    return stream.read()
-  })
+  const frame = await readProofResponse(connection, Uint8Array.from(effect.frame))
   const next = runtime.receiveFrame(frame)
   if (!next) throw new Error("Missing proof page response")
   return next
@@ -120,11 +125,43 @@ export function exportWorkspaceProofs(document: Uint8Array, value: unknown): unk
   if (!value || typeof value !== "object" || !("authority" in value) || (!("records" in value) && !("pages" in value))) return value
   return meshRustRuntime().state.authorizationExport(document, value)
 }
-async function proofTimeout<T>(operation: () => Promise<T>): Promise<T> {
+async function readProofResponse(connection: SyncConnection, frame: Uint8Array): Promise<Uint8Array> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let stream: DuplexStream | undefined
+  let expired = false
+  let sendClosed = false
+  const ensurePending = () => { if (expired) throw new Error("Authorization page timed out; retry same snapshot") }
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true
+      reject(new Error("Authorization page timed out; retry same snapshot"))
+    }, 20_000)
+  })
+  const operation = (async () => {
+    const opened = await connection.openStream()
+    if (expired) { releaseProofStream(opened, true); ensurePending() }
+    stream = opened
+    await stream.send(frame)
+    ensurePending()
+    await stream.closeSend()
+    sendClosed = true
+    ensurePending()
+    const response = await stream.read(MAX_PROOF_FRAME_BYTES)
+    ensurePending()
+    if (response.length > MAX_PROOF_FRAME_BYTES) throw new Error("Authorization page response is too large")
+    return response
+  })()
   try {
-    return await Promise.race([operation(), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Authorization page timed out; retry same snapshot")), 20_000)
-    })])
-  } finally { if (timer) clearTimeout(timer) }
+    return await Promise.race([operation, deadline])
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+    if (stream) releaseProofStream(stream, !sendClosed)
+  }
+}
+
+function releaseProofStream(stream: DuplexStream, closeSend: boolean): void {
+  try {
+    if (stream.reset) void Promise.resolve(stream.reset()).catch(() => undefined)
+    else if (closeSend) void Promise.resolve(stream.closeSend()).catch(() => undefined)
+  } catch { /* Cleanup must not replace the transfer result. */ }
 }

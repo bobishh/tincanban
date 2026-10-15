@@ -1,5 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson } from "../domain/identity"
+import { receivedHistoryBasisIdentity } from "./receivedHistoryBasisIdentity"
+import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { RustStateCore } from "@meta-uber/mesh-replication/runtime"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { assertWorkspaceEntityTransitions, assertWorkspaceRootTransition, assertWorkspaceTransition } from "../domain/permissions"
@@ -27,6 +29,7 @@ export type IncomingAuthorizationBundle =
 
 export type WorkspaceAdmissionInput = {
   workspaceId: string
+  receivedBasis?: WasmVerifiedReceivedHistoryBaseline
   local?: Uint8Array
   remote: Uint8Array
   authorization: IncomingAuthorizationBundle
@@ -90,10 +93,11 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
   local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>, loadMs: number): WorkspaceAdmissionResult {
   let phaseStarted = performance.now()
   const bundle = input.authorization
+  if (input.receivedBasis && !(input.receivedBasis instanceof WasmVerifiedReceivedHistoryBaseline)) throw new Error("Workspace basis must be Native-verified")
   const recordPages = policy.authorizationRecordPages(bundle)
   const incomingRecords = recordPages.flat()
   const authority = policy.prepareWriteEvidence({ incoming: bundle.authority, known: input.knownAuthority,
-    records: incomingRecords, genesisPersonId: local?.ownerPersonId ?? remote.ownerPersonId,
+    records: incomingRecords, genesisPersonId: input.receivedBasis ? bundle.authority.genesisOwner.personId : local?.ownerPersonId ?? remote.ownerPersonId,
     remoteOwnerPersonId: remote.ownerPersonId }) as WorkspaceWriteAuthorityEvidence
   // The full raw union is the evaluator's evidence source. It includes hashes
   // already known locally so late authority evidence can reclassify them.
@@ -101,7 +105,7 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
   const rawBytes = Automerge.save(merged)
   const prepareMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
-  const plan = policy.evaluateCausalAdmission({
+  const rawAdmission = {
     records: incomingRecords,
     snapshot: {
       workspaceId: remote.id, genesisOwner: authority.genesisOwner, genesisEpoch: authority.genesisEpoch,
@@ -111,40 +115,20 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
       departures: authority.departures,
     },
     nowMs: input.now,
-  }) as AdmissionPlan
+  }
+  const plan = (input.receivedBasis ? input.receivedBasis.admitTail(rawAdmission) : policy.evaluateCausalAdmission(rawAdmission)) as AdmissionPlan
   const policyMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
   const changesByHash = new Map(Automerge.getChangesMetaSince(merged, []).map(change => [change.hash, change]))
   const operationCount = Automerge.stats(merged).numOps
-  // Expanding a large text history duplicates every operation in JavaScript.
-  // The full before/after permission check below needs no expanded history.
-  const boundedChanges = [...changesByHash.values()].filter(change => change.maxOp - change.startOp + 1 <= 32_768)
-    .map(change => Automerge.getBackend(merged).getChangeByHash(change.hash)!)
-  const { targetsByHash, objectParents } = indexAdmissionOperations(boundedChanges)
-  // Existing map IDs retain their original parent even if their large creation
-  // change was omitted. Missing/deleted objects still use the full check.
-  const entitiesId = Automerge.getObjectId(merged.entities)
-  if (entitiesId) {
-    objectParents.set(entitiesId, { parentId: "_root", key: "entities" })
-    for (const [id, entity] of Object.entries(merged.entities)) {
-      const objectId = Automerge.getObjectId(entity)
-      if (objectId) objectParents.set(objectId, { parentId: entitiesId, key: id })
-    }
-  }
+  const { targetsByHash, objectParents } = indexDocumentOperations(merged, changesByHash)
   const actorByHash = new Map<string, string>()
   for (const authorization of plan.verifiedAuthorizations) {
     for (const hash of authorization.signed.payload.hashes) actorByHash.set(hash, authorization.signed.payload.personId)
   }
   const indexMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
-  for (const decision of plan.decisions) {
-    if (decision.status.type !== "admitted") continue
-    const change = changesByHash.get(decision.hash)
-    if (change) {
-      const operations = targetsByHash.get(change.hash)
-      assertAdmittedTransition(merged, change, decision.status.role, actorByHash.get(change.hash), operations, objectParents)
-    }
-  }
+  assertPlanTransitions(input.receivedBasis, plan, merged, changesByHash, actorByHash, { targetsByHash, objectParents })
   const transitionsMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
   const quarantinedHashes = plan.decisions.filter(decision => decision.status.type === "quarantined").map(decision => decision.hash)
@@ -183,6 +167,40 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
     decisions: plan.decisions, authorizedDocument, authorizedHeads }
 }
 
+type ChangeIndex = Map<string, ReturnType<typeof Automerge.getChangesMetaSince>[number]>
+function indexDocumentOperations(merged: Automerge.Doc<WorkspaceDocumentV2>, changesByHash: ChangeIndex) {
+  // Expanding a large text history duplicates every operation in JavaScript.
+  // The full before/after permission check below needs no expanded history.
+  const boundedChanges = [...changesByHash.values()].filter(change => change.maxOp - change.startOp + 1 <= 32_768)
+    .map(change => Automerge.getBackend(merged).getChangeByHash(change.hash)!)
+  const { targetsByHash, objectParents } = indexAdmissionOperations(boundedChanges)
+  // Existing map IDs retain their original parent even if their large creation
+  // change was omitted. Missing/deleted objects still use the full check.
+  const entitiesId = Automerge.getObjectId(merged.entities)
+  if (entitiesId) {
+    objectParents.set(entitiesId, { parentId: "_root", key: "entities" })
+    for (const [id, entity] of Object.entries(merged.entities)) {
+      const objectId = Automerge.getObjectId(entity)
+      if (objectId) objectParents.set(objectId, { parentId: entitiesId, key: id })
+    }
+  }
+  return { targetsByHash, objectParents }
+}
+
+function assertPlanTransitions(receivedBasis: WasmVerifiedReceivedHistoryBaseline | undefined, plan: AdmissionPlan,
+  merged: Automerge.Doc<WorkspaceDocumentV2>, changesByHash: ChangeIndex, actorByHash: Map<string, string>,
+  { targetsByHash, objectParents }: ReturnType<typeof indexDocumentOperations>) {
+  const basisGenesis = receivedHistoryBasisIdentity(receivedBasis)?.genesisHash
+  for (const decision of plan.decisions) {
+    if (decision.status.type !== "admitted" || decision.hash === basisGenesis) continue
+    const change = changesByHash.get(decision.hash)
+    if (change) {
+      const operations = targetsByHash.get(change.hash)
+      assertAdmittedTransition(merged, change, decision.status.role, actorByHash.get(change.hash), operations, objectParents)
+    }
+  }
+}
+
 function assertAdmittedTransition(
   document: Automerge.Doc<WorkspaceDocumentV2>,
   change: ReturnType<typeof Automerge.getChangesMetaSince>[number],
@@ -202,7 +220,7 @@ function assertAdmittedTransition(
     if (touchedPaths.entityIds.size === 0) return
     const before = workspaceEntitiesAtHeads(document, change.deps)
     const after = workspaceEntitiesAtHeads(document, [change.hash])
-    assertWorkspaceEntityTransitions(role, before, after, touchedPaths.entityIds, actorPersonId)
+    assertWorkspaceEntityTransitions(role, before, after, touchedPaths.entityIds, actorPersonId, document.id)
     return
   }
   // Ambiguous operations require the full transition check. Computing patches

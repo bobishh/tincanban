@@ -14,6 +14,7 @@ const pendingAction = ref<"publish" | "update" | "unpublish" | null>(null)
 const disclosure = "Anyone with the link can read the saved cards, descriptions, fields, board and card discussions with author names, and attached files. Other boards, workspace chat and identity secrets remain private."
 const error = ref("")
 let operationGeneration = 0
+let activeOperation: "refresh" | "compare" | "publish" | "unpublish" | null = null
 const link = computed(() => `${window.location.origin}/boards/${encodeURIComponent(props.board.id)}`)
 const sourceKey = computed(() => `${props.workspaceId}:${props.board.id}`)
 function requestVisibility(event: Event) {
@@ -29,6 +30,12 @@ watch(sourceKey, () => {
   if (props.owner) void refresh()
 })
 watch(() => props.sourceVersion, () => {
+  // A same-board edit makes an in-flight publish older than the current
+  // document, but must not silently cancel a request the owner confirmed.
+  if (pendingAction.value || activeOperation === "publish" || activeOperation === "unpublish") {
+    if (published.value) changed.value = true
+    return
+  }
   pendingAction.value = null
   operationGeneration++; checked.value = false; changed.value = null; busy.value = false; error.value = ""
   if (props.owner) void refresh()
@@ -43,6 +50,7 @@ async function profile() {
 async function refresh() {
   const generation = operationGeneration
   const boardId = props.board.id
+  activeOperation = "refresh"
   busy.value = true
   error.value = ""
   changed.value = null
@@ -59,24 +67,34 @@ async function refresh() {
     if (generation !== operationGeneration) return
     checked.value = false
     error.value = cause instanceof Error ? cause.message : "Keeper publication status unavailable"
-  } finally { if (generation === operationGeneration) busy.value = false }
+  } finally {
+    if (activeOperation === "refresh") activeOperation = null
+    if (generation === operationGeneration) busy.value = false
+  }
 }
 async function checkLocalChanges() {
   const generation = operationGeneration
+  const sourceVersion = props.sourceVersion
   const source = { document: props.document, workspaceId: props.workspaceId, boardId: props.board.id, hash: hash.value }
+  activeOperation = "compare"
   busy.value = true
   error.value = ""
   changed.value = null
   try {
     const { hasLocalPublicBoardChanges } = await import("../public/publicationClient")
     const result = await hasLocalPublicBoardChanges(source)
-    if (generation === operationGeneration) changed.value = result
+    if (generation === operationGeneration && sourceVersion === props.sourceVersion) changed.value = result
   } catch (cause) { if (generation === operationGeneration) error.value = cause instanceof Error ? cause.message : "Could not compare this board" }
-  finally { if (generation === operationGeneration) busy.value = false }
+  finally {
+    if (activeOperation === "compare") activeOperation = null
+    if (generation === operationGeneration) busy.value = false
+  }
 }
 async function publish(action: "publish" | "update") {
   const generation = operationGeneration
+  const sourceVersion = props.sourceVersion
   const source = { boardId: props.board.id, workspaceId: props.workspaceId, document: props.document }
+  activeOperation = "publish"
   busy.value = true
   error.value = ""
   try {
@@ -87,15 +105,19 @@ async function publish(action: "publish" | "update") {
     if (generation !== operationGeneration) return
     revision.value = result.revision
     published.value = true
-    changed.value = false
+    changed.value = sourceVersion === props.sourceVersion ? false : true
     checked.value = true
     hash.value = result.hash
   } catch (cause) { if (generation === operationGeneration) error.value = cause instanceof Error ? cause.message : "Publication failed" }
-  finally { if (generation === operationGeneration) busy.value = false }
+  finally {
+    if (activeOperation === "publish") activeOperation = null
+    if (generation === operationGeneration) busy.value = false
+  }
 }
 async function unpublish() {
   const generation = operationGeneration
   const boardId = props.board.id
+  activeOperation = "unpublish"
   busy.value = true
   error.value = ""
   try {
@@ -109,7 +131,10 @@ async function unpublish() {
     changed.value = null
     checked.value = true
   } catch (cause) { if (generation === operationGeneration) error.value = cause instanceof Error ? cause.message : "Unpublish failed" }
-  finally { if (generation === operationGeneration) busy.value = false }
+  finally {
+    if (activeOperation === "unpublish") activeOperation = null
+    if (generation === operationGeneration) busy.value = false
+  }
 }
 async function confirmPublication() {
   const action = pendingAction.value
@@ -153,11 +178,11 @@ async function confirmPublication() {
 </template>
 
 <style scoped>
-.publication-panel { display: grid; gap: 10px; overflow-wrap: anywhere; }
+.publication-panel { display: grid; gap: var(--space-2); overflow-wrap: anywhere; }
 .publication-panel p { margin: 0; }
-.publication-toggle { display: flex; align-items: center; gap: 8px; font-weight: 700; }
-.publication-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.publication-confirmation { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); }
+.publication-toggle { display: flex; align-items: center; gap: var(--space-2); font-weight: 700; }
+.publication-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.publication-confirmation { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--line); }
 .publication-panel a { color: var(--link, #245f9e); }
 .publication-panel > button { justify-self: start; }
 </style>

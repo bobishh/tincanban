@@ -27,13 +27,13 @@ export function useAppController() {
 
 function boardContext(core: ReturnType<typeof useAppCore>): AppBoardContext {
   const {
-    tincanban, search, filters, isEditingBoard, itemFormParentId,
+    tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
   } = core
   return {
-    tincanban, search, filters, isEditingBoard, itemFormParentId,
+    tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
     selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
@@ -74,7 +74,7 @@ function appCollaboration(core: ReturnType<typeof useAppCore>) {
     revokeWorkspacePeer, promoteWorkspacePeer,
   } = core
   return {
-    device: { sync, chat, blindReplication: core.blindReplication },
+    device: { sync, chat, blindReplication: core.blindReplication, profileRecovery: core.profileRecovery },
     permissions: { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, keeperOwnedWorkspaces, currentWorkspaceOwnerId, canEditItems, canEditBoard, canManageAccess, canImportWorkspace, canRenameWorkspace },
     mesh: {
       devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, meshMembers,

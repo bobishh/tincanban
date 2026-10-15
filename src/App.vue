@@ -1,42 +1,41 @@
 <!-- Workspace role gates are enforced again at command and sync boundaries. -->
 <script setup lang="ts">
-import { MarkdownContent } from "./ui/markdownContent"
 import { useAppController } from "./app/useAppController"
 import { isArchiveColumn, isItemArchived } from "./domain/archive"
 import { cardStageButtons } from "./domain/cardStageButtons"
 import { useCardAges } from "./app/useAgingClock"
 import { showEnteringElement, hideLeavingElement } from "./ui/modal"
-import { artifactKindLabels, priorityLabels, type DocumentInput } from "./types"
+import type { DocumentInput } from "./types"
 import ModalLayer from "./components/ModalLayer.vue"
 import TincanbanPageLayout from "./components/TincanbanPageLayout.vue"
 import TincanbanHeading from "./components/TincanbanHeading.vue"
 import BrandCan from "./components/BrandCan.vue"
 import BoardDragOverlay from "./components/BoardDragOverlay.vue"
-import ColumnFoldCover from "./components/ColumnFoldCover.vue"
+import BoardColumns from "./components/BoardColumns.vue"
 import BoardItemCard from "./components/BoardItemCard.vue"
-import LeadFilters from "./components/LeadFilters.vue"
+import BoardToolbar from "./components/BoardToolbar.vue"
 import { useObjectConversations } from "./app/useObjectConversations"
 import ObjectConversationLayer from "./components/ObjectConversationLayer.vue"
-import CardStageStrip from "./components/CardStageStrip.vue"
-import AutosaveTextarea from "./components/AutosaveTextarea.vue"
 import MobileDrawer from "./components/MobileDrawer.vue"
 import SaveState from "./components/SaveState.vue"
 import StartupStatus from "./components/StartupStatus.vue"
 import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
-import QuickNoteForm from "./components/QuickNoteForm.vue"
 import BuildFooter from "./components/BuildFooter.vue"
-import { saveIdentityName } from "./app/identityName"
+import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
+import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
 import { defineAsyncComponent, onBeforeUnmount, ref } from "vue"
 import type { Component } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
-import { createNarrativeEditHandler } from "./app/narrativeEditor"
 import { useColumnCollapse } from "./app/useColumnCollapse"
 import { useAppViewState } from "./app/useAppViewState"
 import { useMemberAvatars } from "./app/useMemberAvatars"
-import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, SpatialWindow, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { AutosaveTextarea, CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, LeadDetailWindow, MoveItemDialog, QuickNoteForm, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+type IdentityNameSaver = typeof identityNameSaverType
+const saveIdentityName: IdentityNameSaver = async (...args) => (await import("./app/identityName")).saveIdentityName(...args)
+const LeadArtifactsSection = defineAsyncComponent(() => import("./components/LeadArtifactsSection.vue") as Promise<{ default: Component }>)
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
 const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage, startupCoverVisible } = useAppViewState(app)
 const conversations = useObjectConversations(app)
@@ -71,7 +70,8 @@ const {
   computedItemFieldIds, itemFormOptionValues, visibleItems, hasFilters, workspacePresenceSummary,
   visibleColumns, clearFilters, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, expandFilteredCards, columnColor, columnStatus, itemsForColumn,
   trackBoardScroll, selectedItem, subitemsForSelectedItem,
-  selectedItemHistory, editingItem, candidateParentsForMove,
+  selectedItemHistory, editingItem, candidateParentsForMove, archivedHistoryLoading, archivedHistoryError,
+  archivedHistoryNotice, archivedHistoryHasMore, loadEarlierItemHistory,
 } = app.board
 const { sync, chat } = app.collaboration.device
 const { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, canEditItems, canEditBoard, canManageAccess, canRenameWorkspace } = app.collaboration.permissions
@@ -86,29 +86,38 @@ const {
   selectedLead, selectedLeadItem, selectedDocuments, selectedArtifacts, availableArtifactTemplates, openBoardItem,
   restoreSelectedItemVersion, saveQuickNote, submitDocument, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
   openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
-  exportWorkspace, openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
+  exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
+  openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
   handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, settingsSaving,
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
 
-const rejectionEditor = ref<InstanceType<typeof AutosaveTextarea>>()
+const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
 async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 
 function saveItemDocument(item: { id: string } | null | undefined, document: Omit<DocumentInput, "leadId">) { return item ? submitDocument(item.id, document) : Promise.reject(new Error("Item is no longer open")) }
 function saveSelectedLeadDocument(document: Omit<DocumentInput, "leadId">) { return saveItemDocument(selectedLeadItem.value, document) }
-const editItemNow = createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)
-async function editItem(item: Parameters<typeof editItemNow>[0]) { if (!rejectionEditor.value || await rejectionEditor.value.flush()) editItemNow(item) }
+async function editItem(item: Parameters<typeof openBoardItem>[0]) {
+  if (rejectionEditor.value && !(await rejectionEditor.value.flush())) return
+  const { createNarrativeEditHandler } = await import("./app/narrativeEditor")
+  createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)(item)
+}
 
 async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) { if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false }
 const cardAgeFor = useCardAges(() => activeBoard.value?.cardAgingPolicy)
-const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvatars(app.workspace)
+const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision } = useMemberAvatars(app.workspace)
+function saveProfile(draft: { name: string; avatarData?: string | null; revision?: string }) {
+  return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity,
+    { avatarData: draft.avatarData, expectedRevision: draft.revision })
+}
 </script>
 
 <template>
+  <ReleaseUpgradeNotice />
   <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
     <StartupStatus v-if="startupCoverVisible" expanded :message="startupMessage" :view-only="false" :error="null" />
   </Transition>
@@ -153,17 +162,10 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :can-review="uiReady && canEditItems" :review-change="reviewCausalChange"
       :dismiss-change="dismissCausalChange" :restore-change="restoreCausalChange" />
 
-    <section class="toolbar" aria-label="tincanban controls" :inert="!boardVisible || undefined">
-      <label class="search-field">
-        <span aria-hidden="true">⌕</span>
-        <input v-model="search" type="search" aria-label="Search cards" :placeholder="isBlankBoard ? 'Search cards' : 'Search company, role, notes'" />
-      </label>
-      <div class="toolbar-spacer"></div>
-      <LeadFilters v-model="filters" :columns="genericColumns" :fields="boardFields" />
-      <div class="toolbar-meta">
-        <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
-      </div>
-    </section>
+    <BoardToolbar v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
+      :placeholder="isBlankBoard ? 'Search cards' : 'Search company, role, notes'" :inert="!boardVisible || undefined">
+      <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
+    </BoardToolbar>
 
     <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
       <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
@@ -203,27 +205,13 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
     </div>
 
     <section :key="boardRenderKey" ref="boardRef" class="board" :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)), 'board-filtered': hasFilters, 'board-single-column': visibleColumns.length === 1 }" role="region" :aria-label="activeWorkspace.title" @scroll.passive="trackBoardScroll">
-      <article
-        v-for="column in visibleColumns"
-        :key="column.id"
-        class="column"
-        :data-column-id="column.id"
-        :style="{ '--column-hatch-color': columnColor(column.id) }"
-        role="region"
-        :aria-label="column.title"
-        :class="[columnStatus(column.id) ? `column-${columnStatus(column.id)}` : '', { 'bin-column': isArchiveColumn(column), 'bin-column-open': isArchiveColumn(column) && !isColumnCollapsed(column), 'column-foldable': column.collapsible, 'column-collapsed': isColumnCollapsed(column), 'column-moved': movedColumnId === column.id }]"
-      >
-        <span v-if="column.collapsible" class="column-paper" aria-hidden="true"></span>
-        <ColumnFoldCover v-if="column.collapsible" :collapsed="isColumnCollapsed(column)" :title="column.title" :count="itemsForColumn(column).length" />
-        <Transition name="column-fold">
-          <button v-if="isColumnCollapsed(column)" class="column-closed" type="button" :aria-label="`Open ${column.title} with ${itemsForColumn(column).length} cards`" @click="toggleColumnCollapse(column)"><span class="count">{{ itemsForColumn(column).length }}</span><strong>{{ column.title }}</strong></button>
-          <div v-else class="card-stack" :data-column-id="column.id">
-            <header class="column-header" :class="{ 'column-drag-handle': isEditingBoard }">
-              <div class="column-title"><span class="column-dot"></span><h2 :title="isEditingBoard ? 'Double-click to edit column' : undefined" @dblclick="isEditingBoard && (editingColumn = column)">{{ column.title }}</h2></div>
-              <div class="column-actions"><span class="count">{{ itemsForColumn(column).length }}</span><button v-if="column.collapsible && !hasFilters" class="bin-close" type="button" :aria-label="`Collapse ${column.title}`" @click="toggleColumnCollapse(column)">×</button><button v-if="isEditingBoard" class="button button-small button-quiet" type="button" aria-label="Edit column" @click="editingColumn = column">Edit</button></div>
-            </header>
-            <template v-for="(item, index) in itemsForColumn(column)" :key="item.id">
+      <BoardColumns :visible-columns="visibleColumns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
+        :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
+        @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event">
+      <template #before-item="{ column, item, index }">
               <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
+      </template>
+      <template #card="{ item, column }">
               <BoardItemCard
                 :item="item"
                 :lead="leadForItem(item)"
@@ -243,12 +231,11 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
                 @discuss="conversations.openCardDiscussion"
                 @task-toggle="toggleCardTask"
               />
-            </template>
-            <div v-if="!itemsForColumn(column).length" class="empty-column">{{ hasFilters ? 'No matches in this column' : `No ${entityName}s` }}</div>
-            <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
-          </div>
-        </Transition>
-      </article>
+      </template>
+      <template #add-item="{ column }">
+        <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
+      </template>
+      </BoardColumns>
       <div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div>
       <form v-if="isEditingBoard" class="add-column-card" @submit.prevent="addBoardColumn"><label class="sr-only" for="new-board-column">New column</label><input id="new-board-column" v-model="newBoardColumnTitle" placeholder="New column" :disabled="addingBoardColumn" /><label><input type="checkbox" :checked="newBoardColumnArchive" :disabled="genericColumns.some(column => isArchiveColumn(column)) || addingBoardColumn" @change="selectArchiveColumn(($event.target as HTMLInputElement).checked)" /> Archive column</label><label><input v-model="newBoardColumnCollapsible" type="checkbox" :disabled="addingBoardColumn" /> Allow this column to collapse</label><button class="button button-primary" type="submit" :disabled="addingBoardColumn">{{ addingBoardColumn ? 'Adding…' : '+ Add column' }}</button><p v-if="addBoardColumnError" class="form-error" role="alert">{{ addBoardColumnError }}</p></form>
     </section>
@@ -299,7 +286,8 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @apply-workspace-settings="applyWorkspaceSettings"
     >
       <template #identity>
-        <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
+        <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
+          :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile" @recovery="showIdentityRecovery = true" />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </template>
       <template #workspace>
@@ -314,7 +302,8 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       <section class="dialog" role="dialog" aria-modal="true" aria-label="Settings">
         <div class="dialog-head"><div><span class="eyebrow">Identity</span><h2>Settings</h2></div><button class="icon-button" type="button" aria-label="Close" @click="showSettings = false">×</button></div>
         <IdentitySettingsPanel :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
-          :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)" @recovery="showIdentityRecovery = true" />
+          :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
+          :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile" @recovery="showIdentityRecovery = true" />
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </ModalLayer>
@@ -345,6 +334,7 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
     <ItemDetailDialog
       v-if="selectedItem"
       :workspace-id="activeWorkspace.id" :item="selectedItem" :columns="genericColumns" :card-stage-buttons="cardStageButtons(activeBoard, genericColumns)"
+      :attachment-coverage="app.collaboration.device.blindReplication.attachmentCoverage.value"
       :move-to-column="moveCardToColumn" :archived="Boolean(selectedItem && isItemArchived(selectedItem))"
       :narrative="selectedItem ? cardNotes(selectedItem) : ''"
       :narrative-field-id="activeBoard?.preset?.bindings['field.notes']"
@@ -355,6 +345,8 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       :save-document="(document: Omit<DocumentInput, 'leadId'>) => saveItemDocument(selectedItem, document)"
       :update-document="updateDocumentMarkdown"
       :history="selectedItemHistory"
+      :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
+      :history-notice="archivedHistoryNotice" :history-has-more="archivedHistoryHasMore"
       :archive-error="archiveError"
       :restore-saving="historyRestoreSaving"
       :restore-error="historyRestoreError"
@@ -368,13 +360,14 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @start-move="handleStartMove"
       @archive-item="handleArchiveItem" @restore-item="handleRestoreItem"
       @restore-version="restoreSelectedItemVersion"
+      @load-earlier-history="loadEarlierItemHistory"
       @update:quick-note="quickNoteDraft = $event"
       @save-note="saveQuickNote(selectedItem)"
       @update-markdown="updateItemMarkdown"
     />
 
     <ItemFormDialog
-      v-if="showItemForm"
+      v-if="showItemForm" :workspace-id="activeWorkspace.id"
       :parent-id="itemFormParentValue" :entity-name="entityName"
       :fields="boardFields"
       :columns="itemFormColumns"
@@ -399,36 +392,25 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @close="showMoveDialog = false; itemToMove = null"
       @confirm="handleConfirmMove"
     />
-    <SpatialWindow v-if="selectedLead" framed :window-id="`item:${selectedLead.id}`" :workspace-id="activeWorkspace.id" :title="selectedLead.company" aria-label="Lead details" close-label="Close detail" :initial-width="760" :initial-height="700" @close="closeDetail">
-      <template #header><div class="detail-head" :data-discussion-item="selectedLead.id">
-          <div><h2 data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.company']">{{ selectedLead.company }}</h2><p data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.role']">{{ selectedLead.role }}</p></div>
-          <div class="detail-head-actions">
-            <button v-if="selectedLeadItem" class="button button-small" type="button" :disabled="!canEditItems" @click="editItem(selectedLeadItem)">Edit</button>
-          </div>
-        </div></template>
+    <LeadDetailWindow v-if="selectedLead" :lead="selectedLead" :item="selectedLeadItem" :board="activeBoard" :columns="genericColumns"
+      :workspace-id="activeWorkspace.id" :read-only="!canEditItems" :narrative="selectedLeadItem ? cardNotes(selectedLeadItem) : ''" :move="moveCardToColumn"
+      :application-source-document="getActiveDoc()" :application-source-doc-version="docVersion"
+      :history="selectedItemHistory" :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
+      :history-notice="archivedHistoryNotice" :history-has-more="archivedHistoryHasMore"
+      :restore-saving="historyRestoreSaving" :restore-error="historyRestoreError" :restore-notice="historyRestoreNotice"
+      @close="closeDetail" @edit="editItem" @update-markdown="selectedLeadItem && updateItemMarkdown(selectedLeadItem, $event)" @content="detailDialog = $event"
+      @restore-version="restoreSelectedItemVersion" @load-earlier-history="loadEarlierItemHistory">
       <template #toolbar>
-      <CardStageStrip v-if="selectedLeadItem" :item="selectedLeadItem" :columns="genericColumns" :buttons="cardStageButtons(activeBoard, genericColumns)" :read-only="!canEditItems" :move="moveCardToColumn" />
-      <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
-      <button v-if="archiveUndo && archiveUndo.workspaceId === activeWorkspace.id" class="button button-small" type="button" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo archive' }}</button>
+        <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
+        <button v-if="archiveUndo && archiveUndo.workspaceId === activeWorkspace.id" class="button button-small" type="button" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo archive' }}</button>
       </template>
-      <section ref="detailDialog" class="detail-layout" data-detail-layout tabindex="-1" :data-discussion-item="selectedLead.id">
-        <div class="detail-primary" data-detail-primary role="region" aria-label="Lead description and documents">
-          <section v-if="selectedLeadItem && cardNotes(selectedLeadItem)" class="detail-section"><span class="detail-label">Description</span><MarkdownContent class="detail-copy" data-discussion-text data-discussion-field="narrative" :source="cardNotes(selectedLeadItem) || ''" :editable-tasks="canEditItems" @task-toggle="updateItemMarkdown(selectedLeadItem, $event)" /></section>
-          <section v-if="selectedLead.sourceText" class="detail-section"><span class="detail-label">Source snapshot</span><p class="source-snapshot" data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.sourceText']">{{ selectedLead.sourceText }}</p></section>
-          <section class="detail-section artifacts-section"><div class="section-heading"><div><span class="detail-label">PDF artifacts</span><h3>{{ selectedArtifacts.length ? `${selectedArtifacts.length} attached` : "No generated PDFs" }}</h3></div><button class="button button-small" type="button" :disabled="!canEditItems" @click="showArtifactForm ? showArtifactForm = false : openArtifactForm()">+ PDF</button></div>
-            <form v-if="showArtifactForm" class="document-form" novalidate @submit.prevent="submitArtifact"><label><span>Kind</span><select v-model="artifactDraft.kind" @change="artifactDraft.templateId = ''"><option v-for="(label, kind) in artifactKindLabels" :key="kind" :value="kind">{{ label }}</option></select></label><label><span>Title</span><input v-model="artifactDraft.title" placeholder="Cleo CV" /></label><label><span>Base template</span><select v-model="artifactDraft.templateId"><option value="">Select template</option><option v-for="template in availableArtifactTemplates" :key="template.id" :value="template.id">{{ template.name }}</option></select></label><label><span>PDF path</span><input v-model="artifactDraft.pdfPath" placeholder="/Users/…/cleo-cv.pdf" /></label><label><span>Generated Markdown path</span><input v-model="artifactDraft.sourceMarkdownPath" placeholder="/Users/…/cleo-cv.md" /></label><p v-if="artifactError" class="form-error" role="alert">{{ artifactError }}</p><button class="button button-primary" type="submit">Attach PDF</button></form>
-            <div v-for="artifact in selectedArtifacts" :key="artifact.id" class="document-row"><span class="document-icon">{{ artifact.kind === "cv" ? "CV" : "CL" }}</span><div><strong>{{ artifact.title }}</strong><span>{{ artifactKindLabels[artifact.kind] }} · from template</span></div><a :href="`file://${artifact.pdfPath}`" class="open-path" title="Open PDF">Open PDF</a></div>
-          </section>
-          <ItemDocuments v-if="selectedLeadItem" :documents="selectedDocuments" :read-only="!canEditItems" :save="saveSelectedLeadDocument" :update="updateDocumentMarkdown" />
-        </div>
-        <aside class="detail-inspector" data-detail-inspector aria-label="Lead properties and actions">
-        <div class="detail-grid" data-discussion-text data-discussion-field="overview">
-          <div><span class="detail-label">Priority</span><strong data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.priority']">{{ selectedLead.priority ? priorityLabels[selectedLead.priority] : "—" }}</strong></div>
-          <div><span class="detail-label">Fit</span><strong data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.fitScore']">{{ selectedLead.fitScore ?? "—" }}<small v-if="selectedLead.fitScore !== undefined">/10</small></strong></div>
-          <div><span class="detail-label">Location</span><strong data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.location']">{{ selectedLead.location || "—" }}</strong></div>
-          <div><span class="detail-label">Work mode</span><strong data-discussion-text :data-discussion-field="activeBoard?.preset?.bindings['field.workMode']">{{ selectedLead.workMode || "—" }}</strong></div>
-        </div>
-        <a v-if="selectedLead.url" class="source-link" :href="selectedLead.url" target="_blank" rel="noreferrer">Open job source ↗</a>
+      <template #primary>
+          <LeadArtifactsSection v-model="artifactDraft" :artifacts="selectedArtifacts" :templates="availableArtifactTemplates"
+            :read-only="!canEditItems" :show-form="showArtifactForm" :error="artifactError"
+            @toggle="showArtifactForm ? showArtifactForm = false : openArtifactForm()" @submit="submitArtifact" />
+          <ItemDocuments v-if="selectedLeadItem" :documents="selectedDocuments" :workspace-id="activeWorkspace.id" :attachment-coverage="app.collaboration.device.blindReplication.attachmentCoverage.value" :read-only="!canEditItems" :save="saveSelectedLeadDocument" :update="updateDocumentMarkdown" />
+      </template>
+      <template #inspector>
         <QuickNoteForm
           v-if="selectedLeadItem"
           v-model="quickNoteDraft"
@@ -441,12 +423,12 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
           <span class="detail-label">Rejection notes / retrospective</span>
           <AutosaveTextarea
             :key="selectedLead.id" ref="rejectionEditor" :read-only="!canEditItems" :value="selectedLead.rejectionReason ?? ''"
-            :save="reason => handleUpdateRejectionReason(activeWorkspace.id, selectedLead!.id, reason)"
+            :save="(reason: string) => handleUpdateRejectionReason(activeWorkspace.id, selectedLead!.id, reason)"
             placeholder="Optional rejection reason or retrospective note (what went wrong)…" label="Rejection notes" />
         </section>
-        </aside>
-      </section>
-    </SpatialWindow>
+
+      </template>
+    </LeadDetailWindow>
     </template>
     <SyncDialog v-if="sync.isOpen.value" :initial-tab="syncInitialTab" :member-avatars="memberAvatars" :revoking-person-id="revokingPeer" @revoke-person="revokeWorkspacePeer" :blind-replication="app.collaboration.device.blindReplication"
       :pending-joins="sync.pendingJoins.value"
@@ -495,6 +477,12 @@ const { memberAvatars, currentAvatar, saveAvatar, avatarNotice } = useMemberAvat
       @accept-and-join="sync.acceptWorkspaceJoin"
       @copy="sync.copyInvite"
       :export-workspace="exportWorkspace"
+      :create-private-recovery="createPrivateRecovery"
+      :private-recovery-unavailable-reason="privateRecoveryUnavailableReason"
+      :inspect-private-recovery="inspectPrivateRecovery"
+      :restore-private-recovery="restorePrivateRecovery"
+      :has-workspace-copy="hasWorkspaceCopy"
+      :workspace-title="workspaceTitle"
       @dismiss="sync.dismiss"
       @start="sync.startDurableMesh"
       @stop="sync.stopLiveSync"

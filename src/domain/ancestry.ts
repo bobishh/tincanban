@@ -4,6 +4,8 @@ import {
   entityKind,
   validatePlacementParent,
 } from "./model"
+import { compareRanks } from "./rank"
+export { compareRanks } from "./rank"
 
 function gcdBigInt(a: bigint, b: bigint): bigint {
   let x = a < 0n ? -a : a
@@ -33,15 +35,6 @@ function reduceRational(num: bigint, den: bigint): string {
   if (num === 0n) return "0/1"
   const g = gcdBigInt(num, den)
   return `${num / g}/${den / g}`
-}
-
-export function compareRanks(r1: string, r2: string): number {
-  const [n1, d1] = parseRank(r1)
-  const [n2, d2] = parseRank(r2)
-  const diff = n1 * d2 - n2 * d1
-  if (diff < 0n) return -1
-  if (diff > 0n) return 1
-  return 0
 }
 
 export function calculateRankBetween(prevRank: string | null, nextRank: string | null): string {

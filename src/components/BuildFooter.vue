@@ -14,7 +14,7 @@ const commitUrl = hasCommit ? `https://github.com/bobishh/tincanban/commit/${com
 </template>
 
 <style scoped>
-.site-footer { min-height: 152px; padding: 24px clamp(16px, 4vw, 56px); padding-bottom: max(24px, var(--safe-bottom)); border-top: 2px solid var(--line); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; color: var(--ink); text-align: center; font: 700 .8rem/1.4 var(--site-font-sans); }
+.site-footer { min-height: 152px; padding: var(--space-5) clamp(var(--space-4), 4vw, var(--space-7)); padding-bottom: max(var(--space-5), var(--safe-bottom)); border-top: 2px solid var(--line); display: flex; flex-direction: column; justify-content: center; align-items: center; gap: var(--space-2); color: var(--ink); text-align: center; font: 700 .8rem/1.4 var(--site-font-sans); }
 .tower-mark { --tower-ball-color: var(--red); width: 36px; height: 54px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: square; stroke-linejoin: miter; }
 .footer-copy { font-size: .8rem; }
 .footer-copy a { color: inherit; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }

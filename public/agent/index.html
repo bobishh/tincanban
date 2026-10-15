@@ -9,6 +9,7 @@
     <link rel="icon" href="/favicon.png?v=6" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="stylesheet" href="/assets/site-foundation.css?v=3" />
+    <link rel="stylesheet" href="/assets/layout-tokens.css" />
     <link rel="stylesheet" href="/assets/primitive.css?v=5" />
     <style>
       :root { --tower-ball-color: var(--red); --paper: #f3f0e8; --ink: #171717; --muted: #6b675f; --line: #171717; --yellow: #ffd43b; --blue: #1f6feb; --red: #ff5a36; --green: #69db7c; --panel: #fffdf7; --soft: #e9e5db; }
@@ -19,34 +20,34 @@
       .eyebrow, .route, .badge, .tool-name, .pipeline span { font-family: var(--site-font-sans); }
       code { font-family: var(--site-font-mono); font-variant-ligatures: none; }
       .topbar { position: sticky; top: 0; z-index: 5; min-height: 76px; padding: 0 max(var(--site-gutter), calc((100% - var(--site-content-max)) / 2 + var(--site-gutter))); border-bottom: 2px solid var(--line); display: flex; align-items: center; background: rgba(244, 244, 242, .96); }
-      .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); font-size: var(--site-brand-size); font-weight: var(--site-brand-weight); letter-spacing: var(--site-brand-tracking); line-height: 1; text-decoration: none; }
+      .brand { display: flex; align-items: center; gap: var(--space-2); color: var(--ink); font-size: var(--site-brand-size); font-weight: var(--site-brand-weight); letter-spacing: var(--site-brand-tracking); line-height: 1; text-decoration: none; }
       .brand-can { display: block; flex-shrink: 0; }
-      main { width: min(1080px, 100%); margin: 0 auto; padding: clamp(34px, 7vw, 82px) clamp(16px, 4vw, 56px) 80px; }
-      .hero { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 28px; align-items: end; margin-bottom: 34px; }
+      main { width: min(1080px, 100%); margin: 0 auto; padding: clamp(var(--space-6), 7vw, var(--space-9)) clamp(var(--space-4), 4vw, var(--space-7)) var(--space-9); }
+      .hero { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: var(--space-5); align-items: end; margin-bottom: var(--space-6); }
       .eyebrow { color: var(--blue); font-size: .8rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-      h1 { max-width: 720px; margin: 12px 0 18px; font-size: clamp(2rem, 9vw, 2rem); line-height: .84; letter-spacing: -.085em; }
+      h1 { max-width: 720px; margin: var(--space-3) 0 var(--space-4); font-size: clamp(2rem, 9vw, 2rem); line-height: .84; letter-spacing: -.085em; }
       .lede { max-width: 680px; margin: 0; color: var(--muted); font-size: clamp(1rem, 2vw, 1rem); line-height: 1.5; }
-      .hero-card { padding: 18px; border: 2px solid var(--line); background: var(--yellow); }
-      .hero-card strong { display: block; margin: 8px 0 10px; font-size: 1.5rem; line-height: 1; }
+      .hero-card { padding: var(--space-4); border: 2px solid var(--line); background: var(--yellow); }
+      .hero-card strong { display: block; margin: var(--space-2) 0 var(--space-2); font-size: 1.5rem; line-height: 1; }
       .hero-card p { margin: 0; font: 700 .8rem/1.5 var(--site-font-sans); }
-      .guide-card { margin-top: 20px; padding: clamp(20px, 4vw, 30px); border: 2px solid var(--line); background: var(--panel); }
+      .guide-card { margin-top: var(--space-4); padding: clamp(var(--space-4), 4vw, var(--space-6)); border: 2px solid var(--line); background: var(--panel); }
       .guide-card:nth-of-type(odd) { background: white; }
-      .guide-card h2 { margin: 0 0 14px; font-size: clamp(1.5rem, 3vw, 1.5rem); line-height: .95; letter-spacing: -.055em; }
+      .guide-card h2 { margin: 0 0 var(--space-3); font-size: clamp(1.5rem, 3vw, 1.5rem); line-height: .95; letter-spacing: -.055em; }
       .guide-card p, .guide-card li { color: var(--muted); line-height: 1.62; }
-      .guide-card p { max-width: 820px; margin: 10px 0 0; }
-      .guide-card ul, .guide-card ol { margin: 12px 0 0; padding-left: 23px; }
-      .guide-card li + li { margin-top: 7px; }
-      code { padding: 2px 5px; border: 1px solid rgba(23,23,23,.38); color: var(--ink); background: var(--soft); font-size: .82em; overflow-wrap: anywhere; }
-      .model-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-top: 18px; }
-      .model-grid span { padding: 12px 9px; border: 2px solid var(--line); color: var(--ink); background: var(--yellow); font: 700 .8rem/1.25 var(--site-font-sans); letter-spacing: .06em; text-align: center; text-transform: uppercase; }
+      .guide-card p { max-width: 820px; margin: var(--space-2) 0 0; }
+      .guide-card ul, .guide-card ol { margin: var(--space-3) 0 0; padding-left: var(--space-5); }
+      .guide-card li + li { margin-top: var(--space-2); }
+      code { padding: var(--space-1) var(--space-1); border: 1px solid rgba(23,23,23,.38); color: var(--ink); background: var(--soft); font-size: .82em; overflow-wrap: anywhere; }
+      .model-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--space-2); margin-top: var(--space-4); }
+      .model-grid span { padding: var(--space-3) var(--space-2); border: 2px solid var(--line); color: var(--ink); background: var(--yellow); font: 700 .8rem/1.25 var(--site-font-sans); letter-spacing: .06em; text-align: center; text-transform: uppercase; }
       .model-grid span:nth-child(2n) { background: #dfeaff; }.model-grid span:nth-child(3n) { background: #eadfff; }
-      .tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 18px; }
-      .tool { min-height: 120px; padding: 14px; border: 2px solid var(--line); background: white; }
+      .tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-3); margin-top: var(--space-4); }
+      .tool { min-height: 120px; padding: var(--space-3); border: 2px solid var(--line); background: white; }
       .tool-name { display: inline-block; color: var(--blue); font-size: .8rem; font-weight: 700; }
-      .tool p { margin-top: 10px; font-size: .8rem; line-height: 1.45; }
-      .subhead { margin: 26px 0 0; font-size: .8rem; font-family: var(--site-font-sans); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-      .note { margin-top: 18px !important; padding: 12px 14px; border-left: 5px solid var(--red); color: var(--ink) !important; background: var(--soft); font-size: .8rem; }
-      footer { width: min(1080px, 100%); margin: 0 auto; padding: 0 clamp(16px, 4vw, 56px) 52px; }
+      .tool p { margin-top: var(--space-2); font-size: .8rem; line-height: 1.45; }
+      .subhead { margin: var(--space-5) 0 0; font-size: .8rem; font-family: var(--site-font-sans); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+      .note { margin-top: var(--space-4) !important; padding: var(--space-3) var(--space-3); border-left: 5px solid var(--red); color: var(--ink) !important; background: var(--soft); font-size: .8rem; }
+      footer { width: min(1080px, 100%); margin: 0 auto; padding: 0 clamp(var(--space-4), 4vw, var(--space-7)) var(--space-7); }
       footer a { color: var(--blue); font-weight: 700; text-decoration-thickness: 2px; text-underline-offset: 4px; }
       @media (max-width: 720px) { .hero { grid-template-columns: 1fr; }.hero-card { max-width: 300px; } }
       @media (max-width: 500px) { .topbar { min-height: 64px; } h1 { font-size: 2rem; }.guide-card { } }
@@ -69,7 +70,7 @@
 
       <section class="guide-card">
         <h2>Working model</h2>
-        <p>A device owns a local catalog of independent workspaces. Each workspace is one Automerge document containing its board schema, items, document templates, history, and collaboration metadata. WebMCP commands target the current workspace shown in tincanban; creating a workspace makes it current.</p>
+        <p>A device owns a local catalog of independent workspaces. Each workspace has an active Automerge document containing its board schema, items, document templates, and collaboration metadata. Earlier original changes can live in separately verified history archives. WebMCP commands target the current workspace shown in tincanban; creating a workspace makes it current.</p>
         <div class="model-grid"><span>board</span><span>columns</span><span>fields</span><span>items</span><span>document templates</span><span>artifacts</span></div>
         <ul>
           <li>Every entity has a stable UUID. Titles are display text and may change.</li>
@@ -147,25 +148,31 @@
         <h2>Sync, identity, and storage</h2>
         <ul>
           <li><strong>Share workspaces:</strong> Sync opens with the current workspace selected. Select one or more existing workspaces, then generate one invitation for that fixed set. The recipient keeps a separate person and device identity.</li>
-          <li><strong>Add my device:</strong> enrolls another device under the same personal identity and shares the personal workspace catalog after mutual code approval.</li>
+          <li><strong>Add my device</strong> enrolls another device under the same personal identity; it is different from inviting another person to a workspace. Compare the authentication code on both devices; the existing device owner approves enrollment. Confirmed devices transfer signed identity/catalog and profile state plus private Rusty settings over their authenticated device channel. Board copies still need device or Rusty sync, and each device keeps its own replication progress.</li>
+          <li><strong>Recovery backup</strong> can restore the same identity, profile, workspace references, and private Rusty settings on a replacement device. It does not contain board history or attachment bytes; those need a workspace backup or an available Rusty copy. Older seed-only recovery files restore only the identity key.</li>
+          <li>If Sync → Rusty shows <strong>Update device access</strong>, an owner can update Rusty's signed permission policy for approved devices. This keeps boards, saved files, and device certificates unchanged.</li>
+          <li>Rusty statuses describe recent confirmation for each board: Not checked, Syncing, Catching up, Synced, Check overdue, Unavailable, or Removal pending. Synced means a successful check within the last 45 seconds. Profile delivery appears separately; it is not a claim that the whole board copy is synced.</li>
           <li>Sync contains Participants, Rusty, Backups, and Recovery. Import as a new board belongs to the Workspaces list; export belongs to Sync → Backups.</li>
-          <li>Rusty stores encrypted objects without reading or classifying cards. Eligible owners automatically replace old snapshots after 8 retained objects; the replacement still contains Automerge history, so document size can grow.</li>
+          <li>Rusty stores encrypted objects without reading or classifying cards. Eligible owners replace redundant storage snapshots after 8 retained objects; that operation keeps the inner Automerge history. Separately, Owner-authorized history compaction runs at 512 admitted active changes or 4 MiB of active history. Original changes and their classifications remain in archives; total retained storage can still grow.</li>
           <li>Automerge changes sync incrementally while peer sessions are live. Workspace snapshots and trust state persist in IndexedDB.</li>
           <li>A <code>.tincanban</code> export carries workspace data, Automerge history, and public proofs. It excludes private signing keys, the personal root, and pairing secrets.</li>
+          <li><strong>Load earlier history</strong> in an item's History section reads archived revisions on demand. Restoring one creates a new currently authorized change and keeps the original revision and its provenance.</li>
+          <li><strong>Sync → Backups → Private recovery backup</strong> encrypts original workspace evidence, available archive and attachment bytes, and private reading keys with separate recovery words. A peer-received archive can be backed up without Rusty credentials. Missing archive or attachment parts make coverage explicitly incomplete. Inspect before restoring; replacing an existing workspace requires confirmation.</li>
         </ul>
       </section>
 
       <section class="guide-card">
         <h2>Settings and publication</h2>
-        <p>Settings uses one section list: Identity, Workspace, Document templates, Priority rules (job-search boards), and settings.json. Identity saves photo and name together and contains encrypted identity recovery. Workspace shows saved/sync status, automations, Public board access, and device diagnostics. Diagnostic consent applies across workspaces on this device.</p>
+        <p>With a board open, Settings sections are Identity, Workspace, Document templates, Priority rules (when supported), and settings.json. Identity saves name and photo together with Save profile; Recovery backup opens a separate encrypted backup/restore flow. That file restores identity, profile, workspace references, and private Rusty connections, not board history or attachment bytes. Workspace shows local save status, automations, Public board access, and device diagnostics. Diagnostic consent applies across workspaces on this device.</p>
         <p>Public board is an owner-only switch with a scope confirmation. Publication creates a saved public copy; later edits remain private until Update public copy. Withdrawing removes access to that copy and its files, but cannot recall downloaded copies. Publication is separate from workspace settings and has no WebMCP tool.</p>
-        <p>CLEF supplies vacancy assessments through approved automations. Automatic priority computes fit and priority from those saved assessments; it does not start or stop CLEF. Job match uses company recognition 20%, stability 20%, stack 30%, and work profile 30%. Missing evidence contributes no points. Profile edits invalidate old stack/work comparisons; historical cards are not automatically reclassified. Preserve existing weighted rules unless the user requests conversion.</p>
+        <p>CLEF supplies vacancy assessments through approved automations. Website job intake can create Leads; an owner can enable forwarded email after a receiving route is configured. New source-backed applications retain the original URL-extracted company, role, text, time, and posting URL, plus captured thread references and ATS identifiers when available. Email matching uses those original references and posting evidence; editable card titles and company/role fields, and later page refreshes, do not replace the original evidence. Missing, conflicting, or ambiguous evidence stays in review. The signed automation API lets an owner bind a retained email to the chosen application and retry it; Settings does not provide a manual email review queue. Original posting evidence remains attached to its application.</p>
+        <p>Automatic priority computes fit and priority from saved assessments; it does not start or stop CLEF. Job match uses company recognition 20%, stability 20%, stack 30%, and work profile 30%. Missing evidence contributes no points. Profile edits invalidate old stack/work comparisons; historical cards are not automatically reclassified. Preserve existing weighted rules unless the user requests conversion.</p>
         <p>Board cards drag with their full content. Select text and open contextual discussions inside a card’s details.</p>
       </section>
 
       <section class="guide-card">
         <h2>Run locally</h2>
-        <p>Install pinned dependencies with <code>npm ci</code>, then start Vite with <code>npm run dev</code>. Workspaces remain in that browser profile's IndexedDB. Production builds use <code>npm run build</code>. Rust is needed only when rebuilding the canonical transport after transport source changes.</p>
+        <p>Install pinned dependencies with <code>npm ci</code>, then start Vite with <code>npm run dev</code>. Workspaces remain in that browser profile's IndexedDB. Production builds use <code>npm run build</code>. Changes to the canonical Native policy or transport source require rebuilding its WASM package.</p>
       </section>
     </main>
 

@@ -4,8 +4,8 @@ import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceRole } from "./domain/permissions"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceAuthorizationRecords"
 import type { WorkspaceDocumentV2 } from "./domain/model"
-import { advanceWorkspaceRevision, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
-  type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
+import { advanceWorkspaceRevision, advanceHistoryProgress, advanceLocalHistoryProgress, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
+  type StoredHistoryProgress, type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
 import { readDeltaTail } from "./workspaceDeltaTail"
 
 export type WorkspaceDeltaCommand = {
@@ -162,11 +162,13 @@ export class WorkspaceDeltaJournal {
     await verifyDelta(expected, delta)
     const next = nextFrontier(expected, delta)
     if (!this.database) return this.appendMemory(expected, delta, next)
-    const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions"], "readwrite")
+    const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions", "snapshots", "historyProgress"], "readwrite")
     const done = transactionDone(transaction)
     try {
       const frontiers = transaction.objectStore("frontiers")
       const current = await requestResult(frontiers.get(expected.workspaceId)) as WorkspaceDeltaFrontier | undefined
+      const snapshot = await requestResult(transaction.objectStore("snapshots").get(expected.workspaceId)) as StoredWorkspaceSnapshot | undefined
+      const progress = await requestResult(transaction.objectStore("historyProgress").get(expected.workspaceId)) as StoredHistoryProgress | undefined
       const deltas = transaction.objectStore("deltas")
       const receipts = transaction.objectStore("receipts")
       const { receipt, changeBytes, proof } = delta.command
@@ -183,6 +185,11 @@ export class WorkspaceDeltaJournal {
       const changeKey = `${expected.workspaceId}:${receipt.changeHash}`
       deltas.add(delta)
       frontiers.put(next)
+      const progressBaselineId = snapshot?.receivedHistory?.baselineId ?? progress?.baselineId
+      if (progressBaselineId !== undefined) {
+        advanceHistoryProgress(transaction, expected.workspaceId, progressBaselineId,
+          1, changeBytes.byteLength)
+      }
       transaction.objectStore("changes").put({ id: changeKey, workspaceId: expected.workspaceId,
         changeHash: receipt.changeHash, bytes: new Uint8Array(changeBytes), addedAt: delta.savedAt })
       transaction.objectStore("proofs").put({ id: changeKey, workspaceId: expected.workspaceId, changeHash: receipt.changeHash, proof })
@@ -209,10 +216,14 @@ export class WorkspaceDeltaJournal {
         return { ...current }
       }
       if (canonicalizeJson(current.frontier) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
-      return { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
+      const nextJournal = { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
         changes: [...current.changes, { workspaceId: expected.workspaceId, changeHash: receipt.changeHash,
           bytesBase64: toBase64Url(changeBytes), addedAt: delta.savedAt }],
         receipts: { ...current.receipts, [receipt.transactionId]: receipt }, proofs: { ...current.proofs, [receipt.changeHash]: proof } }
+      const progressBaselineId = current.snapshot?.receivedHistory?.baselineId ?? current.historyProgress?.baselineId
+      if (progressBaselineId !== undefined) advanceLocalHistoryProgress(nextJournal, expected.workspaceId,
+        progressBaselineId, 1, changeBytes.byteLength)
+      return nextJournal
     })
     return structuredClone(result)
   }
@@ -263,15 +274,21 @@ export class WorkspaceDeltaJournal {
   private async readSaved(workspaceId: string) {
     if (!this.database) {
       const journal = structuredClone(readLocalJournalReference(workspaceId))
-      return { basis: journal.snapshot, frontier: journal.frontier, saved: journal.deltas ?? [] }
+      const frontier = journal.frontier
+      return { basis: journal.snapshot, frontier,
+        saved: frontier ? (journal.deltas ?? []).filter(delta => delta.generation === frontier.generation) : [] }
     }
     const transaction = this.database.transaction(["snapshots", "frontiers", "deltas"], "readonly")
     const done = transactionDone(transaction)
-    const [basis, frontier, saved] = await Promise.all([
+    const [basis, frontier] = await Promise.all([
       requestResult(transaction.objectStore("snapshots").get(workspaceId)) as Promise<StoredWorkspaceSnapshot | undefined>,
       requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
-      requestResult(transaction.objectStore("deltas").index("workspaceId").getAll(workspaceId)) as Promise<StoredWorkspaceDelta[]>,
     ])
+    const saved = frontier
+      ? await requestResult(transaction.objectStore("deltas").index("sequence").getAll(
+          IDBKeyRange.bound([workspaceId, frontier.generation, 0], [workspaceId, frontier.generation, frontier.revision]),
+        )) as StoredWorkspaceDelta[]
+      : []
     await done
     return { basis, frontier, saved }
   }

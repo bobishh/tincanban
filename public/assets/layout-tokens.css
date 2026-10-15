@@ -1,0 +1,28 @@
+/* Shared by application surfaces and the standalone agent guide. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 80px;
+  --space-10: 96px;
+  --space-11: 128px;
+  --site-gutter: clamp(var(--space-4), 4vw, var(--space-7));
+  --surface-padding: var(--space-5);
+  --section-gap: var(--space-5);
+  --field-gap: var(--space-2);
+  --action-gap: var(--space-3);
+  --focus-room: var(--space-2);
+  --form-field-min: 220px;
+  --form-field-max: 360px;
+  --settings-sidebar: 192px;
+  --dialog-width: 680px;
+  --dialog-wide: 960px;
+  --control-size: 48px;
+  --control-size-compact: 40px;
+  --icon-size: 44px;
+}

@@ -1,5 +1,5 @@
 const roots = {
-  private: ["src/App.vue", "src/sync/startupDiagnostics.ts", "src/vendor/berlin-tower.js"],
+  private: ["src/App.vue", "src/sync/startupDiagnostics.ts"],
   public: ["src/public/PublicBoardApp.vue"],
 }
 

@@ -1,14 +1,10 @@
-import {
-  createBlobDescriptor,
-  MeshBlobStore,
-  type BlobDescriptor,
-} from "@meta-uber/mesh-blob"
-import { BrowserMeshStore } from "@meta-uber/mesh-browser-store"
+import type { BlobDescriptor, MeshBlobStore } from "@meta-uber/mesh-blob"
+import type { BlobByteSource } from "@meta-uber/mesh-blob/stream"
 import type { FileReference } from "./domain/model"
 
-const blobs = new MeshBlobStore(
-  new BrowserMeshStore("tincanban-attachments-v1", ["blobs"]),
-)
+let storage: Promise<MeshBlobStore> | undefined
+const blobs = () => storage ??= import("./attachmentBlobStore").then(module => module.attachmentBlobStore)
+  .catch(cause => { storage = undefined; throw cause })
 
 let fetchAttachment: ((descriptor: BlobDescriptor) => Promise<Uint8Array | undefined>) | undefined
 
@@ -19,13 +15,7 @@ export function configureAttachmentFetcher(
 }
 
 export async function storeAttachment(file: File): Promise<FileReference> {
-  const bytes = new Uint8Array(await file.arrayBuffer())
-  const descriptor = await createBlobDescriptor(
-    bytes,
-    file.name,
-    file.type || "application/octet-stream",
-  )
-  await blobs.put(descriptor, bytes)
+  const descriptor = await (await import("./attachmentFileStream")).storeFileAttachment(await blobs(), file)
   return referenceFromDescriptor(descriptor)
 }
 
@@ -34,25 +24,38 @@ export async function readAttachment(
 ): Promise<Uint8Array | undefined> {
   const descriptor = blobDescriptor(reference)
   if (!descriptor) return undefined
-  const local = await blobs.getVerified(descriptor)
+  const local = await (await blobs()).getVerified(descriptor)
   if (local || !fetchAttachment) return local
   const received = await fetchAttachment(descriptor)
   if (!received) return undefined
-  await blobs.put(descriptor, received)
+  const cached = await (await blobs()).getVerified(descriptor)
+  if (cached) return cached
+  await (await blobs()).put(descriptor, received)
   return received
 }
 
 export async function readStoredAttachment(
   descriptor: BlobDescriptor,
 ): Promise<Uint8Array | undefined> {
-  return blobs.getVerified(descriptor)
+  return (await blobs()).getVerified(descriptor)
+}
+
+export async function readStoredAttachmentStream(descriptor: BlobDescriptor): Promise<BlobByteSource | undefined> {
+  const requested = structuredClone(descriptor)
+  return (await blobs()).getStream(requested)
+}
+
+export async function writeStoredAttachmentStream(descriptor: BlobDescriptor, source: BlobByteSource,
+  ensureCurrent: () => void): Promise<void> {
+  const requested = structuredClone(descriptor)
+  await (await blobs()).putStream(requested, source, { ensureCurrent })
 }
 
 export async function writeStoredAttachment(
   descriptor: BlobDescriptor,
   bytes: Uint8Array,
 ): Promise<void> {
-  await blobs.put(descriptor, bytes)
+  await (await blobs()).put(descriptor, bytes)
 }
 
 export function attachmentName(reference: FileReference): string {

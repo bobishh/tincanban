@@ -2,14 +2,15 @@
 import { computed } from "vue"
 import { MarkdownContent } from "../ui/markdownContent"
 import { previewCardNote } from "../ui/cardNotePreview"
-import type { ItemDiscussion } from "../chat/itemDiscussions"
-import type { Item } from "../domain/model"
+import type { Item } from "../domain/entitySchemas"
 import type { Lead } from "../types"
 
 type CardField = { id: string; title: string; value: string }
+type ItemDiscussion = { count: number; messageId?: string }
+type CardItem = Item
 
 const props = defineProps<{
-  item: Item
+  item: CardItem
   lead?: Lead
   notes: string
   searchQuery?: string
@@ -26,11 +27,16 @@ const props = defineProps<{
 
 const notePreview = computed(() => previewCardNote(props.notes, props.searchQuery ?? "", props.searchMatchIndex ?? -1))
 
+function selectCard(event: MouseEvent) {
+  (event.currentTarget as HTMLButtonElement).focus()
+  emit("select", props.item)
+}
+
 const emit = defineEmits<{
-  open: [item: Item, event: MouseEvent]
-  select: [item: Item]
+  open: [item: CardItem, event: MouseEvent]
+  select: [item: CardItem]
   discuss: [itemId: string]
-  taskToggle: [item: Item, markdown: string]
+  taskToggle: [item: CardItem, markdown: string]
 }>()
 </script>
 
@@ -41,7 +47,7 @@ const emit = defineEmits<{
     :data-item-id="item.id"
     @click="emit('open', item, $event)"
   >
-    <button class="card-open-button" type="button" :aria-label="`Open ${item.title}${ageLevel && ageLevel !== 'fresh' ? `. ${ageLabel}` : ''}`" @click="emit('select', item)"></button>
+    <button class="card-open-button" type="button" :aria-label="`Open ${item.title}${ageLevel && ageLevel !== 'fresh' ? `. ${ageLabel}` : ''}`" @click="selectCard"></button>
     <div class="card-layout">
       <div class="card-main">
         <template v-if="lead">

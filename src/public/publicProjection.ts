@@ -1,4 +1,7 @@
 import { compareRanks } from "../domain/ancestry"
+import { columnColors } from "../domain/columnColors"
+import { itemNarrative } from "../domain/narrative"
+import { orderItemsByPriority } from "../domain/priority"
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { isItem, type FileReference, type WorkspaceDocumentV2, type WorkspaceEntity } from "../domain/model"
 import { conversationRoots, type Anchor } from "../chat/context"
@@ -52,14 +55,16 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
   if (!board || !("kind" in board) || board.kind !== "board" || !active(board)) throw new Error("Selected board is unavailable")
   const entities = Object.values(document.entities) as Entity[]
   const children = childLookup(entities)
-  const columns = children(boardId).filter(entity => "kind" in entity && entity.kind === "column" && !isArchiveColumn(entity, board))
+  const boardColumns = children(boardId).filter((entity): entity is Extract<WorkspaceEntity, { kind: "column" }> => "kind" in entity && entity.kind === "column")
+  const colors = columnColors(boardColumns)
+  const columns = boardColumns.filter(column => !isArchiveColumn(column, board))
   const fields = children(boardId).filter((entity): entity is PublicFieldEntity => "kind" in entity && entity.kind === "field")
   if (columns.length > MAX_COLUMNS || fields.length > MAX_FIELDS) throw new Error("Public board exceeds collection limits")
   const publicFields = projectFields(fields)
-  const cards = projectCards(columns, children, publicFields)
+  const cards = projectCards(board, columns, children, publicFields)
   const projection: PublicBoardProjection = {
-    kind: "tincanban-public-board", version: 1, board: { id: board.id, title: board.title },
-    columns: columns.map(entity => ({ id: entity.id, title: entity.title, rank: entity.placement.rank })),
+    kind: "tincanban-public-board", version: 1, board: { id: board.id, title: board.title, presentation: publicPresentation(board, columns, publicFields) },
+    columns: columns.map(entity => ({ id: entity.id, title: entity.title, rank: entity.placement.rank, color: colors.get(entity.id), ...( "collapsible" in entity ? { collapsible: entity.collapsible } : {}) })),
     fields: publicFields, cards, discussions: [], files: [],
   }
   const chatScope = await getChatScope(workspaceId)
@@ -68,6 +73,16 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
   const projectedFiles = await projectFiles(entities, boardId, new Set(cards.map(card => card.id)), stageAsset)
   projection.files = projectedFiles.files
   return { projection: validatePublicBoardProjection(projection), assets: projectedFiles.assets }
+}
+
+function publicPresentation(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], fields: PublicBoardProjection["fields"]): NonNullable<PublicBoardProjection["board"]["presentation"]> {
+  const visibleIds = new Set([...columns.map(column => column.id), ...fields.map(field => field.id), ...fields.flatMap(field => field.options.map(option => option.id))])
+  return {
+    ...(board.entityName ? { entityName: board.entityName } : {}),
+    preset: board.preset ? { ...board.preset, bindings: Object.fromEntries(Object.entries(board.preset.bindings).filter(([, id]) => visibleIds.has(id))) } : null,
+    ...(board.cardStageButtons ? { cardStageButtons: board.cardStageButtons.filter(button => columns.some(column => column.id === button.columnId)) } : {}),
+    ...(board.cardAgingPolicy ? { cardAgingPolicy: board.cardAgingPolicy } : {}),
+  }
 }
 
 type PublicFieldEntity = Extract<WorkspaceEntity, { kind: "field" }>
@@ -82,23 +97,23 @@ function childLookup(entities: Entity[]) {
 }
 function projectFields(fields: PublicFieldEntity[]): PublicBoardProjection["fields"] {
   return fields.map(field => ({
-    id: field.id, title: field.title, valueType: field.valueType, required: field.required, rank: field.placement.rank,
+    id: field.id, title: field.title, valueType: field.valueType, required: field.required, rank: field.placement.rank, ...(field.valueType === "number" ? { min: field.min, max: field.max } : {}),
     options: field.valueType === "select"
       ? Object.values(field.options).filter(option => option.archivedAt == null).sort((a, b) => compareRanks(a.rank, b.rank) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(option => ({ id: option.id, title: option.title, rank: option.rank }))
       : [],
   }))
 }
-function projectCards(columns: Entity[], children: (id: string) => Entity[], fields: PublicBoardProjection["fields"]): PublicBoardProjection["cards"] {
+function projectCards(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], children: (id: string) => Entity[], fields: PublicBoardProjection["fields"]): PublicBoardProjection["cards"] {
   const fieldMap = new Map(fields.map(field => [field.id, field]))
   const cards: PublicBoardProjection["cards"] = []
   const visited = new Set<string>()
   const walk = (parentId: string, columnId: string, cardParentId: string | null): void => {
-    for (const entity of children(parentId)) {
-      if (!isItem(entity)) continue
+    const items = children(parentId).filter(isItem)
+    for (const entity of orderItemsByPriority(board, items, board.preset?.bindings["field.notes"])) {
       if (visited.has(entity.id)) throw new Error("Public card hierarchy contains a cycle")
       visited.add(entity.id)
       const values = Object.fromEntries(Object.entries(entity.values ?? {}).filter(([fieldId, value]) => validFieldValue(fieldMap.get(fieldId), value)))
-      cards.push({ id: entity.id, parentId: cardParentId, columnId, title: entity.title, body: entity.body, values, rank: entity.placement.rank })
+      cards.push({ id: entity.id, parentId: cardParentId, columnId, title: entity.title, body: itemNarrative(entity, board.preset?.bindings["field.notes"], children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]), values, rank: entity.placement.rank, ...(entity.createdAt ? { createdAt: entity.createdAt } : {}), ...(entity.updatedAt ? { updatedAt: entity.updatedAt } : {}), ...(entity.lastActivityAt ? { lastActivityAt: entity.lastActivityAt } : {}) })
       if (cards.length > MAX_CARDS) throw new Error("Public board exceeds card limit")
       walk(entity.id, columnId, entity.id)
     }

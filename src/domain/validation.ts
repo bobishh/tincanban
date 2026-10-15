@@ -7,6 +7,7 @@ import { automationEntityId, automationLifecycle } from "./automationLifecycle"
 import { parseAutomationDefinition } from "./automationContract"
 import { parseAutomationApproval } from "./automationApproval"
 import { canonicalizeJson } from "./identity"
+import { assertApplicationSourceRecord } from "./applicationSourceData"
 
 function validate<T>(schema: z.ZodType<T>, input: unknown): CommandResult<T> {
   const result = schema.safeParse(input)
@@ -23,6 +24,13 @@ export function validateWorkspaceDoc(input: unknown): CommandResult<WorkspaceDoc
   const parsed = validate(workspaceSchema, input)
   if (!parsed.ok) return parsed
   const doc = parsed.value as WorkspaceDocumentV2
+  for (const [id, entity] of Object.entries(doc.entities)) {
+    if (entity.kind !== "application_source" && !id.startsWith("application-source:")) continue
+    try {
+      if (id !== entity.id) throw new Error("Source entity ID mismatch")
+      assertApplicationSourceRecord(entity, doc.entities, doc.id)
+    } catch { return invalid(`entities.${id}`, "Application source scope, record or original reference is invalid") }
+  }
   const profileError = validateMemberProfiles(doc)
   if (profileError) return profileError
   const automationError = validateAutomations(doc)
@@ -140,7 +148,7 @@ function parseTransition(value: unknown): Record<string, unknown> | undefined {
 
 const allowedParents: Record<EntityKind, readonly (string | null)[]> = {
   board: [null], column: ["board"], field: ["board"], item: ["column", "item"],
-  document: ["item"], artifact: ["item"], document_template: [null], template: [null], member_profile: [null], automation: ["board"],
+  document: ["item"], artifact: ["item"], document_template: [null], template: [null], member_profile: [null], automation: ["board"], application_source: ["item"],
 }
 export function validatePlacementParent(childKind: string, parentKind: string | null): CommandResult<void> {
   if (!Object.hasOwn(allowedParents, childKind)) return { ok: false, error: { code: "invalid_input", message: `Unknown entity kind: ${childKind}` } }

@@ -149,9 +149,11 @@ test("Given item and discussion windows, when dragged resized and reopened then 
   const restored = await discussion.boundingBox()
   expect(restored!.width).toBeCloseTo(resized!.width, 0)
   await page.setViewportSize({ width: 700, height: 600 })
-  const clamped = await discussion.boundingBox()
-  expect(clamped!.x).toBeGreaterThanOrEqual(0)
-  expect(clamped!.x + clamped!.width).toBeLessThanOrEqual(700)
+  await expect.poll(async () => (await discussion.boundingBox())?.x).toBeGreaterThanOrEqual(0)
+  await expect.poll(async () => {
+    const clamped = await discussion.boundingBox()
+    return clamped ? clamped.x + clamped.width : Infinity
+  }).toBeLessThanOrEqual(700)
 })
 
 test("Given two items and a participant, when one discussion attaches both items and mentions the participant then one signed message references both", async ({ page }) => {

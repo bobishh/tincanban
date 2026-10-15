@@ -1,3 +1,5 @@
+import { emailJobIdentity } from "./emailVacancy.ts";
+
 export const MAX_RAW_EMAIL_BYTES = 1_048_576;
 const MAX_TEXT_BYTES = 64_000;
 const MAX_URLS = 50;
@@ -23,10 +25,11 @@ export interface ApplicationCandidate {
   messageIds?: string[];
   company?: string;
   role?: string;
+  sources?: import("../../../src/domain/applicationSourceData").ApplicationSourceData[];
 }
 
 export type CorrelationResult =
-  | { kind: 'matched'; cardId: string; method: 'thread' | 'job-url' | 'company-role' }
+  | { kind: 'matched'; cardId: string; method: 'thread' | 'job-url' | 'ats-id' | 'company-role' }
   | { kind: 'review'; reason: string; candidates: string[] };
 
 export async function parseForwardedMail(input: ArrayBuffer | Uint8Array, nested = false): Promise<ForwardedMail> {
@@ -138,7 +141,7 @@ function normalizeJobUrl(value: string): string {
       if (/^(utm_.+|gclid|fbclid|mc_cid|mc_eid)$/i.test(key)) url.searchParams.delete(key);
     }
     url.hostname = url.hostname.toLowerCase();
-    return url.toString().replace(/\/$/, '');
+    return emailJobIdentity(url.toString()).replace(/\/$/, '');
   } catch {
     return '';
   }

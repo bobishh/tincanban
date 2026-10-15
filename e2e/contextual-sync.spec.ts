@@ -120,14 +120,19 @@ test("Given independent paired peers, when signed object discussions sync, then 
     await test.step("Then signed out-of-order reply retains unavailable quote and resolves when root arrives", async () => {
       const records = await guest.evaluate(async authorityRecord => {
         const identity = await import(/* @vite-ignore */ "/src/domain/identity.ts")
-        const protocol = await import(/* @vite-ignore */ "/src/chat/records.ts")
-        const proofs = await import(/* @vite-ignore */ "/src/domain/proofs.ts")
+        const signing = await import(/* @vite-ignore */ "/src/chat/signing.ts")
+        const { resolveSigningContext } = await import(/* @vite-ignore */ "/src/domain/signingContext.ts")
         const profile = await identity.bootstrapIdentity()
-        const certificates = (await proofs.defaultProofStore.listCertificates()).filter((certificate: any) => certificate.payload.personId === profile.identity.personId)
-        if (!certificates.some((certificate: any) => certificate.payload.deviceId === profile.device.deviceId)) certificates.push(profile.certificate)
         const original = authorityRecord.signed.payload
-        const root = await protocol.createChatRecord(profile, certificates, authorityRecord.authority, original.workspaceId, "chat-message", "Later retained root", 0, { references: original.context.references, mentions: [] })
-        const reply = await protocol.createChatRecord(profile, certificates, authorityRecord.authority, original.workspaceId, "chat-message", "Reply arrives first", 0, { references: [], mentions: [], replyTo: root.signed.payload.id, conversationRootId: root.signed.payload.id })
+        const authorityRevision = JSON.stringify(authorityRecord.authority)
+        const contextFor = () => resolveSigningContext({ profile, certificates: authorityRecord.certificates,
+          purpose: "chat-message", binding: { workspaceId: original.workspaceId }, authorityRevision,
+          current: async () => ({ personId: profile.identity.personId, deviceId: profile.device.deviceId, authorityRevision }) })
+        const root = await signing.createChatRecord(profile, authorityRecord.authority, original.workspaceId,
+          "chat-message", "Later retained root", 0, { references: original.context.references, mentions: [] }, await contextFor())
+        const reply = await signing.createChatRecord(profile, authorityRecord.authority, original.workspaceId,
+          "chat-message", "Reply arrives first", 0,
+          { references: [], mentions: [], replyTo: root.signed.payload.id, conversationRootId: root.signed.payload.id }, await contextFor())
         return { root, reply }
       }, committed.record)
       for (const record of [records.reply, records.root]) {

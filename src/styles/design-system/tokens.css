@@ -1,3 +1,5 @@
+@import "../../../public/assets/layout-tokens.css";
+
 :root {
   --presence-green: #69db7c;
   --presence-yellow: #ffd43b;
@@ -16,13 +18,10 @@
   --green: #69db7c;
   --panel: #fffdf7;
   --soft: #e9e5db;
-  --control-size: 46px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
-  --control-size-compact: 40px;
-  --icon-size: 44px;
   font-family: var(--site-font-sans);
   font-size: 20px;
   color: var(--ink);

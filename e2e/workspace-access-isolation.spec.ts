@@ -9,15 +9,20 @@ test("Given an unreadable authority on one board, when creating and importing an
   const brokenWorkspaceId = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
   await createJobSearchWorkspace(page, "Healthy sibling")
   await page.evaluate(async workspaceId => {
-    const { peerStore } = await import("/src/sync/peerStore.ts")
-    const authority = await peerStore.getWorkspaceAuthority(workspaceId)
-    if (!authority) throw new Error("Missing workspace authority")
-    // A broken board must not block a different active board after reload.
-    await peerStore.putWorkspaceAuthority({ ...authority, ownerPublicKey: "invalid-key",
-      updatedAt: new Date(Date.parse(authority.updatedAt) + 1_000).toISOString(),
+    const { STORE_AUTHORITY } = await import("/src/sync/peerStore.ts")
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("tincanban-peer-catalog-v1")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
     })
-    const stored = await peerStore.getWorkspaceAuthority(workspaceId)
-    if (stored?.ownerPublicKey !== "invalid-key") throw new Error("Malformed authority was not stored")
+    const transaction = database.transaction(STORE_AUTHORITY, "readwrite")
+    transaction.objectStore(STORE_AUTHORITY).put({ workspaceId, ownerPublicKey: "invalid-key" })
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => reject(transaction.error)
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
   }, brokenWorkspaceId)
   await page.reload()
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()

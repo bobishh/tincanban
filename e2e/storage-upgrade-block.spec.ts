@@ -42,7 +42,7 @@ test(`Given a held version ${version} journal with existing deltas, When the sto
       rows.onsuccess = () => { resolve({ version: database.version, sequences: rows.result.map((row: { sequence: number }) => row.sequence), revisions: database.objectStoreNames.contains("revisions") }); database.close() }
       rows.onerror = () => { reject(rows.error); database.close() }
     }
-  }))).toEqual({ version: 4, sequences: [2, 10], revisions: true })
+  }))).toEqual({ version: 7, sequences: [2, 10], revisions: true })
   await app.close()
 })
 }

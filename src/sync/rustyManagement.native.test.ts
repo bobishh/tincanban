@@ -1,0 +1,892 @@
+import { execFile, spawn, type ChildProcess } from "node:child_process"
+import { createServer } from "node:net"
+import { mkdtemp, rm, readdir, readFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { resolve } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
+import { afterEach, expect, test, vi } from "vitest"
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
+import * as Automerge from "@automerge/automerge/slim"
+import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
+import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
+import { createWorkspaceDoc } from "../domain/seeds"
+import type { WorkspaceDocumentV2 } from "../domain/model"
+import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
+import { defaultStorage } from "../storage"
+import { deleteLocal, listLocalKeys } from "../localDb"
+import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations,
+  persistPrivateReplicaState, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
+import { RustyManagementRepository } from "./rustyManagementRepository"
+import { ensureIdentityReplicaConnection } from "./identityReplicaConnection"
+import { createIdentityReplica } from "./identityReplicaStore"
+import { approveRustyScope } from "./rustyEnrollment"
+import { blindObjectId, discoverBlindKeeper, inventoryBlindObjects, uploadBlindObject, downloadBlindObject } from "./blindClient"
+import { decodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
+import { prepareBlindCheckpoint, submitBlindCheckpoint } from "./blindCheckpoint"
+import { ensureRustyPersonPolicy, readRustyManagementStatus, updateRustyManagementPolicy } from "./rustyManagementClient"
+import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { exportIdentityDeviceExtensions } from "./identityDeviceExtensions"
+import * as identityTransfer from "./identityDeviceTransfer"
+import { createChatRecordFixture as createChatRecord } from "../chat/records.testSupport"
+import { readIdentityProfileQueue } from "./identityProfileProjectionQueue"
+import { identityProfileProjectionKey } from "./identityProfileProjectionState"
+import { saveIdentityPhoto } from "../app/identityPhoto"
+import { identityProfileValue, readIdentityProfileState } from "../domain/identityProfileState"
+import { createBlobDescriptor } from "@meta-uber/mesh-blob"
+import { AttachmentTransfer } from "./attachmentTransfer"
+import { createAttachmentRepository } from "./attachmentRepository"
+import { uploadBlindBlob, downloadBlindBlob } from "./blindBlobClient"
+import { createAttachmentIndexRepository } from "./attachmentIndexRepository"
+import { privateReplicaBinding } from "./privateReplicaRepository"
+import { fetchRustyAttachment } from "./rustyAttachmentDelivery"
+import { recordGenesisAuthority } from "./changeAuthorization"
+import { blindHash, canonicalBlindJson } from "./blindClient"
+import { ensureWorkspaceReplicaWriter } from "./workspaceReplicaWriter"
+import { confirmRustyAttachmentCoverage } from "./attachmentCoverage"
+import { createBlindReplica } from "./blindReplicaStore"
+import { storeAttachment, blobDescriptor } from "../attachments"
+import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
+import { writeArchiveBytes, readArchiveBytes, readArchiveIndex, type ArchiveObjectStore } from "@meta-uber/mesh-replication/history-archive"
+import { openArchiveObject, type ArchiveEncryptionBinding, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
+import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote"
+import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-archive-locators"
+import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locator-preparation"
+import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
+import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
+import { verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { createWorkspaceHistoryPreparation } from "./historyPreparationRepository"
+import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
+
+let automergeReady: Promise<void> | undefined
+function initializeNativeAutomerge(): Promise<void> {
+  return automergeReady ??= readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
+    .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
+}
+
+afterEach(() => { resetIdentityStorageForTest() })
+
+async function unusedLoopbackPort(): Promise<number> {
+  const listener = createServer()
+  await new Promise<void>((resolveListen, reject) => {
+    listener.once("error", reject)
+    listener.listen(0, "127.0.0.1", () => resolveListen())
+  })
+  const address = listener.address()
+  if (!address || typeof address === "string") throw new Error("Loopback listener did not expose a TCP port")
+  const { port } = address
+  await new Promise<void>((resolveClose, reject) => listener.close(error => error ? reject(error) : resolveClose()))
+  return port
+}
+
+function verifyNativeArchive(input: unknown): Promise<unknown> {
+  const binary = resolve(process.cwd(), process.env.TINCANBAN_HISTORY_VERIFY_BINARY ?? "vendor/meta-mesh/target/debug/examples/history_archive_verify")
+  return new Promise((resolveVerified, reject) => {
+    const child = execFile(binary, { timeout: 10_000, maxBuffer: 128 * 1024 }, (error, stdout, stderr) => {
+      if (error) { reject(new Error(`Native archive verification failed: ${stderr.trim() || error.message}`)); return }
+      try { resolveVerified(JSON.parse(stdout)) } catch (error) { reject(error) }
+    })
+    child.stdin?.on("error", reject)
+    child.stdin?.end(JSON.stringify(input))
+  })
+}
+
+async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>,
+  options: { port?: number; stateDirectory?: string; controllers?: string[] } = {}) {
+  const port = options.port ?? await unusedLoopbackPort()
+  const stateDirectory = options.stateDirectory ?? await mkdtemp(resolve(tmpdir(), "tincanban-rusty-native-"))
+  const origin = `http://127.0.0.1:${port}`
+  const binary = resolve(process.cwd(), process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse")
+  const child = spawn(binary, [stateDirectory, `127.0.0.1:${port}`], {
+    env: {
+      ...process.env,
+      RUSTY_PUBLIC_ORIGIN: origin,
+      RUSTY_TRUSTED_OWNER: JSON.stringify({
+        identity: profile.identity,
+        allowedControllerDeviceIds: options.controllers ?? [profile.device.deviceId],
+      }),
+      RUSTY_LOG: "off",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  let output = ""
+  let spawnError: Error | undefined
+  child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); output = output.slice(-8_000) })
+  child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); output = output.slice(-8_000) })
+  child.once("error", error => { spawnError = error })
+  try {
+    await waitForRusty(child, origin, () => output, () => spawnError)
+    return { child, origin, stateDirectory, logs: () => output }
+  } catch (error) {
+    await stopRusty(child)
+    if (!options.stateDirectory) await rm(stateDirectory, { recursive: true, force: true })
+    throw error
+  }
+}
+
+async function waitForRusty(child: ChildProcess, origin: string, output: () => string, spawnError: () => Error | undefined): Promise<void> {
+  const deadline = Date.now() + 8_000
+  while (Date.now() < deadline) {
+    if (spawnError()) throw new Error(`Unable to spawn Rusty: ${spawnError()?.message}`)
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Rusty exited during startup: ${output()}`)
+    try {
+      const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(400) })
+      if (response.ok) return
+    } catch { /* Listener may still be starting. */ }
+    await delay(40)
+  }
+  throw new Error(`Rusty did not become ready: ${output()}`)
+}
+
+async function stopRusty(child: ChildProcess): Promise<void> {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  try { child.kill("SIGINT") } catch { /* Exit may race graceful shutdown. */ }
+  if (!await waitForExit(child, 5_000)) {
+    try { child.kill("SIGTERM") } catch { /* Escalate after the bounded grace period. */ }
+    if (!await waitForExit(child, 2_000)) {
+      try { child.kill("SIGKILL") } catch { /* Do not remove state unless exit is confirmed below. */ }
+      if (!await waitForExit(child, 2_000)) throw new Error("Rusty process did not exit; preserving its state directory")
+    }
+  }
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true
+  return new Promise(resolveExit => {
+    const finish = (exited: boolean) => {
+      clearTimeout(timer)
+      child.removeListener("exit", onExit)
+      resolveExit(exited)
+    }
+    const onExit = () => finish(true)
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    child.once("exit", onExit)
+  })
+}
+
+test("Given original signed archive evidence and an uncertain upload, when Rusty and the sender restart, then a cold reader authenticates exact originals solely from encrypted archive storage", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  const profile = await bootstrapIdentity("Native archive owner")
+  let service = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `archive-${crypto.randomUUID()}`,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
+    const context = { workspaceId: crypto.randomUUID(), historyEpoch: 1, indexId: "original-proof-evidence" }
+    const scope = { scopeId: access.scopeId, keyEpoch: 1, key: crypto.getRandomValues(new Uint8Array(32)) }
+    await initializeNativeAutomerge()
+    let sourceDoc = Automerge.from({ id: context.workspaceId, title: "Original basis" })
+    sourceDoc = Automerge.change(sourceDoc, draft => { draft.title = "Signed pending original" })
+    const originalChange = Automerge.getLastLocalChange(sourceDoc)!
+    const decodedChange = Automerge.decodeChange(originalChange)
+    expect(decodedChange.deps).toHaveLength(1)
+    Automerge.free(sourceDoc)
+    const signed = await signEnvelope(profile.privateKeys.devicePrivateKey, { kind: "workspace-changes", version: 1,
+      workspaceId: context.workspaceId, personId: profile.identity.personId, deviceId: profile.device.deviceId, hashes: [decodedChange.hash] }, profile.device.deviceId)
+    const sentinel = "PRIVATE-ARCHIVE-ORIGINAL-SENTINEL-842903"
+    const original = new TextEncoder().encode(JSON.stringify({ signed, changeBytes: toBase64Url(originalChange), identity: profile.identity, certificates: [profile.certificate],
+      classification: { type: "pending", reason: "Original dependencies not available" },
+      unknownExtension: sentinel + "x".repeat(3 * 256 * 1024 + 37) }, null, 2))
+    const objects = new Map<string, Uint8Array>()
+    const local: ArchiveObjectStore = { read: async id => objects.get(id), write: async (id, bytes) => { objects.set(id, bytes.slice()) } }
+    function* chunks() { for (let offset = 0; offset < original.length; offset += 64 * 1024) yield original.subarray(offset, offset + 64 * 1024) }
+    const reference = await writeArchiveBytes(context, chunks(), local)
+    const parts = (await readArchiveIndex(context, reference.root, local)).entries
+    expect(new Set(parts.map(entry => entry.objectId)).size).toBeLessThan(parts.length)
+    const preparationIdentity = { transitionId: crypto.randomUUID(), personId: profile.identity.personId,
+      workspaceId: context.workspaceId, historyEpoch: context.historyEpoch, previousBaselineId: null,
+      sourceRevision: await blindHash(original), authorityRevision: await blindHash(new TextEncoder().encode(canonicalBlindJson({
+        identity: profile.identity, certificates: [profile.certificate] }))),
+      privateBinding: await blindHash(new TextEncoder().encode(canonicalBlindJson({ ...access, key: toBase64Url(scope.key) }))),
+      storage: { origin: access.origin, scopeId: access.scopeId, policyRevision: access.policyRevision,
+        servicePublicKey: access.servicePublicKey, keyEpoch: 1, keyDigest: await blindHash(scope.key) } }
+    const journal = createWorkspaceHistoryPreparation(preparationIdentity, () => {})
+    await journal.capture(chunks())
+    const plan: HistoryPreparedObject[] = []
+    const prepare = async (plainId: string, partIndex: number) => {
+      const bytes = objects.get(plainId)!
+      const binding: ArchiveEncryptionBinding = { ...context, objectId: plainId, objectKind: partIndex < 0 ? "page" : "part",
+        partIndex: partIndex < 0 ? 0 : partIndex, partCount: partIndex < 0 ? 1 : reference.partCount }
+      plan.push(await journal.stage(scope, binding, bytes))
+    }
+    const partIds = new Set(parts.map(entry => entry.objectId))
+    for (const plainId of objects.keys()) if (!partIds.has(plainId)) await prepare(plainId, -1)
+    for (const [index, entry] of parts.entries()) await prepare(entry.objectId, index)
+    const rootBinding = plan.find(item => item.binding.objectId === reference.root.objectId && item.binding.objectKind === "page")!.binding
+    expect((await journal.archive(rootBinding)).phase).toBe("archived")
+    let loseReply = true
+    const fetcher: typeof fetch = async (...args) => {
+      const response = await fetch(...args)
+      if (loseReply && args[1]?.method === "PUT" && response.ok) {
+        loseReply = false; await response.body?.cancel(); throw new Error("Archive receipt reply lost")
+      }
+      return response
+    }
+    const source = createArchiveRemote(access, { fetch: fetcher, ensureCurrent: () => {} })
+    await expect(journal.cover(source)).rejects.toThrow("Archive receipt reply lost")
+    objects.clear()
+    const port = Number(new URL(service.origin).port), directory = service.stateDirectory
+    await stopRusty(service.child)
+    service = await startRusty(profile, { port, stateDirectory: directory })
+    const reopened = createWorkspaceHistoryPreparation(preparationIdentity, () => {})
+    const recovered: HistoryPreparedObject[] = []
+    for await (const item of reopened.objects()) recovered.push(item)
+    expect([...recovered].sort((left, right) => left.index - right.index)).toEqual(plan)
+    const retainedSource: Uint8Array[] = []
+    for await (const part of await reopened.readSource()) retainedSource.push(part)
+    expect(new Uint8Array(Buffer.concat(retainedSource))).toEqual(original)
+    const resumed = createArchiveRemote(access, { fetch, ensureCurrent: () => {} })
+    const noEncryption = vi.spyOn(crypto.subtle, "encrypt").mockRejectedValue(new Error("Re-encryption after restart forbidden"))
+    let covered: Awaited<ReturnType<typeof reopened.cover>>
+    try { covered = await reopened.cover(resumed); expect(noEncryption).not.toHaveBeenCalled() }
+    finally { noEncryption.mockRestore() }
+    expect(covered.phase).toBe("covered")
+    const rootCiphertextId = covered.root!.ciphertextId
+    const expectedSet = recovered.map(item => ({ objectId: item.sealed.ciphertextId, keyEpoch: 1 }))
+      .sort((left, right) => left.objectId < right.objectId ? -1 : 1)
+    const complete = covered.coverage!
+    expect(complete.payload).toMatchObject({ objectCount: recovered.length, rootCovered: true })
+    expect(await verifyCompleteArchiveCoverage(complete, access, rootCiphertextId, expectedSet)).toMatchObject({ objectCount: recovered.length })
+    const subset = await confirmArchiveCoverageSet(access, rootCiphertextId, "native-archive-subset-0001",
+      expectedSet.filter(entry => entry.objectId === rootCiphertextId), { ...resumed, ensureCurrent: () => {} })
+    await expect(verifyCompleteArchiveCoverage(subset, access, rootCiphertextId, expectedSet)).rejects.toThrow()
+    expect((await inventoryBlindObjects(access, 0)).objects).toEqual([])
+    const downloads = vi.fn(fetch)
+    const recipient = createArchiveRemote({ ...access, writeToken: "recipient-cannot-upload" }, { fetch: downloads, ensureCurrent: () => {} })
+    const cold: ArchiveObjectStore = { write: async () => { throw new Error("Cold read tried publishing") }, read: async (id, maximum, binding) => {
+      const item = recovered.find(value => value.binding.objectId === id && canonicalBlindJson(value.binding) === canonicalBlindJson({ ...binding, objectId: id }))!
+      if (!item) throw new Error("Missing private archive locator")
+      const ciphertext = await recipient.download(item.sealed.ciphertextId)
+      const bytes = await openArchiveObject(scope, item.binding, item.sealed.ciphertextId, ciphertext)
+      if (bytes.length > maximum) throw new Error("Archive read limit exceeded")
+      return bytes
+    } }
+    const restoredParts: Uint8Array[] = []
+    for await (const part of await readArchiveBytes(context, reference, cold)) restoredParts.push(part)
+    const restored = new Uint8Array(restoredParts.reduce((sum, bytes) => sum + bytes.length, 0))
+    let offset = 0
+    for (const part of restoredParts) { restored.set(part, offset); offset += part.length }
+    expect(restored).toEqual(original)
+    expect(downloads).toHaveBeenCalledTimes(recovered.length)
+    const retained = JSON.parse(new TextDecoder().decode(restored))
+    const authorKey = await verifyDeviceCertificateChain(retained.identity, retained.signed.signerKeyId, retained.certificates)
+    expect(await verifyEnvelope(retained.signed, authorKey)).toBe(true)
+    expect(retained.signed).toEqual(signed)
+    const retainedChange = Automerge.decodeChange(decodeBlindBytes(retained.changeBytes))
+    expect(retained.signed.payload.hashes).toEqual([retainedChange.hash])
+    expect(retainedChange.deps).toEqual(decodedChange.deps)
+    expect(retained.classification.type).toBe("pending")
+    const filenames = await readdir(resolve(directory, "scopes", access.scopeId, "archives"))
+    expect(filenames).toHaveLength(recovered.length)
+    for (const filename of filenames) {
+      const persisted = await readFile(resolve(directory, "scopes", access.scopeId, "archives", filename), "utf8")
+      expect(persisted).not.toContain(sentinel)
+      expect(persisted).not.toContain(context.workspaceId)
+      expect(persisted).not.toContain(access.readToken)
+    }
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+    vi.unstubAllGlobals()
+  }
+}, 30_000)
+
+function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number; key: Uint8Array }, transitionId: string) {
+  const controlJson = decodeBlindBytes(capturedHistory.originals.control)
+  const control = JSON.parse(new TextDecoder().decode(controlJson))
+  const authorizationJson = capturedHistory.originals.authorizations.map(decodeBlindBytes)
+  const records = authorizationJson.map(bytes => JSON.parse(new TextDecoder().decode(bytes)))
+  const signer = { personId: capturedHistory.expected.personId, deviceId: records[0].signed.signerKeyId,
+    certificates: records[0].certificates }
+  const source = { snapshot: { ...control, document: decodeBlindBytes(capturedHistory.originals.document) }, records,
+    pendingChangeBytes: capturedHistory.originals.pending.map(decodeBlindBytes), nowMs: 0 }
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, claimedOwner: true }, signer)).toThrow(/unknown field/i)
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, claimedOwner: true } }, signer)).toThrow(/unknown field/i)
+  expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, document: [256] } }, signer)).toThrow()
+  const preparation = WasmStateCore.prepareWorkspaceHistory(source, signer)
+  try {
+    const capture = preparation.captureOriginals(capturedHistory.catalogue.context.historyEpoch, controlJson, authorizationJson)
+    try {
+      const objects: Array<{ ciphertextId: string; binding: ArchiveEncryptionBinding; object: EncryptedArchiveObject }> = []
+      const catalogue = capture.writeEncryptedCatalogue(scope.scopeId, scope.keyEpoch, scope.key,
+        () => crypto.getRandomValues(new Uint8Array(12)),
+        (ciphertextId: string, binding: ArchiveEncryptionBinding, object: EncryptedArchiveObject) => {
+          objects.push({ ciphertextId, binding: structuredClone(binding), object: structuredClone(object) })
+        }, () => {}) as typeof capturedHistory.catalogue
+      // Exercise the production Native-to-browser sink ABI, including its plaintext content address.
+      expect(objects.length).toBeGreaterThan(0)
+      expect(objects.every(entry => /^[A-Za-z0-9_-]{43}$/.test(entry.binding.objectId))).toBe(true)
+      const rebase = capture.rebase(catalogue.context.historyEpoch, transitionId)
+      try { return { catalogue, objects, document: rebase.document() } } finally { rebase.free() }
+    } finally { capture.free() }
+  } finally { preparation.free() }
+}
+
+test("Given a Native-derived original-history catalogue, when data and locator coverage survive Rusty restart, then Native binds the admitted basis to real receipts and a cold HTTP reader recovers originals without the sender journal", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  const profile = await bootstrapIdentity("Native catalogue storage owner")
+  let service = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `capture-${crypto.randomUUID()}`,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
+    const scope = { scopeId: access.scopeId, keyEpoch: 1, key: crypto.getRandomValues(new Uint8Array(32)) }
+    const transitionId = crypto.randomUUID()
+    const current = deriveCurrentNativeCatalogue(scope, transitionId)
+    const context = current.catalogue.context
+    const identity = { transitionId, personId: profile.identity.personId, workspaceId: context.workspaceId, historyEpoch: context.historyEpoch,
+      sourceRevision: current.catalogue.captureRevision, authorityRevision: current.catalogue.authorityRevision,
+      privateBinding: await blindHash(new TextEncoder().encode(canonicalBlindJson({ ...access, key: toBase64Url(scope.key) }))), previousBaselineId: null,
+      storage: { origin: access.origin, scopeId: access.scopeId, policyRevision: access.policyRevision, servicePublicKey: access.servicePublicKey, keyEpoch: 1, keyDigest: await blindHash(scope.key) } }
+    const journal = createWorkspaceHistoryPreparation(identity, () => {})
+    await journal.capture([new TextEncoder().encode(canonicalBlindJson(capturedHistory.originals))])
+    for (const entry of current.objects) await journal.stageSealed(scope, entry.binding, { ciphertextId: entry.ciphertextId, object: entry.object })
+    const rootBinding = { ...context, objectId: current.catalogue.root.objectId, objectKind: "page" as const, partIndex: 0, partCount: 1 }
+    await journal.archive(rootBinding)
+    const covered = await journal.cover(createArchiveRemote(access, { fetch, ensureCurrent: () => {} }))
+    expect(covered.phase).toBe("covered")
+    const directoryIdentity = { ...identity, transitionId: crypto.randomUUID() }
+    const directory = createWorkspaceHistoryPreparation(directoryIdentity, () => {})
+    const prepared = await prepareArchiveLocators({ data: journal, directory,
+      scope, remote: createArchiveRemote(access, { fetch, ensureCurrent: () => {} }), ensureCurrent: () => {} })
+    expect(prepared.directory.phase).toBe("covered")
+    expect(prepared.root.root.count).toBe(covered.objectCount)
+    const archiveIds: string[] = []
+    for (const source of [journal, directory]) for await (const object of source.objects()) archiveIds.push(object.sealed.ciphertextId)
+    await stopRusty(service.child)
+    service = await startRusty(profile, { port: Number(new URL(service.origin).port), stateDirectory: service.stateDirectory })
+    for (const source of [journal, directory]) for (const method of ["read", "readSource", "objects", "locators"] as const) {
+      vi.spyOn(source, method).mockImplementation(() => { throw new Error("Sender journal unavailable") })
+    }
+    const recipient = createArchiveRemote({ ...access, writeToken: "recipient-cannot-upload" }, { fetch, ensureCurrent: () => {} })
+    const objects = []
+    for (const ciphertextId of archiveIds) objects.push({ ciphertextId, object: await recipient.download(ciphertextId) })
+    const originalSigner = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.authorizations[0])))
+    const nativeInput = { originals: capturedHistory.originals, historyEpoch: context.historyEpoch, proposeInitialBaseline: true,
+      signer: { personId: capturedHistory.expected.personId, deviceId: originalSigner.signed.signerKeyId, certificates: originalSigner.certificates },
+      scope: { ...scope, key: toBase64Url(scope.key) }, locatorRoot: prepared.root,
+      authority: { servicePublicKey: access.servicePublicKey, scopeId: access.scopeId, policyRevision: access.policyRevision },
+      dataTransitionId: identity.transitionId, directoryTransitionId: directoryIdentity.transitionId,
+      dataReceipt: JSON.stringify(covered.coverage), directoryReceipt: JSON.stringify(prepared.directory.coverage), objects }
+    const verified = await verifyNativeArchive(nativeInput) as { ownerProposal: { kind: string; baselineId: string }; ownerAttestation: null; basis: { byteLength: number } }
+    expect(verified).toEqual({ kind: "verified-history-archive-coverage", version: 1,
+      catalogueRoot: current.catalogue.root, locatorRoot: prepared.root, captureRevision: current.catalogue.captureRevision,
+      authorityRevision: current.catalogue.authorityRevision, dataObjectCount: covered.objectCount, directoryObjectCount: prepared.directory.objectCount,
+      basis: { historyEpoch: context.historyEpoch, transitionId: identity.transitionId, nodeCount: 2, changeCount: 1,
+        stateDigest: "_QpBD1OaSEhZVINBNeCj9Cui5FftSHLRzj39Uw7jjzE", documentDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+        genesisHash: expect.stringMatching(/^[0-9a-f]{64}$/), byteLength: expect.any(Number) },
+      ownerProposal: expect.objectContaining({ kind: "workspace-history-baseline", version: 1,
+        historyEpoch: 1, previousBaselineId: null, authorityRevision: current.catalogue.authorityRevision,
+        archive: current.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
+    expect(verified.basis.byteLength).toBeLessThan(2048)
+    // Generated public fixture seed; never send a signing key to the Native adapter.
+    const fixtureKey = new Uint8Array(48)
+    fixtureKey.set([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32])
+    fixtureKey.fill(152, 16)
+    const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
+    const signedBaseline = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
+    expect(await verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(signedBaseline) })).toEqual({ ...verified,
+      ownerAttestation: { baselineId: verified.ownerProposal.baselineId, historyEpoch: 1, deviceId: nativeInput.signer.deviceId } })
+    if (process.env.TINCANBAN_PRIOR_READER_PROBE === "1") {
+      const probe = await new Promise<string>((resolveProbe, reject) => {
+        const child = execFile(process.execPath, ["scripts/check-prior-history-reader.mjs"], { timeout: 20_000 }, (error, stdout, stderr) => {
+          if (error) reject(new Error(`Prior released reader probe failed: ${stderr || error.message}`))
+          else resolveProbe(stdout)
+        })
+        child.stdin?.end(JSON.stringify({ originals: capturedHistory.originals, admittedHash: capturedHistory.expected.admittedHash,
+          compactDocument: toBase64Url(current.document), signedBaseline: JSON.stringify(signedBaseline) }))
+      })
+      expect(JSON.parse(probe)).toMatchObject({ nativeHistoryAPI: "absent", originalHistory: "admitted-and-retained",
+        version2Receive: "rejected-before-merge-and-cursor" })
+      console.info("Prior released reader evidence", probe.trim())
+    }
+    // Cold cursors retain pre-compaction snapshots; acknowledge only exact archived originals.
+    const retainedObjects = new Map(objects.map(entry => [entry.ciphertextId, entry.object]))
+    const received = WasmStateCore.verifyReceivedHistoryBaseline(new TextEncoder().encode(JSON.stringify(signedBaseline)),
+      current.document, scope.scopeId, scope.keyEpoch, scope.key, nativeInput.authority, retainedObjects, () => {})
+    try {
+      const originalBytes = decodeBlindBytes(capturedHistory.originals.document)
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, retainedObjects, () => {})).not.toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        current.document, retainedObjects, () => {})).toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, new Map(), () => {})).toThrow()
+      expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
+        originalBytes, retainedObjects, () => { throw new Error("Session replaced") })).toThrow()
+      expect(() => received.verifyPreviousBaseline(received)).toThrow(/predecessor/)
+      expect(received.document()).toEqual(current.document)
+    } finally { received.free() }
+    const wrongDomain = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MATCH/1")
+    await expect(verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(wrongDomain) })).rejects.toThrow(/signature/)
+    await expect(verifyNativeArchive({ ...nativeInput, directoryReceipt: nativeInput.dataReceipt })).rejects.toThrow(/exact Native set and preparation/)
+    const cold = createLocatedArchiveStore(scope, prepared.root, { download: recipient.download, ensureCurrent: () => {} })
+    const readOriginal = async (key: string, indexId: string) => {
+      const entry = (await readArchiveIndex(context, current.catalogue.root, cold, { prefix: key })).entries.find(entry => entry.key === key)!
+      const reference = JSON.parse(new TextDecoder().decode(await cold.read(entry.objectId, 64 * 1024, { ...context, objectKind: "record", partIndex: 0, partCount: 1 })))
+      const parts: Uint8Array[] = []
+      for await (const part of await readArchiveBytes({ ...context, indexId }, reference, cold)) parts.push(part)
+      return new Uint8Array(Buffer.concat(parts))
+    }
+    const original = await readOriginal("pending/0000000000000000", "source-pending/0000000000000000")
+    expect(original).toEqual(decodeBlindBytes(capturedHistory.originals.pending[0]))
+    await initializeNativeAutomerge()
+    const decoded = Automerge.decodeChange(original)
+    expect(decoded.hash).toBe(capturedHistory.expected.pendingHash)
+    expect(decoded.deps).toHaveLength(1)
+    const originalProof = await readOriginal("proof/0000000000000001", "source-proof/0000000000000001")
+    expect(originalProof).toEqual(decodeBlindBytes(capturedHistory.originals.authorizations[1]))
+    const proof = JSON.parse(new TextDecoder().decode(originalProof))
+    const control = JSON.parse(new TextDecoder().decode(await readOriginal("control", "source-control")))
+    expect(control.genesisOwner.publicKey).toBe(capturedHistory.expected.publicKey)
+    const authorKey = await verifyDeviceCertificateChain({ ...control.genesisOwner, displayName: "" }, proof.signed.signerKeyId, proof.certificates)
+    expect(await verifyEnvelope(proof.signed, authorKey)).toBe(true)
+    expect(proof.signed.payload.hashes).toEqual([decoded.hash])
+    for (const source of [journal, directory]) for (const method of ["read", "readSource", "objects", "locators"] as const) expect(source[method]).not.toHaveBeenCalled()
+  } finally {
+    await stopRusty(service.child); await rm(service.stateDirectory, { recursive: true, force: true }); vi.unstubAllGlobals()
+  }
+}, 30_000)
+
+test("Given an admitted file and a private Rusty connection, when ordinary replication runs, then background upload confirms discoverable coverage before the source is needed again", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  const profile = await bootstrapIdentity("Automatic attachment owner")
+  const service = await startRusty(profile)
+  let workspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
+  try {
+    await initializeNativeAutomerge()
+    const discovery = await discoverBlindKeeper(service.origin)
+    const bytes = new Uint8Array(256 * 1024 + 19).fill(67)
+    const descriptor = await createBlobDescriptor(bytes, "automatic-private-file.txt", "text/plain")
+    const seed = createWorkspaceDoc(crypto.randomUUID(), "Automatic files", profile.identity.personId, "blank")
+    const board = Object.values(seed.entities).find(entity => entity.kind === "board")!
+    seed.entities.file = { id: "file", kind: "document", title: "Automatic file", documentKind: "attachment", format: "file", content: null,
+      placement: { parentId: board.id, rank: "0/1" }, archivedAt: null, createdAt: "2026-10-15T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z",
+      file: { type: "blob", sha256: descriptor.blobId.slice(7), byteLength: descriptor.size, mimeType: descriptor.mediaType, fileName: descriptor.name } }
+    workspace = Automerge.from(seed)
+    const document = workspace
+    await recordGenesisAuthority(document, profile)
+    const reference = await storeAttachment(new File([bytes], descriptor.name, { type: descriptor.mediaType }))
+    expect(blobDescriptor(reference)).toEqual(descriptor)
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `auto-${crypto.randomUUID()}`,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
+    const config = { ...access, workspaceId: document.id, keyEpoch: 1, minimumWriterVersion: 2 as const,
+      contentKey: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), cursor: 0, lastUploaded: "" }
+    await setReplicaPreference(profile.identity.personId, config)
+    const selected = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === document.id)!
+    const app = { getCurrentProfile: () => profile, readWorkspaceDoc: async () => document,
+      readWorkspaceBytes: async () => Automerge.save(document), mergeAuthorizedWorkspace: async () => {},
+      causalReviewError: { value: undefined } }
+    let states: AttachmentCoverageStatus[] = []
+    const replica = createBlindReplica(selected, app as never, () => {}, async () => {}, next => { states = next })
+    await replica.sync()
+    await vi.waitFor(() => expect(states[0]).toMatchObject({ phase: "complete", label: "Complete on Rusty" }), { timeout: 10_000 })
+    const inventory = await inventoryBlindObjects(access, 0)
+    const latest = inventory.objects.at(-1)!
+    const stored = await downloadBlindObject(access, latest.objectId)
+    const snapshot = JSON.parse(new TextDecoder().decode(await decryptBlindObject(stored, config.scopeId, config.keyEpoch, decodeBlindBytes(config.contentKey))))
+    expect(snapshot.attachments).toHaveLength(1)
+    expect(snapshot.attachments[0].blobId).toBe(descriptor.blobId)
+    const sourceUnavailable = vi.fn(async () => { throw new Error("Source closed") })
+    expect(await fetchRustyAttachment(app as never, document.id, descriptor, () => {}, sourceUnavailable)).toEqual(bytes)
+    expect(sourceUnavailable).not.toHaveBeenCalled()
+  } finally {
+    await stopRusty(service.child)
+    if (workspace) Automerge.free(workspace)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+    vi.unstubAllGlobals()
+  }
+}, 30_000)
+
+test("Given encrypted attachment chunks and a lost response, when Rusty and the transfer restart, then a cold recipient reads verified bytes without source access or plaintext server storage", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Native attachment owner")
+  let service = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    expect(discovery.encryptedBlobs).toEqual({ version: 1, maximumCiphertextBytes: 1048592 })
+    expect(discovery.writerPolicy).toEqual({ version: 1, maximumWriterVersion: 2 })
+    expect(discovery.blobCoverage).toEqual({ version: 1, maximumObjects: 33 })
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey,
+      scopeId: `blob-${crypto.randomUUID()}`, readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
+    const workspaceId = crypto.randomUUID()
+    const scope = { workspaceId, scopeId: access.scopeId, keyEpoch: 1,
+      contentKey: toBase64Url(crypto.getRandomValues(new Uint8Array(32))) }
+    const sentinel = "PRIVATE-ATTACHMENT-SENTINEL-UNIQUE-7421"
+    const bytes = new Uint8Array(256 * 1024 + 37).fill(81)
+    bytes.set(new TextEncoder().encode(sentinel))
+    const descriptor = await createBlobDescriptor(bytes, "private-candidate-letter.txt", "text/plain")
+    const source = createAttachmentRepository(`native-sender:${crypto.randomUUID()}`, () => {})
+    const attempts: Array<{ object: unknown; requestId: string }> = []
+    let loseResponse = true
+    const transport = { download: downloadBlindBlob, upload: async (...args: Parameters<typeof uploadBlindBlob>) => {
+      attempts.push({ object: structuredClone(args[1]), requestId: args[2] })
+      const receipt = await uploadBlindBlob(...args)
+      if (loseResponse) { loseResponse = false; throw new Error("Response lost after durable commit") }
+      return receipt
+    } }
+    await expect(new AttachmentTransfer(scope, access, source, async () => {}, transport).upload(descriptor, bytes))
+      .rejects.toThrow("Response lost after durable commit")
+    expect((await source.read())?.receipts).toEqual({})
+    const restartPort = Number(new URL(service.origin).port)
+    const directory = service.stateDirectory
+    await stopRusty(service.child)
+    service = await startRusty(profile, { port: restartPort, stateDirectory: directory })
+    const locator = await new AttachmentTransfer(scope, access, source, async () => {}, transport).upload(descriptor)
+    expect(attempts[1]).toEqual(attempts[0])
+    expect(await inventoryBlindObjects(access, 0)).toMatchObject({ objects: [], cursor: 0 })
+    const proof = await confirmRustyAttachmentCoverage(scope, { ...access, writeToken: "" }, descriptor, locator, async () => {})
+    expect(proof.payload.objects).toHaveLength(3)
+    expect(proof.payload.objects.map(object => object.objectId).sort())
+      .toEqual((await source.read())!.objects.map(object => object.objectId).sort())
+    const recipient = createAttachmentRepository(`native-recipient:${crypto.randomUUID()}`, () => {})
+    const received = await new AttachmentTransfer(scope, access, recipient, async () => {}, {
+      upload: async () => { throw new Error("Source device unavailable") }, download: downloadBlindBlob,
+    }).download(descriptor, locator)
+    expect(received).toEqual(bytes)
+    expect((await recipient.read())?.received).toHaveLength(3)
+
+    await initializeNativeAutomerge()
+    const seed = createWorkspaceDoc(workspaceId, "Attachment board", profile.identity.personId, "blank")
+    const board = Object.values(seed.entities).find(entity => entity.kind === "board")
+    if (!board) throw new Error("Native attachment board fixture has no board")
+    const now = new Date().toISOString()
+    seed.entities["native-attachment"] = { id: "native-attachment", kind: "document", title: "Private attachment",
+      documentKind: "attachment", format: "file", content: null,
+      placement: { parentId: board.id, rank: "0/1" }, archivedAt: null, createdAt: now, updatedAt: now,
+      file: { type: "blob", sha256: descriptor.blobId.slice("sha256:".length), byteLength: descriptor.size,
+        mimeType: descriptor.mediaType, fileName: descriptor.name } }
+    const workspace = Automerge.from<WorkspaceDocumentV2>(seed)
+    await recordGenesisAuthority(workspace, profile)
+    const app = { getCurrentProfile: () => profile, readWorkspaceDoc: async (id: string) => {
+      if (id !== workspaceId) throw new Error("Unexpected native workspace read")
+      return workspace
+    } }
+    const connection = { ...access, purpose: "workspace" as const, workspaceId, keyEpoch: scope.keyEpoch,
+      contentKey: scope.contentKey, cursor: 0, lastUploaded: "" }
+    await setReplicaPreference(profile.identity.personId, connection)
+    const selected = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === workspaceId)
+    if (!selected) throw new Error("Native attachment connection was not retained")
+    const binding = privateReplicaBinding(profile.identity.personId, selected)
+    const indexKey = `tincanban.attachment-index.v1.${await blindHash(new TextEncoder().encode(binding))}`
+    await createAttachmentIndexRepository(binding, () => {}).merge([locator])
+    const peer = vi.fn(async () => { throw new Error("Source device unavailable") })
+    expect(await fetchRustyAttachment(app as never, workspaceId, descriptor, () => {}, peer)).toEqual(bytes)
+    expect(peer).not.toHaveBeenCalled()
+
+    const plaintextForbidden = [sentinel, descriptor.name, descriptor.blobId.slice(7), scope.contentKey, access.readToken, access.writeToken]
+    const files = await readdir(service.stateDirectory, { recursive: true, withFileTypes: true })
+    for (const entry of files) {
+      if (!entry.isFile()) continue
+      const stored = await readFile(resolve(entry.parentPath, entry.name), "utf8")
+      for (const secret of plaintextForbidden) expect(stored).not.toContain(secret)
+    }
+    for (const secret of plaintextForbidden) expect(service.logs()).not.toContain(secret)
+    const transferStorageId = await blindHash(new TextEncoder().encode(canonicalBlindJson(["download", binding, descriptor, locator])))
+    const transferHash = await blindHash(new TextEncoder().encode(transferStorageId))
+    const transferStateKey = `tincanban.attachment-transfer.v1.${transferHash}`
+    await Promise.all((await listLocalKeys()).filter(key => key === transferStateKey ||
+      key.startsWith(`tincanban.attachment-object.v1.${transferHash}.`)).map(deleteLocal))
+    const coldTransfer = createAttachmentRepository(transferStorageId, () => {})
+    expect(await coldTransfer.read()).toBeNull()
+    expect(await coldTransfer.object(locator.manifestId)).toBeNull()
+    await approveRustyScope(access, profile, true)
+    await expect(confirmRustyAttachmentCoverage(scope, { ...access, writeToken: "" }, descriptor, locator, async () => {}))
+      .rejects.toMatchObject({ status: 403 })
+    let revokedFetchBytes: Uint8Array | undefined
+    let revokedFetchError: unknown
+    try { revokedFetchBytes = await fetchRustyAttachment(app as never, workspaceId, descriptor, () => {}) }
+    catch (cause) { revokedFetchError = cause }
+    expect(revokedFetchError).toBeInstanceOf(AggregateError)
+    expect(revokedFetchBytes).toBeUndefined()
+    const revoked = createAttachmentRepository(`native-revoked:${crypto.randomUUID()}`, () => {})
+    await expect(new AttachmentTransfer(scope, access, revoked, async () => {}).download(descriptor, locator))
+      .rejects.toMatchObject({ status: 403 })
+    expect(await revoked.read()).toBeNull()
+    await setReplicaPreference(profile.identity.personId, selected, true)
+    await deleteLocal(indexKey)
+    Automerge.free(workspace)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 30_000)
+
+test("Given a native Rusty HTTP service, when the owner migrates, enrolls and checkpoints a scope, then clients verify signed policy revisions", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Native Rusty owner")
+  const process = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(process.origin)
+    expect(discovery.scopeManagement).toBe(1)
+    expect(discovery.snapshotCheckpoints).toBe(1)
+    const binding = {
+      origin: discovery.origin,
+      servicePublicKey: discovery.servicePublicKey,
+      resourceKind: "scope" as const,
+      resourceId: `scope-${crypto.randomUUID()}`,
+    }
+    expect(decodeBlindBytes(binding.servicePublicKey)).toHaveLength(32)
+    expect(binding.origin).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+    expect(binding.resourceId).toMatch(/^[A-Za-z0-9_-]{1,128}$/)
+
+    const initial = await readRustyManagementStatus(binding, profile)
+    expect(initial).toMatchObject({ capability: null, revision: 0, migrationPending: false })
+    const firstCapability = await updateRustyManagementPolicy(binding, profile, {
+      operations: ["management.update", "scope.policy", "snapshot.checkpoint"],
+      revokedDeviceIds: [],
+    })
+    expect(firstCapability.payload.revision).toBe(1)
+
+    const access = {
+      origin: binding.origin,
+      servicePublicKey: binding.servicePublicKey,
+      scopeId: binding.resourceId,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      policyRevision: 0,
+    }
+    access.policyRevision = await approveRustyScope(access, profile)
+    expect(access.policyRevision).toBe(1)
+
+    const contentKey = crypto.getRandomValues(new Uint8Array(32))
+    const firstObject = await encryptBlindObject(access.scopeId, 1, contentKey, new TextEncoder().encode("admitted encrypted snapshot"))
+    const uploadReceipt = await uploadBlindObject(access, firstObject)
+    expect(uploadReceipt.payload.sequence).toBe(1)
+    const inventory = await inventoryBlindObjects(access, 0)
+    expect(inventory).toMatchObject({ cursor: 1, maxSequence: 1, objectCount: 1 })
+
+    const checkpointObject = await encryptBlindObject(access.scopeId, 1, contentKey, new TextEncoder().encode("complete admitted checkpoint"))
+    const checkpointRequest = await prepareBlindCheckpoint(access, checkpointObject, inventory.maxSequence ?? inventory.cursor, profile)
+    expect(checkpointRequest.authorization.payload.managementRevision).toBe(1)
+    const checkpointReceipt = await submitBlindCheckpoint(access, checkpointRequest)
+    expect(checkpointReceipt.payload).toMatchObject({ sequence: 2, supersedesThrough: 1, policyRevision: 1 })
+    const compactedInventory = await inventoryBlindObjects(access, 0)
+    expect(compactedInventory).toMatchObject({ cursor: 2, maxSequence: 2, objectCount: 1 })
+
+    const restrictedCapability = await updateRustyManagementPolicy(binding, profile, {
+      operations: ["management.update", "scope.policy"],
+      revokedDeviceIds: [],
+    })
+    expect(restrictedCapability.payload).toMatchObject({ revision: 2, operations: ["management.update", "scope.policy"] })
+    const nextCheckpoint = await encryptBlindObject(access.scopeId, 1, contentKey, new TextEncoder().encode("checkpoint after removal"))
+    await expect(prepareBlindCheckpoint(access, nextCheckpoint, compactedInventory.cursor, profile))
+      .rejects.toThrow(/operation|authorize|rights/i)
+  } finally {
+    await stopRusty(process.child)
+    await rm(process.stateDirectory, { recursive: true, force: true })
+  }
+}, 20_000)
+
+test("Given a floor-1 workspace scope, when its owner completes the real writer upgrade, then progress survives and Rusty requires writer v2", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Native writer upgrade owner")
+  const process = await startRusty(profile)
+  let workspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
+  try {
+    await initializeNativeAutomerge()
+    const discovery = await discoverBlindKeeper(process.origin)
+    expect(discovery.writerPolicy).toEqual({ version: 1, maximumWriterVersion: 2 })
+    const workspaceId = crypto.randomUUID()
+    const seed = createWorkspaceDoc(workspaceId, "Writer upgrade board", profile.identity.personId, "blank")
+    workspace = Automerge.from<WorkspaceDocumentV2>(seed)
+    await recordGenesisAuthority(workspace, profile)
+    const access = { origin: discovery.origin, servicePublicKey: discovery.servicePublicKey,
+      scopeId: `writer-${crypto.randomUUID()}`, readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile)
+    expect(access.policyRevision).toBe(1)
+
+    const contentKey = crypto.getRandomValues(new Uint8Array(32))
+    const admittedObject = await encryptBlindObject(access.scopeId, 1, contentKey, new TextEncoder().encode("legacy admitted snapshot"))
+    const admittedId = await blindObjectId(admittedObject)
+    const legacyReceipt = await uploadBlindObject(access, admittedObject)
+    expect(legacyReceipt.payload.sequence).toBe(1)
+
+    await setReplicaPreference(profile.identity.personId, { ...access, workspaceId, keyEpoch: 1,
+      contentKey: toBase64Url(contentKey), cursor: legacyReceipt.payload.sequence, lastUploaded: admittedId })
+    const config = (await getReplicaConfigurations(profile.identity.personId))[0]
+    if (!config) throw new Error("Native writer upgrade configuration was not saved")
+    const before = await getPrivateReplicaProgress(profile.identity.personId, config)
+    await persistPrivateReplicaState(profile.identity.personId, config, before.generation, {
+      ...before, generation: before.generation + 1, cursor: 1, lastUploaded: admittedId,
+    })
+    expect(await getPrivateReplicaProgress(profile.identity.personId, config)).toMatchObject({ cursor: 1, lastUploaded: admittedId })
+    const app = { getCurrentProfile: () => profile, readWorkspaceDoc: async (id: string) => {
+      if (id !== workspaceId) throw new Error("Unexpected native workspace read")
+      return workspace!
+    } }
+    const wireBodies: string[] = []
+    const send = globalThis.fetch.bind(globalThis)
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      if (typeof input === "string" && input.startsWith(access.origin) && typeof init?.body === "string") wireBodies.push(init.body)
+      return send(input, init)
+    })
+    const upgraded = await ensureWorkspaceReplicaWriter(app as never, config, () => {})
+    expect(upgraded).toMatchObject({ minimumWriterVersion: 2, policyRevision: 2, cursor: 1, lastUploaded: admittedId })
+    expect((await exportPrivateReplicaState(profile.identity.personId)).entries[0]?.operations[0]?.config)
+      .toMatchObject({ minimumWriterVersion: 2, policyRevision: 2 })
+    expect(await getPrivateReplicaProgress(profile.identity.personId, upgraded)).toMatchObject({ cursor: 1, lastUploaded: admittedId })
+    expect(await inventoryBlindObjects({ ...access, policyRevision: upgraded.policyRevision }, 0))
+      .toMatchObject({ cursor: 1, objectCount: 1 })
+
+    const nextObject = await encryptBlindObject(access.scopeId, 1, contentKey, new TextEncoder().encode("new writer object"))
+    const nextId = await blindObjectId(nextObject)
+    const rejectedLegacyWrite = await fetch(`${access.origin}/v2/scopes/${access.scopeId}/objects/${nextId}`, {
+      method: "PUT", headers: { Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json",
+        "X-Rusty-Request-Id": crypto.randomUUID() },
+      body: JSON.stringify(nextObject),
+    })
+    expect(rejectedLegacyWrite.status).toBe(426)
+    const receipt = await uploadBlindObject({ ...access, policyRevision: upgraded.policyRevision }, nextObject)
+    expect(receipt.payload).toMatchObject({ sequence: 2, policyRevision: upgraded.policyRevision })
+    expect(wireBodies.every(body => !body.includes("contentKey") && !body.includes(toBase64Url(contentKey)))).toBe(true)
+  } finally {
+    if (workspace) Automerge.free(workspace)
+    await stopRusty(process.child)
+    await rm(process.stateDirectory, { recursive: true, force: true })
+  }
+}, 20_000)
+
+test("Given an approved person policy, when controller pins are removed and an independent owner device creates a scope, then the browser client needs no primary device or its ancestry", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Person policy owner")
+  let process = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(process.origin)
+    expect(discovery.personManagement).toBe(1)
+    const person = await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
+    expect(person?.payload.kind).toBe("rusty-person-management-capability")
+    const port = Number(new URL(process.origin).port), stateDirectory = process.stateDirectory
+    await stopRusty(process.child)
+    process = await startRusty(owner, { port, stateDirectory, controllers: [] })
+
+    resetIdentityStorageForTest()
+    const fresh = await bootstrapIdentity("Independent owner device")
+    if (!owner.privateKeys.identityPrivateKey) throw new Error("Fixture owner has no root key")
+    const certificate = await signEnvelope(owner.privateKeys.identityPrivateKey, { kind: "device-certificate" as const, version: 1 as const,
+      personId: owner.identity.personId, deviceId: fresh.device.deviceId, devicePublicKey: fresh.device.publicKey,
+      issuerCertificateHash: null, canEnrollDevices: true }, owner.identity.personId)
+    await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
+    await adoptEnrolledIdentity(owner.identity, certificate)
+    const independent = await bootstrapIdentity()
+    expect(independent.privateKeys.identityPrivateKey).toBeUndefined()
+    expect(independent.certificate.payload.issuerCertificateHash).toBeNull()
+    const confirmed = await ensureRustyPersonPolicy(discovery, independent, true)
+    expect(confirmed).toEqual(person)
+
+    const binding = { origin: discovery.origin, servicePublicKey: discovery.servicePublicKey,
+      resourceKind: "scope" as const, resourceId: `independent-${crypto.randomUUID()}` }
+    const cap = await updateRustyManagementPolicy(binding, independent, { operations: ["management.update", "scope.policy", "snapshot.checkpoint"], revokedDeviceIds: [] })
+    expect(cap.payload).toMatchObject({ resourceKind: "scope", resourceId: binding.resourceId, revision: 1 })
+    const access = { origin: binding.origin, servicePublicKey: binding.servicePublicKey, scopeId: binding.resourceId,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 1 }
+    expect(await approveRustyScope(access, independent)).toBe(1)
+    expect(await inventoryBlindObjects(access, 0)).toMatchObject({ objects: [], cursor: 0 })
+  } finally {
+    await stopRusty(process.child)
+    await rm(process.stateDirectory, { recursive: true, force: true })
+  }
+}, 20_000)
+
+test("Given a cold enrolled device without its workspace, when its identity-scoped replica pulls from native Rusty, then restore photo, opaque components and original signed profiles without source capture", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Native Rusty identity owner")
+  const process = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(process.origin)
+    await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
+    const sourceConfig = await ensureIdentityReplicaConnection(discovery, owner, () => {})
+    expect(sourceConfig).toMatchObject({ purpose: "identity", personId: owner.identity.personId, policyRevision: 1 })
+    expect(await ensureIdentityReplicaConnection(discovery, owner, () => {})).toEqual(sourceConfig)
+
+    const ownerRoot = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+    const unknownWorkspaceId = crypto.randomUUID()
+    registerWorkspaceInRoot(ownerRoot, unknownWorkspaceId, unknownWorkspaceId, "genesis")
+    const legacyPhoto = { avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA", changedAt: "2099-10-13T08:00:00.000Z" }
+    ownerRoot.photo = legacyPhoto
+    await defaultStorage.savePersonalRoot(ownerRoot)
+    const olderRoot = structuredClone(ownerRoot)
+    const latestPhoto = await saveIdentityPhoto(owner, legacyPhoto.avatarData)
+    const sourceRoot = (await defaultStorage.loadPersonalRoot(ownerRoot.rootId))!
+    const portable = await createIdentityDeviceTransfer(sourceRoot, [owner.certificate])
+    const sourceProfileState = (portable.components.profileObservations.value as { observations: Array<{ profileState: unknown }> }).observations[0].profileState
+    const signedSourceState = await readIdentityProfileState(sourceProfileState, owner.identity)
+    expect(signedSourceState.operations).toHaveLength(1)
+    expect(identityProfileValue(signedSourceState, "photo")).toMatchObject({ status: "value", values: [latestPhoto] })
+    const extension = { schema: "future-native-settings@1", required: false, value: { marker: "private opaque native state" } }
+    portable.components.futureSettings = extension
+    const originalProfile = await createChatRecord(owner, [owner.certificate], { publicKey: owner.identity.publicKey,
+      certificates: [owner.certificate] }, `${owner.identity.personId}:native-board`, "chat-profile", "Native profile", 3)
+    const observations = portable.components.profileObservations.value.observations as unknown[]
+    observations.push({ kind: "workspace-profile", workspaceId: unknownWorkspaceId, record: originalProfile })
+    await applyIdentityDeviceTransfer(await readIdentityDeviceTransfer(portable, owner.identity.personId), () => {})
+    const source = createIdentityReplica(sourceConfig, owner, () => {})
+    expect(await source.sync()).toBe(true)
+
+    const portablePreferences = await exportPrivateReplicaState(owner.identity.personId)
+    const portableCapabilities = await new RustyManagementRepository(owner.identity.personId).export()
+    expect(portablePreferences.entries[0].operations[0].config).toMatchObject({ purpose: "identity", personId: owner.identity.personId })
+    expect(JSON.stringify(portablePreferences)).not.toContain('"progress"')
+
+    resetIdentityStorageForTest()
+    const temporaryRecipient = await bootstrapIdentity("Enrolled native recipient")
+    const ownerCertificateHash = await certHashDefault(owner.certificate)
+    const recipientCertificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+      owner.identity.personId, temporaryRecipient.device.deviceId, temporaryRecipient.device.publicKey, ownerCertificateHash)
+    await defaultProofStore.putCertificate(ownerCertificateHash, owner.certificate)
+    await defaultProofStore.putCertificate(await certHashDefault(recipientCertificate), recipientCertificate)
+    await adoptEnrolledIdentity(owner.identity, recipientCertificate)
+    const recipient = await bootstrapIdentity()
+    expect(recipient.identity.personId).toBe(owner.identity.personId)
+    expect(recipient.privateKeys.identityPrivateKey).toBeUndefined()
+
+    olderRoot.devices[recipient.device.deviceId] = { deviceId: recipient.device.deviceId, publicKey: recipient.device.publicKey,
+      displayName: recipient.device.displayName, certificateHash: await certHashDefault(recipientCertificate), addedAt: "2026-10-14T07:00:00.000Z" }
+    await defaultStorage.savePersonalRoot(olderRoot)
+
+    await deleteLocal(`tincanban.private-replica-state.v2.${owner.identity.personId}`)
+    await deleteLocal(`tincanban.rusty-management.v1.${owner.identity.personId}`)
+    await deleteLocal(`tincanban.identity-device-extensions.v1.${owner.identity.personId}`)
+    await deleteLocal(identityProfileProjectionKey(owner.identity.personId))
+    await receivePrivateReplicaState(owner.identity.personId, portablePreferences)
+    await new RustyManagementRepository(owner.identity.personId).import(portableCapabilities)
+    const selected = (await getIdentityReplicaConfigurations(owner.identity.personId))[0]
+    expect(selected).toMatchObject({ purpose: "identity", personId: owner.identity.personId, cursor: 0, lastUploaded: "" })
+    expect(await getPrivateReplicaProgress(owner.identity.personId, selected)).toMatchObject({ cursor: 0, generation: 0 })
+    expect((await defaultStorage.loadPersonalRoot())?.photo).toEqual(olderRoot.photo)
+    expect(await exportIdentityDeviceExtensions(owner.identity.personId)).toEqual({})
+    expect(await readIdentityProfileQueue(owner.identity)).toEqual([])
+
+    const sourceCapturePath = vi.spyOn(identityTransfer, "createIdentityDeviceTransfer").mockRejectedValue(new Error("source capture unavailable"))
+    try {
+      const recipientReplica = createIdentityReplica(selected, recipient, () => {})
+      expect(await recipientReplica.pull()).toBe(true)
+      expect(sourceCapturePath).not.toHaveBeenCalled()
+    } finally { sourceCapturePath.mockRestore() }
+
+    const pulledRoot = (await defaultStorage.loadPersonalRoot())!
+    expect(pulledRoot.photo).toEqual(latestPhoto)
+    const pulledState = await readIdentityProfileState(pulledRoot.profileState, owner.identity)
+    expect(identityProfileValue(pulledState, "photo")).toMatchObject({ status: "value", values: [latestPhoto] })
+    expect(pulledState.operations).toEqual(signedSourceState.operations)
+    expect(await readIdentityProfileQueue(owner.identity)).toEqual([{ workspaceId: unknownWorkspaceId, record: originalProfile }])
+    expect(await exportIdentityDeviceExtensions(owner.identity.personId)).toEqual({ preservedExtensions: {
+      schema: "preserved-identity-components@1", required: false,
+      value: { personId: owner.identity.personId, extensions: [{ name: "futureSettings", component: extension }] },
+    } })
+    expect(await getPrivateReplicaProgress(owner.identity.personId, (await getIdentityReplicaConfigurations(owner.identity.personId))[0]))
+      .toMatchObject({ cursor: 1 })
+    expect(recipient.privateKeys.identityPrivateKey).toBeUndefined()
+  } finally {
+    await stopRusty(process.child)
+    await rm(process.stateDirectory, { recursive: true, force: true })
+  }
+}, 30_000)

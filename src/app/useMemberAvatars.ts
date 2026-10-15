@@ -1,13 +1,17 @@
 import { computed, onScopeDispose, ref, watch } from "vue"
 import { memberAvatarData, memberProfileEntityId } from "../domain/avatarData"
 import { defaultStorage } from "../storage"
-import { newerIdentityPhoto, parseIdentityPhoto, saveIdentityPhoto, type IdentityPhoto } from "./identityPhoto"
+import { parseIdentityPhoto, saveIdentityPhoto, type IdentityPhoto } from "./identityPhoto"
+import type { PersonalRootDocumentV1 } from "../domain/model"
 import type { useTincanban } from "../state"
+import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
 
 /** One identity preference; signed workspace profiles carry its public projection. */
 export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
   const photo = ref<IdentityPhoto>()
   const avatarNotice = ref("")
+  const profileConflicts = ref<{ names: string[]; photos: IdentityPhoto[] }>({ names: [], photos: [] })
+  const profileRevision = ref("")
   let disposed = false
   let queue = Promise.resolve()
   let photoOwner = ""
@@ -32,49 +36,73 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     queue = running.catch(() => {})
     return running
   }
-  async function projectPhoto(value: IdentityPhoto, all: boolean) {
-    if (!workspace.ready.value) return
-    const id = personId()
+  function ownerIsCurrent(ownerId: string): boolean { return !disposed && personId() === ownerId }
+  async function projectOnePhoto(workspaceId: string, value: IdentityPhoto, ownerId: string): Promise<"complete" | "failed" | "stale"> {
+    if (!ownerIsCurrent(ownerId)) return "stale"
+    try {
+      const doc = await workspace.readWorkspaceDoc(workspaceId)
+      if (!ownerIsCurrent(ownerId)) return "stale"
+      const entity = doc.entities[memberProfileEntityId(ownerId)]
+      if (entity?.kind === "member_profile") {
+        const projected = parseIdentityPhoto(JSON.parse(entity.data))
+        if (entity.data === JSON.stringify(value) || projected?.avatarData === value.avatarData) return "complete"
+      }
+      await workspace.executeWorkspaceCommandAsync(workspaceId, { kind: "setMemberAvatar", ...value })
+      return ownerIsCurrent(ownerId) ? "complete" : "stale"
+    } catch { return ownerIsCurrent(ownerId) ? "failed" : "stale" }
+  }
+  async function projectPhoto(value: IdentityPhoto, all: boolean, ownerId: string) {
+    if (!workspace.ready.value || !ownerIsCurrent(ownerId)) return
     const active = workspace.getActiveDoc()?.id
     const ids = all ? workspace.availableWorkspaces.value.map(item => item.id) : active ? [active] : []
     let failed = 0
     for (const workspaceId of ids) {
-      if (disposed || personId() !== id) return
-      try {
-        const doc = await workspace.readWorkspaceDoc(workspaceId)
-        const entity = doc.entities[memberProfileEntityId(id!)]
-        if (entity?.kind === "member_profile") {
-          const projected = parseIdentityPhoto(JSON.parse(entity.data))
-          if (entity.data === JSON.stringify(value) || newerIdentityPhoto(projected, value) === projected) continue
-        }
-        await workspace.executeWorkspaceCommandAsync(workspaceId, { kind: "setMemberAvatar", ...value })
-      } catch { failed++ }
+      const result = await projectOnePhoto(workspaceId, value, ownerId)
+      if (result === "stale") return
+      if (result === "failed") failed++
     }
     avatarNotice.value = failed ? "Photo saved. Sharing to some workspaces is pending; reopen them to retry." : ""
+  }
+  async function readProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
+    const { rootIdentityProfileState } = await import("../domain/identityProfileRoot")
+    const { identityProfileValue } = await import("../domain/identityProfileState")
+    const { identityProfileRevision } = await import("../domain/identityProfileRevision")
+    const state = await rootIdentityProfileState(root)
+    const name = identityProfileValue(state, "name"), picture = identityProfileValue(state, "photo")
+    const revision = await identityProfileRevision(state)
+    if (!ownerIsCurrent(ownerId)) return false
+    profileRevision.value = revision
+    profileConflicts.value = { names: name.status === "conflict" ? name.values.filter((value): value is string => typeof value === "string") : [],
+      photos: picture.status === "conflict" ? picture.values.filter((value): value is IdentityPhoto => typeof value !== "string") : [] }
+    return picture.status === "conflict"
+  }
+  function clearProfileChoices(): void {
+    profileRevision.value = ""
+    profileConflicts.value = { names: [], photos: [] }
   }
   async function reconcilePhoto() {
     if (disposed) return
     const id = personId()
     if (!id) return
-    if (photoOwner !== id) { photo.value = undefined; photoOwner = id; avatarNotice.value = "" }
+    if (photoOwner !== id) { photo.value = undefined; photoOwner = id; avatarNotice.value = ""; clearProfileChoices() }
     const root = await defaultStorage.loadPersonalRoot()
-    if (root?.identity.personId !== id) return
+    if (!ownerIsCurrent(id)) return
+    if (root?.identity.personId !== id) {
+      clearProfileChoices()
+      photo.value = undefined
+      avatarNotice.value = ""
+      return
+    }
     const stored = parseIdentityPhoto(root.photo)
     const entity = workspace.getActiveDoc()?.entities[memberProfileEntityId(id)]
     const incoming = entity?.kind === "member_profile" ? parseIdentityPhoto(JSON.parse(entity.data)) : undefined
-    let chosen = newerIdentityPhoto(stored, incoming)
-    if (!chosen || disposed || personId() !== id) return
-    const changed = chosen !== stored
-    if (changed) {
-      const updated = await defaultStorage.updatePersonalRootForIdentity(id, current => {
-        if (!current) throw new Error("Identity catalog is unavailable")
-        return { ...current, photo: newerIdentityPhoto(parseIdentityPhoto(current.photo), chosen) }
-      })
-      chosen = parseIdentityPhoto(updated?.photo)
-      if (!chosen) return
-    }
+    const conflicted = await readProfileChoices(root, id)
+    const chosen = stored ?? incoming
+    if (!chosen) return
+    if (!ownerIsCurrent(id)) return
     photo.value = chosen
-    await projectPhoto(chosen, changed)
+    if (conflicted) { avatarNotice.value = "Photo changes need a choice in Settings → Identity."; return }
+    if (stored) await projectPhoto(stored, false, id)
   }
   async function saveAvatar(avatarData: string | null): Promise<void> {
     await serial(async () => {
@@ -83,7 +111,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
       const saved = await saveIdentityPhoto(profile, avatarData)
       if (personId() !== profile.identity.personId) throw new Error("Identity changed while saving photo")
       photoOwner = profile.identity.personId; photo.value = saved
-      await projectPhoto(saved, true)
+      await projectPhoto(saved, true, profile.identity.personId)
     })
   }
   const stop = watch(() => {
@@ -92,6 +120,10 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     const entity = doc?.entities[memberProfileEntityId(personId() ?? "")]
     return `${workspace.ready.value}:${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
   }, () => { void serial(reconcilePhoto).catch(() => { avatarNotice.value = "Profile photo could not load. Reload to retry." }) }, { immediate: true })
-  onScopeDispose(() => { disposed = true; stop() })
-  return { memberAvatars, currentAvatar, saveAvatar, avatarNotice }
+  const unsubscribe = subscribeIdentityDevicePreferences(owner => {
+    if (disposed || owner !== personId()) return
+    void serial(reconcilePhoto).catch(() => { avatarNotice.value = "Profile photo could not load. Reload to retry." })
+  })
+  onScopeDispose(() => { disposed = true; stop(); unsubscribe() })
+  return { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision }
 }

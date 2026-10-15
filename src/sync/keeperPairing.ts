@@ -1,6 +1,7 @@
 import { verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
-import { bootstrapIdentity, canonicalizeJson, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile } from "../domain/identity"
-import { defaultProofStore } from "../domain/proofs"
+import { bootstrapIdentity, canonicalizeJson, sha256Base64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
+import { signingEvidence, signWithContext } from "../domain/signingContext"
+import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { peerStore } from "./peerStore"
 import type { DeviceCertificate } from "../domain/model"
@@ -70,19 +71,6 @@ function checkedRequestBody(payload: Record<string, unknown>) {
   return { ...payload, operationId: payload.operationId ?? operationId(), issuedAt, expiresAt }
 }
 
-async function controllerBundle(profile: LocalProfile) {
-  const certificates = await defaultProofStore.listCertificates()
-  const byId = new Map<string, DeviceCertificate>()
-  for (const cert of [profile.certificate, ...certificates]) {
-    if (cert.payload.personId === profile.identity.personId) byId.set(cert.payload.deviceId, cert)
-  }
-  return {
-    identity: profile.identity,
-    deviceId: profile.device.deviceId,
-    certificates: [...byId.values()],
-  }
-}
-
 async function publicKeyFingerprint(publicKey: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(publicKey)))
   return [...bytes].slice(0, 12).map(byte => byte.toString(16).padStart(2, "0")).join("").match(/.{1,4}/g)?.join(":") ?? "unavailable"
@@ -103,19 +91,36 @@ export async function getEligibleKeeperWorkspaces(workspaces: KeeperWorkspace[])
 }
 
 export async function signKeeperControllerRequest(profile: LocalProfile, discovery: KeeperDiscovery, kind: string, body: Record<string, unknown>) {
+  const requestProfile = structuredClone(profile)
+  const requestDiscovery = structuredClone(discovery)
+  const requestBody = structuredClone(body)
   const payload = {
-    ...checkedRequestBody(body),
+    ...checkedRequestBody(requestBody),
     kind,
     version: 1,
     protocolVersion: 1,
-    servicePersonId: discovery.personId,
-    serviceOrigin: discovery.origin,
-    controllerPersonId: profile.identity.personId,
-    controllerDeviceId: profile.device.deviceId,
+    servicePersonId: requestDiscovery.personId,
+    serviceOrigin: requestDiscovery.origin,
+    controllerPersonId: requestProfile.identity.personId,
+    controllerDeviceId: requestProfile.device.deviceId,
   }
+  const expiresAtMs = Number(payload.expiresAt) * 1000
+  if (!Number.isSafeInteger(expiresAtMs) || typeof payload.operationId !== "string" || !payload.operationId) {
+    throw new Error("Controller request timestamps are invalid.")
+  }
+  const binding = {
+    servicePersonId: requestDiscovery.personId, serviceOrigin: requestDiscovery.origin,
+    controllerPersonId: requestProfile.identity.personId, controllerDeviceId: requestProfile.device.deviceId,
+    operationId: payload.operationId, issuedAt: Number(payload.issuedAt), expiresAt: Number(payload.expiresAt),
+  }
+  const context = await resolveLocalSigningContext(requestProfile, kind, binding,
+    { domain: CONTROL_DOMAIN, expiresAt: expiresAtMs })
+  const evidence = signingEvidence(context)
   return {
-    ...await controllerBundle(profile),
-    signed: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId, CONTROL_DOMAIN),
+    identity: evidence.identity,
+    deviceId: context.deviceId,
+    certificates: evidence.certificates,
+    signed: await signWithContext(context, payload),
   }
 }
 

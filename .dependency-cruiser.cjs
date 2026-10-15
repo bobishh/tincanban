@@ -34,8 +34,8 @@ module.exports = {
     {
       name: "production-does-not-import-tests",
       severity: "error",
-      from: { pathNot: "[.](?:test|spec)[.]ts$" },
-      to: { path: "[.](?:test|spec)[.]ts$" },
+      from: { pathNot: "[.](?:test|spec|testSupport)[.]ts$" },
+      to: { path: "[.](?:test|spec|testSupport)[.]ts$" },
     },
     {
       name: "domain-does-not-depend-on-infrastructure",
@@ -43,6 +43,7 @@ module.exports = {
       comment: "Domain stays usable without Vue, storage, or sync runtimes.",
       from: { path: "^src/domain/" },
       to: {
+        dependencyTypesNot: ["type-only"],
         path: "^src/(?:components|ui|sync)(?:/|$)|^src/storage[.]ts$",
       },
     },
@@ -55,6 +56,7 @@ module.exports = {
     },
   ],
   options: {
+    tsPreCompilationDeps: false,
     doNotFollow: { path: "node_modules" },
     exclude: { path: "^(?:dist|iroh-wasm|vendor)/" },
     tsConfig: { fileName: "tsconfig.app.json" },

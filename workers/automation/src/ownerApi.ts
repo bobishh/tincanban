@@ -4,15 +4,19 @@ import { automationBodyHash, verifyAutomationOwnerRequest } from "../../../src/d
 import type { WorkerEnv, AutomationIntegration } from "./index";
 import type { AutomationActivationPacket } from "./replica";
 import { json, readJson } from "./http";
+import { workerBuildSha, workerReleaseIdentity } from "./buildIdentity";
 
 /** Browser bootstrap needs a deployment-approved identity, never the operator credential. */
 export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Headers): Promise<Response> {
   const url = new URL(request.url);
   const owners = (env.AUTOMATION_OWNER_IDS ?? "").split(",").map(value => value.trim()).filter(Boolean);
   if (request.method === "GET" && url.pathname === "/v2/capabilities") return json({
-    version: 2, origin: url.origin, enrollment: owners.length > 0,
+    version: 2, origin: url.origin, buildSha: workerBuildSha(env.RELEASE_SHA), enrollment: owners.length > 0,
+    readers: workerReleaseIdentity(env).readers,
     types: automationTypes.map(value => ({ type: value.type, version: value.version, title: value.title })),
     emailRouting: privateEmailRoutes(env).length > 0,
+    applicationReview: { version: 1, actions: ["discover", "list", "review", "bind", "retry", "retry-unbound"] },
+    instanceManagement: { version: 1, actions: ["discover", "identity", "activate", "refresh-access", "prepare-storage-rotation", "rotate-storage", "prepare-history-baseline", "activate-history-baseline"] },
   }, 200, cors);
   const match = url.pathname.match(/^\/v2\/integrations\/([0-9a-f-]{36})\/(identity|activation|observation|email)$/);
   if (!match) return json({ error: "Not found" }, 404, cors);
@@ -57,7 +61,7 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
       return json({ error: "Activation does not match its enrolled owner, workspace or instance" }, 422, cors);
     }
     const grant = packet.grant?.payload?.automation;
-    if (!grant || definition.scope.boardId !== grant.boardId || definition.scope.grantId !== packet.grant.payload.grantId) {
+    if (!grant || definition.typeVersion !== grant.version || definition.scope.boardId !== grant.boardId || definition.scope.grantId !== packet.grant.payload.grantId) {
       return json({ error: "Activation scope is incomplete" }, 422, cors);
     }
     const integration: AutomationIntegration = { id: intent.integrationId, workspaceId: intent.workspaceId,

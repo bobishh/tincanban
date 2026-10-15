@@ -35,12 +35,17 @@ function useLeadSelection(core: ReturnType<typeof useAppCore>) {
 
 function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>, selection: ReturnType<typeof useLeadSelection>) {
   const restoreSelectedItemVersion = async (changeHash: string) => {
-    if (!core.selectedItemId.value || core.historyRestoreSaving.value) return
+    if (!board.selectedHistoryItemId.value || core.historyRestoreSaving.value) return
     core.historyRestoreSaving.value = true
     core.historyRestoreError.value = ""
     core.historyRestoreNotice.value = ""
     try {
-      await core.tincanban.executeCommandAsync({ kind: "restoreItemVersion", entityId: core.selectedItemId.value, changeHash })
+      const entityId = board.selectedHistoryItemId.value, workspaceId = core.tincanban.activeWorkspace.id
+      const archived = await board.readArchivedItemVersion(changeHash)
+      if (board.selectedHistoryItemId.value !== entityId || core.tincanban.activeWorkspace.id !== workspaceId) throw new Error("History selection changed")
+      await core.tincanban.executeCommandAsync({ kind: "restoreItemVersion", entityId, changeHash,
+        ...(archived ? { archived: { baselineId: archived.baselineId, historyEpoch: archived.historyEpoch,
+          observation: archived.observation, item: archived.item } } : {}) })
       core.historyRestoreNotice.value = "Version restored"
     } catch (error) {
       core.historyRestoreError.value = `Restore failed: ${messageFrom(error)}`
@@ -376,6 +381,19 @@ async function addColumn(core: ReturnType<typeof useAppCore>, title: string, arc
 
 function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
   const exportWorkspace = async () => (await import("./workspaceFiles")).exportActiveWorkspace(core)
+  const privateRecoveryUnavailableReason = computed(() => {
+    void core.tincanban.docVersion.value
+    return core.tincanban.getCurrentProfile()?.privateKeys.identityPrivateKey
+      ? ""
+      : "Create a full backup on your original device. You can inspect and restore backups here."
+  })
+  const createPrivateRecovery = async () => (await import("./workspaceHistoryRecovery")).createPrivateWorkspaceRecovery(core)
+  const inspectPrivateRecovery = async (file: Blob, words: string) =>
+    (await import("./workspaceHistoryRecovery")).inspectPrivateWorkspaceRecovery(file, words)
+  const restorePrivateRecovery = async (inspection: { workspaceId: string; personId: string; coverage: "complete" | "incomplete"; missingCount: number }, replace: boolean) =>
+    (await import("./workspaceHistoryRecovery")).restorePrivateWorkspaceRecovery(core, inspection, replace)
+  const hasWorkspaceCopy = (workspaceId: string) => core.tincanban.availableWorkspaces.value.some(workspace => workspace.id === workspaceId)
+  const workspaceTitle = (workspaceId: string) => core.tincanban.availableWorkspaces.value.find(workspace => workspace.id === workspaceId)?.title ?? "Recovered workspace"
   const workspaceImportState = ref({ busy: false, error: "" })
   const openImport = () => { workspaceImportState.value.error = ""; core.importInput.value?.click() }
   const importWorkspace = async (event: Event) => {
@@ -402,7 +420,9 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     await core.tincanban.restoreWorkspaceAsync(id)
     core.notice.value = "Workspace restored"
   }
-  return { exportWorkspace, openImport, importWorkspace, workspaceImportState, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
+  return { exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
+    openImport, importWorkspace, workspaceImportState, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace,
+    handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
 }
 
 async function createWorkspaceWithOwnerCredential(core: ReturnType<typeof useAppCore>, title: string,

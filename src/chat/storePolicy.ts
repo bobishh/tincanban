@@ -31,6 +31,8 @@ export interface WorkspaceMetaInternal {
   workspaceId: string
   cursor: string | null
   pruneCutoff: string | null
+  contentRevision?: number
+  contentGeneration?: string
 }
 
 export const DEFAULT_DB_NAME = "tincanban-chat-v1"

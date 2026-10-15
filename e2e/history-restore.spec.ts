@@ -56,3 +56,13 @@ test("Given a moved item, when restore fails then retries, then current placemen
     await expect(page.getByRole("region", { name: "Doing" }).locator(".lead-card")).toHaveCount(0)
   })
 })
+
+test("Given a board without an archive, when earlier history is requested, then explain the empty result and preserve its current item", async ({ page }) => {
+  await createBoardAndItem(page)
+  await page.getByRole("button", { name: "Open Reversible item" }).click()
+  const detail = page.getByRole("dialog", { name: "Item overview" })
+  await detail.getByRole("button", { name: "Load earlier history", exact: true }).click()
+  await expect(detail.getByRole("status")).toContainText("No earlier archived versions")
+  await expect(detail.getByRole("heading", { name: "Reversible item", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "To do" }).getByText("Reversible item")).toBeVisible()
+})

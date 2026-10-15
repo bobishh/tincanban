@@ -86,6 +86,12 @@ function installOnlineWarmup() {
 }
 
 export async function runWorkspaceAdmission(input: WorkspaceAdmissionInput): Promise<WorkspaceAdmissionResult> {
+  // The opaque Native baseline handle cannot cross the browser Worker boundary.
+  // Keep compact-history admission on the same Native policy implementation.
+  if (input.receivedBasis) {
+    const { computeWorkspaceAdmission } = await import("./workspaceAdmissionCore")
+    return computeWorkspaceAdmission(input, meshRustRuntime().state)
+  }
   // Non-browser callers (CLI/unit fixtures) use the identical pure algorithm.
   if (typeof window === "undefined") {
     const { computeWorkspaceAdmission } = await import("./workspaceAdmissionCore")

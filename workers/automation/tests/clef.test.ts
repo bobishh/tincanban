@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyOpportunity, classifyApplicationEvent } from '../src/clef.ts';
+import { classifyOpportunity, classifyApplicationEvent, readApplicationEventClassification } from '../src/clef.ts';
 
 const roleProbabilities = { backend: 1, frontend: 0, fullstack: 0, platform_devops: 0, data_ai: 0, mobile: 0, engineering_management: 0, other_unknown: 0 };
 const seniorityProbabilities = { intern_junior: 0, middle: 0, senior: 1, staff_principal: 0, lead_manager: 0, unknown: 0 };
@@ -94,4 +94,41 @@ test('Given a confident receipt confirmation, when classifying, then selects App
     type: 'choice', choice: 'applied', confidence: 0.95, probabilities,
   } }), 'We received your application for Senior Software Engineer at Example GmbH.');
   assert.equal(result.event, 'applied');
+});
+
+test('Given retained exact Clef classification, when reading it, then validate and preserve its complete evidence', () => {
+  const classification = {
+    event: 'rejection',
+    distributions: { application_event: { type: 'choice', choice: 'rejected', confidence: 0.9,
+      probabilities: { new_opportunity: 0, applied: 0, interview: 0.04, rejected: 0.9, offer: 0.01, follow_up: 0.02, unrelated: 0.01, uncertain: 0.02 } } },
+    model: '@cf/cloudflare/clef-flash', policyVersion: 'application-event-clef-v2',
+  };
+  assert.deepEqual(readApplicationEventClassification(classification), classification);
+});
+
+test('Given incomplete, modified-policy, or caller-disagreed retained classification, when reading it, then reject it', () => {
+  const classification = {
+    event: 'rejection',
+    distributions: { application_event: { type: 'choice', choice: 'rejected', confidence: 0.9,
+      probabilities: { new_opportunity: 0, applied: 0, interview: 0.04, rejected: 0.9, offer: 0.01, follow_up: 0.02, unrelated: 0.01, uncertain: 0.02 } } },
+    model: '@cf/cloudflare/clef-flash', policyVersion: 'application-event-clef-v2',
+  };
+  for (const value of [
+    { ...classification, extra: true },
+    { ...classification, model: 'other-model' },
+    { ...classification, policyVersion: 'future-policy' },
+    { ...classification, event: 'interview' },
+    { ...classification, distributions: { ...classification.distributions, unrelated: classification.distributions.application_event } },
+    { ...classification, distributions: { application_event: { ...classification.distributions.application_event, choice: 'unknown' } } },
+  ]) assert.throws(() => readApplicationEventClassification(value));
+});
+
+test('Given retained low-confidence or narrow-margin event, when reading it, then derive uncertain using live thresholds', () => {
+  const base = {
+    event: 'uncertain', model: '@cf/cloudflare/clef-flash', policyVersion: 'application-event-clef-v2',
+    distributions: { application_event: { type: 'choice', choice: 'rejected', confidence: 0.69,
+      probabilities: { new_opportunity: 0, applied: 0, interview: 0.1, rejected: 0.69, offer: 0, follow_up: 0.1, unrelated: 0, uncertain: 0.11 } } },
+  };
+  assert.deepEqual(readApplicationEventClassification(base), base);
+  assert.throws(() => readApplicationEventClassification({ ...base, event: 'rejection' }));
 });

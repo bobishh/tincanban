@@ -36,6 +36,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
   return withWorkspaceMutation(workspaceId, async () => {
     const loaded = await phase("load-document", () => storage.loadWorkspaceDoc(workspaceId))
     if (!loaded) return { doc: undefined, changed: false }
+    const receivedBasis = await phase("load-history-basis", () => storage.getVerifiedReceivedHistoryBaseline(workspaceId))
     // Keep the last admitted projection available if its local authority record
     // is malformed. Raw causal bytes may contain unreviewed changes, so this
     // branch must neither replay them nor persist a new classification.
@@ -46,7 +47,8 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     }
     const evidence = await phase("load-evidence", () => storage.loadCausalEvidence(workspaceId))
     const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(loaded.doc, stateRuntime.currentProfile ?? undefined))
-    if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization))) {
+    if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization,
+      undefined, receivedBasis))) {
       meshTrace("workspace.reclassify.reused", { workspaceId })
       return { doc: loaded.doc, changed: false }
     }
@@ -54,7 +56,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
     const raw = Automerge.load<WorkspaceDocumentV2>(rawBytes)
     try {
       const admission = await phase("admit-history", () => evaluateIncomingWorkspaceAdmission(raw, raw, authorization,
-        (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[]))
+        (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], receivedBasis))
       stage = "validate-projection"
       const doc = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
       const validation = validateWorkspaceDoc(doc)

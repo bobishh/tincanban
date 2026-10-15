@@ -1,8 +1,16 @@
 # Proof transfer status
 
-Implemented: bounded resumable proof pages; whole-record signatures retained; exact serialized budgets including envelope and authority evidence; candidate-derived dependency coverage; Rust authority/signature admission shared by WASM/native; optional untrusted restart cache; commit and document ACK remain after complete admission. Initial invitations, enrollment, and durable snapshot batches resolve manifests before validation/publication. Large proof-only authority changes send authority evidence without retransmitting history records. No proof/history retirement is implemented.
+Implemented: bounded resumable proof pages; whole-record signatures retained; exact serialized budgets including envelope and authority evidence; candidate-derived dependency coverage; Rust authority/signature admission shared by WASM/native; optional untrusted restart cache; commit and document ACK remain after complete admission. Initial invitations, enrollment, and durable snapshot batches resolve manifests before validation/publication. Large proof-only authority changes send authority evidence without retransmitting history records.
 
-Legacy incoming v1 limits remain 20,000 records and 16 MiB. Pages use encoded frames ≤256 KiB, page payloads ≤224 KiB, requests ≤1,024 actual hashes, aggregate ≤1,000,000 records /256 MiB, and at most4,096 proof rounds. Oversized indivisible signed records or authority manifests reject. These finite resource caps still bound supported history. Paging only removes the legacy whole-bundle boundary; P2 growth/retirement work remains partially complete.
+The current source also implements durable incremental admission and Owner-attested
+compact bases with retained original archives. These paths are undergoing final
+browser acceptance and have not yet been released. The authoritative contract is
+[history archives and recovery](../openspec/changes/unified-device-and-replica-architecture/history-archive-contract.md);
+the [protocol reference](protocol-and-tools.md#history-maintenance-and-recovery)
+describes the implementation. Compaction bounds active history; it does not delete
+original evidence or make total storage constant.
+
+Legacy incoming v1 limits remain 20,000 records and 16 MiB. Pages use encoded frames ≤256 KiB, page payloads ≤224 KiB, requests ≤1,024 actual hashes, aggregate ≤1,000,000 records /256 MiB, and at most4,096 proof rounds. Oversized indivisible signed records or authority manifests reject. These finite resource caps still bound supported history. Paging removes the legacy whole-bundle boundary; authenticated compaction is a separate protocol.
 
 Wire protocol: small proof bundles remain inline; bundles above 64 KiB use a manifest and bounded page requests. tincanban and Keeper ship the same protocol together. There is no legacy-peer fallback or format capability negotiation.
 
@@ -22,9 +30,12 @@ Output `/tmp/match-proof-admission-benchmark.json`. Fixture uses a valid workspa
 
 Metadata optimization keeps full actual history hash/dependency coverage and decodes operation bodies only for rejected unsigned discriminator repair. Same fixture after public `getChangesMetaSince(doc, [])` replaces eager binary decoding: full admission100/1,000/20,001 =58/453/9,156ms; one-proof delta =19/90/1,735ms. At20,001, delta improves3,179→1,735ms; full admission9,947→9,156ms. Rust/WASM flow and bridge remain dominant.
 
-Delta has one additional change. Native release benchmark and commands live in `vendor/meta-mesh/docs/proof-paging.md`: at20,001, frozen source preparation544ms,98source pages343ms,full admission1,608ms,one-proof delta243ms. Different runtimes/fixtures; not direct browser latency estimates. Before metadata optimization, TS scanned and decoded every local/remote binary change. Current path still traverses complete metadata, merges/saves candidate, copies document bytes into JS arrays, crosses WASM, then verifies authority/coverage. Even a one-proof delta retains history-sized CPU cost. Browser incoming admission now runs in a module Worker; document/proof commit and UI publication remain on the host. Local route tests check responsiveness while 20,001 changes are pending, worker startup failure, forged proof rejection, and reload after commit. That UI fixture groups change hashes into signed records and is separate from the one-record-per-change benchmark above. Incremental durable coverage indexing and authenticated compaction remain unimplemented. Connection flapping is not proven eliminated.
+Delta has one additional change. Native release benchmark and commands live in `vendor/meta-mesh/docs/proof-paging.md`: at20,001, frozen source preparation544ms,98source pages343ms,full admission1,608ms,one-proof delta243ms. Different runtimes/fixtures; not direct browser latency estimates. At the time of this benchmark, the path traversed complete metadata, merged/saved the candidate, copied document bytes into JS arrays, crossed WASM, then verified authority/coverage. Even a one-proof delta retained history-sized CPU cost. Browser incoming admission runs in a module Worker; document/proof commit and UI publication remain on the host. Local route tests check responsiveness while 20,001 changes are pending, worker startup failure, forged proof rejection, and reload after commit. That UI fixture groups change hashes into signed records and is separate from the one-record-per-change benchmark above. These historical timings do not measure the current incremental journal or compact-basis path. Connection flapping is not proven eliminated.
 
-## Proposed authenticated history checkpoint — not implemented
+## Historical checkpoint proposal
+
+The following proposal predates the current history contract linked above. It
+records the original constraints, not the current implementation or rollout state.
 
 A safe checkpoint must have an explicit trust anchor: signed workspace genesis plus verified owner/succession chain, or a previously accepted checkpoint. Its canonical signed payload must bind workspace id, checkpoint sequence and predecessor digest, snapshot bytes digest, exact included history/frontier digest, authenticated causal coverage, and authority epoch. Owner signature alone cannot erase previously known competing authority chains or revocations.
 

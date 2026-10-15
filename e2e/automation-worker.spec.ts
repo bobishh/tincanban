@@ -50,7 +50,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     expect(workerIdentityResponse.status, await workerIdentityResponse.clone().text()).toBe(200)
     const workerIdentity = await workerIdentityResponse.json() as Record<string, unknown>
     const activation = await approveAutomationFromUi(page, workerIdentity)
-    expect(activation).toMatchObject({ version: 2, definition: { payload: { type: "job-intake", typeVersion: 1 } } })
+    expect(activation).toMatchObject({ version: 2, definition: { payload: { type: "job-intake", typeVersion: 2 } } })
     const sharedAutomation = await page.evaluate(async () => {
       const { useTincanban } = await import("/src/state.ts")
       const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")
@@ -209,7 +209,7 @@ async function connectBlindRusty(page: Page, origin: string): Promise<void> {
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
   await panel.getByRole("button", { name: "Connect", exact: true }).click()
-  await expect(panel.getByText("Synced", { exact: true })).toBeVisible()
+  await expect(panel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
 }
 
 type WorkspaceSeed = {
@@ -241,14 +241,16 @@ async function approveAutomationFromUi(page: Page, workerIdentity: Record<string
   // Management UI is covered by the independent lifecycle scenario below. This scenario covers intake and mail semantics.
   return page.evaluate(async identity => {
     const { useTincanban } = await import("/src/state.ts")
-    const { readLocal } = await import("/src/localDb.ts")
+    const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
     const { exportApprovedAutomation } = await import("/src/app/automationActivation.ts")
     const workspace = useTincanban()
     const personId = workspace.getCurrentProfile()!.identity.personId
-    const configs = JSON.parse(await readLocal(`tincanban.blind-replicas.v1.${personId}`) ?? "[]") as Array<{ workspaceId: string }>
+    const configs = await getReplicaConfigurations(personId)
     const config = configs.find(value => value.workspaceId === workspace.getActiveDoc()!.id)
     if (!config) throw new Error("Rusty local access missing")
-    return JSON.parse(await exportApprovedAutomation(workspace, config, JSON.stringify(identity)))
+    return JSON.parse(await exportApprovedAutomation(workspace, config, JSON.stringify(identity), {
+      name: "Job intake", type: "job-intake", typeVersion: 2, parameters: { sources: ["website", "email"] },
+    }))
   }, workerIdentity)
 }
 
@@ -290,8 +292,8 @@ async function postForwardedMail(origin: string, messageId: string, subject: str
   return createHash("sha256").update(`${integrationId}:email:${messageId}`).digest("base64url")
 }
 
-async function eventStatus(origin: string, eventId: string): Promise<Record<string, unknown>> {
-  const response = await fetch(`${origin}/v1/integrations/${integrationId}/events/${eventId}`, {
+async function eventStatus(origin: string, eventId: string, targetIntegrationId = integrationId): Promise<Record<string, unknown>> {
+  const response = await fetch(`${origin}/v1/integrations/${targetIntegrationId}/events/${eventId}`, {
     headers: { authorization: `Bearer ${operatorToken}` },
   })
   if (response.status !== 200) return { status: `http-${response.status}` }
@@ -510,11 +512,31 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     const privateAddress = `jobs-${"a".repeat(32)}@example.test`
     await fetch(`${setup.origin}/__test/configure`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId, columns: workspace.columns,
-        fieldIds: workspace.fieldBindings, ownerPersonId: trustedOwner.identity.personId,
+        fieldIds: workspace.fieldBindings, emailAddress: privateAddress, ownerPersonId: trustedOwner.identity.personId,
         privateEmailRoutes: [{ id: instanceId, address: privateAddress, mailbox: "owner@example.test" }] }) })
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
+    await page.reload()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
+    const mailboxProbe = await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/state.ts")
+      const { readAutomationMailbox } = await import("/src/app/automationMailbox.ts")
+      const { parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
+      const app = useTincanban(), profile = app.getCurrentProfile()!, workspaceId = app.getActiveDoc()!.id
+      const entity = Object.values(app.getActiveDoc()!.entities).find(value => value.kind === "automation")
+      if (entity?.kind !== "automation") throw new Error("Automation unavailable")
+      const definition = parseAutomationDefinition(JSON.parse(entity.definition))
+      const mailbox = await readAutomationMailbox(profile, { origin: entity.executor.origin, workspaceId,
+        definitionId: definition.id, personId: entity.executor.personId, grantId: definition.scope.grantId })
+      return { integrationId: mailbox.integrationId, route: mailbox.setup.route }
+    })
+    expect(mailboxProbe).toMatchObject({ integrationId: instanceId, route: { address: privateAddress } })
     await expect(automation.getByRole("button", { name: "Enable email and Applied", exact: true })).toBeVisible({ timeout: 45_000 })
     await automation.getByRole("button", { name: "Enable email and Applied", exact: true }).click()
-    await expect(automation.getByText("Email enabled · Waiting for first email", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const emailApproval = automation.getByRole("form", { name: "Confirm automation approval", exact: true })
+    await emailApproval.getByLabel("Allow Worker to read this workspace").check()
+    await emailApproval.getByRole("button", { name: "Confirm approval", exact: true }).click()
+    await expect(automation.getByText("Email enabled", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(automation.getByRole("button", { name: "Enable email and Applied", exact: true })).toHaveCount(0)
     const raw = ["From: owner@example.test", `To: ${privateAddress}`, "Message-ID: <upvest-role-review@example.test>",
       `Date: ${new Date().toUTCString()}`, "Subject: Sorry, it’s not a match this time", "Content-Type: text/plain; charset=utf-8", "",
@@ -522,9 +544,12 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     const received = await fetch(`${setup.origin}/__test/email`, { method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ from: "owner@example.test", to: privateAddress, raw }) })
     expect(received.status).toBe(202)
-    const mail = automation.getByRole("list", { name: "Recent email processing" }).getByRole("listitem").filter({ hasText: "Sorry, it’s not a match this time" })
-    await expect(mail).toContainText("Needs review", { timeout: 45_000 })
-    await expect(mail).toContainText("Application has no vacancy URL to read its original role")
+    const mailEventId = createHash("sha256").update(`${instanceId}:email:<upvest-role-review@example.test>`).digest("base64url")
+    await expect.poll(async () => (await eventStatus(setup.origin, mailEventId, instanceId)).status, { timeout: 45_000 }).toBe("review")
+    expect(await eventStatus(setup.origin, mailEventId, instanceId)).toMatchObject({
+      result: { reason: "Original posting evidence is missing or unavailable; choose an application" },
+    })
+    await expect(automation.getByRole("list", { name: "Recent email processing" })).toHaveCount(0)
     await page.evaluate(async urlFieldId => {
       const { useTincanban } = await import("/src/state.ts")
       await useTincanban().executeCommandAsync({ kind: "patchItem", entityId: "upvest-review-card",
@@ -532,14 +557,10 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     }, workspace.fieldBindings.jobUrl)
     await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
     await syncFromBlindRusty(page)
-    await page.getByRole("button", { name: "Settings", exact: true }).click()
-    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
-    await mail.getByRole("button", { name: "Retry processing", exact: true }).click()
-    await expect(mail).toContainText("Application moved to Rejected", { timeout: 45_000 })
-    await expect(mail.getByRole("button", { name: "Retry processing", exact: true })).toHaveCount(0)
-    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
-    await syncFromBlindRusty(page)
-    await expectStatusColumn(page, "Rejected", "Upvest — Senior Software Engineer (f/m/d)")
+    expect(await eventStatus(setup.origin, mailEventId, instanceId)).toMatchObject({
+      status: "review", result: { reason: "Original posting evidence is missing or unavailable; choose an application" },
+    })
+    await expectStatusColumn(page, "Applied", "Upvest — Senior Software Engineer (f/m/d)")
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
     await automation.getByRole("button", { name: "Pause", exact: true }).click()

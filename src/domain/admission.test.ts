@@ -1,3 +1,4 @@
+import { createActorBinding, createChangeProof } from "./transactionProofs"
 import { beforeAll, describe, expect, it, beforeEach, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
@@ -7,8 +8,6 @@ import {
   resetIdentityStorageForTest,
   sha256Base64Url,
   canonicalizeJson,
-  createActorBinding,
-  createChangeProof,
 } from "./identity"
 import { ProofStore } from "./proofs"
 import { AdmissionController } from "./admission"

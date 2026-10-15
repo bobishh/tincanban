@@ -16,6 +16,7 @@ export interface JobPageResult {
   company: string;
   role: string;
   title: string;
+  atsId?: string;
   description: string;
   body: string;
   source: 'jobposting' | 'opengraph' | 'html' | 'unavailable';
@@ -71,6 +72,7 @@ export async function extractJobPage(
       company,
       role,
       title: extracted.title,
+      ...(extracted.atsId ? { atsId: extracted.atsId } : {}),
       description: extracted.description,
       body: extracted.body,
       source: extracted.source,
@@ -138,7 +140,9 @@ function extractHtmlFields(html: string): Omit<JobPageResult, 'url' | 'finalUrl'
           ? (job.hiringOrganization as Record<string, unknown>).name : '');
         const role = plainText(job.title);
         const description = plainText(job.description).slice(0, 20_000);
-        return { company, role, title: role || htmlTitle(html), description, body: description || visibleText(html), source: 'jobposting' };
+        const atsId = postingIdentifier(job.identifier);
+        return { company, role, title: role || htmlTitle(html), ...(atsId ? { atsId } : {}),
+          description, body: description || visibleText(html), source: 'jobposting' };
       }
     } catch {
       // Ignore malformed structured data and use page metadata.
@@ -155,6 +159,21 @@ function extractHtmlFields(html: string): Omit<JobPageResult, 'url' | 'finalUrl'
     body: visibleText(html),
     source: ogCompany || ogTitle || description ? 'opengraph' : 'html',
   };
+}
+
+function postingIdentifier(value: unknown): string | undefined {
+  if (typeof value === 'string') return boundedIdentifier(value);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const property = value as Record<string, unknown>;
+  const type = Array.isArray(property['@type']) ? property['@type'] : [property['@type']];
+  if (!type.some(entry => typeof entry === 'string' && /(?:^|[/#])PropertyValue$/i.test(entry))) return undefined;
+  if (typeof property.propertyID !== 'string' || !property.propertyID.trim() || property.propertyID.length > 128) return undefined;
+  return typeof property.value === 'string' ? boundedIdentifier(property.value) : undefined;
+}
+
+function boundedIdentifier(value: string): string | undefined {
+  const result = value.trim();
+  return result && result.length <= 256 ? result : undefined;
 }
 
 function findJobPosting(value: unknown): Record<string, unknown> | undefined {

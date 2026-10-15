@@ -322,6 +322,34 @@ describe("Transaction wrapper, commands, and publication queue (Requirement 1.6)
     expect(Automerge.getChangesMetaSince(queue.getDocument(), []).map(change => change.hash)).toContain(selectedHash)
   })
 
+  it("Given a compact active document, when restoring an archived item version, then write a fresh current-author change with source provenance", async () => {
+    const raw = createWorkspaceDoc("ws_archived_history", "Archived history", profile.identity.personId, "blank")
+    const original = createCommandQueue(Automerge.from<WorkspaceDocumentV2>(raw), profile)
+    const column = Object.values(original.getDocument().entities).find(entity => hasEntityKind(entity, "column"))!
+    const created = await original.transact({ kind: "createItem", parentId: column.id, title: "Original archived title", body: "Original text" })
+    if (!created.ok) throw new Error("Fixture item failed")
+    const entityId = created.value.receipt.changedEntityIds[0]!
+    const snapshot = JSON.parse(JSON.stringify(original.getDocument().entities[entityId])) as Item
+    const changeHash = created.value.receipt.changeHash
+    const compact = Automerge.from<WorkspaceDocumentV2>(JSON.parse(JSON.stringify(original.getDocument())))
+    const queue = createCommandQueue(compact, profile)
+    await queue.transact({ kind: "patchItem", entityId, title: "Current title" })
+    expect(Automerge.getChangesMetaSince(queue.getDocument(), []).some(change => change.hash === changeHash)).toBe(false)
+    const before = Automerge.getHeads(queue.getDocument())
+    const restored = await queue.transact({ kind: "restoreItemVersion", entityId, changeHash,
+      archived: { baselineId: "A".repeat(43), historyEpoch: 2, observation: "admitted", item: snapshot } })
+    expect(restored.ok).toBe(true)
+    expect(queue.getDocument().entities[entityId]).toMatchObject({ title: "Original archived title", body: "Original text" })
+    const fresh = Automerge.getChangesMetaSince(queue.getDocument(), before)
+    expect(fresh).toHaveLength(1)
+    expect(JSON.parse(fresh[0]!.message!)).toMatchObject({ personId: profile.identity.personId,
+      action: "restoreItemVersion", restoredFrom: { baselineId: "A".repeat(43), historyEpoch: 2, changeHash, observation: "admitted" } })
+    expect(fresh[0]!.hash).not.toBe(changeHash)
+    const refused = await queue.transact({ kind: "restoreItemVersion", entityId, changeHash,
+      archived: { baselineId: "A".repeat(43), historyEpoch: 2, observation: "admitted", item: { ...snapshot, id: "unrelated" } } })
+    expect(refused).toMatchObject({ ok: false, error: { code: "invalid_input" } })
+  })
+
   it("rejects invalid commands and cycle-creating moves without mutating document", async () => {
     // Test on a blank board workspace where items have no required fields
     const rawWs = createWorkspaceDoc("ws_blank_test", "Blank Board", profile.identity.personId, "blank")

@@ -76,6 +76,24 @@ export interface ApplicationEventClassification {
   policyVersion: string;
 }
 
+/** Validate retained classifier evidence without invoking the model. */
+export function readApplicationEventClassification(value: unknown): ApplicationEventClassification {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ['event', 'distributions', 'model', 'policyVersion'])) {
+    throw new Error('Retained application classification has an invalid shape');
+  }
+  if (value.model !== CLEF_MODEL || value.policyVersion !== APPLICATION_EVENT_POLICY_VERSION) {
+    throw new Error('Retained application classification uses an unsupported model or policy');
+  }
+  if (!isPlainRecord(value.distributions) || !hasExactKeys(value.distributions, ['application_event'])) {
+    throw new Error('Retained application classification has invalid distributions');
+  }
+  const answer = readChoice(value.distributions.application_event, Object.keys(APPLICATION_EVENT));
+  const event = deriveApplicationEvent(answer);
+  if (value.event !== event) throw new Error('Retained application classification event disagrees with its evidence');
+  return { event, distributions: { application_event: answer }, model: CLEF_MODEL,
+    policyVersion: APPLICATION_EVENT_POLICY_VERSION };
+}
+
 const assessmentKeys: Record<JobCriterion, string> = {
   companyRecognition: 'company_recognition', companyStability: 'company_stability', stackFit: 'stack_fit', workFit: 'work_fit',
 };
@@ -157,18 +175,27 @@ export async function classifyApplicationEvent(ai: DecisionAi, state: string): P
     },
   });
   const answer = readChoice(responseAnswers(response).application_event, Object.keys(APPLICATION_EVENT));
-  const winner = answer.choice;
+  return readApplicationEventClassification({ event: deriveApplicationEvent(answer),
+    distributions: { application_event: answer }, model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION });
+}
+
+function deriveApplicationEvent(answer: ClefChoiceAnswer): ApplicationEventClassification['event'] {
   const ranked = Object.values(answer.probabilities).sort((a, b) => b - a);
-  const event = (winner === 'uncertain' || winner === 'new_opportunity' || winner === 'offer' || winner === 'follow_up' || winner === 'unrelated'
-    || ranked[0] < 0.7 || ranked[0] - ranked[1] < 0.2
-    ? 'uncertain'
-    : winner === 'rejected' ? 'rejection' : winner) as ApplicationEventClassification['event'];
-  return {
-    event,
-    distributions: { application_event: answer },
-    model: CLEF_MODEL,
-    policyVersion: APPLICATION_EVENT_POLICY_VERSION,
-  };
+  if (answer.choice === 'uncertain' || answer.choice === 'new_opportunity' || answer.choice === 'offer'
+    || answer.choice === 'follow_up' || answer.choice === 'unrelated' || ranked[0]! < 0.7 || ranked[0]! - ranked[1]! < 0.2) {
+    return 'uncertain';
+  }
+  return (answer.choice === 'rejected' ? 'rejection' : answer.choice) as ApplicationEventClassification['event'];
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  const keys = [...expected].sort();
+  return actual.length === keys.length && actual.every((key, index) => key === keys[index]);
 }
 
 function boundedState(state: string): string {

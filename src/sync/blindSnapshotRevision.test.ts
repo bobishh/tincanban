@@ -2,16 +2,21 @@ import { beforeEach, expect, test, vi } from "vitest"
 import { createBlindSnapshotRevision } from "./blindSnapshotRevision"
 
 const state = vi.hoisted(() => ({ revision: "saved-1" as string | undefined, authority: "authority-1",
+  chatRevision: "generation-1:0", historicalReads: 0,
   chat: { version: 1, messages: [] as unknown[], profiles: [] as unknown[], typing: [] as unknown[] },
   duringChat: undefined as (() => void) | undefined }))
 vi.mock("../storage", () => ({ defaultStorage: { readWorkspaceRevision: async () => state.revision } }))
-vi.mock("../chat/service", () => ({ exportChat: async () => { state.duringChat?.(); return state.chat } }))
+vi.mock("../chat/service", () => ({
+  exportChat: async () => { state.historicalReads++; state.duringChat?.(); return state.chat },
+  readChatContentRevision: async () => { const revision = state.chatRevision; state.duringChat?.(); return revision },
+}))
 vi.mock("./changeAuthorization", () => ({ localWorkspaceAdmissionAuthority: async () => ({ fingerprint: state.authority }) }))
 
 beforeEach(() => {
   state.revision = "saved-1"; state.authority = "authority-1"
   state.chat = { version: 1, messages: [], profiles: [], typing: [] }
   state.duringChat = undefined
+  state.chatRevision = "generation-1:0"; state.historicalReads = 0
 })
 
 function fixture() {
@@ -25,6 +30,7 @@ test("Given unchanged durable evidence, When polling repeats, Then root metadata
   state.chat.typing = ["ephemeral typing"]
   expect(await f.read("board")).toBe(first)
   expect(f.app.readWorkspaceDoc).toHaveBeenCalledOnce()
+  expect(state.historicalReads).toBe(0)
 })
 
 test.each(["document-or-proofs", "authority", "message", "profile"])("Given changed %s, When polling repeats, Then snapshot revision changes", async change => {
@@ -33,14 +39,16 @@ test.each(["document-or-proofs", "authority", "message", "profile"])("Given chan
   if (change === "authority") state.authority = "authority-2"
   if (change === "message") state.chat.messages = ["new message"]
   if (change === "profile") state.chat.profiles = ["renamed profile"]
+  if (change === "message" || change === "profile") state.chatRevision = "generation-1:1"
   expect(await f.read("board")).not.toBe(before)
 })
 
-test.each(["revision", "authority"])("Given %s changes during the read, When binding a snapshot revision, Then reuse is unavailable", async change => {
+test.each(["revision", "authority", "chat-content"])("Given %s changes during the read, When binding a snapshot revision, Then reuse is unavailable", async change => {
   const f = fixture()
   state.duringChat = () => {
     if (change === "revision") state.revision = "saved-2"
-    else state.authority = "authority-2"
+    else if (change === "authority") state.authority = "authority-2"
+    else state.chatRevision = "generation-1:1"
   }
   expect(await f.read("board")).toBeUndefined()
 })

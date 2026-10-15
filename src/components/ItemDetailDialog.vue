@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { MarkdownContent } from "../ui/markdownContent"
 import SpatialWindow from "./SpatialWindow.vue"
+import ItemHistoryPanel from "./ItemHistoryPanel.vue"
 import QuickNoteForm from "./QuickNoteForm.vue"
 import type { Item, FieldDefinition } from "../domain/model"
 import type { HistoryEntry } from "../domain/history"
@@ -9,9 +10,11 @@ import CardStageStrip from "./CardStageStrip.vue"
 import type { Column } from "../domain/model"
 import type { CardStageButton } from "../domain/cardStageButtons"
 import { LazyItemDocuments as ItemDocuments } from "../app/lazyItemDocuments"
+import type { AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
-defineProps<{
+const props = defineProps<{
   workspaceId?: string
+  attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
   item: Item
   columns: Column[]
@@ -26,6 +29,10 @@ defineProps<{
   saveDocument: (document: Omit<DocumentInput, "leadId">) => Promise<void>
   updateDocument: (documentId: string, content: string) => Promise<void>
   history?: HistoryEntry[]
+  historyLoading?: boolean
+  historyError?: string
+  historyNotice?: string
+  historyHasMore?: boolean
   archiveError?: string
   restoreSaving?: boolean
   restoreError?: string
@@ -43,6 +50,7 @@ const emit = defineEmits<{
   (e: "archiveItem", itemId: string): void
   (e: "restoreItem", itemId: string): void
   (e: "restoreVersion", changeHash: string): void
+  (e: "loadEarlierHistory"): void
   (e: "update:quickNote", value: string): void
   (e: "saveNote"): void
   (e: "updateMarkdown", item: Item, markdown: string): void
@@ -50,7 +58,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" @close="emit('close')">
+  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="props.workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" @close="emit('close')">
       <template #header>
       <div class="detail-head" :data-discussion-item="item.id">
         <div>
@@ -94,12 +102,15 @@ const emit = defineEmits<{
             <span class="detail-label">Description</span>
             <MarkdownContent class="detail-copy" data-discussion-field="narrative" data-discussion-text :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', item, $event)" />
           </div>
-          <ItemDocuments
+          <slot name="documents"><ItemDocuments
             :documents="documents"
+            :workspace-id="props.workspaceId"
+            :attachment-coverage="props.attachmentCoverage"
             :read-only="readOnly"
             :save="saveDocument"
             :update="updateDocument"
-          />
+          /></slot>
+          <slot name="discussion" />
 
         <section class="detail-section detail-subsection">
           <div class="section-heading detail-section-head">
@@ -129,32 +140,10 @@ const emit = defineEmits<{
           </div>
         </section>
 
-        <section class="detail-section detail-subsection">
-          <div class="section-heading detail-section-head">
-            <span class="detail-label">History</span>
-            <h3>{{ history?.length ? `${history.length} changes` : "No recorded history" }}</h3>
-          </div>
-          <div v-if="history?.length" class="item-history-list">
-            <div
-              v-for="(entry, index) in history"
-              :key="entry.hash"
-              class="item-history-entry"
-            >
-              <div class="item-history-head">
-                <strong>{{ entry.action }}</strong>
-                <span class="item-history-time">{{ new Date(entry.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
-              </div>
-              <div class="item-history-author">
-                Author: <span>{{ entry.authorLabel }}</span>
-              </div>
-              <button v-if="index < history.length - 1" class="button button-small button-quiet" type="button"
-                :disabled="readOnly || restoreSaving" @click="emit('restoreVersion', entry.hash)">Restore this version</button>
-            </div>
-          </div>
-          <p v-if="restoreSaving" role="status" class="dialog-copy">Restoring version…</p>
-          <p v-else-if="restoreNotice" role="status" class="dialog-copy">{{ restoreNotice }}</p>
-          <p v-if="restoreError" role="alert" class="form-error">{{ restoreError }}</p>
-        </section>
+        <ItemHistoryPanel v-if="history !== undefined" :history="history" :read-only="readOnly"
+          :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
+          :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
+          @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
         </div>
       </div>
 
@@ -170,11 +159,18 @@ const emit = defineEmits<{
   </SpatialWindow>
 </template>
 
+<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
-.detail-head { margin: 0; align-items: center; gap: 12px; }
-.detail-head h2 { font-size: 1.1rem; margin: 2px 0 0; }
+.detail-subsection { padding-top: var(--space-4); border-top: 2px solid var(--line); }
+.detail-section-head { margin-bottom: var(--space-3); }
+.detail-section-head h3 { margin: 0; font-size: 1rem; }
+.subitem-list { display: grid; gap: var(--space-2); }
+.subitem-row { padding: var(--space-2) var(--space-3); border: 2px solid var(--soft); }
+.subitem-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.detail-head { margin: 0; align-items: center; gap: var(--space-3); }
+.detail-head h2 { font-size: 1.1rem; margin: var(--space-1) 0 0; }
 .detail-head-actions { flex-wrap: wrap; }
-.detail-dialog { width: 100%; height: 100%; max-height: none; padding: 18px; border: 0; box-shadow: none; }
+.detail-dialog { width: 100%; height: 100%; max-height: none; padding: var(--space-4); border: 0; box-shadow: none; }
 .detail-scroll { flex: 1; }
-.dialog-actions { padding-right: 30px; flex-shrink: 0; }
+.dialog-actions { padding-right: var(--space-6); flex-shrink: 0; }
 </style>

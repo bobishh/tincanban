@@ -1,4 +1,4 @@
-import { defineAsyncComponent, h, ref, watch, type Component } from "vue"
+import { defineAsyncComponent, h, ref, type Component } from "vue"
 
 const pendingStatus = (message: string): Component => ({
   setup: () => () => h("div", { role: "status", "aria-live": "polite" }, message),
@@ -27,49 +27,30 @@ export const ItemDetailDialog = defineAsyncComponent<Component>({
   delay: 0,
   loadingComponent: pendingStatus("Opening item…"),
 })
-export const SpatialWindow = defineAsyncComponent<Component>({
-  loader: () => import("../components/SpatialWindow.vue"),
+export const LeadDetailWindow = defineAsyncComponent<Component>({
+  loader: () => import("../components/LeadDetailWindow.vue"),
   delay: 0,
   loadingComponent: pendingStatus("Opening details…"),
 })
+export const QuickNoteForm = defineAsyncComponent<Component>(() => import("../components/QuickNoteForm.vue"))
+export const AutosaveTextarea = defineAsyncComponent<Component>(() => import("../components/AutosaveTextarea.vue"))
 export const WorkspacesDialog = defineAsyncComponent<Component>(() => import("../components/WorkspacesDialog.vue"))
 export const ColumnDialog = defineAsyncComponent<Component>(() => import("../components/ColumnDialog.vue"))
 export const SchemaEditorDialog = defineAsyncComponent<Component>(() => import("../components/SchemaEditorDialog.vue"))
 export const MoveItemDialog = defineAsyncComponent<Component>(() => import("../components/MoveItemDialog.vue"))
 export const WorkspaceSettingsPanel = defineAsyncComponent<Component>(() => import("../components/WorkspaceSettingsPanel.vue"))
 
-let detailChunksPromise: Promise<void> | null = null
-
-function preloadOfflineDetailChunks() {
-  if (typeof navigator === "undefined" || !navigator.onLine) return Promise.resolve()
-  if (!detailChunksPromise) {
-    detailChunksPromise = Promise.all([
-      import("../components/SpatialWindow.vue"),
-      import("../components/ItemDetailDialog.vue"),
-      import("../components/ItemFormDialog.vue"),
-    ]).then(() => undefined).catch(error => {
-      detailChunksPromise = null
-      throw error
-    })
-  }
-  return detailChunksPromise
-}
-
+/** Background preloading does not belong to the synchronous application graph. */
 export function startOfflineDetailPreload(isReady: () => boolean) {
-  let idleHandle: number | undefined
-  let timerHandle: number | undefined
-  const schedule = () => {
-    if (!isReady() || !navigator.onLine || detailChunksPromise) return
-    const preload = () => { idleHandle = undefined; timerHandle = undefined; void preloadOfflineDetailChunks().catch(() => {}) }
-    if (typeof window.requestIdleCallback === "function") idleHandle = window.requestIdleCallback(preload, { timeout: 3_000 })
-    else timerHandle = window.setTimeout(preload, 200)
+  let disposed = false, pending = false, stop: (() => void) | undefined
+  const load = () => {
+    if (disposed || pending || stop || !navigator.onLine) return
+    pending = true
+    void import("./offlineDetailPreload").then(module => {
+      if (!disposed) stop = module.startOfflineDetailPreload(isReady)
+    }).catch(() => {}).finally(() => { pending = false })
   }
-  const stopWatch = watch(isReady, schedule, { immediate: true })
-  window.addEventListener("online", schedule)
-  return () => {
-    stopWatch()
-    window.removeEventListener("online", schedule)
-    if (idleHandle !== undefined) window.cancelIdleCallback(idleHandle)
-    if (timerHandle !== undefined) window.clearTimeout(timerHandle)
-  }
+  load()
+  window.addEventListener("online", load)
+  return () => { disposed = true; window.removeEventListener("online", load); stop?.() }
 }

@@ -1,7 +1,7 @@
 import type { BlindReplicaConfig } from "./blindReplication"
 export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "error"; lastSyncedAt?: number; error?: string }
 export type ConnectionPresence = "connected" | "reconnecting" | "offline" | "empty"
-const confirmationLifetime = 45_000
+export const replicaConfirmationLifetime = 45_000
 export const replicaKey = (config: Pick<BlindReplicaConfig, "origin" | "scopeId">) => `${config.origin}/${config.scopeId}`
 export const syncTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString()
 
@@ -11,7 +11,7 @@ export function replicaStatus(config: BlindReplicaConfig, health: ReplicaHealth 
   if (health.phase === "syncing") return "Syncing"
   if (health.phase === "catching-up") return "Catching up"
   if (health.phase === "error") return "Unavailable"
-  return health.lastSyncedAt && now - health.lastSyncedAt <= confirmationLifetime ? "Synced" : "Check overdue"
+  return health.lastSyncedAt && now - health.lastSyncedAt <= replicaConfirmationLifetime ? "Synced" : "Check overdue"
 }
 
 export function replicationPresence(device: ConnectionPresence, configs: BlindReplicaConfig[], health: Record<string, ReplicaHealth>, workspaceId: string, now: number): ConnectionPresence {

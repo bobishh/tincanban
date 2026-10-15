@@ -6,8 +6,11 @@ import { AutomationCoordinator, type EnqueueSuccess } from "./coordinator";
 import type { AutomationEvent } from "./pipeline";
 import type { AutomationActivationPacket } from "./replica";
 import { handleOwnerApi } from "./ownerApi";
+import { handleApplicationReviewApi } from "./applicationReviewApi";
+import { handleAutomationInstanceApi } from "./automationInstanceApi";
 import { corsHeaders, json, readJson } from "./http";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
+import { workerReleaseIdentity, type WorkerReleaseBindings } from "./buildIdentity";
 
 export { AutomationCoordinator } from "./coordinator";
 
@@ -40,6 +43,12 @@ export interface WorkerEnv {
   PROVISIONING_TOKEN?: string;
   IDENTITY_STORAGE_SECRET?: string;
   EVENT_STORAGE_SECRET?: string;
+  /** Commit SHA embedded into this immutable Worker version; unset in local development. */
+  RELEASE_SHA?: string;
+  RELEASE_ARTIFACT_SHA256?: WorkerReleaseBindings["RELEASE_ARTIFACT_SHA256"];
+  RELEASE_COHORT_ID?: WorkerReleaseBindings["RELEASE_COHORT_ID"];
+  RELEASE_SDK_SHA?: WorkerReleaseBindings["RELEASE_SDK_SHA"];
+  CF_VERSION_METADATA?: WorkerReleaseBindings["CF_VERSION_METADATA"];
 }
 
 type JsonObject = Record<string, unknown>;
@@ -121,7 +130,9 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
   const url = new URL(request.url);
   const cors = corsHeaders(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
-  if (request.method === "GET" && url.pathname === "/health") return json({ status: "ready" }, 200, cors);
+  if (request.method === "GET" && url.pathname === "/health") return json({ status: "ready", ...workerReleaseIdentity(env) }, 200, cors);
+  if (url.pathname.startsWith("/v2/application-review/")) return handleApplicationReviewApi(request, env, cors);
+  if (url.pathname.startsWith("/v2/automation-instances/")) return handleAutomationInstanceApi(request, env, cors);
   if (url.pathname.startsWith("/v2/")) return handleOwnerApi(request, env, cors);
 
   if (request.method === "POST" && url.pathname === "/v1/challenge") {
@@ -232,7 +243,7 @@ function coordinator(env: WorkerEnv, integrationId: string): DurableObjectStub<A
   return env.AUTOMATION.getByName(integrationId);
 }
 
-function parseIntegrations(env: WorkerEnv): AutomationIntegration[] {
+export function parseIntegrations(env: WorkerEnv): AutomationIntegration[] {
   let value: unknown;
   try {
     value = JSON.parse(env.INTEGRATIONS_JSON || "[]") as unknown;
@@ -295,10 +306,10 @@ function parseScope(value: unknown): AutomationScope {
 function assertActivationMatchesIntegration(packet: AutomationActivationPacket, integration: AutomationIntegration): void {
   if (!packet || ![1, 2].includes(packet.version) || packet.workspaceId !== integration.workspaceId || packet.blind?.workspaceId !== integration.workspaceId ||
     !packet.grant?.payload || packet.grant.payload.kind !== "workspace-grant" || packet.grant.payload.role !== "automation" ||
-    packet.grant.payload.workspaceId !== integration.workspaceId || packet.grant.payload.automation?.version !== 1 ||
-    packet.grant.payload.automation.boardId !== integration.scope.boardId ||
-    !Number.isFinite(packet.grant.payload.automation.expiresAt) || packet.grant.payload.automation.expiresAt <= Date.now() ||
-    packet.grant.payload.automation.expiresAt !== Date.parse(integration.scope.expiresAt)) {
+    packet.grant.payload.workspaceId !== integration.workspaceId || ![1, 2].includes(packet.grant.payload.automation?.version ?? 0) ||
+    packet.grant.payload.automation?.boardId !== integration.scope.boardId ||
+    !Number.isFinite(packet.grant.payload.automation?.expiresAt) || packet.grant.payload.automation!.expiresAt <= Date.now() ||
+    packet.grant.payload.automation!.expiresAt !== Date.parse(integration.scope.expiresAt)) {
     throw new TypeError("Activation grant does not match configured integration scope");
   }
   if (packet.version === 2) {
@@ -383,7 +394,9 @@ function requiredString(value: unknown, name: string, maxLength: number): string
 }
 
 function stripHumanCheck(submission: WebsiteSubmission): Omit<WebsiteSubmission, "humanCheckToken" | "humanCheckAnswer"> {
-  const { humanCheckToken: _token, humanCheckAnswer: _answer, ...normalized } = submission;
+  const normalized = { ...submission };
+  delete normalized.humanCheckToken;
+  delete normalized.humanCheckAnswer;
   return normalized;
 }
 

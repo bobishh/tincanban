@@ -51,9 +51,8 @@ test("Given Settings is open, when Recovery backup opens, then recovery stays ab
   await recovery.getByRole("textbox", { name: "Recovery words", exact: true }).fill("invalid restoration words")
   await recovery.getByLabel("Recovery file").setInputFiles({ name: "invalid-recovery.json", mimeType: "application/json", buffer: Buffer.from("{}") })
   await recovery.getByRole("checkbox").check()
-  await recovery.getByRole("button", { name: "Restore identity" }).click()
   await expect(recovery.getByRole("alert")).toBeVisible()
-  await expect(recovery.getByRole("button", { name: "Restore identity" })).toBeEnabled()
+  await expect(recovery.getByRole("button", { name: "Restore identity" })).toBeDisabled()
   const recoveryOnTop = await page.locator(".overlay").evaluateAll(overlays => {
     const settingsOverlay = overlays.find(element => element.querySelector('[role="dialog"][aria-label="Settings"]'))!
     const recoveryOverlay = overlays.find(element => element.querySelector('[role="dialog"][aria-label="Identity recovery"]'))!

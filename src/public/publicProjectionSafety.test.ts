@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { WorkspaceDocumentV2 } from "../domain/model"
+import type { Board, WorkspaceDocumentV2 } from "../domain/model"
 import { createPublicBoardPublication, snapshotPublicBoardSource } from "./publicProjection"
 
 const mocks = vi.hoisted(() => ({ messages: [] as unknown[], reads: [] as string[] }))
@@ -66,6 +66,19 @@ describe("publication boundary regressions", () => {
     expect(snapshot.entities.privateFile).toBeUndefined()
     expect(snapshot.id).toBeUndefined()
     expect(snapshot.ownerPersonId).toBeUndefined()
+  })
+  it("Given display settings in the CRDT, When publishing, Then retain visitor presentation while removing private bindings", async () => {
+    const document = fixture()
+    Object.assign(document.entities.board!, { entityName: "lead", preset: { key: "job-search", version: 1, bindings: {
+      "status.lead": "todo", "status.archived": "archive", "field.stage": "select", "field.private": "hiddenField", "option.stage.active": "visible", "option.stage.hidden": "hidden",
+    } }, employee_profile: { stack: "private preferences", work_profile: "private preferences" }, cardStageButtons: [{ columnId: "todo" }, { columnId: "archive" }] })
+    Object.assign(document.entities.todo!, { color: "#66b3ff", collapsible: true })
+    const publication = await createPublicBoardPublication(document, "private-workspace", "board")
+    expect(publication.projection.board.presentation).toEqual({ entityName: "lead", preset: { key: "job-search", version: 1,
+      bindings: { "status.lead": "todo", "field.stage": "select", "option.stage.active": "visible" } }, cardStageButtons: [{ columnId: "todo" }] })
+    expect(publication.projection.columns[0]).toMatchObject({ color: "#66b3ff", collapsible: true })
+    expect(JSON.stringify(publication.projection)).not.toMatch(/archive|hiddenField|private preferences|employee_profile/)
+    expect((document.entities.board as Board).preset?.bindings["status.archived"]).toBe("archive")
   })
   it("Given an attachment stage failure, When creating a publication, Then later files are not uploaded and no complete plan is returned", async () => {
     const document = fixture()

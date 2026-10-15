@@ -4,8 +4,8 @@ import * as Automerge from "@automerge/automerge/slim"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { encodePairingFrame, inspectPairingFrame } from "@meta-uber/mesh-pairing"
-import { bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, type LocalProfile } from "../domain/identity"
-import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant } from "../domain/proofs"
+import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
 import { isNativeKeeperRoute } from "./durableMeshSessions"
@@ -950,7 +950,9 @@ describe("DurableMesh peer catalog gossip", () => {
       updatedAt: new Date().toISOString(),
     }
     const store = {
+      getWorkspaceAuthority: async () => null,
       getWorkspaceCredential: async () => credential,
+      listPeers: async () => [],
       getPeer: async () => ({
         workspaceId: "workspace-1", personId: "previous-person", deviceId: owner.device.deviceId,
         endpoint: "old-endpoint", transportSecret: "mesh-secret", role: "visitor" as const,
@@ -1204,17 +1206,13 @@ describe("DurableMesh peer catalog gossip", () => {
   it("Given an enrolled owner device, when it opens an existing workspace, then its certificate can verify new grants", async () => {
     resetIdentityStorageForTest()
     const owner = await bootstrapIdentity("Owner")
-    const keyPair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair
-    const publicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)))
-    const deviceId = await sha256Base64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey)))
+    resetIdentityStorageForTest()
+    const phone = await bootstrapIdentity("Owner phone")
+    const { deviceId, publicKey } = phone.device
     const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
       owner.identity.personId, deviceId, publicKey, await certHashDefault(owner.certificate))
-    const enrolledOwner: LocalProfile = {
-      identity: owner.identity,
-      device: { deviceId, publicKey, displayName: "Owner phone" },
-      certificate,
-      privateKeys: { devicePrivateKey: keyPair.privateKey },
-    }
+    const enrolledOwner = await adoptEnrolledIdentity(owner.identity, certificate)
+    await defaultProofStore.putCertificate(await certHashDefault(owner.certificate), owner.certificate)
     let credential = {
       version: 1 as const,
       workspaceId: "workspace-1",
@@ -1227,7 +1225,9 @@ describe("DurableMesh peer catalog gossip", () => {
       localGrant: { stale: true },
     }
     const store = {
+      getWorkspaceAuthority: async () => null,
       getWorkspaceCredential: async () => structuredClone(credential),
+      listPeers: async () => [],
       putWorkspaceCredential: async (next: typeof credential) => { credential = structuredClone(next) },
       getPeer: async () => null,
     }

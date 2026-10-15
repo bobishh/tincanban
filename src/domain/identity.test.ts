@@ -1,8 +1,7 @@
+import { createActorBinding, createChangeProof } from "./transactionProofs"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import {
   bootstrapIdentity,
-  createActorBinding,
-  createChangeProof,
   verifyEnvelope,
   canonicalizeJson,
   resetIdentityStorageForTest,

@@ -1,4 +1,4 @@
-name: Deploy production
+name: Deploy compatible production cohort
 
 on:
   workflow_run:
@@ -6,7 +6,6 @@ on:
     types: [completed]
     branches: [main]
 
-# Verify may cancel superseded builds; production mutations never cancel each other.
 concurrency:
   group: tincanban-production
   cancel-in-progress: false
@@ -14,6 +13,7 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  packages: write
 
 jobs:
   deploy:
@@ -23,110 +23,130 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+      VERIFIED_RUN_ID: ${{ github.event.workflow_run.id }}
+      VERIFIED_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      RUSTY_DEPLOY_SPEC: ${{ vars.RUSTY_DEPLOY_SPEC }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      DOCKER_REGISTRY_USERNAME: ${{ github.repository_owner }}
+      RUSTY_TRUSTED_OWNER: ${{ secrets.RUSTY_TRUSTED_OWNER }}
+      RUSTY_TELEMETRY_TOKEN: ${{ secrets.RUSTY_TELEMETRY_TOKEN }}
+      CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
-      - name: Require client compatible with production blind Rusty
-        run: |
-          if [ ! -f src/sync/blindClient.ts ] || [ ! -f src/components/RustyPanel.vue ]; then
-            echo "::error::Production uses blind Rusty. Commit the compatible client before deploying main."
-            exit 1
-          fi
+      - name: Fetch the exact existing Rusty config from Tangled
+        run: node scripts/fetch-rusty-deploy-config.mjs
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.7
+      - name: Install the pinned Kamal release tool
+        run: gem install kamal --version 2.10.1 --no-document
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: workers/frontend/package-lock.json
       - run: npm ci --prefix workers/frontend
+      - name: Select the exact successful Rusty image run
+        id: rusty
+        run: |
+          revision=$(node scripts/release-coordinator.mjs rusty-revision)
+          selected=$(gh api --method GET repos/bobishh/rusty/actions/workflows/ci.yml/runs -f head_sha="$revision" -f status=success -f event=push -f branch=main -f per_page=20 --jq '.workflow_runs[] | select(.head_repository.full_name == "bobishh/rusty" and .head_sha == "'"$revision"'") | "\(.id) \(.run_attempt)"' | head -n 1)
+          read -r run_id attempt <<< "$selected"
+          test -n "$run_id"
+          test -n "$attempt"
+          gh run download "$run_id" --repo bobishh/rusty --name "rusty-release-$revision-$attempt" --dir .release/rusty
+          echo "RUSTY_RUN_ID=$run_id" >> "$GITHUB_ENV"
+          echo "RUSTY_RUN_ATTEMPT=$attempt" >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v7
         with:
-          name: tincanban-frontend-${{ github.event.workflow_run.head_sha }}
-          path: dist/
+          name: tincanban-frontend-cohort-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          path: .release/frontend/
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
-      - name: Verify artifact and keep previous release chunks
-        env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: node workers/frontend/release.mjs retain "$RELEASE_SHA"
-      - name: Deploy current main only
-        id: publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          current=$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)
-          if [ "$current" != "$RELEASE_SHA" ]; then
-            echo "Superseded by $current; skipping deployment."
-            echo "deployed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          test -n "$CLOUDFLARE_API_TOKEN"
-          upload_output=$(mktemp)
-          WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/frontend/node_modules/.bin/wrangler versions upload --config workers/frontend/wrangler.jsonc --tag "$RELEASE_SHA" --var "RELEASE_SHA:$RELEASE_SHA"
-          version_id=$(node workers/frontend/release.mjs uploaded-version "$upload_output")
-          workers/frontend/node_modules/.bin/wrangler versions deploy --config workers/frontend/wrangler.jsonc "$version_id@100" --yes
-          echo "deployed=true" >> "$GITHUB_OUTPUT"
-      - name: Verify production serves this commit
-        if: steps.publish.outputs.deployed == 'true'
-        env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: node workers/frontend/release.mjs smoke "$RELEASE_SHA"
-
-  automation:
-    name: Deploy automation Worker
-    needs: deploy
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.head_repository.full_name == github.repository
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          submodules: recursive
-          persist-credentials: false
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - name: Install locked Worker dependencies
+          name: tincanban-automation-cohort-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          path: .release/automation/
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Seal the compatible cohort and protected reader floors
+        run: node scripts/release-coordinator.mjs prepare .release "$RELEASE_SHA"
+      - name: Require successful verification of the exact shared SDK
+        shell: bash
         run: |
-          npm install --global pnpm@11.25.0
-          pnpm --dir workers/automation install --frozen-lockfile
-      - name: Deploy verified current main
-        id: publish
+          set -euo pipefail
+          sdk_sha=$(node -p "JSON.parse(require('fs').readFileSync('.release/cohort.json', 'utf8')).components.frontend.sdkSha")
+          [[ "$sdk_sha" =~ ^[a-f0-9]{40}$ ]]
+          sdk_run=$(gh api --method GET repos/bobishh/meta-mesh/actions/workflows/ci.yml/runs -f head_sha="$sdk_sha" -f status=success -f event=push -f branch=main -f per_page=20 --jq '.workflow_runs[] | select(.head_repository.full_name == "bobishh/meta-mesh" and .head_sha == "'"$sdk_sha"'") | .id' | head -n 1)
+          [[ "$sdk_run" =~ ^[0-9]+$ ]]
+          SDK_SHA="$sdk_sha" SDK_RUN="$sdk_run" node -e "require('fs').writeFileSync('.release/sdk-verification.json', JSON.stringify({repository:'bobishh/meta-mesh',sourceSha:process.env.SDK_SHA,runId:process.env.SDK_RUN}) + '\\n')"
+          printf 'Verified SDK %s in run %s\n' "$sdk_sha" "$sdk_run"
+      - name: Prepare the existing Rusty host transport
         env:
-          GH_TOKEN: ${{ github.token }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
-          REPOSITORY: ${{ github.repository }}
+          RUSTY_DEPLOY_SSH_KEY: ${{ secrets.RUSTY_DEPLOY_SSH_KEY }}
+          RUSTY_DEPLOY_KNOWN_HOSTS: ${{ secrets.RUSTY_DEPLOY_KNOWN_HOSTS }}
         run: |
-          current=$(gh api "repos/$REPOSITORY/git/ref/heads/main" --jq .object.sha)
-          if [ "$current" != "$RELEASE_SHA" ]; then
-            echo "Superseded by $current; skipping deployment."
-            echo "deployed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          test -n "$RUSTY_DEPLOY_SSH_KEY"
+          test -n "$RUSTY_DEPLOY_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$RUSTY_DEPLOY_SSH_KEY" > "$RUNNER_TEMP/rusty-deploy-key"
+          chmod 600 "$RUNNER_TEMP/rusty-deploy-key"
+          printf '%s\n' "$RUSTY_DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          echo "RUSTY_SSH_KEY_FILE=$RUNNER_TEMP/rusty-deploy-key" >> "$GITHUB_ENV"
+      - name: Prepare private Rusty runtime secrets for Kamal
+        env:
+          DEPLOY_CONFIG_DIR: .release-config/hetzner_playground
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$RUSTY_TRUSTED_OWNER"
+          test -n "$RUSTY_TELEMETRY_TOKEN"
+          test -n "$CLICKHOUSE_PASSWORD"
+          case "$RUSTY_TELEMETRY_TOKEN$CLICKHOUSE_PASSWORD" in *$'\n'*|*$'\r'*) exit 1;; esac
+          install -m 700 -d "$DEPLOY_CONFIG_DIR/.kamal"
+          umask 077
+          printf 'RUSTY_TELEMETRY_TOKEN=%s\nCLICKHOUSE_PASSWORD=%s\n' "$RUSTY_TELEMETRY_TOKEN" "$CLICKHOUSE_PASSWORD" > "$DEPLOY_CONFIG_DIR/.kamal/secrets"
+          chmod 600 "$DEPLOY_CONFIG_DIR/.kamal/secrets"
+      - name: Stage immutable Worker versions without rebuilding
+        run: |
           test -n "$CLOUDFLARE_API_TOKEN"
-          upload_output=$(mktemp)
-          WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/automation/node_modules/.bin/wrangler versions upload --config workers/automation/wrangler.jsonc --tag "$RELEASE_SHA" --keep-vars
-          version_id=$(node workers/frontend/release.mjs uploaded-version "$upload_output")
-          workers/automation/node_modules/.bin/wrangler versions deploy --config workers/automation/wrangler.jsonc "$version_id@100" --yes --durable-objects-code-update-mode immediate
-          echo "deployed=true" >> "$GITHUB_OUTPUT"
-      - name: Verify production automation is ready
-        if: steps.publish.outputs.deployed == 'true'
+          for component in automation frontend; do
+            upload_output="$RUNNER_TEMP/$component-upload.jsonl"
+            WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/frontend/node_modules/.bin/wrangler versions upload --config ".release/deploy/$component.json" --no-bundle --keep-vars --tag "$RELEASE_SHA"
+            node scripts/release-coordinator.mjs record-version .release "$component" "$upload_output"
+          done
+      - uses: actions/upload-artifact@v6
+        with:
+          name: cohort-staged-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require current main before any production activation
         run: |
-          curl --fail --silent --show-error --retry 5 --retry-delay 2 https://automation.meta-uber-engineer.dev/health | node --input-type=module -e '
-            let body = "";
-            for await (const chunk of process.stdin) body += chunk;
-            if (JSON.parse(body).status !== "ready") throw new Error("Automation health check failed");
-          '
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          test "$current" = "$RELEASE_SHA"
+      - name: Activate and confirm exact native image first
+        run: node scripts/release-coordinator.mjs activate .release rusty
+      - name: Activate and confirm exact automation version
+        run: node scripts/release-coordinator.mjs activate .release automation
+      - name: Activate frontend only after compatible servers confirm
+        run: node scripts/release-coordinator.mjs activate .release frontend
+      - name: Verify the whole active cohort and actual frontend bytes
+        run: node scripts/release-coordinator.mjs complete .release
+      - name: Preserve activation or interrupted-recovery evidence
+        uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: cohort-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14

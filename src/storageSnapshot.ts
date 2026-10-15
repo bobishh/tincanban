@@ -1,12 +1,13 @@
 import type { Heads } from "./domain/model"
 import { fromBase64Url } from "./domain/identity"
-import type { StoredCausalEvidence } from "./storageJournal"
+import type { StoredWorkspaceSnapshot, StoredCausalEvidence } from "./storageJournal"
 
 export type StoredSnapshot = {
   workspaceId: string
   heads: Heads
   bytes: Uint8Array
   causalEvidence?: StoredCausalEvidence
+  receivedHistory?: StoredWorkspaceSnapshot["receivedHistory"]
   savedAt: string
 }
 

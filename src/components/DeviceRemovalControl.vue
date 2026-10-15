@@ -53,10 +53,10 @@ async function confirmDeviceRemoval() {
   </div>
 </template>
 <style scoped>
-h2 { margin: 0 0 16px; }
-label { display: block; margin: 12px 0; }
-p { margin: 12px 0; line-height: 1.5; }
-ul { margin: 12px 0; padding-left: 20px; }
-.button { margin: 4px 8px 4px 0; }
+h2 { margin: 0 0 var(--space-4); }
+label { display: block; margin: var(--space-3) 0; }
+p { margin: var(--space-3) 0; line-height: 1.5; }
+ul { margin: var(--space-3) 0; padding-left: var(--space-4); }
+.button { margin: var(--space-1) var(--space-2) var(--space-1) 0; }
 [role="alert"] { color: var(--accent); }
 </style>

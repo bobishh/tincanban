@@ -1,4 +1,6 @@
+import { createActorBinding } from "./transactionProofs"
 import { describe, expect, it, beforeEach } from "vitest"
+import { deleteLocal, readLocal, writeLocal } from "../localDb"
 import {
   canonicalizeJson,
   signEnvelope,
@@ -6,7 +8,6 @@ import {
   bootstrapIdentity,
   resetIdentityStorageForTest,
   sha256Base64Url,
-  createActorBinding,
 } from "./identity"
 import {
   validateCertificateChain,
@@ -25,6 +26,21 @@ describe("Cryptographic proofs, authority, and certificate chains (Requirement 2
     resetIdentityStorageForTest()
   })
 
+  it("Given malformed or newer durable proof evidence, when adding a certificate, then reject without replacing recovery data", async () => {
+    const key = "tincanban.v1.proof_store"
+    await deleteLocal(key)
+    try {
+      const profile = await bootstrapIdentity("Owner")
+      const store = new ProofStore()
+      await store.listCertificates()
+      for (const raw of ["{broken", JSON.stringify({ certificates: [] }), JSON.stringify({ futureEvidence: { retained: true } })]) {
+        await writeLocal(key, raw)
+        await expect(store.putCertificate("new", profile.certificate)).rejects.toThrow(/proof|evidence|upgrade/i)
+        expect(await readLocal(key)).toBe(raw)
+      }
+    } finally { await deleteLocal(key) }
+  })
+
   it("Given grants for two workspaces, when one leaves the mesh, then only that workspace grants are removed", async () => {
     const owner = await bootstrapIdentity("Owner")
     const store = new ProofStore()
@@ -37,6 +53,81 @@ describe("Cryptographic proofs, authority, and certificate chains (Requirement 2
 
     expect(await store.listGrants("ws_alpha")).toEqual([])
     expect(await store.listGrants("ws_beta")).toEqual([beta])
+  })
+
+  it("Given two proof-store instances loaded from one base, when each adds certificates and grants, then retain every durable record", async () => {
+    const key = "tincanban.v1.proof_store"
+    await deleteLocal(key)
+    try {
+      const alpha = await bootstrapIdentity("Alpha")
+      resetIdentityStorageForTest()
+      const beta = await bootstrapIdentity("Beta")
+      const first = new ProofStore()
+      const second = new ProofStore()
+      await Promise.all([first.listCertificates(), second.listCertificates(), first.listGrants(), second.listGrants()])
+      const alphaGrant = await createWorkspaceGrant(alpha, "workspace-alpha", "member-alpha", "editor")
+      const betaGrant = await createWorkspaceGrant(beta, "workspace-beta", "member-beta", "visitor")
+
+      await first.putCertificate("alpha-cert", alpha.certificate)
+      await second.putCertificate("beta-cert", beta.certificate)
+      await first.putGrant(alphaGrant.payload.grantId, alphaGrant)
+      await second.putGrant(betaGrant.payload.grantId, betaGrant)
+
+      const reopened = new ProofStore()
+      expect((await reopened.listCertificates()).map(value => value.payload.deviceId).sort())
+        .toEqual([alpha.certificate.payload.deviceId, beta.certificate.payload.deviceId].sort())
+      expect((await reopened.listGrants()).map(value => value.payload.grantId).sort())
+        .toEqual([alphaGrant.payload.grantId, betaGrant.payload.grantId].sort())
+    } finally { await deleteLocal(key) }
+  })
+
+  it("Given retained signed records, when callers mutate inputs or getter results and another save occurs, then preserve stored evidence", async () => {
+    const key = "tincanban.v1.proof_store"
+    await deleteLocal(key)
+    try {
+      const profile = await bootstrapIdentity("Owner")
+      const store = new ProofStore()
+      const originalCertificate = structuredClone(profile.certificate)
+      const certificateInput = structuredClone(originalCertificate)
+      await store.putCertificate("owner-cert", certificateInput)
+      certificateInput.payload.deviceId = "mutated-input"
+      const certificateRead = await store.getCertificate("owner-cert")
+      certificateRead!.payload.deviceId = "mutated-read"
+
+      const originalGrant = await createWorkspaceGrant(profile, "workspace", "member", "editor")
+      const grantInput = structuredClone(originalGrant)
+      await store.putGrant(originalGrant.payload.grantId, grantInput)
+      grantInput.payload.workspaceId = "mutated-input"
+      const grantRead = await store.getGrant(originalGrant.payload.grantId)
+      grantRead!.payload.workspaceId = "mutated-read"
+
+      await store.putGenesis("workspace", await createWorkspaceGenesis(profile, "workspace", []))
+      const reopened = new ProofStore()
+      expect(await reopened.getCertificate("owner-cert")).toEqual(originalCertificate)
+      expect(await reopened.getGrant(originalGrant.payload.grantId)).toEqual(originalGrant)
+    } finally { await deleteLocal(key) }
+  })
+
+  it("Given a stale proof-store snapshot, when another instance removes workspace grants, then unrelated writes cannot resurrect them", async () => {
+    const key = "tincanban.v1.proof_store"
+    await deleteLocal(key)
+    try {
+      const profile = await bootstrapIdentity("Owner")
+      const remover = new ProofStore()
+      const removed = await createWorkspaceGrant(profile, "removed-workspace", "member-a", "editor")
+      const retained = await createWorkspaceGrant(profile, "retained-workspace", "member-b", "visitor")
+      await remover.putGrant(removed.payload.grantId, removed)
+      await remover.putGrant(retained.payload.grantId, retained)
+
+      const stale = new ProofStore()
+      await stale.listGrants()
+      await remover.removeWorkspaceGrants("removed-workspace")
+      await stale.putCertificate("owner-cert", profile.certificate)
+
+      const reopened = new ProofStore()
+      expect(await reopened.listGrants("removed-workspace")).toEqual([])
+      expect(await reopened.listGrants("retained-workspace")).toEqual([retained])
+    } finally { await deleteLocal(key) }
   })
 
   it("canonicalizes JSON according to RFC 8785 and rejects non-finite numbers", () => {

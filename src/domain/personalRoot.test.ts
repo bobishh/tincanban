@@ -71,6 +71,18 @@ describe("Personal Root Document and Catalog (Requirement 2.1)", () => {
     expect(root.devices["dev_laptop"].displayName).toBe("Alice's Laptop")
   })
 
+  it("Given a verified enrollment request, when registering its device, then exclude request-only fields from the personal catalog", async () => {
+    const profile = await bootstrapIdentity("Alice")
+    const root = createPersonalRoot(profile, "initial-certificate")
+    const request = { kind: "device-enrollment-request", version: 2, invitationId: "invitation",
+      deviceId: "new-device", publicKey: "new-public-key", displayName: "Phone",
+      certificateHash: "new-certificate", addedAt: "2026-10-15T15:00:00.000Z" }
+    registerDeviceInRoot(root, request)
+    expect(root.devices[request.deviceId]).toEqual({ deviceId: request.deviceId, publicKey: request.publicKey,
+      displayName: request.displayName, certificateHash: request.certificateHash, addedAt: request.addedAt })
+    expect(request.invitationId).toBe("invitation")
+  })
+
   it("reconciles uncatalogued stored workspaces idempotently after interruption", async () => {
     const profile = await bootstrapIdentity("Alice")
     const root = createPersonalRoot(profile, "cert_hash_1")

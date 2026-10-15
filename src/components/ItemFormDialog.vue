@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import ModalLayer from "./ModalLayer.vue"
-import { computed, reactive, ref } from "vue"
+import { computed, defineAsyncComponent, reactive, ref, type Component } from "vue"
 import { useDelayedFlag } from "../ui/useDelayedFlag"
 import type { Column, FieldDefinition, FieldValue, Item } from "../domain/model"
 import { validateFieldValue } from "../domain/fields"
 import type { NarrativeFoldSources } from "../domain/commandTypes"
 
+const ItemEditWindow = defineAsyncComponent<Component>(() => import("./SpatialWindow.vue"))
 const props = defineProps<{
+  workspaceId?: string
   parentId: string
   entityName?: string
   fields: FieldDefinition[]
@@ -42,6 +44,11 @@ for (const field of props.fields) {
 }
 const localError = ref("")
 const showSaving = useDelayedFlag(() => Boolean(props.saving))
+const surfaceProps = computed(() => props.item ? {
+  windowId: `item-edit:${props.item.id}`, workspaceId: props.workspaceId ?? "local",
+  title: `Edit ${props.entityName || 'item'}`, ariaLabel: "Edit item", closeLabel: "Dismiss",
+  initialWidth: 720, initialHeight: 700, busy: props.saving, class: "item-editor-window",
+} : { busy: props.saving, protectDraft: true, class: "overlay overlay-level-120" })
 
 // Materialize schema metadata once per schema change. Draft keystrokes must not
 // repeatedly traverse Automerge proxies or rebuild every select's options.
@@ -105,17 +112,18 @@ function handleSave() {
 </script>
 
 <template>
-  <ModalLayer :busy="saving" protect-draft class="overlay overlay-level-120" @close="emit('cancel')">
-    <section class="dialog" role="dialog" aria-modal="true" :aria-label="item ? 'Edit item' : showCoreFields !== false ? 'Item details' : 'Add item'">
-      <form novalidate :aria-busy="saving" @submit.prevent="handleSave">
-        <div class="dialog-head">
+  <component :is="item ? ItemEditWindow : ModalLayer" v-bind="surfaceProps" @close="emit('cancel')">
+    <section :class="item ? 'item-edit-content' : 'dialog'" :role="item ? undefined : 'dialog'" :aria-modal="item ? undefined : true" :aria-label="item ? undefined : showCoreFields !== false ? 'Item details' : 'Add item'">
+      <form class="item-form" novalidate :aria-busy="saving" @submit.prevent="handleSave">
+        <div v-if="!item" class="dialog-head">
           <div>
             <h2>{{ item ? `Edit ${entityName || 'item'}` : showCoreFields !== false ? `${entityName || 'Item'} details` : `Add ${entityName || 'item'}` }}</h2>
           </div>
           <button class="icon-button" type="button" aria-label="Dismiss" :disabled="saving" @click="emit('cancel')">×</button>
         </div>
 
-        <fieldset class="form-grid form-grid-spaced" :disabled="saving">
+        <div class="item-form-content">
+        <fieldset class="form-grid" :disabled="saving">
           <label v-if="showCoreFields !== false" class="wide">
             <span>Title *</span>
             <input v-model="title" autofocus required placeholder="Item title" />
@@ -188,7 +196,8 @@ function handleSave() {
             </label>
           </template>
         </fieldset>
-
+        </div>
+        <footer class="item-form-footer">
         <p v-if="localError || errorMessage" role="alert" class="form-error form-error-spaced">
           {{ localError || errorMessage }}
         </p>
@@ -197,7 +206,23 @@ function handleSave() {
           <button class="button button-quiet" type="button" :disabled="saving" @click="emit('cancel')">Cancel</button>
           <button class="button button-primary" type="submit" :disabled="saving">{{ showSaving ? 'Saving…' : errorMessage ? 'Retry save' : item ? 'Save changes' : showCoreFields !== false ? 'Save item' : 'Create item' }}</button>
         </div>
+        </footer>
       </form>
     </section>
-  </ModalLayer>
+  </component>
 </template>
+
+<style scoped>
+.item-form { display: grid; gap: var(--section-gap); min-width: 0; }
+.item-form-content { min-width: 0; }
+.item-form-footer { display: grid; gap: var(--field-gap); }
+.item-form-footer .dialog-actions { margin: 0; }
+.item-edit-content { height: 100%; min-height: 0; padding: var(--surface-padding); }
+.item-edit-content .item-form { height: 100%; grid-template-rows: minmax(0, 1fr) auto; gap: var(--space-4); }
+.item-edit-content .item-form-content { overflow: auto; padding: var(--focus-room); scrollbar-gutter: stable; }
+.item-edit-content .item-form-footer { padding: var(--focus-room) var(--focus-room) var(--space-4); border-top: 1px solid var(--soft); }
+@media (max-width: 600px) { .item-edit-content { padding: var(--space-2); } }
+</style>
+<style>
+.item-editor-window .spatial-body { overflow: hidden; }
+</style>

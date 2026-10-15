@@ -1,7 +1,9 @@
-import { defaultProofStore } from "../domain/proofs"
-import { automationBodyHash, createAutomationOwnerRequest, verifyAutomationObservation } from "../domain/automationProtocol"
+import { requestWorkerJson } from "./workerJsonResponse"
+import { automationBodyHash, createAutomationOwnerRequest as createVerifiedOwnerRequest, verifyAutomationObservation,
+  type AutomationOwnerRequestInput } from "../domain/automationProtocol"
+import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { isAutomationOrigin } from "../domain/automationLifecycle"
-import { automationTypes } from "../domain/automationContract"
+import { automationTypes, type AutomationDefinition } from "../domain/automationContract"
 import type { LocalProfile } from "../domain/identity"
 import type { AutomationWorkerIdentity } from "./automation"
 
@@ -11,55 +13,49 @@ export function automationOrigin(address: string): string {
   return origin
 }
 
-async function requestJson(origin: string, path: string, body?: unknown, method = "POST"): Promise<unknown> {
-  const response = await fetch(`${origin}${path}`, { method, mode: "cors", credentials: "omit", redirect: "error",
-    signal: AbortSignal.timeout(15_000), ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }) })
-  // Responses contain public identity and small receipts, never the activation document.
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error("Worker returned an empty response")
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 64 * 1024) { await reader.cancel(); throw new Error("Worker response exceeds the size limit") }
-      chunks.push(value)
-    }
-  } finally { reader.releaseLock() }
-  const bytes = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
-  let result: unknown
-  try { result = JSON.parse(new TextDecoder().decode(bytes)) }
-  catch { throw new Error("Address is not an automation Worker") }
-  if (!response.ok) throw new Error(result && typeof result === "object" && "error" in result ? String(result.error) : `Worker returned ${response.status}`)
-  return result
+async function createOwnerRequest(profile: LocalProfile, input: AutomationOwnerRequestInput) {
+  const payload = structuredClone(input)
+  const context = await resolveLocalSigningContext(profile, "automation-owner-request", {
+    origin: payload.origin, workspaceId: payload.workspaceId, integrationId: payload.integrationId,
+    action: payload.action, personId: profile.identity.personId,
+  }, { expiresAt: Date.now() + 60_000 })
+  return createVerifiedOwnerRequest(context, payload)
 }
 
-export async function enrollAutomation(profile: LocalProfile, origin: string, workspaceId: string, integrationId: string): Promise<AutomationWorkerIdentity> {
+async function requestJson(origin: string, path: string, body?: unknown, method: "GET" | "POST" | "PUT" = "POST"): Promise<unknown> {
+  return requestWorkerJson(origin, path, method, 64 * 1024, body, "Address is not an automation Worker")
+}
+
+export async function enrollAutomation(profile: LocalProfile, origin: string, workspaceId: string, integrationId: string,
+  requiredType: Pick<AutomationDefinition, "type" | "typeVersion"> = { type: "job-intake", typeVersion: 1 }): Promise<AutomationWorkerIdentity> {
+  profile = structuredClone(profile)
+  requiredType = { ...requiredType }
   const capabilities = await requestJson(origin, "/v2/capabilities", undefined, "GET") as { version?: unknown; origin?: unknown; enrollment?: unknown; types?: Array<{ type: string; version: number }> }
   if (capabilities.version !== 2 || capabilities.origin !== origin || !capabilities.enrollment ||
-    !capabilities.types?.some(value => value.type === automationTypes[0].type && value.version === automationTypes[0].version)) {
+    !automationTypes.some(value => value.type === requiredType.type && value.version === requiredType.typeVersion) ||
+    !capabilities.types?.some(value => value.type === requiredType.type && value.version === requiredType.typeVersion)) {
     throw new Error("Worker does not support owner enrollment for this automation type")
   }
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "enroll", origin, workspaceId, integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
+  const ownerRequest = await createOwnerRequest(profile, { action: "enroll", origin, workspaceId, integrationId, bodyHash: null })
   const identity = await requestJson(origin, `/v2/integrations/${integrationId}/identity`, { ownerRequest }) as AutomationWorkerIdentity
   if (identity.origin !== origin || identity.integrationId !== integrationId) throw new Error("Worker identity belongs to another origin or instance")
   return identity
 }
 
 export async function activateAutomation(profile: LocalProfile, identity: AutomationWorkerIdentity, workspaceId: string, packet: unknown): Promise<void> {
+  profile = structuredClone(profile)
+  identity = structuredClone(identity)
+  packet = structuredClone(packet)
   if (!identity.integrationId) throw new Error("Worker instance is missing")
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "activate", origin: identity.origin, workspaceId,
-    integrationId: identity.integrationId, bodyHash: await automationBodyHash(packet) }, await defaultProofStore.listCertificates())
+  const ownerRequest = await createOwnerRequest(profile, { action: "activate", origin: identity.origin, workspaceId,
+    integrationId: identity.integrationId, bodyHash: await automationBodyHash(packet) })
   await requestJson(identity.origin, `/v2/integrations/${identity.integrationId}/activation`, { ownerRequest, packet }, "PUT")
 }
 
 export async function observeAutomation(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string; personId: string; grantId: string }) {
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "observe", origin: input.origin,
-    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
+  input = { ...input }
+  const ownerRequest = await createOwnerRequest(profile, { action: "observe", origin: input.origin,
+    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null })
   const receipt = await requestJson(input.origin, `/v2/integrations/${input.integrationId}/observation`, { ownerRequest })
   return verifyAutomationObservation(receipt, { ...input, nonce: ownerRequest.signed.payload.nonce })
 }
@@ -71,13 +67,16 @@ export type AutomationEmailSetup = {
 }
 
 export async function readAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }): Promise<AutomationEmailSetup> {
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "email", origin: input.origin,
-    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null }, await defaultProofStore.listCertificates())
+  input = { ...input }
+  const ownerRequest = await createOwnerRequest(profile, { action: "email", origin: input.origin,
+    workspaceId: input.workspaceId, integrationId: input.integrationId, bodyHash: null })
   return await requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ownerRequest }) as AutomationEmailSetup
 }
 
 export async function retryAutomationEmail(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string }, eventId: string) {
+  profile = structuredClone(profile)
+  input = { ...input }
   const body = { retryEventId: eventId }
-  const ownerRequest = await createAutomationOwnerRequest(profile, { action: "email", ...input, bodyHash: await automationBodyHash(body) }, await defaultProofStore.listCertificates())
+  const ownerRequest = await createOwnerRequest(profile, { action: "email", ...input, bodyHash: await automationBodyHash(body) })
   return requestJson(input.origin, `/v2/integrations/${input.integrationId}/email`, { ...body, ownerRequest })
 }

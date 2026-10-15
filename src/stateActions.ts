@@ -1,5 +1,5 @@
 import * as Automerge from "@automerge/automerge/slim";
-import { bootstrapIdentity } from "./domain/identity";
+import { refreshIdentityPresentation } from "./domain/identity";
 import { commitAndPersist, dismissCausalChange, reconcile, restoreCausalChange, reviewCausalChange, whenReady } from "./statePersistence";
 import { stateRuntime } from "./stateContext";
 import { createStateDerived } from "./stateDerived";
@@ -49,6 +49,6 @@ export function createTincanbanActions() {
 }
 
 async function refreshIdentity(): Promise<void> {
-  stateRuntime.currentProfile = await bootstrapIdentity();
+  stateRuntime.currentProfile = await refreshIdentityPresentation();
   stateRuntime.docVersion.value += 1;
 }

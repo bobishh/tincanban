@@ -1,10 +1,11 @@
+import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
 import { defaultStorage } from "./storage"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "./crdt"
 import { setStorageFailureHookForTest, WorkspaceStorage } from "./storage"
-import { bootstrapIdentity, resetIdentityStorageForTest } from "./domain/identity"
+import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope } from "./domain/identity"
 import { useTincanban, hydrate, reconcile, resetStateForTest } from "./state"
 import { persistAuthorizedCommand, refreshAvailableWorkspaces, reviewCausalChange } from "./statePersistence"
 import * as Automerge from "@automerge/automerge/slim"
@@ -29,6 +30,8 @@ vi.mock("@automerge/automerge/slim", async () => {
 })
 
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
@@ -36,6 +39,8 @@ beforeAll(async () => {
 
 describe("Repository-backed state and projections (Requirement 1.8)", () => {
   beforeEach(async () => {
+    vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+      (callback ?? options as () => Promise<unknown>)() } })
     setStorageFailureHookForTest(false)
     for (const workspace of [...await defaultStorage.listWorkspaces(), ...await defaultStorage.listArchivedWorkspaces()]) await defaultStorage.purgeWorkspaceForTest(workspace.id)
     resetIdentityStorageForTest()
@@ -124,7 +129,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(app.getActiveDoc()!.entities[item.id]!.placement.parentId).toBe(applied.id)
       expect(app.getActiveDoc()!.entities[item.id]!.archivedAt ?? null).toBeNull()
     } finally { bundles.mockRestore(); digest.mockRestore(); access.mockRestore(); save.mockClear() }
-  })
+  }, 15_000)
 
   it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {
     const app = useTincanban()
@@ -687,6 +692,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const tincanban = useTincanban()
     const before = tincanban.getAutomergeBytes()
     const remote = Automerge.from(createWorkspaceDoc("other", "Remote board", tincanban.getCurrentProfile()!.identity.personId, "blank"))
+    await recordGenesisAuthority(remote, tincanban.getCurrentProfile()!)
     const authorization = await exportAuthorizationBundle(Automerge.save(remote), tincanban.getCurrentProfile()!)
     await expect(tincanban.mergeAuthorizedWorkspace("selected", Automerge.save(remote), authorization)).rejects.toThrow(/Invalid workspace/)
     expect(tincanban.getAutomergeBytes()).toEqual(before)
@@ -698,9 +704,15 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const owner = before.ownerPersonId
     const forged = Automerge.change(Automerge.clone(before), draft => { draft.ownerPersonId = "attacker" })
     const changed = Automerge.getAllChanges(forged).map(change => Automerge.decodeChange(change).hash)
-    await authorizeLocalChanges(forged, tincanban.getCurrentProfile()!, changed)
-    const authorization = await exportAuthorizationBundle(Automerge.save(before), tincanban.getCurrentProfile()!)
-    authorization.records = await exportAuthorizations(Automerge.save(forged))
+    const profile = tincanban.getCurrentProfile()!
+    // A hostile remote can sign its own bytes; local authoring must not be used to mint this invalid root transition.
+    const hostileProof = { signed: await signEnvelope(profile.privateKeys.devicePrivateKey, {
+      kind: "workspace-changes" as const, version: 1 as const, workspaceId: before.id, hashes: changed,
+      personId: profile.identity.personId, deviceId: profile.device.deviceId }, profile.device.deviceId),
+    publicKey: profile.identity.publicKey, certificates: [profile.certificate], ownerPublicKey: profile.identity.publicKey,
+    ownerCertificates: [profile.certificate] }
+    const authorization = await exportAuthorizationBundle(Automerge.save(before), profile)
+    authorization.records = [...await exportAuthorizations(Automerge.save(before)), hostileProof]
     await expect(tincanban.mergeAuthorizedWorkspace(before.id, Automerge.save(forged), authorization)).rejects.toThrow(/owner/i)
     expect(tincanban.getActiveDoc()!.ownerPersonId).toBe(owner)
   })

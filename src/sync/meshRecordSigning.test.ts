@@ -1,0 +1,89 @@
+import { beforeEach, expect, it } from "vitest"
+import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, verifyEnvelope } from "../domain/identity"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
+import { createPeerAdvertisement, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceSuccessionPolicy, createWorkspaceSuccessionVote } from "./meshRecords"
+import { meshRecordSigning, workspaceRecordSigning } from "./meshRecordSigning"
+import type { WorkspaceMeshCredential } from "./peerStore"
+
+beforeEach(() => resetIdentityStorageForTest())
+
+it("Given a visitor's valid membership, when leaving, then permit the participant signer without owner rights", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  resetIdentityStorageForTest()
+  const visitor = await bootstrapIdentity("Visitor")
+  const grant = await createWorkspaceGrant(owner, "workspace", visitor.identity.personId, "visitor")
+  const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1,
+    transportSecret: "secret", updatedAt: new Date().toISOString(), localGrant: grant }
+  const signing = await meshRecordSigning(visitor, credential, { kind: "departure" }, {
+    getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null, listPeers: async () => [] })
+  const record = await createWorkspaceDeparture(visitor, "workspace", 1, ["head"], [], signing)
+  expect(record.authority.certificates).toEqual([visitor.certificate])
+  expect(await verifyEnvelope(record.record, visitor.device.publicKey)).toBe(true)
+})
+
+it("Given a prepared participant signer, when its stored grant changes, then refuse the original action", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  let revision = "approved"
+  const signing = await workspaceRecordSigning(owner, "workspace", async () => revision, ["workspace-departure"])
+  revision = "removed"
+  await expect(signing.sign({ kind: "workspace-departure", workspaceId: "workspace" })).rejects.toThrow(/changed|stale/i)
+})
+
+it("Given an identity-only advertisement signer, when asked to sign an owner action or another scope, then refuse", async () => {
+  const profile = await bootstrapIdentity("Joining device")
+  const signing = await workspaceRecordSigning(profile, "workspace", async () => "unjoined-route", ["peer-advertisement"])
+  await expect(signing.sign({ kind: "workspace-revocation", workspaceId: "workspace" })).rejects.toThrow(/purpose/i)
+  await expect(signing.sign({ kind: "peer-advertisement", workspaceId: "another" })).rejects.toThrow(/scope/i)
+})
+
+it("Given an enrolled device, when issuing a route, then require its ancestor and bundle the complete unchanged chain", async () => {
+  const issuer = await bootstrapIdentity("Issuer")
+  resetIdentityStorageForTest()
+  const temporary = await bootstrapIdentity("New device")
+  const certificate = await createDelegatedCertificate(issuer.privateKeys.devicePrivateKey, issuer.device.deviceId,
+    issuer.identity.personId, temporary.device.deviceId, temporary.device.publicKey, await certHashDefault(issuer.certificate))
+  const device = await adoptEnrolledIdentity(issuer.identity, certificate)
+  await expect(workspaceRecordSigning(device, "workspace", async () => "joining", ["peer-advertisement"]))
+    .rejects.toThrow(/ancestor|chain|certificate/i)
+  await defaultProofStore.putCertificate(await certHashDefault(issuer.certificate), issuer.certificate)
+  const signing = await workspaceRecordSigning(device, "workspace", async () => "joining", ["peer-advertisement"])
+  const route = await createPeerAdvertisement(device, "workspace", "endpoint", { signing })
+  expect(route.certificates).toEqual([certificate, issuer.certificate])
+  expect(device.certificate).toEqual(certificate)
+  expect(await verifyEnvelope(route.advertisement, temporary.device.publicKey)).toBe(true)
+})
+
+it("Given an editor in the current voting policy, when voting, then retain editor authority and full signer evidence", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  resetIdentityStorageForTest()
+  const editor = await bootstrapIdentity("Editor")
+  const grant = await createWorkspaceGrant(owner, "workspace", editor.identity.personId, "editor")
+  const policy = await createWorkspaceSuccessionPolicy(owner, "workspace", null, [editor.identity.personId, "candidate"].sort(), 1)
+  const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1, transportSecret: "secret",
+    updatedAt: new Date().toISOString(), localGrant: grant, catalog: { successionPolicy: policy, successionVotes: [] } }
+  const signing = await meshRecordSigning(editor, credential, { kind: "vote", candidatePersonId: "candidate" }, {
+    getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null, listPeers: async () => [] })
+  const vote = await createWorkspaceSuccessionVote(editor, policy, "candidate", grant, new Date().toISOString(), [], signing)
+  expect(vote.voterCertificates).toEqual([editor.certificate])
+  expect(await verifyEnvelope(vote.signed, editor.device.publicKey)).toBe(true)
+})
+
+it("Given an editor removing another device of the same person, when signing, then preserve that right and refuse a different target", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  resetIdentityStorageForTest()
+  const editor = await bootstrapIdentity("Editor")
+  const grant = await createWorkspaceGrant(owner, "workspace", editor.identity.personId, "editor")
+  const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1, transportSecret: "secret",
+    updatedAt: new Date().toISOString(), localGrant: grant }
+  const signing = await meshRecordSigning(editor, credential, { kind: "device-revocation", personId: editor.identity.personId,
+    deviceId: "other-device" }, { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null,
+    listPeers: async () => [{ workspaceId: "workspace", deviceId: "other-device", personId: editor.identity.personId,
+      endpoint: "endpoint", transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString() }] })
+  const removed = await createWorkspaceDeviceRevocation(editor, "workspace", editor.identity.personId, "other-device", ["head"], [], signing)
+  expect(await verifyEnvelope(removed.record, editor.device.publicKey)).toBe(true)
+  await expect(createWorkspaceDeviceRevocation(editor, "workspace", "another-person", "other-device", ["head"], [], signing))
+    .rejects.toThrow(/authorized target/i)
+})

@@ -1,7 +1,9 @@
 import { z } from "zod"
-import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile } from "./identity"
-import { certHashDefault, validateCertificateChain } from "./proofs"
+import { canonicalizeJson, publicKeyId, sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "./identity"
+import { validateCertificateChain } from "./proofs"
+import { signingEvidence, signWithContext, type VerifiedSigningContext } from "./signingContext"
 import type { DeviceCertificate } from "./model"
+import { publicDeviceProofFields, verifyDeviceProofSignature } from "./deviceProof"
 import { isAutomationOrigin } from "./automationLifecycle"
 
 const identifier = z.string().min(1).max(256)
@@ -20,38 +22,30 @@ const observationPayload = z.strictObject({
 })
 const proof = z.object({ publicKey: z.string().max(128), certificates: z.array(z.unknown()).min(1).max(32),
   signed: z.object({ signerKeyId: identifier, signature: z.string().max(128), payload: z.object({ kind: z.string() }).passthrough() }) })
-export type AutomationOwnerPayload = z.infer<typeof ownerPayload>
+type AutomationOwnerPayload = z.infer<typeof ownerPayload>
+export type AutomationOwnerRequestInput = Pick<AutomationOwnerPayload, "action" | "origin" | "workspaceId" | "integrationId" | "bodyHash">
 export type AutomationObservation = z.infer<typeof observationPayload>
+export type AutomationObservationProof = { publicKey: string; certificates: DeviceCertificate[]; signed: SignedEnvelope<AutomationObservation> }
+const observationProofSchema = z.strictObject({ ...publicDeviceProofFields,
+  signed: z.strictObject({ signerKeyId: identifier, signature: z.string().min(1).max(128), payload: observationPayload }) })
+
+/** Detach bounded, exact observation evidence before any asynchronous verification. */
+export function parseAutomationObservationProof(value: unknown): AutomationObservationProof {
+  const captured: unknown = structuredClone(value)
+  if (new TextEncoder().encode(canonicalizeJson(captured)).byteLength > 128 * 1024) throw new Error("Worker observation exceeds the size limit")
+  return observationProofSchema.parse(captured) as AutomationObservationProof
+}
 
 export async function automationBodyHash(value: unknown): Promise<string> {
   return sha256Base64Url(new TextEncoder().encode(canonicalizeJson(value)))
 }
 
-export async function createAutomationOwnerRequest(profile: LocalProfile,
-  input: Pick<AutomationOwnerPayload, "action" | "origin" | "workspaceId" | "integrationId" | "bodyHash">, certificatePool: readonly DeviceCertificate[] = []) {
+export async function createAutomationOwnerRequest(context: VerifiedSigningContext, input: AutomationOwnerRequestInput) {
   const now = Date.now()
   const payload = ownerPayload.parse({ ...input, kind: "automation-owner-request", version: 1,
-    personId: profile.identity.personId, nonce: crypto.randomUUID(), issuedAt: now, expiresAt: now + 60_000 })
-  const certificates = await ownerCertificateChain(profile.certificate, certificatePool)
-  return { publicKey: profile.identity.publicKey, certificates,
-    signed: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId) }
-}
-
-async function ownerCertificateChain(leaf: DeviceCertificate, pool: readonly DeviceCertificate[]): Promise<DeviceCertificate[]> {
-  const byHash = new Map(await Promise.all(pool.map(async certificate => [await certHashDefault(certificate), certificate] as const)))
-  const chain: DeviceCertificate[] = []
-  const visited = new Set<string>()
-  let current = leaf
-  for (;;) {
-    const hash = await certHashDefault(current)
-    if (visited.has(hash) || chain.length >= 32) throw new Error("Device certificate chain is invalid")
-    visited.add(hash)
-    chain.push(current)
-    if (current.payload.issuerCertificateHash === null) return chain
-    const issuer = byHash.get(current.payload.issuerCertificateHash)
-    if (!issuer) throw new Error("Device trust chain is incomplete. Reconnect this device before adding automation.")
-    current = issuer
-  }
+    personId: context.personId, nonce: crypto.randomUUID(), issuedAt: now, expiresAt: now + 60_000 })
+  const { identity, certificates } = signingEvidence(context)
+  return { publicKey: identity.publicKey, certificates, signed: await signWithContext(context, payload) }
 }
 
 export async function verifyAutomationOwnerRequest(value: unknown, origin: string, owners: readonly string[], now = Date.now()) {
@@ -76,13 +70,13 @@ async function verifyDeviceProof(envelope: z.infer<typeof proof>, personId: stri
 
 export async function verifyAutomationObservation(value: unknown,
   expected: { personId: string; origin: string; integrationId: string; workspaceId: string; grantId: string; nonce: string }, now = Date.now()) {
-  const envelope = proof.parse(value)
+  const envelope = parseAutomationObservationProof(value)
   const payload = observationPayload.parse(envelope.signed.payload)
   if (payload.origin !== expected.origin || payload.integrationId !== expected.integrationId ||
     payload.workspaceId !== expected.workspaceId || payload.grantId !== expected.grantId || payload.nonce !== expected.nonce ||
     payload.issuedAt > now + 5_000 || payload.issuedAt < now - 60_000 || new Set(payload.heads).size !== payload.heads.length) {
     throw new Error("Worker observation does not match the requested automation")
   }
-  await verifyDeviceProof(envelope, expected.personId)
+  await verifyDeviceProofSignature(envelope, expected.personId, envelope.signed.signerKeyId)
   return payload
 }

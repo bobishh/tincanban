@@ -55,6 +55,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
   const directory = await mkdtemp(join(tmpdir(), "rusty-public-board-"))
   const trustedOwner = { identity: fixture.identity, allowedControllerDeviceIds: [fixture.deviceId] }
   let child: ChildProcess | undefined
+  let releasePublicationChallenge: (() => void) | undefined
   const start = () => new Promise<void>((resolveStart, reject) => {
     child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, `127.0.0.1:${port}`], {
       env: { RUSTY_TRUSTED_OWNER: JSON.stringify(trustedOwner), RUSTY_PUBLIC_ORIGIN: origin, RUSTY_CORS_ORIGINS: baseURL! },
@@ -88,6 +89,22 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
   }
   try {
     await start()
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const syncDialog = page.getByRole("dialog", { name: "Device sync" })
+    await syncDialog.getByRole("tab", { name: "Rusty", exact: true }).click()
+    const rustyPanel = syncDialog.getByRole("region", { name: "Rusty", exact: true })
+    await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await rustyPanel.getByLabel("Address", { exact: true }).fill(origin)
+    await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(rustyPanel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const syncNow = rustyPanel.getByRole("button", { name: "Sync now", exact: true })
+    if (await syncNow.count()) {
+      await syncNow.click()
+      await expect(syncNow).toBeDisabled()
+      await expect(syncNow).toBeEnabled()
+    }
+    await syncDialog.getByRole("button", { name: "Close", exact: true }).click()
+    await page.waitForTimeout(500)
     let panel = await openPublication()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
@@ -97,8 +114,41 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("group", { name: "Confirm public board change" })).toContainText("discussion")
+    let reachPublicationChallenge!: () => void
+    let unlockPublicationChallenge!: () => void
+    let markPublicationChallengeFulfilled!: () => void
+    const publicationChallengeReached = new Promise<void>(resolveReached => { reachPublicationChallenge = resolveReached })
+    const publicationChallengeGate = new Promise<void>(resolveGate => { unlockPublicationChallenge = resolveGate })
+    const publicationChallengeFulfilled = new Promise<void>(resolveFulfilled => { markPublicationChallengeFulfilled = resolveFulfilled })
+    releasePublicationChallenge = unlockPublicationChallenge
+    let heldPublicationChallenge = false
+    await page.route(`${origin}/v1/public/challenges`, async route => {
+      const response = await route.fetch()
+      if (!heldPublicationChallenge) {
+        heldPublicationChallenge = true
+        reachPublicationChallenge()
+        await publicationChallengeGate
+      }
+      await route.fulfill({ response })
+      markPublicationChallengeFulfilled()
+    })
     await panel.getByRole("button", { name: "Confirm publication", exact: true }).click()
-    await expect(panel).toHaveAttribute("data-public-revision", "1", { timeout: 30_000 })
+    await Promise.race([publicationChallengeReached, new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Publication challenge did not start")), 15_000))])
+    const sourceVersionBeforeConcurrentEdit = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().docVersion.value)
+    const concurrentEdit = await page.evaluate(async () => {
+      const app = (await import("/src/state.ts")).useTincanban()
+      const item = Object.values(app.getActiveDoc()!.entities).find(entity => (entity as { title?: string }).title === "Public release card") as { id: string } | undefined
+      if (!item) throw new Error("Public release card disappeared during publication")
+      await app.executeCommandAsync({ kind: "patchItem", entityId: item.id, body: "Concurrent description edit" })
+      return app.docVersion.value
+    })
+    expect(concurrentEdit).toBeGreaterThan(sourceVersionBeforeConcurrentEdit)
+    unlockPublicationChallenge()
+    releasePublicationChallenge = undefined
+    await publicationChallengeFulfilled
+    await page.unroute(`${origin}/v1/public/challenges`)
+    await expect.poll(async () => await panel.getAttribute("data-public-revision"), { timeout: 30_000 }).toBe("1")
+    await expect(panel).toContainText("There are unpublished changes.")
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
@@ -107,11 +157,13 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const reader = await anonymousContext.newPage()
     await reader.goto(new URL(publicHref!, baseURL).toString())
     await expect(reader.getByRole("heading", { name: "Public release fixture" })).toBeVisible()
-    await expect(reader.getByRole("heading", { name: "Public release card" })).toBeVisible()
-    await reader.getByRole("button", { name: "Read card" }).click()
-    const publicCard = reader.getByRole("dialog", { name: "Public release card" })
-    await expect(publicCard.getByText("Public release discussion", { exact: true })).toBeVisible()
-    await publicCard.getByRole("button", { name: "Close" }).click()
+    await expect(reader.getByRole("button", { name: "Open Public release card" })).toBeVisible()
+    await reader.getByRole("button", { name: "Open Public release card" }).click()
+    const publicCard = reader.getByRole("dialog", { name: "Public release card details" })
+    await publicCard.getByRole("button", { name: "Open discussion", exact: true }).click()
+    const publicDiscussion = reader.getByRole("dialog", { name: "Published discussion" })
+    await expect(publicDiscussion.getByText("Public release discussion", { exact: true })).toBeVisible()
+    await publicDiscussion.getByRole("button", { name: "Close discussion", exact: true }).click()
     const anonymousState = await reader.evaluate(async () => ({ profile: localStorage.getItem("tincanban.local_profile.v1"), dbs: await indexedDB.databases() }))
     expect(anonymousState).toEqual({ profile: null, dbs: [] })
     const publicFileLink = reader.getByRole("link", { name: /Release handout/ })
@@ -122,6 +174,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     expect(download.suggestedFilename()).toBe("release.bin")
     expect(await readFile(await download.path()!)).toEqual(Buffer.from([0, 1, 2, 0xff, 0x41]))
 
+    await publicCard.getByRole("button", { name: "Close card details", exact: true }).click()
     await page.getByRole("button", { name: "Open Public release card" }).click()
     const editDetail = page.getByRole("dialog", { name: "Item overview" })
     await editDetail.getByRole("button", { name: "Edit" }).click()
@@ -148,7 +201,14 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
         request.onsuccess = () => {
           const db = request.result
           const transaction = db.transaction("blobs", "readwrite")
-          transaction.objectStore("blobs").delete(descriptor.blobId)
+          const store = transaction.objectStore("blobs")
+          const keys = store.getAllKeys()
+          keys.onsuccess = () => {
+            for (const key of keys.result) {
+              if (key === descriptor.blobId || key === `mesh-blob-stream-v1:${descriptor.blobId}` ||
+                typeof key === "string" && key.startsWith(`mesh-blob-chunk-v1:${descriptor.blobId}:`)) store.delete(key)
+            }
+          }
           transaction.oncomplete = () => { db.close(); resolve() }
           transaction.onerror = () => { db.close(); reject(transaction.error) }
         }
@@ -186,7 +246,9 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await start()
     await reader.reload()
     await expect(reader.getByText("Second published description")).toBeVisible()
-    const updatedFile = reader.getByRole("link", { name: /Release handout/ })
+    await reader.getByRole("button", { name: "Open Public release card" }).click()
+    const updatedCard = reader.getByRole("dialog", { name: "Public release card details" })
+    const updatedFile = updatedCard.getByRole("link", { name: /Release handout/ })
     const updatedDownloadStarted = reader.waitForEvent("download")
     await updatedFile.click()
     expect(await readFile(await (await updatedDownloadStarted).path()!)).toEqual(Buffer.from([0, 1, 2, 0xff, 0x41]))
@@ -201,7 +263,8 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const withdrawnFile = await reader.evaluate(async href => (await fetch(href!, { cache: "no-store" })).status, updatedFileUrl)
     expect(withdrawnFile).toBe(404)
   } finally {
-    if (anonymousContext) await anonymousContext.close()
+    releasePublicationChallenge?.()
+    if (anonymousContext && !anonymousContext.pages().every(contextPage => contextPage.isClosed())) await anonymousContext.close()
     if (child && child.exitCode === null) await stop()
     await rm(directory, { recursive: true, force: true })
   }

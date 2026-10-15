@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { renderMarkdown, toggleMarkdownTask } from "./markdown"
 
 describe("shared Markdown rendering", () => {
+  it("Given an external Markdown resource, when rendered, then it opens separately while relative navigation stays local", () => {
+    const html = renderMarkdown("[Resource](https://example.org/resource) [Relative](/agent) [Section](#details)\n\nhttps://example.org/automatic")
+    expect(html).toContain('href="https://example.org/resource" target="_blank" rel="noopener noreferrer"')
+    expect(html).toContain('href="https://example.org/automatic" target="_blank" rel="noopener noreferrer"')
+    expect(html).toContain('<a href="/agent">Relative</a>')
+    expect(html).toContain('<a href="#details">Section</a>')
+  })
+
+  it("Given a browser origin and an imperfect resource URL, when rendered, then local links stay local and the document still renders", () => {
+    vi.stubGlobal("location", { origin: "https://tincanban.test" })
+    try {
+      const html = renderMarkdown("[Same site](https://tincanban.test/agent) [Imperfect](https://example.org:invalid/resource)")
+      expect(html).toContain('<a href="https://tincanban.test/agent">Same site</a>')
+      expect(html).toContain('href="https://example.org:invalid/resource" target="_blank"')
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it("renders structured content and preserves ordinary note line breaks", () => {
     const html = renderMarkdown("# Plan\n\n**Important**\nNext line\n\n- [ ] First\n- [x] Done\n\n`code`")
     expect(html).toContain("<h1>Plan</h1>")

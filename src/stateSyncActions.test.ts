@@ -32,6 +32,15 @@ describe("readWorkspaceDoc", () => {
     const storage = { loadWorkspaceDoc: async () => ({ doc }) } as unknown as WorkspaceStorage
     expect(await createSyncActions().readWorkspaceDoc(doc.id, storage)).toBe(doc)
   })
+
+  it("distinguishes an absent workspace from a failed storage read without rewriting either cause", async () => {
+    stateRuntime.activeDoc = null
+    const missing = { loadWorkspaceDoc: async () => null } as unknown as WorkspaceStorage
+    await expect(createSyncActions().readWorkspaceDoc("missing", missing)).rejects.toMatchObject({ code: "workspace-unavailable" })
+    const failure = new Error("Workspace storage unreadable")
+    const broken = { loadWorkspaceDoc: async () => { throw failure } } as unknown as WorkspaceStorage
+    await expect(createSyncActions().readWorkspaceDoc("broken", broken)).rejects.toBe(failure)
+  })
 })
 
 it("Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause", async () => {

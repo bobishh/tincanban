@@ -3,6 +3,7 @@ import { isMemberProfileData, MAX_AVATAR_DATA_URL_LENGTH } from "./avatarData"
 import { isValidRank } from "./rank"
 import { isAutomationDefinitionData, isAutomationControlData, isAutomationOrigin } from "./automationLifecycle"
 import { isAutomationApprovalData } from "./automationApproval"
+import { applicationSourceEntitySchema, type ApplicationSourceEntity } from "./applicationSourceData"
 
 const id = z.string().min(1)
 const rank = z.string().refine(isValidRank, "Invalid canonical rank")
@@ -99,7 +100,7 @@ const automationSchema = z.strictObject({
   controls: z.record(z.string(), z.string().max(8192).refine(isAutomationControlData)),
 })
 export const entitySchema = z.union([
-  boardSchema, columnSchema, fieldSchema, documentSchema, templateSchema, legacyTemplateSchema, artifactSchema, itemSchema, memberProfileSchema, automationSchema,
+  boardSchema, columnSchema, fieldSchema, documentSchema, templateSchema, legacyTemplateSchema, artifactSchema, itemSchema, memberProfileSchema, automationSchema, applicationSourceEntitySchema,
 ])
 export const workspaceSchema = z.strictObject({
   kind: z.literal("workspace"), formatVersion: z.literal(3), id, title: z.string(), archivedAt: z.string().nullable(), ownerPersonId: z.string(),
@@ -123,7 +124,7 @@ export type LegacyWritingTemplate = z.infer<typeof legacyTemplateSchema>
 export type PdfArtifact = z.infer<typeof artifactSchema>
 type MemberProfile = z.infer<typeof memberProfileSchema>
 type AutomationEntity = z.infer<typeof automationSchema>
-export type WorkspaceEntity = Board | Column | Item | FieldDefinition | AttachedDocument | DocumentTemplate | LegacyWritingTemplate | PdfArtifact | MemberProfile | AutomationEntity
+export type WorkspaceEntity = Board | Column | Item | FieldDefinition | AttachedDocument | DocumentTemplate | LegacyWritingTemplate | PdfArtifact | MemberProfile | AutomationEntity | ApplicationSourceEntity
 export type WorkspaceDocumentV2 = Omit<z.infer<typeof workspaceSchema>, "entities"> & { entities: Record<string, WorkspaceEntity> }
 
 export type EntityKind = Exclude<WorkspaceEntity, Item>["kind"] | "item"

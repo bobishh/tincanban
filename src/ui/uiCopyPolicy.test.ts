@@ -17,10 +17,41 @@ function protocolInstanceId(node: ts.Node): boolean {
     && ts.isPropertyAssignment(parent.parent) && parent.parent.name.getText() === "instanceId"
 }
 
+function recoverySecurityEnum(node: ts.Node): boolean {
+  if (!ts.isStringLiteral(node) || node.text !== "legacy" || !ts.isArrayLiteralExpression(node.parent)) return false
+  const array = node.parent
+  const member = array.parent
+  const call = member.parent
+  return ts.isPropertyAccessExpression(member) && member.expression === array && member.name.text === "includes" &&
+    ts.isCallExpression(call) && call.expression === member &&
+    call.arguments.length === 1 && ts.isCallExpression(call.arguments[0]!) &&
+    call.arguments[0]!.expression.getText() === "String" && call.arguments[0]!.arguments.length === 1 &&
+    ts.isPropertyAccessExpression(call.arguments[0]!.arguments[0]!) && call.arguments[0]!.arguments[0]!.name.text === "security"
+}
+
 function diagnosticEvent(node: ts.Node): boolean {
   const parent = node.parent
   return ts.isCallExpression(parent) && ts.isPropertyAccessExpression(parent.expression)
     && parent.expression.expression.getText() === "console" && parent.arguments[0] === node
+}
+
+function sourceObservationWireLiteral(node: ts.Node): boolean {
+  if (!ts.isStringLiteral(node) || node.text !== "legacy") return false
+  const parent = node.parent
+  if (ts.isBinaryExpression(parent) && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken].includes(parent.operatorToken.kind)) {
+    return parent.right === node && ts.isPropertyAccessExpression(parent.left) && ["phase", "origin"].includes(parent.left.name.text)
+  }
+  if (!ts.isArrayLiteralExpression(parent) || !ts.isCallExpression(parent.parent)) return false
+  const call = parent.parent, property = call.parent
+  return call.expression.getText() === "z.enum" && ts.isPropertyAssignment(property) &&
+    ["phase", "origin"].includes(property.name.getText())
+}
+
+// Persisted storage keys are compatibility identifiers, never rendered copy.
+function storageKeyLiteral(node: ts.Node): boolean {
+  return ts.isTemplateExpression(node) && node.head.text === "tincanban.private-replica-legacy-snapshot.v1." &&
+    ts.isArrowFunction(node.parent) && ts.isVariableDeclaration(node.parent.parent) &&
+    node.parent.parent.name.getText() === "legacySnapshotKey"
 }
 
 function constantText(node: ts.Node): string | undefined {
@@ -35,11 +66,14 @@ function constantText(node: ts.Node): string | undefined {
 }
 
 function scriptViolations(source: string, file: string): string[] {
-  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  const extension = file.slice(file.lastIndexOf(".")).toLowerCase()
+  const kind = extension === ".tsx" ? ts.ScriptKind.TSX : extension === ".jsx" ? ts.ScriptKind.JSX
+    : extension === ".js" || extension === ".mjs" || extension === ".cjs" ? ts.ScriptKind.JS : ts.ScriptKind.TS
+  const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, kind)
   const violations: string[] = []
   function visit(node: ts.Node): void {
     const text = constantText(node)
-    if (text !== undefined && forbidden.test(text) && !protocolInstanceId(node) && !diagnosticEvent(node)) {
+    if (text !== undefined && forbidden.test(text) && !protocolInstanceId(node) && !recoverySecurityEnum(node) && !diagnosticEvent(node) && !sourceObservationWireLiteral(node) && !storageKeyLiteral(node)) {
       const { line } = ast.getLineAndCharacterOfPosition(node.getStart(ast))
       violations.push(`${file}:${line + 1}: ${text}`)
     }
@@ -107,5 +141,16 @@ describe("Application UI copy policy", () => {
   it("Given internal migration names, When inspected, Then comments and protocol identifiers remain allowed", () => {
     expect(copyViolations('// Legacy migration\nconst legacyKey = "__meta__legacy-journal-v1"\nconst peer = { instanceId: payload.instanceId ?? "legacy" }', "storage.ts")).toEqual([])
     expect(copyViolations('<template><!-- legacy migration --><p>Storage unavailable</p></template>', "Screen.vue")).toEqual([])
+  })
+
+  it("Given generic TypeScript with hidden implementation names, When inspected, Then TS syntax is not misread as JSX copy", () => {
+    expect(copyViolations("// legacy implementation detail\nconst keep = <T>(legacyValue: T): T => legacyValue", "generic.ts")).toEqual([])
+  })
+
+  it.each([
+    'const wire = { phase: z.enum(["original", "refresh", "legacy"]), origin: z.enum(["website", "legacy"]) }',
+    'const inherited = value.phase === "legacy" || value.origin === "legacy"',
+  ])("Given source protocol literals %s, When inspected, Then enum validation and comparisons are not UI copy", source => {
+    expect(copyViolations(source, "protocol.ts")).toEqual([])
   })
 })

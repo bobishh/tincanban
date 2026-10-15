@@ -22,7 +22,7 @@ test("Given a blank board, when Archive column is enabled and item archived, the
   await expect(page.getByRole("textbox", { name: "New column" })).toHaveValue("Archive")
   await page.getByRole("button", { name: "+ Add column" }).click()
   await expect(archiveOption).toBeDisabled()
-  await page.getByRole("button", { name: "Done" }).click()
+  await page.locator(".topbar").getByRole("button", { name: "Done", exact: true }).click()
 
   await page.getByRole("button", { name: "Add item to To do" }).click()
   const form = page.getByRole("dialog", { name: "Item details" })
@@ -63,7 +63,7 @@ test("Given item archived before Archive column exists, when column is enabled, 
   await page.getByRole("checkbox", { name: "Archive column" }).check()
   await page.getByRole("checkbox", { name: "Allow this column to collapse" }).check()
   await page.getByRole("button", { name: "+ Add column" }).click()
-  await page.getByRole("button", { name: "Done" }).click()
+  await page.locator(".topbar").getByRole("button", { name: "Done", exact: true }).click()
   await page.getByRole("button", { name: "Open Archive with 1 cards" }).click()
   await page.getByRole("region", { name: "Archive", exact: true }).getByRole("button", { name: "Open Earlier card" }).click()
   await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Restore item" }).click()

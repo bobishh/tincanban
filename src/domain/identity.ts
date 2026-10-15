@@ -14,15 +14,12 @@ import {
   sealIdentitySeed,
   type IdentityRecoveryEnvelope,
   type IdentitySecurity,
+  type IdentityAdoptionCommit,
   type LocalProfile as MeshLocalProfile,
   type SignedEnvelope,
 } from "@meta-uber/mesh-identity"
 import type {
-  ActorBinding,
-  ActorId,
-  ChangeProof,
   DeviceCertificate,
-  Hash,
   PublicIdentity,
 } from "./model"
 import { readLocal, writeLocal, deleteLocal } from "../localDb"
@@ -48,10 +45,8 @@ export type LocalProfile = MeshLocalProfile & {
 const identityStore = new BrowserIdentityStore({
   storageKey: "tincanban.local_profile.v1",
   signatureDomain: "MATCH/1",
-  ...(typeof indexedDB === "undefined" ? {} : {
-    asyncStorage: { getItem: readLocal, setItem: writeLocal, removeItem: deleteLocal },
-    requirePersistence: true,
-  }),
+  asyncStorage: { getItem: readLocal, setItem: writeLocal, removeItem: deleteLocal },
+  requirePersistence: typeof indexedDB !== "undefined",
 })
 const recoveryStorageKey = "tincanban.identity_recovery.v1"
 let identityInitialized = false
@@ -89,11 +84,15 @@ export async function bootstrapIdentity(displayName?: string): Promise<LocalProf
   return identityBootstrap
 }
 
-export async function renameIdentity(displayName: string): Promise<LocalProfile> {
+export async function renameIdentity(displayName: string, commit?: IdentityAdoptionCommit): Promise<LocalProfile> {
   const normalized = normalizeDisplayName(displayName)
   const error = validateDisplayName(normalized)
   if (error) throw new Error(error)
-  return await identityStore.rename(normalized) as LocalProfile
+  return await identityStore.rename(normalized, commit) as LocalProfile
+}
+
+export async function refreshIdentityPresentation(expectedRaw?: string): Promise<LocalProfile> {
+  return await identityStore.refreshPresentation(expectedRaw) as LocalProfile
 }
 
 export async function renewDeviceIdentity(): Promise<LocalProfile> {
@@ -124,49 +123,25 @@ export async function restoreIdentityRecovery(
   displayName: string,
   replaceExisting = false,
   beforeRestore?: () => Promise<void>,
+  commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
   if (!identitySecurityForRecovery(recoveryKey)) throw new Error("Invalid recovery words")
-  const candidate = await openIdentityRecoveryEnvelope(envelope, recoveryKey, displayName)
   const current = await bootstrapIdentity(displayName)
+  const candidate = await openIdentityRecoveryEnvelope(envelope, recoveryKey, displayName)
+  if (!isCurrentIdentityProfile(current)) throw new Error("Identity changed during recovery")
   if (current.identity.personId !== candidate.identity.personId && !replaceExisting)
     throw new Error("Confirm identity replacement before restoring a different identity")
   await beforeRestore?.()
-  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName) as LocalProfile
+  if (!isCurrentIdentityProfile(current)) throw new Error("Identity changed during recovery")
+  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName, commit) as LocalProfile
 }
 
 export async function adoptEnrolledIdentity(
   identity: PublicIdentity,
   certificate: DeviceCertificate,
+  commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
-  return await identityStore.adopt(identity, certificate) as LocalProfile
+  return await identityStore.adopt(identity, certificate, commit) as LocalProfile
 }
 
-export async function createActorBinding(
-  profile: LocalProfile,
-  documentId: string,
-  actorId: ActorId,
-): Promise<ActorBinding> {
-  return await signEnvelope(profile.privateKeys.devicePrivateKey, {
-    kind: "actor-binding" as const,
-    version: 1 as const,
-    personId: profile.identity.personId,
-    deviceId: profile.device.deviceId,
-    documentId,
-    actorId,
-  }, profile.device.deviceId) as ActorBinding
-}
-
-export async function createChangeProof(
-  profile: LocalProfile,
-  documentId: string,
-  changeHash: Hash,
-  actorBindingHash: Hash,
-): Promise<ChangeProof> {
-  return await signEnvelope(profile.privateKeys.devicePrivateKey, {
-    kind: "change-proof" as const,
-    version: 1 as const,
-    documentId,
-    changeHash,
-    actorBindingHash,
-  }, profile.device.deviceId) as ChangeProof
-}
+export function isCurrentIdentityProfile(profile: LocalProfile): boolean { return identityStore.isCurrentProfile(profile) }

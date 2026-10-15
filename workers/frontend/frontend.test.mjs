@@ -29,3 +29,22 @@ test('Given a health request, then report exact deployed SHA without reading ass
   assert.equal(result.headers.get('x-frontend-release'), 'abc');
   assert.equal(result.headers.get('x-frontend-worker'), 'tincanban');
 });
+
+test('Given a coordinated release, when a tab checks release state, then report the artifact cohort without claiming device acknowledgement', async () => {
+  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: {}, contract: {} };
+  const response = await worker.fetch(new Request('https://match.meta-uber-engineer.dev/release-cohort.json'), {
+    RELEASE_COHORT_JSON: JSON.stringify(cohort), RELEASE_ARTIFACT_SHA256: 'a'.repeat(64),
+    CF_VERSION_METADATA: { id: 'exact-version' },
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('cache-control'), /no-store/);
+  const body = await response.json();
+  assert.equal(body.cohortId, cohort.cohortId);
+  assert.equal(body.frontendVersionId, 'exact-version');
+  assert.equal(body.deviceAcknowledged, undefined);
+});
+
+test('Given no verified cohort metadata, when a client asks about activation, then refuse a successful cohort claim', async () => {
+  const response = await worker.fetch(new Request('https://match.meta-uber-engineer.dev/release-cohort.json'), {});
+  assert.equal(response.status, 503);
+});

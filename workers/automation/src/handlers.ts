@@ -4,7 +4,7 @@ import type { DecisionAi } from "./clef";
 import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from "./pipeline";
 import type { JobPageFetcher } from "./extraction";
 
-const handlers = { "job-intake@1": runPipeline };
+const handlers = { "job-intake@1": runPipeline, "job-intake@2": runPipeline };
 
 /** Deployed handlers implement registered types; incoming source names never select arbitrary code. */
 export function runRegisteredAutomation(definition: AutomationDefinition, event: AutomationEvent, ai: DecisionAi, employeeProfile?: EmployeeProfile, bands?: Array<{ optionId: string; minScore: number }>, fetcher?: JobPageFetcher): Promise<AutomationPipelineResult> {

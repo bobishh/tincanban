@@ -1,6 +1,6 @@
 import { bootstrapIdentity } from "./domain/identity"
 import type { PersonalRootDocumentV1 } from "./domain/model"
-import { getStorageRaw, setStorageRaw } from "./storageRaw"
+import { compareAndSwapLocal, readLocal, type LocalStatePlan } from "./localDb"
 import { withLocalStateWriteLock } from "./localStateLock"
 
 const mapKey = "tincanban.v1.personal_roots"
@@ -22,30 +22,68 @@ function validateMutation(personId: string, current: PersonalRootDocumentV1 | nu
   if (next && !current && map[next.rootId]) throw new Error("Personal root ID is already registered.")
 }
 
+async function mapForUpdate(raw: string | null, personId: string,
+  update: (current: PersonalRootDocumentV1 | null) => PersonalRootDocumentV1 | null | Promise<PersonalRootDocumentV1 | null>) {
+  const map = parseMap(raw)
+  const current = Object.values(map).find(root => root.identity.personId === personId) ?? null
+  const before = current ? cloneRoot(current) : null
+  const proposed = await update(before ? cloneRoot(before) : null)
+  const next = proposed ? cloneRoot(proposed) : null
+  validateMutation(personId, current, next, map)
+  if (current && next === null) delete map[current.rootId]
+  else if (next) map[next.rootId] = cloneRoot(next)
+  return { map, before, next }
+}
+
+/** Build an exact compare-and-swap plan without publishing cache state or writing storage. */
+export async function planPersonalRootUpdate(
+  personId: string,
+  update: (current: PersonalRootDocumentV1 | null) => PersonalRootDocumentV1 | null | Promise<PersonalRootDocumentV1 | null>,
+): Promise<LocalStatePlan> {
+  const raw = await readLocal(mapKey)
+  const { map, before, next } = await mapForUpdate(raw, personId, update)
+  if (!changed(before, next)) return { conditions: [{ key: mapKey, value: raw }], writes: [] }
+  return { conditions: [{ key: mapKey, value: raw }], writes: [{ key: mapKey, value: JSON.stringify(map) }] }
+}
+
+const maxCasAttempts = 32
+
 export class PersonalRootMapStore {
   constructor(
     private readonly cache: Map<string, PersonalRootDocumentV1>,
     private readonly beforeWrite: () => void,
   ) {}
 
-  private async read() { return parseMap(await getStorageRaw(mapKey)) }
-
   private replaceCache(map: Record<string, PersonalRootDocumentV1>) {
     this.cache.clear()
     for (const [id, root] of Object.entries(map)) this.cache.set(id, cloneRoot(root))
   }
 
-  private async persist(map: Record<string, PersonalRootDocumentV1>) {
-    this.beforeWrite()
-    await setStorageRaw(mapKey, JSON.stringify(map))
-    this.replaceCache(map)
+  async planUpdate(personId: string,
+    update: (current: PersonalRootDocumentV1 | null) => PersonalRootDocumentV1 | null | Promise<PersonalRootDocumentV1 | null>): Promise<LocalStatePlan> {
+    return planPersonalRootUpdate(personId, update)
   }
 
+  private async read() { return parseMap(await readLocal(mapKey)) }
+
   async save(root: PersonalRootDocumentV1): Promise<void> {
+    const submitted = cloneRoot(root)
     await withLocalStateWriteLock(mapKey, async () => {
-      const map = await this.read()
-      map[root.rootId] = cloneRoot(root)
-      await this.persist(map)
+      for (let attempt = 0; attempt < maxCasAttempts; attempt += 1) {
+        const raw = await readLocal(mapKey)
+        const map = parseMap(raw)
+        const existing = map[submitted.rootId]
+        if (existing && existing.identity.personId !== submitted.identity.personId) {
+          throw new Error("Personal root ID is already registered to another identity.")
+        }
+        map[submitted.rootId] = cloneRoot(submitted)
+        const next = JSON.stringify(map)
+        if (await compareAndSwapLocal({ conditions: [{ key: mapKey, value: raw }], writes: [{ key: mapKey, value: next }] }, this.beforeWrite)) {
+          this.replaceCache(map)
+          return
+        }
+      }
+      throw new Error("Personal root changed too often to save safely.")
     })
   }
 
@@ -53,21 +91,24 @@ export class PersonalRootMapStore {
     update: (current: PersonalRootDocumentV1 | null) => PersonalRootDocumentV1 | null | Promise<PersonalRootDocumentV1 | null>,
   ): Promise<PersonalRootDocumentV1 | null> {
     return withLocalStateWriteLock(mapKey, async () => {
-      const map = await this.read()
-      const current = Object.values(map).find(root => root.identity.personId === personId) ?? null
-      const before = current ? cloneRoot(current) : null
-      const next = await update(before ? cloneRoot(before) : null)
-      validateMutation(personId, current, next, map)
-      return this.applyUpdate(map, current, before, next)
+      for (let attempt = 0; attempt < maxCasAttempts; attempt += 1) {
+        const raw = await readLocal(mapKey)
+        const map = parseMap(raw)
+        const current = Object.values(map).find(root => root.identity.personId === personId) ?? null
+        const before = current ? cloneRoot(current) : null
+        const next = await update(before ? cloneRoot(before) : null)
+        validateMutation(personId, current, next, map)
+        if (current && next === null) delete map[current.rootId]
+        else if (next) map[next.rootId] = cloneRoot(next)
+        if (!changed(before, next)) return next ? cloneRoot(next) : null
+        const plan: LocalStatePlan = { conditions: [{ key: mapKey, value: raw }], writes: [{ key: mapKey, value: JSON.stringify(map) }] }
+        if (await compareAndSwapLocal(plan, this.beforeWrite)) {
+          this.replaceCache(map)
+          return next ? cloneRoot(next) : null
+        }
+      }
+      throw new Error("Personal root changed too often to update safely.")
     })
-  }
-
-  private async applyUpdate(map: Record<string, PersonalRootDocumentV1>, current: PersonalRootDocumentV1 | null,
-    before: PersonalRootDocumentV1 | null, next: PersonalRootDocumentV1 | null) {
-    if (current && next === null) delete map[current.rootId]
-    else if (next) map[next.rootId] = cloneRoot(next)
-    if (changed(before, next)) await this.persist(map)
-    return next ? cloneRoot(next) : null
   }
 
   async load(rootId?: string): Promise<PersonalRootDocumentV1 | null> {

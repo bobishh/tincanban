@@ -9,9 +9,12 @@ import EnrollmentRequest from "./EnrollmentRequest.vue"
 import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import ModalLayer from "./ModalLayer.vue"
 import WorkspaceFileActions from "./WorkspaceFileActions.vue"
+import WorkspaceHistoryMaintenance from "./WorkspaceHistoryMaintenance.vue"
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import type { SyncStep, SuccessionView } from "../app/syncTypes"
 
+type PrivateRecoveryBackup = { file: Blob; words: string; coverage: "complete" | "incomplete"; missingCount: number }
+type PrivateRecoveryInspection = { workspaceId: string; personId: string; coverage: "complete" | "incomplete"; missingCount: number }
 
 const props = defineProps<{
   initialTab?: "Participants" | "Rusty" | "Backups"
@@ -55,6 +58,12 @@ const props = defineProps<{
   networkOnline?: boolean
   live?: boolean
   exportWorkspace?: () => Promise<void>
+  createPrivateRecovery?: () => Promise<PrivateRecoveryBackup>
+  privateRecoveryUnavailableReason?: string
+  inspectPrivateRecovery?: (file: Blob, words: string) => Promise<PrivateRecoveryInspection>
+  restorePrivateRecovery?: (inspection: PrivateRecoveryInspection, replace: boolean) => Promise<void>
+  hasWorkspaceCopy?: (workspaceId: string) => boolean
+  workspaceTitle?: (workspaceId: string) => string
 }>()
 
 const emit = defineEmits<{
@@ -323,7 +332,12 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>
         </div>
         <div v-show="activeTab === 'Backups'" :id="`${tabId}-Backups-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Backups-tab`">
-        <WorkspaceFileActions :export-workspace="exportWorkspace" />
+        <WorkspaceFileActions :export-workspace="exportWorkspace" :create-private-recovery="createPrivateRecovery"
+          :private-recovery-unavailable-reason="privateRecoveryUnavailableReason"
+          :inspect-private-recovery="inspectPrivateRecovery" :restore-private-recovery="restorePrivateRecovery"
+          :has-workspace-copy="hasWorkspaceCopy" :workspace-title="workspaceTitle" :current-person-id="currentPersonId" />
+        <WorkspaceHistoryMaintenance v-if="blindReplication && activeWorkspaceId" :controller="blindReplication"
+          :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
         </div>
       </template>
       <!-- Step: Direct Workspace Selection (supersedes former preliminary chooser) -->
@@ -373,7 +387,10 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           </button>
         </section>
 
-        <WorkspaceFileActions :export-workspace="exportWorkspace" />
+        <WorkspaceFileActions :export-workspace="exportWorkspace" :create-private-recovery="createPrivateRecovery"
+          :private-recovery-unavailable-reason="privateRecoveryUnavailableReason"
+          :inspect-private-recovery="inspectPrivateRecovery" :restore-private-recovery="restorePrivateRecovery"
+          :has-workspace-copy="hasWorkspaceCopy" :workspace-title="workspaceTitle" :current-person-id="currentPersonId" />
       </template>
 
       <template v-else-if="step === 'enroll-host-preparing'">

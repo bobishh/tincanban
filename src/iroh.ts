@@ -1,6 +1,7 @@
 import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
+import type { MeshStream } from "@meta-uber/mesh-transport"
 import policyInit, {
   WasmAutomergeSyncEngine,
   WasmAutomergeDeviceSyncFlow,
@@ -46,11 +47,7 @@ type IrohAcceptor = {
   close: () => Promise<void>
 }
 
-type IrohStream = {
-  send: (bytes: Uint8Array) => Promise<void>
-  read: () => Promise<Uint8Array>
-  closeSend: () => Promise<void>
-}
+type IrohStream = MeshStream
 
 function irohArtifactAvailable(): boolean {
   return typeof WebAssembly !== "undefined"

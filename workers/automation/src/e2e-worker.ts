@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import productionWorker, { AutomationCoordinator as ProductionCoordinator, type WorkerEnv } from "./index";
+import { privateEmailRoutes } from "./emailRoutes";
 import { MAX_RAW_EMAIL_BYTES } from "./email";
-import type { JobPageFetcher } from "./extraction";
+import { MAX_JOB_PAGE_BYTES, type JobPageFetcher } from "./extraction";
 
 const testAi = {
   async run(_model: string, input: unknown): Promise<unknown> {
@@ -42,19 +43,32 @@ export class AutomationE2eConfig extends DurableObject<E2EEnv> {
   async getOwners(): Promise<string> { return await this.ctx.storage.get<string>("owners") ?? ""; }
   async setIntegrations(value: string): Promise<void> { await this.ctx.storage.put("integrations", value); }
   async getIntegrations(): Promise<string> { return await this.ctx.storage.get<string>("integrations") ?? "[]"; }
+  async setJobPage(url: string, value: string): Promise<void> { await this.ctx.storage.put(`jobPage:${url}`, value); }
+  async getJobPage(url: string): Promise<string | null> { return await this.ctx.storage.get<string>(`jobPage:${url}`) ?? null; }
 }
 
 export class AutomationCoordinator extends ProductionCoordinator {
-  constructor(ctx: DurableObjectState, env: WorkerEnv) {
+  private readonly testConfig: DurableObjectNamespace<AutomationE2eConfig>
+  constructor(ctx: DurableObjectState, env: E2EEnv) {
     super(ctx, { ...env, AI: testAi as unknown as Ai });
+    this.testConfig = env.TEST_CONFIG
   }
   protected override jobPageFetcher(): JobPageFetcher {
     return async (input, init) => {
       const url = String(input);
-      if (url === "https://jobs.example.test/nacre/systems") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Principal Systems Engineer","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>', { headers: { "content-type": "text/html" } });
+      const configured = await this.testConfig.getByName("integration").getJobPage(url)
+      if (configured) {
+        const value = JSON.parse(configured) as { status: number; html?: string }
+        return new Response(value.html ?? "", { status: value.status, headers: { "content-type": "text/html" } })
+      }
+      if (url === "https://jobs.example.test/nacre/systems") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Principal Systems Engineer","description":"Build and operate distributed systems.","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>', { headers: { "content-type": "text/html" } });
       if (url === "https://jobs.example.test/upvest/product") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
       return fetch(input, init);
     };
+  }
+  protected override async resolvePrivateEmailRoute(id: string) {
+    const routes = await this.testConfig.getByName("integration").getEmailRoutes();
+    return privateEmailRoutes({ EMAIL_ROUTES_JSON: routes }).find(value => value.id === id);
   }
 }
 
@@ -62,6 +76,7 @@ const testWorker: ExportedHandler<E2EEnv> = {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === "/__test/configure") return configureTestIntegration(request, env);
+    if (url.pathname === "/__test/job-page") return configureJobPage(request, env);
     const testEnv = await withTestConfiguration(env);
     if (url.pathname === "/__test/email") return handleTestEmail(request, testEnv);
     return productionWorker.fetch!(request, testEnv);
@@ -72,6 +87,20 @@ const testWorker: ExportedHandler<E2EEnv> = {
 };
 
 export default testWorker;
+
+async function configureJobPage(request: Request, env: E2EEnv): Promise<Response> {
+  if (request.method !== "PUT") return json({ error: "Method not allowed" }, 405)
+  let value: unknown
+  try { value = await request.json() } catch { return json({ error: "Invalid job page fixture" }, 400) }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return json({ error: "Invalid job page fixture" }, 400)
+  const input = value as Record<string, unknown>
+  if (input.url !== "https://jobs.example.test/nacre/systems" || (input.status !== 200 && input.status !== 404) ||
+    (input.status === 200 && (typeof input.html !== "string" || new TextEncoder().encode(input.html).byteLength > MAX_JOB_PAGE_BYTES)) ||
+    (input.status === 404 && input.html !== undefined)) return json({ error: "Invalid job page fixture" }, 400)
+  await env.TEST_CONFIG.getByName("integration").setJobPage(input.url, JSON.stringify({ status: input.status,
+    ...(typeof input.html === "string" ? { html: input.html } : {}) }))
+  return json({ accepted: true }, 200)
+}
 
 async function handleTestEmail(request: Request, env: WorkerEnv): Promise<Response> {
   if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);

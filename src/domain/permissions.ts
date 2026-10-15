@@ -5,6 +5,7 @@ import type { Command } from "./commandTypes"
 import { automationEntityId, automationLifecycle, isAutomationOrigin } from "./automationLifecycle"
 import { parseAutomationDefinition } from "./automationContract"
 import { parseAutomationApproval } from "./automationApproval"
+import { assertApplicationSourceRecord } from "./applicationSourceData"
 
 export type WorkspaceRole = "owner" | "editor" | "visitor" | "automation"
 
@@ -67,6 +68,7 @@ const commandCapabilities: Record<Command["kind"], WorkspaceCapability | "entity
   createBoard: "board.configure",
   createColumn: "board.configure",
   createItem: "content.write",
+  createItemWithApplicationSource: "content.write",
   patchItem: "content.write",
   restoreItemVersion: "content.write",
   moveEntity: "entity",
@@ -85,6 +87,7 @@ const commandCapabilities: Record<Command["kind"], WorkspaceCapability | "entity
   updateBoardSchema: "board.configure",
   updateWorkspaceSettings: "board.configure",
   setMemberAvatar: "chat.profile",
+  recordApplicationSource: "content.write",
   createAutomation: "board.configure",
   configureAutomation: "board.configure",
   setAutomationState: "board.configure",
@@ -104,7 +107,7 @@ export function assertWorkspaceTransition(role: WorkspaceRole, before: Workspace
   const beforeEntities = rawBeforeEntities ?? {}
   const afterEntities = rawAfterEntities ?? {}
   assertRootChanges(role, beforeTitle, afterTitle, beforeRoot, afterRoot)
-  assertWorkspaceEntityTransitions(role, beforeEntities, afterEntities, new Set([...Object.keys(beforeEntities), ...Object.keys(afterEntities)]), actorPersonId)
+  assertWorkspaceEntityTransitions(role, beforeEntities, afterEntities, new Set([...Object.keys(beforeEntities), ...Object.keys(afterEntities)]), actorPersonId, after.id)
 }
 
 export function assertWorkspaceRootTransition(role: WorkspaceRole, changedRootKeys: ReadonlySet<string>): void {
@@ -118,10 +121,15 @@ export function assertWorkspaceEntityTransitions(
   afterEntities: WorkspaceDocumentV2["entities"],
   changedEntityIds: ReadonlySet<string>,
   actorPersonId?: string,
+  workspaceId?: string,
 ): void {
   for (const id of changedEntityIds) {
     const a = beforeEntities[id], b = afterEntities[id]
     if (canonicalizeJson(a ?? null) === canonicalizeJson(b ?? null)) continue
+    if (isApplicationSourceTransition(id, a, b)) {
+      assertApplicationSourceTransition(role, id, a, b, afterEntities, workspaceId)
+      continue
+    }
     if (id.startsWith("automation:") || hasEntityKind(a, "automation") || hasEntityKind(b, "automation")) {
       assertAutomationTransition(role, a, b)
       continue
@@ -132,6 +140,20 @@ export function assertWorkspaceEntityTransitions(
     }
     assertEntityTransition(role, a, b, afterEntities)
   }
+}
+
+function isApplicationSourceTransition(id: string, before: WorkspaceDocumentV2["entities"][string] | undefined,
+  after: WorkspaceDocumentV2["entities"][string] | undefined): boolean {
+  return id.startsWith("application-source:") || before?.kind === "application_source" || after?.kind === "application_source"
+}
+
+function assertApplicationSourceTransition(role: WorkspaceRole, id: string,
+  before: WorkspaceDocumentV2["entities"][string] | undefined, after: WorkspaceDocumentV2["entities"][string] | undefined,
+  entities: WorkspaceDocumentV2["entities"], workspaceId?: string): void {
+  if (before) throw new Error("Application source records are immutable")
+  assertWorkspaceCapability(role, "content.write")
+  if (!after || after.id !== id) throw new Error("Application source identity is invalid")
+  assertApplicationSourceRecord(after, entities, workspaceId)
 }
 
 function assertAutomationTransition(role: WorkspaceRole, before: WorkspaceDocumentV2["entities"][string] | undefined,

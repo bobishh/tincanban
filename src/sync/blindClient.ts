@@ -1,4 +1,7 @@
 /* global __TINCANBAN_BUILD_COMMIT__ */
+import { z } from "zod"
+import { verifyEnvelope } from "../domain/identity"
+import type { BlindServiceCapabilities } from "./blindServiceCapabilities"
 import { blindOrigin } from "./blindOrigin"
 export { blindOrigin } from "./blindOrigin"
 import { decodeBlindBytes, encodeBlindBytes, type BlindObject } from "./blindEnvelope"
@@ -7,6 +10,36 @@ export type BlindAccess = { origin: string; scopeId: string; servicePublicKey: s
 export type BlindReceipt = { payload: { kind: "blind-storage-receipt"; version: 2; serviceId: string; scopeId: string; keyEpoch: number;
   objectId: string; sequence: number; policyRevision: number; requestId: string }; signerKeyId: string; signature: string }
 const encoder = new TextEncoder()
+const policyId = z.string().min(1).max(128)
+const policyHash = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+const scopePolicyReceiptSchema = z.strictObject({
+  signerKeyId: policyHash, signature: z.string().min(1).max(128),
+  payload: z.strictObject({ kind: z.literal("rusty-scope-policy-receipt"), version: z.literal(1), serviceId: policyHash,
+    scopeId: policyId, personId: policyId, revision: z.number().int().positive().refine(Number.isSafeInteger), revoked: z.boolean(),
+    challengeId: policyId, authorizationHash: policyHash, minimumWriterVersion: z.literal(2).optional() }),
+})
+export type RustyScopePolicyReceipt = z.infer<typeof scopePolicyReceiptSchema>
+type RustyPolicyStorage = { scopeId: string; servicePublicKey: string }
+
+/** Structural parsing is safe during a local transaction; callers verify cryptography before using saved evidence. */
+export function parseRustyScopePolicyReceipt(value: unknown): RustyScopePolicyReceipt {
+  return scopePolicyReceiptSchema.parse(structuredClone(value))
+}
+
+/** A service receipt confirms only storage policy. Current Owner requests separately authorize maintenance. */
+export async function verifyRustyWriterPolicyReceipt(value: unknown, storageValue: RustyPolicyStorage,
+  personId: string, minimumRevision: number): Promise<RustyScopePolicyReceipt> {
+  const receipt = parseRustyScopePolicyReceipt(value)
+  const storage = structuredClone(storageValue)
+  const payload = receipt.payload
+  const key = decodeBlindBytes(storage.servicePublicKey)
+  if (key.length !== 32 || !Number.isSafeInteger(minimumRevision) || minimumRevision < 0 ||
+    payload.scopeId !== storage.scopeId || payload.personId !== personId || payload.revoked ||
+    payload.minimumWriterVersion !== 2 || payload.revision < minimumRevision ||
+    receipt.signerKeyId !== payload.serviceId || payload.serviceId !== await blindHash(key) ||
+    !await verifyEnvelope(receipt, storage.servicePublicKey, "RUSTY/2")) throw new Error("Rusty receipt does not confirm this writer policy")
+  return receipt
+}
 
 export function canonicalBlindJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalBlindJson).join(",")}]`
@@ -59,35 +92,72 @@ export async function readBlindJson<T>(response: Response, maximumBytes = 32 * 1
   return value
 }
 
-export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1 }> {
+export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; scopeEnrollmentRetry?: 1;
+  encryptedBlobs?: { version: 1; maximumCiphertextBytes: number }; writerPolicy?: { version: 1; maximumWriterVersion: 2 };
+  blobCoverage?: { version: 1; maximumObjects: 33 }; encryptedArchives?: { version: 1; maximumCiphertextBytes: 262160 };
+  archiveCoverageBatches?: { version: 1; maximumObjects: 64 }; archiveCoverageAggregates?: { version: 1; maximumChildren: 8; maximumHeight: 31 } }> {
   const origin = blindOrigin(input)
   const descriptor = await readBlindJson<{ protocolVersions: number[]; publicOrigin: string; service: { serviceId: string; publicKey: string };
-    capabilities: { modes: string[]; applicationWrites: boolean; classification: boolean; snapshotCheckpoints?: { version: number } } }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
+    capabilities: BlindServiceCapabilities }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
   if (!descriptor.protocolVersions?.includes(2) || descriptor.publicOrigin !== origin || !descriptor.capabilities?.modes?.includes("blind") ||
     descriptor.capabilities.applicationWrites !== false || descriptor.capabilities.classification !== false ||
     !descriptor.service || await blindHash(decodeBlindBytes(descriptor.service.publicKey)) !== descriptor.service.serviceId) {
     throw new Error("This service does not support blind Rusty replication")
   }
-  return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId, ...(descriptor.capabilities.snapshotCheckpoints?.version === 1 ? { snapshotCheckpoints: 1 as const } : {}) }
+  return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId,
+    ...(await import("./blindServiceCapabilities")).supportedManagementFeatures(descriptor.capabilities) }
 }
 
 export async function verifyBlindReceipt(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string): Promise<void> {
   const payload = receipt.payload
   const serviceId = await blindHash(decodeBlindBytes(access.servicePublicKey))
-  if (!payload || payload.kind !== "blind-storage-receipt" || payload.version !== 2 || payload.serviceId !== serviceId || receipt.signerKeyId !== serviceId ||
-    payload.scopeId !== access.scopeId || payload.keyEpoch !== object.keyEpoch || payload.objectId !== await blindObjectId(object) ||
-    payload.requestId !== requestId || !Number.isSafeInteger(payload.sequence) || payload.sequence < 1 || payload.policyRevision !== access.policyRevision) {
-    throw new Error("Rusty receipt does not cover this encrypted object")
-  }
+  const objectId = await blindObjectId(object)
+  const mismatches = blindReceiptMismatches(receipt, access, object, requestId, serviceId, objectId)
+  if (mismatches.length) throw new Error(`Rusty receipt does not cover this encrypted object (${mismatches.join(", ")})`)
   const publicKey = await crypto.subtle.importKey("raw", decodeBlindBytes(access.servicePublicKey), "Ed25519", false, ["verify"])
   const message = encoder.encode(`RUSTY/2/${payload.kind}\0${canonicalBlindJson(payload)}`)
   if (!await crypto.subtle.verify("Ed25519", publicKey, decodeBlindBytes(receipt.signature), message)) throw new Error("Rusty receipt signature invalid")
 }
 
-export async function uploadBlindObject(access: BlindAccess, object: BlindObject): Promise<BlindReceipt> {
-  const requestId = crypto.randomUUID()
+function blindReceiptMismatches(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string,
+  serviceId: string, objectId: string): string[] {
+  const payload = receipt.payload
+  return [
+    ...blindReceiptScopeMismatches(receipt, access, serviceId),
+    ...blindReceiptObjectMismatches(payload, object, objectId, requestId),
+    ...blindReceiptProgressMismatches(payload, access),
+  ]
+}
+
+function blindReceiptScopeMismatches(receipt: BlindReceipt, access: BlindAccess, serviceId: string): string[] {
+  const payload = receipt.payload
+  return [
+    !payload || payload.kind !== "blind-storage-receipt" ? "kind" : undefined,
+    payload?.version !== 2 ? "version" : undefined,
+    payload?.serviceId !== serviceId || receipt.signerKeyId !== serviceId ? "service" : undefined,
+    payload?.scopeId !== access.scopeId ? "scope" : undefined,
+  ].filter((field): field is string => field !== undefined)
+}
+
+function blindReceiptObjectMismatches(payload: BlindReceipt["payload"], object: BlindObject, objectId: string, requestId: string): string[] {
+  return [
+    payload?.keyEpoch !== object.keyEpoch ? "epoch" : undefined,
+    payload?.objectId !== objectId ? "object" : undefined,
+    payload?.requestId !== requestId ? "request" : undefined,
+  ].filter((field): field is string => field !== undefined)
+}
+
+function blindReceiptProgressMismatches(payload: BlindReceipt["payload"], access: BlindAccess): string[] {
+  return [
+    !Number.isSafeInteger(payload?.sequence) || payload.sequence < 1 ? "sequence" : undefined,
+    payload?.policyRevision !== access.policyRevision ? "policy-revision" : undefined,
+  ].filter((field): field is string => field !== undefined)
+}
+
+export async function uploadBlindObject(access: BlindAccess, object: BlindObject, requestId: string = crypto.randomUUID(), observedSequence = 0): Promise<BlindReceipt> {
+  if (!Number.isSafeInteger(observedSequence) || observedSequence < 0) throw new Error("Invalid admitted storage sequence")
   const id = await blindObjectId(object)
-  const receipt = await readBlindJson<BlindReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}`, {
+  const receipt = await readBlindJson<BlindReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}?writerVersion=2&observedSequence=${observedSequence}`, {
     method: "PUT", signal: AbortSignal.timeout(30000),
     headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json", "X-Rusty-Request-Id": requestId }, body: JSON.stringify(object),
   }), 16384)

@@ -54,7 +54,9 @@
 
 :root {
   font-size: 20px;
-  --site-font-sans: "Caveat", cursive;
+  --site-font-sans: "Caveat", "Comic Sans MS", cursive;
+  --site-font-reading: "Fira Sans", Arial, sans-serif;
+  --site-font-brand: "Caveat", "Comic Sans MS", cursive;
   --site-font-mono: "Fira Code", ui-monospace, monospace;
   --site-content-max: 1480px;
   --site-gutter: clamp(16px, 4vw, 56px);

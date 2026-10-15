@@ -1,51 +1,51 @@
 .keeper-admin { min-height: 100vh; }
 .keeper-admin .topbar { z-index: 2; }
 .keeper-admin .brand h1 { text-transform: uppercase; }
-:where(.keeper-admin) .admin-content { width: min(1000px, 100%); margin: 0 auto; padding: clamp(20px, 5vw, 56px) clamp(16px, 4vw, 40px) 64px; }
-:where(.keeper-admin) .admin-nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 32px; }
-:where(.keeper-admin) .admin-section { margin: 0 0 44px; }
-:where(.keeper-admin) .section-heading { justify-content: space-between; margin-bottom: 16px; }
+:where(.keeper-admin) .admin-content { width: min(1000px, 100%); margin: 0 auto; padding: clamp(var(--space-4), 5vw, var(--space-7)) clamp(var(--space-4), 4vw, var(--space-6)) var(--space-8); }
+:where(.keeper-admin) .admin-nav { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-6); }
+:where(.keeper-admin) .admin-section { margin: 0 0 var(--space-7); }
+:where(.keeper-admin) .section-heading { justify-content: space-between; margin-bottom: var(--space-4); }
 :where(.keeper-admin) .section-heading h2 { margin: 0; font-size: clamp(1.5rem, 4vw, 2rem); letter-spacing: -.04em; }
 :where(.keeper-admin) .section-copy, :where(.keeper-admin) .muted { color: var(--muted); line-height: 1.5; }
-:where(.keeper-admin) .keeper-card, :where(.keeper-admin) .approval-card, :where(.keeper-admin) .login-card { padding: clamp(16px, 3vw, 24px); border: 2px solid var(--line); background: var(--panel); }
-:where(.keeper-admin) .keeper-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding-bottom: 18px; border-bottom: 2px solid var(--soft); }
-:where(.keeper-admin) .keeper-heading h3, :where(.keeper-admin) .approval-card h3 { margin: 0 0 5px; }
+:where(.keeper-admin) .keeper-card, :where(.keeper-admin) .approval-card, :where(.keeper-admin) .login-card { padding: clamp(var(--space-4), 3vw, var(--space-5)); border: 2px solid var(--line); background: var(--panel); }
+:where(.keeper-admin) .keeper-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); padding-bottom: var(--space-4); border-bottom: 2px solid var(--soft); }
+:where(.keeper-admin) .keeper-heading h3, :where(.keeper-admin) .approval-card h3 { margin: 0 0 var(--space-1); }
 :where(.keeper-admin) .keeper-heading p { margin: 0; overflow-wrap: anywhere; font: 700 .7rem/1.5 var(--site-font-mono); }
 :where(.keeper-admin) .replication-status { margin: 0; color: var(--muted); font: 700 .75rem/1.4 var(--site-font-mono); }
 :where(.keeper-admin) .replication-status[data-state="connected"] { color: var(--focus); }
 :where(.keeper-admin) .replication-status[data-state="retrying"] { color: var(--muted); }
-:where(.keeper-admin) .board-row { padding: 13px 0; border-top: 1px solid var(--soft); }
-:where(.keeper-admin) .board-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-:where(.keeper-admin) .board-row p, :where(.keeper-admin) .approval-card p { margin: 6px 0 0; color: var(--muted); font-size: .84rem; line-height: 1.45; }
-:where(.keeper-admin) .empty-state { padding: 18px; border: 2px dashed var(--line); color: var(--muted); line-height: 1.55; }
-:where(.keeper-admin) .approvals-section { display: grid; gap: 14px; }
-:where(.keeper-admin) .approval-card ul { padding-left: 22px; line-height: 1.7; }
-:where(.keeper-admin) .login-card { display: grid; justify-items: start; gap: 12px; max-width: 480px; margin: 32px auto; }
+:where(.keeper-admin) .board-row { padding: var(--space-3) 0; border-top: 1px solid var(--soft); }
+:where(.keeper-admin) .board-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+:where(.keeper-admin) .board-row p, :where(.keeper-admin) .approval-card p { margin: var(--space-1) 0 0; color: var(--muted); font-size: .84rem; line-height: 1.45; }
+:where(.keeper-admin) .empty-state { padding: var(--space-4); border: 2px dashed var(--line); color: var(--muted); line-height: 1.55; }
+:where(.keeper-admin) .approvals-section { display: grid; gap: var(--space-3); }
+:where(.keeper-admin) .approval-card ul { padding-left: var(--space-5); line-height: 1.7; }
+:where(.keeper-admin) .login-card { display: grid; justify-items: start; gap: var(--space-3); max-width: 480px; margin: var(--space-6) auto; }
 :where(.keeper-admin) .login-card h2, :where(.keeper-admin) .login-card p { margin: 0; }
-:where(.keeper-admin) .field-label { display: grid; gap: 7px; color: var(--muted); font-size: .82rem; font-weight: 750; }
-:where(.keeper-admin) .login-card input, :where(.keeper-admin) .service-admin-fallback input { width: min(360px, 80vw); min-height: var(--control-size); padding: 9px 12px; border: 2px solid var(--line); background: var(--panel); }
-:where(.keeper-admin) .admin-notice { min-height: 1.5em; margin: 0 0 20px; padding: 8px 12px; border: 1px solid var(--soft); color: var(--ink); background: var(--panel); font-weight: 700; line-height: 1.4; }
+:where(.keeper-admin) .field-label { display: grid; gap: var(--space-2); color: var(--muted); font-size: .82rem; font-weight: 750; }
+:where(.keeper-admin) .login-card input, :where(.keeper-admin) .service-admin-fallback input { width: min(360px, 80vw); min-height: var(--control-size); padding: var(--space-2) var(--space-3); border: 2px solid var(--line); background: var(--panel); }
+:where(.keeper-admin) .admin-notice { min-height: 1.5em; margin: 0 0 var(--space-4); padding: var(--space-2) var(--space-3); border: 1px solid var(--soft); color: var(--ink); background: var(--panel); font-weight: 700; line-height: 1.4; }
 :where(.keeper-admin) .admin-notice-error { border: 2px solid var(--red); color: var(--ink); background: var(--panel); }
-@media (max-width: 600px) { .keeper-admin .topbar { padding: 12px 16px; } :where(.keeper-admin) .keeper-heading { flex-direction: column; } }
+@media (max-width: 600px) { .keeper-admin .topbar { padding: var(--space-3) var(--space-4); } :where(.keeper-admin) .keeper-heading { flex-direction: column; } }
 
 
 /* Keeper administration uses shared controls and primitive surfaces. */
 :where(.keeper-admin) .admin-section { }
-:where(.keeper-admin) .admin-section > .keeper-card + .keeper-card { margin-top: 16px; }
-:where(.keeper-admin) .keeper-list { display: grid; gap: 10px; }
-:where(.keeper-admin) .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 20px; color: var(--muted); }
+:where(.keeper-admin) .admin-section > .keeper-card + .keeper-card { margin-top: var(--space-4); }
+:where(.keeper-admin) .keeper-list { display: grid; gap: var(--space-2); }
+:where(.keeper-admin) .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); color: var(--muted); }
 :where(.keeper-admin) .breadcrumbs a { color: inherit; }
-:where(.keeper-admin) .board-row .button { margin-top: 12px; }
+:where(.keeper-admin) .board-row .button { margin-top: var(--space-3); }
 :where(.keeper-admin) .danger-zone { border-color: var(--red); }
 :where(.keeper-admin) .danger-zone > h3 { color: var(--red); }
 .keeper-admin .dialog-actions, :where(.keeper-admin) .cors-actions { flex-wrap: wrap; }
 @media (max-width: 600px) { :where(.keeper-admin) .section-heading { flex-wrap: wrap; } }
 
 
-:where(.keeper-admin) .admin-header-actions { display: flex; gap: 8px; }
-:where(.keeper-admin) .service-admin-fallback { display: grid; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--soft); }
+:where(.keeper-admin) .admin-header-actions { display: flex; gap: var(--space-2); }
+:where(.keeper-admin) .service-admin-fallback { display: grid; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--soft); }
 :where(.keeper-admin) .service-admin-fallback summary { color: var(--muted); cursor: pointer; font-weight: 750; }
-:where(.keeper-admin) .cors-settings { display: grid; gap: 12px; }
+:where(.keeper-admin) .cors-settings { display: grid; gap: var(--space-3); }
 :where(.keeper-admin) .cors-settings h3, :where(.keeper-admin) .cors-settings p { margin: 0; }
-:where(.keeper-admin) .cors-settings textarea { width: 100%; padding: 10px 12px; border: 2px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; resize: vertical; }
-:where(.keeper-admin) .cors-actions { display: flex; gap: 10px; }
+:where(.keeper-admin) .cors-settings textarea { width: 100%; padding: var(--space-2) var(--space-3); border: 2px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; resize: vertical; }
+:where(.keeper-admin) .cors-actions { display: flex; gap: var(--space-2); }

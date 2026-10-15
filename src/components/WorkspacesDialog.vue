@@ -255,13 +255,13 @@ function displayTitle(title: string) {
 </template>
 
 <style scoped>
-.board-directory { display: grid; gap: 12px; margin: 0 0 16px; }
-.board-directory-search { display: grid; gap: 5px; font-weight: 650; }
-.board-directory-search input { min-height: 40px; padding: 8px 10px; }
-.board-directory-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.board-directory { display: grid; gap: var(--space-3); margin: 0 0 var(--space-4); }
+.board-directory-search { display: grid; gap: var(--space-1); font-weight: 650; }
+.board-directory-search input { min-height: var(--control-size-compact); padding: var(--space-2) var(--space-2); }
+.board-directory-filters { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .board-directory-filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.board-directory section { display: grid; gap: 5px; }
-.board-directory h3 { margin: 2px 0; font-size: .84rem; }
+.board-directory section { display: grid; gap: var(--space-1); }
+.board-directory h3 { margin: var(--space-1) 0; font-size: .84rem; }
 .workspace-switch small { color: var(--muted); font-size: .76rem; font-weight: 500; }
-.workspace-switch { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.workspace-switch { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
 </style>
