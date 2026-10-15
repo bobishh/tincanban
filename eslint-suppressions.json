@@ -12,11 +12,6 @@
       "count": 1
     }
   },
-  "src/chat/store.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 6
-    }
-  },
   "src/chat/storeTransactions.ts": {
     "@typescript-eslint/no-unsafe-argument": {
       "count": 5
@@ -58,17 +53,6 @@
   "src/domain/model.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
-    }
-  },
-  "src/domain/proofs.ts": {
-    "@typescript-eslint/no-unsafe-argument": {
-      "count": 5
-    },
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    },
-    "@typescript-eslint/no-unsafe-member-access": {
-      "count": 10
     }
   },
   "src/domain/schema.test.ts": {

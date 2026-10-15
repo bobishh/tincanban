@@ -9,8 +9,10 @@ import type { SyncNode, SyncTransport } from "./transport"
 import { type LiveWorkspaceSync, type WorkspaceReplica, type WorkspaceSetStore } from "./workspaceSet"
 import type { DurableMesh, DurableMeshOptions, MeshPeerView, MeshSuccessionView } from "./durableMesh"
 import { createDeviceSyncState, userMessage } from "./deviceSyncState"
-import { requestDeviceEnrollment, selectDeviceEnrollment } from "./deviceSyncEnrollment"
-import { generateWorkspaceInvite as generateHostInvite, WorkspaceAdmissionFailure, type WorkspaceHostContext } from "./deviceSyncHost"
+import type { selectDeviceEnrollment } from "./deviceSyncEnrollment"
+import { requestDeviceEnrollmentLazily, selectDeviceEnrollmentLazily } from "./lazyDeviceEnrollment"
+import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
+import type { WorkspaceHostContext } from "./deviceSyncHost"
 import { createKeeperOperations } from "./keeperOperations"
 import type { KeeperDiscovery } from "./keeperDiscovery"
 import type { KeeperPairing } from "./keeperPairing"
@@ -343,9 +345,8 @@ export class DeviceSyncController {
     }
   }
 
-  private async selectSyncAll() {
-    await this.ensureDurableMesh()
-    await selectDeviceEnrollment(this.enrollmentContext())
+  private selectSyncAll() {
+    return selectDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh())
   }
 
   private selectSyncWorkspace() {
@@ -354,8 +355,12 @@ export class DeviceSyncController {
   }
 
   private async generateWorkspaceInvite() {
+    const run = this.run
     await this.ensureDurableMesh()
-    await generateHostInvite(this.workspaceHostContext())
+    if (this.run !== run) return
+    const { generateWorkspaceInvite } = await import("./deviceSyncHost")
+    if (this.run !== run) return
+    await generateWorkspaceInvite(this.workspaceHostContext())
   }
 
   private workspaceHostContext(): WorkspaceHostContext {
@@ -447,17 +452,8 @@ export class DeviceSyncController {
       async () => await this.durableMesh?.revokedWorkspaceIds() ?? [])
   }
 
-  private async requestEnrollment(replaceIdentity = false) {
-    const invite = this.state.parsedInvite.value
-    if (!invite || invite.kind !== "device-enrollment" || this.state.step.value !== "enroll-guest") return
-    await this.ensureDurableMesh()
-    const profile = await this.getProfile()
-    if (profile.identity.personId !== invite.issuerPersonId && (!replaceIdentity || this.state.enrollmentConflict.value?.currentPersonId !== profile.identity.personId)) {
-      this.state.error.value = "Identity conflict: confirm the identity replacement first."
-      return
-    }
-    this.state.replacementPersonId.value = replaceIdentity ? profile.identity.personId : undefined
-    await requestDeviceEnrollment(this.enrollmentContext(), invite)
+  private requestEnrollment(replaceIdentity = false) {
+    return requestDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh(), replaceIdentity)
   }
 
   private async waitToReconnect(milliseconds: number) {

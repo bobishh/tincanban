@@ -8,12 +8,14 @@ import {
   type LocalProfile,
 } from "../domain/identity"
 import {
-  createChatRecord,
   verifyChatRecord,
   type ChatRecord,
   type ChatAuthority,
   type ChatPayload,
 } from "./records"
+import { createChatRecord as createVerifiedChatRecord } from "./signing"
+import { createChatRecordFixture as createChatRecord } from "./records.testSupport"
+import { resolveSigningContext } from "../domain/signingContext"
 import {
   certHashDefault,
   createDelegatedCertificate,
@@ -53,6 +55,18 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
     }
   }
 
+  it("rejects a verified signing context supplied with another record author", async () => {
+    const owner = await createProfile("Owner")
+    const other = await createProfile("Other")
+    const authorityRevision = "fixture-authority"
+    const signingContext = await resolveSigningContext({ profile: owner, certificates: [owner.certificate],
+      purpose: "chat-message", binding: { workspaceId }, authorityRevision,
+      current: async () => ({ personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision }),
+    })
+    await expect(createVerifiedChatRecord(other, makeOwnerAuthority(owner), workspaceId, "chat-message", "Substituted author",
+      0, undefined, signingContext)).rejects.toThrow("Chat signing context does not match the record author")
+  })
+
   it("verifies an editor grant with the embedded owner certificate when the local certificate catalog is incomplete", async () => {
     const owner = await createProfile("Owner")
     const editor = await createProfile("Editor")
@@ -65,7 +79,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
     } as never)
     const peers = vi.spyOn(peerStore,"listPeers").mockResolvedValue([])
     try {
-      await expect(verifyChatRecord(record,workspaceId,owner.identity.personId)).resolves.toBe(record)
+      await expect(verifyChatRecord(record,workspaceId,owner.identity.personId)).resolves.toStrictEqual(record)
       const forged = structuredClone(record)
       forged.authority.certificates[0]!.signature = toBase64Url(new Uint8Array(64))
       await expect(verifyChatRecord(forged,workspaceId,owner.identity.personId)).rejects.toThrow("Invalid workspace grant")
@@ -80,13 +94,13 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
     const context = { references: [{ workspaceScope: workspaceId, boardId: "board", itemId: "item" }], mentions: ["person"] }
     const record = await createChatRecord(owner, [owner.certificate], makeOwnerAuthority(owner), workspaceId, "chat-message", "Discuss", 0, context)
     expect(record.signed.payload.version).toBe(2)
-    await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).resolves.toBe(record)
+    await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).resolves.toStrictEqual(record)
     const forged = structuredClone(record)
     forged.signed.payload.context!.references[0]!.itemId = "changed"
     await expect(verifyChatRecord(forged, workspaceId, owner.identity.personId)).rejects.toThrow("Invalid message signature")
     const legacy = await createChatRecord(owner, [owner.certificate], makeOwnerAuthority(owner), workspaceId, "chat-message", "Legacy")
     expect(legacy.signed.payload.version).toBe(1)
-    await expect(verifyChatRecord(legacy, workspaceId, owner.identity.personId)).resolves.toBe(legacy)
+    await expect(verifyChatRecord(legacy, workspaceId, owner.identity.personId)).resolves.toStrictEqual(legacy)
     legacy.signed.payload.context = context
     await expect(verifyChatRecord(legacy, workspaceId, owner.identity.personId)).rejects.toThrow("Invalid chat record")
   })
@@ -96,7 +110,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       const owner = await createProfile("Owner Alice")
       const record = await createChatRecord(owner, [owner.certificate], makeOwnerAuthority(owner),
         workspaceId, "chat-typing", "typing", Date.now())
-      await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).resolves.toBe(record)
+      await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).resolves.toStrictEqual(record)
 
       record.signed.payload.text = "maybe"
       await expect(verifyChatRecord(record, workspaceId, owner.identity.personId)).rejects.toThrow("Invalid typing presence")
@@ -116,7 +130,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       )
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
       expect(verified.signed.payload.text).toBe("Hello from owner Alice")
       expect(verified.signed.payload.personId).toBe(owner.identity.personId)
     })
@@ -135,7 +149,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       )
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
       expect(verified.signed.payload.text).toBe("Alice")
     })
 
@@ -184,7 +198,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       }
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
       expect(verified.signed.payload.deviceId).toBe(dev2Id)
     })
   })
@@ -592,7 +606,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       )
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
       expect(verified.signed.payload.personId).toBe(editor.identity.personId)
     })
 
@@ -628,7 +642,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       )
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
     })
 
     it("admits chat-profile from editor holding valid grant", async () => {
@@ -654,7 +668,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       )
 
       const verified = await verifyChatRecord(record, workspaceId, owner.identity.personId)
-      expect(verified).toBe(record)
+      expect(verified).toStrictEqual(record)
       expect(verified.signed.payload.text).toBe("Editor Bob")
     })
 
@@ -685,7 +699,7 @@ describe("Chat records cryptographic admission (src/chat/records.ts)", () => {
       const peers = vi.spyOn(peerStore, "listPeers").mockResolvedValue([])
 
       try {
-        await expect(verifyChatRecord(record, workspaceId, newOwner.identity.personId)).resolves.toBe(record)
+        await expect(verifyChatRecord(record, workspaceId, newOwner.identity.personId)).resolves.toStrictEqual(record)
       } finally {
         credential.mockRestore()
         peers.mockRestore()

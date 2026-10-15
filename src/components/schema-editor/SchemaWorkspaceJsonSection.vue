@@ -44,3 +44,9 @@ const emit = defineEmits<{
 
   </div>
 </template>
+
+<style scoped>
+textarea.schema-json-textarea {
+  font: 400 max(.7rem, 14px)/1.5 var(--site-font-mono);
+}
+</style>

@@ -6,16 +6,17 @@ import { BrowserMeshDialScheduler, BrowserMeshOutgoingHandshake, BrowserMeshSess
 import { adaptVerifiedWorkspaceAdvertisement, connectToDevice, type DeviceRoute } from "@meta-uber/mesh-replication/protocol"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { defaultProofStore } from "../domain/proofs"
-import { requestBlob, respondToBlobRequest, type BlobDescriptor } from "@meta-uber/mesh-blob"
+import { respondToBlobRequest, type BlobDescriptor } from "@meta-uber/mesh-blob"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
-import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
+import { canonicalAuthorityJson, workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import type { SyncConnection, SyncNode } from "./transport"
 import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync} from "./workspaceSet"
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
 import { DurableMeshHandshake } from "./durableMeshHandshake"
 import { lazyIdentityDevicePreferences } from "./lazyIdentityDevicePreferences"
+import { fetchBlobFromCurrentSessions, type BlobAuthoritySnapshot } from "./durableMeshBlobFetch"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -343,36 +344,45 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     })
   }
 
+  private async currentBlobAuthority(workspaceId: string): Promise<BlobAuthoritySnapshot> {
+    const [rawProfile, rawCredential] = await Promise.all([
+      this.options.getProfile(), this.store.getWorkspaceCredential(workspaceId),
+    ])
+    if (!rawCredential) throw new Error("Workspace mesh credential is unavailable")
+    const profile = structuredClone(rawProfile)
+    const credential = structuredClone(rawCredential)
+    if ((await this.revokedWorkspaceIds([credential], profile)).includes(workspaceId)) {
+      throw new Error("Workspace access was revoked during blob transfer")
+    }
+    const partition = meshRustRuntime().state.partitionCredentials({ credentials: [credential],
+      personId: profile.identity.personId, publicKey: profile.identity.publicKey, deviceId: profile.device.deviceId })
+    if (!partition.activeIndices.includes(0)) {
+      throw new Error("Workspace mesh identity changed during blob transfer")
+    }
+    const credentialAuthority: Record<string, unknown> = { ...credential }
+    delete credentialAuthority.updatedAt
+    return {
+      profile,
+      identity: canonicalAuthorityJson({ identity: profile.identity, device: profile.device,
+        certificate: profile.certificate }),
+      credential: canonicalAuthorityJson(credentialAuthority),
+      transportSecret: credential.transportSecret,
+    }
+  }
+
   async fetchBlob(workspaceId: string, descriptor: BlobDescriptor): Promise<Uint8Array | undefined> {
     const blob = this.options.workspaceStore.blob
     if (!blob) return undefined
-    const local = await blob.read(descriptor)
-    if (local) return local
-    const credential = await this.store.getWorkspaceCredential(workspaceId)
-    if (!credential) throw new Error("Workspace mesh credential is unavailable")
-    const profile = await this.options.getProfile()
-    const deadline = Date.now() + 10_000
-    let lastError: unknown
-    while (Date.now() < deadline) {
-      const sessions = [...this.sessions.values()].filter(entry =>
-        entry.workspaceId === workspaceId && entry.blobTransferSupported)
-      if (sessions.length === 0) {
-        await new Promise(resolve => setTimeout(resolve, 200))
-        continue
-      }
-      for (const entry of sessions) {
-        try {
-          const bytes = await requestBlob(entry.connection, credential.transportSecret, profile, workspaceId, descriptor)
-          await blob.write(descriptor, bytes)
-          return bytes
-        } catch (error) {
-          lastError = error
-        }
-      }
-      break
-    }
-    if (lastError) throw lastError
-    throw new Error("No connected peer can provide this file")
+    return fetchBlobFromCurrentSessions({
+      workspaceId, descriptor, blob,
+      readAuthority: () => this.currentBlobAuthority(workspaceId),
+      sessions: () => [...this.sessions.values()].filter(entry =>
+        entry.workspaceId === workspaceId && entry.blobTransferSupported),
+      isCurrent: (entry, runId) => this.currentRunId === runId &&
+        this.sessions.get(this.peerKey(workspaceId, entry.deviceId, entry.instanceId)) === entry,
+      currentRunId: () => this.currentRunId,
+      isRunning: () => !this.stopped,
+    })
   }
 
   protected async publishRecoveredSession(key: string, entry: SessionEntry) {

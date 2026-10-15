@@ -74,7 +74,7 @@ function appCollaboration(core: ReturnType<typeof useAppCore>) {
     revokeWorkspacePeer, promoteWorkspacePeer,
   } = core
   return {
-    device: { sync, chat, blindReplication: core.blindReplication },
+    device: { sync, chat, blindReplication: core.blindReplication, profileRecovery: core.profileRecovery },
     permissions: { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, keeperOwnedWorkspaces, currentWorkspaceOwnerId, canEditItems, canEditBoard, canManageAccess, canImportWorkspace, canRenameWorkspace },
     mesh: {
       devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, meshMembers,

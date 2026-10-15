@@ -585,6 +585,74 @@ describe("paged initial snapshot transport", () => {
     expect((decoded[0]!.authorization as any).pages.flat()).toHaveLength(20_001)
     await clearProofPages(f.id)
   }, 20_000)
+  it("Given paged authorization, when all responses arrive, then bound raw reads and release each stream without closing its connection", async () => {
+    const f = await fixture()
+    const open = f.connection.openStream
+    const reads: Array<ReturnType<typeof vi.fn>> = []
+    const resets: Array<ReturnType<typeof vi.fn>> = []
+    f.connection.openStream = async () => {
+      const stream = await open()
+      const read = vi.fn((maximumBytes?: number) => stream.read(maximumBytes))
+      const reset = vi.fn(async () => undefined)
+      reads.push(read)
+      resets.push(reset)
+      return { ...stream, read, reset }
+    }
+    await f.target.resolveProofs(await f.source.snapshot(), f.connection, "secret")
+    expect(reads.length).toBeGreaterThan(1)
+    for (const read of reads) expect(read).toHaveBeenCalledWith(256 * 1024)
+    for (const reset of resets) expect(reset).toHaveBeenCalledOnce()
+    expect(f.connection.close).not.toHaveBeenCalled()
+    await clearProofPages(f.id)
+  }, 20_000)
+
+  it("Given an authorization page never finishes, when its deadline expires, then reset only its stream without publishing partial proof", async () => {
+    const f = await fixture()
+    const snapshot = await f.source.snapshot()
+    let began!: () => void
+    const started = new Promise<void>(resolve => { began = resolve })
+    let stop!: (error: Error) => void
+    const pending = new Promise<Uint8Array>((_, reject) => { stop = reject })
+    const reset = vi.fn(async () => { stop(new Error("Read stopped")) })
+    f.connection.openStream = async () => ({ send: vi.fn(), closeSend: vi.fn(), read: () => { began(); return pending }, reset })
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    try {
+      const result = f.target.resolveProofs(snapshot, f.connection, "secret").catch(error => error as Error)
+      await started
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(await result).toMatchObject({ message: "Authorization page timed out; retry same snapshot" })
+      expect(reset).toHaveBeenCalledOnce()
+      expect(f.connection.close).not.toHaveBeenCalled()
+      expect(f.merge).not.toHaveBeenCalled()
+      expect(f.validate).not.toHaveBeenCalled()
+    } finally { vi.useRealTimers(); stop(new Error("Test complete")); await clearProofPages(f.id) }
+  }, 20_000)
+
+  it("Given opening an authorization stream stalls, when it arrives after timeout, then reset it without sending a stale request", async () => {
+    const f = await fixture()
+    const snapshot = await f.source.snapshot()
+    let began!: () => void
+    const started = new Promise<void>(resolve => { began = resolve })
+    let release!: (stream: Awaited<ReturnType<SyncConnection["openStream"]>>) => void
+    const opened = new Promise<Awaited<ReturnType<SyncConnection["openStream"]>>>(resolve => { release = resolve })
+    const stream = { send: vi.fn(async () => undefined), read: vi.fn(async () => new Uint8Array()),
+      closeSend: vi.fn(async () => undefined), reset: vi.fn(async () => undefined) }
+    f.connection.openStream = () => { began(); return opened }
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    try {
+      const result = f.target.resolveProofs(snapshot, f.connection, "secret").catch(error => error as Error)
+      await started
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(await result).toMatchObject({ message: "Authorization page timed out; retry same snapshot" })
+      release(stream)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(stream.reset).toHaveBeenCalledOnce()
+      expect(stream.send).not.toHaveBeenCalled()
+      expect(stream.read).not.toHaveBeenCalled()
+      expect(f.connection.close).not.toHaveBeenCalled()
+      expect(f.merge).not.toHaveBeenCalled()
+    } finally { release(stream); vi.useRealTimers(); await clearProofPages(f.id) }
+  }, 20_000)
   it("Given lost response, retry reuses saved pages; corrupt saved page forces bounded refetch", async () => {
     const f = await fixture()
     const snapshot = await f.source.snapshot()

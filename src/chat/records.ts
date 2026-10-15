@@ -1,5 +1,5 @@
 import { validateMessageContext, type MessageContext } from "./context"
-import { signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { verifyEnvelope, type SignedEnvelope } from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { validateDisplayName, normalizeDisplayName } from "./names"
 import { peerStore } from "../sync/peerStore"
@@ -151,13 +151,8 @@ async function assertGrantPermission(
 }
 
 export async function verifyChatRecord(value: unknown, workspaceId: string, ownerPersonId: string, grantWorkspaceId = workspaceId): Promise<ChatRecord> {
-  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 32768) throw new Error("Chat record too large")
-  const record = value as ChatRecord
-  const payload = validateRecordShape(record, workspaceId)
-  validatePayloadText(payload)
-  const key = await verifyDeviceChain({ personId: payload.personId, publicKey: record.publicKey,
-    deviceId: payload.deviceId, certificates: record.certificates })
-  if (!await verifyEnvelope(record.signed, key)) throw new Error("Invalid message signature")
+  const record = await verifyChatRecordSignature(value, workspaceId)
+  const payload = record.signed.payload
   const recordAuthority = record.authority
   if (!recordAuthority) throw new Error("Invalid workspace authority")
   const storedAuthority = await storedWorkspaceAuthority(grantWorkspaceId)
@@ -170,14 +165,32 @@ export async function verifyChatRecord(value: unknown, workspaceId: string, owne
   return record
 }
 
-export async function createChatRecord(profile: LocalProfile, certificates: DeviceCertificate[], authority: ChatAuthority,
-  workspaceId: string, kind: ChatPayload["kind"], text: string, revision = 0, context?: MessageContext): Promise<ChatRecord> {
-  const payload: ChatPayload = {
-    kind, version: context ? 2 : 1, ...(context ? { context } : {}), workspaceId, personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    id: `${profile.device.deviceId}:${crypto.randomUUID()}`, createdAt: new Date().toISOString(), text, revision,
+function detachedChatRecord(value: unknown): ChatRecord {
+  let serialized: string
+  try {
+    serialized = JSON.stringify(value)
+  } catch {
+    return invalidRecord()
   }
-  return {
-    signed: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId),
-    publicKey: profile.identity.publicKey, certificates, authority,
+  if (typeof serialized !== "string") return invalidRecord()
+  if (new TextEncoder().encode(serialized).byteLength > 32768) throw new Error("Chat record too large")
+  try {
+    return JSON.parse(serialized) as ChatRecord
+  } catch {
+    return invalidRecord()
   }
+}
+
+export async function verifyChatRecordSignature(value: unknown, workspaceId: string): Promise<ChatRecord> {
+  const record = detachedChatRecord(value)
+  const payload = validateRecordShape(record, workspaceId)
+  validatePayloadText(payload)
+  const key = await verifyDeviceChain({
+    personId: payload.personId,
+    publicKey: record.publicKey,
+    deviceId: payload.deviceId,
+    certificates: record.certificates,
+  })
+  if (!await verifyEnvelope(record.signed, key)) throw new Error("Invalid message signature")
+  return record
 }

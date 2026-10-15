@@ -188,9 +188,6 @@
   font-size: 1rem;
 }
 .schema-json-textarea {
-  font-family: var(--site-font-sans);
-  font-size: 1rem;
-  line-height: 1.4;
   padding: 0.75rem;
   border: 2px solid var(--line, #171717);
   border-radius: 0;

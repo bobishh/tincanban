@@ -94,6 +94,18 @@ invitation, content key, or Editor/Visitor application grant. Board history and
 chat are encrypted by clients, which still verify authorizations before merging.
 See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
 
+The [working-tree architecture diagram](openspec/changes/unified-device-and-replica-architecture/design.md#current-working-tree-boundaries)
+separates Rusty's HTTP storage, direct device sync, private identity state and the
+authorized automation Worker. Its implementation/verification gaps are explicit;
+it does not assert a coordinated production rollout.
+
+The working-tree writer upgrade also coordinates existing automation Workers:
+it checks maintenance support before changing Rusty policy, retains the confirmed
+receipt through interrupted retries, and waits for signed Worker confirmations
+before activating local access. This refresh preserves each Worker's approval and
+pending work; it does not renew its permissions. Older Workers require a compatible
+rollout, and untyped live grants require explicit route adoption or removal.
+
 Compatible Rusty services advertise owner-authorized snapshot checkpoints. After
 eight retained snapshots, a caught-up owner client replaces their storage prefix
 with one freshly encrypted snapshot carrying complete admitted document history
@@ -139,6 +151,21 @@ isolated loopback public origin and exercise the compiled anonymous-reader mock
 scenarios in both browsers. The real owner-to-Rusty integration uses Vite's local
 development server because its fixture reads private app state. Run
 `cargo test --locked` from `../mesh-lighthouse` for native protocol and storage tests.
+`npm run test:rusty-management` separately exercises signed management status,
+policy migration, enrollment, encrypted checkpoints and attachment client
+restart/retry/cold-receiver recovery over real native HTTP,
+without a browser. The archive case also runs the Native verifier against actual
+Rusty receipts and recovered ciphertext, then binds a compact admitted-state basis
+to that exact archived preparation. The same case signs an initial Owner proposal
+through the JavaScript identity SDK and confirms it with Native policy. This is
+preparation evidence; cold-receiver validation and baseline activation remain
+incomplete. Build the current Rusty binary first,
+then build `history_archive_verify` with
+`cargo build -p meta-mesh-core --example history_archive_verify` from
+`vendor/meta-mesh`. Set `TINCANBAN_RUSTY_BINARY` or
+`TINCANBAN_HISTORY_VERIFY_BINARY` when either binary is outside its default debug
+checkout. Ordinary unit tests do not require these binaries. This integration
+adapter's JSON result is test evidence, not baseline activation authority.
 
 Readable protocol 1 services are no longer configurable in the application UI.
 Existing deployments and grants require explicit migration to a fresh storage
@@ -211,6 +238,15 @@ a signed Worker acknowledgement of those exact commands. Reading access applies
 to the entire workspace; grants last 30 days. New UI instances support website
 job intake; email routing still requires deployment configuration.
 
+Existing instances are managed separately from initial enrollment. The owner can
+inspect an expired approval without allowing the Worker to execute it. **Renew
+approval**, **Adopt existing Worker**, enabling email and enabling vacancy evidence
+show workspace-reading access and the new 30-day term before explicit confirmation.
+Adoption retains the same executor, routing address, saved events and pending
+replication; Retry connection does not silently renew an expired approval. These
+paths are implemented in the working tree; browser and coordinated-release
+acceptance remain pending.
+
 ## Run locally
 
 Requirements: Git and Node.js 22 or newer. Rust is **not** needed to run tincanban:
@@ -248,10 +284,10 @@ are required; invalid values disable sending. Use `.env` locally or Cloudflare b
 variables in production. These values become public browser assets; backend/desktop
 secret write keys belong only in backend runtime secrets.
 
-**Settings → Identity** contains only **Send diagnostics from this device** when a
+**Settings → Workspace → Diagnostics** contains **Send diagnostics from this device** when a
 collector is configured. The consent choice applies to this browser across
 workspaces and survives reload. Old local collector URLs and keys are ignored;
-explicit old opt-out survives. **Settings → Identity → Diagnostic delivery**
+explicit old opt-out survives. **Settings → Workspace → Diagnostics → Diagnostic delivery**
 shows queued/dropped events, last confirmed send and delivery failures. The
 collector must accept the [version 2 contract](openspec/changes/configurable-telemetry/design.md).
 Local diagnostic snapshots remain available when external sending is disabled.
@@ -381,8 +417,9 @@ or 4 MiB per scope.
 
 ## What to expect
 
-- **Availability:** another device must be reachable to receive new data or fetch
-  an attachment that is not stored locally. There is no permanent hosted replica.
+- **Availability:** new data needs a reachable device or a configured Rusty holding
+  its encrypted copy. An attachment absent locally needs a reachable source or
+  confirmed Rusty file coverage. Local saved data remains available offline.
 - **Connectivity:** peers use Iroh discovery and relay infrastructure when needed;
   P2P does not mean infrastructure-free or guaranteed connectivity on every network.
 - **Local startup:** Rust/WASM policy code loads before stored documents are opened.

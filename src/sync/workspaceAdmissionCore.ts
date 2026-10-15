@@ -202,7 +202,7 @@ function assertAdmittedTransition(
     if (touchedPaths.entityIds.size === 0) return
     const before = workspaceEntitiesAtHeads(document, change.deps)
     const after = workspaceEntitiesAtHeads(document, [change.hash])
-    assertWorkspaceEntityTransitions(role, before, after, touchedPaths.entityIds, actorPersonId)
+    assertWorkspaceEntityTransitions(role, before, after, touchedPaths.entityIds, actorPersonId, document.id)
     return
   }
   // Ambiguous operations require the full transition check. Computing patches

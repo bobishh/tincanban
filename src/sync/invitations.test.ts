@@ -1,11 +1,14 @@
-import { describe, expect, it, beforeEach } from "vitest"
+import { describe, expect, it, beforeEach, vi } from "vitest"
 import {
   InvitationService,
   resetInvitationStorageForTest,
   deriveTranscriptAuthCode,
 } from "./invitations"
 import { bootstrapIdentity, resetIdentityStorageForTest, verifyEnvelope } from "../domain/identity"
+import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
 import { createDeviceEnrollmentInvite, createWorkspaceJoinInvite } from "@meta-uber/mesh-pairing"
+import { certHashDefault } from "../domain/proofs"
+import { resolveSigningContext } from "../domain/signingContext"
 
 describe("InvitationService (Requirements 3.2 - 3.4)", () => {
   beforeEach(() => {
@@ -71,17 +74,128 @@ describe("InvitationService (Requirements 3.2 - 3.4)", () => {
     await service.saveIssuedInvitation(invite)
 
     await service.claimInvitation(invite.invitationId, profileGuest.device.deviceId)
+    const context = await resolveSigningContext({ profile: profileHost, certificates: [profileHost.certificate],
+      purpose: "device-certificate", binding: { personId: profileHost.identity.personId,
+        deviceId: profileGuest.device.deviceId, devicePublicKey: profileGuest.device.publicKey,
+        issuerCertificateHash: await certHashDefault(profileHost.certificate) }, authorityRevision: "test",
+      current: async () => ({ personId: profileHost.identity.personId, deviceId: profileHost.device.deviceId,
+        authorityRevision: "test" }) })
 
     const approval = await service.approveEnrollment(
       invite.invitationId,
       profileGuest.device,
-      profileHost
+      profileHost,
+      context,
     )
     expect(approval.ok).toBe(true)
     if (!approval.ok) return
 
     expect(approval.certificate.payload.deviceId).toBe(profileGuest.device.deviceId)
     expect(approval.certificate.payload.personId).toBe(profileHost.identity.personId)
+  })
+
+  it("Given another device key, when approving enrollment, then reject and leave the claim redeeming", async () => {
+    const owner = await bootstrapIdentity("Issuer")
+    const recipient = await bootstrapIdentity("Recipient")
+    const other = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const service = new InvitationService()
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    await service.saveIssuedInvitation(invite)
+    await service.claimInvitation(invite.invitationId, recipient.device.deviceId)
+
+    const wrongProfile = { ...owner, privateKeys: { ...owner.privateKeys, devicePrivateKey: other.privateKey } }
+    expect(await service.approveEnrollment(invite.invitationId, recipient.device, wrongProfile)).toMatchObject({ ok: false })
+    expect((await service.getInvitation(invite.invitationId))?.status).toBe("redeeming")
+  })
+
+  it("Given an active issuer and an isolated recipient profile, when approving enrollment, then issue a verifiable certificate", async () => {
+    const issuer = await bootstrapIdentity("Issuer")
+    const recipientValues = new Map<string, string>()
+    const recipientStore = new BrowserIdentityStore({ storageKey: "isolated-recipient", requirePersistence: true,
+      storage: { getItem: key => recipientValues.get(key) ?? null,
+        setItem: (key, value) => { recipientValues.set(key, value) }, removeItem: key => { recipientValues.delete(key) } } })
+    const recipient = await recipientStore.bootstrap("Recipient")
+    const service = new InvitationService()
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", issuer)
+    await service.saveIssuedInvitation(invite)
+    await service.claimInvitation(invite.invitationId, recipient.device.deviceId)
+
+    const approval = await service.approveEnrollment(invite.invitationId, recipient.device, issuer)
+    expect(approval.ok).toBe(true)
+    if (!approval.ok) return
+    expect(approval.certificate.payload).toMatchObject({ personId: issuer.identity.personId,
+      deviceId: recipient.device.deviceId, devicePublicKey: recipient.device.publicKey,
+      issuerCertificateHash: await certHashDefault(issuer.certificate) })
+    await expect(verifyEnvelope(approval.certificate, issuer.device.publicKey)).resolves.toBe(true)
+  })
+
+  it("Given a redeeming claim, when cancellation occurs during certificate signing, then do not consume or return a certificate", async () => {
+    const owner = await bootstrapIdentity("Issuer")
+    const recipient = await bootstrapIdentity("Recipient")
+    const service = new InvitationService()
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    await service.saveIssuedInvitation(invite)
+    await service.claimInvitation(invite.invitationId, recipient.device.deviceId)
+
+    let notifySigningStarted!: () => void
+    const signingStarted = new Promise<void>(resolve => { notifySigningStarted = resolve })
+    let releaseSigning!: () => void
+    const signingGate = new Promise<void>(resolve => { releaseSigning = resolve })
+    const originalSign = crypto.subtle.sign.bind(crypto.subtle)
+    const sign = vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => {
+      const result = await originalSign(...args)
+      notifySigningStarted()
+      await signingGate
+      return result
+    })
+    try {
+      const pending = service.approveEnrollment(invite.invitationId, recipient.device, owner)
+      await signingStarted
+      await service.cancelInvitation(invite.invitationId)
+      releaseSigning()
+
+      expect(await pending).toMatchObject({ ok: false })
+      expect((await service.getInvitation(invite.invitationId))?.status).toBe("cancelled")
+    } finally {
+      releaseSigning()
+      sign.mockRestore()
+    }
+  })
+
+  it("Given cancellation after final awaited validation, when consuming approval, then preserve the cancelled state", async () => {
+    const owner = await bootstrapIdentity("Issuer")
+    const recipient = await bootstrapIdentity("Recipient")
+    const service = new InvitationService()
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    await service.saveIssuedInvitation(invite)
+    await service.claimInvitation(invite.invitationId, recipient.device.deviceId)
+    const originalToISOString = Date.prototype.toISOString
+    const toISOString = vi.spyOn(Date.prototype, "toISOString").mockImplementation(function (this: Date) {
+      void service.cancelInvitation(invite.invitationId)
+      return originalToISOString.call(this)
+    })
+    try {
+      expect(await service.approveEnrollment(invite.invitationId, recipient.device, owner)).toMatchObject({ ok: false })
+      expect((await service.getInvitation(invite.invitationId))?.status).toBe("cancelled")
+    } finally { toISOString.mockRestore() }
+  })
+
+  it("Given the invitation record is replaced after final validation, when consuming approval, then preserve the replacement", async () => {
+    const owner = await bootstrapIdentity("Issuer")
+    const recipient = await bootstrapIdentity("Recipient")
+    const service = new InvitationService()
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    await service.saveIssuedInvitation(invite)
+    await service.claimInvitation(invite.invitationId, recipient.device.deviceId)
+    const originalToISOString = Date.prototype.toISOString
+    const toISOString = vi.spyOn(Date.prototype, "toISOString").mockImplementation(function (this: Date) {
+      void service.saveIssuedInvitation(invite)
+      return originalToISOString.call(this)
+    })
+    try {
+      expect(await service.approveEnrollment(invite.invitationId, recipient.device, owner)).toMatchObject({ ok: false })
+      expect((await service.getInvitation(invite.invitationId))?.status).toBe("pending")
+    } finally { toISOString.mockRestore() }
   })
 
   it("prevents non-owner editor from issuing workspace grants (Requirement 3.4)", async () => {

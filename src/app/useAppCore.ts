@@ -17,6 +17,7 @@ import { meshTrace } from "../sync/meshTrace"
 import { useAppMesh } from "./useAppMesh"
 import { configureAttachmentFetcher, readStoredAttachment, writeStoredAttachment } from "../attachments"
 import { workspaceBlobDescriptor, workspaceChatRoomId } from "./workspaceMetadata"
+import { useIdentityProfileRecovery } from "./useIdentityProfileRecovery"
 
 type ArchiveUndo = { workspaceId: string; itemId: string; title: string }
 
@@ -92,6 +93,7 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
     async id => (await tincanban.readWorkspaceDoc(id)).ownerPersonId,
     async id => workspaceChatRoomId(await tincanban.readWorkspaceDoc(id)),
   )
+  const profileRecovery = useIdentityProfileRecovery(tincanban)
   const chatWorkspaceId = computed(() => tincanban.ready.value ? tincanban.activeWorkspace.id : "")
   const chatOwnerId = computed(() => { void tincanban.docVersion.value; return tincanban.getActiveDoc()?.ownerPersonId ?? "" })
   const identityName = computed(() => { void tincanban.docVersion.value; return tincanban.getCurrentProfile()?.identity.displayName ?? "" })
@@ -131,11 +133,14 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
     workspaceOwner: id => timedWorkspaceStoreStage("owner-check", id, () =>
       resolveWorkspaceOwner(tincanban.readWorkspaceDoc, id)),
   })
-  configureAttachmentFetcher(descriptor => sync.fetchBlob(tincanban.activeWorkspace.id, descriptor))
   const policy = useWorkspacePolicy(tincanban, ui, sync)
   const blindReplication = useBlindReplication(tincanban)
+  configureAttachmentFetcher(descriptor => {
+    const workspaceId = tincanban.activeWorkspace.id
+    return blindReplication.fetchAttachment(workspaceId, descriptor, current => sync.fetchBlob(workspaceId, current))
+  })
   const mesh = useAppMesh({ activeWorkspace: tincanban.activeWorkspace, chat, sync, blindReplication, ...policy })
-  return { chat, sync, blindReplication, ...policy, ...mesh }
+  return { chat, sync, blindReplication, profileRecovery, ...policy, ...mesh }
 }
 
 function subscribeWorkspaceAndChat(subscribeLocalChanges: ReturnType<typeof useTincanban>["subscribeLocalChanges"], listener: () => void) {

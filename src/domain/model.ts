@@ -1,3 +1,5 @@
+import type { IdentityProfileState } from "./identityProfileState"
+
 export type EntityId = string
 export type WorkspaceId = string
 export type PersonId = string // base64url SHA-256(raw identity public key)
@@ -39,6 +41,7 @@ export type PersonalRootDocumentV1 = {
   rootId: string
   identity: PublicIdentity
   photo?: { avatarData: string | null; changedAt: string }
+  profileState?: IdentityProfileState
   displayNamePreset?: string
   devices: Record<DeviceId, RegisteredDevice>
   workspaces: Record<WorkspaceId, WorkspaceReference>
@@ -113,7 +116,7 @@ export type DeviceCertificate = SignedEnvelope<{
   deviceId: DeviceId
   devicePublicKey: string
   issuerCertificateHash: Hash | null // null means signed by identity authority
-  canEnrollDevices: true
+  canEnrollDevices: boolean
 }>
 
 export type ActorBinding = SignedEnvelope<{
@@ -145,7 +148,7 @@ export type WorkspaceGrant = SignedEnvelope<{
 }>
 
 export type AutomationGrantScope = {
-  version: 1
+  version: 1 | 2
   boardId: string
   columns: { lead: string; applied?: string; interview: string; rejected: string }
   fieldIds: string[]

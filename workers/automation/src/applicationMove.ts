@@ -12,6 +12,12 @@ export async function planApplicationMove(mail: ForwardedMail, candidates: Autom
   const correlation = await correlateApplicationFromJobPages(mail, candidates, fetcher);
   if (correlation.kind !== "matched") return { kind: "review", reason: correlation.reason };
   const candidate = candidates.find(item => item.cardId === correlation.cardId)!;
+  return planBoundApplicationMove(mail, candidate, columns, event);
+}
+
+/** Only the coordinator's verified owner binding may select a candidate without automatic matching. */
+export function planBoundApplicationMove(mail: ForwardedMail, candidate: AutomationCandidate, columns: Columns,
+  event: "applied" | "interview" | "rejection"): ApplicationMovePlan {
   const messageTime = mail.date ? Date.parse(mail.date) : Number.NaN;
   const changedTime = candidate.workflow ? Date.parse(candidate.workflow.changedAt) : Number.NaN;
   if (!Number.isFinite(messageTime)) return { kind: "review", reason: "Email has no valid original date" };

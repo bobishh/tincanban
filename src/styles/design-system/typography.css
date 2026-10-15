@@ -1,6 +1,9 @@
 /* tincanban typography. Consumers may override font tokens. */
 :root {
-  --site-font-brand: "Caveat", cursive;
+  --site-font-sans: "Caveat", "Comic Sans MS", cursive;
+  --site-font-reading: "Fira Sans", Arial, sans-serif;
+  --site-font-mono: "Fira Code", ui-monospace, monospace;
+  --site-font-brand: "Caveat", "Comic Sans MS", cursive;
 }
 
 :where(h1, h2, h3, h4, h5, h6) {

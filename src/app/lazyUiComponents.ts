@@ -47,6 +47,9 @@ function preloadOfflineDetailChunks() {
       import("../components/SpatialWindow.vue"),
       import("../components/ItemDetailDialog.vue"),
       import("../components/ItemFormDialog.vue"),
+      import("../components/ItemDocuments.vue"),
+      import("../attachmentBlobStore"),
+      import("../attachmentFileStream").then(module => module.preloadBlobStreamStorage()),
     ]).then(() => undefined).catch(error => {
       detailChunksPromise = null
       throw error

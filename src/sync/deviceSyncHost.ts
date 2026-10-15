@@ -23,17 +23,12 @@ import type { PairingContext } from "./deviceSyncContext"
 import type { JoinDecision } from "./deviceSyncJoinApproval"
 import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from "./keeperCommitReceipt"
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
+import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
+
+export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
 type WorkspaceOption = { id: string; title: string }
 type KeeperAdmission = { servicePersonId: string; workspaceIds: string[]; followOwner: boolean; serviceGrantFloors?: Record<string, number> }
-
-/** A non-network failure before a join completes needs a terminal cause on the host. */
-export class WorkspaceAdmissionFailure extends Error {
-  constructor(error: unknown) {
-    super(error instanceof Error ? error.message : String(error), { cause: error })
-    this.name = "WorkspaceAdmissionFailure"
-  }
-}
 
 export type WorkspaceHostContext = PairingContext & {
   workspace: WorkspaceReplica

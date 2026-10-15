@@ -1,11 +1,11 @@
-import { certHashDefault, createWorkspaceGrant } from "../domain/proofs"
+import { createWorkspaceGrant } from "../domain/proofs"
 import type { ScopedInvitation } from "@meta-uber/mesh-pairing"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import {
   sha256Base64Url,
-  signEnvelope,
   type LocalProfile,
 } from "../domain/identity"
+import type { VerifiedSigningContext } from "../domain/signingContext"
 
 type InvitationStatus = "pending" | "redeeming" | "consumed" | "cancelled" | "expired"
 
@@ -100,37 +100,23 @@ export class InvitationService {
   async approveEnrollment(
     invitationId: string,
     recipientDevice: { deviceId: string; publicKey: string; displayName?: string },
-    profile: LocalProfile
+    profile: LocalProfile,
+    suppliedContext?: VerifiedSigningContext,
   ): Promise<{ ok: true; certificate: DeviceCertificate } | { ok: false; error: string }> {
-    const invite = await this.getInvitation(invitationId)
-    if (!invite) {
-      return { ok: false, error: "Invitation not found" }
-    }
-    if (invite.kind !== "device-enrollment") {
-      return { ok: false, error: "Not a device-enrollment invitation" }
-    }
-    if (invite.status !== "redeeming" || invite.claimedByDeviceId !== recipientDevice.deviceId) {
-      return { ok: false, error: "Invitation not currently redeeming for this device" }
-    }
-
-    if (!profile.certificate.payload.canEnrollDevices) return { ok: false, error: "This device cannot enroll other devices" }
-
-    const certPayload = {
-      kind: "device-certificate" as const,
-      version: 1 as const,
-      personId: profile.identity.personId,
-      deviceId: recipientDevice.deviceId,
-      devicePublicKey: recipientDevice.publicKey,
-      issuerCertificateHash: await certHashDefault(profile.certificate),
-      canEnrollDevices: true as const,
-    }
-
-    const signedCert = await signEnvelope(profile.privateKeys.devicePrivateKey, certPayload, profile.device.deviceId)
-
-    invite.status = "consumed"
-    invite.approvedAt = new Date().toISOString()
-
-    return { ok: true, certificate: signedCert }
+    const requestedDevice = structuredClone(recipientDevice)
+    const requestedProfile = structuredClone(profile)
+    const requestedInvitationId = invitationId
+    const { approveEnrollmentCertificate } = await import("./enrollmentCertificate")
+    return approveEnrollmentCertificate(requestedInvitationId, requestedDevice, requestedProfile, suppliedContext, {
+      getInvitation: id => this.getInvitation(id),
+      consume: (invite, approvedAt, stillCurrent) => {
+        const current = inMemoryInvitations.get(invite.invitationId) ?? null
+        if (!current || !stillCurrent(current, Date.now())) return false
+        current.status = "consumed"
+        current.approvedAt = approvedAt
+        return true
+      },
+    })
   }
 
   async approveWorkspaceJoin(

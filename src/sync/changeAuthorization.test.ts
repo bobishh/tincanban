@@ -11,11 +11,13 @@ import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, crea
 import { publicKeyId, toBase64Url } from "../domain/identity"
 import { createWorkspaceOwnershipTransfer, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"
 import { executeCommand, type Command } from "../domain/commands"
-import { authorityValidationFingerprint, localWorkspaceAdmissionAuthority, exportAuthorizations, exportAuthorizationBundle, exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, recordGenesisAuthority, validateIncomingChanges, validateIncomingChangesWithProofStatus, validateIncomingChangeAuthorizations, workspaceRole, workspaceWritesBlocked } from "./changeAuthorization"
+import { authorityValidationFingerprint, localWorkspaceAdmissionAuthority, exportAuthorizations, exportAuthorizationBundle, exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, validateIncomingChanges, validateIncomingChangesWithProofStatus, validateIncomingChangeAuthorizations, workspaceRole, workspaceWritesBlocked } from "./changeAuthorization"
 import { reconcileOwnerRevocationBoundaries } from "./ownerRevocationBoundaryRepair"
+import { recordHistoricalGenesis as recordGenesisAuthority, prepareHistoricalAuthorizations as prepareLocalChangeAuthorizations } from "./workspaceSigning.testSupport"
 import { assertWorkspaceTransition } from "../domain/permissions"
 import { isItem, type WorkspaceDocumentV2 } from "../domain/model"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+import { resolveSigningContext } from "../domain/signingContext"
 
 type TestCatalog = {
   revocations?: WorkspaceRevocation[]
@@ -111,6 +113,39 @@ it("Given an enrolled owner device with a delegated certificate, when creating a
   await expect(recordGenesisAuthority(doc, enrolled)).resolves.toHaveLength(1)
   const bundle = await exportDocumentAuthorizationBundle(doc, enrolled)
   expect(bundle.authority?.genesisOwner.certificates).toEqual(expect.arrayContaining([certificate, owner.certificate]))
+})
+
+it("Given a missing signing ancestor, when preparing a local change authorization, then reject before creating an unverifiable record", async () => {
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, member.device.deviceId, member.device.publicKey, await certHashDefault(owner.certificate))
+  const enrolled = { ...member, identity: owner.identity, certificate,
+    privateKeys: { devicePrivateKey: member.privateKeys.devicePrivateKey } }
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Missing signer ancestor", owner.identity.personId, "blank"))
+  const pool = vi.spyOn(defaultProofStore, "listCertificates").mockResolvedValue([])
+  try { await expect(prepareLocalChangeAuthorizations(doc, enrolled, ["change"])).rejects.toThrow(/ancestor|chain/i) }
+  finally { pool.mockRestore(); Automerge.free(doc) }
+})
+
+it("Given a mismatched private signer, when preparing a local change authorization, then reject its certified key mismatch", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Mismatched signer", owner.identity.personId, "blank"))
+  try {
+    await expect(prepareLocalChangeAuthorizations(doc, { ...owner, privateKeys: { devicePrivateKey: member.privateKeys.devicePrivateKey } }, ["change"])).rejects.toThrow(/key|signer/i)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given authority changing while a local proof is signed, when signing finishes, then reject the stale record", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Signing race", owner.identity.personId, "blank"))
+  const original = crypto.subtle.sign.bind(crypto.subtle)
+  const sign = vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => {
+    const result = await original(...args)
+    if (new TextDecoder().decode(args[2] as ArrayBuffer).includes('"workspace-changes"')) {
+      peerStoreState.authority = { version: 1, workspaceId: doc.id, ownerPersonId: owner.identity.personId,
+        ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 2, catalog: {} }
+    }
+    return result
+  })
+  try { await expect(prepareLocalChangeAuthorizations(doc, owner, ["change"])).rejects.toThrow(/authority|stale/i) }
+  finally { sign.mockRestore(); Automerge.free(doc) }
 })
 
 it("Given two valid enrolled devices, When stored certificate order changes, Then local admission and its race guard keep identical authority fingerprints", async () => {
@@ -735,7 +770,13 @@ it("Given split owners wrote on separate partitions, when the branches meet, the
   const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Partitioned", owner.identity.personId, "blank"))
   const column = Object.values(base.entities).find(entity => hasEntityKind(entity, "column"))!
   const write = async (profile: LocalProfile, title: string) => {
-    const result = await executeCommand(base, { kind: "createItem", parentId: column.id, title }, profile)
+    // Independent partition fixtures own different active devices; neither impersonates this browser's current local profile.
+    const signingContext = (purpose: string, binding: Record<string, string | number>) => resolveSigningContext({
+      profile, certificates: [profile.certificate], purpose, binding, authorityRevision: "partition",
+      current: async () => ({ personId: profile.identity.personId, deviceId: profile.device.deviceId, authorityRevision: "partition" }),
+    })
+    const result = await executeCommand(base, { kind: "createItem", parentId: column.id, title }, profile,
+      undefined, undefined, signingContext)
     if (!result.ok) throw new Error(result.error.message)
     return result.value.newDoc
   }

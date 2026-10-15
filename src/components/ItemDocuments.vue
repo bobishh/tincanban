@@ -11,11 +11,14 @@ import {
 import type { Document, DocumentInput } from "../types"
 import { isInlineNarrativeNote } from "../domain/narrative"
 import ModalLayer from "./ModalLayer.vue"
+import { attachmentCoveragePresentation, type AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
 type DocumentDraft = Omit<DocumentInput, "leadId">
 
 const props = defineProps<{
   documents: Document[]
+  workspaceId?: string
+  attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
   save: (document: DocumentDraft) => Promise<void>
   update: (documentId: string, content: string) => Promise<void>
@@ -33,6 +36,10 @@ const previewError = ref("")
 const previewSaving = ref(false)
 const previewStatus = ref("")
 const visibleDocuments = computed(() => props.documents.filter(document => !isInlineNarrativeNote({ ...document, content: document.content ?? null, documentKind: document.kind })))
+
+function coverageFor(document: Document) {
+  return attachmentCoveragePresentation(props.attachmentCoverage, props.workspaceId, document.file)
+}
 
 async function attach() {
   const trimmedTitle = title.value.trim()
@@ -232,6 +239,10 @@ onBeforeUnmount(closePreview)
       <div>
         <strong>{{ document.title }}</strong>
         <span>{{ fileDescription(document) }}</span>
+        <span v-if="document.file?.type === 'blob'" class="attachment-coverage" role="status" aria-label="Encrypted attachment coverage">
+          {{ coverageFor(document).label }}
+          <small v-if="coverageFor(document).error">{{ coverageFor(document).error }}</small>
+        </span>
       </div>
       <div class="document-actions">
         <button class="button button-small button-quiet" type="button" @click="openPreview(document)">Preview</button>
@@ -270,3 +281,8 @@ onBeforeUnmount(closePreview)
     </ModalLayer>
   </section>
 </template>
+
+<style scoped>
+.attachment-coverage { display: block; font-size: .82em; opacity: .78; }
+.attachment-coverage small { display: block; }
+</style>

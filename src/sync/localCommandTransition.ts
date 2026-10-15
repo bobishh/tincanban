@@ -36,7 +36,7 @@ export async function assertLocalCommandTransition(
   }
   // Check immutable roots without enumerating unrelated entities.
   assertWorkspaceTransition(role, { ...base, entities: {} }, { ...next, entities: {} }, profile.identity.personId)
-  assertWorkspaceEntityTransitions(role, base.entities, next.entities, touched.entityIds, profile.identity.personId)
+  assertWorkspaceEntityTransitions(role, base.entities, next.entities, touched.entityIds, profile.identity.personId, next.id)
 }
 
 async function matchesLocalAuthorization(authorizations: WorkspaceChangeAuthorization[], workspaceId: string,

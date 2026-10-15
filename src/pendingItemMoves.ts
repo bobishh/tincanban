@@ -26,7 +26,7 @@ export function projectPendingItemMoves(doc: WorkspaceDocumentV2): WorkspaceDocu
   // Move handlers write entity scalars and placement only. Keep large text and
   // nested content shared; never clone or modify the Automerge history.
   const entities = Object.fromEntries(Object.entries(doc.entities).map(([id, entity]) =>
-    [id, { ...entity, placement: { ...entity.placement } }]))
+    [id, entity.kind === "application_source" ? entity : { ...entity, placement: { ...entity.placement } }]))
   const projected = { ...doc, entities }
   for (const move of moves) {
     const context = { nowIso: move.nowIso, beforeHeads: [] }

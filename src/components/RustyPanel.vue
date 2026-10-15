@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { BlindReplicationController } from "../app/blindReplication"
-import { replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
+import { profileDeliveryStates, replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
 import RustyMark from "./RustyMark.vue"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
 const address = ref("")
@@ -9,6 +9,8 @@ const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)
 const records = computed(() => props.controller.configs.value.filter(config => config.workspaceId === props.workspaceId))
+const profileRecords = computed(() => profileDeliveryStates(props.controller.configs.value, props.controller.identityConfigs.value,
+  props.controller.statuses.value, props.workspaceId, props.controller.now.value))
 async function run(action: () => Promise<void>) {
   pending.value = true
   failure.value = ""
@@ -32,6 +34,19 @@ async function connect() {
         <button v-if="owner" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(() => controller.remove(config))">{{ config.removalPending ? 'Retry removal' : 'Remove' }}</button>
       </li>
     </ul>
+    <div v-if="profileRecords.length" class="rusty-profile-status" aria-label="Profile delivery">
+      <h4>Profile delivery</h4>
+      <p class="dialog-copy">Profile photo and private settings sync independently from board data.</p>
+      <ul class="rusty-connections">
+        <li v-for="profile in profileRecords" :key="profile.key">
+          <div class="rusty-connection"><strong>{{ profile.origin }}</strong><span>{{ profile.status }}</span>
+            <small v-if="profile.lastSyncedAt">Last sync: <time :datetime="new Date(profile.lastSyncedAt).toISOString()">{{ syncTime(profile.lastSyncedAt) }}</time></small>
+            <small v-if="profile.error" role="alert">{{ profile.error }}</small>
+            <small v-if="profile.status === 'Profile delivery not configured' && controller.profileSetupErrors.value[profile.origin]" role="alert">{{ controller.profileSetupErrors.value[profile.origin] }}</small>
+          </div>
+        </li>
+      </ul>
+    </div>
     <button v-if="owner && !adding" class="button" type="button" :disabled="pending || controller.busy.value" @click="adding = true">Add Rusty</button>
     <form v-if="owner && adding" @submit.prevent="connect">
       <label for="rusty-address">Address</label>

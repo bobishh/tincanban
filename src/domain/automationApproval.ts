@@ -8,7 +8,7 @@ const approvalSchema = z.strictObject({
   grant: z.strictObject({ ...signature, payload: z.strictObject({
     kind: z.literal("workspace-grant"), version: z.literal(1), grantId: identifier, workspaceId: identifier,
     personId: identifier, role: z.literal("automation"), accessEpoch: z.number().int().positive(),
-    automation: z.strictObject({ version: z.literal(1), boardId: identifier,
+    automation: z.strictObject({ version: z.union([z.literal(1), z.literal(2)]), boardId: identifier,
       columns: z.strictObject({ lead: identifier, applied: identifier.optional(), interview: identifier, rejected: identifier }),
       fieldIds: z.array(identifier).min(1).max(128), expiresAt: z.number().int().positive(),
     }),
@@ -21,6 +21,7 @@ export function parseAutomationApproval(data: string) {
   const result = approvalSchema.parse(JSON.parse(data))
   const scope = result.definition.payload.scope
   const grant = result.grant.payload
+  if (result.definition.payload.typeVersion !== grant.automation.version) throw new Error("Automation approval version does not match its signed grant")
   if (scope.workspaceId !== grant.workspaceId || scope.boardId !== grant.automation.boardId || scope.grantId !== grant.grantId ||
     result.definition.signerKeyId !== result.grant.signerKeyId) throw new Error("Automation approval does not match its signed type scope")
   return result

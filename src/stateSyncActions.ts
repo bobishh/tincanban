@@ -1,4 +1,5 @@
 import { hasEntityKind } from "./domain/model"
+import { WorkspaceUnavailableError } from "./workspaceAvailability"
 import { meshTrace } from "./sync/meshTrace"
 import * as Automerge from "@automerge/automerge/slim";
 import { assertWorkspaceCapability } from "./domain/permissions";
@@ -78,7 +79,7 @@ async function readWorkspaceDoc(
   const doc = stateRuntime.activeDoc?.id === id
     ? stateRuntime.activeDoc
     : (await storage.loadWorkspaceDoc(id))?.doc;
-  if (!doc) throw new Error("The selected workspace is unavailable on this device.");
+  if (!doc) throw new WorkspaceUnavailableError();
   return doc;
 }
 

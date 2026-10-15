@@ -1,5 +1,6 @@
 import * as Automerge from "@automerge/automerge/slim"
-import { canonicalizeJson, publicKeyId, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { canonicalizeJson, publicKeyId, sha256Base64Url, type LocalProfile } from "../domain/identity"
+import { signingEvidence, signWithContext } from "../domain/signingContext"
 import type { WorkspaceDocumentV2, WorkspaceGrant, DeviceCertificate } from "../domain/model"
 import { defaultProofStore } from "../domain/proofs"
 import { peerStore, type WorkspaceAuthorityRecord, type WorkspaceMeshCredential } from "./peerStore"
@@ -16,6 +17,8 @@ import type { StoredCausalEvidence } from "../storageJournal"
 
 import type { WorkspaceRole } from "../domain/permissions"
 import { canonicalAuthorityJson, normalizeCertificateSets } from "./authorityFingerprint"
+import type { WorkspaceSigningContextFactory } from "./workspaceSigning"
+export type { WorkspaceSigningContextFactory } from "./workspaceSigning"
 export class WorkspaceChangeRejected extends Error {
   constructor(message: string) { super(message); this.name = "WorkspaceChangeRejected" }
 }
@@ -34,6 +37,8 @@ async function storedWorkspaceAuthority(workspaceId: string): Promise<{ authorit
     return { authority: null, invalid: typeof indexedDB !== "undefined" }
   }
 }
+
+export { storedWorkspaceAuthority as readWorkspaceSigningAuthority }
 
 /** Invalid durable authority is a read-only state, not permission to replay raw history. */
 export async function workspaceAuthorityIsInvalid(workspaceId: string): Promise<boolean> {
@@ -68,9 +73,12 @@ function uniqueCertificates(profile: LocalProfile, certificates: DeviceCertifica
   return [...new Map(values.map(certificate => [certificate.signature, certificate])).values()].sort((a, b) => a.signature.localeCompare(b.signature))
 }
 
-export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile): Promise<Authorization[]> {
+export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile,
+  signingContext?: WorkspaceSigningContextFactory): Promise<Authorization[]> {
+  profile = capturedWorkspaceSigner(profile)
+  const { context, requireCurrent } = await resolveWorkspaceSigningContext(doc, profile, "scope-genesis", "scopeId", signingContext)
   const creator = { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
-    certificates: uniqueCertificates(profile, await defaultProofStore.listCertificates()) }
+    certificates: signingEvidence(context).certificates }
   const payload = meshRustRuntime().state.planScopeGenesis({ scopeId: doc.id,
     documentOwnerPersonId: doc.ownerPersonId, creator }) as {
     kind: "scope-genesis"; version: 1; scopeId: string; creator: typeof creator; controlEpoch: 1
@@ -80,9 +88,10 @@ export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumen
     // local journal; skipping proofs would make causal replay erase the seed
     // workspace when it builds the first authorized projection.
     const hashes = Automerge.getChangesMetaSince(doc, []).map(change => change.hash)
-    return hashes.length ? authorizeLocalChanges(doc, profile, hashes) : []
+    return hashes.length ? authorizeLocalChanges(doc, profile, hashes, signingContext) : []
   }
-  const genesis = await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId)
+  const genesis = await signWithContext(context, payload)
+  await requireCurrent()
   const scopeAuthoritySnapshot = { genesis, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] }
   const validated = meshRustRuntime().state.validateScopeAuthority(scopeAuthoritySnapshot, Date.now()) as {
     scopeId: string; controller: { personId: string }
@@ -97,7 +106,7 @@ export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumen
   }
   await peerStore.putWorkspaceAuthority(authority)
   const hashes = Automerge.getChangesMetaSince(doc, []).map(change => change.hash)
-  return hashes.length ? authorizeLocalChanges(doc, profile, hashes) : []
+  return hashes.length ? authorizeLocalChanges(doc, profile, hashes, signingContext) : []
 }
 
 type Authorization = WorkspaceChangeAuthorization
@@ -214,16 +223,21 @@ function authorities(credential: StoredWorkspaceAuthority | null) {
   ...((credential.ownerHistory ?? []) as WorkspaceAuthority[])]
 }
 
-export async function prepareLocalChangeAuthorizations(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, hashes: string[]) {
+export async function prepareLocalChangeAuthorizations(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, hashes: string[],
+  signingContext?: WorkspaceSigningContextFactory) {
+  profile = capturedWorkspaceSigner(profile)
+  hashes = hashes.slice()
   const credential = typeof indexedDB === "undefined" ? undefined : (await storedWorkspaceAuthority(doc.id)).authority
   if (typeof indexedDB !== "undefined" && !credential) throw new Error("Workspace authority is unavailable. Import this board as a new board.")
   const ownerPersonId = credential?.ownerPersonId ?? doc.ownerPersonId
-  const certificates = (await defaultProofStore.listCertificates()).filter(cert => cert.payload.personId === profile.identity.personId)
-  if (!certificates.some(cert => cert.payload.deviceId === profile.device.deviceId)) certificates.push(profile.certificate)
-  const signed = await signEnvelope(profile.privateKeys.devicePrivateKey, {
+  const { context, requireCurrent } = await resolveWorkspaceSigningContext(signingAccessDocument(doc, hashes), profile,
+    "workspace-changes", "workspaceId", signingContext)
+  const certificates = signingEvidence(context).certificates
+  const signed = await signWithContext(context, {
     kind: "workspace-changes" as const, version: 1 as const, workspaceId: doc.id, hashes,
     personId: profile.identity.personId, deviceId: profile.device.deviceId,
-  }, profile.device.deviceId)
+  })
+  await requireCurrent()
   return [{ signed, publicKey: profile.identity.publicKey, certificates,
     ...(profile.identity.personId !== ownerPersonId ? { grant: credential?.localGrant as WorkspaceGrant } : {}),
     ownerPublicKey: credential?.ownerPublicKey ?? profile.identity.publicKey,
@@ -231,8 +245,33 @@ export async function prepareLocalChangeAuthorizations(doc: Automerge.Doc<Worksp
   }] satisfies Authorization[]
 }
 
-export async function authorizeLocalChanges(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, hashes: string[]) {
-  const authorizations = await prepareLocalChangeAuthorizations(doc, profile, hashes)
+/** A local command checks access at its dependencies; admission separately checks its new transition. */
+function signingAccessDocument(doc: Automerge.Doc<WorkspaceDocumentV2>, hashes: string[]) {
+  if (hashes.length !== 1 || !Automerge.getHeads(doc).includes(hashes[0]!)) return doc
+  const bytes = Automerge.getBackend(doc).getChangeByHash(hashes[0]!)
+  const deps = bytes && Automerge.decodeChange(bytes).deps
+  return deps?.length ? Automerge.view(doc, deps) : doc
+}
+
+/** Keep authorization policy in its lazy signing chunk; authority readers stay owned here. */
+async function resolveWorkspaceSigningContext(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, purpose: string,
+  scopeField: string, factory?: WorkspaceSigningContextFactory) {
+  const { workspaceSigningContext } = await import("./workspaceSigning")
+  return workspaceSigningContext(doc, profile, purpose, scopeField, factory, {
+    readAuthority: () => storedWorkspaceAuthority(doc.id),
+    authorityFingerprint: authorityValidationFingerprint,
+    workspaceRole: (target, signer) => workspaceRole(target, signer),
+  })
+}
+
+function capturedWorkspaceSigner(profile: LocalProfile): LocalProfile {
+  return { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
+    certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
+}
+
+export async function authorizeLocalChanges(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, hashes: string[],
+  signingContext?: WorkspaceSigningContextFactory) {
+  const authorizations = await prepareLocalChangeAuthorizations(doc, profile, hashes, signingContext)
   await putRecords(doc.id, authorizations)
   return authorizations
 }

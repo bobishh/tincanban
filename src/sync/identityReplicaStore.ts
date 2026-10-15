@@ -1,0 +1,97 @@
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
+import { resolveLocalSigningContext } from "../domain/localSigningContext"
+import { defaultStorage } from "../storage"
+import { defaultProofStore } from "../domain/proofs"
+import { readIdentityStateRevision } from "../identityStateRevision"
+import { IdentityReplica } from "./identityReplica"
+import type { IdentityReplicaConfig } from "./blindReplication"
+import { parsePrivateReplicaConfig } from "./blindReplicaConfig"
+import { privateReplicaBinding, getPrivateReplicaProgress, persistPrivateReplicaState } from "./privateReplicaRepository"
+import { createIdentityDeviceTransfer, applyIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createIdentityReplicaRecord } from "./identityReplicaProtocol"
+import { RustyManagementRepository, type ManagementBinding } from "./rustyManagementRepository"
+import { readRustyManagementStatus } from "./rustyManagementClient"
+import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
+import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
+import { discoverBlindKeeper } from "./blindClient"
+
+/** Production ports keep private person state outside workspace/Worker replication adapters. */
+export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void) {
+  const parsed = parsePrivateReplicaConfig(JSON.stringify(config), profile.identity.personId)
+  if (parsed.purpose !== "identity") throw new Error("Private identity scope required")
+  config = parsed
+  profile = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
+    certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
+  const personId = profile.identity.personId
+  const management: ManagementBinding = { origin: config.origin, servicePublicKey: config.servicePublicKey,
+    resourceKind: "scope", resourceId: config.scopeId }
+  const repository = new RustyManagementRepository(personId)
+  const personBinding: ManagementBinding = { ...management, resourceKind: "person", resourceId: personId }
+  const personAuthority = async (deviceId: string) => {
+    const saved = await repository.read(personBinding)
+    if (saved?.pending) throw new Error("Person policy transition is pending")
+    if (saved?.capability?.payload.revokedDeviceIds.includes(deviceId)) throw new Error("Private identity device is revoked by person policy")
+    return saved?.capability ?? null
+  }
+  const authority = async () => {
+    ensureCurrent()
+    const saved = await repository.read(management)
+    if (!saved?.capability || saved.pending) throw new Error("Private identity scope requires confirmed Rusty management policy")
+    const cap = await verifyRustyManagementEvidence(saved.capability, management, { personId, resourceKind: "scope",
+      resourceId: config.scopeId, minimumRevision: 1 })
+    ensureCurrent()
+    return cap
+  }
+  const authorize = async (deviceId: string, revision: number) => {
+    await personAuthority(deviceId)
+    const cap = await authority()
+    if (revision > cap.revision || cap.revokedDeviceIds.includes(deviceId)) throw new Error("Private identity signer is revoked or its policy is unconfirmed")
+  }
+  const guard = async () => {
+    ensureCurrent()
+    await personAuthority(profile.device.deviceId)
+    if (config.removalPending) throw new Error("Private identity scope removal is pending")
+    await getPrivateReplicaProgress(personId, config)
+    const cap = await authority()
+    if (cap.revokedDeviceIds.includes(profile.device.deviceId)) throw new Error("Private identity device is revoked")
+    ensureCurrent()
+  }
+  const replica = new IdentityReplica(config, privateReplicaBinding(personId, config), {
+    repository: { read: () => getPrivateReplicaProgress(personId, config), commit: async (expected, next) => {
+      await persistPrivateReplicaState(personId, config, expected, next, ensureCurrent)
+    } },
+    revision: readIdentityStateRevision,
+    capture: async () => {
+      await guard()
+      const cap = await authority()
+      const root = await defaultStorage.loadPersonalRoot()
+      if (root?.identity.personId !== personId) throw new Error("Private identity catalog is unavailable")
+      const context = await resolveLocalSigningContext(profile, "identity-replica-state", { personId, origin: config.origin,
+        scopeId: config.scopeId, keyEpoch: config.keyEpoch, managementRevision: cap.revision }, {
+        ensureCurrent: guard, currentAuthority: async () => canonicalizeJson([await authority(), await personAuthority(profile.device.deviceId)]),
+      })
+      const certificates = [profile.certificate, ...await defaultProofStore.listCertificates()]
+        .filter(certificate => certificate.payload.personId === personId)
+      return createIdentityReplicaRecord(context, config, await createIdentityDeviceTransfer(root, certificates), cap.revision)
+    },
+    merge: async transfer => {
+      await guard()
+      await applyIdentityDeviceTransfer(transfer, ensureCurrent)
+      identityDevicePreferencesChanged(personId)
+    }, authorize, guard,
+  })
+  const refresh = async () => {
+    ensureCurrent()
+    const service = await discoverBlindKeeper(config.origin)
+    if (service.servicePublicKey !== config.servicePublicKey) throw new Error("Private identity service pin changed")
+    if (service.personManagement === 1) {
+      const status = await readRustyManagementStatus(personBinding, profile, { ensureCurrent })
+      if (status.migrationPending || !status.capability) throw new Error("Person policy migration is unfinished")
+    } else if (await repository.read(personBinding)) throw new Error("Rusty upgrade required for saved person authority")
+    const status = await readRustyManagementStatus(management, profile, { ensureCurrent })
+    if (status.migrationPending || !status.capability) throw new Error("Private identity policy migration is unfinished")
+    await guard()
+  }
+  return { sync: async () => { await refresh(); return replica.sync() },
+    pull: async () => { await refresh(); return replica.pull() }, push: async () => { await refresh(); return replica.push() } }
+}

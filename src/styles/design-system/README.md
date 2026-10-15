@@ -4,7 +4,7 @@ Rusty imports `index.css` in full from a pinned tincanban revision. Match import
 
 - `tokens.css`: palette, spacing and sizes.
 - `reset.css`: box sizing, viewport bounds, thin paper-colored scrollbars and reduced-motion behavior.
-- `typography.css`: Original tincanban typography: Caveat for content, controls and headings; Fira Code for technical text. Rusty sets its font overrides in its own typography.css.
+- `typography.css`: preserve all existing board/card/chrome typography, including card notes/body text, metadata, filters, navigation and forms. Fira Code remains scoped to code and `settings.json`; the JSON editor's exact font rule lives with its lazy component. `reading-fonts.css` owns the detail description/note and discussion/chat prose rules plus local Fira Sans WOFF2 subsets (weights 400, 600 and 700); it loads with the lazy detail and chat surfaces and provides reading-size defaults as fallbacks. The subsets come from Google Fonts' official `google/fonts/ofl/firasans` family. The matching SIL Open Font License is `public/assets/OFL-FiraSans.txt`. Latin, Latin Extended, Cyrillic and Cyrillic Extended coverage is bundled locally; runtime CDN requests are not used.
 - `controls.css`: shared buttons and fields. Single-value selects use paper menus through
   `appearance: base-select` where supported; other browsers keep a system picker
   with the shared field styling. Multiple/listbox selects keep native behavior.

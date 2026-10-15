@@ -9,9 +9,11 @@ import CardStageStrip from "./CardStageStrip.vue"
 import type { Column } from "../domain/model"
 import type { CardStageButton } from "../domain/cardStageButtons"
 import { LazyItemDocuments as ItemDocuments } from "../app/lazyItemDocuments"
+import type { AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
-defineProps<{
+const props = defineProps<{
   workspaceId?: string
+  attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
   item: Item
   columns: Column[]
@@ -50,7 +52,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" @close="emit('close')">
+  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="props.workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" @close="emit('close')">
       <template #header>
       <div class="detail-head" :data-discussion-item="item.id">
         <div>
@@ -96,6 +98,8 @@ const emit = defineEmits<{
           </div>
           <ItemDocuments
             :documents="documents"
+            :workspace-id="props.workspaceId"
+            :attachment-coverage="props.attachmentCoverage"
             :read-only="readOnly"
             :save="saveDocument"
             :update="updateDocument"
@@ -170,6 +174,7 @@ const emit = defineEmits<{
   </SpatialWindow>
 </template>
 
+<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
 .detail-head { margin: 0; align-items: center; gap: 12px; }
 .detail-head h2 { font-size: 1.1rem; margin: 2px 0 0; }

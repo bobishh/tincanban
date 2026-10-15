@@ -1,9 +1,13 @@
 import { correlateApplication, type ApplicationCandidate, type CorrelationResult, type ForwardedMail } from "./email.ts";
 import { extractJobPage, type JobPageFetcher } from "./extraction.ts";
 
-/** Card labels only narrow the lookup; vacancy pages supply all matching fields. */
+/** Retained originals take precedence. Pre-source v1 replicas retain their URL lookup during migration. */
 export async function correlateApplicationFromJobPages(mail: ForwardedMail, candidates: ApplicationCandidate[],
   fetcher: JobPageFetcher = fetch): Promise<CorrelationResult> {
+  if (candidates.some(candidate => candidate.sources !== undefined)) {
+    const { correlateApplicationSources } = await import("./applicationSourceMatching.ts");
+    return correlateApplicationSources(mail, candidates.map(candidate => ({ ...candidate, sources: candidate.sources ?? [] })));
+  }
   const references = candidates.map(({ cardId, jobUrl, messageIds }) => ({ cardId, jobUrl, messageIds }));
   const direct = correlateApplication(mail, references);
   if (direct.kind === "matched" || direct.reason !== "No existing application matched") return direct;

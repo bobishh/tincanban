@@ -25,18 +25,54 @@ export function promisifyRequest<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 function defaultMeta(workspaceId: string): WorkspaceMetaInternal {
-  return { workspaceId, cursor: null, pruneCutoff: null }
+  return { workspaceId, cursor: null, pruneCutoff: null, contentGeneration: crypto.randomUUID(), contentRevision: 0 }
+}
+
+export function contentRevisionMeta(
+  workspaceId: string,
+  stored: WorkspaceMetaInternal | undefined
+): { meta: WorkspaceMetaInternal; needsWrite: boolean } {
+  const meta = stored ?? defaultMeta(workspaceId)
+  if (meta.contentRevision === undefined && meta.contentGeneration === undefined) {
+    return { meta: { ...meta, contentGeneration: crypto.randomUUID(), contentRevision: 0 }, needsWrite: true }
+  }
+  if (typeof meta.contentGeneration !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(meta.contentGeneration)) {
+    throw new Error("Invalid chat content generation")
+  }
+  if (typeof meta.contentRevision !== "number" || !Number.isSafeInteger(meta.contentRevision) || meta.contentRevision < 0) throw new Error("Invalid chat content revision")
+  return { meta, needsWrite: stored === undefined }
+}
+
+export function persistContentRevision(
+  metaStore: IDBObjectStore,
+  meta: WorkspaceMetaInternal,
+  contentChanged: boolean,
+  metadataChanged: boolean
+): void {
+  if (contentChanged) {
+    const revision = meta.contentRevision ?? 0
+    if (revision >= Number.MAX_SAFE_INTEGER) throw new Error("Chat content revision is exhausted")
+    meta.contentRevision = revision + 1
+    metadataChanged = true
+  }
+  if (metadataChanged) metaStore.put(meta)
+}
+
+export function contentRevisionToken(meta: WorkspaceMetaInternal): string {
+  if (!meta.contentGeneration || meta.contentRevision === undefined) throw new Error("Chat content revision is uninitialized")
+  return `${meta.contentGeneration}:${meta.contentRevision}`
 }
 
 function updatePruneCutoff(
-  metaStore: IDBObjectStore,
   meta: WorkspaceMetaInternal,
   pruned: StoredMessageInternal[]
-): void {
+): boolean {
   const latestPrunedKey = pruned.at(-1)?.orderKey
-  if (!latestPrunedKey) return
+  if (!latestPrunedKey) return false
+  const previous = meta.pruneCutoff
   meta.pruneCutoff = meta.pruneCutoff && meta.pruneCutoff > latestPrunedKey ? meta.pruneCutoff : latestPrunedKey
-  metaStore.put(meta)
+  return meta.pruneCutoff !== previous
 }
 
 function deletePruned(
@@ -44,10 +80,15 @@ function deletePruned(
   workspaceId: string,
   pruned: StoredMessageInternal[],
   existingIds: Set<string>
-): void {
+): boolean {
+  let deleted = false
   for (const message of pruned) {
-    if (existingIds.has(message.id)) messageStore.delete([workspaceId, message.id])
+    if (existingIds.has(message.id)) {
+      messageStore.delete([workspaceId, message.id])
+      deleted = true
+    }
   }
+  return deleted
 }
 
 export async function appendMessageTransaction(tx: IDBTransaction, message: StoredChatMessage): Promise<boolean> {
@@ -64,22 +105,30 @@ export async function appendMessageTransaction(tx: IDBTransaction, message: Stor
     promisifyRequest<WorkspaceMetaInternal | undefined>(metaStore.get(message.workspaceId)),
     promisifyRequest<StoredMessageInternal[]>(messageStore.index(INDEX_MSG_WORKSPACE_ORDER).getAll(range)),
   ])
-  const meta = storedMeta ?? defaultMeta(message.workspaceId)
-  if (meta.pruneCutoff && orderKey <= meta.pruneCutoff) return false
+  const { meta, needsWrite } = contentRevisionMeta(message.workspaceId, storedMeta)
+  if (meta.pruneCutoff && orderKey <= meta.pruneCutoff) {
+    persistContentRevision(metaStore, meta, false, needsWrite)
+    return false
+  }
   const existing = storedMessages.find((candidate) => candidate.id === message.id)
   if (existing && !areMessagesIdentical(existing, message)) {
     throw new Error(`Message conflict: immutable message content mismatch for [${message.workspaceId}, ${message.id}]`)
   }
-  if (existing) return false
+  if (existing) {
+    persistContentRevision(metaStore, meta, false, needsWrite)
+    return false
+  }
 
   const allMessages = [...storedMessages, internalMessage].sort((left, right) =>
     compareText(left.orderKey, right.orderKey)
   )
   const { pruned, retainedIds } = computeRetention(allMessages)
-  deletePruned(messageStore, message.workspaceId, pruned, new Set(storedMessages.map((item) => item.id)))
-  updatePruneCutoff(metaStore, meta, pruned)
-  if (!retainedIds.has(message.id)) return false
-  messageStore.put(internalMessage)
+  const deletedExisting = deletePruned(messageStore, message.workspaceId, pruned, new Set(storedMessages.map((item) => item.id)))
+  const cutoffChanged = updatePruneCutoff(meta, pruned)
+  const retained = retainedIds.has(message.id)
+  if (retained) messageStore.put(internalMessage)
+  persistContentRevision(metaStore, meta, retained || deletedExisting, needsWrite || cutoffChanged)
+  if (!retained) return false
   return true
 }
 
@@ -164,7 +213,7 @@ export async function mergeChatTransaction(
     promisifyRequest<StoredChatProfile[]>(profileStore.index(INDEX_PROF_WORKSPACE).getAll(IDBKeyRange.only(workspaceId))),
     promisifyRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId)),
   ])
-  const meta = storedMeta ?? defaultMeta(workspaceId)
+  const { meta, needsWrite } = contentRevisionMeta(workspaceId, storedMeta)
   const profilesChanged = mergeProfiles(profileStore, storedProfiles, profileBatch)
   const existingMessages = new Map(storedMessages.map((message) => [message.id, message]))
   const candidates = newMessageCandidates(workspaceId, messageBatch, existingMessages, meta.pruneCutoff)
@@ -172,8 +221,9 @@ export async function mergeChatTransaction(
     compareText(left.orderKey, right.orderKey)
   )
   const { pruned, retainedIds } = computeRetention(allMessages)
-  deletePruned(messageStore, workspaceId, pruned, new Set(existingMessages.keys()))
-  updatePruneCutoff(metaStore, meta, pruned)
+  const deletedExisting = deletePruned(messageStore, workspaceId, pruned, new Set(existingMessages.keys()))
+  const cutoffChanged = updatePruneCutoff(meta, pruned)
   const added = persistCandidates(messageStore, candidates, retainedIds)
-  return { added, changed: profilesChanged || added.length > 0 }
+  persistContentRevision(metaStore, meta, profilesChanged || added.length > 0 || deletedExisting, needsWrite || cutoffChanged)
+  return { added, changed: profilesChanged || added.length > 0 || deletedExisting }
 }

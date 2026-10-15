@@ -1,26 +1,48 @@
-import { signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { resolveLocalSigningContext } from "../domain/localSigningContext"
+import { signingEvidence, signWithContext } from "../domain/signingContext"
 import type { DeviceCertificate, PublicIdentity } from "../domain/model"
-import { rustyCertificateChain } from "./rustyEnrollment"
-import { blindHash, blindObjectId, blindProducerHeaders, blindOrigin, canonicalBlindJson, fetchBlind, readBlindJson, type BlindAccess } from "./blindClient"
+import { blindHash, blindObjectId, blindProducerHeaders, blindOrigin, canonicalBlindJson, discoverBlindKeeper, fetchBlind, readBlindJson, type BlindAccess } from "./blindClient"
 import { decodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { RustyManagementRepository } from "./rustyManagementRepository"
+import { rustyManagementAuthorityRevision, type ManagementClientGuard } from "./rustyManagementClient"
+import { verifyRustyManagementCapability, type RustyManagementCapability } from "./rustyManagementCapability"
 
 type CheckpointAuthorization = { kind: "rusty-snapshot-checkpoint"; version: 1; serviceId: string; origin: string; scopeId: string;
-  keyEpoch: number; policyRevision: number; expectedSequence: number; objectId: string; requestId: string; issuedAt: number; expiresAt: number }
+  keyEpoch: number; policyRevision: number; expectedSequence: number; objectId: string; requestId: string; issuedAt: number; expiresAt: number;
+  managementRevision?: number; writerVersion?: 2 }
 export type BlindCheckpointRequest = { object: BlindObject; identity: PublicIdentity; deviceId: string; certificates: DeviceCertificate[];
-  authorization: SignedEnvelope<CheckpointAuthorization> }
+  authorization: SignedEnvelope<CheckpointAuthorization>; managementCapability?: SignedEnvelope<RustyManagementCapability> }
 export type BlindCheckpointReceipt = SignedEnvelope<{ kind: "rusty-snapshot-checkpoint-receipt"; version: 1; serviceId: string;
   scopeId: string; keyEpoch: number; objectId: string; sequence: number; supersedesThrough: number; policyRevision: number;
   requestId: string; authorizationHash: string }>
 
 /** Prepared evidence stays immutable across uncertain transport retries. Content keys never leave this device. */
-export async function prepareBlindCheckpoint(access: BlindAccess, object: BlindObject, expectedSequence: number, profile: LocalProfile): Promise<BlindCheckpointRequest> {
+export async function prepareBlindCheckpoint(access: BlindAccess, object: BlindObject, expectedSequence: number, profile: LocalProfile,
+  guard: ManagementClientGuard = {}): Promise<BlindCheckpointRequest> {
+  access = { ...access }
+  object = structuredClone(object)
+  profile = structuredClone(profile)
+  const service = await discoverBlindKeeper(access.origin)
+  if (service.servicePublicKey !== access.servicePublicKey) throw new Error("Rusty checkpoint service pin changed")
+  const writerVersion = service.writerPolicy?.maximumWriterVersion === 2 ? 2 as const : undefined
+  const binding = { origin: blindOrigin(access.origin), servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
+  const managementCapability = (await new RustyManagementRepository(profile.identity.personId).read(binding))?.capability
+  const managementRevision = rustyManagementAuthorityRevision(binding, profile, "snapshot.checkpoint", managementCapability)
   const issuedAt = Date.now()
+  const context = await resolveLocalSigningContext(profile, "rusty-snapshot-checkpoint", {
+    origin: blindOrigin(access.origin), scopeId: access.scopeId,
+    ...(writerVersion === undefined ? {} : { writerVersion }),
+  }, { expiresAt: issuedAt + 120000, ensureCurrent: guard.ensureCurrent,
+    currentAuthority: async () => `${await managementRevision()}/${await guard.currentAuthority?.() ?? ""}` })
   const payload: CheckpointAuthorization = { kind: "rusty-snapshot-checkpoint", version: 1,
     serviceId: await blindHash(decodeBlindBytes(access.servicePublicKey)), origin: blindOrigin(access.origin), scopeId: access.scopeId,
     keyEpoch: object.keyEpoch, policyRevision: access.policyRevision, expectedSequence, objectId: await blindObjectId(object),
-    requestId: crypto.randomUUID(), issuedAt, expiresAt: issuedAt + 120000 }
-  return { object, identity: profile.identity, deviceId: profile.device.deviceId, certificates: await rustyCertificateChain(profile),
-    authorization: await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId) }
+    requestId: crypto.randomUUID(), issuedAt, expiresAt: issuedAt + 120000,
+    ...(writerVersion === undefined ? {} : { writerVersion }),
+    ...(managementCapability ? { managementRevision: managementCapability.payload.revision } : {}) }
+  return { object, identity: signingEvidence(context).identity, deviceId: context.deviceId, certificates: signingEvidence(context).certificates,
+    authorization: await signWithContext(context, payload), ...(managementCapability ? { managementCapability } : {}) }
 }
 
 export async function verifyCheckpointReceipt(receipt: BlindCheckpointReceipt, access: BlindAccess, request: BlindCheckpointRequest): Promise<void> {
@@ -42,6 +64,16 @@ function checkpointBindingMatches(payload: BlindCheckpointReceipt["payload"], ac
 }
 
 export async function submitBlindCheckpoint(access: BlindAccess, request: BlindCheckpointRequest): Promise<BlindCheckpointReceipt> {
+  access = { ...access }
+  request = structuredClone(request)
+  const binding = { origin: blindOrigin(access.origin), servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
+  await rustyManagementAuthorityRevision(binding, { identity: request.identity, device: { deviceId: request.deviceId } },
+    "snapshot.checkpoint", request.managementCapability)()
+  if (request.managementCapability) {
+    const cap = await verifyRustyManagementCapability(request.managementCapability, binding, { personId: request.identity.personId,
+      deviceId: request.deviceId, resourceKind: "scope", resourceId: access.scopeId, operation: "snapshot.checkpoint", minimumRevision: 1 })
+    if (request.authorization.payload.managementRevision !== cap.revision) throw new Error("Checkpoint management revision is stale")
+  }
   const receipt = await readBlindJson<BlindCheckpointReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/checkpoint`, {
     method: "POST", signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(request),

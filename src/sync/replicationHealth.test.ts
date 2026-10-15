@@ -1,6 +1,7 @@
 import { expect, test } from "vitest"
-import type { BlindReplicaConfig } from "./blindReplication"
+import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
 import { replicaKey, replicaStatus, replicationPresence, type ReplicaHealth } from "./replicationHealth"
+import { profileDeliveryStates } from "./profileDeliveryHealth"
 const board = { origin: "https://rusty.example", scopeId: "one", workspaceId: "board" } as BlindReplicaConfig
 const other = { ...board, scopeId: "two", workspaceId: "other" }
 const now = 100_000
@@ -30,4 +31,26 @@ test("Given a prior successful sync, when a request fails or confirmation expire
  expect(replicaStatus(board, { ...healthy, phase: "syncing" }, now)).toBe("Syncing")
  expect(replicaStatus(board, { ...healthy, phase: "catching-up" }, now)).toBe("Catching up")
  expect(replicationPresence("offline", [board], { [replicaKey(board)]: { ...healthy, phase: "catching-up" } }, "board", now)).toBe("reconnecting")
+})
+
+const personal = { origin: board.origin, scopeId: "person-scope", personId: "person-1", purpose: "identity" } as IdentityReplicaConfig
+
+test("Given a synced board and no personal Rusty scope, when profile delivery is shown, then it stays unconfigured", () => {
+ const rows = profileDeliveryStates([board], [], { [replicaKey(board)]: healthy }, "board", now)
+ expect(rows).toEqual([{ key: board.origin, origin: board.origin, status: "Profile delivery not configured" }])
+})
+
+test("Given board and profile scopes on one Rusty origin, when only board has a successful pass, then profile is not called synced", () => {
+ const rows = profileDeliveryStates([board], [personal], { [replicaKey(board)]: healthy }, "board", now)
+ expect(rows).toHaveLength(1)
+ expect(rows[0].status).toBe("Not checked")
+})
+
+test("Given a personal scope, when its pass fails or expires, then profile delivery reports that independent state", () => {
+ expect(profileDeliveryStates([board], [personal], { [replicaKey(personal)]: { phase: "error", error: "offline" } }, "board", now)[0])
+   .toMatchObject({ status: "Unavailable", error: "offline" })
+ expect(profileDeliveryStates([board], [personal], { [replicaKey(personal)]: healthy }, "board", now + 60_000)[0].status)
+   .toBe("Check overdue")
+ expect(profileDeliveryStates([board], [{ ...personal, removalPending: true }], { [replicaKey(personal)]: healthy }, "board", now)[0].status)
+   .toBe("Removal pending")
 })

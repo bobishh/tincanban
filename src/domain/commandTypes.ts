@@ -13,6 +13,7 @@ import type { BoardSchemaDraft } from "./schema";
 import type { WorkspaceSettingsDraft } from "./workspaceSettings";
 import type { AutomationDefinition } from "./automationContract";
 import type { AutomationDesiredState } from "./automationLifecycle";
+import type { ApplicationSourceData } from "./applicationSourceData";
 
 export type NarrativeFoldSources = { expectedBody: string; notesFieldId?: string; expectedNotes?: FieldValue; notes: Array<{ id: string; title: string; content: string | null; format: "markdown" | "html" | "pdf" | "file" | "path" }> };
 
@@ -24,6 +25,7 @@ export type Command =
   | { kind: "createBoard"; title: string; preset: "job-search" | "blank" }
   | { kind: "createColumn"; boardId: string; title: string; archive?: true; collapsible?: boolean; beforeId?: string | null }
   | { kind: "createItem"; id?: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null }
+  | { kind: "createItemWithApplicationSource"; id: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null; data: ApplicationSourceData }
   | { kind: "patchItem"; entityId: string; title?: string; body?: string; values?: Record<string, FieldValue>; foldNarrativeSources?: NarrativeFoldSources }
   | { kind: "restoreItemVersion"; entityId: string; changeHash: string }
   | { kind: "moveEntity"; entityId: string; parentId: string; beforeId?: string | null }
@@ -70,6 +72,7 @@ export type Command =
   | { kind: "updateBoardSchema"; boardId: string; schema: BoardSchemaDraft; expectedHeads?: Heads }
   | { kind: "updateWorkspaceSettings"; settings: WorkspaceSettingsDraft; expectedHeads?: Heads }
   | { kind: "setMemberAvatar"; avatarData: string | null; changedAt?: string }
+  | { kind: "recordApplicationSource"; data: ApplicationSourceData }
   | { kind: "createAutomation"; definition: AutomationDefinition; approval: string; executor: { origin: string; personId: string } }
   | { kind: "configureAutomation"; definition: AutomationDefinition; approval: string }
   | { kind: "setAutomationState"; automationId: string; state: AutomationDesiredState };

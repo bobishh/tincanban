@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
-import type { DeviceCertificate } from "../domain/model"
-import { bootstrapIdentity, signEnvelope } from "../domain/identity"
-import { defaultProofStore } from "../domain/proofs"
+import { bootstrapIdentity, canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { readWorkspaceCatalogRecords } from "../storageCatalog"
 import { peerStore } from "../sync/peerStore"
-import { parseServiceLoginRequest, serviceLoginPayload, type ServiceLoginRequest } from "./serviceLogin"
+import { assertServiceLoginSession, createServiceLoginApproval } from "./serviceLoginApproval"
+import { parseServiceLoginRequest, type ServiceLoginRequest } from "./serviceLogin"
 
 const request = ref<ServiceLoginRequest>()
 const identityName = ref("")
@@ -29,44 +28,53 @@ function cancel() { window.close() }
 
 async function approve() {
   if (!request.value || pending.value) return
+  const requestSnapshot = structuredClone(request.value)
+  const opener = window.opener as Window | null
+  if (!opener) { error.value = "TinSink sign-in window is unavailable"; return }
   pending.value = true
   error.value = ""
   try {
-    const profile = await bootstrapIdentity()
-    const authorities = await peerStore.listWorkspaceAuthorities()
-    const metadata = (await readWorkspaceCatalogRecords()).filter(board => !board.archivedAt)
-    const workspaces = authorities.filter(authority => authority.scopeAuthoritySnapshot).map(authority => {
-      const catalog = authority.catalog as { revocations?: unknown[]; deviceRevocations?: Array<{ record: unknown; authority: unknown }>; departures?: unknown[] } | undefined
-      return { workspace: authority.workspaceId, name: metadata.find(board => board.id === authority.workspaceId)?.title ?? "", grant: authority.localGrant ?? null,
-        policy: { scope: authority.scopeAuthoritySnapshot, revocations: catalog?.revocations ?? [], departures: catalog?.departures ?? [],
-          deviceRevocations: (catalog?.deviceRevocations ?? []).map(value => ({ record: value.record, signer: value.authority })) } }
+    const activeProfile = await bootstrapIdentity()
+    const profile = { ...activeProfile, identity: structuredClone(activeProfile.identity), device: structuredClone(activeProfile.device),
+      certificate: structuredClone(activeProfile.certificate), privateKeys: { ...activeProfile.privateKeys } }
+    const currentWorkspaces = await readWorkspaceEvidence()
+    const ensureCurrent = async () => {
+      assertServiceLoginSession(request.value, requestSnapshot, window.opener as Window | null, opener)
+      const current = await bootstrapIdentity()
+      if (!sameProfile(current, profile)) throw new Error("Identity changed during TinSink approval")
+      const latest = await readWorkspaceEvidence()
+      if (canonicalizeJson(latest) !== canonicalizeJson(currentWorkspaces)) throw new Error("Workspace authority changed during TinSink approval")
+    }
+    const approval = await createServiceLoginApproval(profile, requestSnapshot, currentWorkspaces, {
+      ensureCurrent,
+      currentAuthority: async () => canonicalizeJson(await readWorkspaceEvidence()),
     })
-    // Sending transport secrets, document contents or identity private keys is unnecessary.
-    const proof = await signEnvelope(profile.privateKeys.devicePrivateKey,
-      { ...serviceLoginPayload(request.value, Math.floor(Date.now() / 1000)), boards: workspaces.map(board => ({ workspace: board.workspace, name: board.name })) }, profile.device.deviceId, "TINSINK/1")
-    const certificates = await certifiedDeviceChain(profile.certificate, hash => defaultProofStore.getCertificate(hash))
-    const opener = window.opener as Window | null
-    if (!opener) throw new Error("TinSink sign-in window is unavailable")
-    const evidence = { identity: profile.identity, deviceId: profile.device.deviceId,
-      certificates, proof,
-      workspaces }
-    opener.postMessage({ type: "tinsink-approval", challenge: request.value.challenge, evidence: JSON.stringify(evidence) }, request.value.origin)
+    await ensureCurrent()
+    assertServiceLoginSession(request.value, requestSnapshot, window.opener as Window | null, opener)
+    opener.postMessage({ type: "tinsink-approval", challenge: requestSnapshot.challenge,
+      evidence: JSON.stringify(approval) }, requestSnapshot.origin)
     approved.value = true
   } catch (e) { error.value = e instanceof Error ? e.message : "Approval failed" }
   finally { pending.value = false }
 }
 
-async function certifiedDeviceChain(leaf: DeviceCertificate, getCertificate: (hash: string) => Promise<DeviceCertificate | null>) {
-  const certificates = [leaf]
-  let certificate = leaf
-  while (certificate.payload.issuerCertificateHash) {
-    if (certificates.length >= 32) throw new Error("Device certificate chain is too long")
-    const issuer = await getCertificate(certificate.payload.issuerCertificateHash)
-    if (!issuer || certificates.some(value => value.signature === issuer.signature)) throw new Error("Device certificate chain is unavailable")
-    certificates.push(issuer)
-    certificate = issuer
-  }
-  return certificates
+async function readWorkspaceEvidence() {
+  const authorities = await peerStore.listWorkspaceAuthorities()
+  const metadata = (await readWorkspaceCatalogRecords()).filter(board => !board.archivedAt)
+  return authorities.filter(authority => authority.scopeAuthoritySnapshot).map(authority => {
+    const catalog = authority.catalog as { revocations?: unknown[]; deviceRevocations?: Array<{ record: unknown; authority: unknown }>; departures?: unknown[] } | undefined
+    return { workspace: authority.workspaceId, name: metadata.find(board => board.id === authority.workspaceId)?.title ?? "", grant: authority.localGrant ?? null,
+      policy: { scope: authority.scopeAuthoritySnapshot, revocations: catalog?.revocations ?? [], departures: catalog?.departures ?? [],
+        deviceRevocations: (catalog?.deviceRevocations ?? []).map(value => ({ record: value.record, signer: value.authority })) } }
+  })
+}
+
+function sameProfile(left: LocalProfile, right: LocalProfile) {
+  return left.identity.personId === right.identity.personId && left.identity.publicKey === right.identity.publicKey &&
+    left.device.deviceId === right.device.deviceId && left.device.publicKey === right.device.publicKey &&
+    left.certificate.signature === right.certificate.signature &&
+    left.privateKeys.devicePrivateKey === right.privateKeys.devicePrivateKey &&
+    left.privateKeys.identityPrivateKey === right.privateKeys.identityPrivateKey
 }
 
 </script>

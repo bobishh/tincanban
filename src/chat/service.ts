@@ -1,10 +1,6 @@
 import { normalizeMessageContext, type MessageContext } from "./context"
-import { bootstrapIdentity, type LocalProfile } from "../domain/identity"
-import { defaultProofStore } from "../domain/proofs"
 import { chatStore, type StoredChatMessage, type StoredChatProfile } from "./store"
-import { createChatRecord, verifyChatRecord, type ChatRecord, type ChatAuthority } from "./records"
-import { peerStore } from "../sync/peerStore"
-import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
+import { verifyChatRecord, type ChatRecord } from "./records"
 import { meshTrace } from "../sync/meshTrace"
 
 export type ChatChange = { workspaceId: string; added: StoredChatMessage[]; remote: boolean; history: boolean; typing?: ChatRecord[] }
@@ -32,8 +28,14 @@ channel?.addEventListener("message", event => {
 export function configureChat(owner: typeof readOwner, scope: typeof readScope) { readOwner = owner; readScope = scope }
 export function subscribeChat(listener: (event: ChatChange) => void) { listeners.add(listener); return () => { listeners.delete(listener) } }
 export async function getChatScope(workspaceId: string) { return readScope(workspaceId) }
+export async function getChatProjectionAccess(workspaceId: string) {
+  const [ownerPersonId, scope] = await Promise.all([readOwner(workspaceId), readScope(workspaceId)])
+  return { ownerPersonId, scope }
+}
+export function notifyChatProfileProjection(workspaceId: string) { publish({ workspaceId, added: [], remote: true, history: true }) }
 export async function loadChat(workspaceId: string) { return chatStore.load(await readScope(workspaceId)) }
 export async function readChatCursor(workspaceId: string) { return chatStore.readCursor(await readScope(workspaceId)) }
+export async function readChatContentRevision(workspaceId: string) { return chatStore.readContentRevision(await readScope(workspaceId)) }
 export async function markChatRead(workspaceId: string, cursor: string) { return chatStore.markRead(await readScope(workspaceId), cursor) }
 
 function rememberTyping(workspaceId: string, record: ChatRecord) {
@@ -71,33 +73,9 @@ function member(record: ChatRecord): StoredChatProfile {
   return { workspaceId: p.workspaceId, personId: p.personId, name: p.text, revision: p.revision, record }
 }
 
-async function credentials(workspaceId: string, profile: LocalProfile): Promise<ChatAuthority> {
-  const credential = typeof indexedDB === "undefined" ? null : await peerStore.getWorkspaceCredential(workspaceId)
-  const authority = credential ?? (typeof indexedDB === "undefined" ? null : await peerStore.getWorkspaceAuthority(workspaceId).catch(() => null))
-  const owner = authority?.ownerPersonId ?? await readOwner(workspaceId)
-  const certificates = await defaultProofStore.listCertificates()
-  if (owner === profile.identity.personId) return {
-    publicKey: authority?.ownerPublicKey ?? profile.identity.publicKey,
-    certificates: authority ? authority.ownerCertificates as DeviceCertificate[] : certificates.filter(c => c.payload.personId === owner),
-  }
-  const saved = await loadChat(workspaceId)
-  const source = saved.profiles.map(p => p.record as ChatRecord).find(r => r?.authority?.publicKey)
-  const grant = (authority?.localGrant as WorkspaceGrant | undefined) ??
-    (await defaultProofStore.listGrants(workspaceId)).find(g => g.payload.personId === profile.identity.personId)
-  if (!grant) throw new Error("Connect to the workspace owner once to enable chat")
-  if (authority) return { publicKey: authority.ownerPublicKey,
-    certificates: authority.ownerCertificates as DeviceCertificate[], grant }
-  if (!source) throw new Error("Connect to the workspace owner once to enable chat")
-  return { ...source.authority, grant }
-}
-
 async function signed(workspaceId: string, kind: "chat-message" | "chat-profile" | "chat-typing", text: string, revision = 0, context?: MessageContext) {
-  const profile = await bootstrapIdentity()
-  const chain = (await defaultProofStore.listCertificates()).filter(c => c.payload.personId === profile.identity.personId)
-  if (!chain.some(c => c.payload.deviceId === profile.device.deviceId)) chain.push(profile.certificate)
-  const scope = await readScope(workspaceId)
-  const record = await createChatRecord(profile, chain, await credentials(workspaceId, profile), scope, kind, text, revision, context)
-  return verifyChatRecord(record, scope, await readOwner(workspaceId), workspaceId)
+  const { createSignedChatRecord } = await import("./signing")
+  return createSignedChatRecord(workspaceId, kind, text, { readOwner, readScope }, revision, context)
 }
 
 async function exclusive<T>(workspaceId: string, action: () => Promise<T>): Promise<T> {
@@ -106,6 +84,7 @@ async function exclusive<T>(workspaceId: string, action: () => Promise<T>): Prom
 
 export async function ensureChatProfile(workspaceId: string, options: { updateName?: boolean } = {}) {
   return exclusive(workspaceId, async () => {
+    const { bootstrapIdentity } = await import("../domain/identity")
     const profile = await bootstrapIdentity()
     const own = (await loadChat(workspaceId)).profiles.find(p => p.personId === profile.identity.personId)
     // Background synchronization adopts the admitted shared profile; local names are not rename commands.

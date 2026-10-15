@@ -15,6 +15,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  RUSTY_REVISION: 5238a1bcc94bec99583c86710d6242cec306551d
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
@@ -246,6 +249,45 @@ jobs:
       - run: cargo build --locked --manifest-path crates/tincanban-lighthouse/Cargo.toml
       - run: npx playwright test --reporter=list --project=keeper-join
 
+  native-management:
+    name: Native Rusty management and archive interoperability
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/checkout@v7
+        with:
+          repository: bobishh/rusty
+          ref: ${{ env.RUSTY_REVISION }}
+          path: .ci/rusty
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:meta-mesh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Move Rusty outside the application Cargo workspace
+        run: cp -a "$GITHUB_WORKSPACE/.ci/rusty" "$RUNNER_TEMP/tincanban-rusty"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: |
+            ${{ runner.temp }}/tincanban-rusty -> target
+            vendor/meta-mesh -> target
+      - name: Build pinned Rusty and the Native archive verifier
+        run: |
+          cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
+          cargo build --locked --manifest-path vendor/meta-mesh/Cargo.toml -p meta-mesh-core --example history_archive_verify
+      - name: Verify actual clients against restarted Native storage and policy
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+          TINCANBAN_HISTORY_VERIFY_BINARY: ${{ github.workspace }}/vendor/meta-mesh/target/debug/examples/history_archive_verify
+        run: npm run test:rusty-management
+
   automation-worker:
     name: Automation (runtime and owner lifecycle)
     runs-on: ubuntu-24.04
@@ -257,7 +299,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: bobishh/rusty
-          ref: 6619c4cdbc174906327c6fe9be746c03c3cdda86
+          ref: ${{ env.RUSTY_REVISION }}
           path: .ci/rusty
           persist-credentials: false
       - uses: actions/setup-node@v7

@@ -34,8 +34,8 @@ module.exports = {
     {
       name: "production-does-not-import-tests",
       severity: "error",
-      from: { pathNot: "[.](?:test|spec)[.]ts$" },
-      to: { path: "[.](?:test|spec)[.]ts$" },
+      from: { pathNot: "[.](?:test|spec|testSupport)[.]ts$" },
+      to: { path: "[.](?:test|spec|testSupport)[.]ts$" },
     },
     {
       name: "domain-does-not-depend-on-infrastructure",

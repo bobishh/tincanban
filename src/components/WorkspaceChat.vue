@@ -386,6 +386,7 @@ function formatDisplayTime(createdAt: string): string {
 </template>
 
 <style src="./WorkspaceChat.css" scoped></style>
+<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
 .conversation-content { width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: none; max-height: none; border: 0; box-shadow: none; padding: 12px 16px; }
 .chat-message-meta { align-items: center; }

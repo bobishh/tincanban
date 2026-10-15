@@ -1,6 +1,6 @@
 import type { useTincanban } from "../state"
 import { defaultStorage } from "../storage"
-import { exportChat } from "../chat/service"
+import { readChatContentRevision } from "../chat/service"
 import { canonicalizeJson } from "../domain/identity"
 import { localWorkspaceAdmissionAuthority } from "./changeAuthorization"
 import { admissionPolicy } from "./workspaceAdmissionCheckpoint"
@@ -17,9 +17,10 @@ export function createBlindSnapshotRevision(app: Pick<ReturnType<typeof useTinca
     }
     const profile = app.getCurrentProfile() ?? undefined
     const context = await localWorkspaceAdmissionAuthority(cachedRoot, profile)
-    const chat = await exportChat(id)
+    const chatRevision = await readChatContentRevision(id)
     if (await defaultStorage.readWorkspaceRevision(id) !== revision ||
-      (await localWorkspaceAdmissionAuthority(cachedRoot, profile)).fingerprint !== context.fingerprint) return undefined
-    return canonicalizeJson([revision, context.fingerprint, admissionPolicy(), { ...chat, typing: [] }])
+      (await localWorkspaceAdmissionAuthority(cachedRoot, profile)).fingerprint !== context.fingerprint ||
+      await readChatContentRevision(id) !== chatRevision) return undefined
+    return canonicalizeJson([revision, context.fingerprint, admissionPolicy(), chatRevision])
   }
 }

@@ -1,5 +1,6 @@
 import { hasEntityKind, validateWorkspaceDoc } from "./domain/model"
 import { meshTrace } from "./sync/meshTrace"
+import { recoverPendingIdentityDeviceActivation } from "./sync/identityDeviceActivationLoader"
 import * as Automerge from "@automerge/automerge/slim";
 import { initializeAutomerge } from "./crdt";
 import {
@@ -136,6 +137,10 @@ export async function hydratePreparedState(storage = defaultStorage): Promise<vo
     await diagnoseStartupStep("causal-review", () => refreshCausalReview(storage, doc.id), { workspaceId: doc.id });
     console.info("[tincanban.startup] hydrate", "personal-root")
     await diagnoseStartupStep("personal-root-load", () => initializePersonalRootCatalog(storage, profile));
+    await diagnoseStartupStep("identity-device-recovery", () => recoverPendingIdentityDeviceActivation(profile.identity.personId, () => {
+      if (stateRuntime.currentProfile?.identity.personId !== profile.identity.personId ||
+        stateRuntime.currentProfile?.device.deviceId !== profile.device.deviceId) throw new Error("Identity changed during device-state recovery");
+    }));
     applyInjectedFixture(updateReactiveState);
     console.info("[tincanban.startup] hydrate", "catalog")
     await refreshAvailableWorkspaces(storage);
@@ -225,7 +230,12 @@ async function commitAuthorizedCommand(
   if (command.kind !== "setMemberAvatar") ensureContentWrite(role)
   assertWorkspaceCommand(role, doc, command);
   const authorityGrantHash = await localChangeAuthorityGrantHash(doc.id, profile.identity.personId, command.kind === "setMemberAvatar");
-  const result = await executeCommand(doc, command, profile, undefined, authorityGrantHash);
+  const { localCommandSigningContext } = await import("./sync/localCommandSigning")
+  const signingContext = await localCommandSigningContext(doc, profile, async () => {
+    await assertWorkspaceWritesAllowed(doc.id)
+    assertWorkspaceCommand(await workspaceRole(doc, profile), doc, command)
+  })
+  const result = await executeCommand(doc, command, profile, undefined, authorityGrantHash, signingContext);
   if (!result.ok) throw new Error(`Command failed: [${result.error.code}] ${result.error.message}`);
   return persistNewLocalChange(doc, result.value, profile, storage, undefined, role);
 }
