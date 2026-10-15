@@ -255,7 +255,12 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const updatedFileUrl = await updatedFile.getAttribute("href")
 
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
+    // Discovery can reconnect after Rusty restarts. Keep controls pending until
+    // the exact withdrawal is acknowledged, rather than timing its network work as a UI interaction.
+    const withdrawal = page.waitForResponse(response => response.url() === `${origin}/v1/public/boards/${fixture.boardId}` &&
+      response.request().method() === "PUT" && response.request().postDataJSON().action === "unpublish", { timeout: 30_000 })
     await panel.getByRole("button", { name: "Confirm withdrawal", exact: true }).click()
+    expect((await withdrawal).status()).toBe(200)
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await reader.reload()

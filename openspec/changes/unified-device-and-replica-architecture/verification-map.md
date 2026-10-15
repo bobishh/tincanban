@@ -315,3 +315,12 @@ The isolated case also exposed assertion overhead: generic deep equality over
 byte comparisons through native `Buffer.equals` reduces the case to 4 ms. Cache
 descriptor equality and exactly one write remain asserted separately. No byte
 sampling, shorter attachment or larger outer timeout replaces the original proof.
+
+Matrix [38815581051](https://github.com/bobishh/tincanban/actions/runs/38815581051)
+passed 28 job groups, including full unit coverage and both archive recovery engines.
+Only public-board withdrawal acceptance failed: after Rusty restart discovery took
+4.79 seconds, and the successful withdrawal response arrived at 4.90/5.08 seconds,
+racing the generic five-second enabled assertion. The test now awaits the exact
+unpublish PUT response under the existing thirty-second network bound, requires
+200, then keeps its original UI and anonymous board/file 404 assertions. Chromium
+and WebKit both pass locally. No production code or UI interaction limit changed.
