@@ -165,8 +165,10 @@ test("Given private profile revision loading, when Identity settings opens, then
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
   const personId = await page.evaluate(async () => {
+    const { useTincanban } = await import("/src/state.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
+    await useTincanban().whenReady()
     const root = await defaultStorage.loadPersonalRoot()
     if (!root) throw new Error("Expected startup to initialize a personal root")
     const id = root.identity.personId

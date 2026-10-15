@@ -16,6 +16,11 @@ import { records } from "./workspaceChangeProofStore"
 import { workspaceSigningContext } from "./workspaceSigning"
 import { readWorkspaceSigningAuthority, authorityValidationFingerprint } from "./changeAuthorization"
 
+vi.mock("@automerge/automerge/slim", async () => {
+  const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
+  return { ...actual, view: vi.fn(actual.view) }
+})
+
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
@@ -256,4 +261,24 @@ it("Given durable workspace authority cannot be read, then authorization fails c
       Automerge.getChangesMetaSince(doc, []).map(change => change.hash))).rejects.toThrow(/authority/i)
     expect(await records(doc.id)).toEqual(before)
   } finally { Automerge.free(doc) }
+})
+
+
+it("Given an exact dependency document, when signing a local delta, then reuse its admitted access basis without materializing a historical view", async () => {
+  const { profile, doc } = await fixture()
+  let changed: typeof doc | undefined
+  try {
+    await recordGenesisAuthority(doc, profile)
+    changed = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Next title" })
+    const hash = Automerge.getHeads(changed)[0]!
+    const historicalView = vi.mocked(Automerge.view)
+    historicalView.mockClear()
+    const [proof] = await prepareLocalChangeAuthorizations(changed, profile, [hash], undefined, doc)
+    expect(proof?.signed.payload.hashes).toEqual([hash])
+    expect(historicalView).not.toHaveBeenCalled()
+    const unrelated = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Other branch" })
+    try {
+      await expect(prepareLocalChangeAuthorizations(changed, profile, [hash], undefined, unrelated)).rejects.toThrow(/basis|dependenc/i)
+    } finally { Automerge.free(unrelated) }
+  } finally { if (changed) Automerge.free(changed); Automerge.free(doc) }
 })

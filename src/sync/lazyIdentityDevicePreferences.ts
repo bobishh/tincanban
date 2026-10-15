@@ -1,13 +1,13 @@
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceSetStore } from "./workspaceSet"
 
-import type { withIdentityDevicePreferences } from "./identityDevicePreferences"
+import { withIdentityDevicePreferences } from "./identityDevicePreferences"
 
 type PreferencesModule = { withIdentityDevicePreferences: typeof withIdentityDevicePreferences }
 
-/** Private preferences load only after negotiating a same-identity session. */
+/** Private preferences are exchanged only within a negotiated same-identity session. */
 export function lazyIdentityDevicePreferences(store: WorkspaceSetStore, profile: LocalProfile, remotePersonId: string,
-  remoteDeviceId: string, isCurrent: () => boolean, importPreferences: () => Promise<PreferencesModule> = () => import("./identityDevicePreferences")) {
+  remoteDeviceId: string, isCurrent: () => boolean, importPreferences: () => Promise<PreferencesModule> = async () => ({ withIdentityDevicePreferences })) {
   if (remotePersonId !== profile.identity.personId) return store
   let wrapped: Promise<WorkspaceSetStore> | undefined
   const ensureCurrent = () => { if (!isCurrent()) throw new Error("Device session is no longer authorized") }

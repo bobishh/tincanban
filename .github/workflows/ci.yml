@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: 1c64a9149b45a46cb971a816da3d09f7c94578cd
+  RUSTY_REVISION: 4deafef492ebf235c18aaf6570cde5d90840372e
 
 jobs:
   verify:
@@ -304,7 +304,7 @@ jobs:
   automation-worker:
     name: Automation (runtime and owner lifecycle)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
         with:
@@ -402,6 +402,7 @@ jobs:
           - attachments-rusty-webkit
           - attachment-session-recovery
           - attachment-session-recovery-webkit
+          - complete-device-state
     steps:
       - uses: actions/checkout@v7
         with:

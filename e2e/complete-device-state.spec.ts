@@ -37,7 +37,9 @@ async function connectRusty(page: Page, origin: string) {
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
   await panel.getByRole("button", { name: "Connect", exact: true }).click()
-  await expect(panel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+  const boardConnection = panel.getByRole("listitem").filter({ has: page.getByRole("button", { name: "Remove", exact: true }) })
+  await expect(boardConnection.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
   return panel
 }
 
@@ -123,6 +125,17 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await enrollDevice(page, phone)
     await phone.goto("about:blank")
     const panel = await connectRusty(page, rusty.origin)
+    // Receive the private connection while its source is still online, then
+    // isolate the phone before the new photo exists so the cold read uses Rusty.
+    await phone.goto(baseURL!)
+    await expect.poll(() => phone.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const current = await bootstrapIdentity()
+      return (await getReplicaConfigurations(current.identity.personId)).some(config => config.origin === origin)
+    }, rusty.origin), { timeout: 30_000 }).toBe(true)
+    await phone.goto("about:blank")
+    await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await page.getByLabel("Name", { exact: true }).fill("Latest owner profile")
     const png = await page.evaluate(() => {
@@ -168,7 +181,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
     const recipientProfile = await profile(recipient)
     const approval = await page.evaluate(async target => {
       const { bootstrapIdentity, signEnvelope, toBase64Url } = await import("/src/domain/identity.ts")
-      const { createDeviceEnrollmentInvite } = await import("@meta-uber/mesh-pairing")
+      const { createDeviceEnrollmentInvite } = await import("/vendor/meta-mesh/packages/mesh-pairing/src/index.ts")
       const { InvitationService } = await import("/src/sync/invitations.ts")
       const { enrollmentPayload } = await import("/src/sync/enrollment.ts")
       const { defaultStorage } = await import("/src/storage.ts")
@@ -239,6 +252,7 @@ test("Given another person is invited to the owner's board, when workspace state
   const rusty = await startRustyService({ identity: owner.identity, allowedControllerDeviceIds: [owner.device.deviceId] }, baseURL!)
   try {
     await connectRusty(page, rusty.origin)
+    await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await guest.goto("/")
     await ensureJobSearchWorkspace(guest)
     const guestBefore = await profile(guest)

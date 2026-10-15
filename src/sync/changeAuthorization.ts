@@ -226,13 +226,13 @@ function authorities(credential: StoredWorkspaceAuthority | null) {
 }
 
 export async function prepareLocalChangeAuthorizations(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile, hashes: string[],
-  signingContext?: WorkspaceSigningContextFactory) {
+  signingContext?: WorkspaceSigningContextFactory, accessBasis?: Automerge.Doc<WorkspaceDocumentV2>) {
   profile = capturedWorkspaceSigner(profile)
   hashes = hashes.slice()
   const credential = typeof indexedDB === "undefined" ? undefined : (await storedWorkspaceAuthority(doc.id)).authority
   if (typeof indexedDB !== "undefined" && !credential) throw new Error("Workspace authority is unavailable. Import this board as a new board.")
   const ownerPersonId = credential?.ownerPersonId ?? doc.ownerPersonId
-  const { context, requireCurrent } = await resolveWorkspaceSigningContext(signingAccessDocument(doc, hashes), profile,
+  const { context, requireCurrent } = await resolveWorkspaceSigningContext(signingAccessDocument(doc, hashes, accessBasis), profile,
     "workspace-changes", "workspaceId", signingContext)
   const certificates = signingEvidence(context).certificates
   const signed = await signWithContext(context, {
@@ -248,10 +248,22 @@ export async function prepareLocalChangeAuthorizations(doc: Automerge.Doc<Worksp
 }
 
 /** A local command checks access at its dependencies; admission separately checks its new transition. */
-function signingAccessDocument(doc: Automerge.Doc<WorkspaceDocumentV2>, hashes: string[]) {
-  if (hashes.length !== 1 || !Automerge.getHeads(doc).includes(hashes[0]!)) return doc
-  const bytes = Automerge.getBackend(doc).getChangeByHash(hashes[0]!)
+function signingAccessDocument(doc: Automerge.Doc<WorkspaceDocumentV2>, hashes: string[],
+  accessBasis?: Automerge.Doc<WorkspaceDocumentV2>) {
+  const singleHead = hashes.length === 1 && Automerge.getHeads(doc).includes(hashes[0]!)
+  if (!singleHead && !accessBasis) return doc
+  const bytes = singleHead ? Automerge.getBackend(doc).getChangeByHash(hashes[0]!) : undefined
   const deps = bytes && Automerge.decodeChange(bytes).deps
+  if (accessBasis) {
+    // The immutable command input already represents these dependencies. Reuse
+    // it only for the exact causal basis; materializing a full historical view
+    // here otherwise makes one-card writes scale with every description.
+    if (accessBasis.id !== doc.id || !deps ||
+        deps.slice().sort().join() !== Automerge.getHeads(accessBasis).sort().join()) {
+      throw new Error("Workspace signing access basis does not match change dependencies")
+    }
+    return accessBasis
+  }
   return deps?.length ? Automerge.view(doc, deps) : doc
 }
 

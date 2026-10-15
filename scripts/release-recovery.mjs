@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { sealArtifact, verifyArtifact, readArtifactFiles, assertCompatibleRollback } from './release-cohort.mjs';
+import { sealArtifact, verifyArtifact, readArtifactFiles, assertCompatibleRollback, assertCohortCapabilities } from './release-cohort.mjs';
 import { checkRelease, retainedAsset, retentionCandidates } from '../workers/frontend/release.mjs';
 
 const load = path => JSON.parse(readFileSync(path, 'utf8'));
@@ -17,12 +17,7 @@ export function selectCompatibleRollback(current, target) {
     if (artifact.writerVersion < current.contract.minimumWriterVersion) throw new Error(`Incompatible rollback writer: ${component}`);
   }
   for (const [component, capabilities] of Object.entries(current.contract.capabilities ?? {})) {
-    for (const [name, required] of Object.entries(capabilities)) {
-      const available = target.contract?.capabilities?.[component]?.[name];
-      const minimum = typeof required === 'number' ? required : required.version;
-      const version = typeof available === 'number' ? available : available?.version ?? 0;
-      if (version < minimum || (required.actions ?? []).some(action => !available?.actions?.includes(action))) throw new Error(`Incompatible rollback capability: ${component}/${name}`);
-    }
+    assertCohortCapabilities(target.contract?.capabilities?.[component], capabilities);
   }
   return target;
 }

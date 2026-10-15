@@ -92,8 +92,9 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
     const recipientDetail = recipient.getByRole("dialog", { name: "Lead details" })
     const recipientAttachment = recipientDetail.getByRole("group", { name: "Private transfer fixture" })
+    // Metadata can be synced before the next poll receives the acknowledged file locator.
     await expect(recipientAttachment.getByRole("status", { name: "Encrypted attachment coverage" }))
-      .toHaveText("Complete on Rusty")
+      .toHaveText("Complete on Rusty", { timeout: 30_000 })
     const localBytesBeforeClose = await recipient.evaluate(async () => {
       const { useTincanban } = await import("/src/state.ts")
       const { blobDescriptor, readStoredAttachment } = await import("/src/attachments.ts")

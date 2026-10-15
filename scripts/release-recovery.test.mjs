@@ -45,6 +45,19 @@ test('Given a required management action, when a prior release only advertised t
   const target = { components: {}, contract: { capabilities: { automation: { instanceManagement: { version: 1, actions: ['discover'] } } } } };
   assert.throws(() => selectCompatibleRollback(current, target), /capability/);
 });
+test('Given required checkpoint fencing, when selecting a prior cohort, then reject missing or altered flags before deployment', () => {
+  const current = { contract: { minimumWriterVersion: 2, readers: {}, capabilities: {
+    rusty: { snapshotCheckpoints: { version: 1, observedSequence: true }, scopeManagement: 1 },
+  } } };
+  const target = capabilities => ({ components: {}, contract: { capabilities: { rusty: capabilities } } });
+  for (const observedSequence of [undefined, false, 'true']) {
+    assert.throws(() => selectCompatibleRollback(current, target({
+      snapshotCheckpoints: { version: 1, ...(observedSequence === undefined ? {} : { observedSequence }) }, scopeManagement: 1,
+    })), /capability/);
+  }
+  const compatible = target({ snapshotCheckpoints: { version: 2, observedSequence: true }, scopeManagement: 1 });
+  assert.equal(selectCompatibleRollback(current, compatible), compatible);
+});
 test('Given an archived lazy chunk whose bytes changed, when composing rollback, then reject the envelope', () => {
   const old = frontend('1-1', 'a'), active = frontend('2-1', 'c');
   active.files['assets/assets/app-cccccccc.js'] = file('substituted');

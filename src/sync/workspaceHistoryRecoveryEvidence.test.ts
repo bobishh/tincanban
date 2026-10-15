@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import { beforeAll, expect, it, vi } from "vitest"
 import { fromBase64Url } from "../domain/identity"
@@ -33,12 +34,13 @@ it("Given exact current source bytes and original journal records, when backing 
   expect(field.byteLength).toBe(f.bytes.length)
   const parts = records.filter(record => record.id === field.id)
   expect(parts).toHaveLength(3)
-  expect(parts.every(record => fromBase64Url(record.data).length <= 256 * 1024)).toBe(true)
-  expect(parts.reduce((sum, record) => sum + fromBase64Url(record.data).length, 0)).toBe(f.bytes.length)
+  const decodedParts = parts.map(record => Buffer.from(fromBase64Url(record.data)))
+  expect(decodedParts.every(bytes => bytes.length <= 256 * 1024)).toBe(true)
+  expect(Buffer.concat(decodedParts).equals(f.bytes)).toBe(true)
   const transaction = f.database.transaction("snapshots", "readonly"), done = transactionDone(transaction)
   const unchanged = await requestResult(transaction.objectStore("snapshots").get(f.workspaceId)) as { bytes: Uint8Array }
   await done
-  expect(unchanged.bytes).toEqual(f.bytes)
+  expect(Buffer.from(unchanged.bytes).equals(f.bytes)).toBe(true)
 })
 
 it("Given a workspace changes during export, when final source consistency is checked, then refuse a completion claim", async () => {

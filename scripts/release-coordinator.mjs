@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { canonical, assembleCohort, verifyArtifact, readArtifactFiles, verifyComponentObservation, assertCompatibleRollback } from './release-cohort.mjs';
+import { canonical, assembleCohort, verifyArtifact, readArtifactFiles, verifyComponentObservation, assertCompatibleRollback, assertCohortCapabilities } from './release-cohort.mjs';
 import { parseRustyDeploySpec, deployRustyArtifact } from './deploy-rusty-cohort.mjs';
 import { createHash } from 'node:crypto';
 import { materializeRollback } from './release-recovery.mjs';
@@ -122,16 +122,7 @@ function recordVersion(directory, component, outputPath) {
   journal.state = Object.values(journal.components).filter(value => value.versionId).length === 2 ? 'staged' : 'staging';
   save(join(directory, 'activation.json'), journal);
 }
-export function assertRustyCohortCapabilities(capabilities, required) {
-  for (const [name, requirement] of Object.entries(required)) {
-    const minimum = typeof requirement === 'number' ? requirement : requirement.version;
-    const actual = capabilities?.[name];
-    if (!Number.isSafeInteger(minimum) || minimum < 1 || !Number.isSafeInteger(actual?.version) || actual.version < minimum ||
-      typeof requirement === 'object' && Object.entries(requirement).some(([field, value]) => field !== 'version' && actual?.[field] !== value)) {
-      throw new Error(`Missing Rusty capability ${name}`);
-    }
-  }
-}
+export { assertCohortCapabilities as assertRustyCohortCapabilities } from './release-cohort.mjs';
 async function confirm(directory, component, versionId, attempts = 12) {
   const cohort = checkedCohort(directory);
   const journal = load(join(directory, 'activation.json'));
@@ -145,17 +136,12 @@ async function confirm(directory, component, versionId, attempts = 12) {
       if (health.sdkSha !== cohort.components[component].sdkSha || (versionId && health.versionId !== versionId)) throw new Error('Provider version or SDK artifact mismatch');
       if (component === 'rusty') {
         const discovery = await getJson(`${origin}/.well-known/mesh-lighthouse`);
-        assertRustyCohortCapabilities(discovery.capabilities, cohort.contract.capabilities.rusty);
+        assertCohortCapabilities(discovery.capabilities, cohort.contract.capabilities.rusty);
         if ((discovery.capabilities?.writerPolicy?.maximumWriterVersion ?? 0) < cohort.contract.minimumWriterVersion) throw new Error('Rusty cannot enforce the cohort writer version');
       }
       if (component === 'automation') {
         const capabilities = await getJson(`${origin}/v2/capabilities`);
-        for (const [name, required] of Object.entries(cohort.contract.capabilities.automation)) {
-          const actual = capabilities[name];
-          if ((actual?.version ?? 0) < required.version || required.actions.some(action => !actual.actions?.includes(action))) {
-            throw new Error(`Missing automation capability ${name}`);
-          }
-        }
+        assertCohortCapabilities(capabilities, cohort.contract.capabilities.automation);
       }
       assertCompatibleRollback({ readers: health.readers }, cohort.contract.readers[component]);
       if (component !== 'rusty' && health.writerVersion !== cohort.components[component].writerVersion) throw new Error('Running Worker writer support differs from checked artifact');

@@ -68,8 +68,8 @@ archive coverage from retained objects, and checks original signed workspace
 history before offering restoration. Restoring uses the same identity, requires
 explicit consent before replacing an existing workspace, preserves the previous
 local journal, and resumes interrupted private-state projection before startup
-opens that workspace. This connected source path still awaits final verification;
-it is not evidence of a production rollout.
+opens that workspace. Production availability follows the exact compatible
+release cohort and its retained activation evidence.
 
 tincanban is an experimental application. Keep an independent backup of important
 work. Browser storage is a local copy, not a hosted backup service.

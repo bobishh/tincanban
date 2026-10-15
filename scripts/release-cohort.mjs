@@ -34,6 +34,20 @@ export function assertCompatibleRollback(reader, retainedSchemas) {
   assertReaders(reader.readers); assertReaders(retainedSchemas);
   for (const [schema, minimum] of Object.entries(retainedSchemas)) if ((Object.hasOwn(reader.readers, schema) ? reader.readers[schema] : 0) < minimum) throw new Error(`Incompatible rollback reader: ${schema}`);
 }
+/** One capability policy for declared rollback support and live component observations. */
+export function assertCohortCapabilities(capabilities, required) {
+  for (const [name, requirement] of Object.entries(required)) {
+    const minimum = typeof requirement === 'number' ? requirement : requirement?.version;
+    const actual = capabilities?.[name];
+    const version = typeof actual === 'number' ? actual : actual?.version;
+    if (!Number.isSafeInteger(minimum) || minimum < 1 || !Number.isSafeInteger(version) || version < minimum ||
+      typeof requirement === 'object' && Object.entries(requirement).some(([field, value]) => {
+        if (field === 'version') return false;
+        if (field === 'actions') return !Array.isArray(value) || !Array.isArray(actual?.actions) || value.some(action => !actual.actions.includes(action));
+        return actual?.[field] !== value;
+      })) throw new Error(`Missing cohort capability ${name}`);
+  }
+}
 export function assembleCohort(components, contract) {
   if (contract.version !== 1 || !Number.isSafeInteger(contract.minimumWriterVersion) || contract.minimumWriterVersion < 1 ||
     !Array.isArray(contract.migrations) || !Array.isArray(contract.rollbackReaders) || !contract.rollbackReaders.length) throw new Error('Invalid release contract');

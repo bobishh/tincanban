@@ -545,7 +545,9 @@ test("Given an owner with two archived history generations, when adding my phone
     }
     await expect(original.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
     await original.getByRole("button", { name: "Restore this version", exact: true }).click()
-    await expect(phoneDetail.getByText("Version restored", { exact: true })).toBeVisible()
+    // Restoring an archived version reads its original encrypted objects from
+    // the retained history source before committing the workspace command.
+    await expect(phoneDetail.getByText("Version restored", { exact: true })).toBeVisible({ timeout: 30_000 })
     await phoneDetail.getByRole("button", { name: "Close detail", exact: true }).click()
     await expect(phone.getByRole("button", { name: "Open Enrolled history — Original position", exact: true })).toBeVisible()
   } finally {

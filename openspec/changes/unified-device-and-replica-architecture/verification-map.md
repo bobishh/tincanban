@@ -130,3 +130,45 @@ longest task at 4x CPU. Native core passed 313 cases with three existing ignored
 cases; immutable-source and entity-map rebinding negatives remain covered. These
 are local repair proofs; final hosted and production cohort verification remain
 independent completion requirements.
+
+
+The next hosted matrix, [run 38795728593](https://github.com/bobishh/tincanban/actions/runs/38795728593),
+exposed an additional historical-document materialization in local signing and a
+browser-cached failed preference-module fetch. Local command signing now reuses
+its immutable input only after matching the exact signed change dependencies;
+the private preference adapter is bundled with the already-lazy mesh module.
+Focused move verification measured a 62ms longest task at 4x CPU
+(`/tmp/tincanban-final-basis-move-proof`), with the 200ms gate unchanged. The
+original offline-owner reconnect scenario passed in 8.7 seconds
+(`/tmp/tincanban-scoped-reconnect-static-loader`). The source/credential, signer,
+revocation and subsequent causal admission checks remain required.
+
+That matrix also exposed acceptance synchronization gaps: optimistic chat text
+was mistaken for a completed local save, and several eventual Rusty/enrollment,
+coverage and archived-restore states used an incidental five-second assertion.
+Focused reruns retain exact completed-state, full attachment bytes and restored
+original-content assertions. The two-generation owner-closed restore passed in
+41.2 seconds (`/tmp/tincanban-final-two-generation-restore-proof`); cold WebKit
+attachment coverage and download passed in 21.1 seconds
+(`/tmp/tincanban-ci-cold-coverage-fixed-results`). External-service scenarios now
+run in projects that install their actual Rusty/Worker dependencies. These are
+repair proofs, independent from the final main CI and production activation.
+
+
+WebKit backup profiling found 21,571 scope-authority validations taking 7,072ms
+inside a 15.19-second backup interval. The shared Native verifier now keeps a
+512-entry, per-thread cache of successful Ed25519 relations, keyed by the exact
+public key, signature and domain-separated signed bytes. It does not cache
+identity, authority, revocation, expiry or scope decisions. Forged inputs, error
+behavior, bounded eviction and a changed signer identifier remain tested; the
+full core suite passed 316 cases with three existing ignored cases. Both actual
+WASM artifacts were rebuilt and their API check passed.
+
+The same isolated WebKit scenario on those WASM artifacts made 21,477 validations
+in 3,096ms; backup completed in 11.78 seconds and the full two-generation scenario
+passed in 37.5 seconds, recorded in the task execution output. Temporary
+profiling code was removed. Cold photo/name delivery with the source closed,
+private connection transfer with local progress retained, incompatible-component
+rejection, and other-person credential isolation passed through actual browser
+flows. The application-source binding suite passed all five retained-event
+cases (`/tmp/tincanban-app-source-binding-final`).

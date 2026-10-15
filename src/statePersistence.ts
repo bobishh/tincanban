@@ -259,7 +259,7 @@ async function persistNewLocalChange(
   await assertWorkspaceWritesAllowed(base.id);
   const changeBytes = Automerge.getLastLocalChange(created.newDoc);
   if (!changeBytes) throw new Error("No change produced");
-  const authorizations = await prepareLocalChangeAuthorizations(created.newDoc, profile, [created.receipt.changeHash]);
+  const authorizations = await prepareLocalChangeAuthorizations(created.newDoc, profile, [created.receipt.changeHash], undefined, base);
   const deltaDoc = await persistDeltaCommand(base, created, changeBytes, authorizations, profile, storage, localRole, reviewedChangeHash)
   if (deltaDoc) {
     tracePersistedLocalChange(base.id, created, deltaDoc, changeBytes)

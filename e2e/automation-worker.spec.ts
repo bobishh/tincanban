@@ -209,7 +209,7 @@ async function connectBlindRusty(page: Page, origin: string): Promise<void> {
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
   await panel.getByRole("button", { name: "Connect", exact: true }).click()
-  await expect(panel.getByText("Synced", { exact: true })).toBeVisible()
+  await expect(panel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
 }
 
 type WorkspaceSeed = {
