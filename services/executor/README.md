@@ -109,16 +109,21 @@ executor before recording its acknowledgement.
 
 ## Verification status
 
-Executor release CI run `38940879267` passed image acceptance and deployment.
+Executor release CI run `38942711938` passed image acceptance and deployment.
 Production `/health` confirmed `ready`, source
-`547ca3d43f78665e561e9b737380b063664a7191`, SDK
+`aabc3a8e293e53ae0fb01bd27b6c11accf3e7092`, SDK
 `9d92a478495b471bf6a8075dcf23e77b412473cc` and runtime artifact
-`39a518987a9f984d7298b8353a29550ae4579307d335c2acdc49c50b2540981c`.
-The deployment receipt binds the exact checked config bytes to registry manifest
-`sha256:62de14ab9bd3b9c3c5273eecf98a4fe003fc7e4f27d80680002e2fc367bf617c`,
-including Docker 29's sparse containerd export.
+`0915a7b75d68205855a3e4202d82e15e12f33e6a478d8b3f080247182bbc9dad`.
+Its sealed image passed the immutable registry/config check, including Docker 29's
+sparse containerd export. Intake release `38945619930` independently activated
+source `65a7bdac997c0db17fcbfda575f1857424092682`.
 
-The narrowed participant-only transfer is a subsequent source change awaiting
-its CI release. Existing integration cutover, Cloudflare key cleanup and a real
-received-event result remain unverified. Process readiness and image identity do
-not establish that production automation works.
+Participant import `38946006101` transferred eight tables/four pages. Read-only
+inventory confirmed zero imported event rows and no pending signed upload. Node
+activation in `38946109742` succeeded at epoch 1; the subsequent intake
+acknowledgement failed because workerd rejects `redirect: "error"`. A compatible
+manual redirect policy and native Request regression are authored for the next
+intake release. Retrying acknowledgement preserves the already active Node actor.
+Cloudflare key cleanup and a real received-event result remain unverified until
+that acknowledgement succeeds. Process readiness and image identity do not
+establish that production automation works.

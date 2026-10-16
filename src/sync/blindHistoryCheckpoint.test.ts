@@ -4,6 +4,9 @@ import { blindHash } from "./blindClient"
 import { encodeBlindBytes } from "./blindEnvelope"
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
 import type { BlindReplicaConfig } from "./blindReplication"
+import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
+vi.mock("./privateReplicaRepository", async original => ({ ...await original<typeof import("./privateReplicaRepository")>(),
+  readReplicaWriterUpgrade: vi.fn(async () => undefined) }))
 vi.mock("./blindCheckpoint", () => ({ verifyCheckpointReceipt: vi.fn(async () => {}) }))
 function fixture() {
   const config = { workspaceId: crypto.randomUUID(), scopeId: "scope", origin: "https://rusty.example", servicePublicKey: "A".repeat(43),
@@ -26,6 +29,15 @@ function fixture() {
   return { config, transitionId, requests, ports, setMaximum: (value: number) => { maximum = value },
     loseReply: () => { loseReply = true }, retained: () => retained }
 }
+it("Given unfinished automation maintenance after local writer activation, when publishing compact history, then retain old objects and never submit deletion", async () => {
+  const f = fixture()
+  await recordHistoryStorageFence("owner", f.config, f.transitionId, 7, f.ports.guard)
+  vi.mocked(readReplicaWriterUpgrade).mockResolvedValueOnce({ localActivated: true } as never)
+  await expect(publishHistoryStorageCheckpoint("owner", f.config, f.transitionId, "baseline", f.ports))
+    .rejects.toThrow("Finish automation storage maintenance")
+  expect(f.ports.submit).not.toHaveBeenCalled()
+  expect(f.retained()).toBe(7)
+})
 it("Given remote checkpoint committed but reply lost, when a fresh publisher resumes, then reuse exact ciphertext, signature and original drained fence", async () => {
   const f = fixture(); await recordHistoryStorageFence("owner", f.config, f.transitionId, 7, f.ports.guard); f.loseReply()
   await expect(publishHistoryStorageCheckpoint("owner", f.config, f.transitionId, "baseline", f.ports)).rejects.toThrow("reply lost")

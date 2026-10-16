@@ -8,7 +8,7 @@ import { discoverBlindKeeper } from "./blindClient"
 import { authorityValidationFingerprint, readWorkspaceSigningAuthority, workspaceRole } from "./changeAuthorization"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
-import { captureReplicaWriterWorkers, completeReplicaWriterUpgrade, confirmReplicaWriterUpgrade,
+import { activateReplicaWriterUpgrade, captureReplicaWriterWorkers, completeReplicaWriterUpgrade, confirmReplicaWriterUpgrade,
   getPrivateReplicaProgress, getReplicaConfigurations, prepareReplicaWriterUpgrade,
   privateReplicaBinding, readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import { approveRustyScope } from "./rustyEnrollment"
@@ -50,7 +50,7 @@ function canAdoptRepositoryConfig(requested: BlindReplicaConfig, saved: BlindRep
 
 /** Freeze, copy legacy discovery, confirm the monotonic server floor, then atomically activate retained local progress. */
 export async function ensureWorkspaceReplicaWriter(app: WriterApp,
-  config: BlindReplicaConfig, ensureCurrent: () => void): Promise<BlindReplicaConfig> {
+  config: BlindReplicaConfig, ensureCurrent: () => void, options: { storageOnly?: boolean } = {}): Promise<BlindReplicaConfig> {
   config = parseReplicaConfig(JSON.stringify(config))
   ensureCurrent()
   const active = app.getCurrentProfile()
@@ -75,6 +75,7 @@ export async function ensureWorkspaceReplicaWriter(app: WriterApp,
       config = saved
     }
     const upgrade = await readReplicaWriterUpgrade(owner, config)
+    if (options.storageOnly && (!upgrade || upgrade.localActivated)) return config
     if (config.minimumWriterVersion === 2 && !upgrade) return config
     assertUpgradeCredentials(owner, config, upgrade)
     const service = await discoverBlindKeeper(config.origin)
@@ -107,14 +108,13 @@ export async function ensureWorkspaceReplicaWriter(app: WriterApp,
       await assertSigningContextCurrent(context)
       guardIdentity()
     }
-    return runWriterTransition(app, config, profile, upgrade, guardIdentity, guardOwner)
+    return runWriterTransition(app, config, profile, upgrade, guardIdentity, guardOwner, options.storageOnly ?? false)
   })
 }
 
-/** Run compatibility as a post-sync maintenance pass; only durable intents may block a later sync. */
+/** Automation confirmation retries after ordinary storage sync; it never gates its next pass. */
 export async function maintainWorkspaceReplicaWriter(app: WriterApp, config: BlindReplicaConfig,
   ensureCurrent: () => void, reload: () => Promise<void>): Promise<void> {
-  if (config.minimumWriterVersion === 2) return
   const owner = app.getCurrentProfile()?.identity.personId
   if (!owner) return
   const key = `${owner}:${config.origin}/${config.scopeId}`
@@ -122,7 +122,8 @@ export async function maintainWorkspaceReplicaWriter(app: WriterApp, config: Bli
     ensureCurrent()
     const pending = await readReplicaWriterUpgrade(owner, config)
     ensureCurrent()
-    if (pending) {
+    if (config.minimumWriterVersion === 2 && !pending) return
+    if (pending && !pending.localActivated) {
       meshTrace("workspace.replica.writer-maintenance-blocked", {
         phase: "pending-transition", workspaceId: config.workspaceId, "server.address": new URL(config.origin).host,
       }, "warn")
@@ -147,9 +148,9 @@ export async function maintainWorkspaceReplicaWriter(app: WriterApp, config: Bli
 
 /** Capture dependent Writers before policy mutation; retained evidence makes lost maintenance replies retryable. */
 async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, profile: LocalProfile,
-  upgrade: ReplicaWriterUpgrade | undefined, guardIdentity: () => void, guardOwner: () => Promise<void>): Promise<BlindReplicaConfig> {
+  upgrade: ReplicaWriterUpgrade | undefined, guardIdentity: () => void, guardOwner: () => Promise<void>, storageOnly: boolean): Promise<BlindReplicaConfig> {
   const owner = profile.identity.personId
-  const discovered = await discoverWorkspaceReplicaWorkers(app, config, guardOwner)
+  const discovered = storageOnly ? [] : await discoverWorkspaceReplicaWorkers(app, config, guardOwner)
   await guardOwner()
   let intent = upgrade ?? await prepareReplicaWriterUpgrade(owner, config, guardIdentity)
   const guard = async () => {
@@ -161,7 +162,7 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
     guardIdentity()
   }
   await guard()
-  intent = await captureReplicaWriterWorkers(owner, intent, discovered, guardIdentity)
+  if (!storageOnly) intent = await captureReplicaWriterWorkers(owner, intent, discovered, guardIdentity)
   await guard()
   await createWorkspaceAttachmentIndex(owner, intent.config, guardIdentity).read()
   await guard()
@@ -177,6 +178,15 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
   if (!intent.confirmed) throw new Error("Rusty writer upgrade has no durable policy confirmation")
   const receipt = await verifyRustyWriterPolicyReceipt(intent.confirmed, intent.config, owner, config.policyRevision)
   await guard()
+  if (!intent.localActivated) {
+    config = await activateReplicaWriterUpgrade(owner, intent, receipt.payload.revision, guardIdentity)
+    const activated = await readReplicaWriterUpgrade(owner, config)
+    if (!activated) throw new Error("Writer maintenance journal changed after local activation")
+    intent = activated
+    await guard()
+    identityDevicePreferencesChanged(owner)
+  }
+  if (storageOnly) return config
   // Reinspect after maintenance so Workers introduced during the transition cannot be silently omitted.
   for (let round = 0; round < 4; round++) {
     await refreshWorkspaceReplicaWorkers(profile, intent.config, receipt, intent.workers ?? [], guard)

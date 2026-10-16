@@ -17,6 +17,9 @@ execute component CI after implementation. Production automation is final proof.
 - [ ] Release narrowed participant transfer and intake bridge; verify integration cutover checkpoints.
 - [ ] Confirm real production automation with admitted change, durable receipt and board result.
 - [ ] Remove retired Cloudflare keys/CRDT paths after verified migration; document recovery.
+- [ ] Recover local Rusty policy independently; move automation confirmation after ordinary replication.
+- [ ] Ship compact detail/chat prose without changing handwritten board cards.
+- [ ] Verify TinSink browser-origin Logs/Traces delivery independently of automation.
 
 ## Current implementation boundary
 
@@ -25,10 +28,15 @@ scoped command API, exact-write receipt journal, paged encrypted migration and
 Cloudflare intake outbox. Tests are authored, not executed locally. The separate
 executor DNS record and isolated CI environment exist; infra configuration is
 pinned to `2ba230f771523b967977c74cdc582ba293a43c1f`.
-Executor CI `38940879267` deployed source `547ca3d43f78665e561e9b737380b063664a7191`;
+Executor CI `38942711938` deployed source `aabc3a8e293e53ae0fb01bd27b6c11accf3e7092`;
 live `/health` and immutable registry/config evidence matched its checked artifact.
-Participant-only transfer is a later source change; its CI release, integration
-cutover and real-event acceptance remain pending. The old Cloudflare CRDT adapter
-remains only for the explicitly fenced approved-participant transfer and must be
-removed after verified cutover, together with retired readable state. Old letters,
-event queues, bindings and nonce ledgers are excluded rather than reconciled.
+Intake CI `38945619930` independently deployed `65a7bdac997c0db17fcbfda575f1857424092682`.
+Import `38946006101` transferred eight tables/four pages: zero imported events and
+no pending signed upload. Node activation `38946109742` succeeded; intake
+acknowledgement failed on workerd's unsupported `redirect: "error"` mode. Its
+compatible redirect fix is authored; acknowledgement and real-event acceptance
+remain pending. A clearly marked new synthetic form submission is durably queued
+in intake for the real production check. Old letters, event queues, bindings and
+nonce ledgers are excluded rather than reconciled. Configured production routes
+do not use the compiled legacy adapter after cutover; legacy acceptance fixtures
+still import that adapter. Retired readable rows are deleted by acknowledgement.

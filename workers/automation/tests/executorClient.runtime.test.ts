@@ -1,10 +1,12 @@
 import { expect, test, vi } from "vitest";
-import { bootstrapFreshExecutor, callActiveExecutor } from "../src/executorClient";
+import { bootstrapFreshExecutor, callActiveExecutor, submitExecutorItemCommand } from "../src/executorClient";
 import { freshBindingHash } from "../src/executorFresh";
 
 test("Given an acknowledged integration route, when management RPC runs, then it uses scoped authentication and arguments", async () => {
   const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Validate against workerd's actual Request API rather than accepting any mock options.
+    expect(new Request(input, init).redirect).toBe("manual");
     calls.push([input, init]);
     return Response.json({ status: "ok" });
   });
@@ -41,6 +43,7 @@ test("Given a durable fresh reservation, when owner enrollment retries, then it 
   const calls: Array<[RequestInfo | URL, RequestInit | undefined]> = [];
   const binding = { integrationId: "integration-1", ownerPersonId: "owner-1", workspaceId: "workspace-1", origin: "https://executor.example", epoch: 1 };
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    expect(new Request(input, init).redirect).toBe("manual");
     calls.push([input, init]);
     return Response.json({ identity: { personId: "automation-person-1", publicKey: "public-key" },
       device: { deviceId: "device-1", publicKey: "device-key" }, deviceCertificate: {
@@ -64,6 +67,23 @@ test("Given a durable fresh reservation, when owner enrollment retries, then it 
     expect(calls[0]![0]).toBe("https://executor.example/internal/integrations/integration-1/bootstrap");
     expect(JSON.parse(String(calls[0]![1]?.body))).toEqual(binding);
     expect(JSON.stringify(calls[0]![1]?.body)).not.toContain("never-forward-this-secret");
+  } finally { vi.unstubAllGlobals(); }
+});
+
+test("Given a redirected executor endpoint, when management or items call it, then credentials never follow the redirect", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    expect(new Request(input, init).redirect).toBe("manual");
+    return new Response("redirect", { status: 307, headers: { location: "https://another-service.example/private" } });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    const env = workerEnv({ origin: "https://executor.example", epoch: 7 });
+    await expect(callActiveExecutor(env, "integration-1", "getEvent", ["event"], async () => null))
+      .rejects.toThrow("Executor redirects are not allowed");
+    await expect(submitExecutorItemCommand(env, "integration-1", {} as never))
+      .rejects.toThrow("Executor redirects are not allowed");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("https://executor.example/"))).toBe(true);
   } finally { vi.unstubAllGlobals(); }
 });
 

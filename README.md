@@ -139,8 +139,11 @@ coordinator or activation cohort.
 The writer upgrade also coordinates existing automation Workers:
 it checks maintenance support before changing Rusty policy, retains the confirmed
 receipt through interrupted retries, and waits for signed Worker confirmations
-before activating local access. This refresh preserves each Worker's approval and
-pending work; it does not renew its permissions. Older Workers require a compatible
+as independent post-sync maintenance. A verified Rusty policy receipt activates
+this device's matching storage policy and retained progress before automation
+confirmation. An unavailable automation cannot block ordinary board replication;
+destructive snapshot/history cleanup waits for maintenance to finish. This refresh
+preserves each Worker's approval and pending work; it does not renew its permissions. Older Workers require a compatible
 rollout, and untyped live grants require explicit route adoption or removal.
 
 Compatible Rusty services advertise owner-authorized snapshot checkpoints. After

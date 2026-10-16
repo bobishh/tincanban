@@ -117,7 +117,10 @@ bounded routing metadata, activates forwarding, and deletes the old participant'
 identity/replica/transition rows. The executor journal retains the imported state;
 intake cannot reopen the retired board. Form/email acceptance uses its local routing
 metadata and remains available during executor outages.
-No permanent dual-write fallback or inactive CRDT dependency remains in intake.
+Configured production intake has no dual-write fallback and cannot reopen the
+retired participant. The shared legacy adapter remains compiled for legacy runtime
+acceptance fixtures; its presence is not evidence that production intake executes
+CRDT operations.
 
 The owner's manually created Tesla cards and manually moved Amazon card remain
 ordinary admitted board state. Historical letters and queued intake never enter

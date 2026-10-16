@@ -308,8 +308,12 @@ export class ExecutorIntakeOutbox {
     const token = this.env.EXECUTOR_SERVICE_TOKEN;
     if (!token || new TextEncoder().encode(token).byteLength < 32) throw new Error("Executor service authentication is not configured");
     const response = await fetch(`${state.origin}/internal/integrations/${encodeURIComponent(this.integrationId)}/status`, {
-      headers: { authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(90_000),
+      headers: { authorization: `Bearer ${token}` }, redirect: "manual", signal: AbortSignal.timeout(90_000),
     });
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      throw new Error("Executor redirects are not allowed");
+    }
     const payload = await readSmallJson(response);
     if (!response.ok || !isRecord(payload) || payload.status !== "active" || payload.epoch !== state.epoch || payload.manifestHash !== state.manifest_hash) {
       throw new Error("Executor is not active for this exact migration epoch and manifest");

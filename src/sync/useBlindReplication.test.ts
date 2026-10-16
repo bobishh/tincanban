@@ -132,7 +132,7 @@ it("Given a legacy workspace connection, when post-sync maintenance confirms wri
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.calls.find(call => call.purpose === "workspace")?.config).toMatchObject(f.workspace)
-  expect(controller.configs.value[0]).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
+  await vi.waitFor(() => expect(controller.configs.value[0]).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 }))
   await controller.syncNow()
   expect(runtime.calls.filter(call => call.purpose === "workspace").at(-1)?.config).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
 })
@@ -148,9 +148,27 @@ it("Given optional writer maintenance fails after normal sync, then keep replica
   await controller.syncNow()
   expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
   expect(controller.error.value).toBe("")
-  expect(trace).toHaveBeenCalledWith("workspace.replica.writer-maintenance.failed", expect.objectContaining({
+  await vi.waitFor(() => expect(trace).toHaveBeenCalledWith("workspace.replica.writer-maintenance.failed", expect.objectContaining({
     phase: "post-sync-pass", workspaceId: f.workspace.workspaceId, "server.address": "rusty.example",
-  }), "warn", expect.any(Error))
+  }), "warn", expect.any(Error)))
+})
+
+it("Given automation maintenance never answers, when ordinary Rusty sync finishes twice, then release busy and continue independent storage passes", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let release!: () => void
+  runtime.maintenance.mockImplementation(() => new Promise<void>(resolve => { release = resolve }))
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(runtime.maintenance).toHaveBeenCalledOnce())
+    await controller.syncNow()
+    expect(controller.busy.value).toBe(false)
+    const passes = runtime.workspaceSync.mock.calls.length
+    await controller.syncNow()
+    expect(runtime.workspaceSync.mock.calls.length).toBeGreaterThan(passes)
+    expect(runtime.maintenance).toHaveBeenCalledOnce()
+    expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
+  } finally { release?.() }
 })
 
 it("Given an active workspace file request, then the controller supplies a live session guard to Rusty delivery", async () => {

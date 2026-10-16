@@ -37,6 +37,7 @@
 /* Keep reading-face changes inside detail prose and discussion/chat content. */
 .detail-layout .detail-copy, .detail-layout .detail-copy.reading-prose, .detail-layout .source-snapshot,
 .chat-dialog .chat-message-body, .chat-dialog textarea.chat-textarea,
+.detail-layout .detail-copy.markdown-content, .chat-dialog .chat-message-body.markdown-content,
 .reading-prose, .reading-input, .reading-explanation {
   font-family: var(--site-font-reading);
   font-size: var(--site-font-body-size, 16px);

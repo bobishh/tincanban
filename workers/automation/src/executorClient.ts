@@ -72,7 +72,7 @@ export async function callExecutorRpc<T>(
       "x-tincanban-executor-epoch": String(epoch),
     },
     body: JSON.stringify({ method, args }),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(180_000),
   });
   const payload = await readResponseJson(response, maxResponseBytes);
@@ -117,7 +117,7 @@ export async function bootstrapFreshExecutor<T>(
   if (!token || new TextEncoder().encode(token).byteLength < 32) throw new Error("Executor service authentication is not configured");
   const response = await fetch(`${origin}/internal/integrations/${encodeURIComponent(binding.integrationId)}/bootstrap`, {
     method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify(binding), redirect: "error", signal: AbortSignal.timeout(90_000),
+    body: JSON.stringify(binding), redirect: "manual", signal: AbortSignal.timeout(90_000),
   });
   const payload = await readResponseJson(response, 2 * 1024 * 1024);
   if (!response.ok) {
@@ -151,7 +151,7 @@ export async function submitExecutorItemCommand<T>(
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-executor-integration": integrationId },
     body: JSON.stringify(envelope),
-    redirect: "error",
+    redirect: "manual",
     signal: AbortSignal.timeout(90_000),
   });
   const payload = await readResponseJson(response, 2 * 1024 * 1024);
@@ -181,6 +181,10 @@ function executorOrigin(value: string | undefined): string {
 }
 
 async function readResponseJson(response: Response, maximumBytes: number): Promise<unknown> {
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel();
+    throw new ExecutorRpcError(502, "Executor redirects are not allowed");
+  }
   if (!response.body) throw new Error("Executor returned an empty response");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

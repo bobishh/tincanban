@@ -11,6 +11,7 @@ import type { readAutomationInstance, refreshAutomationStorageAccess } from "../
 import { parseRustyScopePolicyReceipt, type RustyScopePolicyReceipt } from "./rustyScopePolicy"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from "./replicaWriterWorkersState"
+import { withAutomationWriterDependency } from "./replicaDependencyError"
 
 export type { ReplicaWriterWorker } from "./replicaWriterWorkersState"
 
@@ -63,7 +64,7 @@ export async function discoverWorkspaceReplicaWorkers(appPick: WorkspacePick, co
   const { assertAutomationStorageRefreshSupported } = await import("../app/automationInstanceClient")
   for (const origin of candidateOrigins) {
     await guardAsync()
-    await assertAutomationStorageRefreshSupported(origin)
+    await withAutomationWriterDependency("inspection", origin, () => assertAutomationStorageRefreshSupported(origin))
     await guardAsync()
   }
   return parsed
@@ -103,8 +104,9 @@ function readTypedAutomationRoute(entity: Extract<WorkspaceEntity, { kind: "auto
 async function inspectAutomationRoute(profile: LocalProfile, route: AutomationRouteInfo, workspaceId: string,
   config: BlindReplicaConfig, guard: GuardAsync, accepted: readonly BlindReplicaConfig[]): Promise<ReplicaWriterWorker | undefined> {
   const { inspectExistingAutomation } = await import("../app/automationInstanceManagement")
-  const inspected = await inspectExistingAutomation(profile, { origin: route.origin, workspaceId,
-    definitionId: route.definition.id, executorPersonId: route.executorPersonId }, { ensureCurrent: guard })
+  const inspected = await withAutomationWriterDependency("inspection", route.origin, () => inspectExistingAutomation(profile,
+    { origin: route.origin, workspaceId, definitionId: route.definition.id, executorPersonId: route.executorPersonId },
+    { ensureCurrent: guard }))
   await guard()
   const identity = inspected.identity
   if (identity.origin !== route.origin || inspected.description.workspaceId !== workspaceId ||
@@ -179,12 +181,13 @@ async function refreshOneWorker(profile: LocalProfile, config: BlindReplicaConfi
   await guard()
   const route = { origin: target.origin, workspaceId: target.workspaceId, definitionId: target.definitionId,
     executorPersonId: target.executorPersonId, integrationId: target.integrationId }
-  const before = await read(profile, route, { ensureCurrent: guard })
+  const before = await withAutomationWriterDependency("inspection", target.origin, () => read(profile, route, { ensureCurrent: guard }))
   await guard()
   assertIdentityRoute(before.identity, target)
   const prior = before.identity.description
   const pin = storagePin(prior.storage, config)
-  const after = await refresh(profile, { ...route, storage: pin, receipt }, { ensureCurrent: guard })
+  const after = await withAutomationWriterDependency("confirmation", target.origin,
+    () => refresh(profile, { ...route, storage: pin, receipt }, { ensureCurrent: guard }))
   await guard()
   assertIdentityRoute(after.identity, target)
   assertRefreshPreservedAutomation(prior, after.identity.description, receipt)

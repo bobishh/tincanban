@@ -54,13 +54,15 @@ function parseWriterUpgrades(value: unknown, entries: PrivateReplicaState["entri
 }
 
 function parseWriterUpgrade(raw: unknown): ReplicaWriterUpgrade {
-  if (!isPlainRecord(raw) || Object.keys(raw).some(field => !["id", "config", "confirmed", "workers"].includes(field)) || typeof raw.id !== "string" ||
+  if (!isPlainRecord(raw) || Object.keys(raw).some(field => !["id", "config", "confirmed", "workers", "localActivated"].includes(field)) || typeof raw.id !== "string" ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw.id)) throw new Error("Invalid writer upgrade intent")
   const config = parseReplicaConfig(serialize(raw.config))
   if (config.minimumWriterVersion !== undefined || config.removalPending || !config.preferenceRevision) throw new Error("Invalid writer upgrade intent scope")
   const confirmed = parseWriterUpgradeConfirmation(raw.confirmed, config)
   const workers = raw.workers === undefined ? undefined : parseReplicaWriterWorkers(raw.workers, config.workspaceId)
-  return { id: raw.id, config, ...(confirmed ? { confirmed } : {}), ...(workers ? { workers } : {}) }
+  if (raw.localActivated !== undefined && (raw.localActivated !== true || !confirmed)) throw new Error("Invalid locally activated writer policy")
+  return { id: raw.id, config, ...(confirmed ? { confirmed } : {}), ...(workers ? { workers } : {}),
+    ...(raw.localActivated === true ? { localActivated: true as const } : {}) }
 }
 
 function parseWriterUpgradeConfirmation(value: unknown, config: BlindReplicaConfig) {
@@ -140,13 +142,16 @@ export function assertNoWriterUpgrade(state: PrivateReplicaState, config: Pick<P
 }
 
 export function matchingConfig(state: PrivateReplicaState, config: PrivateReplicaConfig, allowUpgrade = false): PrivateReplicaConfig {
-  if (!allowUpgrade) assertNoWriterUpgrade(state, config)
+  const upgrade = state.writerUpgrades?.[scopeKey(config)]
+  if (!allowUpgrade && !upgrade?.localActivated) assertNoWriterUpgrade(state, config)
   const normalized = parsePrivateReplicaConfig(JSON.stringify(config), state.personId)
   const selected = effectivePrivateReplicaConfigs(state).find(value => scopeKey(value) === scopeKey(normalized) &&
     (value.purpose ?? "workspace") === (normalized.purpose ?? "workspace"))
   if (!selected || privateReplicaBinding(state.personId, selected) !== privateReplicaBinding(state.personId, normalized)) {
     throw new Error("Rusty credential revision changed during replication")
   }
+  if (!allowUpgrade && upgrade?.localActivated && (selected.purpose === "identity" || selected.minimumWriterVersion !== 2 ||
+    !upgrade.confirmed || selected.policyRevision < upgrade.confirmed.payload.revision)) throw new Error("Locally activated writer policy no longer matches storage")
   return selected
 }
 

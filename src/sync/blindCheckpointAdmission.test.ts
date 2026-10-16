@@ -2,12 +2,15 @@ import { readFile } from "node:fs/promises"
 import { afterEach, beforeAll, expect, test, vi } from "vitest"
 import { change, init, save, getChangesMetaSince, initializeWasm } from "@automerge/automerge/slim"
 import { assertWorkspaceWritesAllowed } from "../stateCausalAdmission"
-import { checkpointAdmissionReady } from "./blindCheckpointAdmission"
+import { checkpointAdmissionReady, checkpointHooks } from "./blindCheckpointAdmission"
+import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
+import type { BlindReplicaConfig } from "./blindReplication"
 import { stateRuntime } from "../stateContext"
 import { defaultStorage } from "../storage"
 import type { StoredCausalEvidence } from "../storageJournal"
 import type { useTincanban } from "../state"
 vi.mock("../stateCausalAdmission", () => ({ assertWorkspaceWritesAllowed: vi.fn(async () => {}) }))
+vi.mock("./privateReplicaRepository", () => ({ readReplicaWriterUpgrade: vi.fn(async () => undefined) }))
 beforeAll(async () => { await initializeWasm(new Uint8Array(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))) })
 afterEach(() => { vi.restoreAllMocks(); stateRuntime.ready.value = false; stateRuntime.pendingWrites = 0 })
 
@@ -52,4 +55,12 @@ test("Pending ownership confirmation blocks cleanup without making ordinary repl
   const { app } = fixture()
   vi.mocked(assertWorkspaceWritesAllowed).mockRejectedValueOnce(new Error("Ownership transfer awaiting confirmation"))
   expect(await checkpointAdmissionReady(app, "board")).toBe(false)
+})
+
+test("Given locally active storage policy but unfinished automation confirmation, when considering destructive checkpoint cleanup, then defer deletion until maintenance finishes", async () => {
+  const { app } = fixture()
+  vi.mocked(readReplicaWriterUpgrade).mockResolvedValueOnce({ localActivated: true } as never)
+  const hooks = checkpointHooks(app, { workspaceId: "board" } as BlindReplicaConfig, () => {})
+  expect(await hooks.checkpointAllowed!()).toBe(false)
+  expect(await hooks.checkpointAllowed!()).toBe(true)
 })

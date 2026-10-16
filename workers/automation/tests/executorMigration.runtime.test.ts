@@ -109,7 +109,10 @@ describe("Cloudflare executor migration fence", () => {
     const integrationId = "migration-retired-participant";
     const stub = runtime.AUTOMATION.getByName(integrationId);
     let manifestHash = "";
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "active", epoch: 16, manifestHash })));
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(new Request(input, init).redirect).toBe("manual");
+      return Response.json({ status: "active", epoch: 16, manifestHash });
+    }));
     try {
       await runInDurableObject(stub, async (_instance, ctx) => {
         const worker = new AutomationCoordinator(ctx, coordinatorEnv());

@@ -30,6 +30,12 @@ it("Given reading typography surfaces, when styles are packaged, then Fira Sans 
   expect(readingFonts).toContain("font-family: var(--site-font-reading)")
   expect(readingFonts).toContain("font-size: var(--site-font-body-size, 16px)")
   expect(readingFonts).toContain("line-height: var(--site-font-line, 1.5)")
+  // Given detail and chat Markdown roots inherit `.markdown-content` sizing,
+  // when lazy reading styles load, then prose must keep the 16px reading scale.
+  expect(readingFonts).toContain(".detail-layout .detail-copy.markdown-content")
+  expect(readingFonts).toContain(".chat-dialog .chat-message-body.markdown-content")
+  expect(readingFonts).toContain("font-size: var(--site-font-body-size, 16px)")
+  expect(readingFonts).toContain("line-height: var(--site-font-line, 1.5)")
   expect(typography).not.toContain("schema-json-textarea")
   expect(jsonSettings).toContain("textarea.schema-json-textarea")
   expect(jsonSettings).toContain("font: 400 max(.7rem, 14px)/1.5 var(--site-font-mono)")

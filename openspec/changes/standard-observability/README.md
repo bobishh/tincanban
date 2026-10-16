@@ -8,6 +8,15 @@ cohort or product activation dependency.
 
 ## Current evidence
 
+- **Production browser delivery, 2026-10-16 18:22:45 UTC:** read-only ClickHouse
+  queries over the preceding 15 minutes found 162 log rows and 65 trace rows from
+  `tincanban.browser`, project `tincanban`, source `browser`, version
+  `65a7bdac997c0db17fcbfda575f1857424092682`. Latest timestamps were
+  18:19:23.662 and 18:20:07.962 UTC respectively. TinSink `/health` returned 200;
+  both `/v1/logs` and `/v1/traces` preflights returned 204 with the exact
+  `https://match.meta-uber-engineer.dev` origin and required headers. This confirms
+  actual browser export through TinSink/Collector to persistent OTel tables;
+  availability remains point-in-time evidence, not an uptime guarantee.
 - **Source/focused checks:** official OTel SDK/exporters and spans/logs exist for
   browser, automation Worker and Rusty. TinSink accepts authenticated OTLP/HTTP
   JSON, and the deployment config provisions a private pinned Collector and
@@ -17,19 +26,15 @@ cohort or product activation dependency.
   was run once against disposable remote Docker resources. It sent official SDK
   logs and traces through the checked TinSink binary and actual pinned Collector,
   then verified stored records using the read-only ClickHouse account. TinSink CI
-  now runs this test locally with disposable containers. The revised CI has not yet
-  run; the synthetic integration fixture does not claim browser E2E or production
-  delivery from released browser/Worker/Rusty revisions.
-- **Pending release:** TinSink's revised CI has not yet passed. The independent
-  service pipelines and configured producer releases have not yet established
-  production OTel delivery. No production delivery or browser acceptance is
-  claimed here.
+  now runs this test with disposable containers. That isolated fixture remains
+  separate evidence from the production browser rows recorded above; it does not
+  establish delivery from every Worker or Rusty revision.
 - **Acceptance authored:** browser SDK tests cover OTLP signal URLs, redaction,
   consent and failed export; Worker runtime tests cover authenticated correlated
   logs/traces; Rusty tests cover official exporters and W3C parent context; TinSink
   `tests/otlp-ingress.mjs` covers official SDK requests, gateway policy and outage.
   The separate real-Collector/ClickHouse runner passed locally against isolated
-  disposable services; the revised CI job has not run yet. The public-delivery native acceptance covers editor/automation owner-closed
+  disposable services. The public-delivery native acceptance covers editor/automation owner-closed
   writes and stale-source retry behavior; it is a separate release gate.
 
 ## Required checks
@@ -46,28 +51,28 @@ Run the checks from their owning checkout; passing one layer does not imply anot
 | Release | Each service's owning CI and deployment evidence; query stored rows only when released producers have export configured | Independent service releases and actual configured production delivery |
 
 TinSink CI runs its isolated full-chain runner and validates the pinned Collector
-configuration. The revised workflow still needs to pass. It deploys TinSink and
+configuration. It deploys TinSink and
 its Collector configuration only; it does not build or deploy the product or
 Rusty. The image build fetches the immutable pinned Tincanban design-system
 revision for console assets, without depending on current Tincanban main or a
-product release trigger. Production delivery and real browser acceptance remain
-unverified until their own release and configured-row checks pass.
-- **Reported defect remains open:** Rusty panel displays `Module terminated` on
-  browser build eec9197. Direct TinSink ClickHouse inspection on 2026-10-16 found
-  repeated browser connection failures with only unknown_error. Automerge's WASM
-  guard emits that message after an earlier exception terminates its instance.
-  No recovered original exception or reproduced root cause exists yet. Do not
-  label this corruption, memory exhaustion, native Rusty crash or a fixed defect.
+product release trigger. Browser delivery is established by the exact configured
+rows above; that evidence does not certify unrelated public-board behavior.
+- **Automation defect, separate from TinSink:** Cloudflare reported its isolate
+  memory limit/reset while opening historical automation state. Later calls
+  emitted `Module terminated`. At 18:10:50 UTC the browser propagated an automation
+  management failure into Rusty's status; this is not evidence of a native Rusty
+  crash or a Sink outage. The separate executor rollout and removal of that sync
+  dependency are tracked in
+  [separate automation executor](../separate-automation-executor/tasks.md).
 - **Additional source fix:** TinSink approval cloned a Vue Proxy before its error
   handler. Scalar snapshot is now inside try; focused regression passes. Not
   deployed yet.
 - **Outside scope by user decision:** installing Grafana, dashboards and Grafana
   Cloud. Standard Collector ClickHouse tables retain future compatibility.
 
-The user explicitly placed root-cause investigation after the diagnostic release.
-Do not delay the current release with speculative reproduction attempts. After CI
-activation, inspect newly captured first exceptions, then implement the evidenced
-WASM fix as follow-up work.
+Diagnostic capture now provides original bounded exceptions. Continue incident
+investigation against the relevant service/version rather than treating a browser
+status label as the failing service's identity.
 
 ## Independent release gates
 

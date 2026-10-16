@@ -84,3 +84,26 @@ SHALL require a real authorized production automation result, not CI alone.
 - **WHEN** intake forwards it and the executor completes execution
 - **THEN** the actual board contains the intended admitted signed change
 - **AND** its command result contains a verified Rusty receipt and correlated diagnostic trace
+
+### Requirement: Storage sync remains independent of automation maintenance
+
+Rusty's signed policy confirmation SHALL activate the device's matching storage
+credentials and retained replication progress atomically, independently of
+automation inspection and confirmation. Existing exact receipt, storage sequence,
+credential revocation and ciphertext retry checks SHALL remain enforced.
+Automation confirmation SHALL retry in a separate post-sync task, retaining its
+device-local journal. Snapshot/history deletion SHALL wait for that task to finish.
+
+#### Scenario: Automation unavailable during a retained writer-policy transition
+
+- **GIVEN** a retained local transition and Rusty's valid signed policy receipt
+- **WHEN** automation inspection or confirmation is unavailable
+- **THEN** normal Rusty replication continues with the confirmed policy and exact retained progress
+- **AND** automation maintenance does not hold the sync scheduler or mark Rusty unavailable
+- **AND** destructive checkpoint cleanup remains deferred
+
+#### Scenario: Invalid policy confirmation
+
+- **GIVEN** a pending transition without a valid exact signed Rusty receipt
+- **WHEN** a caller attempts to activate replacement storage policy
+- **THEN** activation fails without discarding its journal, old credentials or ciphertext

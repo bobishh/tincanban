@@ -17,6 +17,7 @@ type Session = { identity: () => string; epoch: () => number; disposed: () => bo
 export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>, state: State, session: Session) {
   const replicas = new Map<string, { binding: string; sync: () => Promise<boolean | void> }>()
   const writerMaintenance = new Map<string, BlindReplicaConfig>()
+  let writerMaintenanceRunning: Promise<void> | undefined
   const personId = () => app.getCurrentProfile()?.identity.personId ?? ""
   const current = (owner: string, epoch: number) => !session.disposed() && session.identity() === owner && personId() === owner && session.epoch() === epoch
   const profileBinding = () => {
@@ -64,19 +65,23 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
       { owner, guard, configs: state.configs, cache: replicas, attachmentCoverage: state.attachmentCoverage,
         reload: () => reload(owner, epoch), queueWriterMaintenance: value => writerMaintenance.set(replicaKey(value), structuredClone(value)) }))
   }
-  async function runWriterMaintenance(owner: string, epoch: number) {
+  function runWriterMaintenance(owner: string, epoch: number): Promise<void> {
+    if (writerMaintenanceRunning) return writerMaintenanceRunning
     const queued = [...writerMaintenance.values()]
     writerMaintenance.clear()
-    for (const config of queued) {
+    writerMaintenanceRunning = (async () => { for (const config of queued) {
       if (!current(owner, epoch)) return
       const guard = captureSession(undefined, owner, epoch)
-      const { maintainWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
-      try { await maintainWorkspaceReplicaWriter(app, config, guard, () => reload(owner, epoch)) }
+      try {
+        const { maintainWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
+        await maintainWorkspaceReplicaWriter(app, config, guard, () => reload(owner, epoch))
+      }
       catch (error) {
         meshTrace("workspace.replica.writer-maintenance.failed", { phase: "post-sync-pass", workspaceId: config.workspaceId,
           "server.address": new URL(config.origin).host }, "warn", error)
       }
-    }
+    } })().finally(() => { writerMaintenanceRunning = undefined })
+    return writerMaintenanceRunning
   }
   async function provision(owner: string, epoch: number) {
     const guard = captureSession(undefined, owner, epoch)

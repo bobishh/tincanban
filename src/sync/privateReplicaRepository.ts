@@ -258,7 +258,7 @@ function reconcileReplicaProgress(previous: PrivateReplicaState, next: PrivateRe
 export async function persistPrivateReplicaProgress(owner: string, config: PrivateReplicaConfig, ensureIdentity: () => void = () => {}) {
   const freeze = await replicaCredentialFreezeCondition(owner, config)
   return effectiveReplicaConfigs(await mutate(owner, state => {
-    assertNoWriterUpgrade(state, config)
+    matchingConfig(state, config)
     return updateReplicaProgress(state, config)
   }, ensureIdentity, [freeze]))
 }
@@ -346,6 +346,20 @@ function assertConfirmedWriterRevision(revision: number, currentRevision: number
 
 export async function completeReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, policyRevision: number,
   ensureIdentity: () => void = () => {}): Promise<BlindReplicaConfig> {
+  return finishReplicaWriterUpgrade(owner, upgrade, policyRevision, ensureIdentity, false)
+}
+
+/** Rusty's verified receipt activates this device independently of automation availability. */
+export async function activateReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, policyRevision: number,
+  ensureIdentity: () => void = () => {}): Promise<BlindReplicaConfig> {
+  const receipt = await verifyRustyWriterPolicyReceipt(upgrade.confirmed, upgrade.config, owner, policyRevision)
+  if (receipt.payload.revision !== policyRevision) throw new Error("Writer activation requires the exact signed policy revision")
+  ensureIdentity()
+  return finishReplicaWriterUpgrade(owner, upgrade, policyRevision, ensureIdentity, true)
+}
+
+async function finishReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterUpgrade, policyRevision: number,
+  ensureIdentity: () => void, retainMaintenance: boolean): Promise<BlindReplicaConfig> {
   upgrade = structuredClone(upgrade)
   const freeze = await replicaCredentialFreezeCondition(owner, upgrade.config)
   const config = parseReplicaConfig(serialize(upgrade.config))
@@ -358,6 +372,9 @@ export async function completeReplicaWriterUpgrade(owner: string, upgrade: Repli
     const selected = writerUpgradeSelection(current, config)
     const progress = current.progress[key]
     assertConfirmedWriterRevision(policyRevision, selected.policyRevision, upgrade)
+    if (upgrade.localActivated) {
+      return finishActiveWriterMaintenance(current, selected, policyRevision, key, retainMaintenance)
+    }
     if (progress?.replication?.pending) throw new Error("Pending Rusty upload prevents writer upgrade completion")
     const next = changeReplicaPreference(current, { ...selected, policyRevision, minimumWriterVersion: 2 } as BlindReplicaConfig)
     const [updated] = effectiveReplicaConfigs(next).filter(value => scopeKey(value) === key)
@@ -368,11 +385,22 @@ export async function completeReplicaWriterUpgrade(owner: string, upgrade: Repli
         generation: progress.replication.generation + 1 } : undefined
       next.progress[key] = { ...progress, revision: updated.preferenceRevision!, ...(replication ? { replication } : {}) }
     }
-    delete next.writerUpgrades![key]
+    if (retainMaintenance) next.writerUpgrades![key] = { ...upgrade, localActivated: true }
+    else delete next.writerUpgrades![key]
     if (!Object.keys(next.writerUpgrades!).length) delete next.writerUpgrades
     return next
   }, ensureIdentity, [freeze])
   return effectiveReplicaConfigs(state).find(value => scopeKey(value) === key)!
+}
+
+function finishActiveWriterMaintenance(current: PrivateReplicaState, selected: BlindReplicaConfig, policyRevision: number,
+  key: string, retainMaintenance: boolean): PrivateReplicaState {
+  if (selected.minimumWriterVersion !== 2 || selected.policyRevision !== policyRevision) throw new Error("Activated writer policy changed before maintenance completion")
+  if (retainMaintenance) return current
+  const next = structuredClone(current)
+  delete next.writerUpgrades![key]
+  if (!Object.keys(next.writerUpgrades!).length) delete next.writerUpgrades
+  return next
 }
 
 /** Prepare a portable private-state merge against exact v2 and legacy bytes; never writes during planning. */

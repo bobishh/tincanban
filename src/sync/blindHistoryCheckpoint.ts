@@ -1,6 +1,6 @@
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
-import { privateReplicaBinding } from "./privateReplicaRepository"
+import { privateReplicaBinding, readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import { blindHash, discoverBlindKeeper } from "./blindClient"
 import { decodeBlindBytes, decryptBlindObject, encryptBlindObject } from "./blindEnvelope"
 import { verifyCheckpointReceipt, type BlindCheckpointReceipt, type BlindCheckpointRequest } from "./blindCheckpoint"
@@ -60,6 +60,7 @@ type Ports = {
 export async function publishHistoryStorageCheckpoint(owner: string, config: BlindReplicaConfig, transitionId: string,
   baselineId: string, ports: Ports): Promise<{ sequence: number; hash: string }> {
   ports.guard()
+  if (await readReplicaWriterUpgrade(owner, config)) throw new Error("Finish automation storage maintenance before replacing Rusty history")
   await ports.ensureCurrent()
   const { key, binding } = await location(owner, config, transitionId)
   let raw = await readLocal(key)
@@ -85,6 +86,7 @@ export async function publishHistoryStorageCheckpoint(owner: string, config: Bli
   }
   ports.guard()
   await ports.ensureCurrent()
+  if (await readReplicaWriterUpgrade(owner, config)) throw new Error("Finish automation storage maintenance before replacing Rusty history")
   const receipt = state.receipt ?? await ports.submit(request).catch(cause => {
     if (cause instanceof Error && "code" in cause && cause.code === "checkpoint_conflict" && "status" in cause && cause.status === 409) {
       throw new HistoryStorageCheckpointConflictError(baselineId, cause)

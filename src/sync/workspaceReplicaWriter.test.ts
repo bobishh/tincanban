@@ -185,6 +185,62 @@ test("Given optional Worker discovery fails before any writer intent, when post-
   } finally { f.close() }
 })
 
+test("Given a retained writer transition and unavailable automation, when resuming storage policy, then activate only Rusty's verified receipt and retain automation maintenance without contacting it", async () => {
+  const f = await fixture()
+  try {
+    f.approval.mockRejectedValueOnce(new Error("Lost Rusty reply"))
+    await expect(runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).rejects.toThrow("Lost Rusty reply")
+    f.discoverWorkers.mockClear().mockRejectedValue(new Error("Module terminated"))
+    f.refreshWorkers.mockClear()
+    const next = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {}, { storageOnly: true })
+    expect(next).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4, cursor: 9 })
+    expect(f.discoverWorkers).not.toHaveBeenCalled()
+    expect(f.refreshWorkers).not.toHaveBeenCalled()
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, next)).toMatchObject({ localActivated: true })
+    const progress = await runtime.getPrivateReplicaProgress(f.owner, next)
+    expect(progress).toMatchObject({ cursor: 9, uploadedRevision: "confirmed-content" })
+    await runtime.persistPrivateReplicaState(f.owner, next, progress.generation, { ...progress,
+      generation: progress.generation + 1, cursor: 10 })
+    await runtime.maintainWorkspaceReplicaWriter(f.app as never, next, () => {}, async () => {})
+    expect(await runtime.getPrivateReplicaProgress(f.owner, next)).toMatchObject({ cursor: 10 })
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, next)).toMatchObject({ localActivated: true })
+    await expect(runtime.getPrivateReplicaProgress(f.owner, f.config)).rejects.toThrow(/revision changed/i)
+  } finally { f.close() }
+})
+
+test("Given locally activated policy and new durable ciphertext, when automation eventually confirms, then clear only maintenance and preserve exact pending upload", async () => {
+  const f = await fixture()
+  try {
+    await runtime.prepareReplicaWriterUpgrade(f.owner, f.config)
+    const next = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {}, { storageOnly: true })
+    const progress = await runtime.getPrivateReplicaProgress(f.owner, next)
+    const pending = { requestId: crypto.randomUUID(), hash: "A".repeat(43), bytes: 1,
+      object: { version: 1 as const, scopeId: next.scopeId, keyEpoch: 1, nonce: "A".repeat(16), ciphertext: "A".repeat(23) } }
+    await runtime.persistPrivateReplicaState(f.owner, next, progress.generation,
+      { ...progress, generation: progress.generation + 1, pending })
+    const before = await runtime.getPrivateReplicaProgress(f.owner, next)
+    await runtime.ensureWorkspaceReplicaWriter(f.app as never, next, () => {})
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, next)).toBeUndefined()
+    expect(await runtime.getPrivateReplicaProgress(f.owner, next)).toEqual(before)
+  } finally { f.close() }
+})
+
+test("Given an altered or mismatched Rusty receipt, when activating storage before automation maintenance, then preserve the frozen credentials and reject it", async () => {
+  const f = await fixture()
+  try {
+    const original = await runtime.prepareReplicaWriterUpgrade(f.owner, f.config)
+    let confirmed = original
+    await f.confirmScope(4, { confirmed: async receipt => {
+      confirmed = await runtime.confirmReplicaWriterUpgrade(f.owner, original, receipt)
+    } })
+    await expect(runtime.activateReplicaWriterUpgrade(f.owner,
+      { ...confirmed, confirmed: { ...confirmed.confirmed!, signature: "A".repeat(86) } }, 4)).rejects.toThrow(/receipt/i)
+    await expect(runtime.activateReplicaWriterUpgrade(f.owner, confirmed, 3)).rejects.toThrow(/exact.*revision/i)
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, f.config)).toEqual(confirmed)
+    await expect(runtime.getPrivateReplicaProgress(f.owner, f.config)).rejects.toThrow(/upgrade.*pending/i)
+  } finally { f.close() }
+})
+
 test("Given a durable writer intent, when post-sync maintenance sees it, then leave it for strict resolver resume", async () => {
   const f = await fixture()
   try {
@@ -229,7 +285,7 @@ test("Given a lost reply followed by another own device's policy update, when th
   } finally { f.close() }
 })
 
-test("Given a Worker refresh reply is lost after Rusty confirms policy, when the migration retries, then reuse the saved receipt and finish every captured Worker before local activation", async () => {
+test("Given a Worker refresh reply is lost after Rusty confirms policy, when the migration retries, then reuse the saved receipt while ordinary storage remains active", async () => {
   const f = await fixture()
   try {
     const worker = { origin: "https://automation.example", workspaceId: f.doc.id, definitionId: "intake",
@@ -240,7 +296,8 @@ test("Given a Worker refresh reply is lost after Rusty confirms policy, when the
     const pending = await runtime.readReplicaWriterUpgrade(f.owner, f.config)
     expect(pending?.workers).toEqual([worker])
     expect(pending?.confirmed?.payload.revision).toBe(4)
-    expect((await runtime.getReplicaConfigurations(f.owner))[0]).not.toHaveProperty("minimumWriterVersion")
+    expect((await runtime.getReplicaConfigurations(f.owner))[0]).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4 })
+    expect(pending?.localActivated).toBe(true)
     const updated = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})
     expect(updated).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4, cursor: 9 })
     expect(f.approval).toHaveBeenCalledTimes(1)
@@ -260,7 +317,7 @@ test("Given an existing Worker cannot refresh access, when preparing a scope upg
   } finally { f.close() }
 })
 
-test("Given a second Worker appears during maintenance, when checking the cohort again, then capture and confirm both before activating the local writer", async () => {
+test("Given a second Worker appears during maintenance, when checking the cohort again, then retain both routes while the local writer stays active", async () => {
   const f = await fixture()
   try {
     const first = { origin: "https://automation.example", workspaceId: f.doc.id, definitionId: "first",
@@ -270,7 +327,7 @@ test("Given a second Worker appears during maintenance, when checking the cohort
     f.refreshWorkers.mockImplementation(async (_profile, _config, receipt, workers, guard) => {
       await guard()
       expect((await runtime.readReplicaWriterUpgrade(f.owner, f.config))?.workers).toEqual(workers)
-      expect((await runtime.getReplicaConfigurations(f.owner))[0]).not.toHaveProperty("minimumWriterVersion")
+      expect((await runtime.getReplicaConfigurations(f.owner))[0]).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4 })
       expect(receipt.payload.revision).toBe(4)
     })
     const updated = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})
@@ -297,14 +354,14 @@ test("Given a captured Worker disappears from the document and refresh fails, wh
   } finally { f.close() }
 })
 
-test("Given current device authority is revoked during Worker maintenance, when the response arrives, then retain the confirmed intent and do not activate local credentials", async () => {
+test("Given current device authority is revoked during Worker maintenance, when the response arrives, then stop maintenance and retain its confirmed journal without rolling back the earlier storage policy", async () => {
   const f = await fixture()
   try {
     f.refreshWorkers.mockImplementationOnce(async () => { await f.revoke() })
     await expect(runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).rejects.toThrow(/revok|permission|authority/i)
     expect((await runtime.readReplicaWriterUpgrade(f.owner, f.config))?.confirmed?.payload.revision).toBe(4)
-    expect((await runtime.getReplicaConfigurations(f.owner))[0]).not.toHaveProperty("minimumWriterVersion")
-    await expect(runtime.getPrivateReplicaProgress(f.owner, f.config)).rejects.toThrow(/upgrade.*pending/i)
+    expect((await runtime.getReplicaConfigurations(f.owner))[0]).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4 })
+    await expect(runtime.getPrivateReplicaProgress(f.owner, f.config)).rejects.toThrow(/revision changed/i)
   } finally { f.close() }
 })
 
@@ -320,7 +377,7 @@ test("Given new Workers keep arriving during maintenance, when the bounded resca
     const pending = await runtime.readReplicaWriterUpgrade(f.owner, f.config)
     expect(pending?.workers).toHaveLength(5)
     expect(pending?.confirmed?.payload.revision).toBe(4)
-    expect((await runtime.getReplicaConfigurations(f.owner))[0]).not.toHaveProperty("minimumWriterVersion")
+    expect((await runtime.getReplicaConfigurations(f.owner))[0]).toMatchObject({ minimumWriterVersion: 2, policyRevision: 4 })
     f.discoverWorkers.mockResolvedValue([])
     const updated = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})
     expect(updated.minimumWriterVersion).toBe(2)

@@ -5,6 +5,7 @@ import { defaultStorage } from "../storage"
 import { discoverBlindKeeper } from "./blindClient"
 import type { BlindReplicaConfig, BlindReplicaStore } from "./blindReplication"
 import { assertWorkspaceWritesAllowed } from "../stateCausalAdmission"
+import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
 
 /** Fail closed: presentation/dismissal never turns quarantined raw history into safe retention deletion. */
 export async function checkpointAdmissionReady(tincanban: ReturnType<typeof useTincanban>, workspaceId: string, bytes?: Uint8Array): Promise<boolean> {
@@ -35,6 +36,8 @@ export function checkpointHooks(tincanban: ReturnType<typeof useTincanban>, conf
       ensureIdentity()
       const profile = tincanban.getCurrentProfile()
       if (request && (request.identity.personId !== profile?.identity.personId || request.deviceId !== profile.device.deviceId)) return false
+      if (!profile || await readReplicaWriterUpgrade(profile.identity.personId, config)) return false
+      ensureIdentity()
       return checkpointAdmissionReady(tincanban, config.workspaceId)
     },
     prepareCheckpoint: async (bytes, object, expectedSequence) => {

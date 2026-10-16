@@ -15,7 +15,8 @@ type Operation = { dot: Dot; context: Clock; purpose: ReplicaPurpose; config: Pr
 type Entry = { origin: string; scopeId: string; operations: Operation[] }
 type Progress = { revision: string; cursor: number; lastUploaded: string; replication?: ReplicaState<BlindObject> }
 export type PrivateReplicaWire = { version: 3 | 4 | 5; personId: string; clock: Clock; entries: Entry[] }
-export type ReplicaWriterUpgrade = { id: string; config: BlindReplicaConfig; confirmed?: RustyScopePolicyReceipt; workers?: ReplicaWriterWorker[] }
+export type ReplicaWriterUpgrade = { id: string; config: BlindReplicaConfig; confirmed?: RustyScopePolicyReceipt; workers?: ReplicaWriterWorker[];
+  localActivated?: true }
 export type PrivateReplicaState = PrivateReplicaWire & { actorId: string; progress: Record<string, Progress>; migrated: boolean;
   writerUpgrades?: Record<string, ReplicaWriterUpgrade> }
 const entryKey = (entry: Pick<Entry, "origin" | "scopeId">) => `${entry.origin}/${entry.scopeId}`

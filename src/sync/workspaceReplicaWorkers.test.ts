@@ -26,6 +26,7 @@ vi.mock("../app/automationInstanceClient", () => ({
 vi.mock("./changeAuthorization", () => ({ readWorkspaceSigningAuthority: mocks.readAuthority }))
 
 import { discoverWorkspaceReplicaWorkers, refreshWorkspaceReplicaWorkers, type ReplicaWriterWorker } from "./workspaceReplicaWorkers"
+import { AutomationWriterDependencyError } from "./replicaDependencyError"
 
 const workspaceId = "workspace-1"
 const rusty = { origin: "https://rusty.example.test", scopeId: "scope-current", keyEpoch: 2,
@@ -199,6 +200,28 @@ describe("workspace Rusty writer refresh cohort helper", () => {
     mocks.readAuthority.mockResolvedValue({ authority: null, invalid: true })
     await expect(discoverWorkspaceReplicaWorkers({ readWorkspaceDoc: async () => document(), getCurrentProfile: () => profile },
       config, async () => {})).rejects.toThrow(/authority/i)
+  })
+
+  it("Given a typed automation route, When its inspection fails, Then identify the automation dependency and retain the original exception", async () => {
+    descriptions["inspection-failure"] = { storage: { ...rusty } }
+    const original = new Error("Module terminated")
+    mocks.inspect.mockRejectedValueOnce(original)
+    const failure = await discoverWorkspaceReplicaWorkers({ readWorkspaceDoc: async () => document(
+      automation("inspection-failure", "executor-inspection-failure")), getCurrentProfile: () => profile }, config, async () => {})
+      .catch(error => error)
+    expect(failure).toBeInstanceOf(AutomationWriterDependencyError)
+    expect(failure).toMatchObject({ stage: "inspection", cause: original })
+    expect(mocks.refresh).not.toHaveBeenCalled()
+  })
+
+  it("Given a pending policy refresh, When automation confirmation fails, Then identify its stage and stop before the next participant", async () => {
+    const original = new Error("Module terminated")
+    mocks.refresh.mockRejectedValueOnce(original)
+    const failure = await refreshWorkspaceReplicaWorkers(profile, config, receipt,
+      [worker("first"), worker("second")], async () => {}).catch(error => error)
+    expect(failure).toBeInstanceOf(AutomationWriterDependencyError)
+    expect(failure).toMatchObject({ stage: "confirmation", cause: original })
+    expect(mocks.refresh).toHaveBeenCalledOnce()
   })
 
   it("Given confirmed policy and captured routes, When refreshing, Then retain grant state and bind the receipt to exact storage", async () => {

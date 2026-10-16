@@ -52,5 +52,24 @@ test("Given a durable writer transition, when strict resume fails, then do not c
 
   await expect(resolvePrivateReplica(app as never, config, session as never)).rejects.toThrow("Worker discovery unavailable")
   expect(mocks.resume).toHaveBeenCalledOnce()
+  expect(mocks.resume).toHaveBeenCalledWith(app, config, session.guard, { storageOnly: true })
   expect(mocks.create).not.toHaveBeenCalled()
+})
+
+test("Given locally activated Rusty policy and unfinished automation confirmation, when resolving and syncing, then never await automation or its maintenance lock", async () => {
+  const { resolvePrivateReplica } = await import("./privateReplicaFactory")
+  mocks.pending.mockResolvedValue({ id: "pending-transition", localActivated: true })
+  mocks.resume.mockImplementation(() => new Promise(() => {}))
+  const sync = vi.fn(async () => true)
+  mocks.create.mockReturnValue({ sync })
+  const queueWriterMaintenance = vi.fn()
+  const current = { ...config, minimumWriterVersion: 2 as const }
+  const session = { owner: "owner", guard: vi.fn(), configs: ref([current]), cache: new Map(),
+    reload: vi.fn(async () => {}), queueWriterMaintenance }
+  const app = { getCurrentProfile: () => ({ identity: { personId: "owner" } }) }
+  const replica = await resolvePrivateReplica(app as never, current, session as never)
+  expect(await replica.sync()).toBe(true)
+  expect(mocks.resume).not.toHaveBeenCalled()
+  expect(sync).toHaveBeenCalledOnce()
+  expect(queueWriterMaintenance).toHaveBeenCalledWith(current)
 })

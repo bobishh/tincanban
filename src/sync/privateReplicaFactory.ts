@@ -65,10 +65,10 @@ export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>
   config = JSON.parse(canonicalizeJson(config)) as PrivateReplicaConfig
   guard()
   const pendingWriterUpgrade = config.purpose !== "identity" ? await readReplicaWriterUpgrade(owner, config) : undefined
-  if (config.purpose !== "identity" && pendingWriterUpgrade) {
+  if (config.purpose !== "identity" && pendingWriterUpgrade && !pendingWriterUpgrade.localActivated) {
     const { ensureWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
     guard()
-    config = await ensureWorkspaceReplicaWriter(app, config, guard)
+    config = await ensureWorkspaceReplicaWriter(app, config, guard, { storageOnly: true })
     await session.reload()
     guard()
   }
@@ -100,7 +100,7 @@ export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>
   guard()
   const result: Replica = { binding, sync: async () => {
     const synced = await implementation.sync()
-    if (config.purpose !== "identity" && config.minimumWriterVersion !== 2) session.queueWriterMaintenance?.(config)
+    if (config.purpose !== "identity" && (config.minimumWriterVersion !== 2 || pendingWriterUpgrade)) session.queueWriterMaintenance?.(config)
     return synced
   } }
   if (typeof implementation.pull === "function") {
