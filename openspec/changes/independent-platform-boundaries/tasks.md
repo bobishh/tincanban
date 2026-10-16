@@ -18,3 +18,5 @@ Module terminated diagnosis follows expanded diagnostics and the first captured
 primary exception; speculative WASM changes do not block these releases.
 
 User release instruction, 2026-10-16: stop further local rechecks and ship through owning CI. Prior local proof remains recorded; final stale-file URL fix is left for CI/production verification. Do not report that unrun keeper rerun as passed.
+
+- [ ] Production automation follow-up requested by user: inspect Worker errors, queue state and task execution after release; distinguish intake, authorization, Rusty sync and executor failures from live evidence.

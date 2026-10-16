@@ -76,6 +76,7 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await discussion.getByRole("button", { name: "Close", exact: true }).click()
   await expect(page.getByRole("button", { name: /Reply|Post/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /Invite/ })).toHaveCount(0)
+  await page.getByRole("button", { name: "Open Public card", exact: true }).click()
   const documentDownload = cardDialog.getByRole("link", { name: "Download Handout", exact: true })
   await expect(documentDownload).toHaveAttribute("download", "handout.txt")
   if (browserName !== "webkit") {

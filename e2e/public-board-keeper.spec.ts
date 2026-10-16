@@ -219,7 +219,9 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(reader.getByText("Third published description", { exact: true })).toBeVisible({ timeout: 30_000 })
     panel = await openPublication()
     await expect(panel).toHaveAttribute("data-public-revision", "3", { timeout: 30_000 })
-    expect(await reader.evaluate(async href => (await fetch(href!, { cache: "no-store" })).status, firstFileUrl)).toBe(404)
+    // A refreshed board keeps an earlier file URL usable while that exact file
+    // remains in the active manifest. Withdrawal below must still revoke it.
+    expect(await reader.evaluate(async href => (await fetch(href!, { cache: "no-store" })).status, firstFileUrl)).toBe(200)
 
     await stop()
     await start()

@@ -10,7 +10,15 @@ export function useAppViewState(app: ReturnType<typeof useAppController>, routeC
   let cancelled = false
   let revealTimer: ReturnType<typeof setTimeout> | undefined
   onBeforeUnmount(() => { cancelled = true; clearTimeout(revealTimer) })
-  watch(() => app.ui.state.boardRef.value ?? routeContent?.value, content => {
+  watch(() => {
+    // A cached board can render before the policy runtime is ready. Keep the
+    // full startup cover until runtime initialization advances into local reads.
+    if (startupStage.value === "starting") return null
+    const board = app.ui.state.boardRef.value
+    if (board) return board
+    const route = routeContent?.value
+    return route && !route.classList.contains("board-address-progress") ? route : null
+  }, content => {
     if (!content || boardPainted.value) return
     const reveal = () => {
       clearTimeout(revealTimer)

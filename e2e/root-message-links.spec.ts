@@ -49,7 +49,9 @@ for (const width of [390, 1440]) test(`Given a root message with replies at ${wi
   await chat.getByRole("button", { name: "Close", exact: true }).click()
   await expect(page).toHaveURL(url!)
   await discussion.getByRole("button", { name: "Close", exact: true }).click()
-  await expect(page).toHaveURL(new URL("/", url!).toString())
+  const boardAddress = new URL(url!)
+  boardAddress.hash = ""
+  await expect(page).toHaveURL(boardAddress.toString())
   await expect(discussion).toHaveCount(0)
   await page.goto(url!)
   await expect(discussion.locator(`[data-message-id="${rootId}"]`)).toHaveClass(/is-linked-message/)

@@ -70,7 +70,7 @@ test("Given invalid mobile pairing link, when error opens, then backdrop covers 
   await page.goto("/pair#invalid")
   await safeInsets(page)
   const dialog = page.getByRole("dialog", { name: "Device sync", exact: true })
-  await expect(dialog.getByRole("alert")).toBeVisible()
+  await expect(dialog.getByRole("alert")).toBeVisible({ timeout: 25_000 })
   await coveredBackdrop(page)
   await page.screenshot({ path: info.outputPath("mobile-pairing-failure-bottom.png") })
   await dialog.getByRole("button", { name: "Dismiss", exact: true }).tap()

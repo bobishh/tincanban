@@ -41,6 +41,8 @@ async function seedFormatTwoWorkspace(page: Page, malformed = false) {
     const { registerWorkspaceInCurrentRoot } = await import("/src/statePersonalRoot.ts")
     await registerWorkspaceInCurrentRoot(defaultStorage, profile, old.id, "genesis")
     await writeLocal("tincanban.active_workspace_id", old.id)
+    const board = Object.values(old.entities).find((entity: any) => entity.kind === "board") as any
+    window.history.replaceState(null, "", `/boards/${encodeURIComponent(board.id)}/older-board`)
     return old.id as string
   }, malformed)
 }

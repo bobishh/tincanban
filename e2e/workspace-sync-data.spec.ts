@@ -86,6 +86,7 @@ test("Given independent devices without a signaling API, when a workspace invita
   try {
     await page.goto("/")
     await addLead(page, "Host card")
+    const stableBoardPath = new URL(page.url()).pathname
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const hostDialog = page.getByRole("dialog", { name: "Device sync" })
     await hostDialog.getByRole("button", { name: "Add someone" }).click()
@@ -99,7 +100,7 @@ test("Given independent devices without a signaling API, when a workspace invita
     await expect(guestDialog.getByText("Connected to Job search")).toBeVisible({ timeout: 25_000 })
     await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()
     await expect(guest.getByRole("button", { name: "Open Host card — Engineer" })).toBeVisible()
-    await expect(guest).toHaveURL("/")
+    await expect(guest).toHaveURL(url => url.pathname === stableBoardPath)
     await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await hostDialog.getByRole("button", { name: "Add someone", exact: true }).click()
@@ -117,7 +118,7 @@ test("Given independent devices without a signaling API, when a workspace invita
     await expect(page.getByRole("button", { name: "Open Saved offline — Engineer" })).toBeVisible({ timeout: 25_000 })
     await expect(guest.getByRole("button", { name: "Open While guest offline — Engineer" })).toBeVisible({ timeout: 25_000 })
     await expect(guest.getByLabel("Mesh connected")).toBeVisible()
-    await expect(guest).toHaveURL("/")
+    await expect(guest).toHaveURL(url => url.pathname === stableBoardPath)
     await page.context().setOffline(true)
     await expect(page.getByLabel("Mesh offline")).toBeVisible()
     await addLead(page, "Host saved offline")
@@ -135,6 +136,7 @@ test("Given no network before accepting, when the connection returns, then the s
   test.setTimeout(45_000)
   await page.goto("/")
   await addLead(page, "Waiting for network")
+  const stableBoardPath = new URL(page.url()).pathname
   await page.getByRole("button", { name: "Sync", exact: true }).click()
   const host = page.getByRole("dialog", { name: "Device sync" })
   await host.getByRole("button", { name: "Add someone" }).click()
@@ -155,7 +157,7 @@ test("Given no network before accepting, when the connection returns, then the s
     await expect(dialog.getByText("Connected to Job search")).toBeVisible({ timeout: 25_000 })
     await dialog.getByRole("button", { name: "Close", exact: true }).first().click()
     await expect(guest.getByRole("button", { name: "Open Waiting for network — Engineer" })).toBeVisible()
-    await expect(guest).toHaveURL("/")
+    await expect(guest).toHaveURL(url => url.pathname === stableBoardPath)
   } finally {
     await context.close()
   }

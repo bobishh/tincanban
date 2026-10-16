@@ -43,6 +43,7 @@ test("Given a saved profile and private Rusty connection, when its encrypted rec
 
 test("Given malformed or oversized recovery input, when selecting the file, then explain failure and keep restore disabled without losing words or board state", async ({ page }) => {
   await page.goto("/")
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 25_000 })
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   await page.getByRole("button", { name: "Recovery backup", exact: true }).click()
   const recovery = page.getByRole("dialog", { name: "Identity recovery", exact: true })

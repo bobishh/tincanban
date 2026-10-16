@@ -439,6 +439,7 @@ test("Given a paired editor, when the invitation tab reloads repeatedly, then tr
   try {
     await Promise.all([page.goto("/"), guest.goto("/")])
     const invite = await pairWorkspace(page, guest)
+    const stableBoardPath = new URL(page.url()).pathname
     const identity = await guest.evaluate(async () => JSON.parse((await (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!).identity.personId)
     for (let i = 0; i < 2; i++) {
       await guest.reload()
@@ -461,7 +462,7 @@ test("Given a paired editor, when the invitation tab reloads repeatedly, then tr
     await expect(guest.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
     await expect(guest.getByRole("dialog", { name: "Device sync" })).toHaveCount(0)
     await expect(guest.getByLabel("Workspace role: editor")).toBeVisible()
-    expect(new URL(guest.url()).pathname).toBe("/")
+    expect(new URL(guest.url()).pathname).toBe(stableBoardPath)
   } finally { await context.close() }
 })
 

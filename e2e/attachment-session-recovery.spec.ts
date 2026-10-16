@@ -220,8 +220,9 @@ test("Given a multi-chunk attachment transfer loses its stream, when the recipie
   }
 })
 
-test("Given an archived owner baseline, when a credential-free editor receives it and restores a private backup offline, then archived versions remain readable and restorable", async ({ browser, baseURL }) => {
-  test.setTimeout(180_000)
+test("Given an archived owner baseline, when a credential-free editor receives it and restores a private backup offline, then archived versions remain readable and restorable", async ({ browser, baseURL }, testInfo) => {
+  // CI WebKit reached identity restoration but exhausted the shared 180s budget.
+  test.setTimeout(testInfo.project.name.includes("webkit") ? 240_000 : 180_000)
   const ownerContext = await browser.newContext()
   const editorContext = await browser.newContext({ acceptDownloads: true })
   const owner = await ownerContext.newPage()
@@ -310,7 +311,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })
       .or(maintenance.getByRole("alert"))).toBeVisible({ timeout: 60_000 })
     await expect(maintenance.getByRole("alert")).toHaveCount(0)
-    await expect(maintenance.getByRole("status")).toContainText("Older history archived")
+    await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })).toContainText("Older history archived")
 
     // Capacity failure must be legible and leave the already admitted history usable.
     const baselineBeforeCapacityFailure = await owner.evaluate(async id =>

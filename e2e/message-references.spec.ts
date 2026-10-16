@@ -71,10 +71,13 @@ test("Given a linked message, when closing chat, then URL clears and the same li
 
 test("Given an unavailable linked message, when closing its error chat, then URL and retry feedback clear", async ({ page }) => {
   const url = await copiedLink(page)
-  await page.goto(changeReference(url, { messageId: "missing-device:missing-message" }))
+  const unavailableUrl = changeReference(url, { messageId: "missing-device:missing-message" })
+  await page.goto(unavailableUrl)
   await expect(page.getByText("Message unavailable", { exact: true }).first()).toBeVisible()
   await page.getByRole("dialog", { name: "Workspace chat", exact: true }).getByRole("button", { name: "Close", exact: true }).click()
-  await expect(page).toHaveURL(new URL("/", url).toString())
+  const boardAddress = new URL(unavailableUrl)
+  boardAddress.hash = ""
+  await expect(page).toHaveURL(boardAddress.toString())
   await expect(page.getByRole("button", { name: "Retry message link" })).toHaveCount(0)
   await page.reload()
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible()

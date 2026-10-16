@@ -6,9 +6,9 @@ const privateStartup = startupBudgetFiles(manifest, "private")
 const publicStartup = startupBudgetFiles(manifest, "public")
 
 export default [
-  // Stable board routes, public-delivery scheduling and optional OTel admission add 10 kB.
+  // Stable board routes, public-delivery scheduling and optional OTel admission add 11 kB.
   // Signing, projection, delivery transport and the OTel SDK load on demand.
-  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "249 kB" },
+  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "250 kB" },
   // Shared semantic prose and technical-value rules add under 200 bytes.
   { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.95 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },
