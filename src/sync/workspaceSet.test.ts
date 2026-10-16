@@ -11,7 +11,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { createLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
 import { initializeAutomerge } from "../crdt"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
-import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
+import { clearMeshTrace, meshTraceSnapshot, setMeshTraceVerboseLogging } from "./meshTrace"
 import { withWorkspaceMutation } from "../workspaceMutation"
 
 beforeAll(async () => {
@@ -405,7 +405,7 @@ describe("incremental workspace control plane", () => {
 
 
 describe("rejected document isolation", () => {
-  it("Given an interrupted incoming stream, When the frame fails, Then its trace identifies a network failure", async () => {
+  it("Given sync debugging and an interrupted incoming stream, When the frame fails, Then its trace identifies a network failure", async () => {
     clearMeshTrace()
     const record = vi.spyOn(await import("./telemetry"), "record").mockImplementation(() => {})
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
@@ -417,6 +417,7 @@ describe("rejected document isolation", () => {
       accepted = true
       return stream
     }, close: vi.fn(), openStream: vi.fn() }
+    setMeshTraceVerboseLogging(true)
     const session = liveAutomergeWorkspaceSync(connection, "secret", {
       read: async () => new Uint8Array(), merge: vi.fn(), activate: vi.fn(),
     }, "workspace", "local", "remote")
@@ -427,6 +428,7 @@ describe("rejected document isolation", () => {
       expect(meshTraceSnapshot()).toContainEqual(expect.objectContaining({ event: "workspace.frame.rejected" }))
     } finally {
       await session.close()
+      setMeshTraceVerboseLogging(false)
       record.mockRestore()
       if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow)
       else Reflect.deleteProperty(globalThis, "window")
