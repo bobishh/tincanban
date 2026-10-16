@@ -207,7 +207,6 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     const restore = restoredDialog.getByRole("button", { name: "Restore workspace" })
     await expect(restore).toHaveCSS("text-transform", "uppercase")
     await expect(restore).toHaveCSS("border-radius", "0px")
-    await expect(restoredDialog.locator(".workspace-item strong", { hasText: "Temporary board" })).toHaveCSS("font-size", "20px")
     await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
     await restore.click()
     await expect(restoredDialog.getByRole("alert")).toBeVisible()

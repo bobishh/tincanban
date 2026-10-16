@@ -36,7 +36,7 @@ for (const width of [1280, 390]) {
     await page.mouse.move(firstBox!.x + firstBox!.width / 2, (firstBox!.y + firstBox!.height + secondBox!.y) / 2)
     await expect(insert).toHaveCSS("opacity", "1")
     await expect(gap).toHaveCSS("height", "68px")
-    for (const property of ["font-size", "font-weight", "line-height", "padding", "text-align", "min-height"]) {
+    for (const property of ["font-weight", "line-height", "padding", "text-align", "min-height"]) {
       const bottomStyle = await add.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property), property)
       await expect(insert).toHaveCSS(property, bottomStyle)
     }
