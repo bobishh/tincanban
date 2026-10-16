@@ -70,3 +70,22 @@ standard control minima. The `-1px` screen-reader-only box is a mechanical excep
 nonmodal editing and container resizing. Other surface suites exercise domain
 content and pending/error states. External Markdown resources use a new tab;
 relative and same-origin navigation stays local, and downloads keep their behavior.
+
+## CSS validation
+
+`npm run quality:css` runs the official ESLint CSS recommended correctness rules
+on application CSS, Vue style blocks, public asset CSS and the standalone agent
+guide. It also rejects repeated selectors within the same block and identical
+declarations, preserving fallbacks with different values and media overrides.
+Embedded-style errors retain their source line numbers. The command and its
+fixtures run through `npm run quality` in CI.
+
+Browser support policy, deliberate `!important` overrides and token-provided font
+fallbacks are excluded from the recommended rules. Shared variables are resolved
+at runtime; unknown-variable warnings are disabled while property validation
+remains enabled. The native select `base-select` value extends the syntax data.
+Two valid font shorthands have local suppressions for a validator issue with
+multiple `var()` fallbacks.
+
+`npm run quality:dup` includes standalone CSS alongside TypeScript and Vue;
+`npm run quality:layout` continues to enforce spacing and control-size tokens.

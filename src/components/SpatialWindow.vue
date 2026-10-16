@@ -126,8 +126,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 </template>
 
 <style scoped>
-.spatial-window { container: detail-window / inline-size; padding: 0; max-width: none; max-height: none; position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 0; min-height: 0; background: var(--panel, white); color: var(--ink, #171717); border: 2px solid var(--line, #171717); box-shadow: 6px 6px 0 var(--ink, #171717); overflow: hidden; }
-.spatial-window { animation: window-appear var(--motion-panel) var(--motion-ease); }
+.spatial-window { container: detail-window / inline-size; padding: 0; max-width: none; max-height: none; position: absolute; display: flex; flex-direction: column; pointer-events: auto; min-width: 0; min-height: 0; background: var(--panel, white); color: var(--ink, #171717); border: 2px solid var(--line, #171717); box-shadow: 6px 6px 0 var(--ink, #171717); overflow: hidden; animation: window-appear var(--motion-panel) var(--motion-ease); }
 .spatial-geometry-motion { transition: left var(--motion-panel) var(--motion-ease), top var(--motion-panel) var(--motion-ease), width var(--motion-panel) var(--motion-ease), height var(--motion-panel) var(--motion-ease); }
 .window-leave-active { transition: opacity var(--motion-fast) ease, transform var(--motion-panel) var(--motion-ease); pointer-events: none; }
 .window-leave-to { opacity: 0; transform: translateY(6px) scale(.985); }
@@ -137,8 +136,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-controls { display: flex; flex: none; gap: var(--space-1); }
 .spatial-controls button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: var(--space-2); }
 .spatial-controls svg, .spatial-resize svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.spatial-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
-.spatial-body { animation: panel-appear var(--motion-panel) var(--motion-ease); }
+.spatial-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; animation: panel-appear var(--motion-panel) var(--motion-ease); }
 .spatial-body-framed { display: flex; flex-direction: column; padding: var(--space-4); overflow: hidden; }
 .spatial-resize { position: absolute; bottom: 0; right: 0; width: 44px; height: 44px; padding: var(--space-4) var(--space-1) var(--space-1) var(--space-4); background: transparent; border: 0; color: var(--muted, #666); cursor: nwse-resize; touch-action: none; user-select: none; }
 .spatial-resize:disabled { visibility: hidden; }
@@ -176,6 +174,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-window .stage-scroll-later { right: 0; background: linear-gradient(to left, var(--panel) 60%, transparent); }
 .spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
 .spatial-window .status-strip button { flex-shrink: 0; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+/* eslint-disable-next-line css/no-invalid-properties -- Valid font shorthand with two var() fallbacks is misparsed by the CSS validator. */
 .spatial-window .source-snapshot { margin-top: var(--space-2); color: var(--ink); white-space: pre-wrap; max-height: 190px; overflow: auto; padding: var(--space-2) 0; border: 0; font: 400 var(--site-font-reading-size, 14px)/var(--site-font-reading-line, 1.65) var(--site-font-reading); }
 .scroll-frame .detail-section:first-child { margin-top: 0; }
 @media (max-width: 600px) {

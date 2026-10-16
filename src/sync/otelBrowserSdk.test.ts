@@ -68,8 +68,9 @@ describe("browser OTel SDK", () => {
       request.on("end", () => {
         requests.push({ path: request.url ?? "", headers: request.headers, body: Buffer.concat(chunks).toString("utf8") })
         if (request.url === "/v1/traces") {
-          response.writeHead(503)
-          response.end("Collector unavailable")
+          // A permanent rejection tests exporter errors without randomized SDK retry delays.
+          response.writeHead(400)
+          response.end("Collector rejected the batch")
         } else {
           response.writeHead(200, { "Content-Type": "application/json" })
           response.end(JSON.stringify({ partialSuccess: { rejectedLogRecords: 1, errorMessage: "sampled out by test" } }))
@@ -86,7 +87,7 @@ describe("browser OTel SDK", () => {
     sdk.operation({ name: "startup.history", attributes: { "startup.stage": "history-load" }, startedAt, endedAt: startedAt + 1 })
     await sdk.forceFlush()
     expect(requests.filter(request => request.path === "/v1/logs")).toHaveLength(1)
-    expect(requests.some(request => request.path === "/v1/traces")).toBe(true)
+    expect(requests.filter(request => request.path === "/v1/traces")).toHaveLength(1)
     for (const request of requests) {
       expect(request.headers.authorization).toBe("Bearer public-browser-fixture-key-0123456789")
       expect(request.headers["x-tinsink-project"]).toBe("tincanban")

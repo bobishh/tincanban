@@ -30,7 +30,7 @@
 
 
 /* Keeper administration uses shared controls and primitive surfaces. */
-:where(.keeper-admin) .admin-section { }
+
 :where(.keeper-admin) .admin-section > .keeper-card + .keeper-card { margin-top: var(--space-4); }
 :where(.keeper-admin) .keeper-list { display: grid; gap: var(--space-2); }
 :where(.keeper-admin) .breadcrumbs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); color: var(--muted); }

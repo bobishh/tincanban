@@ -3,7 +3,7 @@
   "minLines": 8,
   "minTokens": 60,
   "mode": "strict",
-  "format": ["typescript", "vue"],
+  "format": ["typescript", "vue", "css"],
   "ignore": [
     "**/*.test.ts",
     "**/node_modules/**",

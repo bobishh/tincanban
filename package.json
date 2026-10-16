@@ -7,7 +7,7 @@
     "vendor/meta-mesh/packages/*"
   ],
   "scripts": {
-    "quality": "npm run quality:types && npm run quality:lint && npm run quality:layout && npm run quality:dead && npm run quality:deps && npm run quality:dup && npm run quality:patterns",
+    "quality": "npm run quality:types && npm run quality:lint && npm run quality:css && npm run quality:layout && npm run quality:dead && npm run quality:deps && npm run quality:dup && npm run quality:patterns",
     "dev": "vite",
     "build": "vue-tsc -p tsconfig.app.json --noEmit && vite build",
     "preview": "vite preview",
@@ -29,7 +29,8 @@
     "test:e2e:policy": "npm run build && playwright test --config playwright.policy.config.ts",
     "verify:policy": "node vendor/meta-mesh/scripts/verify-policy-deps.mjs",
     "test:e2e:discussions": "playwright test --config playwright.discussions.config.ts",
-    "test:inventory": "node scripts/test-description-inventory.mjs"
+    "test:inventory": "node scripts/test-description-inventory.mjs",
+    "quality:css": "node --test scripts/check-css.test.mjs && node scripts/check-css.mjs"
   },
   "dependencies": {
     "@automerge/automerge": "^3.4.1",
@@ -63,6 +64,7 @@
   },
   "devDependencies": {
     "@ast-grep/cli": "0.45.3",
+    "@eslint/css": "^2.0.1",
     "@eslint/js": "10.0.1",
     "@playwright/test": "^1.55.0",
     "@size-limit/file": "14.0.0",
@@ -80,6 +82,7 @@
     "istanbul-reports": "3.2.0",
     "jscpd": "5.3.0",
     "knip": "6.37.0",
+    "postcss": "^8.5.30",
     "size-limit": "14.0.0",
     "terser": "^5.51.2",
     "typescript": "~5.8.3",
