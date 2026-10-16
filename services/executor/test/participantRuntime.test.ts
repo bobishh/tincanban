@@ -20,7 +20,7 @@ test("Given continuous management RPCs for one integration, when scheduled ticks
     import { appendFileSync } from "node:fs";
     import { parentPort, workerData } from "node:worker_threads";
     const record = (kind, request) => appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({
-      kind, integrationId: workerData.integrationId, operation: request.operation, at: Date.now(),
+      kind, integrationId: workerData.integrationId, operation: request.operation,
     }) + "\\n");
     parentPort.on("message", ({ id, request }) => {
       record("start", request);
@@ -35,7 +35,7 @@ test("Given continuous management RPCs for one integration, when scheduled ticks
   const runtimeQueue = runtime as unknown as { pending: number };
   const pendingSamples: number[] = [];
   let producing = true;
-  const readEvents = () => readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { kind: string; integrationId: string; operation: string; at: number });
+  const readEvents = () => readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line) as { kind: string; integrationId: string; operation: string });
   const pump = async () => {
     while (producing) await runtime.call("one", { operation: "rpc", method: "management", args: [] });
   };
@@ -53,12 +53,12 @@ test("Given continuous management RPCs for one integration, when scheduled ticks
 
   try {
     const events = await waitFor(rows => rows.filter(row => row.kind === "start" && row.operation === "tick").length >= 2);
-    const loadStoppedAt = Date.now();
     const ticks = events.filter(row => row.kind === "start" && row.operation === "tick");
     const tickEnds = events.filter(row => row.kind === "end" && row.operation === "tick");
     assert.equal(ticks.length, 2, "one slow tick must not accumulate a second scheduled tick while running");
     assert.notEqual(ticks[0]!.integrationId, ticks[1]!.integrationId, "timer cursor must rotate independently of management RPC selection");
-    assert.ok(ticks[0]!.at < loadStoppedAt && ticks[1]!.at < loadStoppedAt, "timer ticks must join the lane before continuous RPC load stops");
+    const betweenTicks = events.slice(events.indexOf(ticks[0]!) + 1, events.indexOf(ticks[1]!));
+    assert.ok(betweenTicks.some(row => row.kind === "start" && row.operation === "rpc"), "management calls must keep progressing between scheduled ticks");
     assert.equal(tickEnds.length, 1);
     assert.equal(Math.max(...pendingSamples), 5, "four producer calls and one scheduled or running tick should occupy the lane");
     assert.ok(pendingSamples.every(count => count <= 5), "a slow scheduled tick must not accumulate behind the four management producers");
