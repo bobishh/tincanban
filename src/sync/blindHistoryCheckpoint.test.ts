@@ -5,7 +5,8 @@ import { encodeBlindBytes } from "./blindEnvelope"
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { readReplicaWriterUpgrade } from "./privateReplicaRepository"
-vi.mock("./privateReplicaRepository", async original => ({ ...await original<typeof import("./privateReplicaRepository")>(),
+import type * as ReplicaRepository from "./privateReplicaRepository"
+vi.mock("./privateReplicaRepository", async original => ({ ...await original<typeof ReplicaRepository>(),
   readReplicaWriterUpgrade: vi.fn(async () => undefined) }))
 vi.mock("./blindCheckpoint", () => ({ verifyCheckpointReceipt: vi.fn(async () => {}) }))
 function fixture() {

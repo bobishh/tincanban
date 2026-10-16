@@ -241,6 +241,57 @@ test("Given an altered or mismatched Rusty receipt, when activating storage befo
   } finally { f.close() }
 })
 
+test("Given locally active policy, a newer own-device revision and pending ciphertext, when fresh Rusty confirmation advances again, then rebind exact progress and finish maintenance", async () => {
+  const f = await fixture()
+  try {
+    await runtime.prepareReplicaWriterUpgrade(f.owner, f.config)
+    const active = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {}, { storageOnly: true })
+    const progress = await runtime.getPrivateReplicaProgress(f.owner, active)
+    const pending = { requestId: crypto.randomUUID(), hash: "A".repeat(43), bytes: 1, observedSequence: 9,
+      object: { version: 1 as const, scopeId: active.scopeId, keyEpoch: 1, nonce: "A".repeat(16), ciphertext: "A".repeat(23) } }
+    await runtime.persistPrivateReplicaState(f.owner, active, progress.generation,
+      { ...progress, generation: progress.generation + 1, pending })
+    const preferences = await import("./privateReplicaPreferences")
+    const wire = await runtime.exportPrivateReplicaState(f.owner)
+    const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
+      { ...wire, actorId: "peer-newer-active-policy", progress: {}, migrated: true }, { ...active, policyRevision: 5 }))
+    await runtime.receivePrivateReplicaState(f.owner, incoming)
+    const [current] = await runtime.getReplicaConfigurations(f.owner)
+    const before = await runtime.getPrivateReplicaProgress(f.owner, current!)
+    f.approval.mockImplementation(async (_access, _profile, _revoked, options) => f.confirmScope(6, options))
+    const updated = await runtime.ensureWorkspaceReplicaWriter(f.app as never, current!, () => {})
+    expect(updated).toMatchObject({ minimumWriterVersion: 2, policyRevision: 6, cursor: 9 })
+    expect(await runtime.getPrivateReplicaProgress(f.owner, updated)).toEqual({ ...before,
+      generation: before.generation + 1, binding: runtime.privateReplicaBinding(f.owner, updated) })
+    expect((await runtime.getPrivateReplicaProgress(f.owner, updated)).pending).toEqual(pending)
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, updated)).toBeUndefined()
+    await expect(runtime.getPrivateReplicaProgress(f.owner, current!)).rejects.toThrow(/revision changed/i)
+  } finally { f.close() }
+})
+
+test("Given a newer Rusty receipt persisted before interruption, when ordinary storage resumes, then activate it without waiting for automation and preserve exact pending bytes", async () => {
+  const f = await fixture()
+  try {
+    await runtime.prepareReplicaWriterUpgrade(f.owner, f.config)
+    const active = await runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {}, { storageOnly: true })
+    const progress = await runtime.getPrivateReplicaProgress(f.owner, active)
+    const pending = { requestId: crypto.randomUUID(), hash: "A".repeat(43), bytes: 1,
+      object: { version: 1 as const, scopeId: active.scopeId, keyEpoch: 1, nonce: "A".repeat(16), ciphertext: "A".repeat(23) } }
+    await runtime.persistPrivateReplicaState(f.owner, active, progress.generation,
+      { ...progress, generation: progress.generation + 1, pending })
+    const intent = await runtime.readReplicaWriterUpgrade(f.owner, active)
+    await f.confirmScope(5, { confirmed: async receipt => {
+      await runtime.confirmReplicaWriterUpgrade(f.owner, intent!, receipt)
+    } })
+    f.discoverWorkers.mockClear().mockRejectedValue(new Error("Module terminated"))
+    const updated = await runtime.ensureWorkspaceReplicaWriter(f.app as never, active, () => {}, { storageOnly: true })
+    expect(updated.policyRevision).toBe(5)
+    expect((await runtime.getPrivateReplicaProgress(f.owner, updated)).pending).toEqual(pending)
+    expect(f.discoverWorkers).not.toHaveBeenCalled()
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, updated)).toMatchObject({ localActivated: true })
+  } finally { f.close() }
+})
+
 test("Given a durable writer intent, when post-sync maintenance sees it, then leave it for strict resolver resume", async () => {
   const f = await fixture()
   try {

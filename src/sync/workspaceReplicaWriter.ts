@@ -48,6 +48,25 @@ function canAdoptRepositoryConfig(requested: BlindReplicaConfig, saved: BlindRep
     storageCredentialIdentity(saved) === storageCredentialIdentity(requested)
 }
 
+function adoptWriterConfig(owner: string, requested: BlindReplicaConfig, saved: BlindReplicaConfig | undefined): BlindReplicaConfig {
+  if (!saved) throw new Error("Writer upgrade credential revision changed")
+  if (privateReplicaBinding(owner, saved) === privateReplicaBinding(owner, requested)) return requested
+  if (!canAdoptRepositoryConfig(requested, saved)) throw new Error("Writer upgrade credential revision changed")
+  return saved
+}
+
+function writerServiceSupportsUpgrade(service: Awaited<ReturnType<typeof discoverBlindKeeper>>, config: BlindReplicaConfig,
+  upgrade: ReplicaWriterUpgrade | undefined): boolean {
+  if (service.servicePublicKey !== config.servicePublicKey) throw new Error("Rusty writer service pin changed")
+  if (service.writerPolicy?.maximumWriterVersion === 2) return true
+  if (upgrade) throw new Error("Rusty upgrade required to resume the pending writer policy")
+  return false
+}
+
+function storagePolicyActivated(config: BlindReplicaConfig, upgrade: ReplicaWriterUpgrade): boolean {
+  return upgrade.localActivated === true && upgrade.confirmed !== undefined && upgrade.confirmed.payload.revision <= config.policyRevision
+}
+
 /** Freeze, copy legacy discovery, confirm the monotonic server floor, then atomically activate retained local progress. */
 export async function ensureWorkspaceReplicaWriter(app: WriterApp,
   config: BlindReplicaConfig, ensureCurrent: () => void, options: { storageOnly?: boolean } = {}): Promise<BlindReplicaConfig> {
@@ -69,22 +88,14 @@ export async function ensureWorkspaceReplicaWriter(app: WriterApp,
     guardIdentity()
     const saved = (await getReplicaConfigurations(owner)).find(value => value.origin === config.origin && value.scopeId === config.scopeId &&
       value.workspaceId === config.workspaceId)
-    if (!saved) throw new Error("Writer upgrade credential revision changed")
-    if (privateReplicaBinding(owner, saved) !== privateReplicaBinding(owner, config)) {
-      if (!canAdoptRepositoryConfig(config, saved)) throw new Error("Writer upgrade credential revision changed")
-      config = saved
-    }
+    config = adoptWriterConfig(owner, config, saved)
     const upgrade = await readReplicaWriterUpgrade(owner, config)
-    if (options.storageOnly && (!upgrade || upgrade.localActivated)) return config
+    if (options.storageOnly && (!upgrade || storagePolicyActivated(config, upgrade))) return config
     if (config.minimumWriterVersion === 2 && !upgrade) return config
     assertUpgradeCredentials(owner, config, upgrade)
     const service = await discoverBlindKeeper(config.origin)
     guardIdentity()
-    if (service.servicePublicKey !== config.servicePublicKey) throw new Error("Rusty writer service pin changed")
-    if (service.writerPolicy?.maximumWriterVersion !== 2) {
-      if (upgrade) throw new Error("Rusty upgrade required to resume the pending writer policy")
-      return config
-    }
+    if (!writerServiceSupportsUpgrade(service, config, upgrade)) return config
     // Ordinary replication drains the exact old outbox before a later pass attempts this transition.
     if (!upgrade && (await getPrivateReplicaProgress(owner, config)).pending) return config
     let doc = await app.readWorkspaceDoc(config.workspaceId)
@@ -178,7 +189,7 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
   if (!intent.confirmed) throw new Error("Rusty writer upgrade has no durable policy confirmation")
   const receipt = await verifyRustyWriterPolicyReceipt(intent.confirmed, intent.config, owner, config.policyRevision)
   await guard()
-  if (!intent.localActivated) {
+  if (!intent.localActivated || config.policyRevision !== receipt.payload.revision) {
     config = await activateReplicaWriterUpgrade(owner, intent, receipt.payload.revision, guardIdentity)
     const activated = await readReplicaWriterUpgrade(owner, config)
     if (!activated) throw new Error("Writer maintenance journal changed after local activation")

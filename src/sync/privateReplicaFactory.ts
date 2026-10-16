@@ -65,7 +65,8 @@ export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>
   config = JSON.parse(canonicalizeJson(config)) as PrivateReplicaConfig
   guard()
   const pendingWriterUpgrade = config.purpose !== "identity" ? await readReplicaWriterUpgrade(owner, config) : undefined
-  if (config.purpose !== "identity" && pendingWriterUpgrade && !pendingWriterUpgrade.localActivated) {
+  if (config.purpose !== "identity" && pendingWriterUpgrade && (!pendingWriterUpgrade.localActivated ||
+    (pendingWriterUpgrade.confirmed?.payload.revision ?? 0) > config.policyRevision)) {
     const { ensureWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
     guard()
     config = await ensureWorkspaceReplicaWriter(app, config, guard, { storageOnly: true })

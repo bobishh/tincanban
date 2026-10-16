@@ -395,6 +395,10 @@ async function finishReplicaWriterUpgrade(owner: string, upgrade: ReplicaWriterU
 
 function finishActiveWriterMaintenance(current: PrivateReplicaState, selected: BlindReplicaConfig, policyRevision: number,
   key: string, retainMaintenance: boolean): PrivateReplicaState {
+  if (retainMaintenance && policyRevision > selected.policyRevision) {
+    return reconcileReplicaProgress(current, changeReplicaPreference(current,
+      { ...selected, policyRevision, minimumWriterVersion: 2 }))
+  }
   if (selected.minimumWriterVersion !== 2 || selected.policyRevision !== policyRevision) throw new Error("Activated writer policy changed before maintenance completion")
   if (retainMaintenance) return current
   const next = structuredClone(current)

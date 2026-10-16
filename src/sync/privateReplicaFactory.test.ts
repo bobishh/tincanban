@@ -73,3 +73,17 @@ test("Given locally activated Rusty policy and unfinished automation confirmatio
   expect(sync).toHaveBeenCalledOnce()
   expect(queueWriterMaintenance).toHaveBeenCalledWith(current)
 })
+
+test("Given locally active policy and a newer signed receipt retained after interruption, when resolving storage, then recover only its exact Rusty policy before constructing the writer", async () => {
+  const { resolvePrivateReplica } = await import("./privateReplicaFactory")
+  const current = { ...config, minimumWriterVersion: 2 as const }
+  const updated = { ...current, policyRevision: current.policyRevision + 1 }
+  mocks.pending.mockResolvedValue({ id: "retained-policy-receipt", localActivated: true,
+    confirmed: { payload: { revision: updated.policyRevision } } })
+  mocks.resume.mockResolvedValue(updated)
+  const session = { owner: "owner", guard: vi.fn(), configs: ref([current]), cache: new Map(), reload: vi.fn(async () => {}) }
+  const app = { getCurrentProfile: () => ({ identity: { personId: "owner" } }) }
+  await resolvePrivateReplica(app as never, current, session as never)
+  expect(mocks.resume).toHaveBeenCalledWith(app, current, session.guard, { storageOnly: true })
+  expect(mocks.create.mock.calls[0]?.[0]).toEqual(updated)
+})
