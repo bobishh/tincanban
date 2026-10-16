@@ -431,18 +431,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       await identityDialog.getByRole("checkbox").check()
       await Promise.all([restored.waitForEvent("load"), identityDialog.getByRole("button", { name: "Restore identity", exact: true }).click()])
 
-      // Identity restoration may resume this device's mesh session asynchronously after the load event.
-      // Dismiss its live-sync status modal whenever it appears while opening the recovery dialog.
-      const resumedSync = restored.getByRole("dialog", { name: "Device sync" })
-      const resumedSyncNotice = resumedSync.getByText("Live sync is on. Changes appear in both tabs.", { exact: true })
-      await restored.addLocatorHandler(resumedSyncNotice, async () => {
-        await resumedSync.getByRole("button", { name: "Close", exact: true }).click()
-      }, { times: 1 })
-      try {
-        await restored.getByRole("button", { name: "Sync", exact: true }).click()
-      } finally {
-        await restored.removeLocatorHandler(resumedSyncNotice)
-      }
+      await restored.getByRole("button", { name: "Sync", exact: true }).click()
       const sync = restored.getByRole("dialog", { name: "Device sync" })
       await sync.getByRole("tab", { name: "Backups", exact: true }).click()
       const backups = sync.getByRole("region", { name: "Private workspace recovery" })

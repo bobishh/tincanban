@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { hasEntityKind, type Board, type WorkspaceDocumentV2 } from "../domain/model"
 import type { useTincanban } from "../state"
 import { boardRouteUrl, canonicalizeBoardRoute, isBoardAddressPath, parseBoardRoute, readBoardRouteHint, rememberBoardRouteHint } from "./boardRoute"
+import { pairingLocationClearedEvent } from "../sync/deviceSyncInviteView"
 
 type WorkspaceAddressApi = Pick<ReturnType<typeof useTincanban>, "ready" | "availableWorkspaces" | "activeWorkspace" |
   "activeBoard" | "docVersion" | "getCurrentProfile" | "readWorkspaceDoc" | "switchWorkspace">
@@ -148,6 +149,15 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     if (currentGeneration !== generation) return
     status.value = result
   }
+  function navigateToActiveBoard() {
+    generation++
+    controller.syncActiveBoard(app.activeWorkspace.id)
+    const board = app.activeBoard.value
+    if (board && parseBoardRoute(window.location.pathname)?.boardId === board.id) {
+      unavailableBoardId.value = ""
+      status.value = "available"
+    }
+  }
   const stopPopState = controller.start(() => { void resolveCurrentAddress() })
   let observedWorkspaceId = app.activeWorkspace.id
   watch(() => [app.ready.value, app.activeWorkspace.id, app.activeBoard.value?.id,
@@ -157,6 +167,10 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     // below updates the URL. Only resolve broadly while booting or at readiness.
     if (!snapshot[0] || !previous || !previous[0]) void resolveCurrentAddress()
   }, { immediate: true })
+  const onPairingLocationCleared = () => {
+    if (app.ready.value) navigateToActiveBoard()
+  }
+  window.addEventListener(pairingLocationClearedEvent, onPairingLocationCleared)
   watch(() => app.getCurrentProfile()?.identity.personId, (identityId, previousIdentityId) => {
     if (previousIdentityId && identityId !== previousIdentityId && isBoardAddressPath(window.location.pathname)) {
       void resolveCurrentAddress()
@@ -175,12 +189,17 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     }
     controller.syncActiveBoard(workspaceId)
   }, { immediate: true })
-  onBeforeUnmount(() => { generation++; stopPopState() })
+  onBeforeUnmount(() => {
+    generation++
+    stopPopState()
+    window.removeEventListener(pairingLocationClearedEvent, onPairingLocationCleared)
+  })
 
   return {
     status: computed(() => status.value),
     unavailableBoardId: computed(() => unavailableBoardId.value),
     retry: resolveCurrentAddress,
+    navigateToActiveBoard,
   }
 }
 

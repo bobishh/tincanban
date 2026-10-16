@@ -101,6 +101,10 @@ const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
 async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
+async function switchWorkspaceFromDirectory(workspaceId: string) {
+  await handleSwitchWorkspace(workspaceId)
+  boardAddress.navigateToActiveBoard()
+}
 
 const { saveSelectedLeadDocument, saveSelectedItemDocument } = useAppItemDocumentSave(app)
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
@@ -134,7 +138,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
   </Transition>
   <TincanbanPageLayout :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || undefined" :busy="!uiReady && !startupError">
     <template #header>
-      <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady || !boardAddressResolved" @click="showWorkspaces = true">
+      <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
         <span class="brand-presence">
           <span v-if="ready.value && workspaceRoleStatus === 'unavailable'" class="sr-only" role="img" aria-label="Workspace permissions: unavailable" />
           <BrandCan :presence="meshPresence" :label="uiReady ? meshPresenceLabel : 'Workspace access is not yet confirmed'" :access-role="confirmedRole" />
@@ -150,7 +154,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
           class="button button-quiet mobile-menu-button"
           type="button"
           aria-label="Menu"
-          :disabled="!uiReady || !boardAddressResolved"
+          :disabled="!uiReady"
           :aria-expanded="showMobileMenu ? 'true' : 'false'"
           aria-controls="mobile-drawer"
           @click="toggleMobileMenu"
@@ -158,12 +162,12 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
           <span class="hamburger-icon" aria-hidden="true">☰</span>
         </button>
       </div>
-      <div class="top-actions top-actions-desktop" :inert="!uiReady || !boardAddressResolved || undefined">
-        <button class="button button-quiet" type="button" aria-label="Workspace chat" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
+      <div class="top-actions top-actions-desktop" :inert="!uiReady || undefined">
+        <button class="button button-quiet" type="button" aria-label="Workspace chat" :disabled="!boardAddressResolved" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button class="button button-quiet" type="button" @click="openConnections('Participants')">Sync</button>
         <button class="button button-quiet" type="button" aria-label="Settings" @click="showSettings = true">Settings</button>
-        <button v-if="canEditBoard" class="button button-quiet" type="button" @click="isEditingBoard = !isEditingBoard">{{ isEditingBoard ? "Done" : "Edit board" }}</button>
-        <button v-if="isEditingBoard" class="button button-primary" type="button" @click="showEntitySettings = true">Edit {{ entityName }}</button>
+        <button v-if="canEditBoard" class="button button-quiet" type="button" :disabled="!boardAddressResolved" @click="isEditingBoard = !isEditingBoard">{{ isEditingBoard ? "Done" : "Edit board" }}</button>
+        <button v-if="isEditingBoard" class="button button-primary" type="button" :disabled="!boardAddressResolved" @click="showEntitySettings = true">Edit {{ entityName }}</button>
         <a v-if="hasExperimentalMcp" class="button button-quiet agent-guide-desktop" href="/agent">Agent guide</a>
         <input ref="importInput" class="sr-only" type="file" accept=".tincanban,.match,application/vnd.tincanban+zip,application/vnd.match+zip" @change="importWorkspace" />
       </div>
@@ -190,12 +194,11 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       <StartupStatus v-if="!startupCoverVisible && (!uiReady || startupError)" :message="startupMessage" :view-only="boardVisible" :error="startupError" />
     </Transition>
 
-    <template v-if="boardVisible">
     <MobileDrawer
       :is-open="showMobileMenu"
       :active-workspace-title="workspaceLabel"
-      :is-editing-board="isEditingBoard"
-      :can-edit-board="canEditBoard"
+      :is-editing-board="isEditingBoard && boardAddressResolved"
+      :can-edit-board="canEditBoard && boardAddressResolved"
       :entity-name="entityName"
       @close="closeMobileMenu"
       @open-workspaces="showWorkspaces = true"
@@ -205,47 +208,6 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       @open-sync="openConnections('Participants')"
     />
 
-    <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
-      <div v-for="error in workspaceAccessErrors" :key="error" role="alert" class="notice notice-error">{{ error }}. Other boards remain available. You can export this board and import it as a new board.</div>
-      <div v-if="storageError && !showItemForm" key="storage-error" role="alert" class="notice notice-error">
-        <span>{{ storageError }}</span>
-        <button type="button" class="notice-dismiss" aria-label="Dismiss storage notice" @click="storageError = ''">×</button>
-      </div>
-      <div v-if="notice" :key="notice" class="notice" role="status">
-        <span>{{ notice }}</span>
-        <button v-if="archiveUndo && (notice === 'Item archived' || notice.startsWith('Restore failed'))" type="button" class="notice-undo" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo' }}</button>
-        <button type="button" class="notice-dismiss" aria-label="Dismiss notice" @click="notice = ''">×</button>
-      </div>
-    </TransitionGroup>
-
-    <div v-if="hasFilters" class="filter-summary" aria-live="polite">
-      <span>{{ visibleItems ? 'Showing matching cards' : 'No matching cards' }}</span>
-      <button class="button button-small button-quiet" type="button" @click="clearFilters">Clear search and filters</button>
-    </div>
-
-    <BoardSurface :key="boardRenderKey" :columns="visibleColumns" :items-for-column="itemsForColumn"
-      :column-color="columnColor" :column-status="columnStatus" :is-column-collapsed="isColumnCollapsed"
-      :has-filters="hasFilters" :entity-name="entityName" :board-title="activeWorkspace.title"
-      :can-edit-items="canEditItems" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
-      :card-presentation="boardCardPresentation" :on-element="setBoardElement"
-      :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)) }"
-      @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event" @scroll="trackBoardScroll"
-      @open="openCard" @select="openBoardItem" @discuss="conversations.openCardDiscussion" @task-toggle="toggleCardTask">
-      <template #before-item="{ column, item, index }">
-              <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
-      </template>
-      <template #add-item="{ column }">
-        <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
-      </template>
-      <template #empty>
-      <div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div>
-      <form v-if="isEditingBoard" class="add-column-card" @submit.prevent="addBoardColumn"><label class="sr-only" for="new-board-column">New column</label><input id="new-board-column" v-model="newBoardColumnTitle" placeholder="New column" :disabled="addingBoardColumn" /><label><input type="checkbox" :checked="newBoardColumnArchive" :disabled="genericColumns.some(column => isArchiveColumn(column)) || addingBoardColumn" @change="selectArchiveColumn(($event.target as HTMLInputElement).checked)" /> Archive column</label><label><input v-model="newBoardColumnCollapsible" type="checkbox" :disabled="addingBoardColumn" /> Allow this column to collapse</label><button class="button button-primary" type="submit" :disabled="addingBoardColumn">{{ addingBoardColumn ? 'Adding…' : '+ Add column' }}</button><p v-if="addBoardColumnError" class="form-error" role="alert">{{ addBoardColumnError }}</p></form>
-      </template>
-    </BoardSurface>
-
-    <BoardDragOverlay :controller="app.board" />
-
-    <!-- Dialogs -->
     <WorkspacesDialog
       v-if="showWorkspaces"
       :workspaces="availableWorkspaces" :archived-workspaces="archivedWorkspaces"
@@ -257,19 +219,8 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :create-workspace="handleCreateWorkspace"
       :can-rename-workspace="canRenameWorkspace"
       @close="showWorkspaces = false"
-      @switch="handleSwitchWorkspace"
+      @switch="switchWorkspaceFromDirectory"
       @import="openImport"
-    />
-
-    <ColumnDialog
-      v-if="editingColumn"
-      :column-id="editingColumn.id"
-      :initial-title="editingColumn.title"
-      :initial-collapsible="editingColumn.collapsible"
-      :initial-archive="isArchiveColumn(editingColumn, activeBoard ?? undefined)"
-      @close="editingColumn = null"
-      @save="handleRenameColumn"
-      @archive="handleArchiveColumn"
     />
 
     <SchemaEditorDialog
@@ -316,6 +267,62 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       </section>
     </ModalLayer>
     <IdentityRecoveryDialog v-if="showIdentityRecovery" :before-restore="stopSyncForIdentityRestore" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" @close="showIdentityRecovery = false" @restored="restoredIdentity" />
+
+    <template v-if="boardVisible">
+
+    <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
+      <div v-for="error in workspaceAccessErrors" :key="error" role="alert" class="notice notice-error">{{ error }}. Other boards remain available. You can export this board and import it as a new board.</div>
+      <div v-if="storageError && !showItemForm" key="storage-error" role="alert" class="notice notice-error">
+        <span>{{ storageError }}</span>
+        <button type="button" class="notice-dismiss" aria-label="Dismiss storage notice" @click="storageError = ''">×</button>
+      </div>
+      <div v-if="notice" :key="notice" class="notice" role="status">
+        <span>{{ notice }}</span>
+        <button v-if="archiveUndo && (notice === 'Item archived' || notice.startsWith('Restore failed'))" type="button" class="notice-undo" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo' }}</button>
+        <button type="button" class="notice-dismiss" aria-label="Dismiss notice" @click="notice = ''">×</button>
+      </div>
+    </TransitionGroup>
+
+    <div v-if="hasFilters" class="filter-summary" aria-live="polite">
+      <span>{{ visibleItems ? 'Showing matching cards' : 'No matching cards' }}</span>
+      <button class="button button-small button-quiet" type="button" @click="clearFilters">Clear search and filters</button>
+    </div>
+
+    <BoardSurface :key="boardRenderKey" :columns="visibleColumns" :items-for-column="itemsForColumn"
+      :column-color="columnColor" :column-status="columnStatus" :is-column-collapsed="isColumnCollapsed"
+      :has-filters="hasFilters" :entity-name="entityName" :board-title="activeWorkspace.title"
+      :can-edit-items="canEditItems" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
+      :card-presentation="boardCardPresentation" :on-element="setBoardElement"
+      :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)) }"
+      @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event" @scroll="trackBoardScroll"
+      @open="openCard" @select="openBoardItem" @discuss="conversations.openCardDiscussion" @task-toggle="toggleCardTask">
+      <template #before-item="{ column, item, index }">
+              <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
+      </template>
+      <template #add-item="{ column }">
+        <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
+      </template>
+      <template #empty>
+      <div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div>
+      <form v-if="isEditingBoard" class="add-column-card" @submit.prevent="addBoardColumn"><label class="sr-only" for="new-board-column">New column</label><input id="new-board-column" v-model="newBoardColumnTitle" placeholder="New column" :disabled="addingBoardColumn" /><label><input type="checkbox" :checked="newBoardColumnArchive" :disabled="genericColumns.some(column => isArchiveColumn(column)) || addingBoardColumn" @change="selectArchiveColumn(($event.target as HTMLInputElement).checked)" /> Archive column</label><label><input v-model="newBoardColumnCollapsible" type="checkbox" :disabled="addingBoardColumn" /> Allow this column to collapse</label><button class="button button-primary" type="submit" :disabled="addingBoardColumn">{{ addingBoardColumn ? 'Adding…' : '+ Add column' }}</button><p v-if="addBoardColumnError" class="form-error" role="alert">{{ addBoardColumnError }}</p></form>
+      </template>
+    </BoardSurface>
+
+    <BoardDragOverlay :controller="app.board" />
+
+    <!-- Dialogs -->
+
+    <ColumnDialog
+      v-if="editingColumn"
+      :column-id="editingColumn.id"
+      :initial-title="editingColumn.title"
+      :initial-collapsible="editingColumn.collapsible"
+      :initial-archive="isArchiveColumn(editingColumn, activeBoard ?? undefined)"
+      @close="editingColumn = null"
+      @save="handleRenameColumn"
+      @archive="handleArchiveColumn"
+    />
+
 
     <ObjectConversationLayer :workspace-id="activeWorkspace.id" :workspace-title="activeWorkspace.title" :chat="chat" :conversations="conversations"
       :can-view="chatCanView" :read-only="!canEditItems" :connected="sync.isWorkspaceLive(activeWorkspace.id)" :member-avatars="memberAvatars" @workspaces="showWorkspaces = true" @chat-close="chat.open.value = false" @source-dismiss="conversations.sourceState.value = ''" />

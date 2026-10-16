@@ -8,7 +8,7 @@ export default defineConfig({
     { name: "startup-webkit", testMatch: "**/startup-diagnostics.spec.ts", use: { browserName: "webkit" } },
   ],
   webServer: { ...base.webServer, env: { ...base.webServer?.env,
-    VITE_STARTUP_DIAGNOSTICS: "1", VITE_SYNC_TELEMETRY_URL: "https://telemetry.invalid/events",
-    VITE_SYNC_TELEMETRY_BROWSER_KEY: "public-browser-fixture-key-0123456789", VITE_SYNC_TELEMETRY_LEVEL: "errors",
+    VITE_STARTUP_DIAGNOSTICS: "1", VITE_OTEL_EXPORTER_OTLP_ENDPOINT: "https://telemetry.invalid",
+    VITE_SYNC_TELEMETRY_BROWSER_KEY: "public-browser-fixture-key-0123456789", VITE_SYNC_TELEMETRY_LEVEL: "all",
   } },
 })

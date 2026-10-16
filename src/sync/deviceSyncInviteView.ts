@@ -1,5 +1,7 @@
 import type { DeviceSyncState } from "./deviceSyncState"
 
+export const pairingLocationClearedEvent = "tincanban:pairing-location-cleared"
+
 export async function showInviteQr(
   state: DeviceSyncState,
   inviteUrl: string,
@@ -31,4 +33,5 @@ export function clearPairingLocation(): void {
   url.pathname = "/"
   url.hash = ""
   window.history.replaceState(window.history.state, "", url)
+  window.dispatchEvent(new Event(pairingLocationClearedEvent))
 }
