@@ -57,6 +57,17 @@ function defaultRun(command, args, options = {}) {
   return execFileSync(command, args, { encoding: 'utf8', ...options });
 }
 
+function storageHandoff(run, spec, cohortId, action) {
+  const args = ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=20'];
+  if (process.env.RUSTY_SSH_KEY_FILE) args.push('-i', process.env.RUSTY_SSH_KEY_FILE);
+  const output = run('ssh', [...args, `root@${spec.server}`, `python3 - '${action}' '${cohortId}'`], {
+    input: readFileSync(new URL('./rusty-storage-handoff.py', import.meta.url), 'utf8'), timeout: 180000,
+  });
+  const receipt = JSON.parse(output.trim().split('\n').at(-1));
+  if (!/^[A-Za-z0-9_.-]+$/.test(receipt.version ?? '')) throw new Error('Invalid previous Rusty version');
+  return receipt;
+}
+
 function notFound(error) {
   const detail = String(error?.stderr ?? '');
   return /manifest unknown|manifest not found|name unknown|not found/i.test(detail);
@@ -125,9 +136,21 @@ export function deployRustyArtifact(artifact, cohortId, rawSpec = process.env.RU
   try {
     const environment = { ...process.env, SERVER_IP: spec.server, VERSION: version,
       DOCKER_REGISTRY_PASSWORD: process.env.DOCKER_REGISTRY_PASSWORD ?? token };
-    run('kamal', ['deploy', '--skip-push', '--skip-hooks', '--version', version, '--config-file', temporaryConfig], {
-      cwd: infraDirectory, env: environment, timeout: 600000, stdio: 'inherit',
-    });
+    const options = { cwd: infraDirectory, env: environment, timeout: 900000, stdio: 'inherit' };
+    const configArgs = ['--skip-hooks', '--version', version, '--config-file', temporaryConfig];
+    run('kamal', ['build', 'pull', ...configArgs], options);
+    try {
+      storageHandoff(run, spec, cohortId, 'stop');
+      run('kamal', ['deploy', '--skip-push', ...configArgs], options);
+    } catch (error) {
+      try {
+        const previous = storageHandoff(run, spec, cohortId, 'restore');
+        run('kamal', ['app', 'start', '--skip-hooks', '--version', previous.version, '--config-file', temporaryConfig], options);
+      } catch (restoreError) {
+        throw new AggregateError([error, restoreError], 'Rusty activation failed and the previous writer could not be restored');
+      }
+      throw error;
+    }
     const receipt = verifyOnHost(run, spec, version, artifact);
     if (!receipt.repoDigests.includes(`ghcr.io/bobishh/rusty@${sourceDigest}`)) throw new Error('Running Rusty image differs from the sealed cohort digest');
     return { image: artifact.image, cohortTag: alias, sourceDigest, ...receipt };

@@ -8,6 +8,15 @@ proxy, service environment, ClickHouse accessory, and named storage volume. The
 release coordinator checks the running image's registry digest and then verifies
 Rusty's reported source commit and executable SHA-256 before activating Workers.
 
+Rusty's volume permits one writer. The adapter pulls the sealed image before
+interrupting service, captures the currently routed container in a durable host
+handoff record, and stops existing Rusty writers before Kamal boots the replacement.
+This causes a brief sync interruption; a rolling overlap cannot acquire the storage
+lock. Failed candidates stop first. If replacement activation fails, the adapter
+restarts the captured previous container and restores its Kamal route. An interrupted
+retry reuses that exact record. It never deletes the volume or its stored objects.
+The runner timeout leaves time for Kamal's 600-second health check and cleanup.
+
 Before staging or activating production, CI requires a successful main verification
 run for the cohort's exact SDK commit and retains its repository, commit and run
 ID with the activation artifacts. Rusty's image is separately selected from the

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   assertRustyRuntimeImageReceipt, deployRustyArtifact, kamalImageConfig, parseRustyDeploySpec,
   parseImageDigest, rustyCohortTag,
@@ -13,6 +14,10 @@ const artifact = { image: `ghcr.io/bobishh/rusty@${imageDigest}`, binarySha256,
 const spec = { kind: 'kamal', directory: '.release-config/hetzner_playground', configSha: 'f'.repeat(40),
   configFile: 'config/deploy.mesh-lighthouse.yml', server: 'rusty.example', origin: 'https://rusty.example' };
 const productionConfig = `service: mesh-lighthouse\nimage: "<%= ENV['DOCKER_REGISTRY_USERNAME'] %>/mesh-lighthouse"\nservers:\n  web:\n    hosts:\n      - "<%= ENV['SERVER_IP'] %>"\nproxy:\n  ssl: true\n  hosts:\n    - ingest.meta-uber-engineer.dev\nvolumes:\n  - mesh_lighthouse_blind_20261008:/data\nenv:\n  clear:\n    RUSTY_TRUSTED_OWNER: '<%= ENV.fetch("RUSTY_TRUSTED_OWNER") %>'\naccessories:\n  clickhouse:\n    image: clickhouse/clickhouse-server:26.8.11.7\n`;
+
+test('Given a single-writer storage handoff, when switching or recovering, then preserve the routed writer and reject other volumes', () => {
+  execFileSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', 'scripts', '-p', 'rusty_storage_handoff_test.py'], { stdio: 'pipe' });
+});
 
 test('Given a Rusty production host, when parsing deployment settings, then require the existing Kamal service and exact host origin', () => {
   assert.deepEqual(parseRustyDeploySpec(JSON.stringify(spec)), spec);
@@ -53,6 +58,7 @@ test('Given a digest-addressed artifact, when activating through Kamal, then ali
       }
       return `Digest: ${imageDigest}\n`;
     }
+    if (command === 'ssh' && args.at(-1).includes('python3')) return JSON.stringify({ version: 'previous-version' });
     if (command === 'ssh') return JSON.stringify({ image: artifact.image, containerImageId: 'sha256:' + 'f'.repeat(64),
       repoDigests: [artifact.image] });
     return '';
@@ -72,10 +78,15 @@ test('Given a digest-addressed artifact, when activating through Kamal, then ali
   }
   const create = calls.find(call => call.command === 'docker' && call.args.includes('create'));
   assert.deepEqual(create.args.slice(0, 5), ['buildx', 'imagetools', 'create', '--prefer-index=false', '--tag']);
-  const deploy = calls.find(call => call.command === 'kamal');
+  const deploy = calls.find(call => call.command === 'kamal' && call.args[0] === 'deploy');
   assert.deepEqual(deploy.args.slice(0, 5), ['deploy', '--skip-push', '--skip-hooks', '--version', `cohort-${cohortId}`]);
   assert.equal(deploy.args.includes('accessory'), false);
   assert.equal(calls.some(call => call.command === 'docker' && call.args.includes('build')), false);
+  const pullIndex = calls.findIndex(call => call.command === 'kamal' && call.args[0] === 'build' && call.args[1] === 'pull');
+  const stopIndex = calls.findIndex(call => call.command === 'ssh' && call.args.at(-1).includes('python3') && call.args.at(-1).includes('stop'));
+  assert.ok(pullIndex >= 0 && stopIndex > pullIndex && calls.indexOf(deploy) > stopIndex,
+    'Pull before stopping the previous writer; stop before booting the replacement');
+  assert.ok(deploy.options.timeout > 600000, 'Allow Kamal its full health timeout plus cleanup');
   assert.equal(writes.length, 1);
   assert.match(writes[0].text, /mesh_lighthouse_blind_20261008:\/data/);
   assert.deepEqual(removals, [writes[0].path]);
@@ -103,6 +114,41 @@ test('Given an existing cohort alias or running host with another digest, when d
     if (oldToken === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = oldToken;
   }
   assert.equal(calls.some(call => call.command === 'kamal'), false);
+});
+
+test('Given a failed image pull or replacement boot, when deploying, then leave the writer untouched or restore its exact version before failing', () => {
+  const oldToken = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = 'opaque-test-token';
+  try {
+    for (const failure of ['pull', 'deploy', 'restore']) {
+      const actions = [];
+      const failed = new Error('activation failed');
+      const run = (command, args) => {
+        if (command === 'git') return args[2] === 'show' ? productionConfig : spec.configSha;
+        if (command === 'docker' && args.includes('inspect')) return `Digest: ${imageDigest}\n`;
+        if (command === 'ssh') {
+          const action = args.at(-1).includes("'restore'") ? 'restore' : 'stop';
+          actions.push(action);
+          if (failure === 'restore' && action === 'restore') throw new Error('restore unavailable');
+          return JSON.stringify({ version: 'previous-version' });
+        }
+        if (command === 'kamal') {
+          const action = args[0] === 'build' ? 'pull' : args[0] === 'app' ? 'start' : 'deploy';
+          actions.push(action);
+          if (action === failure || (failure === 'restore' && action === 'deploy')) throw failed;
+          if (action === 'start') assert.equal(args[args.indexOf('--version') + 1], 'previous-version');
+        }
+        return '';
+      };
+      assert.throws(() => deployRustyArtifact(artifact, cohortId, JSON.stringify(spec), {
+        run, readConfig: () => productionConfig, writeConfig: () => {}, unlinkConfig: () => {},
+      }), failure === 'restore' ? /previous writer could not be restored/ : error => error === failed);
+      assert.deepEqual(actions, failure === 'pull' ? ['pull'] :
+        failure === 'restore' ? ['pull', 'stop', 'deploy', 'restore'] : ['pull', 'stop', 'deploy', 'restore', 'start']);
+    }
+  } finally {
+    if (oldToken === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = oldToken;
+  }
 });
 
 test('Given an infra checkout with the right HEAD but edited deploy config, when activating, then reject before registry or host changes', () => {
