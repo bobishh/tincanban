@@ -31,7 +31,7 @@ test("Given no acknowledged migration route, when an RPC runs, then it stays loc
   const fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
   try {
-    const env = workerEnv(null);
+    const env = workerEnv(null, "");
     await expect(callActiveExecutor(env, "integration-1", "getEvent", ["event"], async () => "local-event")).resolves.toBe("local-event");
     expect(fetchMock).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); }
@@ -82,11 +82,11 @@ test("Given a route for another origin, when used, then transport fails closed",
     async () => "local-event")).rejects.toThrow(/does not match configured executor origin/);
 });
 
-function workerEnv(route: { origin: string; epoch: number } | null): Parameters<typeof callActiveExecutor>[0] {
+function workerEnv(route: { origin: string; epoch: number } | null, origin = "https://executor.example"): Parameters<typeof callActiveExecutor>[0] {
   const coordinator = { executionRoute: async () => route, freshExecutionBinding: async () => null };
   return {
     AUTOMATION: { getByName: () => coordinator } as never,
-    EXECUTOR_ORIGIN: "https://executor.example",
+    EXECUTOR_ORIGIN: origin,
     EXECUTOR_SERVICE_TOKEN: "0123456789abcdef0123456789abcdef",
   };
 }

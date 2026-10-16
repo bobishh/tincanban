@@ -303,10 +303,12 @@ function assertActivationMatchesIntegration(packet: AutomationActivationPacket, 
 }
 
 async function getIntegration(env: WorkerEnv, integrationId: string): Promise<AutomationIntegration> {
-  const integration = parseIntegrations(env).find((candidate) => candidate.id === integrationId) ??
-    (/^[0-9a-f-]{36}$/.test(integrationId)
-      ? await callActiveExecutor(env, integrationId, "getRegisteredIntegration", [], local => local.getRegisteredIntegration())
-      : null);
+  let integration: AutomationIntegration | null | undefined = parseIntegrations(env).find((candidate) => candidate.id === integrationId);
+  if (!integration && /^[0-9a-f-]{36}$/.test(integrationId)) {
+    integration = env.EXECUTOR_ORIGIN
+      ? await coordinator(env, integrationId).intakeIntegrationRouting()
+      : await callActiveExecutor(env, integrationId, "getRegisteredIntegration", [], local => local.getRegisteredIntegration());
+  }
   if (!integration) throw new Error("Integration is not configured");
   return integration;
 }

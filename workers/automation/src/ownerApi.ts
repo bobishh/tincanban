@@ -70,6 +70,9 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
       scope: { ...packet.bindings, version: 1, expiresAt: new Date(grant.expiresAt).toISOString() }, allowedForwarders: [] };
     const result = await callActiveExecutor(env, intent.integrationId, "activateOwner", [registration, packet, integration, url.origin],
       local => local.activateOwner(registration, packet, integration, url.origin));
+    if (result.ok || result.status === 503) {
+      await env.AUTOMATION.getByName(intent.integrationId).cacheIntakeIntegrationRouting(integration);
+    }
     return result.ok ? json({ status: result.status, synced: true }, 200, cors)
       : json({ error: result.error }, result.status, cors);
   } catch (error) {

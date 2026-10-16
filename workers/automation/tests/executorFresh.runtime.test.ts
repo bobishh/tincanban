@@ -37,7 +37,8 @@ describe("executor fresh bootstrap reservation", () => {
       await runInDurableObject(stub, async (_instance, ctx) => {
         const worker = new AutomationCoordinator(ctx, { ...workerEnv(), EXECUTOR_ORIGIN: enrolled.origin, EXECUTOR_SERVICE_TOKEN: serviceToken });
         const profile = await worker.enrollOwner({ integrationId, ownerPersonId: enrolled.ownerPersonId, workspaceId: enrolled.workspaceId }, "identity-secret-must-stay-local");
-        expect(profile.identity.personId).toBe(enrolled.ownerPersonId);
+        expect(profile.identity.personId).toBe("automation-person-1");
+        expect(profile.identity.personId).not.toBe(enrolled.ownerPersonId);
         expect(await worker.executionRoute()).toEqual({ origin: enrolled.origin, epoch: enrolled.epoch });
         const [url, init] = fetchMock.mock.calls[0]!;
         expect(url).toBe(`https://executor.example/internal/integrations/${integrationId}/bootstrap`);
@@ -106,7 +107,7 @@ describe("executor fresh bootstrap reservation", () => {
     const stub = runtime.AUTOMATION.getByName("fresh-binding-migration-conflict");
     await runInDurableObject(stub, async (_instance, ctx) => {
       new ExecutionCoordinator(ctx, workerEnv());
-      ctx.storage.sql.exec(`CREATE TABLE executor_migration (singleton INTEGER PRIMARY KEY, phase TEXT NOT NULL, origin TEXT NOT NULL,
+      ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS executor_migration (singleton INTEGER PRIMARY KEY, phase TEXT NOT NULL, origin TEXT NOT NULL,
         epoch INTEGER NOT NULL, manifest_json TEXT, manifest_hash TEXT, updated_at INTEGER NOT NULL)`);
       ctx.storage.sql.exec("INSERT INTO executor_migration (singleton, phase, origin, epoch, updated_at) VALUES (1, 'frozen', 'https://executor.example', 7, ?)", Date.now());
       await expect(reserveCloudflareFreshRoute(ctx.storage, binding)).rejects.toThrow(/migration|reserved/i);
@@ -114,7 +115,7 @@ describe("executor fresh bootstrap reservation", () => {
     });
   });
 
-  it("Given a reserved fresh route with no legacy tables, When website and email intake arrive, Then the adapter stores bounded outbox rows without creating legacy state", async () => {
+  it("Given a reserved fresh route with empty legacy tables, When website and email intake arrive, Then the adapter stores bounded outbox rows without writing legacy state", async () => {
     const runtime = env as unknown as WorkerEnv;
     const stub = runtime.AUTOMATION.getByName("fresh-intake-outbox");
     await runInDurableObject(stub, async (_instance, ctx) => {
@@ -127,7 +128,8 @@ describe("executor fresh bootstrap reservation", () => {
       await expect(worker.enqueueWebsite({ eventId: "w".repeat(43), sourceId: "w".repeat(43), bodyHash: "website-hash", nonce: "fresh-challenge",
         challengeExpiresAt: Date.now() + 60_000, payload: "bounded-ciphertext" }))
         .resolves.toMatchObject({ eventId: "w".repeat(43), status: "pending", duplicate: false });
-      expect(ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('events','consumed_challenges')").toArray()).toEqual([]);
+      expect(ctx.storage.sql.exec("SELECT (SELECT COUNT(*) FROM events) AS events, (SELECT COUNT(*) FROM consumed_challenges) AS challenges").one())
+        .toEqual({ events: 0, challenges: 0 });
       expect(ctx.storage.sql.exec("SELECT event_id FROM executor_intake_outbox ORDER BY event_id").toArray()).toHaveLength(2);
       expect(ctx.storage.sql.exec("SELECT nonce FROM executor_intake_challenges").toArray()).toEqual([{ nonce: "fresh-challenge" }]);
     });
@@ -140,7 +142,7 @@ describe("executor fresh bootstrap reservation", () => {
       const worker = new AutomationCoordinator(ctx, { ...workerEnv(), EXECUTOR_ORIGIN: binding.origin });
       await expect(worker.manageInstance({} as never, "discover", {} as never, "https://automation.example")).resolves.toBeNull();
       await expect(worker.applicationReview({} as never, "discover", {} as never, "https://automation.example")).resolves.toBeNull();
-      expect(ctx.storage.sql.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='automation_registration'").toArray()).toEqual([]);
+      expect(ctx.storage.sql.exec("SELECT COUNT(*) AS count FROM automation_registration").one()).toEqual({ count: 0 });
     });
   });
 });

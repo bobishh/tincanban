@@ -3,7 +3,7 @@ import type { ItemCommandEnvelope } from "./itemCommands";
 import type { AutomationEvent, AutomationPipelineResult } from "./pipeline";
 import type { EnqueueResult, StoredEventStatus } from "./executionCoordinator";
 import type { ExecutionStoragePort } from "./executionPorts";
-import { captureMigrationManifest, parseMigrationManifest, readMigrationPage, sealMigrationPage, type MigrationManifest, type MigrationPage } from "./executorMigration";
+import { captureMigrationManifest, migratedTables, parseMigrationManifest, readMigrationPage, retainIntakeRouting, sealMigrationPage, type MigrationManifest, type MigrationPage } from "./executorMigration";
 import { decryptEventClassification, decryptEventPayload, encryptEventClassification } from "./eventPayload";
 import { classifyExecutorEvent, type ClassificationContext } from "./classificationEndpoint";
 import { callExecutorRpc, submitExecutorItemCommand } from "./executorClient";
@@ -126,10 +126,15 @@ export class ExecutorIntakeOutbox {
       throw new Error("Executor migration acknowledgement does not match the prepared snapshot");
     }
     await this.verifyNodeActive(state);
-    this.storage.transactionSync(() => this.storage.sql.exec(
-      "UPDATE executor_migration SET phase = 'active', updated_at = ? WHERE singleton = 1 AND phase IN ('frozen', 'active') AND origin = ? AND epoch = ? AND manifest_hash = ?",
-      Date.now(), state.origin, epoch, manifestHash,
-    ));
+    this.storage.transactionSync(() => {
+      retainIntakeRouting(this.storage, this.integrationId);
+      this.storage.sql.exec(
+        "UPDATE executor_migration SET phase = 'active', updated_at = ? WHERE singleton = 1 AND phase IN ('frozen', 'active') AND origin = ? AND epoch = ? AND manifest_hash = ?",
+        Date.now(), state.origin, epoch, manifestHash,
+      );
+      // The approved participant now lives in Node; intake retains no board-reading material.
+      for (const table of migratedTables) this.storage.sql.exec(`DELETE FROM ${table}`);
+    });
     await this.scheduleOutboxAlarm(Date.now() + 1_000);
   }
 
@@ -303,7 +308,7 @@ export class ExecutorIntakeOutbox {
     const token = this.env.EXECUTOR_SERVICE_TOKEN;
     if (!token || new TextEncoder().encode(token).byteLength < 32) throw new Error("Executor service authentication is not configured");
     const response = await fetch(`${state.origin}/internal/integrations/${encodeURIComponent(this.integrationId)}/status`, {
-      headers: { authorization: `Bearer ${token}` }, redirect: "error",
+      headers: { authorization: `Bearer ${token}` }, redirect: "error", signal: AbortSignal.timeout(90_000),
     });
     const payload = await readSmallJson(response);
     if (!response.ok || !isRecord(payload) || payload.status !== "active" || payload.epoch !== state.epoch || payload.manifestHash !== state.manifest_hash) {

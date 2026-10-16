@@ -104,6 +104,38 @@ describe("Cloudflare executor migration fence", () => {
     });
   });
 
+  it("Given Node confirms the exact approved participant, When intake acknowledges the route, Then old reading keys are removed and routing survives", async () => {
+    const runtime = env as unknown as WorkerEnv;
+    const integrationId = "migration-retired-participant";
+    const stub = runtime.AUTOMATION.getByName(integrationId);
+    let manifestHash = "";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "active", epoch: 16, manifestHash })));
+    try {
+      await runInDurableObject(stub, async (_instance, ctx) => {
+        const worker = new AutomationCoordinator(ctx, coordinatorEnv());
+        const routing = { id: integrationId, workspaceId: "workspace", scope: { version: 1,
+          boardId: "board", columns: { lead: "lead", interview: "interview", rejected: "rejected" },
+          fieldIds: { company: "company", role: "role", jobUrl: "job-url" }, expiresAt: "2099-01-01T00:00:00.000Z" }, allowedForwarders: [] };
+        ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing) VALUES (1, 'owner', 'workspace', ?, ?)",
+          integrationId, JSON.stringify(routing));
+        ctx.storage.sql.exec("INSERT INTO automation_identities VALUES (?, 'opaque-encrypted-identity', 1)", integrationId);
+        ctx.storage.sql.exec("INSERT INTO automation_replica(singleton, encrypted_state, updated_at) VALUES (1, 'opaque-encrypted-replica', 1)");
+        const manifest = await worker.prepareExecutorMigration(16);
+        manifestHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(manifest)));
+
+        await worker.acknowledgeExecutorMigration(16, manifestHash);
+        await worker.acknowledgeExecutorMigration(16, manifestHash);
+
+        expect(ctx.storage.sql.exec("SELECT * FROM automation_identities").toArray()).toEqual([]);
+        expect(ctx.storage.sql.exec("SELECT * FROM automation_replica").toArray()).toEqual([]);
+        expect(ctx.storage.sql.exec("SELECT * FROM automation_registration").toArray()).toEqual([]);
+        expect(await worker.intakeIntegrationRouting()).toEqual(routing);
+        expect(await worker.executionRoute()).toEqual({ origin, epoch: 16 });
+        expect(await worker.executorMigrationManifestHash()).toBe(manifestHash);
+      });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("Given a frozen source snapshot, When its page is requested, Then page ciphertext is bound to the migration manifest", async () => {
     const runtime = env as unknown as WorkerEnv;
     const stub = runtime.AUTOMATION.getByName("migration-sealed-pages");

@@ -99,7 +99,11 @@ Run `activate` with the same integration and epoch. Node validates the complete
 import and existing authority before becoming active. Its activation body contains
 only the exact `epoch` and `manifestHash`.
 Only after Node confirms that exact manifest is active does the workflow ask
-intake to acknowledge its new route. A failed acknowledgement can retry activation
+intake to acknowledge its new route. Acknowledgement keeps bounded routing metadata
+and deletes the retired participant's identity/replica/transition rows from intake;
+the approved actor now lives in the executor journal. Form and email intake use
+local routing metadata, so executor outages do not block durable acceptance.
+A failed acknowledgement can retry activation
 idempotently. Intake independently checks the active
 executor before recording its acknowledgement.
 

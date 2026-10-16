@@ -1,4 +1,6 @@
 import { canonicalizeJson, fromBase64Url, sha256Base64Url, toBase64Url } from "../../../src/domain/identityCrypto";
+import { parseIntegrations } from "./configuration";
+import type { AutomationIntegration } from "./configuration";
 import type { ExecutionSqlTransactionPort, ExecutionStoragePort } from "./executionPorts";
 
 export const migratedTables = [
@@ -15,6 +17,35 @@ export type MigrationManifest = {
 };
 export type MigrationPage = { table: MigratedTable; offset: number; rows: MigrationRow[] };
 const maximumPageBytes = 4 * 1024 * 1024;
+
+/** Preserve only validated email-routing metadata before legacy participant rows are removed. */
+export function retainIntakeRouting(storage: ExecutionStoragePort, integrationId: string): boolean {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(integrationId)) throw new TypeError("Invalid integration routing identity");
+  const legacyTable = storage.sql.exec<{ present: number }>(
+    "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'automation_registration'",
+  ).toArray().length > 0;
+  if (!legacyTable) return false;
+  const columns = storage.sql.exec<{ name: string }>("PRAGMA table_info(automation_registration)").toArray();
+  if (!columns.some(column => column.name === "routing")) return false;
+  const serialized = storage.sql.exec<{ routing: string | null }>(
+    "SELECT routing FROM automation_registration WHERE singleton = 1 AND integration_id = ?", integrationId,
+  ).toArray()[0]?.routing;
+  if (!serialized) return false;
+
+  const integration: AutomationIntegration | undefined = parseIntegrations({
+    INTEGRATIONS_JSON: JSON.stringify([JSON.parse(serialized)]),
+  })[0];
+  if (!integration || integration.id !== integrationId) throw new Error("Legacy routing does not match its integration identity");
+  const routing = JSON.stringify(integration);
+  if (new TextEncoder().encode(routing).byteLength > 16_384) throw new TypeError("Intake routing exceeds its size limit");
+  storage.sql.exec(`CREATE TABLE IF NOT EXISTS executor_intake_routing (
+    integration_id TEXT PRIMARY KEY, routing TEXT NOT NULL, updated_at INTEGER NOT NULL
+  )`);
+  storage.sql.exec(`INSERT INTO executor_intake_routing (integration_id, routing, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(integration_id) DO UPDATE SET routing = excluded.routing, updated_at = excluded.updated_at`,
+  integrationId, routing, Date.now());
+  return true;
+}
 
 /** Called only after the old writer's serialized lane is durably fenced. Pages never load CRDT. */
 export async function captureMigrationManifest(storage: ExecutionStoragePort, integrationId: string, origin: string, epoch: number): Promise<MigrationManifest> {

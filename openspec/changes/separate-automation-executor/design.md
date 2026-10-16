@@ -112,8 +112,11 @@ durably queueing during the fence. Import must be idempotent and checkpointed;
 the new service cannot execute until it has acknowledged complete state. Retain a
 migration marker/epoch and forward compatible management/intake calls to the
 active writer. A restart or rollback cannot revive old DO execution. Keep legacy
-state until verified import and recovery evidence exists; then remove retired
-readable key/state paths from Cloudflare through an explicit cleanup checkpoint.
+state until verified import exists. The acknowledgement transaction preserves only
+bounded routing metadata, activates forwarding, and deletes the old participant's
+identity/replica/transition rows. The executor journal retains the imported state;
+intake cannot reopen the retired board. Form/email acceptance uses its local routing
+metadata and remains available during executor outages.
 No permanent dual-write fallback or inactive CRDT dependency remains in intake.
 
 The owner's manually created Tesla cards and manually moved Amazon card remain

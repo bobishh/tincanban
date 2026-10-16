@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { ExecutionCoordinator } from "./executionCoordinator";
 import { privateEmailRoutes } from "./emailRoutes";
+import { parseIntegrations, type AutomationIntegration } from "./configuration";
 import type { JobPageFetcher } from "./extraction";
 import { ExecutorIntakeOutbox, ExecutorMigrationFencedError } from "./executorIntakeOutbox";
 import type { MigrationManifest } from "./executorMigration";
@@ -48,6 +49,45 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   }
   activateOwner(...args: Parameters<ExecutionCoordinator["activateOwner"]>) { return this.serialLegacy(() => this.legacyExecution().activateOwner(...args)); }
   getRegisteredIntegration(...args: Parameters<ExecutionCoordinator["getRegisteredIntegration"]>) { return this.serialLegacy(() => this.legacyExecution().getRegisteredIntegration(...args)); }
+  intakeIntegrationRouting(): Promise<AutomationIntegration | null> {
+    return this.serializeAdapter(async () => {
+      const integrationId = this.ctx.id.name;
+      if (!integrationId) return null;
+      const cacheTableExists = this.ctx.storage.sql.exec<{ present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'executor_intake_routing'",
+      ).toArray().length > 0;
+      const cached = cacheTableExists ? this.ctx.storage.sql.exec<{ routing: string }>(
+        "SELECT routing FROM executor_intake_routing WHERE integration_id = ?", integrationId,
+      ).toArray()[0]?.routing : undefined;
+      const legacy = cached === undefined && this.ctx.storage.sql.exec<{ present: number }>(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'automation_registration'",
+      ).toArray().length > 0
+        ? this.ctx.storage.sql.exec<{ routing: string | null }>(
+          "SELECT routing FROM automation_registration WHERE singleton = 1 AND integration_id = ?", integrationId,
+        ).toArray()[0]?.routing ?? undefined
+        : undefined;
+      const serialized = cached ?? legacy;
+      if (serialized === undefined) return null;
+      const integration = parseIntegrations({ INTEGRATIONS_JSON: JSON.stringify([JSON.parse(serialized)]) })[0];
+      if (!integration || integration.id !== integrationId) throw new Error("Cached integration routing does not match its instance identity");
+      return integration;
+    });
+  }
+  cacheIntakeIntegrationRouting(integration: AutomationIntegration): Promise<void> {
+    return this.serializeAdapter(async () => {
+      const integrationId = this.ctx.id.name;
+      if (!integrationId || integration.id !== integrationId) throw new Error("Intake routing does not match its instance identity");
+      const normalized = parseIntegrations({ INTEGRATIONS_JSON: JSON.stringify([integration]) })[0];
+      if (!normalized || normalized.id !== integrationId) throw new TypeError("Intake routing is invalid");
+      const routing = JSON.stringify(normalized);
+      if (new TextEncoder().encode(routing).byteLength > 16_384) throw new TypeError("Intake routing exceeds its size limit");
+      this.ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS executor_intake_routing (
+        integration_id TEXT PRIMARY KEY, routing TEXT NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      this.ctx.storage.sql.exec(`INSERT INTO executor_intake_routing (integration_id, routing, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(integration_id) DO UPDATE SET routing = excluded.routing, updated_at = excluded.updated_at`, integrationId, routing, Date.now());
+    });
+  }
   observeOwner(...args: Parameters<ExecutionCoordinator["observeOwner"]>) { return this.serialLegacy(() => this.legacyExecution().observeOwner(...args)); }
   provisionIdentity(...args: Parameters<ExecutionCoordinator["provisionIdentity"]>) { return this.serialLegacy(() => this.legacyExecution().provisionIdentity(...args)); }
   activateReplica(...args: Parameters<ExecutionCoordinator["activateReplica"]>) { return this.serialLegacy(() => this.legacyExecution().activateReplica(...args)); }
