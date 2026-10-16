@@ -12,8 +12,6 @@ import type {
   Hash,
 } from "./model"
 import {
-  canonicalizeJson,
-  sha256Base64Url,
   signEnvelope,
   verifyEnvelope,
 } from "./identityCrypto"

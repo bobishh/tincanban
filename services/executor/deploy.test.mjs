@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { activateExecutor, parseRuntimeEnvironment, validateArtifact, validateDeploymentPin } from './deploy.mjs';
+import { activateExecutor, assertExecutorImageReceipt, parseRuntimeEnvironment, validateArtifact, validateDeploymentPin } from './deploy.mjs';
 
 test('Given a running executor, When its replacement succeeds, Then the prior writer stops before activation', async () => {
   const actions = [];
@@ -45,4 +45,15 @@ test('Given image evidence, When source or component differs, Then it cannot be 
   assert.deepEqual(validateArtifact(artifact, sourceSha, sdkSha), artifact);
   assert.throws(() => validateArtifact({ ...artifact, sourceSha: 'f'.repeat(40) }, sourceSha, sdkSha), /checked executor/);
   assert.throws(() => validateArtifact({ ...artifact, component: 'rusty' }, sourceSha, sdkSha), /checked executor/);
+});
+
+test('Given Docker engines reporting different image IDs, When checking the host, Then exact config bytes and registry digest remain required', () => {
+  const configImageId = `sha256:${'a'.repeat(64)}`, manifestId = `sha256:${'b'.repeat(64)}`;
+  const image = `ghcr.io/bobishh/tincanban-executor@${manifestId}`;
+  for (const containerImageId of [configImageId, manifestId]) {
+    const receipt = { containerImageId, configImageId, repoDigests: [image] };
+    assert.deepEqual(assertExecutorImageReceipt(receipt, { imageId: configImageId }, image), receipt);
+  }
+  assert.throws(() => assertExecutorImageReceipt({ containerImageId: manifestId, configImageId: manifestId, repoDigests: [image] }, { imageId: configImageId }, image), /checked image/);
+  assert.throws(() => assertExecutorImageReceipt({ containerImageId: manifestId, configImageId, repoDigests: [] }, { imageId: configImageId }, image), /checked image/);
 });

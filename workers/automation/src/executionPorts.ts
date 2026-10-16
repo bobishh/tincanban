@@ -42,6 +42,6 @@ export interface ExecutionAdapters {
   replicaTransport?: ReplicaTransport;
   jobPageFetcher?: () => JobPageFetcher;
   resolvePrivateEmailRoute?: (id: string) => Promise<PrivateEmailRoute | undefined>;
-  classify?: (event: AutomationEvent, definition: AutomationDefinition | null, employeeProfile: EmployeeProfile,
+  classify?: (event: AutomationEvent, definition: AutomationDefinition | undefined, employeeProfile: EmployeeProfile,
     priorityBands?: Array<{ optionId: string; minScore: number }>) => Promise<AutomationPipelineResult>;
 }

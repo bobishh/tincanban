@@ -45,6 +45,14 @@ export function validateArtifact(artifact, sourceSha, sdkSha) {
   return artifact;
 }
 
+export function assertExecutorImageReceipt(receipt, artifact, image) {
+  if (!digest.test(receipt?.containerImageId ?? '') || receipt.configImageId !== artifact.imageId ||
+      !Array.isArray(receipt.repoDigests) || !receipt.repoDigests.includes(image)) {
+    throw new Error('Running executor image differs from the checked image');
+  }
+  return receipt;
+}
+
 /** Failure restores the captured writer; callers must finish image preparation first. */
 export async function activateExecutor(ports) {
   try {
@@ -155,10 +163,8 @@ async function deploy(output, sourceSha, sdkSha) {
   const handoff = action => JSON.parse(ssh(`python3 - ${quoted(action)} ${quoted(handoffId)}`, readFileSync(join(directory, 'storageHandoff.py'), 'utf8')).trim().split('\n').at(-1));
   const verifyImage = () => {
     const name = `tincanban-executor-web-${version}`;
-    const script = 'set -eu\nimage_id=$(docker inspect --format \'{{.Image}}\' "$1")\nrepo_digests=$(docker image inspect --format \'{{json .RepoDigests}}\' "$image_id")\nprintf \'{"imageId":"%s","repoDigests":%s}\\n\' "$image_id" "$repo_digests"\n';
-    const receipt = JSON.parse(ssh(`sh -s -- ${quoted(name)}`, script).trim().split('\n').at(-1));
-    if (receipt.imageId !== artifact.imageId || !receipt.repoDigests?.includes(image)) throw new Error('Running executor image differs from the checked image');
-    return receipt;
+    const receipt = JSON.parse(ssh(`python3 - ${quoted(name)} ${quoted(artifact.imageId)}`, readFileSync(join(directory, 'imageReceipt.py'), 'utf8')).trim().split('\n').at(-1));
+    return assertExecutorImageReceipt(receipt, artifact, image);
   };
   try {
     run('kamal', ['build', 'pull', ...configArgs], options);

@@ -1,4 +1,5 @@
 import type { AutomationCoordinator, WorkerEnv } from "./index";
+import type { ExecutionCoordinator } from "./executionCoordinator";
 import type { ItemCommandEnvelope } from "./itemCommands";
 
 /** Methods exposed to the standalone executor. Replica persistence and lifecycle stay local. */
@@ -10,27 +11,31 @@ export const executorRpcMethods = [
 
 export type ExecutorRpcMethod = typeof executorRpcMethods[number];
 export type ExecutorRoute = { origin: string; epoch: number } | null;
+type ExecutorRoutedMethod = ExecutorRpcMethod | "enqueueWebsite" | "enqueueEmail";
+type ExecutorMethodResult<K extends ExecutorRoutedMethod> = K extends keyof ExecutionCoordinator
+  ? Awaited<ReturnType<ExecutionCoordinator[K]>> : never;
 
 type ExecutorRouteSource = Pick<DurableObjectStub<AutomationCoordinator>, "executionRoute">;
 
 /** Use the executor only after the Durable Object has durably acknowledged the cutover. */
-export async function callActiveExecutor<T>(
+export async function callActiveExecutor<K extends ExecutorRoutedMethod>(
   env: Pick<WorkerEnv, "AUTOMATION" | "EXECUTOR_ORIGIN" | "EXECUTOR_SERVICE_TOKEN">,
   integrationId: string,
-  method: ExecutorRpcMethod | "enqueueWebsite" | "enqueueEmail",
+  method: K,
   args: unknown[],
-  localCall: (coordinator: DurableObjectStub<AutomationCoordinator>) => Promise<T>,
-): Promise<T> {
+  localCall: (coordinator: DurableObjectStub<AutomationCoordinator>) => Promise<unknown>,
+): Promise<ExecutorMethodResult<K>> {
   const coordinator = env.AUTOMATION.getByName(integrationId) as DurableObjectStub<AutomationCoordinator> & ExecutorRouteSource;
-  if (method === "enqueueWebsite" || method === "enqueueEmail") return localCall(coordinator);
+  if (method === "enqueueWebsite" || method === "enqueueEmail") return await localCall(coordinator) as ExecutorMethodResult<K>;
   const route = await coordinator.executionRoute();
-  if (!route) return localCall(coordinator);
+  if (!route) return await localCall(coordinator) as ExecutorMethodResult<K>;
 
   const configuredOrigin = executorOrigin(env.EXECUTOR_ORIGIN);
   if (route.origin !== configuredOrigin || !Number.isSafeInteger(route.epoch) || route.epoch < 1) {
     throw new Error("Acknowledged executor route does not match configured executor origin or epoch");
   }
-  return callExecutorRpc(env, integrationId, route.epoch, method, args);
+  // Intake methods returned above; only the allowlisted management methods reach private RPC.
+  return callExecutorRpc<ExecutorMethodResult<K>>(env, integrationId, route.epoch, method as ExecutorRpcMethod, args);
 }
 
 /** Call Node directly after the caller has already validated the durable route; avoids re-entering a DO alarm lane. */
@@ -114,11 +119,11 @@ export async function submitExecutorItemCommand<T>(
 }
 
 /** Ask the acknowledged executor for the current classification profile for this integration. */
-export function fetchExecutorClassificationContext<T>(
+export function fetchExecutorClassificationContext(
   env: Pick<WorkerEnv, "AUTOMATION" | "EXECUTOR_ORIGIN" | "EXECUTOR_SERVICE_TOKEN">,
   integrationId: string,
-  localCall: (coordinator: DurableObjectStub<AutomationCoordinator>) => Promise<T>,
-): Promise<T> {
+  localCall: (coordinator: DurableObjectStub<AutomationCoordinator>) => Promise<unknown>,
+): Promise<ExecutorMethodResult<"classificationContext">> {
   return callActiveExecutor(env, integrationId, "classificationContext", [], localCall);
 }
 
