@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: fbecee4ceca6e0d40afb07fc04d8c0eaefaaa75e
+  RUSTY_REVISION: 497976d27104088bb4d39b6544d7e211982eed92
 
 jobs:
   verify:
