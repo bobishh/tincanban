@@ -2,7 +2,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { downloadRecoveryArchive } from './release-recovery-core.mjs';
-export { composeRollbackFrontend, selectCompatibleRollback, assertRecoveryRun, materializeRollback } from './release-recovery-core.mjs';
+export { composeRollbackFrontend, selectCompatibleRollback, assertRecoveryRun } from './release-recovery-core.mjs';
 
 const load = path => JSON.parse(readFileSync(path, 'utf8'));
 
