@@ -5,6 +5,44 @@ import { createBoardAddressController } from "./useBoardAddress"
 const doc = (id: string, boardId: string, title: string) => ({ id, title, entities: { [boardId]: { id: boardId, kind: "board", title } } })
 
 describe("private board address integration", () => {
+  it("reveals a saved preview only when the current identity already has the exact active board", () => {
+    const history = historyAt("/boards/board-target/old-title?message=m#message-m")
+    const integration = createBoardAddressController({
+      getAvailableWorkspaces: () => [{ id: "workspace-a" }],
+      getActiveWorkspaceId: () => "workspace-a",
+      getActiveBoard: () => ({ id: "board-target", title: "Current title" }),
+      getIdentityId: () => "person-1",
+      readWorkspaceDoc: vi.fn(),
+      switchWorkspace: vi.fn(),
+    }, history)
+    expect(integration.resolveActivePreview()).toBe("available")
+    expect(history.location()).toEqual({ pathname: "/boards/board-target/current-title", search: "?message=m", hash: "#message-m" })
+  })
+
+  it("keeps saved preview hidden when route points at another board or identity is not loaded", () => {
+    const switchWorkspace = vi.fn()
+    const integration = createBoardAddressController({
+      getAvailableWorkspaces: () => [{ id: "workspace-a" }],
+      getActiveWorkspaceId: () => "workspace-a",
+      getActiveBoard: () => ({ id: "board-a", title: "Unrelated" }),
+      getIdentityId: () => "person-1",
+      readWorkspaceDoc: vi.fn(),
+      switchWorkspace,
+    }, historyAt("/boards/private-target/shared-slug"))
+    expect(integration.resolveActivePreview()).toBe("resolving")
+    expect(switchWorkspace).not.toHaveBeenCalled()
+
+    const anonymous = createBoardAddressController({
+      getAvailableWorkspaces: () => [{ id: "workspace-a" }],
+      getActiveWorkspaceId: () => "workspace-a",
+      getActiveBoard: () => ({ id: "private-target", title: "Private" }),
+      getIdentityId: () => null,
+      readWorkspaceDoc: vi.fn(),
+      switchWorkspace: vi.fn(),
+    }, historyAt("/boards/private-target/private"))
+    expect(anonymous.resolveActivePreview()).toBe("resolving")
+  })
+
   it("loads only entitled workspace summaries on explicit target resolution and activates exact board", async () => {
     const records = new Map([ ["workspace-a", doc("workspace-a", "board-a", "A")], ["workspace-b", doc("workspace-b", "board-target", "Current title")] ])
     let active = { id: "workspace-a" }

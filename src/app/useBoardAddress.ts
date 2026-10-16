@@ -46,6 +46,20 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
     return "available"
   }
 
+  /** Reveal an already-loaded exact local target while its startup history check runs. */
+  function resolveActivePreview(): BoardAddressStatus {
+    const route = currentRoute()
+    if (!route) return isBoardAddressPath(location().pathname) ? unavailable("") : "idle"
+    const identityId = runtime.getIdentityId()
+    const workspaceId = runtime.getActiveWorkspaceId()
+    const activeBoard = runtime.getActiveBoard()
+    if (!identityId || !eligibleWorkspaceIds().has(workspaceId) || activeBoard?.id !== route.boardId) return "resolving"
+    rememberBoardRouteHint(identityId, activeBoard.id, workspaceId)
+    const current = location()
+    canonicalizeBoardRoute({ ...current, state: null, replaceState: (state, title, url) => history.replaceState(state, title, url) }, activeBoard.id, activeBoard.title)
+    return "available"
+  }
+
   function currentRoute() {
     const current = location()
     return parseBoardRoute(current.pathname, current.search, current.hash)
@@ -104,6 +118,7 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
 
   return {
     resolveAddress,
+    resolveActivePreview,
     syncActiveBoard,
     history: { location },
     start(onPopState: () => void) { history.addEventListener("popstate", onPopState); return () => history.removeEventListener("popstate", onPopState) },
@@ -129,19 +144,26 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     const currentGeneration = ++generation
     unavailableBoardId.value = ""
     status.value = isBoardAddressPath(window.location.pathname) ? "resolving" : "idle"
-    const result = await controller.resolveAddress()
+    const result = app.ready.value ? await controller.resolveAddress() : controller.resolveActivePreview()
     if (currentGeneration !== generation) return
     status.value = result
   }
   const stopPopState = controller.start(() => { void resolveCurrentAddress() })
   let observedWorkspaceId = app.activeWorkspace.id
-  watch(() => app.ready.value, ready => { if (ready) void resolveCurrentAddress() }, { immediate: true })
+  watch(() => [app.ready.value, app.activeWorkspace.id, app.activeBoard.value?.id,
+    app.getCurrentProfile()?.identity.personId, app.availableWorkspaces.value.map(workspace => workspace.id).join("\u0000")],
+  (snapshot, previous) => {
+    // After startup, workspace changes are user navigation and the sync watcher
+    // below updates the URL. Only resolve broadly while booting or at readiness.
+    if (!snapshot[0] || !previous || !previous[0]) void resolveCurrentAddress()
+  }, { immediate: true })
   watch(() => app.getCurrentProfile()?.identity.personId, (identityId, previousIdentityId) => {
     if (previousIdentityId && identityId !== previousIdentityId && isBoardAddressPath(window.location.pathname)) {
       void resolveCurrentAddress()
     }
   })
-  watch([() => app.activeWorkspace.id, () => app.activeBoard.value?.id, () => app.activeBoard.value?.title, () => app.docVersion.value], () => {
+  watch([() => app.ready.value, () => app.activeWorkspace.id, () => app.activeBoard.value?.id,
+    () => app.activeBoard.value?.title, () => app.docVersion.value], () => {
     const workspaceId = app.activeWorkspace.id
     const workspaceChanged = workspaceId !== observedWorkspaceId
     observedWorkspaceId = workspaceId

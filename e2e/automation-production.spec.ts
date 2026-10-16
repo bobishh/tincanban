@@ -58,7 +58,7 @@ test.describe.serial("production automation proof", () => {
       await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(rustyOrigin)
       await panel.getByRole("button", { name: "Connect", exact: true }).click()
-      await expect(panel.getByText("Synced", { exact: true })).toBeVisible({ timeout: 60_000 })
+      await expect(panel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 60_000 })
 
       const secrets = await workerSecrets()
       const identityResponse = await workerFetch(`${workerOrigin}/v1/integrations/${integrationId}/identity`, {

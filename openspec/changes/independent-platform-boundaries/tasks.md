@@ -20,3 +20,16 @@ primary exception; speculative WASM changes do not block these releases.
 User release instruction, 2026-10-16: stop further local rechecks and ship through owning CI. Prior local proof remains recorded; final stale-file URL fix is left for CI/production verification. Do not report that unrun keeper rerun as passed.
 
 - [ ] Production automation follow-up requested by user: inspect Worker errors, queue state and task execution after release; distinguish intake, authorization, Rusty sync and executor failures from live evidence.
+
+Production checkpoint, 2026-10-16 15:17 UTC: Rusty `/health` confirms
+`80af4859afafbb829fba78192ebc5ffc6b4977ca`; TinSink's own
+[CI/deployment](https://github.com/bobishh/tinsink/actions/runs/38921366329)
+activated `ef0286190e53b14aab7068ceb521801aa4f4d662`. Direct ClickHouse reads
+confirm that standard native logs and spans reached `otel.otel_logs` and
+`otel.otel_traces`. Frontend and automation remain pending at this checkpoint.
+The existing automation Worker reports `Module terminated` during control sync;
+Automerge's generated guard emits this after an earlier exception terminated its
+WASM instance. The initiating exception is not established by that message.
+The next Worker artifact captures restore/sync phases and flushes alarm diagnostics
+outside the business operation. Recent retained email status also shows a separate
+review outcome for missing original posting evidence; it is not an applied action.
