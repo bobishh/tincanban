@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { MarkdownContent } from "../ui/markdownContent"
-import { defineAsyncComponent, type Component } from "vue"
 import SpatialWindow from "./SpatialWindow.vue"
 import QuickNoteForm from "./QuickNoteForm.vue"
 import type { Item, FieldDefinition, Column } from "../domain/entitySchemas"
@@ -8,7 +7,7 @@ import type { HistoryEntry } from "../domain/historyTypes"
 import type { Document, DocumentInput } from "../types"
 import CardStageStrip from "./CardStageStrip.vue"
 import type { CardStageButton } from "../domain/cardStageButtons"
-const ItemHistoryPanel = defineAsyncComponent<Component>(() => import("./ItemHistoryPanel.vue"))
+import ItemHistoryControl from "./ItemHistoryControl.vue"
 import type { AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
 const props = defineProps<{
@@ -67,6 +66,10 @@ const emit = defineEmits<{
         </div>
         <div class="detail-head-actions">
           <button class="button button-small" type="button" :disabled="readOnly" @click="emit('edit', item)">Edit</button>
+          <ItemHistoryControl v-if="history !== undefined" :item-id="item.id" :item-title="item.title" :workspace-id="workspaceId ?? 'local'" :history="history" :verified-people="historyNames" :read-only="readOnly"
+            :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
+            :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
+            @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
         </div>
       </div>
 
@@ -132,11 +135,6 @@ const emit = defineEmits<{
             </div>
           </div>
         </section>
-
-        <ItemHistoryPanel v-if="history !== undefined" :history="history" :verified-people="historyNames" :read-only="readOnly"
-          :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
-          :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
-          @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
         </div>
       </div>
 

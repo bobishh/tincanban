@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
 import { renderMarkdown, toggleMarkdownTask } from "../ui/markdown"
+import { copyCodeBlock } from "../ui/copyableCode"
 
 const props = defineProps<{ source: string; compact?: boolean; editableTasks?: boolean }>()
 const emit = defineEmits<{ taskToggle: [source: string] }>()
@@ -20,7 +21,8 @@ function handleChange(event: Event) {
   emit("taskToggle", displayedSource.value)
 }
 
-function stopTaskClick(event: MouseEvent) {
+function handleClick(event: MouseEvent) {
+  void copyCodeBlock(event)
   if (event.target instanceof HTMLInputElement && event.target.matches("input[data-task-index]")) event.stopPropagation()
 }
 </script>
@@ -28,7 +30,7 @@ function stopTaskClick(event: MouseEvent) {
 <template>
   <!-- Raw HTML is disabled in the shared parser; only parser-generated markup reaches this sink. -->
   <!-- eslint-disable-next-line vue/no-v-html -->
-  <div class="markdown-content" :class="{ 'markdown-compact': compact, 'markdown-tasks-editable': editableTasks }" @click="stopTaskClick" @change="handleChange" v-html="html"></div>
+  <div class="markdown-content" :class="{ 'markdown-compact': compact, 'markdown-tasks-editable': editableTasks }" @click="handleClick" @change="handleChange" v-html="html"></div>
 </template>
 
 <style>

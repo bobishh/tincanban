@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
+import CopyableCode from "./CopyableCode.vue"
 
 type ReviewChange = {
   hash: string
@@ -94,7 +95,7 @@ async function restore(hash: string) {
         <li v-for="change in activeChanges" :key="change.hash">
           <div><strong>{{ change.action }}</strong><span>{{ change.resolved ? 'Authorized change saved' : change.status.type === 'pending' ? 'Waiting for dependency' : 'Quarantined' }}</span></div>
           <small>{{ change.personId ?? change.actor }} · {{ change.deviceId ?? 'Unknown device' }} · {{ reviewTime(change.time) }}</small>
-          <code>{{ change.hash }}</code>
+          <CopyableCode :value="change.hash" label="Change hash" />
           <p>{{ change.status.reason }}</p>
           <ul v-if="change.preview.length" class="causal-review-preview" aria-label="Draft field changes">
             <li v-for="(line, index) in change.preview" :key="index">{{ line }}</li>
@@ -122,7 +123,7 @@ async function restore(hash: string) {
         <li v-for="change in historyChanges" :key="change.hash">
           <div><strong>{{ change.action }}</strong><span>{{ change.resolved ? 'Authorized change saved' : change.status.type === 'pending' ? 'Waiting for dependency' : 'Quarantined' }}</span></div>
           <small>{{ change.personId ?? change.actor }} · {{ change.deviceId ?? 'Unknown device' }} · {{ reviewTime(change.time) }}</small>
-          <code>{{ change.hash }}</code>
+          <CopyableCode :value="change.hash" label="Change hash" />
           <p>{{ change.status.reason }}</p>
           <ul v-if="change.preview.length" class="causal-review-preview" aria-label="Draft field changes">
             <li v-for="(line, index) in change.preview" :key="index">{{ line }}</li>
@@ -147,7 +148,7 @@ async function restore(hash: string) {
 .causal-review-banner summary { cursor: pointer; font-weight: 700; }
 .causal-review-list { display: grid; gap: var(--space-3); padding-left: var(--space-4); }
 .causal-review-list li { display: grid; gap: var(--space-1); }
-.causal-review-list li > div { display: flex; gap: var(--space-3); align-items: baseline; }
+.causal-review-list li > div:first-child { display: flex; gap: var(--space-3); align-items: baseline; }
 .causal-review-list small, .causal-review-list code { color: var(--muted); overflow-wrap: anywhere; }
 .causal-review-list p, .causal-review-error { margin: 0; }
 .causal-review-error { color: var(--danger, #9b2c2c); }

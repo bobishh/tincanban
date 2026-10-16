@@ -70,3 +70,21 @@ describe("shared Markdown rendering", () => {
     expect(renderMarkdown(source, true)).toBe(preview)
   })
 })
+
+it("Given hashes in prose, code and links, when rendered, then hashes have copy controls without breaking links or nesting controls in card previews", () => {
+  const hash = "a".repeat(64)
+  const html = renderMarkdown(`Intake: ${hash}\n\n\`${hash}\`\n\n[Source](https://example.org/${hash})`)
+  expect(html.match(/data-copy-code/g)).toHaveLength(2)
+  expect(html).toContain(`<code>${hash}</code>`)
+  expect(html).toContain(`href="https://example.org/${hash}"`)
+  expect(renderMarkdown(`Intake: ${hash}`, true)).not.toContain("data-copy-code")
+  expect(renderMarkdown(`https://example.org/${hash}`)).not.toContain("data-copy-code")
+})
+
+it("Given hashes already inside fenced code or a link label, when rendered, then standalone code is copyable and links contain no buttons", () => {
+  const hash = "b".repeat(64)
+  const fenced = renderMarkdown(`\`\`\`\n${hash}\n\`\`\``)
+  expect(fenced).toContain("data-copy-code")
+  const linked = renderMarkdown(`[\`${hash}\`](https://example.org) [${hash}](https://example.org)`)
+  expect(linked).not.toContain("data-copy-code")
+})

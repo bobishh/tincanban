@@ -387,8 +387,10 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     await expect(card).toBeVisible({ timeout: 30_000 })
     await card.click()
     const detail = editor.getByRole("dialog", { name: "Lead details" })
-    await detail.getByRole("button", { name: "Load earlier history", exact: true }).click()
-    const originalVersion = detail.locator(".item-history-entry").filter({ hasText: "createItem" })
+    await detail.getByRole("button", { name: "History", exact: true }).click()
+    const history = editor.getByRole("dialog", { name: "Item history", exact: true })
+    await history.getByRole("button", { name: "Load earlier history", exact: true }).click()
+    const originalVersion = history.locator(".item-history-entry").filter({ hasText: "createItem" })
     await expect(originalVersion.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
     const selectedReads = await editor.evaluate(() => (window as Window & { __TINCANBAN_HISTORY_READS__?: Array<{ objectId: string; binding: { workspaceId: string; historyEpoch: number; indexId: string; objectKind: string; partCount: number; partIndex: number }; byteLength: number | null }> }).__TINCANBAN_HISTORY_READS__ ?? [])
     expect(selectedReads.length).toBeGreaterThan(0)
@@ -398,6 +400,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       ["page", "record", "part"].includes(read.binding.objectKind) && read.binding.partCount > 0 &&
       read.binding.partIndex >= 0 && read.binding.partIndex < read.binding.partCount &&
       (read.byteLength ?? 0) <= (read.binding.objectKind === "part" ? 256 : 64) * 1024)).toBe(true)
+    await history.getByRole("button", { name: "Close history", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
 
     await makeIdentityRecovery()
@@ -448,11 +451,14 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       await expect(restored.getByRole("button", { name: "Open History Archive Company — After archive", exact: true })).toBeVisible()
       await restored.getByRole("button", { name: "Open History Archive Company — After archive", exact: true }).click()
       const restoredDetail = restored.getByRole("dialog", { name: "Lead details" })
-      await restoredDetail.getByRole("button", { name: "Load earlier history", exact: true }).click()
-      const restoredOriginal = restoredDetail.locator(".item-history-entry").filter({ hasText: "createItem" })
+      await restoredDetail.getByRole("button", { name: "History", exact: true }).click()
+      const restoredHistory = restored.getByRole("dialog", { name: "Item history", exact: true })
+      await restoredHistory.getByRole("button", { name: "Load earlier history", exact: true }).click()
+      const restoredOriginal = restoredHistory.locator(".item-history-entry").filter({ hasText: "createItem" })
       await expect(restoredOriginal.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
       await restoredOriginal.getByRole("button", { name: "Restore this version", exact: true }).click()
-      await expect(restoredDetail.getByText("Version restored", { exact: true })).toBeVisible()
+      await expect(restoredHistory.getByText("Version restored", { exact: true })).toBeVisible()
+      await restoredHistory.getByRole("button", { name: "Close history", exact: true }).click()
       await restoredDetail.getByRole("button", { name: "Close detail", exact: true }).click()
       await expect(restored.getByRole("button", { name: "Open History Archive Company — Before archive", exact: true })).toBeVisible()
     } finally { await recovery.close() }
@@ -575,20 +581,23 @@ test("Given an owner with two archived history generations, when adding my phone
     await phoneSync.getByRole("button", { name: "Close", exact: true }).click()
     await phone.getByRole("button", { name: "Open Enrolled history — Latest position", exact: true }).click()
     const phoneDetail = phone.getByRole("dialog", { name: "Lead details" })
-    const original = phoneDetail.locator(".item-history-entry").filter({ hasText: "createItem" })
-    const historyEntries = phoneDetail.locator(".item-history-entry")
+    await phoneDetail.getByRole("button", { name: "History", exact: true }).click()
+    const phoneHistory = phone.getByRole("dialog", { name: "Item history", exact: true })
+    const original = phoneHistory.locator(".item-history-entry").filter({ hasText: "createItem" })
+    const historyEntries = phoneHistory.locator(".item-history-entry")
     for (let page = 0; page < 4 && !(await original.count()); page++) {
       const before = await historyEntries.count()
-      await phoneDetail.getByRole("button", { name: "Load earlier history", exact: true }).click()
+      await phoneHistory.getByRole("button", { name: "Load earlier history", exact: true }).click()
       await expect.poll(() => historyEntries.count(), { timeout: 15_000 }).toBeGreaterThan(before)
-      await expect(phoneDetail.getByRole("status").filter({ hasText: "Reading archived versions…" }))
+      await expect(phoneHistory.getByRole("status").filter({ hasText: "Reading archived versions…" }))
         .toHaveCount(0, { timeout: 30_000 })
     }
     await expect(original.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
     await original.getByRole("button", { name: "Restore this version", exact: true }).click()
     // Restoring an archived version reads its original encrypted objects from
     // the retained history source before committing the workspace command.
-    await expect(phoneDetail.getByText("Version restored", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(phoneHistory.getByText("Version restored", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await phoneHistory.getByRole("button", { name: "Close history", exact: true }).click()
     await phoneDetail.getByRole("button", { name: "Close detail", exact: true }).click()
     await expect(phone.getByRole("button", { name: "Open Enrolled history — Original position", exact: true })).toBeVisible()
   } finally {

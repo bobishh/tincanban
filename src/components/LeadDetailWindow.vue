@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, type Component } from "vue"
+import { computed } from "vue"
 import type { Board, Column, Item } from "../domain/entitySchemas"
 import type { Lead } from "../types"
 import { priorityLabels } from "../types"
@@ -8,7 +8,7 @@ import { MarkdownContent } from "../ui/markdownContent"
 import SpatialWindow from "./SpatialWindow.vue"
 import CardStageStrip from "./CardStageStrip.vue"
 import type { HistoryEntry } from "../domain/historyTypes"
-const ItemHistoryPanel = defineAsyncComponent<Component>(() => import("./ItemHistoryPanel.vue"))
+import ItemHistoryControl from "./ItemHistoryControl.vue"
 const props = defineProps<{ lead: Lead; item?: Item | null; board?: Board | null; columns: Column[]; workspaceId: string; readOnly: boolean; narrative: string; move: (item: Item, columnId: string) => Promise<void>;
   history?: HistoryEntry[]; historyNames?: Record<string, string>; historyLoading?: boolean; historyError?: string; historyNotice?: string; historyHasMore?: boolean;
   restoreSaving?: boolean; restoreError?: string; restoreNotice?: string }>()
@@ -23,7 +23,13 @@ const emit = defineEmits<{ close: []; edit: [item: Item]; updateMarkdown: [markd
   <SpatialWindow framed :window-id="`item:${lead.id}`" :workspace-id="workspaceId" :title="lead.company" aria-label="Lead details" close-label="Close detail" :initial-width="760" :initial-height="700" @close="emit('close')">
     <template #header><div class="detail-head" :data-discussion-item="lead.id">
       <div><h2 data-discussion-text :data-discussion-field="board?.preset?.bindings['field.company']">{{ lead.company }}</h2><p data-discussion-text :data-discussion-field="board?.preset?.bindings['field.role']">{{ lead.role }}</p></div>
-      <div class="detail-head-actions"><button v-if="item" class="button button-small" type="button" :disabled="readOnly" @click="emit('edit', item)">Edit</button></div>
+      <div class="detail-head-actions">
+        <ItemHistoryControl v-if="item" :item-id="lead.id" :item-title="lead.company" :workspace-id="workspaceId" :history="history ?? []" :verified-people="historyNames" :read-only="readOnly"
+          :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
+          :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
+          @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
+        <button v-if="item" class="button button-small" type="button" :disabled="readOnly" @click="emit('edit', item)">Edit</button>
+      </div>
     </div></template>
     <template #toolbar>
       <CardStageStrip v-if="item" :item="item" :columns="columns" :buttons="cardStageButtons(board, columns)" :read-only="readOnly" :move="move" />
@@ -40,10 +46,6 @@ const emit = defineEmits<{ close: []; edit: [item: Item]; updateMarkdown: [markd
           </section>
         </slot>
         <slot name="primary" />
-        <ItemHistoryPanel v-if="item" :history="history ?? []" :verified-people="historyNames" :read-only="readOnly"
-          :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
-          :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
-          @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
       </div>
       <aside class="detail-inspector" data-detail-inspector aria-label="Lead properties and actions">
         <div class="detail-grid" data-discussion-text data-discussion-field="overview">

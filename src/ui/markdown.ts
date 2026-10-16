@@ -1,9 +1,49 @@
 import MarkdownIt from "markdown-it"
 import type { Env } from "markdown-it"
 import { tasklist } from "@mdit/plugin-tasklist"
+import { copyableCodeHtml } from "./copyableCode"
 
 const markdown = new MarkdownIt({ html: false, breaks: true, linkify: true })
   .use(tasklist, { disabled: false, label: false })
+
+const hashPattern = /\b[a-f0-9]{64}\b/gi
+markdown.core.ruler.after("linkify", "copyable_hashes", state => {
+  for (const block of state.tokens) {
+    let linkDepth = 0
+    block.children = block.children?.flatMap(token => {
+      if (token.type === "link_open") linkDepth++
+      if (token.type === "link_close") linkDepth--
+      if (linkDepth) return [token]
+      if (token.type === "code_inline" && /^[a-f0-9]{64}$/i.test(token.content)) {
+        token.type = "copyable_hash"
+        return [token]
+      }
+      if (token.type !== "text") return [token]
+      const result = []
+      let offset = 0
+      for (const match of token.content.matchAll(hashPattern)) {
+        const before = new state.Token("text", "", 0)
+        before.content = token.content.slice(offset, match.index)
+        const hash = new state.Token("copyable_hash", "code", 0)
+        hash.content = match[0]
+        result.push(before, hash)
+        offset = match.index + match[0].length
+      }
+      if (!result.length) return [token]
+      const after = new state.Token("text", "", 0)
+      after.content = token.content.slice(offset)
+      return [...result, after]
+    }) ?? null
+  }
+})
+markdown.renderer.rules.copyable_hash = (tokens, index) => copyableCodeHtml(tokens[index].content, "Hash")
+for (const rule of ["fence", "code_block"]) {
+  const original = markdown.renderer.rules[rule]!
+  markdown.renderer.rules[rule] = (tokens, index, options, env, renderer) =>
+    /^[a-f0-9]{64}$/i.test(tokens[index].content.trim())
+      ? copyableCodeHtml(tokens[index].content.trim(), "Hash")
+      : original(tokens, index, options, env, renderer)
+}
 
 markdown.renderer.rules.link_open = (tokens, index, options, _env, renderer) => {
   const token = tokens[index]!

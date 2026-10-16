@@ -1,35 +1,31 @@
 <script setup lang="ts">
 import type { HistoryEntry } from "../domain/historyTypes"
 import { historyActionLabel, historyAuthorLabel } from "./historyPresentation"
-import { ref } from "vue"
-const props = withDefaults(defineProps<{
-  history: HistoryEntry[]; readOnly?: boolean; historyLoading?: boolean; historyError?: string
-  historyNotice?: string; historyHasMore?: boolean; restoreSaving?: boolean; restoreError?: string; restoreNotice?: string
-  verifiedPeople?: Record<string, string>
-}>(), { verifiedPeople: () => ({}) })
+import CopyableCode from "./CopyableCode.vue"
+import type { ItemHistoryProps } from "./itemHistoryProps"
+const props = withDefaults(defineProps<ItemHistoryProps>(), { verifiedPeople: () => ({}) })
 const emit = defineEmits<{ restoreVersion: [hash: string]; loadEarlierHistory: [] }>()
-const copyStatus = ref("")
 const technicalDetails = (entry: HistoryEntry) => [
-  `Change hash: ${entry.hash}`, `Operation: ${entry.action}`, `Actor: ${entry.actor}`,
-  ...(entry.personId ? [`Person ID: ${entry.personId}`] : []),
-  ...(entry.deviceId ? [`Device ID: ${entry.deviceId}`] : []),
-  ...(entry.entityIds.length ? [`Entity IDs: ${entry.entityIds.join(", ")}`] : []),
-  ...(entry.message ? [`Original change metadata: ${entry.message}`] : []),
-  ...(entry.archive ? [`Archive source ID: ${entry.archive.sourceId}`, `Archive baseline ID: ${entry.archive.baselineId}`,
-    `Archive epoch: ${entry.archive.historyEpoch}`, `Archive observation: ${entry.archive.observation}`] : []),
-].join("\n")
-async function copyDetails(entry: HistoryEntry) {
-  try {
-    await navigator.clipboard.writeText(technicalDetails(entry))
-    copyStatus.value = "Details copied"
-  } catch { copyStatus.value = "Could not copy. Select the details and copy them manually." }
-}
+  { label: "Change hash", value: entry.hash },
+  { label: "Operation", value: entry.action },
+  { label: "Actor", value: entry.actor },
+  ...(entry.personId ? [{ label: "Person ID", value: entry.personId }] : []),
+  ...(entry.deviceId ? [{ label: "Device ID", value: entry.deviceId }] : []),
+  ...entry.entityIds.map((value, index) => ({ label: `Entity ID ${index + 1}`, value })),
+  ...(entry.message ? [{ label: "Original change metadata", value: entry.message }] : []),
+  ...(entry.archive ? [
+    { label: "Archive source ID", value: entry.archive.sourceId },
+    { label: "Archive baseline ID", value: entry.archive.baselineId },
+    { label: "Archive epoch", value: String(entry.archive.historyEpoch) },
+    { label: "Archive observation", value: entry.archive.observation },
+  ] : []),
+]
 </script>
 <template>
-        <section class="detail-section detail-subsection">
+        <section class="item-history-panel">
           <div class="section-heading detail-section-head">
             <span class="detail-label">History</span>
-            <h3>{{ history.length ? `${history.length} changes` : "No recorded history" }}</h3>
+            <h3>{{ history.length ? `${history.length} change${history.length === 1 ? '' : 's'}` : "No recorded history" }}</h3>
           </div>
           <div v-if="history.length" class="item-history-list">
             <div
@@ -39,7 +35,7 @@ async function copyDetails(entry: HistoryEntry) {
             >
               <div class="item-history-head">
                 <strong>{{ historyActionLabel(entry.action) }}</strong>
-                <span class="item-history-time">{{ new Date(entry.time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
+                <span class="item-history-time">{{ new Date(entry.time * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) }}</span>
               </div>
               <div class="item-history-author">
                 Author: <span>{{ historyAuthorLabel(entry, entry.personId ? props.verifiedPeople[entry.personId] : undefined) }}</span>
@@ -49,12 +45,13 @@ async function copyDetails(entry: HistoryEntry) {
                 :disabled="readOnly || restoreSaving || historyLoading" @click="emit('restoreVersion', entry.hash)">Restore this version</button>
               <details class="history-technical">
                 <summary>Technical details</summary>
-                <pre class="technical-value">{{ technicalDetails(entry) }}</pre>
-                <button class="button button-small button-quiet" type="button" @click="copyDetails(entry)">Copy details</button>
+                <div v-for="detail in technicalDetails(entry)" :key="detail.label">
+                  <span>{{ detail.label }}</span>
+                  <CopyableCode :value="detail.value" :label="detail.label" />
+                </div>
               </details>
             </div>
           </div>
-          <p v-if="copyStatus" class="reading-explanation" role="status">{{ copyStatus }}</p>
           <button v-if="historyHasMore !== false" class="button button-small button-quiet" type="button"
             :disabled="historyLoading || restoreSaving" @click="emit('loadEarlierHistory')">
             {{ historyLoading ? 'Reading earlier history…' : historyError ? 'Retry earlier history' : 'Load earlier history' }}
@@ -69,15 +66,14 @@ async function copyDetails(entry: HistoryEntry) {
 </template>
 
 <style scoped>
-.detail-subsection { padding-top: var(--space-4); }
+.item-history-panel { display: grid; gap: var(--space-3); min-width: 0; }
 .detail-section-head { margin-bottom: var(--space-3); }
 .detail-section-head h3 { margin: 0; font-size: 1rem; }
-.item-history-list { display: grid; gap: var(--space-2); max-height: 240px; overflow-y: auto; }
-.item-history-entry { display: grid; justify-items: start; gap: var(--space-1); padding: var(--space-2) 0; font-size: .875rem; }
-.item-history-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
+.item-history-list { display: grid; gap: var(--space-3); min-width: 0; }
+.item-history-entry { display: grid; justify-items: start; min-width: 0; gap: var(--space-1); padding: var(--space-2) 0; font-size: .875rem; }
+.item-history-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
 .item-history-time, .item-history-author { color: var(--muted); }
 .item-history-author, .history-technical { font-family: var(--site-font-reading); font-size: var(--site-font-secondary-size, 14px); line-height: var(--site-font-reading-line, 1.65); }
-.history-technical summary { cursor: pointer; }
-.history-technical pre { max-width: 100%; white-space: pre-wrap; }
-.history-technical :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.history-technical { min-width: 0; width: 100%; }
+.history-technical summary { cursor: pointer; width: fit-content; margin-bottom: var(--space-2); }
 </style>
