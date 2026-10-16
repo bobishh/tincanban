@@ -180,6 +180,34 @@ describe("automation activation signing boundary", () => {
     expect(state.host.executeCommandAsync).not.toHaveBeenCalled()
   })
 
+  it("Given confirmed Rusty policy, When background replication advances before approval rereads access, Then export with current progress", async () => {
+    const state = fixture()
+    readyMocks(state)
+    const confirmed = { ...state.config, minimumWriterVersion: 2 as const, preferenceRevision: "device:1" }
+    const refreshed = { ...confirmed, cursor: 12, lastUploaded: "A".repeat(43) }
+    mocks.ensureWriter.mockResolvedValue(confirmed)
+    mocks.savedConfigs.mockResolvedValueOnce([confirmed]).mockResolvedValueOnce([refreshed])
+    await expect(exportApprovedAutomation(state.host as never, state.config, "{}")).resolves.toBeTruthy()
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ blind: refreshed }))
+  })
+
+  it.each([
+    { readToken: "replacement" }, { writeToken: "replacement" }, { contentKey: "replacement" },
+    { servicePublicKey: "replacement" }, { policyRevision: 3 }, { keyEpoch: 2 },
+    { historicalContentKeys: { "1": "replacement" } }, { historicalContentKeyVariants: { "1": ["replacement"] } },
+    { preferenceRevision: "device:2" }, { minimumWriterVersion: undefined }, { removalPending: true },
+  ])("Given confirmed Rusty policy, When authority changes to %j before approval rereads access, Then refuse before key export", async change => {
+    const state = fixture()
+    readyMocks(state)
+    const confirmed = { ...state.config, minimumWriterVersion: 2 as const, preferenceRevision: "device:1" }
+    mocks.ensureWriter.mockResolvedValue(confirmed)
+    mocks.savedConfigs.mockResolvedValueOnce([confirmed]).mockResolvedValueOnce([{ ...confirmed, ...change }])
+    await expect(exportApprovedAutomation(state.host as never, state.config, "{}"))
+      .rejects.toThrow(/policy changed during automation approval/i)
+    expect(mocks.prepare).not.toHaveBeenCalled()
+    expect(state.host.executeCommandAsync).not.toHaveBeenCalled()
+  })
+
   it("Given identity or workspace switches during asynchronous context resolution, When signing resumes, Then reject without command", async () => {
     const state = fixture()
     readyMocks(state)

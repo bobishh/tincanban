@@ -10,6 +10,7 @@ import { encodeBlindBytes } from "../sync/blindEnvelope"
 import { assertWorkspaceReplicaPurpose } from "../sync/replicaPurpose"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { assertReplicaCredentialsUnfrozen, replicaCredentialFreezeKey } from "../sync/replicaCredentialFreeze"
+import { privateReplicaBinding } from "../sync/privateReplicaBinding"
 
 export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration) {
   config = JSON.parse(canonicalizeJson(config)) as BlindReplicaConfig
@@ -125,7 +126,8 @@ async function readCurrentWriterConfig(tincanban: ReturnType<typeof useTincanban
   const refreshed = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.origin === saved.origin &&
     value.scopeId === saved.scopeId && value.workspaceId === saved.workspaceId)
   await ensureCurrent()
-  if (!refreshed || canonicalizeJson(refreshed) !== canonicalizeJson(confirmed)) {
+  if (!refreshed || refreshed.removalPending || refreshed.minimumWriterVersion !== confirmed.minimumWriterVersion ||
+    privateReplicaBinding(profile.identity.personId, refreshed) !== privateReplicaBinding(profile.identity.personId, confirmed)) {
     throw new Error("Rusty workspace policy changed during automation approval; retry with refreshed access")
   }
   await assertReplicaCredentialsUnfrozen(profile.identity.personId, refreshed)
