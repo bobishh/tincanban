@@ -6,6 +6,7 @@ import { replicaKey, type ReplicaHealth } from "./replicationHealth"
 import { getPrivateReplicaConfigurations, getPrivateReplicaConflictSummaries, persistPrivateReplicaProgress, readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import { provisionIdentityReplicas } from "./provisionIdentityReplicas"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
+import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 
 type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
@@ -59,14 +60,18 @@ export function forgetPrivateReplica(config: PrivateReplicaConfig, state: State,
   }
 }
 
+function requiresWriterRecovery(config: PrivateReplicaConfig, upgrade: ReplicaWriterUpgrade | undefined): config is BlindReplicaConfig {
+  if (config.purpose === "identity" || !upgrade) return false
+  return !upgrade.localActivated || (upgrade.confirmed?.payload.revision ?? 0) > config.policyRevision
+}
+
 /** Network-only construction and compatibility do not participate in rendering the saved local board. */
 export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   const { owner, guard, configs, cache } = session
   config = JSON.parse(canonicalizeJson(config)) as PrivateReplicaConfig
   guard()
   const pendingWriterUpgrade = config.purpose !== "identity" ? await readReplicaWriterUpgrade(owner, config) : undefined
-  if (config.purpose !== "identity" && pendingWriterUpgrade && (!pendingWriterUpgrade.localActivated ||
-    (pendingWriterUpgrade.confirmed?.payload.revision ?? 0) > config.policyRevision)) {
+  if (requiresWriterRecovery(config, pendingWriterUpgrade)) {
     const { ensureWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
     guard()
     config = await ensureWorkspaceReplicaWriter(app, config, guard, { storageOnly: true })
