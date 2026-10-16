@@ -119,7 +119,7 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
     import("../public/publicDeliveryPolicy"), import("../public/publicationClient")])
   captured.ensureCurrent()
   const deliveryPolicy = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    (ctx.state.deliveryGeneration ?? 0) + 1, captured.ensureCurrent)
+    (ctx.state.deliveryGeneration ?? 0) + 1, captured.ensureCurrent, captured.document)
   captured.ensureCurrent()
   const result = await publishBoardSnapshot({ origin: ctx.input.origin, ...captured, action: "publish", expectedRevision, deliveryPolicy })
   captured.ensureCurrent()
@@ -195,13 +195,13 @@ async function hasProjectionChanged(ctx: PublicBoardAccessOperations, captured: 
 async function policyIfChanged(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource) {
   const { buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash } = await import("../public/publicDeliveryPolicy")
   if (ctx.state.deliveryGeneration === null) {
-    return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId, 1, captured.ensureCurrent)
+    return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId, 1, captured.ensureCurrent, captured.document)
   }
   const current = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    ctx.state.deliveryGeneration, captured.ensureCurrent)
+    ctx.state.deliveryGeneration, captured.ensureCurrent, captured.document)
   if (await publicBoardDeliveryPolicyHash(current) === ctx.state.deliveryPolicyHash) return undefined
   return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    ctx.state.deliveryGeneration + 1, captured.ensureCurrent)
+    ctx.state.deliveryGeneration + 1, captured.ensureCurrent, captured.document)
 }
 async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource,
   deliveryPolicy: PublicBoardDeliveryPolicyEvidence | undefined, generation: number) {

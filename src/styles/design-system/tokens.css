@@ -8,7 +8,15 @@
   --motion-panel: 220ms;
   --motion-ease: cubic-bezier(.2, .8, .2, 1);
   --site-font-body-size: 16px;
+  --site-font-reading-size: 14px;
+  --site-font-secondary-size: 14px;
+  --site-font-detail-heading-size: 1.5rem;
+  --site-font-detail-heading-mobile-size: 1.35rem;
+  --site-font-reading-h1-size: 1.3rem;
+  --site-font-reading-h2-size: 1.15rem;
+  --site-font-reading-h3-size: 1.05rem;
   --site-font-line: 1.5;
+  --site-font-reading-line: 1.65;
   --site-font-technical-size: 14px;
   --paper: #f3f0e8;
   --ink: #171717;

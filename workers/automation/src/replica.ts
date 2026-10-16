@@ -431,6 +431,12 @@ export class AutomationReplica {
     replica.historyBasis = basis;
     replica.admissionCache = { rawDocument: replica.rawDocument, authorizations: replica.authorizations,
       authority: replica.authority, result: admission! };
+    return replica.managementInspector();
+  }
+
+  /** Restrict an already admitted instance to guarded management, sharing its durable progress and admission. */
+  managementInspector(): AutomationManagementInspector {
+    const replica = this;
     return Object.freeze({
       pull: (guard: () => Promise<void>) => replica.enqueue(async () => {
         const engine = replica.createEngine(async () => {
@@ -448,7 +454,7 @@ export class AutomationReplica {
       }),
       rotateStorageCredentials: (nextBlind: BlindReplicaConfig, persist: (serialized: string) => Promise<void>,
         guard: () => void | Promise<void>) => AutomationReplica.rotateStorageCredentials(
-        replica.serialize(), profile, nextBlind, persist, guard, replica.transport),
+        replica.serialize(), replica.profile, nextBlind, persist, guard, replica.transport),
       prepareHistory: (snapshot: unknown, guard: () => Promise<void>) => replica.enqueue(async () => {
         await guard();
         const anchor = validateWorkerHistoryAuthority(snapshot, replica.workspaceId, replica.authority.currentOwner);

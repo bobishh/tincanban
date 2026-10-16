@@ -1,5 +1,7 @@
 import { canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelope } from "../domain/identity"
-import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
+import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2, type WorkspaceGrant } from "../domain/model"
+import { parseAutomationApproval } from "../domain/automationApproval"
+import { automationLifecycle } from "../domain/automationLifecycle"
 import { defaultProofStore, validateCertificateChain, verifyWorkspaceGrant } from "../domain/proofs"
 import { signWithContext, signingEvidence } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "../sync/workspaceOwnerSigning"
@@ -67,9 +69,26 @@ function grantDisposition(grant: WorkspaceGrant, workspaceId: string, boardId: s
   return "active"
 }
 
-/** Builds a signed owner checkpoint from persisted, verified workspace grants. */
+function admittedAutomationGrants(document: WorkspaceDocumentV2 | undefined, workspaceId: string, boardId: string): WorkspaceGrant[] {
+  if (!document) return []
+  if (document.id !== workspaceId || !hasEntityKind(document.entities[boardId], "board")) throw new Error("Public delivery policy source does not match its board")
+  const grants: WorkspaceGrant[] = []
+  for (const entity of Object.values(document.entities)) {
+    if (!hasEntityKind(entity, "automation") || entity.placement.parentId !== boardId || entity.archivedAt ||
+      automationLifecycle(entity).state === "deleted") continue
+    const { grant } = parseAutomationApproval(entity.approval)
+    if (grant.payload.workspaceId !== workspaceId || grant.payload.automation.boardId !== boardId ||
+      grant.payload.personId !== entity.executor.personId) throw new Error("Public delivery automation approval does not match its board")
+    grants.push(grant)
+  }
+  return grants
+}
+
+/** Peer grants and admitted automation approvals share the same signature, expiry and revocation filters. */
 export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, workspaceId: string, boardId: string,
-  generation: number, ensureCurrent: () => void | Promise<void> = () => {}): Promise<PublicBoardDeliveryPolicyEvidence> {
+  generation: number, ensureCurrent: () => void | Promise<void> = () => {}, document?: WorkspaceDocumentV2): Promise<PublicBoardDeliveryPolicyEvidence> {
+  // Capture signed metadata before awaits; Automerge documents are proxy-backed.
+  const automationGrants = admittedAutomationGrants(document, workspaceId, boardId)
   await ensureCurrent()
   const credential = await peerStore.getWorkspaceCredential(workspaceId)
   const authority = await peerStore.getWorkspaceAuthority(workspaceId)
@@ -80,7 +99,7 @@ export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, work
   const ownerCerts = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
     [...credential.ownerCertificates as DeviceCertificate[], ...authority.ownerCertificates as DeviceCertificate[],
       ...storedCertificates, profile.certificate])
-  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, grants, credential, ownerCerts)
+  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, [...grants, ...automationGrants], credential, ownerCerts)
   const revokedDeviceIds = [...new Set(deviceRevocations(credential).map(item => item.record.payload.deviceId))].sort()
   const payload: PublicBoardDeliveryPolicy = { kind: "rusty-public-board-delivery-policy", version: 1, workspaceId, boardId,
     generation, accessEpoch: credential.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }

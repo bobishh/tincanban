@@ -2059,7 +2059,7 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
   }
 });
 
-it("Given a verified durable replica, when unchanged controls are polled, then admission is reused until stored evidence changes", async () => {
+it("Given a verified durable replica, when management advances a self-echo cursor and execution resumes, then share admission without restoring history again", async () => {
   const id = `poll-cache-${crypto.randomUUID()}`;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(id);
   const identitySecret = "test-only-identity-secret-at-least-thirty-two-bytes";
@@ -2067,11 +2067,22 @@ it("Given a verified durable replica, when unchanged controls are polled, then a
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
   const registration = { integrationId: id, workspaceId: data.packet.workspaceId, ownerPersonId: data.owner.identity.personId };
-  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  let incoming: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const transport: ReplicaTransport = { ...capturedRuntimeTransport(), publicDelivery: async () => null,
+    inventory: async (_access, after) => incoming && after < 1
+      ? { objects: [{ objectId: await blindObjectId(incoming), sequence: 1 }], cursor: 1, hasMore: false }
+      : { objects: [], cursor: after, hasMore: false },
+    download: async () => { if (!incoming) throw new Error("No self-echo expected yet"); return incoming; } };
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", transport); });
   await stub.enrollOwner(registration, identitySecret);
   await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
   await runInDurableObject(stub, async (instance, ctx) => {
     setExecutionFixture(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
+    const restore = vi.spyOn(AutomationReplica, "restore");
+    const inspect = vi.spyOn(AutomationReplica, "inspectForManagement");
+    const execution = executionFixture(instance);
+    try {
+    await execution.classificationContext();
     const firstNonce = crypto.randomUUID(), secondNonce = crypto.randomUUID();
     const first = await instance.observeOwner(registration, firstNonce, "https://automation.example.test");
     const firstLoaded = loadedExecutionReplica(instance) as { replica?: object } | undefined;
@@ -2082,12 +2093,97 @@ it("Given a verified durable replica, when unchanged controls are polled, then a
     expect(loadedExecutionReplica(instance)?.replica).toBe(firstLoaded?.replica);
     expect(firstAdmission).toBeDefined();
     expect(firstLoaded?.replica && Reflect.get(firstLoaded.replica, "admissionCache")).toBe(firstAdmission);
+    await execution.classificationContext();
+    expect(loadedExecutionReplica(instance)?.replica).toBe(firstLoaded?.replica);
+    expect(restore).toHaveBeenCalledOnce();
+    const managementBody = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake", integrationId: id,
+      executorPersonId: identity.identity.personId };
+    const manage = async () => {
+      const proof = await signedInstanceRequest(data.owner, "identity", managementBody, id);
+      expect(await execution.manageInstance(proof, "identity", managementBody, reviewOrigin)).not.toBeNull();
+    };
+    await manage();
+    await execution.classificationContext();
+    await manage();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(inspect).not.toHaveBeenCalled();
+    incoming = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+      new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial })));
+    await manage();
+    expect(JSON.parse((await execution.loadReplicaState(storageSecret))!).blind.cursor).toBe(1);
+    expect(loadedExecutionReplica(instance)?.replica).toBe(firstLoaded?.replica);
+    await execution.classificationContext();
+    await manage();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(inspect).not.toHaveBeenCalled();
+    const expiredClock = vi.spyOn(Date, "now").mockReturnValue(data.packet.grant.payload.automation!.expiresAt + 1);
+    try {
+      await expect(execution.classificationContext()).rejects.toThrow(/expired/i);
+      await manage();
+      expect(inspect).not.toHaveBeenCalled();
+    }
+    finally { expiredClock.mockRestore(); }
+    expect(restore).toHaveBeenCalledOnce();
+    const commit = vi.spyOn(ctx.storage, "transactionSync").mockImplementation(() => { throw new Error("Disk commit rejected"); });
+    try { await expect(execution.classificationContext()).rejects.toThrow("Disk commit rejected"); }
+    finally { commit.mockRestore(); }
+    expect(loadedExecutionReplica(instance)).toBeUndefined();
+    await execution.classificationContext();
+    expect(restore).toHaveBeenCalledTimes(2);
+    const serialized = (await instance.loadReplicaState(storageSecret))!;
+    const currentProfile = await Reflect.apply(Reflect.get(execution, "getIdentityProfile"), execution,
+      [id, identitySecret]) as Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>;
+    const changedProfile = { ...currentProfile, certificate: { ...currentProfile.certificate, signature: "A".repeat(86) } };
+    const changedReplica = await Reflect.apply(Reflect.get(execution, "restoreReplica"), execution,
+      [serialized, changedProfile, storageSecret]) as AutomationReplica;
+    expect(changedReplica).not.toBe(firstLoaded?.replica);
+    expect(restore).toHaveBeenCalledTimes(3);
+    await expect(changedReplica.signObservationForRuntime(reviewOrigin, crypto.randomUUID())).rejects.toThrow();
     const state = JSON.parse((await instance.loadReplicaState(storageSecret))!);
     state.authorizations = [];
     await instance.saveReplicaState(storageSecret, JSON.stringify(state));
     await expect(instance.observeOwner(registration, crypto.randomUUID(), "https://automation.example.test")).rejects.toThrow();
     expect(loadedExecutionReplica(instance)).toBeUndefined();
     await ctx.storage.deleteAlarm();
+    } finally { restore.mockRestore(); inspect.mockRestore(); }
+  });
+});
+
+it("Given a validated management inspector, when its own guarded pull persists and unchanged reads repeat, then reuse inspection but invalidate externally replaced evidence", async () => {
+  const id = `inspection-cache-${crypto.randomUUID()}`;
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(id);
+  const identitySecret = "test-only-identity-secret-at-least-thirty-two-bytes";
+  const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
+  const identity = await stub.provisionIdentity(id, identitySecret);
+  const data = await typedFixture(identity.identity.personId);
+  let incoming: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const transport: ReplicaTransport = { ...capturedRuntimeTransport(),
+    inventory: async (_access, after) => incoming && after < 1
+      ? { objects: [{ objectId: await blindObjectId(incoming), sequence: 1 }], cursor: 1, hasMore: false }
+      : { objects: [], cursor: after, hasMore: false },
+    download: async () => { if (!incoming) throw new Error("No snapshot"); return incoming; } };
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", transport); });
+  await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
+  incoming = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial })));
+  await runInDurableObject(stub, async (instance, ctx) => {
+    const execution = executionFixture(instance);
+    setExecutionFixture(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
+    const inspect = vi.spyOn(AutomationReplica, "inspectForManagement");
+    const readInspector = () => Reflect.apply(Reflect.get(execution, "managementInspectorNow"), execution, []) as
+      Promise<{ inspector: Awaited<ReturnType<typeof AutomationReplica.inspectForManagement>> }>;
+    try {
+      const first = await readInspector();
+      const guard = async () => first.inspector.assertOwner({ personId: data.owner.identity.personId,
+        publicKey: data.owner.identity.publicKey, certificates: [data.owner.certificate] }, data.owner.device.deviceId);
+      await first.inspector.pull(guard);
+      expect((await readInspector()).inspector).toBe(first.inspector);
+      expect(inspect).toHaveBeenCalledOnce();
+      await expect(first.inspector.pull(async () => { throw new Error("Owner request expired"); })).rejects.toThrow("Owner request expired");
+      await execution.saveReplicaState(storageSecret, first.inspector.serialize());
+      expect((await readInspector()).inspector).not.toBe(first.inspector);
+      expect(inspect).toHaveBeenCalledTimes(2);
+    } finally { inspect.mockRestore(); await ctx.storage.deleteAlarm(); }
   });
 });
 

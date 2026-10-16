@@ -121,9 +121,17 @@ source `65a7bdac997c0db17fcbfda575f1857424092682`.
 Participant import `38946006101` transferred eight tables/four pages. Read-only
 inventory confirmed zero imported event rows and no pending signed upload. Node
 activation in `38946109742` succeeded at epoch 1; the subsequent intake
-acknowledgement failed because workerd rejects `redirect: "error"`. A compatible
-manual redirect policy and native Request regression are authored for the next
-intake release. Retrying acknowledgement preserves the already active Node actor.
-Cloudflare key cleanup and a real received-event result remain unverified until
-that acknowledgement succeeds. Process readiness and image identity do not
-establish that production automation works.
+acknowledgement initially failed because workerd rejects `redirect: "error"`.
+Verify `38950907446` passed for `78f51a1`; independent intake release
+`38952498027` activated the compatible redirect policy. Acknowledgement retry
+`38952676874` succeeded at the same epoch 1, preserving the approved Node actor and
+removing its retired Cloudflare rows. A new form event reached Node and retained
+the model's unrelated/review outcome. Positive item-write/receipt acceptance is
+still pending. Readiness, review handling and image identity alone do not establish
+that production authoring works.
+
+Production traces also exposed repeated historical inspection during management
+polling and delayed command scheduling. Focused cache/scheduler fixes are prepared
+for the next executor-owned release. The public board's owner-signed delivery
+policy currently omits its admitted automation grant; that client-side policy
+repair does not change Rusty's trust checks or grant new permissions.

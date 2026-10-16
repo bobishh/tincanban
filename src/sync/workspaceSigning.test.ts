@@ -6,7 +6,9 @@ import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
-import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
+import { certHashDefault, createAutomationWorkspaceGrant, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
+import { automationTypes } from "../domain/automationContract"
+import { hasEntityKind } from "../domain/model"
 import { resolveSigningContext, signWithContext } from "../domain/signingContext"
 import { createWorkspaceDoc } from "../domain/seeds"
 import { authorizeLocalChanges, recordGenesisAuthority, prepareLocalChangeAuthorizations, type WorkspaceSigningContextFactory } from "./changeAuthorization"
@@ -96,6 +98,58 @@ it("Given an owner workspace, when building public delivery policy, then sign th
     const editor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Not the owner")
     await expect(buildPublicBoardDeliveryPolicy(editor, doc.id, "board-a", 1)).rejects.toThrow(/owner authority is unavailable/i)
   } finally { Automerge.free(doc) }
+})
+
+it("Given an automation approved in the admitted board but absent from the peer proof cache, when the owner refreshes public delivery policy, then include only its valid current board grant", async () => {
+  const { profile, doc } = await fixture()
+  let withAutomation: typeof doc | undefined
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Expected stored workspace authority")
+    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-transport-secret" })
+    const board = Object.values(doc.entities).find(entity => hasEntityKind(entity, "board"))!
+    const grant = await createAutomationWorkspaceGrant(profile, doc.id, "approved-automation", {
+      version: 1, boardId: board.id, columns: { lead: "lead", interview: "interview", rejected: "rejected" },
+      fieldIds: ["company"], expiresAt: Date.now() + 60_000,
+    })
+    expect((await defaultProofStore.listGrants(doc.id)).find(value => value.payload.grantId === grant.payload.grantId)).toBeUndefined()
+    const definition = { kind: "automation-definition", version: 1, id: "existing-automation", name: "Intake",
+      type: "job-intake", typeVersion: 1, parameters: { sources: ["website", "email"] },
+      permissions: automationTypes.find(value => value.version === 1)!.permissions,
+      scope: { workspaceId: doc.id, boardId: board.id, grantId: grant.payload.grantId } }
+    const controlId = crypto.randomUUID()
+    withAutomation = Automerge.change(doc, value => {
+      value.entities["automation:existing-automation"] = { id: "automation:existing-automation", kind: "automation", title: "Intake",
+        placement: { parentId: board.id }, executor: { origin: "https://automation.example", personId: grant.payload.personId },
+        definition: JSON.stringify(definition), approval: JSON.stringify({ grant,
+          definition: { payload: definition, signerKeyId: grant.signerKeyId, signature: "existing-definition-signature" } }),
+        controls: { [controlId]: JSON.stringify({ state: "active", supersedes: [] }) } } as never
+    })
+    const policy = await buildPublicBoardDeliveryPolicy(profile, doc.id, board.id, 2, () => {}, withAutomation)
+    expect(policy.policy.payload.acceptedGrants).toEqual([grant])
+    const forgedSource = Automerge.clone(withAutomation)
+    const forged = Automerge.change(forgedSource, value => {
+      const entity = value.entities["automation:existing-automation"]
+      if (!hasEntityKind(entity, "automation")) throw new Error("Expected automation fixture")
+      const approval = JSON.parse(entity.approval) as { grant: { signature: string } }
+      approval.grant.signature = "A".repeat(86)
+      entity.approval = JSON.stringify(approval)
+    })
+    try {
+      const forgedPolicy = await buildPublicBoardDeliveryPolicy(profile, doc.id, board.id, 3, () => {}, forged)
+      expect(forgedPolicy.policy.payload.acceptedGrants).toEqual([])
+    } finally { Automerge.free(forged); Automerge.free(forgedSource) }
+    const revoked = Automerge.change(withAutomation, value => {
+      const entity = value.entities["automation:existing-automation"]
+      if (!hasEntityKind(entity, "automation")) throw new Error("Expected automation fixture")
+      entity.controls[controlId] = JSON.stringify({ state: "deleted", supersedes: [] })
+    })
+    try {
+      const deletedPolicy = await buildPublicBoardDeliveryPolicy(profile, doc.id, board.id, 3, () => {}, revoked)
+      expect(deletedPolicy.policy.payload.acceptedGrants).toEqual([])
+    } finally { Automerge.free(revoked) }
+  } finally { if (withAutomation) Automerge.free(withAutomation); Automerge.free(doc) }
 })
 
 it("Given a live history-read guard, when validating again, then reuse its exact authority read for role derivation and still reject later revocation", async () => {

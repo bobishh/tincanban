@@ -154,16 +154,19 @@ const emit = defineEmits<{
 
 <style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
-.detail-subsection { padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.detail-subsection { padding-top: var(--space-4); }
 .detail-section-head { margin-bottom: var(--space-3); }
 .detail-section-head h3 { margin: 0; font-size: 1rem; }
 .subitem-list { display: grid; gap: var(--space-2); }
-.subitem-row { padding: var(--space-2) var(--space-3); border: 2px solid var(--soft); }
+.subitem-row { padding: var(--space-2) 0; }
 .subitem-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .detail-head { margin: 0; align-items: center; gap: var(--space-3); }
-.detail-head h2 { font-size: 1.1rem; margin: var(--space-1) 0 0; }
+.detail-head h2 { font-size: var(--site-font-detail-heading-size, 1.5rem); margin: var(--space-1) 0 0; }
 .detail-head-actions { flex-wrap: wrap; }
 .detail-dialog { width: 100%; height: 100%; max-height: none; padding: var(--space-4); border: 0; box-shadow: none; }
 .detail-scroll { flex: 1; }
 .dialog-actions { padding-right: var(--space-6); flex-shrink: 0; }
+@media (max-width: 600px) {
+  .detail-head h2 { font-size: var(--site-font-detail-heading-mobile-size, 1.35rem); }
+}
 </style>

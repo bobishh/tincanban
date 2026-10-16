@@ -9,6 +9,7 @@ import type { ExecutionStoragePort } from "./executionPorts";
 import type { WorkerEnv } from "./index";
 import { bootstrapFreshExecutor } from "./executorClient";
 import { hasExecutorLegacyRows, readCloudflareFreshRoute, reserveCloudflareFreshRoute, validateExecutorFreshBinding, type ExecutorFreshBinding } from "./executorFresh";
+import { configureAutomationTelemetry, flushAutomationTelemetryAfter } from "./telemetry";
 
 export { writeReplicaChunksAtomically } from "./executionCoordinator";
 export type { StoredEventStatus, EnqueueSuccess, EnqueueResult } from "./executionCoordinator";
@@ -21,6 +22,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
 
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
+    configureAutomationTelemetry(env);
     this.intakeOutbox = new ExecutorIntakeOutbox(ctx.storage as ExecutionStoragePort, ctx.id.name ?? "", env);
     if (!env.EXECUTOR_ORIGIN) this.legacyExecution();
   }
@@ -147,7 +149,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   }
 
   alarm(...args: Parameters<ExecutionCoordinator["alarm"]>): Promise<Awaited<ReturnType<ExecutionCoordinator["alarm"]>>> {
-    return this.serializeAdapter(async () => {
+    const operation = this.serializeAdapter(async () => {
       const migration = await this.intakeOutbox.phase();
       if (migration?.phase === "frozen") return await this.intakeOutbox.alarm() as Awaited<ReturnType<ExecutionCoordinator["alarm"]>>;
       if (migration?.phase === "active" || await readCloudflareFreshRoute(this.ctx.storage)) {
@@ -156,6 +158,8 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       if (this.env.EXECUTOR_ORIGIN) { await this.ctx.storage.deleteAlarm(); return undefined as Awaited<ReturnType<ExecutionCoordinator["alarm"]>>; }
       return await this.legacyExecution().alarm(...args) as Awaited<ReturnType<ExecutionCoordinator["alarm"]>>;
     });
+    flushAutomationTelemetryAfter(this.ctx, operation);
+    return operation;
   }
 
   executionRoute(): Promise<{ origin: string; epoch: number } | null> {

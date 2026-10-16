@@ -84,6 +84,7 @@ describe("public board owner access", () => {
     await vi.advanceTimersByTimeAsync(20)
     await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
     expect(mocks.buildPolicy.mock.calls.map(call => call[3])).toEqual([2, 3])
+    expect(mocks.buildPolicy.mock.calls.every(call => call[5] === document.value)).toBe(true)
     expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy.policy.payload.generation).toBe(3)
   })
 

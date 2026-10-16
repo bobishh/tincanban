@@ -69,14 +69,14 @@ async function copyDetails(entry: HistoryEntry) {
 </template>
 
 <style scoped>
-.detail-subsection { padding-top: var(--space-4); border-top: 1px solid var(--line); }
+.detail-subsection { padding-top: var(--space-4); }
 .detail-section-head { margin-bottom: var(--space-3); }
 .detail-section-head h3 { margin: 0; font-size: 1rem; }
 .item-history-list { display: grid; gap: var(--space-2); max-height: 240px; overflow-y: auto; }
-.item-history-entry { display: grid; justify-items: start; gap: var(--space-1); padding: var(--space-2) 0; border-bottom: 1px solid var(--soft); font-size: .875rem; }
+.item-history-entry { display: grid; justify-items: start; gap: var(--space-1); padding: var(--space-2) 0; font-size: .875rem; }
 .item-history-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-1); }
 .item-history-time, .item-history-author { color: var(--muted); }
-.item-history-author, .history-technical { font-family: var(--site-font-reading); font-size: var(--site-font-body-size, 16px); line-height: 1.5; }
+.item-history-author, .history-technical { font-family: var(--site-font-reading); font-size: var(--site-font-secondary-size, 14px); line-height: var(--site-font-reading-line, 1.65); }
 .history-technical summary { cursor: pointer; }
 .history-technical pre { max-width: 100%; white-space: pre-wrap; }
 .history-technical :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }

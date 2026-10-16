@@ -132,7 +132,7 @@
 .lead-card-expanded strong { min-height: 0; overflow-wrap: anywhere; }
 .card-layout { min-width: 0; }
 .card-main, .card-context { min-width: 0; }
-.card-context { display: grid; gap: var(--space-4); margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--soft); }
+.card-context { display: grid; gap: var(--space-4); margin-top: var(--space-4); padding-top: var(--space-3); }
 .card-notes { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--muted); font-size: 1rem; line-height: 1.5; }
 .card-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); align-content: start; gap: var(--space-3) var(--space-4); margin: 0; }
 .card-fields > div { min-width: 0; }
@@ -141,7 +141,7 @@
 .board-empty { width: 100%; padding: var(--space-8) var(--space-5); border: 2px dashed var(--soft); text-align: center; color: var(--muted); font-size: 1rem; }
 @container card (min-width: 520px) {
   .card-layout { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); align-items: start; gap: var(--space-5); padding: var(--space-1); }
-  .card-context { margin-top: 0; padding-top: 0; padding-left: var(--space-5); border-top: 0; border-left: 1px solid var(--soft); }
+  .card-context { margin-top: 0; padding-top: 0; padding-left: var(--space-5); }
 }
 @container card (min-width: 940px) {
   .card-layout { grid-template-columns: minmax(220px, .65fr) minmax(0, 1.35fr); }

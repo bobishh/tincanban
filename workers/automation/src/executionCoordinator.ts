@@ -92,11 +92,20 @@ const maximumAttempts = 8;
 const processingLeaseMs = 2 * 60_000;
 const controlPollMs = 15_000;
 class ApplicationBindingReviewError extends Error {}
+type ParticipantProfile = Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>;
+type CachedEvidence = { serialized: string; storageSecret: string; profileFingerprint: string };
+type CachedReplica = CachedEvidence & { replica: AutomationReplica };
+type CachedInspector = CachedEvidence & { inspector: AutomationManagementInspector };
+
+function participantProfileFingerprint(profile: ParticipantProfile): string {
+  return canonicalizeJson([profile.identity, profile.device, profile.certificate]);
+}
 
 /** Serializes durable intake, replay protection and classification for one integration. */
 export class ExecutionCoordinator {
   private mutationQueue: Promise<unknown> = Promise.resolve();
-  private loadedReplica?: { serialized: string; storageSecret: string; personId: string; deviceId: string; replica: AutomationReplica };
+  private loadedReplica?: CachedReplica;
+  private loadedInspector?: CachedInspector;
   constructor(protected readonly ctx: ExecutionContextPort, protected readonly env: ExecutionEnvironment,
     private readonly adapters: ExecutionAdapters = {}) {
     configureAutomationTelemetry(env);
@@ -375,15 +384,22 @@ export class ExecutionCoordinator {
   }
 
   private async persistReplicaState(secret: string, serialized: string, beforeCommit?: () => Promise<void>, afterPublish?: () => void,
-    expectedGeneration?: string | null): Promise<void> {
+    expectedGeneration?: string | null, source?: CachedReplica | CachedInspector): Promise<void> {
     // A failed write must not leave a mutated in-memory replica reusable under old durable evidence.
-    this.loadedReplica = undefined;
+    if (!source || this.loadedReplica === source) this.loadedReplica = undefined;
+    if (!source || this.loadedInspector === source) this.loadedInspector = undefined;
     const encrypted = await encryptReplicaValue(secret, this.ctx.id.name ?? "", "state", serialized);
     const generation = crypto.randomUUID();
     const chunkSize = 900_000;
     const chunks = Array.from({ length: Math.ceil(encrypted.length / chunkSize) }, (_, index) => encrypted.slice(index * chunkSize, (index + 1) * chunkSize));
     await beforeCommit?.();
     writeReplicaChunksAtomically(this.ctx.storage, generation, chunks, Date.now(), afterPublish, expectedGeneration);
+    // Only the already admitted instance that produced these bytes can advance its cache after commit.
+    if (source) {
+      source.serialized = serialized;
+      if ("replica" in source) this.loadedReplica = source;
+      else this.loadedInspector = source;
+    }
   }
 
   async loadReplicaState(secret: string): Promise<string | null> {
@@ -758,6 +774,7 @@ export class ExecutionCoordinator {
     this.ctx.storage.sql.exec("INSERT INTO automation_history_transition (singleton, transition_id, storage_binding, source_heads) VALUES (1, ?, ?, ?)",
       body.transitionId, binding, JSON.stringify(heads));
     this.loadedReplica = undefined;
+    this.loadedInspector = undefined;
     return inspector;
   }
 
@@ -795,6 +812,7 @@ export class ExecutionCoordinator {
       this.ctx.storage.sql.exec("DELETE FROM automation_history_transition WHERE singleton = 1");
     }, generation);
     this.loadedReplica = undefined;
+    this.loadedInspector = undefined;
     candidate = await AutomationReplica.inspectForManagement(candidateBytes, profile, value => this.saveReplicaState(secret, value));
     observe(candidate);
     await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
@@ -828,6 +846,7 @@ export class ExecutionCoordinator {
     this.ctx.storage.sql.exec("INSERT INTO automation_storage_transition (singleton, transition_id, storage_binding) VALUES (1, ?, ?)",
       body.transitionId, binding);
     this.loadedReplica = undefined;
+    this.loadedInspector = undefined;
     // All execution and management share mutationQueue; no event can enter between the drain and durable freeze.
     return inspector;
   }
@@ -887,6 +906,7 @@ export class ExecutionCoordinator {
       this.ctx.storage.sql.exec("DELETE FROM automation_storage_transition WHERE singleton = 1");
     }, generation);
     this.loadedReplica = undefined;
+    this.loadedInspector = undefined;
     candidate = await AutomationReplica.inspectForManagement(candidateBytes, profile, value => this.saveReplicaState(secret, value));
     observeInspector(candidate);
     await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
@@ -918,12 +938,25 @@ export class ExecutionCoordinator {
   private async managementInspectorNow(): Promise<{ profile: Awaited<ReturnType<typeof profileFromIdentitySeedForDevice>>; inspector: AutomationManagementInspector } | null> {
     if (!this.ctx.storage.sql.exec("SELECT singleton FROM automation_replica WHERE singleton = 1").toArray().length) return null;
     if (!this.env.EVENT_STORAGE_SECRET || !this.env.IDENTITY_STORAGE_SECRET) throw new Error("Automation storage is not configured");
-    const serialized = await this.loadReplicaState(this.env.EVENT_STORAGE_SECRET);
+    const storageSecret = this.env.EVENT_STORAGE_SECRET;
+    const serialized = await this.loadReplicaState(storageSecret);
     if (!serialized) return null;
     const profile = await this.existingIdentityProfile(this.ctx.id.name!, this.env.IDENTITY_STORAGE_SECRET);
     if (!profile) throw new Error("Stored replica has no existing executor identity");
+    const profileFingerprint = participantProfileFingerprint(profile);
+    const active = this.loadedReplica;
+    if (active?.serialized === serialized && active.storageSecret === storageSecret &&
+      active.profileFingerprint === profileFingerprint) return { profile, inspector: active.replica.managementInspector() };
+    const cached = this.loadedInspector;
+    if (cached?.serialized === serialized && cached.storageSecret === storageSecret &&
+      cached.profileFingerprint === profileFingerprint) return { profile, inspector: cached.inspector };
+    this.loadedInspector = undefined;
+    let owned: CachedInspector | undefined;
     const inspector = await AutomationReplica.inspectForManagement(serialized, profile,
-      value => this.saveReplicaState(this.env.EVENT_STORAGE_SECRET!, value));
+      value => this.persistReplicaState(storageSecret, value, undefined, undefined, undefined, owned),
+      this.replicaTransport());
+    owned = { serialized, storageSecret, profileFingerprint, inspector };
+    this.loadedInspector = owned;
     return { profile, inspector };
   }
 
@@ -1342,17 +1375,25 @@ export class ExecutionCoordinator {
     this.assertStorageNotFrozen();
     // Always read and decrypt durable evidence first. Only an exact match may reuse its verification.
     const cached = this.loadedReplica;
+    const profileFingerprint = participantProfileFingerprint(profile);
     if (cached?.serialized === serialized && cached.storageSecret === storageSecret &&
-      cached.personId === profile.identity.personId && cached.deviceId === profile.device.deviceId) return cached.replica;
-    const replica = await AutomationReplica.restore(serialized, profile, value => this.saveReplicaState(storageSecret, value),
-      this.adapters.replicaTransport ?? Reflect.get(this, "__tincanban_test_replica_transport__") as ReplicaTransport | undefined);
-    this.loadedReplica = { serialized, storageSecret, personId: profile.identity.personId, deviceId: profile.device.deviceId, replica };
+      cached.profileFingerprint === profileFingerprint) return cached.replica;
+    this.loadedReplica = undefined;
+    let owned: CachedReplica | undefined;
+    const replica = await AutomationReplica.restore(serialized, profile,
+      value => this.persistReplicaState(storageSecret, value, undefined, undefined, undefined, owned), this.replicaTransport());
+    owned = { serialized, storageSecret, profileFingerprint, replica };
+    this.loadedReplica = owned;
     return replica;
   }
 
   private packetWithTransport(packet: AutomationActivationPacket): AutomationActivationPacket {
-    const transport = this.adapters.replicaTransport ?? Reflect.get(this, "__tincanban_test_replica_transport__") as ReplicaTransport | undefined;
+    const transport = this.replicaTransport();
     return transport ? { ...packet, transport } : packet;
+  }
+
+  private replicaTransport(): ReplicaTransport | undefined {
+    return this.adapters.replicaTransport ?? Reflect.get(this, "__tincanban_test_replica_transport__") as ReplicaTransport | undefined;
   }
 
   private findById(eventId: string): EventRow | undefined {

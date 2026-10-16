@@ -13,25 +13,35 @@ export class BoundedParticipantRuntime implements ParticipantRuntime {
   private lane: Promise<unknown> = Promise.resolve();
   private pending = 0;
   private closing = false;
+  private timerCursor?: string;
+  private timerTickPending = false;
   private readonly timer: NodeJS.Timeout;
 
   constructor(private readonly directory: string, private readonly origin: string, private readonly automationOrigin: string,
     private readonly workerPath = process.env.EXECUTOR_WORKER_PATH ? pathToFileURL(process.env.EXECUTOR_WORKER_PATH) : new URL("./participantWorker.mjs", import.meta.url)) {
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     this.timer = setInterval(() => {
-      if (this.pending || this.closing) return;
+      if (this.timerTickPending || this.closing) return;
       const names = this.integrations();
       if (!names.length) return;
-      const next = names[(names.indexOf(this.integration ?? "") + 1) % names.length]!;
-      void this.call(next, { operation: "tick" }).catch(error => console.error(JSON.stringify({ event: "executor.tick.failed", integrationId: next, error: error.message })));
+      const next = names[(names.indexOf(this.timerCursor ?? "") + 1) % names.length]!;
+      this.timerCursor = next;
+      this.timerTickPending = true;
+      void this.enqueue(next, { operation: "tick" }, true)
+        .catch(error => console.error(JSON.stringify({ event: "executor.tick.failed", integrationId: next, error: error.message })))
+        .finally(() => { this.timerTickPending = false; });
     }, 2_000);
     this.timer.unref();
   }
 
   call(integrationId: string, request: ParticipantRequest): Promise<unknown> {
+    return this.enqueue(integrationId, request, false);
+  }
+
+  private enqueue(integrationId: string, request: ParticipantRequest, scheduledTick: boolean): Promise<unknown> {
     if (this.closing) return Promise.reject(new Error("Executor is shutting down"));
     if (!/^[A-Za-z0-9_-]{1,128}$/.test(integrationId)) return Promise.reject(new TypeError("Invalid integration ID"));
-    if (this.pending >= 32) return Promise.reject(Object.assign(new Error("Executor queue is busy; retry the same command"), { status: 429 }));
+    if (this.pending >= (scheduledTick ? 32 : 31)) return Promise.reject(Object.assign(new Error("Executor queue is busy; retry the same command"), { status: 429 }));
     this.pending += 1;
     const operation = this.lane.then(async () => {
       await this.select(integrationId);

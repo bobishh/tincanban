@@ -145,5 +145,5 @@ onBeforeUnmount(() => {
 </template>
 <style scoped>
 .board-state { max-width: 600px; margin: 10vh auto; padding: var(--space-4); text-align: center; }
-.board-refresh-error { display: flex; align-items: center; justify-content: center; gap: var(--space-3); margin: 0; padding: var(--space-2) var(--space-3); color: var(--red); font: 400 var(--site-font-body-size, 16px)/1.5 var(--site-font-reading); }
+.board-refresh-error { display: flex; align-items: center; justify-content: center; gap: var(--space-3); margin: 0; padding: var(--space-2) var(--space-3); color: var(--red); font: 400 var(--site-font-secondary-size, 14px)/var(--site-font-reading-line, 1.65) var(--site-font-reading); }
 </style>

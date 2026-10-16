@@ -28,6 +28,22 @@ async function proseWidth(locator: Locator) {
   }))
 }
 
+async function assertQuietDetailSections(detail: Locator) {
+  for (const selector of [".detail-inspector", ".detail-grid", ".detail-subsection", ".quick-note-form", ".source-snapshot", ".document-form", ".document-row", ".item-history-entry", ".subitem-row"]) {
+    for (const section of await detail.locator(selector).all()) {
+      await expect(section).toHaveCSS("border-top-width", "0px")
+      await expect(section).toHaveCSS("border-bottom-width", "0px")
+      await expect(section).toHaveCSS("border-left-width", "0px")
+      await expect(section).toHaveCSS("border-image-source", "none")
+    }
+  }
+  const quickNote = detail.locator(".quick-note-form")
+  if (await quickNote.count()) {
+    await expect(quickNote).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
+    await expect(quickNote.locator("textarea")).toHaveCSS("border-top-width", "2px")
+  }
+}
+
 test("Given a Lead detail window, when its container maximizes and then narrows, then properties reflow beside narrative only while space allows", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 })
   await page.goto("/")
@@ -52,6 +68,7 @@ test("Given a Lead detail window, when its container maximizes and then narrows,
   await expect.poll(async () => (await detail.locator("[data-detail-primary]").boundingBox())!.x)
     .toBeLessThan((await inspector.boundingBox())!.x)
   await expect.poll(async () => (await detail.boundingBox())?.width ?? 0).toBeGreaterThan(1200)
+  await assertQuietDetailSections(detail)
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(detail.locator("[data-detail-layout]")).toHaveCSS("grid-template-columns", /\d+px/)
@@ -61,6 +78,7 @@ test("Given a Lead detail window, when its container maximizes and then narrows,
   const mobileMeasure = await proseWidth(prose)
   expect(mobileMeasure.width).toBeLessThanOrEqual(390)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await assertQuietDetailSections(detail)
 })
 
 test("Given a generic item overview, when maximized then narrow, then content reflows and failure draft remains usable", async ({ page }) => {
@@ -96,6 +114,7 @@ test("Given a generic item overview, when maximized then narrow, then content re
   await detail.getByRole("button", { name: "Add note" }).click()
   await expect(detail.getByRole("alert")).toContainText("Note not saved")
   await expect(draft).toHaveValue("Keep this draft on failure")
+  await assertQuietDetailSections(detail)
   await page.evaluate(() => { (window as unknown as { __TINCANBAN_INJECT_STORAGE_FAILURE__: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
 
   await detail.getByRole("button", { name: "Maximize window" }).click()
@@ -108,4 +127,5 @@ test("Given a generic item overview, when maximized then narrow, then content re
   expect(Math.abs((primary?.x ?? 0) - (secondary?.x ?? 0))).toBeLessThan(2)
   expect((await proseWidth(prose)).width).toBeLessThanOrEqual(390)
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await assertQuietDetailSections(detail)
 })

@@ -38,6 +38,7 @@ function updateDraft(event: Event) {
 </template>
 
 <style scoped>
-.quick-note-form { margin-top: var(--space-3); padding: var(--space-3) 0 0; border: 0; border-top: 1px solid var(--soft); }
+.quick-note-form { display: grid; gap: var(--space-2); margin: 0; padding: 0; border: 0; }
+.quick-note-form label { display: grid; gap: var(--space-2); }
 .quick-note-form textarea.reading-input { font-family: var(--site-font-reading); font-size: var(--site-font-body-size, 16px); line-height: 1.5; }
 </style>
