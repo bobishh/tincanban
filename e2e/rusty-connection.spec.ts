@@ -130,7 +130,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await rm(join(directory, "enrollment"), { recursive: true, force: true })
     await start(new URL(origin).host)
     expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
-    await panel.getByRole("button", { name: "Retry removal", exact: true }).click()
+    // Reload resumes the pending revocation; its background retry can finish before a manual click.
     await expect(panel.getByText(origin, { exact: true })).toHaveCount(0, { timeout: 30_000 })
     expect(JSON.parse(await readFile(join(directory, "scopes", scope!, "policy.json"), "utf8")).revoked).toBe(true)
     // When the owner reconnects by address, a fresh scope stores the preserved local board.
