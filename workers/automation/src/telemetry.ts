@@ -71,6 +71,16 @@ export function automationTelemetry(): WorkerTelemetry {
   return configuredTelemetry ?? { enabled: false, flush: async () => {} };
 }
 
+/** Flush logs and spans after Durable Object work settles, without changing its result. */
+export function flushAutomationTelemetryAfter(
+  ctx: { waitUntil(promise: Promise<unknown>): void },
+  operation: Promise<unknown>,
+): void {
+  const flush = () => automationTelemetry().flush();
+  try { ctx.waitUntil(operation.then(flush, flush).catch(() => {})); }
+  catch { /* Telemetry lifecycle support is optional and must not affect the operation. */ }
+}
+
 /** Carry this operation's parent explicitly across Durable Object boundaries. */
 export function automationDiagnosticContext(span?: Span): Context | undefined {
   return span ? trace.setSpan(ROOT_CONTEXT, span) : undefined;

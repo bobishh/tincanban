@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { trace } from "@opentelemetry/api";
-import { automationDiagnosticContext, configureAutomationTelemetry, withAutomationSpan } from "../src/telemetry";
+import { automationDiagnosticContext, configureAutomationTelemetry, flushAutomationTelemetryAfter, withAutomationSpan } from "../src/telemetry";
 import { fetchBlind } from "../../../src/sync/rustyHttp";
 
 describe("automation OpenTelemetry producers", () => {
@@ -60,6 +60,26 @@ describe("automation OpenTelemetry producers", () => {
       expect.objectContaining({ spanId: outgoingHttpSpanId, parentSpanId: workerSpanId }),
     ]));
     expect(syncSpan?.status.code).toBe(2);
+    expect(syncSpan?.attributes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "phase", value: { stringValue: "merge" } }),
+      expect.objectContaining({ key: "exception.stacktrace", value: { stringValue: expect.stringContaining("merge failed") } }),
+    ]));
     vi.unstubAllGlobals();
+  });
+
+  it("flushes Durable Object telemetry after work settles without replacing its outcome", async () => {
+    let finish!: () => void;
+    const work = new Promise<void>(resolve => { finish = resolve; });
+    const pending: Promise<unknown>[] = [];
+    flushAutomationTelemetryAfter({ waitUntil: promise => pending.push(promise) }, work);
+    expect(pending).toHaveLength(1);
+
+    let completed = false;
+    void pending[0]!.then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+    finish();
+    await pending[0];
+    expect(completed).toBe(true);
   });
 });

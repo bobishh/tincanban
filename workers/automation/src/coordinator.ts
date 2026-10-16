@@ -3,7 +3,7 @@ import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from
 import { parseIntegrations, type WorkerEnv, type AutomationIntegration } from "./index";
 import { privateEmailRoutes } from "./emailRoutes";
 import { gmailForwardingConfirmationUrl } from "./email";
-import { configureAutomationTelemetry, recordAutomationException } from "./telemetry";
+import { automationTelemetry, configureAutomationTelemetry, flushAutomationTelemetryAfter, recordAutomationException, withAutomationSpan } from "./telemetry";
 import type { JobPageFetcher } from "./extraction";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
   type AutomationManagementInspector, type ReplicaTransport } from "./replica";
@@ -1067,7 +1067,11 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     };
   }
 
-  alarm(): Promise<void> { return this.serializeMutation(() => this.processAlarm()); }
+  alarm(): Promise<void> {
+    const operation = this.serializeMutation(() => this.processAlarm());
+    flushAutomationTelemetryAfter(this.ctx, operation);
+    return operation;
+  }
 
   private async processAlarm(): Promise<void> {
     if (this.storageTransition() || this.historyTransition()) { await this.ctx.storage.deleteAlarm(); return; }
@@ -1199,10 +1203,15 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     const secret = this.env.EVENT_STORAGE_SECRET;
     const identitySecret = this.env.IDENTITY_STORAGE_SECRET;
     if (!secret || !identitySecret) return null;
-    const serialized = await this.loadReplicaState(secret);
+    const integrationId = this.ctx.id.name ?? "unknown";
+    const stageAttributes = (phase: string) => ({ "integration.id": integrationId, "automation.phase": phase });
+    const serialized = await withAutomationSpan(automationTelemetry(), "automation.control.load-replica-state",
+      stageAttributes("load-replica-state"), () => this.loadReplicaState(secret));
     if (!serialized) return null;
-    const profile = await this.getIdentityProfile(this.ctx.id.name ?? "", identitySecret);
-    const replica = await this.restoreReplica(serialized, profile, secret);
+    const profile = await withAutomationSpan(automationTelemetry(), "automation.control.load-identity-profile",
+      stageAttributes("load-identity-profile"), () => this.getIdentityProfile(integrationId, identitySecret));
+    const replica = await withAutomationSpan(automationTelemetry(), "automation.control.restore-replica",
+      stageAttributes("restore-replica"), () => this.restoreReplica(serialized, profile, secret));
     await replica.sync();
     return replica;
   }
