@@ -40,10 +40,31 @@ test("Given file controls and streaming storage were preloaded online, when the 
       buffer: Buffer.concat([Buffer.from(prefix), Buffer.alloc(256 * 1024 + 19, 0x5a)]) })
     await attach.getByRole("button", { name: "Attach", exact: true }).click()
     await expect(page.getByText("Document attached", { exact: true })).toBeVisible()
-    await detail.getByRole("group", { name: "Offline file", exact: true }).getByRole("button", { name: "Preview", exact: true }).click()
+    const openPreview = detail.getByRole("group", { name: "Offline file", exact: true }).getByRole("button", { name: "Preview", exact: true })
+    await openPreview.click()
     const preview = page.getByRole("dialog", { name: "Document preview" })
-    await expect(preview.getByRole("status")).toHaveText("Loading preview…")
     await expect(preview).toContainText(prefix.trim(), { timeout: 15_000 })
+    await expect(preview).toContainText("Showing the beginning of this file")
+    expect(await preview.locator(".document-preview-text").textContent()).toHaveLength(32 * 1024)
+    await expect(preview.getByRole("status")).toHaveCount(0)
+    await preview.getByRole("button", { name: "Close", exact: true }).click()
+
+    // Hold the next local read so pending-state coverage does not depend on disk speed.
+    await page.evaluate(async () => {
+      const { attachmentBlobStore } = await import("/src/attachmentBlobStore.ts")
+      const read = attachmentBlobStore.getVerified.bind(attachmentBlobStore)
+      attachmentBlobStore.getVerified = async (...args) => {
+        attachmentBlobStore.getVerified = read
+        await new Promise<void>(resolve => window.addEventListener("test:release-attachment-read", () => resolve(), { once: true }))
+        return read(...args)
+      }
+    })
+    await openPreview.click()
+    await expect(preview.getByRole("status")).toHaveText("Loading preview…")
+    await expect(preview.locator(".document-preview-text")).toHaveCount(0)
+    await page.evaluate(() => window.dispatchEvent(new Event("test:release-attachment-read")))
+    await expect(preview).toContainText(prefix.trim())
+    await expect(preview.getByRole("status")).toHaveCount(0)
   } finally {
     await context.setOffline(false)
   }
