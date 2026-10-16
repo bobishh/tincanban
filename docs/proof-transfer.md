@@ -3,8 +3,9 @@
 Implemented: bounded resumable proof pages; whole-record signatures retained; exact serialized budgets including envelope and authority evidence; candidate-derived dependency coverage; Rust authority/signature admission shared by WASM/native; optional untrusted restart cache; commit and document ACK remain after complete admission. Initial invitations, enrollment, and durable snapshot batches resolve manifests before validation/publication. Large proof-only authority changes send authority evidence without retransmitting history records.
 
 The current source also implements durable incremental admission and Owner-attested
-compact bases with retained original archives. These paths are undergoing final
-browser acceptance and have not yet been released. The authoritative contract is
+compact bases with retained original archives. Implementation, named scenario
+results and production activation require separate evidence; see [readiness and release evidence](architecture.md#readiness-and-release-evidence).
+The authoritative contract is
 [history archives and recovery](../openspec/changes/unified-device-and-replica-architecture/history-archive-contract.md);
 the [protocol reference](protocol-and-tools.md#history-maintenance-and-recovery)
 describes the implementation. Compaction bounds active history; it does not delete

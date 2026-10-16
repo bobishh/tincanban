@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { reactive } from "vue"
+import * as Automerge from "@automerge/automerge/slim"
+import { readFile } from "node:fs/promises"
 import { createWorkspaceDoc } from "../domain/seeds"
+import { initializeAutomerge } from "../crdt"
 import type { LocalProfile } from "../domain/identity"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 import { exportApprovedAutomation } from "./automationActivation"
 
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), resolveContext: vi.fn(), exportAuthorization: vi.fn(),
@@ -18,12 +22,19 @@ vi.mock("./automationInstanceClient", () => ({ assertAutomationKeyHistorySupport
 vi.mock("../sync/workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: mocks.ensureWriter }))
 vi.mock("../sync/privateReplicaRepository", () => ({ getReplicaConfigurations: mocks.savedConfigs }))
 
+beforeAll(async () => {
+  const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
+  await initializeAutomerge()
+})
+afterEach(() => { vi.unstubAllGlobals() })
+
 type Fixture = ReturnType<typeof fixture>
 function fixture() {
   const profile = { identity: { personId: "owner-person", publicKey: "owner-public", displayName: "Owner" },
     device: { deviceId: "owner-device", publicKey: "device-public", displayName: "Owner device" },
     certificate: { signature: "leaf-cert", payload: { personId: "owner-person", deviceId: "owner-device" } }, privateKeys: {} } as unknown as LocalProfile
-  const doc = createWorkspaceDoc("automation-workspace", "Applications", profile.identity.personId, "job-search")
+  const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("automation-workspace", "Applications", profile.identity.personId, "job-search"))
   const config = { purpose: "workspace" as const, origin: "https://rusty.example.test", scopeId: "scope-1",
     workspaceId: doc.id, servicePublicKey: "service", readToken: "read", writeToken: "write", keyEpoch: 1,
     policyRevision: 1, contentKey: "key", cursor: 0, lastUploaded: "" }
@@ -189,6 +200,28 @@ describe("automation activation signing boundary", () => {
     mocks.savedConfigs.mockResolvedValueOnce([confirmed]).mockResolvedValueOnce([refreshed])
     await expect(exportApprovedAutomation(state.host as never, state.config, "{}")).resolves.toBeTruthy()
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ blind: refreshed }))
+  })
+
+  it("Given the same workspace heads are reloaded as a new Automerge handle, When authority checks resume, Then allow the approval", async () => {
+    const state = fixture()
+    readyMocks(state)
+    mocks.admissionAuthority.mockImplementation(async () => {
+      state.host.setActiveDoc(Automerge.clone(state.doc) as never)
+      return state.authority
+    })
+    await expect(exportApprovedAutomation(state.host as never, state.config, "{}")).resolves.toBeTruthy()
+  })
+
+  it("Given the workspace changes during an authority check, When approval resumes, Then refuse before command", async () => {
+    const state = fixture()
+    readyMocks(state)
+    mocks.admissionAuthority.mockImplementation(async () => {
+      state.host.setActiveDoc(Automerge.change(Automerge.clone(state.doc), draft => { draft.title = "Changed during approval" }) as never)
+      return state.authority
+    })
+    await expect(exportApprovedAutomation(state.host as never, state.config, "{}"))
+      .rejects.toThrow(/workspace owner authority changed during automation approval/i)
+    expect(state.host.executeCommandAsync).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -1,10 +1,13 @@
 ## Audit Baseline
 
 These nine findings describe the inspected baseline before this change, not the
-completion state of the current working tree. Partial implementation evidence and
-remaining gates are recorded in `tasks.md` and `verification-map.md`.
+completion state of the current source. This file specifies contracts; it does not
+report live release readiness. Named execution evidence belongs in CI artifacts and
+`verification-map.md`; release completion is defined in `tasks.md`. The concise
+[current architecture](../../../docs/architecture.md) distinguishes implementation,
+scenario execution, deployed artifacts and the user's actual phone.
 
-| Finding | Current implementation | Observed defect or architectural risk |
+| Finding | Baseline source | Observed defect or architectural risk |
 | --- | --- | --- |
 | 1 | `src/sync/enrollment.ts`, `src/app/identityPhoto.ts`, `src/chat/service.ts` | Enrollment had stripped photo; private Rusty settings had stayed device-local. Transfer paths require separately maintained schemas. |
 | 2 | `src/sync/deviceEnrollmentDelegation.ts`, Rusty `src/blind.rs::trusted_controller_device` | Same-person ownership differs from controller ancestry; old devices need certificate repair through a root-key holder. |
@@ -45,8 +48,9 @@ workspace/device rights guard those reads and their fallback. Native HTTP checks
 cover the production read adapter with source access unavailable. Normal replica
 push now discovers workspace file descriptors and schedules encrypted upload or
 cold-coverage confirmation. Existing files do not gain Rusty coverage merely
-from the reader. Service-credential migration, streaming, direct-session
-replacement and browser acceptance remain unfinished.
+from the reader. Credential transitions, bounded streaming and session recovery
+have source paths and named scenarios; their execution and rollout require the
+separate evidence defined in the acceptance map.
 
 Public board publication is a separate readable namespace served by Rusty. It is
 not a decryption path into private scopes. This diagram describes inspected source,
@@ -147,9 +151,7 @@ certificate verification through `VerifiedSigningContext`, immutable operations,
 exact-hash legacy values, supersession, conflict retention, explicit resolution,
 field-reference validation, forged signatures, equivocation and newer unsupported
 state. Current caps (512 operations, 512 legacy values, 1 MiB) are model input
-bounds, not the architecture's history/checkpoint policy. The latest full app
-aggregate predates the newest transfer-compatibility tests; a new aggregate is
-pending. The model is now embedded in `PersonalRootDocumentV1.profileState`, carried by the `profile-observations@3` transfer component and checked against its presentation shadow. Production name/photo save uses signed causal operations. Workspace shared-profile projection remains separate and must not mutate the private register; visible conflict-resolution acceptance remains unrun.
+bounds, not the architecture's history/checkpoint policy. The model is embedded in `PersonalRootDocumentV1.profileState`, carried by the `profile-observations@3` transfer component and checked against its presentation shadow. The name/photo save path uses signed causal operations. Workspace shared-profile projection remains separate and must not mutate the private register. The acceptance map identifies conflict-resolution scenarios.
 
 `saveIdentityName` now signs causal name/photo operations and commits both values,
 the personal-root projection and candidate `local_profile` under one
@@ -160,9 +162,8 @@ One preference event publishes only after commit. Five focused cases in
 race and no-op save; existing SDK rename/refresh and async root-planner cases are
 supporting evidence. The transfer compatibility tests verify the @3 state/shadow
 contract and native cold-photo test now uses the production photo writer.
-`e2e/identity-profile-conflicts.spec.ts` authors four combined-save/conflict/
-stale-draft scenarios, including pending-revision loading, but none has run. Visual
-conflict review and cross-device browser convergence remain unverified. Current
+`e2e/identity-profile-conflicts.spec.ts` covers combined-save, conflict and stale-draft
+scenarios, including pending-revision loading. Execution evidence is scenario-specific. Current
 activation preflight validates the local profile identity and its private signing
 key bytes before non-adoption writes; missing profile/key or a mismatch requires
 restore and cannot create a new profile as a side effect. The captured raw profile is also supplied as `expectedRaw` to SDK refresh, binding presentation publication to the exact bytes activation validated. Missing/malformed storage and a concurrent replacement fail closed; no new identity is generated. Eleven focused SDK presentation-refresh checks pass; four pre-existing findings remain in SDK index lint, so no clean index-lint result is claimed.
@@ -189,10 +190,9 @@ queue while source capture is unavailable. Because the referenced workspace is
 unknown, this demonstrates transfer and deferred retention, not shared projection.
 After the full app
 run, the final codec-alias refactor was followed by a 44-case focused four-file
-run. Browser acceptance, compatible old-reader behavior, causal global name/photo
-resolution and product recovery/diagnostics UI remain open; pending-reason data is
-not yet product diagnostics UI. These results do not complete Requirement 1 or the
-architecture gate.
+run. Those historical focused results do not establish compatible old-reader behavior,
+product diagnostics or the complete requirement. Current browser and release evidence
+must be read from the acceptance map and exact CI artifacts.
 
 Current working-tree evidence: `identityDeviceStateCodec` writes required
 `private-rusty-connections@3` and accepts `@2` only as legacy workspace state.
@@ -226,8 +226,8 @@ replacing its bytes. Thirteen focused tests are reported passing for roundtrip,
 conflict order, abort/retry, newer-state retention, privacy bounds and cross-tab
 CAS, including mutation of the original manifest identity during an awaited storage
 read. This is logic evidence, not proof of rollout to older deployed readers.
-Interrupted workspace-installation recovery, older approval migration and causal
-global name/photo resolution remain open.
+Workspace installation uses restartable recovery projections; approval migration
+and causal name/photo state have separate contracts and acceptance obligations.
 
 The optional carrier is `preservedExtensions`, schema
 `preserved-identity-components@1`, with `required: false` and a person-bound list
@@ -272,8 +272,8 @@ receive the retained key set before causal activation. Completion needs a fresh
 snapshot receipt; the completed journal remains immutable audit evidence. No data
 is deleted, no timestamp supplies authority and no conflicting key is discarded.
 Source implementations include the shared exact-source repository activation,
-controller forwarding and restart-visible recovery action. Authored logic, Worker
-receiver and UI scenarios remain unrun until the final verification gate.
+controller forwarding and restart-visible recovery action. Logic, Worker receiver
+and UI scenarios are mapped separately from production activation.
 
 Rusty's `scopeEnrollmentRetry@1` capability preserves the latest completed
 enrollment receipt and normalized request hash in the same atomic scope-policy
@@ -312,9 +312,9 @@ its exact storage key in their transaction; unrelated origins remain independent
 `replicaCredentialDrain.ts` is the maintenance exception: it binds the original
 resource and exact journal, then gives the shared engine only the saved outbox and
 upload/receipt ports. It has no capture, inventory, seal or admission path. These
-are source implementations with authored, unrun scenarios. Person revocation,
-receipt retention, all-scope atomic activation and product recovery orchestration
-are still required before this becomes an exposed device-removal operation.
+are preparation and drain components of the complete transition. Person revocation,
+receipt retention and all-scope activation remain mandatory conditions of the
+exposed device-removal operation, not optional consequences of a successful drain.
 
 Worker maintenance has separate signed `prepare-storage-rotation` and
 `rotate-storage` actions. Preparation pulls current authority, drains its exact
@@ -417,11 +417,10 @@ pending-policy status/retry after restart and global revocation cases. These are
 scoped implementation results, not full requirement or product proof.
 
 Current person revocation enforcement is implemented in the service and
-identity-replication client. Explicit migration UI, typed background state and
-certificate-stability cases are authored in the working tree and unrun. Global
-revocation UI, future content-key/token rotation, old-reader rollback compatibility
-and full browser acceptance remain open. This does not complete the architecture
-gate or approve release.
+identity-replication client. Explicit migration/revocation UI, typed background state,
+future credential rotation and certificate-stability cases have source paths and
+named scenarios. Their presence does not establish rollback compatibility or a
+production rollout; those require the separate final evidence.
 
 Separate `DeviceIdentityProof` from explicit `ScopeManagementCapability`.
 Certificate chains prove the caller's device belongs to the trusted person.
@@ -485,8 +484,8 @@ and pins, never local pending requests. Imported bundles validate completely bef
 one transaction; stale peer evidence cannot replace fresher local policy, same
 revision contradictions fail closed, and signed revocations persist even on the
 revoked device. Imported evidence must be confirmed by signed service status before
-being treated as current management authority. These contracts do not replace the
-separate complete identity-manifest and migration/recovery UI implementation.
+being treated as current management authority. These contracts complement the
+identity-manifest backup/restore flow; neither one alone proves board/file recovery.
 
 ## 3. Verified Signing Context
 
@@ -549,10 +548,9 @@ from the verified context rather than a device-ID-deduplicated certificate pool.
 Automation renewal verifies the previous contract under the historical owner
 derived from the fully admitted ownership chain. Only the current, non-revoked
 owner device may issue a replacement approval. Historical signature validity does
-not restore expired execution rights. This is partial producer migration;
-generic grants, legacy certificate repair, ownership/control transitions and
-remaining SDK/raw-key producers still require audit
-and migration before Requirement 3 is complete.
+not restore expired execution rights. The verified-context contract applies at each
+producer boundary; a passing renewal scenario cannot certify other SDK or raw-key
+callers. Producer coverage is an explicit acceptance obligation.
 
 ## 4. Transactional Private Preferences
 
@@ -565,11 +563,11 @@ discarding retained original legacy bytes. Identical credentials with divergent
 local cursors resume from the earliest cursor and reset a conflicting upload
 acknowledgment. Conflict summaries expose only origin, scope and affected subject
 metadata; the UI shows paused delivery without sending credential values into
-presentation. These source paths are implemented; final migration/race/browser
-acceptance remain unrun. Explicit conflict-recovery source now retains every
+presentation. Migration, races and browser behavior have separate acceptance
+scenarios. Explicit conflict-recovery source retains every
 same-epoch key and exact original outbox through the dedicated origin freeze,
 signed scope-policy CAS, shared activation and restart-visible Owner action.
-These source paths remain unverified until final execution.
+Their source presence does not establish an executed scenario or deployed behavior.
 
 Replace the registry/effective-config pair with one authoritative transactional
 record containing portable credential state, durable tombstones, version vector
@@ -726,8 +724,8 @@ is merged and a bounded current snapshot is flushed before status becomes
 then flushes the index before returning file bytes. Status and failure phase stay
 in the local profile/session controller; upload, missing-source, access,
 capacity, unsupported and unavailable states remain distinct. A native HTTP
-case passes through the production path before fresh-recipient download. Browser
-acceptance remains unfinished.
+case uses the product read adapter before fresh-recipient download. Named browser
+scenarios and their exact execution environments remain separate evidence.
 
 Current server code and Native HTTP tests implement this namespace, durable
 receipts, shared quota and checkpoint isolation. The first HTTP test reproduced
@@ -736,8 +734,8 @@ durable transfer/index repositories and snapshot preservation now have focused
 logic/IndexedDB/Workerd/native HTTP evidence. The product read adapter and current
 workspace-authority binding now have logic/native evidence below. Automatic file
 replication is wired to ordinary replica push and its local status surface is
-present. Service-credential migration, direct-session replacement, bounded
-direct-stream reads and final browser verification remain unfinished.
+present. Credential transitions, direct-session replacement and bounded stream reads
+have dedicated contracts and scenarios; a namespace test alone cannot certify them.
 
 ### Client codec, transfer journal and snapshot index
 
@@ -791,7 +789,7 @@ whole record at once.
 reexports it from `attachmentFileStream.ts` and awaits it with the detail/file
 chunks during the existing online idle preload, so an already-loaded client can
 attach a file after going offline. `e2e/attachments-offline.spec.ts` exercises this
-flow but is authored and syntax-checked only; browser execution remains unrun.
+flow. Its execution result must come from the named browser scenario, not syntax checks.
 When a corrupt legacy byte record exists, a verified streamed repair becomes the
 reader-visible record while preserving the original legacy bytes.
 
@@ -850,8 +848,8 @@ encryption context; uploads use the current connection's bearer tokens and polic
 Original request IDs, ciphertext and historical receipts stay unchanged. A partial
 preparation still requires source continuation; corruption or current-access loss
 cannot silently start a replacement. With no retained preparation, future uploads
-use only the active key. Selection and actual lost-reply/rotation scenarios are
-authored and unrun.
+use only the active key. Selection and lost-reply/rotation scenarios provide separate
+acceptance evidence for retaining the original prepared transfer.
 
 `attachmentRepository.ts` keeps the final transfer journal in one bounded
 256-KiB metadata record plus separate immutable ciphertext records.
@@ -929,9 +927,9 @@ revocation during delivery. Controller tests cover workspace/identity changes.
 The native HTTP case now additionally calls the production read adapter against
 Rusty with source callbacks unavailable, clears its encrypted cache and rejects a
 cold read after server revocation. These are non-browser results; the UI coverage
-presentation and automatic source-file replication are now wired, but browser
-acceptance, complete session replacement and unsafe key/token migration with a
-pending outbox remain open.
+presentation and automatic source-file replication are wired. Browser delivery,
+session replacement and rotation with a pending outbox require their own scenarios;
+none follows merely from a read-adapter pass.
 
 ### Writer compatibility before exposing file coverage
 
@@ -964,10 +962,10 @@ Changing keys or access tokens while an outbox is pending still requires explici
 migration and is refused by this path. Focused IndexedDB and native HTTP tests cover
 these transitions, including floor-1 to floor-2 and HTTP 426 for an old writer.
 
-This does not close the migration/release gate. Old-tab product messaging,
-coordinated rollout, deployed-reader compatibility and rollback evidence remain
-unverified. Existing snapshots, blob bytes and private journals must be preserved
-through any migration.
+A writer-transition check does not close the migration/release gate. Old-tab
+messaging, coordinated rollout, deployed-reader compatibility and rollback require
+separate evidence. Existing snapshots, blob bytes and private journals must survive
+any migration.
 
 The existing approved automation Worker is a separate compatibility boundary. Its
 replica binding includes the exact Rusty policy revision, and its upload path
@@ -1005,9 +1003,9 @@ adoption/removal; it cannot be silently skipped. Typed route capture reads only
 automation metadata from the admitted document, without cloning the full board.
 
 Focused browser-client, IndexedDB journal/orchestration and real Workerd/native
-HTTP checks cover these boundaries separately. A coordinated production cohort,
-old-tab compatibility and final browser acceptance remain unverified. No automatic
-grant renewal or weakened receipt verification is introduced by this transition.
+HTTP checks cover these boundaries separately. Coordinated production activation,
+old-tab compatibility and final browser scenarios need their own evidence. This
+transition does not renew grants or weaken receipt verification.
 
 Store private attachment bytes as authenticated encrypted chunks through Rusty,
 separate from document snapshots. Bind scope, key epoch, content purpose, chunk
@@ -1080,7 +1078,7 @@ files now pass 43 tests, covering normal paged reads, read timeout and a stream
 that opens after timeout.
 The authored `e2e/attachment-session-recovery.spec.ts` closes the live connection during a
 gated attachment read, then requires a new connection, complete preview/download
-and no partial cache publication; it remains browser-unrun. Focused native reset
+and no partial cache publication. Execution is recorded per browser and exact revision. Focused native reset
 tests pass 5/5, the complete Rust workspace test run passed before the layout-only
 inline-buffer change, and the SDK suite
 passes 35 files / 385 tests, including bounded read and mesh-blob coverage.
@@ -1092,9 +1090,9 @@ quality and combined app-size checks pass. Private JS is 234.60/239 kB, private 
 10.74/10.75 kB, public JS 61.07/235 kB, public CSS 10.6/10.6 kB, and transport
 WASM remains within its 2.3-MB cap. The proof-transfer lifecycle suite
 passes 43 tests across two files after three outer regressions first failed; it
-covers normal paged reads, pending-read timeout and late-open cleanup. Browser acceptance,
-credential/key migration, Requirement 7.5 and the full architecture release gate
-remain open.
+covers normal paged reads, pending-read timeout and late-open cleanup. Those focused
+counts are historical evidence, not completion of browser acceptance, credential
+migration or the architecture release gate.
 
 ## 8. Application Identity and Email Binding
 
@@ -1288,7 +1286,7 @@ component failure prevents release completion and produces an actionable recover
 record; it cannot cause a successful frontend-only release to be reported as all
 nine requirements deployed.
 
-### Release source status (unverified working tree)
+### Release implementation and evidence
 
 `scripts/release-cohort.mjs` seals exact file sets, independently declared component
 reader/writer support, SDK/source revisions and digest-addressed Rusty image plus
@@ -1309,12 +1307,13 @@ the running executable/artifact, SDK, provider version, reader floors and
 capabilities; final confirmation also hashes served frontend files. Interrupted
 attempts preserve the cohort/version journal and never clear application storage.
 
-`release/implementation-gate.json` deliberately remains false. Preparation and
-activation cannot proceed until all architecture implementation blocks close.
-The ssh-compose native adapter requires the actual existing host, project,
-service, origin, SSH key and known-host configuration; it overrides only the
-image digest and confirms retained mounts. That external configuration has not
-been established here. Exact-run/attempt archives retain all sealed component
+`release/implementation-gate.json` gates preparation on declared implementation
+completion. Even a true flag is not a green CI result or active-production proof.
+The native adapter uses the exact pinned existing Kamal configuration, SSH key and
+known hosts. It creates a cohort tag for the sealed digest, verifies the tag, then
+runs Kamal with `--skip-push`. The image must carry `service=mesh-lighthouse`;
+the releasing repository needs GitHub Actions Write access to the Rusty package.
+Host image/executable receipts and live capability checks still gate activation. Exact-run/attempt archives retain all sealed component
 bytes and provider UUIDs. The CI recovery workflow resumes an interrupted cohort,
 confirms uncertain stages before retry, stages only missing UUIDs and refuses
 stale recovery after another cohort activates. Compatible rollback selects a
@@ -1331,8 +1330,8 @@ from the active artifact. Incompatible reader/writer floors create a sticky
 verified-signing barrier while retaining local state and read/recovery access.
 The banner offers reload; its acknowledgement covers only that tab. Clients
 predating this monitor need reload and remain subject to native writer-floor
-enforcement. Source implementation and authored scenarios are not executed
-acceptance, production activation or evidence that a phone upgraded.
+enforcement. Source implementation and scenario definitions do not establish
+executed acceptance, production activation or a phone upgrade.
 
 ## 10. Typography and Readability
 
@@ -1354,14 +1353,13 @@ must not remove status or navigation information.
 
 ## Verification Strategy
 
-The latest user timing instruction controls: while source blocks remain open,
-author acceptance scenarios and tests without executing tests, checks or builds.
-Do not commit during that phase. After all source blocks close, run the focused
-logic, Rust policy, repository transaction, process/protocol and Worker runtime
-coverage plus required type/lint/build/size checks. Then run the authored isolated
-browser suite (Chromium and WebKit explicitly, including Linux WebKit), then the
-required CI suites and coordinated production release verification. Do not infer
-iPhone success solely from a mobile viewport in Chromium.
+Author acceptance scenarios before changing behavior and demonstrate logic regressions
+before their fixes. Complete implementation before final browser/release verification;
+repair observed failures without treating a prior pass as evidence for changed source.
+Documentation-only changes need structural/link checks, not artificial behavior tests.
+Final evidence distinguishes logic/protocol checks, Chromium/WebKit scenarios,
+compatible production activation and actual device behavior. In particular, a
+Chromium mobile viewport cannot establish that the user's iPhone recovered its data.
 
 Performance checks use deterministic operation counters and bounded-read evidence
 on equal visible state with 1k, 10k and 100k historical transitions. Record timing

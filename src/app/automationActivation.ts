@@ -1,4 +1,5 @@
 import type { useTincanban } from "../state"
+import * as Automerge from "@automerge/automerge/slim"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { AutomationWorkerIdentity, AutomationConfiguration } from "./automation"
 import { automationEntityId } from "../domain/automationLifecycle"
@@ -38,13 +39,20 @@ export async function exportApprovedAutomation(tincanban: ReturnType<typeof useT
   config = writerConfig
   await ensureCurrent()
   const doc = await tincanban.readWorkspaceDoc(config.workspaceId)
+  const capturedHeads = Automerge.getHeads(doc).sort().join(",")
+  const activeWorkspaceMatches = () => {
+    const active = tincanban.getActiveDoc()
+    return Boolean(active && active.id === doc.id && Automerge.getHeads(active).sort().join(",") === capturedHeads)
+  }
   const currentAuthority = async () => {
     await ensureCurrent()
-    if (tincanban.getActiveDoc() !== doc) throw new Error("Workspace changed during automation approval")
+    if (!activeWorkspaceMatches()) throw new Error("Workspace changed during automation approval")
     if (await workspaceRole(doc, profile) !== "owner") throw new Error("Only the current workspace owner can approve automation")
+    await ensureCurrent()
+    if (!activeWorkspaceMatches()) throw new Error("Workspace changed during automation approval")
     const evidence = await localWorkspaceAdmissionAuthority(doc, profile)
     await ensureCurrent()
-    if (tincanban.getActiveDoc() !== doc || evidence.authority.currentOwner.personId !== profile.identity.personId) {
+    if (!activeWorkspaceMatches() || evidence.authority.currentOwner.personId !== profile.identity.personId) {
       throw new Error("Workspace owner authority changed during automation approval")
     }
     return canonicalizeJson([evidence.fingerprint, evidence.authority.currentEpoch])

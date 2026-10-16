@@ -470,9 +470,11 @@ or 4 MiB per scope.
 - **Permissions:** owner/editor/visitor checks run at command and replication
   boundaries as well as in the UI. Revocation reaches offline peers when they
   reconnect; it cannot erase copies they already hold.
-- **Recovery:** ownership succession is a trusted-group feature, not Byzantine
-  consensus. tincanban has no complete account recovery or stolen-device recovery UI.
-  MetaMesh's recovery primitives alone do not supply that product flow.
+- **Recovery:** encrypted identity recovery and private workspace recovery are
+  separate flows with the scopes described above. Missing board/file copies cannot
+  be reconstructed from recovery words alone. Restoring identity does not itself
+  revoke a stolen device or rotate previously disclosed access. Ownership succession
+  is a trusted-group feature, not Byzantine consensus.
 - **Protocol updates:** refresh both peers when testing a new deployment.
 - **Security:** signed changes and device certificates are implemented; the system
   has not received an independent security audit or Signal-equivalent guarantees.
