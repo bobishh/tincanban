@@ -61,7 +61,7 @@ test('Given separately sealed artifacts, when preparing deploy, then require exa
   try {
     const artifacts = join(root, 'artifacts'); const output = join(root, 'deploy');
     mkdirSync(artifacts);
-    const files = { 'wrangler.json': Buffer.from(JSON.stringify({ main: 'entry.js', vars: {}, assets: { directory: './assets' } })), 'entry.js': Buffer.from('checked') };
+    const files = { 'wrangler.json': Buffer.from(JSON.stringify({ main: 'entry.js', vars: { RELEASE_SDK_SHA: 'd'.repeat(40) }, assets: { directory: './assets' } })), 'entry.js': Buffer.from('checked') };
     writeFileSync(join(artifacts, 'wrangler.json'), files['wrangler.json']);
     writeFileSync(join(artifacts, 'entry.js'), files['entry.js']);
     writeFileSync(join(artifacts, 'artifact.json'), JSON.stringify(sealArtifact({ component: 'frontend', sourceSha: 'a'.repeat(40),
@@ -70,6 +70,7 @@ test('Given separately sealed artifacts, when preparing deploy, then require exa
     const config = JSON.parse(readFileSync(join(output, 'wrangler.json'), 'utf8'));
     assert.equal(resolve(output, config.main), join(artifacts, 'entry.js'));
     assert.equal(resolve(output, config.assets.directory), join(artifacts, 'assets'));
+    assert.equal(config.vars.RELEASE_SDK_SHA, 'c'.repeat(40));
     assert.throws(() => prepareComponent('automation', artifacts, join(root, 'wrong'), 'a'.repeat(40), '123', '4'), /exact successful Verify run/);
     assert.throws(() => prepareComponent('frontend', artifacts, join(root, 'wrong-attempt'), 'a'.repeat(40), '123', '5'), /exact successful Verify run/);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -80,7 +81,7 @@ test('automation Wrangler module paths resolve back into the sealed bundle direc
   try {
     const artifacts = join(root, 'artifact'); const output = join(root, 'deploy');
     mkdirSync(join(artifacts, 'bundle'), { recursive: true });
-    const config = { main: 'bundle/index.js', base_dir: 'bundle', vars: {} };
+    const config = { main: 'bundle/index.js', base_dir: 'bundle', vars: { RELEASE_SDK_SHA: 'd'.repeat(40) } };
     const files = { 'wrangler.json': Buffer.from(JSON.stringify(config)), 'bundle/index.js': Buffer.from('checked worker') };
     writeFileSync(join(artifacts, 'wrangler.json'), files['wrangler.json']);
     writeFileSync(join(artifacts, 'bundle/index.js'), files['bundle/index.js']);
@@ -90,6 +91,7 @@ test('automation Wrangler module paths resolve back into the sealed bundle direc
     const prepared = JSON.parse(readFileSync(join(output, 'wrangler.json'), 'utf8'));
     assert.equal(resolve(output, prepared.main), join(artifacts, 'bundle/index.js'));
     assert.equal(resolve(output, prepared.base_dir), join(artifacts, 'bundle'));
+    assert.equal(prepared.vars.RELEASE_SDK_SHA, 'c'.repeat(40));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

@@ -30,6 +30,7 @@ jobs:
       VERIFIED_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTOMATION_TELEMETRY_TOKEN: ${{ secrets.AUTOMATION_TELEMETRY_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:

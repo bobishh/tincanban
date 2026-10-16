@@ -34,7 +34,7 @@ export function prepareComponent(component, artifactDirectory, outputDirectory, 
   if (config.assets) config.assets.directory = posix.join(artifactBase, config.assets.directory);
   if (config.base_dir) config.base_dir = posix.join(artifactBase, config.base_dir);
   const cohortId = component === 'frontend' ? frontendReleaseMetadata(artifact).cohortId : artifact.artifactSha256;
-  config.vars = { ...config.vars, RELEASE_SHA: artifact.sourceSha, RELEASE_COHORT_ID: cohortId,
+  config.vars = { ...config.vars, RELEASE_SHA: artifact.sourceSha, RELEASE_SDK_SHA: artifact.sdkSha, RELEASE_COHORT_ID: cohortId,
     RELEASE_ARTIFACT_SHA256: artifact.artifactSha256, RELEASE_READERS_JSON: JSON.stringify(artifact.readers),
     RELEASE_WRITER_VERSION: String(artifact.writerVersion) };
   if (component === 'frontend') config.vars.RELEASE_COHORT_JSON = JSON.stringify(frontendReleaseMetadata(artifact));
@@ -134,7 +134,7 @@ async function verifyOnce(expectedPath, versionId, fetcher) {
   const healthResponse = await fetcher(`${origin}/health`, { cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30000) });
   if (!healthResponse.ok) throw new Error(`Deployed ${component} health unavailable (${healthResponse.status})`);
   const health = await healthResponse.json();
-  if (!['ready', 'ok'].includes(health.status) || health.buildSha !== artifact.sourceSha ||
+  if (!['ready', 'ok'].includes(health.status) || health.buildSha !== artifact.sourceSha || health.sdkSha !== artifact.sdkSha ||
       health.artifactSha256 !== artifact.artifactSha256 || health.cohortId !== cohortId ||
       (versionId && health.versionId !== versionId) || health.writerVersion !== artifact.writerVersion ||
       canonical(health.readers) !== canonical(artifact.readers)) throw new Error(`Deployed ${component} differs from selected sealed artifact`);
