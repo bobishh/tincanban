@@ -529,7 +529,9 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
     const proof = structuredClone(value);
     const rawBody = structuredClone(bodyValue);
     const body = parseAutomationInstanceBody(action, rawBody);
-    return this.serializeMutation(async () => {
+    const operation = this.serializeMutation(() => withAutomationSpan(automationTelemetry(), "automation.instance.manage", {
+      "integration.id": this.ctx.id.name ?? "unknown", "automation.action": action,
+    }, async () => {
       const expected = { action, origin, workspaceId: body.workspaceId, definitionId: body.definitionId,
         integrationId: "integrationId" in body ? body.integrationId : null, executorPersonId: body.executorPersonId,
         bodyHash: await automationBodyHash(rawBody) };
@@ -632,7 +634,9 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       await guard();
       ledger.complete(payload.nonce, requestHash, encrypted);
       return response;
-    });
+    }));
+    flushAutomationTelemetryAfter(this.ctx, operation);
+    return operation;
   }
 
   private historyTransition(): { transition_id: string; storage_binding: string; source_heads: string } | undefined {

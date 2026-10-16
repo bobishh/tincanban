@@ -174,6 +174,32 @@ test("Given a legacy server or pending outbox, when scheduling compatibility, th
   } finally { f.close() }
 })
 
+test("Given optional Worker discovery fails before any writer intent, when post-sync maintenance runs, then ordinary legacy replication remains successful", async () => {
+  const f = await fixture()
+  try {
+    f.discoverWorkers.mockRejectedValueOnce(new Error("Module terminated"))
+    await expect(runtime.maintainWorkspaceReplicaWriter(f.app as never, f.config, () => {}, async () => {})).resolves.toBeUndefined()
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, f.config)).toBeUndefined()
+    expect(f.approval).not.toHaveBeenCalled()
+    expect(f.refreshWorkers).not.toHaveBeenCalled()
+  } finally { f.close() }
+})
+
+test("Given a durable writer intent, when post-sync maintenance sees it, then leave it for strict resolver resume", async () => {
+  const f = await fixture()
+  try {
+    f.approval.mockRejectedValueOnce(new Error("Reply lost after durable policy write"))
+    await expect(runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).rejects.toThrow("Reply lost")
+    const pending = await runtime.readReplicaWriterUpgrade(f.owner, f.config)
+    expect(pending).toBeDefined()
+    await expect(runtime.maintainWorkspaceReplicaWriter(f.app as never, f.config, () => {}, async () => {})).resolves.toBeUndefined()
+    f.discoverWorkers.mockRejectedValueOnce(new Error("Module terminated"))
+    await expect(runtime.ensureWorkspaceReplicaWriter(f.app as never, f.config, () => {})).rejects.toThrow("Module terminated")
+    expect(await runtime.readReplicaWriterUpgrade(f.owner, f.config)).toEqual(pending)
+    expect((await runtime.getReplicaConfigurations(f.owner))[0]).not.toHaveProperty("minimumWriterVersion")
+  } finally { f.close() }
+})
+
 test("Given a replaced service pin, when preparing compatibility, then reject before freezing or enrolling storage", async () => {
   const f = await fixture()
   try {

@@ -33,3 +33,22 @@ WASM instance. The initiating exception is not established by that message.
 The next Worker artifact captures restore/sync phases and flushes alarm diagnostics
 outside the business operation. Recent retained email status also shows a separate
 review outcome for missing original posting evidence; it is not an applied action.
+
+Production investigation, 2026-10-16 17:53 CEST: the live browser debugger
+captured `POST /v2/automation-instances/discover` returning HTTP 422 with
+`{"error":"Module terminated"}`. Its caller chain enters Worker discovery from
+`ensureWorkspaceReplicaWriter` before constructing the ordinary board replica.
+The same tab successfully synchronizes the identity profile through Rusty.
+Thus the board's `Unavailable` label is not evidence of a Rusty outage: an optional
+initial writer-policy migration currently propagates an automation error into
+board replication health. Separate ordinary replication under existing accepted
+policy from that maintenance pass; retain the strict resume barrier whenever a
+durable writer-transition intent exists. Source changes and focused regressions
+are pending CI; no production recovery is claimed. Historical Worker logs show
+repeated termination and separate HTTP 502 JSON failures, without establishing
+the initiating WASM exception.
+The pending Worker artifact also records management failures inside the Durable
+Object before the RPC boundary and flushes that operation's diagnostic records.
+
+- [ ] Release and verify independent ordinary board sync while automation discovery
+  fails, plus preserved barriers for already-started writer-policy transitions.

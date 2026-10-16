@@ -2,8 +2,9 @@ import type { Ref } from "vue"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import type { useTincanban } from "../state"
 import { canonicalizeJson } from "../domain/identity"
+import { meshTrace } from "./meshTrace"
 import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig, PrivateReplicaConflictSummary } from "./blindReplication"
-import type { ReplicaHealth } from "./replicationHealth"
+import { replicaKey, type ReplicaHealth } from "./replicationHealth"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 
 type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<IdentityReplicaConfig[]>;
@@ -15,6 +16,7 @@ type Session = { identity: () => string; epoch: () => number; disposed: () => bo
 /** Purpose-specific adapters share scheduling, while credentials and confirmation stay scoped. */
 export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>, state: State, session: Session) {
   const replicas = new Map<string, { binding: string; sync: () => Promise<boolean | void> }>()
+  const writerMaintenance = new Map<string, BlindReplicaConfig>()
   const personId = () => app.getCurrentProfile()?.identity.personId ?? ""
   const current = (owner: string, epoch: number) => !session.disposed() && session.identity() === owner && personId() === owner && session.epoch() === epoch
   const profileBinding = () => {
@@ -59,14 +61,29 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
     const owner = session.identity(), epoch = session.epoch(), guard = captureSession()
     guard()
     return import("./privateReplicaFactory").then(module => module.resolvePrivateReplica(app, config,
-      { owner, guard, configs: state.configs, cache: replicas, attachmentCoverage: state.attachmentCoverage, reload: () => reload(owner, epoch) }))
+      { owner, guard, configs: state.configs, cache: replicas, attachmentCoverage: state.attachmentCoverage,
+        reload: () => reload(owner, epoch), queueWriterMaintenance: value => writerMaintenance.set(replicaKey(value), structuredClone(value)) }))
+  }
+  async function runWriterMaintenance(owner: string, epoch: number) {
+    const queued = [...writerMaintenance.values()]
+    writerMaintenance.clear()
+    for (const config of queued) {
+      if (!current(owner, epoch)) return
+      const guard = captureSession(undefined, owner, epoch)
+      const { maintainWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
+      try { await maintainWorkspaceReplicaWriter(app, config, guard, () => reload(owner, epoch)) }
+      catch (error) {
+        meshTrace("workspace.replica.writer-maintenance.failed", { phase: "post-sync-pass", workspaceId: config.workspaceId,
+          "server.address": new URL(config.origin).host }, "warn", error)
+      }
+    }
   }
   async function provision(owner: string, epoch: number) {
     const guard = captureSession(undefined, owner, epoch)
     guard()
     return import("./privateReplicaFactory").then(module => module.provisionPrivateReplicas(app, state, guard, () => reload(owner, epoch)))
   }
-  return { personId, profileBinding, captureSession, reload, replica, provision, fetchAttachment,
-    clear: () => replicas.clear(), forget: (config: PrivateReplicaConfig, guard: () => void) => import("./privateReplicaFactory")
+  return { personId, profileBinding, captureSession, reload, replica, provision, fetchAttachment, runWriterMaintenance,
+    clear: () => { replicas.clear(); writerMaintenance.clear() }, forget: (config: PrivateReplicaConfig, guard: () => void) => import("./privateReplicaFactory")
       .then(module => { guard(); module.forgetPrivateReplica(config, state, replicas) }) }
 }

@@ -82,6 +82,8 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
           return config.removalPending ? revoke(config) : (await replica(config)).sync()
         }, isCurrent), "Board"))
       if (!isCurrent()) return
+      await runtime.runWriterMaintenance(owner, epoch)
+      if (!isCurrent()) return
       if (failures.length) error.value = failures.join("; ")
       else notice.value = "Configured encrypted replicas synchronized."
     }

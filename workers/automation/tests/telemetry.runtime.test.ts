@@ -31,7 +31,14 @@ describe("automation OpenTelemetry producers", () => {
       throw new Error("merge failed; Bearer do-not-export");
     }, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")).rejects.toThrow("merge failed");
     expect(propagatedTraceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");
-    await telemetry.flush();
+    const managementFailure = new WebAssembly.RuntimeError("management inspector trapped");
+    const managementOperation = withAutomationSpan(telemetry, "automation.instance.manage", {
+      "integration.id": "integration-test", "automation.action": "discover",
+    }, async () => { throw managementFailure; });
+    const pending: Promise<unknown>[] = [];
+    flushAutomationTelemetryAfter({ waitUntil: promise => pending.push(promise) }, managementOperation);
+    await expect(managementOperation).rejects.toBe(managementFailure);
+    await Promise.all(pending);
 
     const logs = requests.find(request => request.url.endsWith("/v1/logs"));
     const traces = requests.find(request => request.url.endsWith("/v1/traces"));
@@ -64,6 +71,13 @@ describe("automation OpenTelemetry producers", () => {
       expect.objectContaining({ key: "phase", value: { stringValue: "merge" } }),
       expect.objectContaining({ key: "exception.stacktrace", value: { stringValue: expect.stringContaining("merge failed") } }),
     ]));
+    const managementSpan = exportedSpans.find((candidate: { name: string }) => candidate.name === "automation.instance.manage");
+    expect(managementSpan?.status.code).toBe(2);
+    expect(managementSpan?.attributes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "automation.action", value: { stringValue: "discover" } }),
+      expect.objectContaining({ key: "exception.message", value: { stringValue: "management inspector trapped" } }),
+      expect.objectContaining({ key: "exception.stacktrace", value: { stringValue: expect.stringContaining("management inspector trapped") } }),
+    ]));
     vi.unstubAllGlobals();
   });
 
@@ -82,4 +96,5 @@ describe("automation OpenTelemetry producers", () => {
     await pending[0];
     expect(completed).toBe(true);
   });
+
 });

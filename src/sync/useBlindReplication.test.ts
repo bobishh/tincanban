@@ -16,6 +16,7 @@ const runtime = vi.hoisted(() => ({
   calls: [] as Array<{ purpose: string; config: unknown; profile?: LocalProfile; guard: () => void }>,
   identitySync: vi.fn(async () => true),
   workspaceSync: vi.fn(async () => true),
+  maintenance: vi.fn(async (_app: unknown, _config: BlindReplicaConfig, _guard: () => void, _reload: () => Promise<void>) => {}),
   provision: vi.fn(),
   migrate: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
   revokeIdentityDevice: vi.fn<(app: unknown, origin: string, deviceId: string, guard: () => void) => Promise<void>>().mockResolvedValue(undefined),
@@ -54,7 +55,8 @@ vi.mock("./rustyManagementClient", async original => ({
   readRustyManagementStatus: (...args: unknown[]) => runtime.readRustyStatus(...args),
 }))
 vi.mock("./rustyEnrollment", () => ({ approveRustyScope: runtime.scopeApproval }))
-vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runtime.writer }))
+vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runtime.writer,
+  maintainWorkspaceReplicaWriter: runtime.maintenance }))
 
 import { useBlindReplication } from "./useBlindReplication"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
@@ -64,6 +66,7 @@ afterEach(() => {
   runtime.calls.length = 0
   runtime.identitySync.mockReset().mockResolvedValue(true)
   runtime.workspaceSync.mockReset().mockResolvedValue(true)
+  runtime.maintenance.mockReset().mockResolvedValue(undefined)
   runtime.provision.mockReset()
   runtime.migrate.mockReset().mockResolvedValue(undefined)
   runtime.revokeIdentityDevice.mockReset().mockResolvedValue(undefined)
@@ -116,29 +119,38 @@ it("Given confirmed history completion, when background synchronization starts a
   expect(controller.historyNotices.value).toEqual({ [f.workspace.workspaceId]: message })
 })
 
-it("Given a legacy workspace connection, when normal sync confirms writer migration, then construct and display the replica with the new causal credentials", async () => {
+it("Given a legacy workspace connection, when post-sync maintenance confirms writer migration, then use the new causal credentials on the next sync", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)
-  runtime.writer.mockImplementationOnce(async (_app, config, guard) => {
+  runtime.maintenance.mockImplementationOnce(async (_app, config, guard, reload) => {
     guard()
     await setReplicaPreference(f.personId, { ...config, policyRevision: 2, minimumWriterVersion: 2 })
     guard()
-    return (await getReplicaConfigurations(f.personId))[0]!
+    await reload()
   })
   const controller = f.start()
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
-  expect(runtime.calls.find(call => call.purpose === "workspace")?.config).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
+  expect(runtime.calls.find(call => call.purpose === "workspace")?.config).toMatchObject(f.workspace)
   expect(controller.configs.value[0]).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
+  await controller.syncNow()
+  expect(runtime.calls.filter(call => call.purpose === "workspace").at(-1)?.config).toMatchObject({ policyRevision: 2, minimumWriterVersion: 2 })
 })
 
-it("Given an interrupted writer policy, when normal sync cannot confirm it, then expose the error and never run the old writer", async () => {
+it("Given optional writer maintenance fails after normal sync, then keep replica health synced and record contextual failure", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)
-  runtime.writer.mockRejectedValue(new Error("Writer policy transition pending: Rusty unavailable"))
+  runtime.maintenance.mockRejectedValue(new Error("Module terminated"))
+  const tracing = await import("./meshTrace")
+  const trace = vi.spyOn(tracing, "meshTrace")
   const controller = f.start()
-  await vi.waitFor(() => expect(controller.error.value).toContain("Writer policy transition pending"))
-  expect(runtime.workspaceSync).not.toHaveBeenCalled()
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await controller.syncNow()
+  expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
+  expect(controller.error.value).toBe("")
+  expect(trace).toHaveBeenCalledWith("workspace.replica.writer-maintenance.failed", expect.objectContaining({
+    phase: "post-sync-pass", workspaceId: f.workspace.workspaceId, "server.address": "rusty.example",
+  }), "warn", expect.any(Error))
 })
 
 it("Given an active workspace file request, then the controller supplies a live session guard to Rusty delivery", async () => {

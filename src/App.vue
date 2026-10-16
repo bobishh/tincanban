@@ -101,10 +101,7 @@ const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
 async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
-async function switchWorkspaceFromDirectory(workspaceId: string) {
-  await handleSwitchWorkspace(workspaceId)
-  boardAddress.navigateToActiveBoard()
-}
+async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
 
 const { saveSelectedLeadDocument, saveSelectedItemDocument } = useAppItemDocumentSave(app)
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
@@ -125,10 +122,7 @@ function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Pa
     ageLevel: age?.level, ageLabel: age?.label }
 }
 const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision } = useMemberAvatars(app.workspace)
-function saveProfile(draft: { name: string; avatarData?: string | null; revision?: string }) {
-  return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity,
-    { avatarData: draft.avatarData, expectedRevision: draft.revision })
-}
+function saveProfile(draft: { name: string; avatarData?: string | null; revision?: string }) { return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity, { avatarData: draft.avatarData, expectedRevision: draft.revision }) }
 </script>
 
 <template>

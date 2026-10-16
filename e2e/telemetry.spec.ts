@@ -70,7 +70,10 @@ for (const status of [202, 503]) {
     expect(encoded).not.toContain(browserKey)
     const submitted = records.find(record => body(record) === "chat.submit")!
     expect(attribute(submitted, "entity.id")).toBeTruthy()
-    expect(records.filter(record => body(record) === "chat.dom.updated" && attribute(record, "entity.id") === attribute(submitted, "entity.id"))).toHaveLength(1)
+    const domUpdates = records.filter(record => body(record) === "chat.dom.updated" && attribute(record, "entity.id") === attribute(submitted, "entity.id"))
+    // A 503 can retransmit the same OTLP record; distinct records still expose duplicate instrumentation.
+    expect(new Set(domUpdates.map(record => JSON.stringify(record))).size).toBe(1)
+    if (status === 202) expect(domUpdates).toHaveLength(1)
     expect(requests.every(url => url === endpoint || url === tracesEndpoint)).toBe(true)
     await chat.getByRole("button", { name: "Close", exact: true }).click()
     const dialog = await settings(page)

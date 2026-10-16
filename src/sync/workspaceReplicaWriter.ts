@@ -15,10 +15,13 @@ import { approveRustyScope } from "./rustyEnrollment"
 import { verifyRustyWriterPolicyReceipt } from "./rustyScopePolicy"
 import { workspaceSigningContext } from "./workspaceSigning"
 import { discoverWorkspaceReplicaWorkers, refreshWorkspaceReplicaWorkers } from "./workspaceReplicaWorkers"
+import { meshTrace } from "./meshTrace"
 import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 import type { LocalProfile } from "../domain/identity"
 
 type WriterApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
+const writerMaintenanceRetryAt = new Map<string, number>()
+const writerMaintenanceRetryMs = 60_000
 
 function assertUpgradeCredentials(owner: string, config: BlindReplicaConfig, upgrade?: ReplicaWriterUpgrade) {
   if (!upgrade) return
@@ -99,12 +102,47 @@ export async function ensureWorkspaceReplicaWriter(app: WriterApp,
         return authority
       }, authorityFingerprint: authorityValidationFingerprint, workspaceRole: (_captured, signer) => workspaceRole(doc, signer),
     })
-    return runWriterTransition(app, config, profile, upgrade, guardIdentity, async () => {
+    const guardOwner = async () => {
       guardIdentity()
       await assertSigningContextCurrent(context)
       guardIdentity()
-    })
+    }
+    return runWriterTransition(app, config, profile, upgrade, guardIdentity, guardOwner)
   })
+}
+
+/** Run compatibility as a post-sync maintenance pass; only durable intents may block a later sync. */
+export async function maintainWorkspaceReplicaWriter(app: WriterApp, config: BlindReplicaConfig,
+  ensureCurrent: () => void, reload: () => Promise<void>): Promise<void> {
+  if (config.minimumWriterVersion === 2) return
+  const owner = app.getCurrentProfile()?.identity.personId
+  if (!owner) return
+  const key = `${owner}:${config.origin}/${config.scopeId}`
+  try {
+    ensureCurrent()
+    const pending = await readReplicaWriterUpgrade(owner, config)
+    ensureCurrent()
+    if (pending) {
+      meshTrace("workspace.replica.writer-maintenance-blocked", {
+        phase: "pending-transition", workspaceId: config.workspaceId, "server.address": new URL(config.origin).host,
+      }, "warn")
+      return
+    }
+    if ((writerMaintenanceRetryAt.get(key) ?? 0) > Date.now()) return
+    writerMaintenanceRetryAt.set(key, Date.now() + writerMaintenanceRetryMs)
+    const updated = await ensureWorkspaceReplicaWriter(app, config, ensureCurrent)
+    ensureCurrent()
+    await reload()
+    if (updated.minimumWriterVersion === 2) writerMaintenanceRetryAt.delete(key)
+  } catch (error) {
+    try { ensureCurrent() } catch { return }
+    let pending = true
+    try { pending = Boolean(await readReplicaWriterUpgrade(owner, config)) } catch { /* uncertain barrier state must remain blocking */ }
+    meshTrace("workspace.replica.writer-maintenance.failed", {
+      phase: pending ? "pending-transition" : "post-sync-compatibility", workspaceId: config.workspaceId,
+      "server.address": new URL(config.origin).host,
+    }, "warn", error)
+  }
 }
 
 /** Capture dependent Writers before policy mutation; retained evidence makes lost maintenance replies retryable. */

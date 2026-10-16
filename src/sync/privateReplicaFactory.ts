@@ -10,7 +10,8 @@ import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
 type Session = { owner: string; guard: () => void; reload: () => Promise<void>;
-  configs: Ref<BlindReplicaConfig[]>; cache: Map<string, Replica>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>> }
+  configs: Ref<BlindReplicaConfig[]>; cache: Map<string, Replica>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>>;
+  queueWriterMaintenance?: (config: BlindReplicaConfig) => void }
 type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<IdentityReplicaConfig[]>; statuses: Ref<Record<string, ReplicaHealth>>;
   profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>;
   preferenceConflicts?: Ref<PrivateReplicaConflictSummary[]>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>> }
@@ -63,7 +64,8 @@ export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>
   const { owner, guard, configs, cache } = session
   config = JSON.parse(canonicalizeJson(config)) as PrivateReplicaConfig
   guard()
-  if (config.purpose !== "identity" && (config.minimumWriterVersion !== 2 || await readReplicaWriterUpgrade(owner, config))) {
+  const pendingWriterUpgrade = config.purpose !== "identity" ? await readReplicaWriterUpgrade(owner, config) : undefined
+  if (config.purpose !== "identity" && pendingWriterUpgrade) {
     const { ensureWorkspaceReplicaWriter } = await import("./workspaceReplicaWriter")
     guard()
     config = await ensureWorkspaceReplicaWriter(app, config, guard)
@@ -96,7 +98,11 @@ export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>
       })
     })
   guard()
-  const result: Replica = { binding, sync: () => implementation.sync() }
+  const result: Replica = { binding, sync: async () => {
+    const synced = await implementation.sync()
+    if (config.purpose !== "identity" && config.minimumWriterVersion !== 2) session.queueWriterMaintenance?.(config)
+    return synced
+  } }
   if (typeof implementation.pull === "function") {
     result.pull = async () => { guard(); const caughtUp = await implementation.pull(); guard(); return caughtUp }
   }

@@ -59,6 +59,7 @@ for (const exit of ["Dismiss", "Close", "Escape"]) {
     await page.goto("/")
     await ensureJobSearchWorkspace(page)
     const boardLabel = await page.locator(".workspace-heading").textContent()
+    const boardAddress = new URL(page.url())
     const invite = await page.evaluate(async () => {
       const state = (await import("/src/state.ts")).useTincanban()
       const profile = state.getCurrentProfile()
@@ -86,8 +87,9 @@ for (const exit of ["Dismiss", "Close", "Escape"]) {
     if (exit === "Escape") await page.keyboard.press("Escape")
     else await dialog.getByRole("button", { name: exit, exact: true }).click()
     await expect(dialog).toBeHidden()
-    await expect(page).toHaveURL(/\/\?view=board$/)
+    await expect(page).toHaveURL(url => url.pathname === boardAddress.pathname && url.search === "?view=board" && !url.hash)
     await page.reload()
+    await expect(page).toHaveURL(url => url.pathname === boardAddress.pathname && url.search === "?view=board" && !url.hash)
     await expect(page.locator(".workspace-heading")).toHaveText(boardLabel ?? "")
     await expect(dialog).toBeHidden()
   })
