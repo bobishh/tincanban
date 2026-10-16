@@ -44,7 +44,7 @@ describe("private classification endpoint", () => {
       }),
     });
 
-    await expect(handleClassificationRequest(request, workerEnv())).rejects.toThrow(/public HTTPS URL/);
+    await expect(handleClassificationRequest(request, workerEnv())).rejects.toThrow('Private job URL is not allowed');
   });
 });
 

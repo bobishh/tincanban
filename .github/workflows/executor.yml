@@ -31,6 +31,8 @@ jobs:
         run: echo "sdk_sha=$(git -C vendor/meta-mesh rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Verify executor deployment acceptance scenarios
         run: node --test services/executor/deploy.test.mjs services/executor/migrate.test.mjs
+      - name: Verify classic and sparse containerd image receipt fixtures
+        run: python3 -m unittest discover -s services/executor -p '*_test.py'
       - name: Build and verify the executor image once
         env:
           RELEASE_SHA: ${{ github.sha }}

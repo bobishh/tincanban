@@ -119,7 +119,7 @@ describe("Cloudflare executor migration fence", () => {
       if (url.pathname.endsWith("/status")) return Response.json({ status: "active", epoch: 14, manifestHash });
       if (url.pathname.endsWith("/rpc")) return Response.json({
         integrationId: "migration-lost-forward-response", control: "active", employeeProfile: { stack: "", work_profile: "" },
-        priorityBands: [], allowedSources: { website: true, email: true },
+        allowedSources: { website: true, email: true },
       });
       itemBodies.push(String(init?.body));
       return itemBodies.length === 1 ? Response.json({ error: "temporary outage" }, { status: 503 }) : Response.json({ status: "accepted" }, { status: 202 });

@@ -227,11 +227,10 @@ export class ExecutionCoordinator {
     allowedSources: { website: boolean; email: boolean };
   } | null> {
     return this.serializeMutation(async () => {
-      const registration = this.registration();
-      if (!registration) return null;
+      const integrationId = this.integrationScope();
       const replica = await this.refreshReplica();
       if (!replica) return null;
-      return { integrationId: registration.integration_id, control: replica.controlForRuntime().state,
+      return { integrationId, control: replica.controlForRuntime().state,
         definition: replica.definitionForRuntime(), employeeProfile: replica.employeeProfileForRuntime(),
         priorityBands: replica.priorityBandsForRuntime(),
         allowedSources: { website: replica.allowsSource("website"), email: replica.allowsSource("email") } };
@@ -252,6 +251,17 @@ export class ExecutionCoordinator {
   private registration() {
     return this.ctx.storage.sql.exec<{ owner_id: string; workspace_id: string; integration_id: string }>(
       "SELECT owner_id, workspace_id, integration_id FROM automation_registration WHERE singleton = 1").toArray()[0];
+  }
+
+  /** The Durable Object name is the integration scope; optional owner enrollment must agree with it. */
+  private integrationScope(): string {
+    const integrationId = this.ctx.id.name;
+    if (!integrationId) throw new Error("Automation instance has no integration identity");
+    const registration = this.registration();
+    if (registration && registration.integration_id !== integrationId) {
+      throw new Error("Automation registration does not match its instance identity");
+    }
+    return integrationId;
   }
 
   private assertOwnerRegistration(value: OwnerRegistration): void {
@@ -461,9 +471,7 @@ export class ExecutionCoordinator {
   /** Accept one authenticated producer result without opening the board or invoking classification. */
   enqueueItemCommand(value: unknown): Promise<EnqueueResult> {
     return this.serializeMutation(async () => {
-      const registration = this.registration();
-      if (!registration) throw new Error("Item commands require an enrolled integration");
-      const command = await prepareItemCommand(value, registration.integration_id);
+      const command = await prepareItemCommand(value, this.integrationScope());
       const secret = this.env.EVENT_STORAGE_SECRET;
       if (!secret) throw new Error("Event storage encryption is not configured");
       const encryptedEvent = await encryptEventPayload(secret, command.eventId, command.event);
@@ -504,7 +512,8 @@ export class ExecutionCoordinator {
   }
 
   getItemCommandResult(commandId: string, integrationId: string) {
-    if (this.registration()?.integration_id !== integrationId) return null;
+    try { if (this.integrationScope() !== integrationId) return null; }
+    catch { return null; }
     if (!this.findById(commandId)?.command_hash) return null;
     const command = this.getEvent(commandId);
     return command ? { ...command, commandId: command.eventId } : null;

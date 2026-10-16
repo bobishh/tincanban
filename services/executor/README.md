@@ -106,6 +106,8 @@ executor before recording its acknowledgement.
 
 ## Verification status
 
-The deployment and runtime acceptance scenarios are source-authored. This change
-has not yet been built, run in CI, migrated in production, or checked against a
-real received event. A source implementation is not production evidence.
+The packaged Node participant, persistence, HTTP and migration acceptance tests
+passed the executor image job in CI run `38939867314`. Activation failed while
+checking Docker 29's sparse image export; the receipt adapter correction still
+needs its next CI run. No production migration or real received-event result has
+been verified. Image checks alone do not establish that automation works.

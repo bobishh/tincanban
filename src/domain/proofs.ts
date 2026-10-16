@@ -19,7 +19,6 @@ import type { LocalProfile } from "./identity"
 import { signWithContext, type VerifiedSigningContext } from "./signingContext"
 import { readLocal, updateLocal } from "../localDb"
 export { certHashDefault, validateCertificateChain } from "./proofValidation"
-export type { ChainValidationOptions, ChainValidationResult } from "./proofValidation"
 
 export type StoredProofsV1 = {
   grants: WorkspaceGrant[]

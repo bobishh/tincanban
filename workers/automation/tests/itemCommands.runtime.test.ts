@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import { sha256Base64Url } from '../../../src/domain/identityCrypto';
 import { prepareItemCommand } from '../src/itemCommands.ts';
+import { parseWebsiteSubmission } from '../src/intake.ts';
 
 const opportunity = {
   relevance: 'yes',
@@ -30,6 +31,7 @@ const envelope = async () => {
     classification: { status: 'review', reason: 'Needs approval', source: { type: 'website', receivedAt: '2026-10-16T12:00:00.000Z' },
       decision: opportunity },
   };
+  value.event.submission = normalizeSubmission(value.event.submission);
   value.idempotencyKey = await sha256Base64Url(new TextEncoder().encode(JSON.stringify(value.event.submission)));
   return value;
 };
@@ -58,7 +60,8 @@ test('Given caller-supplied scores that disagree with CLEF probability evidence,
 });
 
 test('Given an owner-attention email with no decision, when normalized, then it remains a non-authoring review command', async () => {
-  const rawMime = btoa('From: jobs@example.com\r\nSubject: Confirm forwarding\r\n\r\nConfirm address');
+  const rawMime = btoa('From: jobs@example.com\r\nSubject: Confirm forwarding\r\n\r\nConfirm address')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
   const event = { source: 'email', receivedAt: '2026-10-16T12:00:00.000Z', rawMime,
     message: { messageId: null, inReplyTo: null, references: [], from: 'jobs@example.com', to: 'owner@example.com',
       subject: 'Confirm forwarding', text: 'Confirm address', date: null, urls: [], confirmation: true, attachments: [] } } as const;
@@ -73,6 +76,11 @@ test('Given an owner-attention email with no decision, when normalized, then it 
   assert.equal(prepared.classification.decision, undefined);
   assert.equal(prepared.classification.opportunity, undefined);
 });
+
+function normalizeSubmission(value: ReturnType<typeof parseWebsiteSubmission>) {
+  const { humanCheckToken: _token, humanCheckAnswer: _answer, ...submission } = parseWebsiteSubmission(value);
+  return submission;
+}
 
 test('Given a malformed present decision or an opportunity without its source decision, when normalized, then it is rejected', async () => {
   const malformed = await envelope();

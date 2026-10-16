@@ -33,17 +33,21 @@ import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from "../../../src/domain/applicationReviewData";
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
 import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
+import type { ExecutionCoordinator } from "../src/executionCoordinator";
 
 /** Test seams follow the shared executor; the real Durable Object still owns the public RPC surface. */
-function setExecutionFixture(instance: object, key: PropertyKey, value: unknown): void {
+function executionFixture(instance: object): ExecutionCoordinator {
   const execution = Reflect.get(instance, "execution");
   if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
+  return execution as ExecutionCoordinator;
+}
+function setExecutionFixture(instance: object, key: PropertyKey, value: unknown): void {
+  const execution = executionFixture(instance);
   Reflect.set(instance, key, value);
   Reflect.set(execution, key, value);
 }
 function loadedExecutionReplica(instance: object): { replica?: object } | undefined {
-  const execution = Reflect.get(instance, "execution");
-  if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
+  const execution = executionFixture(instance);
   return Reflect.get(execution, "loadedReplica") as { replica?: object } | undefined;
 }
 
@@ -180,8 +184,8 @@ it("Given a live Worker with a pending signed action, When its Owner refreshes c
   await runInDurableObject(stub, async instance => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
-      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
-        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+      inspector: await AutomationReplica.inspectForManagement((await executionFixture(instance).loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => executionFixture(instance).saveReplicaState(reviewStorageSecret, next), transport) }));
   });
   const signer = await receiptSigner();
   const policy = { kind: "rusty-scope-policy-receipt" as const, version: 1 as const, serviceId: signer.serviceId,
@@ -261,8 +265,8 @@ it.each([false, true])("Given an existing executor with legacy=%s, When Owner co
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "__tincanban_test_replica_transport__", transport);
     setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
-      inspector: await AutomationReplica.inspectForManagement(await instance.loadReplicaState(reviewStorageSecret) ?? initial,
-        data.automation, value => instance.saveReplicaState(reviewStorageSecret, value), transport) }));
+      inspector: await AutomationReplica.inspectForManagement(await executionFixture(instance).loadReplicaState(reviewStorageSecret) ?? initial,
+        data.automation, value => executionFixture(instance).saveReplicaState(reviewStorageSecret, value), transport) }));
     ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing) VALUES (1, ?, ?, ?, ?)",
       "obsolete-registration-owner", data.packet.workspaceId, integrationId, JSON.stringify(routing));
   });
@@ -367,8 +371,8 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
   await runInDurableObject(stub, async (instance, ctx) => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "refreshReplica", async () => replica);
-    expect(instance.getEvent(unboundEventId)?.status).toBe("pending");
-    expect(instance.getEvent(boundEventId)?.status).toBe("review");
+    expect((await instance.getEvent(unboundEventId))?.status).toBe("pending");
+    expect((await instance.getEvent(boundEventId))?.status).toBe("review");
     await ctx.storage.deleteAlarm();
   });
 });
@@ -605,7 +609,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
       setExecutionFixture(instance, "env", testEnv);
       setExecutionFixture(instance, "refreshReplica", async () => replica);
       await instance.alarm();
-      expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { decision: { event: "applied" } } });
+      expect((await instance.getEvent(eventId))).toMatchObject({ status: "review", result: { decision: { event: "applied" } } });
       await ctx.storage.deleteAlarm();
     });
 
@@ -660,7 +664,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     await runInDurableObject(stub, async (instance, ctx) => {
       setExecutionFixture(instance, "env", testEnv);
       setExecutionFixture(instance, "refreshReplica", async () => replica);
-      expect(instance.getEvent(eventId)?.status).toBe("pending");
+      expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       await ctx.storage.deleteAlarm();
     });
@@ -672,7 +676,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
       { ...retryRequest.signed.payload, bodyHash: changedNonceHash }, data.owner.device.deviceId) };
     expect((await postApplicationReview("retry", changedNonceRequest, changedNonceBody, testEnv)).status).toBe(409);
     await runInDurableObject(stub, async (instance, ctx) => {
-      expect(instance.getEvent(eventId)?.status).toBe("pending");
+      expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       await ctx.storage.deleteAlarm();
     });
@@ -757,7 +761,7 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
       ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id) VALUES (1, ?, ?, ?)",
         registration.ownerPersonId, registration.workspaceId, registration.integrationId);
       await expect(instance.retryEmail(registration, eventId)).rejects.toThrow(/signed application-binding retry/);
-      expect(instance.getEvent(eventId)?.status).toBe("review");
+      expect((await instance.getEvent(eventId))?.status).toBe("review");
       expect(await ctx.storage.getAlarm()).toBeNull();
       expect(replica.candidates().find(candidate => candidate.cardId === cardId)?.columnId).toBe(data.packet.bindings.columns.applied);
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
@@ -773,7 +777,7 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
       if (scenario === "deleted") {
         const control = vi.spyOn(replica, "controlForRuntime").mockReturnValue({ state: "deleted", heads: [] });
         try { await instance.alarm(); } finally { control.mockRestore(); }
-        expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { decision } });
+        expect((await instance.getEvent(eventId))).toMatchObject({ status: "review", result: { decision } });
         expect(replica.appliedForRuntime(eventId)).toBeUndefined();
         expect(readApplicationBindingAudit(ctx.storage, eventId).map(entry => entry.kind)).toEqual(["saved"]);
         expect(ai.run).not.toHaveBeenCalled();
@@ -786,7 +790,7 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
       });
       await instance.alarm();
       if (staleWorkflow) {
-        expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { decision } });
+        expect((await instance.getEvent(eventId))).toMatchObject({ status: "review", result: { decision } });
         expect(replica.appliedForRuntime(eventId)).toBeUndefined();
         expect(replica.candidates().find(candidate => candidate.cardId === cardId)?.columnId).toBe(data.packet.bindings.columns.interview);
         expect(readApplicationBindingAudit(ctx.storage, eventId).map(entry => entry.kind)).toEqual(["saved"]);
@@ -795,7 +799,7 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
         return;
       }
       if (lostReceipt) {
-        expect(instance.getEvent(eventId)).toMatchObject({ status: "pending", result: { decision } });
+        expect((await instance.getEvent(eventId))).toMatchObject({ status: "pending", result: { decision } });
         expect(readApplicationBindingAudit(ctx.storage, eventId).map(audit => audit.kind)).toEqual(["saved"]);
         const changeHash = replica.appliedForRuntime(eventId)?.changeHash;
         ctx.storage.sql.exec("UPDATE events SET next_attempt_at = 0 WHERE event_id = ?", eventId);
@@ -803,7 +807,7 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
         expect(replica.appliedForRuntime(eventId)?.changeHash).toBe(changeHash);
       }
       expect(ai.run).not.toHaveBeenCalled();
-      expect(instance.getEvent(eventId)).toMatchObject({ status: "applied", result: { decision, action: { cardId,
+      expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { decision, action: { cardId,
         columnId: data.packet.bindings.columns.rejected, bindingId: proof.signed.payload.bindingId } } });
       expect(replica.appliedForRuntime(eventId)?.changeHash).toMatch(/^[0-9a-f]{64}$/);
       const audit = readApplicationBindingAudit(ctx.storage, eventId);
@@ -1076,8 +1080,8 @@ it("Given a queued Worker on an older conflicting epoch, when owner prepares joi
   await runInDurableObject(stub, async instance => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
-      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
-        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+      inspector: await AutomationReplica.inspectForManagement((await executionFixture(instance).loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => executionFixture(instance).saveReplicaState(reviewStorageSecret, next), transport) }));
   });
 
   acceptUpload = true;
@@ -1099,7 +1103,7 @@ it("Given a queued Worker on an older conflicting epoch, when owner prepares joi
   expect(writes[0]).toEqual({ token: stored.blind.writeToken, object: oldPending.object, requestId: oldPending.requestId });
   expect(writes[1]).toEqual(writes[0]);
   await runInDurableObject(stub, async (instance, ctx) => {
-    expect(instance.getEvent("rotation-queued-work")).toBeNull();
+    expect((await instance.getEvent("rotation-queued-work"))).toBeNull();
     ctx.storage.sql.exec(`INSERT INTO events (event_id, source, source_id, body_hash, payload, status, created_at, updated_at, next_attempt_at)
       VALUES (?, 'website', ?, ?, 'encrypted-placeholder', 'pending', ?, ?, 0)`, "rotation-queued-work", "rotation-queued-work",
       "B".repeat(43), Date.now(), Date.now());
@@ -1149,7 +1153,7 @@ it("Given a queued Worker on an older conflicting epoch, when owner prepares joi
   expect(after.replication.generation).toBe(JSON.parse(preparedBytes).replication.generation + 1);
   expect(after.replication.uploadedRevision).toBeUndefined();
   await runInDurableObject(stub, async (instance, ctx) => {
-    expect(instance.getEvent("rotation-queued-work")?.status).toBe("pending");
+    expect((await instance.getEvent("rotation-queued-work"))?.status).toBe("pending");
     expect(ctx.storage.sql.exec("SELECT singleton FROM automation_storage_transition WHERE singleton = 1").toArray()).toHaveLength(0);
     expect(ctx.storage.sql.exec("SELECT transition_id FROM automation_storage_transition_completed WHERE singleton = 1").one())
       .toEqual({ transition_id: transitionId });
@@ -1189,8 +1193,8 @@ it("Given a prepared frozen Worker, when receipt or current Owner proof is inval
   await runInDurableObject(stub, async instance => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
-      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
-        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+      inspector: await AutomationReplica.inspectForManagement((await executionFixture(instance).loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => executionFixture(instance).saveReplicaState(reviewStorageSecret, next), transport) }));
   });
   const prior = JSON.parse(replica.serialize());
   const transitionId = crypto.randomUUID();
@@ -1986,9 +1990,9 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
     setExecutionFixture(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
     await instance.alarm();
     if (existing === 0) {
-      expect(instance.getEvent(eventId)).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
+      expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
     } else {
-      expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { reason: "Original posting evidence is missing or unavailable; choose an application" } });
+      expect((await instance.getEvent(eventId))).toMatchObject({ status: "review", result: { reason: "Original posting evidence is missing or unavailable; choose an application" } });
     }
     await ctx.storage.deleteAlarm();
   });
@@ -2011,7 +2015,7 @@ it.each([false, true])("Given an overdue alarm and website=%s intake, when new w
     const input = { eventId: "new-work", sourceId: "new-work", bodyHash: "hash", payload: "pending-payload" };
     if (website) await instance.enqueueWebsite({ ...input, nonce: "nonce", challengeExpiresAt: Date.now() + 60_000 });
     else await instance.enqueueEmail(input);
-    expect(instance.getEvent(input.eventId)?.status).toBe("pending");
+    expect((await instance.getEvent(input.eventId))?.status).toBe("pending");
     expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
     await ctx.storage.deleteAlarm();
   });
@@ -2042,7 +2046,7 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
       expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
       await instance.enqueueEmail({ eventId: "paused-event", sourceId: "paused-event", bodyHash: "hash", payload: "unused-on-pause" });
       await instance.alarm();
-      expect(instance.getEvent("paused-event")?.status).toBe("pending");
+      expect((await instance.getEvent("paused-event"))?.status).toBe("pending");
       const row = ctx.storage.sql.exec<{ attempt: number }>("SELECT attempt FROM events WHERE event_id = 'paused-event'").one();
       expect(row.attempt).toBe(0);
       expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
@@ -2770,8 +2774,8 @@ it("Given a prepared history freeze, when retried or another transition arrives,
   await runInDurableObject(stub, async instance => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
-      inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
-        data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
+      inspector: await AutomationReplica.inspectForManagement((await executionFixture(instance).loadReplicaState(reviewStorageSecret))!,
+        data.automation, next => executionFixture(instance).saveReplicaState(reviewStorageSecret, next), transport) }));
   });
   const genesis = await signEnvelope(data.owner.privateKeys.devicePrivateKey, { kind: "scope-genesis", version: 1,
     scopeId: data.packet.workspaceId, creator: { personId: data.owner.identity.personId, publicKey: data.owner.identity.publicKey,

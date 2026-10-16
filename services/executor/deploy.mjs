@@ -163,7 +163,7 @@ async function deploy(output, sourceSha, sdkSha) {
   const handoff = action => JSON.parse(ssh(`python3 - ${quoted(action)} ${quoted(handoffId)}`, readFileSync(join(directory, 'storageHandoff.py'), 'utf8')).trim().split('\n').at(-1));
   const verifyImage = () => {
     const name = `tincanban-executor-web-${version}`;
-    const receipt = JSON.parse(ssh(`python3 - ${quoted(name)} ${quoted(artifact.imageId)}`, readFileSync(join(directory, 'imageReceipt.py'), 'utf8')).trim().split('\n').at(-1));
+    const receipt = JSON.parse(ssh(`python3 - ${quoted(name)} ${quoted(artifact.imageId)} ${quoted(image.slice(image.lastIndexOf('@') + 1))}`, readFileSync(join(directory, 'imageReceipt.py'), 'utf8')).trim().split('\n').at(-1));
     return assertExecutorImageReceipt(receipt, artifact, image);
   };
   try {
