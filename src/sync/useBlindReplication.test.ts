@@ -16,7 +16,7 @@ const runtime = vi.hoisted(() => ({
   calls: [] as Array<{ purpose: string; config: unknown; profile?: LocalProfile; guard: () => void }>,
   identitySync: vi.fn(async () => true),
   workspaceSync: vi.fn(async () => true),
-  maintenance: vi.fn(async (_app: unknown, _config: BlindReplicaConfig, _guard: () => void, _reload: () => Promise<void>) => {}),
+  maintenance: vi.fn<(app: unknown, config: BlindReplicaConfig, guard: () => void, reload: () => Promise<void>) => Promise<void>>().mockResolvedValue(undefined),
   provision: vi.fn(),
   migrate: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
   revokeIdentityDevice: vi.fn<(app: unknown, origin: string, deviceId: string, guard: () => void) => Promise<void>>().mockResolvedValue(undefined),
