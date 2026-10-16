@@ -1,6 +1,6 @@
 import * as admissionClient from "./workspaceAdmissionClient"
 import { hasEntityKind } from "../domain/model"
-import { readFile, writeFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber/mesh-workspace"
@@ -17,7 +17,6 @@ import { reconcileOwnerRevocationBoundaries } from "./ownerRevocationBoundaryRep
 import { recordHistoricalGenesis as recordGenesisAuthority, prepareHistoricalAuthorizations as prepareLocalChangeAuthorizations } from "./workspaceSigning.testSupport"
 import { assertWorkspaceTransition } from "../domain/permissions"
 import { isItem, type WorkspaceDocumentV2 } from "../domain/model"
-import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { resolveSigningContext } from "../domain/signingContext"
 
 type TestCatalog = {
@@ -285,58 +284,6 @@ it("checks a signed item edit without materializing unrelated whole-document his
   expect(views.mock.calls.length).toBe(2)
 })
 
-it.runIf(process.env.TINCANBAN_PROOF_BENCHMARK === "1")("benchmarks complete TS/WASM admission and one delta on deterministic signed histories", async () => {
-  const timings: unknown[] = []
-  for (const count of [100, 1000, 20_001]) {
-    let doc = Automerge.from(createWorkspaceDoc(`proof-benchmark-${count}`, "Proof benchmark", owner.identity.personId, "blank"))
-    const records: unknown[] = []
-    for (let index = 0; index < count; index++) {
-      if (index) {
-        doc = Automerge.change(doc, draft => { draft.title = `Proof benchmark ${index}` })
-      }
-      const change = Automerge.decodeChange(Automerge.getLastLocalChange(doc)!)
-      const signed = await signEnvelope(owner.privateKeys.devicePrivateKey, {
-        kind: "workspace-changes" as const, version: 1 as const, workspaceId: doc.id,
-        personId: owner.identity.personId, deviceId: owner.device.deviceId, hashes: [change.hash],
-      }, owner.device.deviceId)
-      records.push({ signed, publicKey: owner.identity.publicKey, certificates: [owner.certificate] })
-    }
-    const legacy = authorizationBundle(doc, records)
-    if (count > 20_000) await expect(validateIncomingChangeAuthorizations(undefined, doc, legacy)).rejects.toThrow(/size limit/)
-    const pages: unknown[][] = [[]]
-    let pageBytes = 2
-    for (const record of records) {
-      const recordBytes = new TextEncoder().encode(JSON.stringify(record)).length
-      if (pageBytes + recordBytes + 1 > 200 * 1024) { pages.push([]); pageBytes = 2 }
-      pages.at(-1)!.push(record)
-      pageBytes += recordBytes + 1
-    }
-    const bundle = { version: 2, authority: legacy.authority, pages }
-    const sourceStarted = performance.now()
-    const manifest = meshRustRuntime().state.authorizationExport(Automerge.save(doc), legacy)
-    const sourceExportMs = performance.now() - sourceStarted
-    expect(manifest).toHaveProperty("kind", "workspace-authorization-manifest")
-    const started = performance.now()
-    expect(await validateIncomingChangeAuthorizations(undefined, doc, bundle)).toHaveLength(count)
-    const fullAdmissionMs = performance.now() - started
-    const remote = Automerge.change(Automerge.clone(doc), draft => { draft.title = "New delta" })
-    const hash = Automerge.decodeChange(Automerge.getLastLocalChange(remote)!).hash
-    const signed = await signEnvelope(owner.privateKeys.devicePrivateKey, {
-      kind: "workspace-changes" as const, version: 1 as const, workspaceId: doc.id,
-      personId: owner.identity.personId, deviceId: owner.device.deviceId, hashes: [hash],
-    }, owner.device.deviceId)
-    const deltaStarted = performance.now()
-    expect(await validateIncomingChangeAuthorizations(doc, remote, { version: 2, authority: legacy.authority,
-      pages: [[{ signed, publicKey: owner.identity.publicKey, certificates: [owner.certificate] }]] })).toHaveLength(1)
-    timings.push({ history: count, proofs: count, aggregateBytes: new TextEncoder().encode(JSON.stringify(legacy)).length,
-      pages: pages.length, sourceExportMs, fullAdmissionMs, deltaHistory: count + 1, deltaProofs: 1,
-      deltaAdmissionMs: performance.now() - deltaStarted })
-    Automerge.free(remote)
-    Automerge.free(doc)
-  }
-  console.info("proof_admission_benchmark", JSON.stringify(timings))
-  await writeFile("/tmp/tincanban-proof-admission-benchmark.json", JSON.stringify(timings, null, 2))
-}, 180_000)
 it("rejects visitor writes even with a valid device signature and owner-issued visitor grant", async () => {
   const { local, remote, record } = await fixture((_, parentId) => ({ kind: "createItem", parentId, title: "Forbidden" }), "visitor")
   const admission = await evaluateIncomingWorkspaceAdmission(local, remote, authorizationBundle(local, [record]))

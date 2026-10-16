@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-test("Given a job-search board, when archive opens and closes at four widths, then columns retain geometry and archive styling", async ({ page }) => {
+test("Given a job-search board, when archive opens with Enter and closes at four widths, then columns retain geometry", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
@@ -29,7 +29,9 @@ test("Given a job-search board, when archive opens and closes at four widths, th
     await test.step(`${width}px: expand, inspect, and collapse archive`, async () => {
       await page.setViewportSize({ width, height: 900 })
       await expectSingleRow()
-      await archive.getByRole("button", { name: "Open archive with 0 cards" }).click()
+      const openArchive = archive.getByRole("button", { name: "Open archive with 0 cards" })
+      await openArchive.focus()
+      await page.keyboard.press("Enter")
       await expect(archive.getByText("No leads")).toBeVisible()
       await expect(archive.locator('.column-header')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
       await expect(archive.locator('.column-header')).toHaveCSS('color', 'rgb(23, 23, 23)')

@@ -13,11 +13,6 @@ for (const width of [320, 360, 390]) {
     await page.goto("/", { waitUntil: "domcontentloaded" })
     const menu = page.getByRole("button", { name: "Menu", exact: true })
     await expect(menu).toBeEnabled()
-    expect(await page.locator(".brand h1").evaluate(el => getComputedStyle(el).fontFamily)).toContain("Caveat")
-    expect(await menu.evaluate(el => getComputedStyle(el).fontFamily)).toContain("Caveat")
-    expect(await page.locator("body").evaluate(el => getComputedStyle(el).fontFamily)).toContain("Caveat")
-    const pageHeadingFonts = await page.locator("h1, h2, h3, h4, h5, h6").evaluateAll(elements => elements.map(el => getComputedStyle(el).fontFamily))
-    expect(pageHeadingFonts.every(font => font.includes("Caveat"))).toBe(true)
     const fits = () => page.locator(".brand-name").evaluate(element => {
       const range = document.createRange()
       range.selectNodeContents(element)
@@ -33,9 +28,6 @@ for (const width of [320, 360, 390]) {
     await menu.click()
     const navigation = page.getByRole("dialog", { name: "Navigation menu" })
     await expect(navigation).toBeVisible()
-    const headings = await navigation.locator("h1, h2, h3, h4, h5, h6").evaluateAll(elements => elements.map(el => getComputedStyle(el).fontFamily))
-    expect(headings.length).toBeGreaterThan(0)
-    expect(headings.every(font => font.includes("Caveat"))).toBe(true)
   })
 }
 

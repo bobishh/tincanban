@@ -146,33 +146,19 @@ jobs:
           retention-days: 3
 
   browser-network:
-    name: Browser (${{ matrix.project }})
-    # Independent runners own independent identities and browser processes.
+    name: Browser (network ${{ matrix.group }})
     runs-on: ubuntu-24.04
-    # Twenty serial durable scenarios take seven minutes locally, before CI
-    # setup and the single retry. Keep individual test deadlines unchanged.
-    timeout-minutes: ${{ matrix.project == 'durable-mesh' && 20 || 10 }}
+    timeout-minutes: ${{ matrix.group == 'durable' && 20 || 25 }}
     strategy:
-      # Collect all project results even after one fails.
       fail-fast: false
-      # Bound service traffic without serializing every isolated project.
-      max-parallel: 3
       matrix:
-        project:
-          - scoped-delegated-owner
-          - chat
-          - durable-mesh
-          - member-access
-          - sync
-          - workspace-roles
-          - workspace-sync-data
-          - workspace-schema-migration
-          - scoped-sync
-          - scoped-enrollment
-          - scoped-existing-board
-          - scoped-existing-identity
-          - succession-named
-          - succession-quorum
+        include:
+          - group: durable
+            projects: durable-mesh
+          - group: replication
+            projects: chat sync workspace-sync-data workspace-schema-migration scoped-sync scoped-enrollment
+          - group: authority
+            projects: scoped-delegated-owner member-access workspace-roles scoped-existing-board scoped-existing-identity succession-named succession-quorum
     steps:
       - uses: actions/checkout@v7
         with:
@@ -186,17 +172,23 @@ jobs:
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium
-      - name: Verify isolated network scenario
+      - name: Verify network projects in separate browser processes
+        env:
+          PROJECTS: ${{ matrix.projects }}
         run: |
-          if [ "${{ matrix.project }}" = chat ]; then
-            npx playwright test --reporter=list --config=playwright.telemetry.config.ts --grep 'Given paired workspaces'
-          else
-            npx playwright test --reporter=list --project=${{ matrix.project }}
-          fi
+          status=0
+          for project in $PROJECTS; do
+            if [ "$project" = chat ]; then
+              npx playwright test --reporter=list --config=playwright.telemetry.config.ts --grep 'Given paired workspaces' --output="test-results/$project" || status=1
+            else
+              npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
+            fi
+          done
+          exit "$status"
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: browser-network-${{ matrix.project }}-failure
+          name: browser-network-${{ matrix.group }}-failure
           path: test-results/
           retention-days: 3
 
@@ -305,7 +297,7 @@ jobs:
         run: npm run test:rusty-management
 
   automation-worker:
-    name: Automation (runtime and owner lifecycle)
+    name: Automation (intake, executor and owner lifecycle)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -320,7 +312,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - uses: dtolnay/rust-toolchain@stable
@@ -344,6 +336,11 @@ jobs:
           npm run check
           npm test
           npm run build -- --outdir .artifact
+      - name: Verify current Node executor runtime
+        run: |
+          node --test services/executor/deploy.test.mjs services/executor/migrate.test.mjs
+          node services/executor/build.mjs
+          node services/executor/dist/run-tests.mjs
       - name: Capture the checked immutable Worker bundle
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
@@ -391,21 +388,22 @@ jobs:
           retention-days: 3
 
   browser-archives:
-    name: Browser (archives and attachments ${{ matrix.project }})
-    # WebKitGTK lacks the WebRTC bootstrap used by real device enrollment.
-    # Keep cross-device WebKit assertions on macOS; Linux still runs UI WebKit.
-    runs-on: ${{ endsWith(matrix.project, '-webkit') && 'macos-latest' || 'ubuntu-24.04' }}
-    timeout-minutes: 20
+    name: Browser (archives and attachments ${{ matrix.group }})
+    # Cross-device WebKit needs macOS WebRTC; build Rusty once per platform.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 2
       matrix:
-        project:
-          - attachments-rusty
-          - attachments-rusty-webkit
-          - attachment-session-recovery
-          - attachment-session-recovery-webkit
-          - complete-device-state
+        include:
+          - group: chromium
+            os: ubuntu-24.04
+            browser: chromium
+            projects: attachments-rusty attachment-session-recovery complete-device-state
+          - group: webkit
+            os: macos-latest
+            browser: webkit
+            projects: attachments-rusty-webkit attachment-session-recovery-webkit
     steps:
       - uses: actions/checkout@v7
         with:
@@ -433,14 +431,20 @@ jobs:
       - name: Use Ubuntu primary archive mirror for browser dependencies
         if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
       - name: Verify archive recovery and attachment lifecycle
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
-        run: npx playwright test --reporter=list --project=${{ matrix.project }}
+          PROJECTS: ${{ matrix.projects }}
+        run: |
+          status=0
+          for project in $PROJECTS; do
+            npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
+          done
+          exit "$status"
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: archives-${{ matrix.project }}-failure
+          name: archives-${{ matrix.group }}-failure
           path: test-results/
           retention-days: 3
