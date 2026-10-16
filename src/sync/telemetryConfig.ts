@@ -1,4 +1,4 @@
-export type TelemetryConfig = { enabled: boolean; endpoint: string; logsEndpoint: string; tracesEndpoint: string; project: string; browserKey?: string; level: "all" | "errors"; sampleRate: number; batchSize?: number }
+export type TelemetryConfig = { enabled: boolean; endpoint: string; analyticsEndpoint?: string; logsEndpoint: string; tracesEndpoint: string; project: string; browserKey?: string; level: "all" | "errors"; sampleRate: number; batchSize?: number }
 const TELEMETRY_CONFIG_KEY = "tincanban.telemetry.v2"
 const listeners = new Set<() => void>()
 function validEndpoint(endpoint: string): boolean {
@@ -36,6 +36,10 @@ function validBrowserKey(value: TelemetryConfig): boolean {
 function configuredEndpoint(legacyEndpoint: string, explicitEndpoint: string): string {
   return explicitEndpoint || legacyEndpoint
 }
+function analyticsEndpoint(legacyEndpoint: string, endpoint: string): string {
+  if (validEndpoint(legacyEndpoint)) return legacyEndpoint
+  return validEndpoint(endpoint) ? new URL("/events", endpoint).href : ""
+}
 function validateTelemetryConfig(value: TelemetryConfig): string {
   if (typeof value.enabled !== "boolean" || !["all", "errors"].includes(value.level)) return "Invalid diagnostic settings."
   if (!validCollectionLimits(value)) return "Sample rate must be 0–100%, and batch size 1–50."
@@ -54,6 +58,7 @@ function deploymentConfig(): TelemetryConfig {
   const project = String(env.VITE_SYNC_TELEMETRY_PROJECT || "tincanban").trim()
   const browserKey = String(env.VITE_SYNC_TELEMETRY_BROWSER_KEY || "").trim()
   const value: TelemetryConfig = { enabled: !!endpoint && !!browserKey && !!otlp, endpoint,
+    analyticsEndpoint: analyticsEndpoint(legacyEndpoint, endpoint),
     logsEndpoint: otlp?.logsEndpoint ?? "", tracesEndpoint: otlp?.tracesEndpoint ?? "", project, browserKey,
     level: (env.VITE_SYNC_TELEMETRY_LEVEL || "all") as TelemetryConfig["level"],
     sampleRate: Number(env.VITE_SYNC_TELEMETRY_SAMPLE_RATE || "1"), batchSize: Number(env.VITE_SYNC_TELEMETRY_BATCH_SIZE || "50") }

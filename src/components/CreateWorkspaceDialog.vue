@@ -89,7 +89,7 @@ async function handleCreate() {
 <style scoped>
 .workspace-create-dialog { display: flex; flex-direction: column; overflow: hidden; }
 .workspace-create-dialog form { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-.workspace-create-content { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.workspace-create-content { padding: var(--focus-room); flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .workspace-create-actions { flex: 0 0 auto; margin-top: 0; padding-top: var(--space-4); border-top: 2px solid var(--line); }
 .workspace-customize { display: grid; gap: var(--space-3); }
 .workspace-customize-toggle { display: flex; width: 100%; min-width: 0; min-height: 54px; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 2px solid var(--line); text-align: left; }

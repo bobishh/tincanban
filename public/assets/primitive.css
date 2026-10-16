@@ -93,7 +93,7 @@ input[type="radio"],
 }
 
 :where(button:not(.button):not(.icon-button)) {
-  --ink-focus: url("/assets/ink-focus-0.svg?v=1#transparent");
+  --ink-focus: url("/assets/ink-focus-0.svg?v=3#transparent");
 }
 
 /* Fill and stroke share one silhouette. Paint stays flat, with no offscreen
@@ -135,11 +135,11 @@ input:not([type="checkbox"]):not([type="radio"]),
 select,
 textarea) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#white");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#white");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#white");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#white");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#white");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#white");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#white");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#white");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#white");
 }
 
 :where(.dialog,
@@ -151,51 +151,51 @@ textarea) {
 .keeper-card,
 .login-card) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#panel");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#panel");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#panel");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#panel");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#panel");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#panel");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#panel");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#panel");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#panel");
 }
 
 /* Linked messages share the drawer's quiet paper highlight. */
 :where(.drawer-header, .chat-message-item.is-linked-message) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#soft");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#soft");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#soft");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#soft");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#soft");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#soft");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#soft");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#soft");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#soft");
 }
 
 :where(.button-primary,
 .notice,
 .status-strip button.active) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#ink");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#ink");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#ink");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#ink");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#ink");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#ink");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#ink");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#ink");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#ink");
 }
 
 .button-danger {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#danger");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#danger");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#danger");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#danger");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#danger");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#danger");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#danger");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#danger");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#danger");
 }
 
 .notice-error,
 .icon-button:hover {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#red");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#red");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#red");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#red");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#red");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#red");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#red");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#red");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#red");
 }
 
 .workspace-item-active,
@@ -203,11 +203,11 @@ textarea) {
 .workspace-customize-toggle,
 .document-preview-message {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#soft");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#soft");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#soft");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#soft");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#soft");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#soft");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#soft");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#soft");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#soft");
 }
 
 .template-item:hover,
@@ -218,47 +218,47 @@ textarea) {
 .keeper-code,
 .sync-checkbox-item:has(input:checked) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#yellow");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#yellow");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#yellow");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#yellow");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#yellow");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#yellow");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#yellow");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#yellow");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#yellow");
 }
 
 .lead-card.card-aging-watch {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=2#watch");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=2#watch");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#watch");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=2#watch");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=2#watch");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#watch");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=2#watch");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=2#watch");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#watch");
 }
 
 .lead-card.card-aging-aged {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=2#aged");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=2#aged");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#aged");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=2#aged");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=2#aged");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#aged");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=2#aged");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=2#aged");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#aged");
 }
 
 .lead-card.card-aging-overdue {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=2#overdue");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=2#overdue");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#overdue");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=2#overdue");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=2#overdue");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#overdue");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=2#overdue");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=2#overdue");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#overdue");
 }
 
 .chat-message-item.is-own:not(.is-linked-message) {
   --ink-surface-0: url("/assets/ink-surface-0.svg?v=1#own");
-  --ink-focus-0: url("/assets/ink-focus-0.svg?v=1#own");
+  --ink-focus-0: url("/assets/ink-focus-0.svg?v=3#own");
   --ink-surface-1: url("/assets/ink-surface-1.svg?v=1#own");
-  --ink-focus-1: url("/assets/ink-focus-1.svg?v=1#own");
+  --ink-focus-1: url("/assets/ink-focus-1.svg?v=3#own");
   --ink-surface-2: url("/assets/ink-surface-2.svg?v=1#own");
-  --ink-focus-2: url("/assets/ink-focus-2.svg?v=1#own");
+  --ink-focus-2: url("/assets/ink-focus-2.svg?v=3#own");
 }
 
 :where(.button,
@@ -315,7 +315,7 @@ textarea) {
   }
 }
 
-/* Focus has a second, green contour outside the unchanged black frame.
+/* Focus adds irregular ink dots outside the unchanged frame.
    Pixel widths keep the same stroke scale for borderless controls. */
 
 :is(button,
@@ -327,10 +327,11 @@ textarea,
 .search-field:focus-within {
   outline: none !important;
   background: transparent !important;
-  border-image-source: var(--ink-focus, url("/assets/ink-focus-0.svg?v=1#white")) !important;
+  border-image-source: var(--ink-focus, url("/assets/ink-focus-0.svg?v=3#white")) !important;
   border-image-slice: 33 fill !important;
   border-image-width: 9.35px !important;
   border-image-outset: 6.65px !important;
+  border-image-repeat: round !important;
 }
 
 .search-field input:focus-visible {
@@ -341,7 +342,7 @@ input[type="checkbox"]:focus-visible,
 input[type="radio"]:focus-visible {
   border-image: none !important;
   background: revert !important;
-  outline: 3px solid var(--focus) !important;
+  outline: 3px dotted var(--focus) !important;
   outline-offset: 3px;
 }
 
@@ -362,7 +363,7 @@ input[type="radio"]:focus-visible {
 }
 
 .column-add-button:focus-visible {
-  --ink-focus: url("/assets/ink-focus-0.svg?v=1#soft");
+  --ink-focus: url("/assets/ink-focus-0.svg?v=3#soft");
 }
 
 .workspace-switch:hover {

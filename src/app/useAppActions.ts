@@ -1,3 +1,4 @@
+import { recordUsageAction } from "../usageActions"
 import { hasEntityKind } from "../domain/model"
 import { computed, ref } from "vue"
 import * as Automerge from "@automerge/automerge/slim"
@@ -143,11 +144,13 @@ async function moveItemToColumn(core: ReturnType<typeof useAppCore>, item: Item,
     if (isItemArchived(item)) return
     await core.tincanban.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
     core.archiveUndo.value = { workspaceId: core.tincanban.activeWorkspace.id, itemId: item.id, title: item.title }
+    recordUsageAction("item_move")
     core.notice.value = "Item archived"
     return
   }
   if (target.id === item.placement.parentId && !isItemArchived(item)) return
   await core.tincanban.executeCommandAsync({ kind: "restoreAndMove", entityId: item.id, parentId: target.id, beforeId: null })
+  recordUsageAction("item_move")
   core.notice.value = "Item moved"
 }
 
@@ -264,6 +267,7 @@ async function saveExistingItem(core: ReturnType<typeof useAppCore>, item: Item,
 async function saveNewItem(core: ReturnType<typeof useAppCore>, details: ReturnType<typeof itemSaveDetails>, body: string, beforeId?: string) {
   const before = new Set(Object.keys(core.tincanban.getActiveDoc()?.entities ?? {}))
   await core.tincanban.executeCommandAsync({ kind: "createItem", parentId: details.parentId, title: details.title, body, values: details.values, beforeId })
+  recordUsageAction("item_create")
   if (core.tincanban.isBlankBoard.value) return
   const created = Object.values(core.tincanban.getActiveDoc()?.entities ?? {}).find(entity => isItem(entity) && !before.has(entity.id))
   if (created) core.selectedLeadId.value = created.id
@@ -295,6 +299,7 @@ async function archiveItem(core: ReturnType<typeof useAppCore>, item: Item | nul
     await core.tincanban.executeCommandAsync({ kind: "setEntityArchived", entityId: itemId, archived: true })
     core.archiveUndo.value = item ? { workspaceId: core.tincanban.activeWorkspace.id, itemId, title: item.title } : null
     core.selectedItemId.value = null
+    recordUsageAction("item_move")
     core.notice.value = "Item archived"
   } catch (error) { reportArchiveFailure(core, error) }
 }
@@ -344,6 +349,7 @@ async function confirmMove(core: ReturnType<typeof useAppCore>, newParentId: str
   await core.tincanban.executeCommandAsync({ kind: "moveEntity", entityId: core.itemToMove.value.id, parentId: newParentId, beforeId: null })
   core.showMoveDialog.value = false
   core.itemToMove.value = null
+  recordUsageAction("item_move")
   core.notice.value = "Item moved"
 }
 
@@ -404,6 +410,7 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     createWorkspaceWithOwnerCredential(core, title, preset)
   const handleCreateWorkspace = async (payload: { title: string; preset: "blank" | "job-search"; config?: WorkspaceCreationDraft }) => {
     const doc = await core.tincanban.createWorkspaceAsync(payload.title, payload.preset, undefined, payload.config)
+    recordUsageAction("workspace_create")
     core.notice.value = `Workspace "${payload.title}" created`
     core.showWorkspaces.value = false
     try { await core.sync.addOwnerWorkspace(doc.id) }

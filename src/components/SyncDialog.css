@@ -49,7 +49,7 @@
 .sync-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); margin-bottom: var(--space-4); border-bottom: 2px solid var(--line); }
 .sync-tabs button { min-width: 0; min-height: var(--icon-size); padding: var(--space-2) var(--space-1); font-size: 1rem; border: 2px solid transparent; border-bottom: 0; }
 .sync-tabs button[aria-selected="true"] { background: var(--yellow); border-color: var(--line); font-weight: 700; }
-.sync-tabs button:focus-visible { outline: 3px solid var(--green); outline-offset: -3px; }
+.sync-tabs button:focus-visible { outline: 3px dotted var(--ink); outline-offset: -3px; }
 .sync-advanced { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .sync-advanced .mesh-member-action { margin-top: var(--space-3); }
 

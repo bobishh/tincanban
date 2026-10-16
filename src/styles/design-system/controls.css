@@ -1,7 +1,7 @@
 
 button, input, select, textarea { font: inherit; color: inherit; }
 /* Covers links, disclosure summaries and custom keyboard targets as well. */
-:where(:focus-visible) { outline: 2px solid var(--focus); outline-offset: 3px; }
+:where(:focus-visible) { outline: 2px dotted var(--focus); outline-offset: 3px; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 button:disabled:hover { transform: none; }
@@ -120,4 +120,4 @@ select { min-height: var(--control-size); padding: var(--space-2) var(--space-5)
 /* Secondary chat actions stay quiet, with a compact keyboard focus ring. */
 .message-action { border: 0; background: transparent; padding: var(--space-1) var(--space-1); min-height: 32px; color: var(--muted); font-size: .8rem; }
 .message-action:hover:not(:disabled) { color: var(--ink); text-decoration: underline; }
-.message-action:focus-visible { outline: 1px solid var(--ink); outline-offset: 1px; }
+.message-action:focus-visible { outline: 1px dotted var(--ink); outline-offset: 1px; }

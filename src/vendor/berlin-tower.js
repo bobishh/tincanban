@@ -14,7 +14,7 @@
         :host { position: relative; display: inline-block; width: 30px; height: 45px; }
         [data-tower-trigger] { position: absolute; left: calc(50% - 1px); bottom: 6px; width: 2px; height: 2px; pointer-events: none; }
         button { display: block; width: 100%; height: 100%; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
-        button:focus-visible { outline: none; border-image: url("/assets/ink-focus-0.svg?v=1#transparent") 33 fill / 9.35px / 6.65px stretch; }
+        button:focus-visible { outline: none; border-image: url("/assets/ink-focus-0.svg?v=3#transparent") 33 fill / 9.35px / 6.65px round; }
         button > svg { display: block; width: 100%; height: 100%; overflow: visible; }
         svg { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: square; stroke-linejoin: miter; }
         [data-tower-base] { transform-origin: 32px 84px; }

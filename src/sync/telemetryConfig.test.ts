@@ -73,3 +73,9 @@ describe("deployment telemetry configuration and device consent", () => {
     expect(config.telemetryConfig().enabled).toBe(true)
   })
 })
+
+it("Given distinct analytics and OTLP routes, when configuration loads, then analytics retains its events route", async () => {
+  vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "https://collector.invalid")
+  const { telemetryConfig } = await import("./telemetryConfig")
+  expect(telemetryConfig()).toMatchObject({ analyticsEndpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs" })
+})

@@ -1,5 +1,6 @@
 <!-- Workspace role gates are enforced again at command and sync boundaries. -->
 <script setup lang="ts">
+import { recordUsageAction } from "./usageActions"
 import { useAppController } from "./app/useAppController"
 import { useAppItemDocumentSave } from "./app/useAppItemDocumentSave"
 import { isArchiveColumn, isItemArchived } from "./domain/archive"
@@ -99,7 +100,7 @@ const {
 const { publicAccess, publicDelivery, backgroundPublicDeliveryError } = useAppPublicBoards(app, uiReady)
 const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
 async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
-function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
+function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
 

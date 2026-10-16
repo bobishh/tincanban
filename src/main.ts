@@ -63,6 +63,7 @@ function mountPrivateApp() {
     const privateApp = appModule as unknown as { default: Component }
     return diagnostics.beginStartupDiagnostics().then(() => diagnostics.diagnoseStartupStep("mount-ui", () => createApp(privateApp.default).mount("#app")))
       .then(() => {
+        void import("./usageAnalytics").then(({ startUsageAnalytics }) => startUsageAnalytics("/app")).catch(() => {})
         const loadFooter = () => { void import("./vendor/berlin-tower.js").catch(() => {}) }
         if (window.requestIdleCallback) window.requestIdleCallback(loadFooter, { timeout: 1500 })
         else window.setTimeout(loadFooter, 0)

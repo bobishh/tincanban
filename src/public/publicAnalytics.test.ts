@@ -15,7 +15,7 @@ describe("public board analytics", () => {
     const [, request] = vi.mocked(fetch).mock.calls[0]!
     const payload = JSON.parse(String(request?.body)) as { events: Array<Record<string, unknown>> }
     expect(payload.events).toHaveLength(1)
-    expect(payload.events[0]).toMatchObject({ event: "public.board.viewed", device_id: "", workspace_id: "", entity_type: "board", entity_id: "public-board" })
+    expect(payload.events[0]).toMatchObject({ event: "page_view", path: "/boards" })
     expect(JSON.stringify(payload)).not.toMatch(/title|body|field|value|credential|private/)
   })
 
@@ -27,13 +27,17 @@ describe("public board analytics", () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it("sends nothing for errors-only diagnostics or a zero sample rate", async () => {
+  it("keeps analytics separate from the errors-only log level and respects zero sampling", async () => {
     const { recordPublicBoardView } = await import("./publicAnalytics")
     mocks.level = "errors"
     recordPublicBoardView("public-board")
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    vi.resetModules()
+    vi.mocked(fetch).mockClear()
     mocks.level = "all"
     mocks.sampleRate = 0
-    recordPublicBoardView("public-board")
+    const sampled = await import("./publicAnalytics")
+    sampled.recordPublicBoardView("public-board")
     await Promise.resolve()
     expect(fetch).not.toHaveBeenCalled()
   })

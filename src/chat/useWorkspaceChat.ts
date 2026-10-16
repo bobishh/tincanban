@@ -1,3 +1,4 @@
+import { recordUsageAction } from "../usageActions"
 import type { MessageContext } from "./context"
 import { computed, nextTick, onBeforeUnmount, ref, watch, type Ref } from "vue"
 import { meshTrace } from "../sync/meshTrace"
@@ -281,7 +282,7 @@ export function useWorkspaceChat(workspaceId: Ref<string>, ownerId: Ref<string>,
     const operation = ++sendGeneration
     const pendingMessage = createPendingMessage(id, personId.value, body, context)
     pending.value = [...pending.value, pendingMessage]
-    try { await sendChatMessage(id, body, context); return true }
+    try { await sendChatMessage(id, body, context); recordUsageAction("chat_send"); return true }
     catch (err) { if (operation === sendGeneration && id === workspaceId.value) error.value = err instanceof Error ? err.message : "Could not save message. Try again."; return false }
     finally {
       pending.value = pending.value.filter(message => message.id !== pendingMessage.id)

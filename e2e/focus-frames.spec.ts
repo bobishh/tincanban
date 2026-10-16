@@ -12,14 +12,14 @@ for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, 
   const titlebar = chat.locator(".spatial-titlebar")
   await page.keyboard.press("Tab")
   await titlebar.focus()
-  await expect(titlebar).toHaveCSS("outline-style", "solid")
+  await expect(titlebar).toHaveCSS("outline-style", "dotted")
   if (width < 600) {
     await chat.getByRole("button", { name: "Add reference or participant", exact: true }).focus()
     await page.keyboard.press("Enter")
   }
   const summary = chat.locator(".mention-picker summary")
   await summary.focus()
-  await expect(summary).toHaveCSS("outline-style", "solid")
+  await expect(summary).toHaveCSS("outline-style", "dotted")
   if (width < 600) {
     await chat.getByRole("button", { name: "Add reference or participant", exact: true }).click()
     await page.keyboard.press("Tab")
@@ -30,5 +30,5 @@ for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, 
   const link = chat.getByRole("link", { name: "Board documentation" })
   await page.keyboard.press("Tab")
   await link.focus()
-  await expect(link).toHaveCSS("outline-style", "solid")
+  await expect(link).toHaveCSS("outline-style", "dotted")
 })

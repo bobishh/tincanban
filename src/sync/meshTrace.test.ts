@@ -64,6 +64,7 @@ describe("mesh trace", () => {
 
   it("Given an error supplied in detail, When meshTrace forwards telemetry, Then retain it unless explicit error overrides it", async () => {
     vi.stubGlobal("window", {})
+    setMeshTraceVerboseLogging(true)
     const detailError = new TypeError("detail failure")
     const explicitError = new RangeError("explicit failure")
 
@@ -75,4 +76,31 @@ describe("mesh trace", () => {
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
     expect(record.mock.calls[1]?.[1]).toMatchObject({ error: explicitError })
   })
+})
+
+it("Given ordinary browsing, when repeated Iroh activity is traced, then snapshots remain local and no telemetry is exported", async () => {
+  vi.stubGlobal("window", {})
+  setMeshTraceVerboseLogging(false)
+  record.mockReset()
+  for (let i = 0; i < 100; i++) meshTrace("gossip.packet", { neighbors: 1 })
+  await vi.dynamicImportSettled()
+  expect(record).not.toHaveBeenCalled()
+  expect(meshTraceSnapshot().at(-1)?.event).toBe("gossip.packet")
+  vi.unstubAllGlobals()
+})
+
+it("Given explicit sync debugging, when tracing is disabled again, then export stops immediately", async () => {
+  vi.stubGlobal("window", {})
+  const info = vi.spyOn(console, "info").mockImplementation(() => {})
+  record.mockReset()
+  setMeshTraceVerboseLogging(true)
+  meshTrace("debug.enabled")
+  await vi.dynamicImportSettled()
+  expect(record).toHaveBeenCalledTimes(1)
+  setMeshTraceVerboseLogging(false)
+  meshTrace("debug.disabled")
+  await vi.dynamicImportSettled()
+  expect(record).toHaveBeenCalledTimes(1)
+  info.mockRestore()
+  vi.unstubAllGlobals()
 })

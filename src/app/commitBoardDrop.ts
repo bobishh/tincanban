@@ -1,3 +1,4 @@
+import { recordUsageAction } from "../usageActions"
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { isItem } from "../domain/model"
 import type { AppBoardContext } from "./useAppBoard"
@@ -37,6 +38,7 @@ async function commitItemDrop(drag: Drag, core: AppBoardContext, presentation: P
   const command = itemMoveCommand(drag, parentId, archiveTarget)
   try {
     await core.tincanban.executeCommandAsync(command)
+    recordUsageAction("item_move")
     presentation.highlightMoved(drag.id, "item")
     if (archiveTarget && sourceColumn) {
       core.archiveUndo.value = { workspaceId: core.tincanban.activeWorkspace.id, itemId: drag.id, title: drag.title }

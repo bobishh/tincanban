@@ -57,7 +57,7 @@ for (const status of [202, 503]) {
     const records: LogRecord[] = []
     const exportedSpans: Span[] = []
     const requests = await interceptOtlp(page, status, records, exportedSpans)
-    await page.goto("/")
+    await page.goto("/?syncTrace=1")
     const text = "private-body-must-never-enter-diagnostics"
     const chat = await send(page, text)
     await expect.poll(() => records.some(record => body(record) === "chat.dom.updated"), { timeout: 15000 }).toBe(true)
@@ -91,7 +91,7 @@ test("Given diagnostics are disabled, when chat saves and page hides, then no OT
   let requests = 0
   await page.route("https://telemetry.invalid/**", async route => { requests++; await route.fulfill({ status: 404 }) })
   await page.addInitScript(() => localStorage.setItem("tincanban.telemetry.enabled.v1", "false"))
-  await page.goto("/")
+  await page.goto("/?syncTrace=1")
   await send(page, "local-only-message")
   await page.waitForTimeout(2500)
   await page.goto("about:blank")
@@ -108,7 +108,7 @@ test("Given enabled OTel, when browser sends a Rusty HTTP request, then tracepar
     requests.push({ path: new URL(route.request().url()).pathname, traceparent: route.request().headers().traceparent ?? "" })
     await route.fulfill({ status: 200, headers, contentType: "application/json", body: JSON.stringify({ status: "ok" }) })
   })
-  await page.goto("/")
+  await page.goto("/?syncTrace=1")
   await send(page, "initialize-otel-before-http")
   await page.evaluate(async () => {
     const { fetchBlind } = await import("/src/sync/rustyHttp.ts")
@@ -128,7 +128,7 @@ test("Given legacy collector settings, when deployment loads, then only the depl
   let deployedRequests = 0
   await page.route("https://legacy.invalid/**", async route => { legacyRequests++; await route.fulfill({ status: 404 }) })
   await page.route("https://telemetry.invalid/**", async route => { deployedRequests++; await route.fulfill({ status: 200, contentType: "application/json", body: "{}" }) })
-  await page.goto("/")
+  await page.goto("/?syncTrace=1")
   await send(page, "deployment-destination")
   await expect.poll(() => deployedRequests).toBeGreaterThan(0)
   expect(legacyRequests).toBe(0)
@@ -137,7 +137,7 @@ test("Given legacy collector settings, when deployment loads, then only the depl
 for (const rejection of [401, 404]) test(`Given OTLP intake returns ${rejection}, when chat saves, then export failure is visible and user can disable diagnostics`, async ({ page }) => {
   let requests = 0
   await page.route("https://telemetry.invalid/**", async route => { requests++; await route.fulfill({ status: rejection }) })
-  await page.goto("/")
+  await page.goto("/?syncTrace=1")
   const chat = await send(page, "message-survives-rejection")
   await expect.poll(() => requests).toBeGreaterThan(0)
   await chat.getByRole("button", { name: "Close", exact: true }).click()
@@ -153,7 +153,7 @@ for (const rejection of [401, 404]) test(`Given OTLP intake returns ${rejection}
 
 test("Given unavailable preference storage, when device opts out, then the checkbox reverts and reports the failure", async ({ page }) => {
   await page.route("https://telemetry.invalid/**", async route => await route.fulfill({ status: 200, contentType: "application/json", body: "{}" }))
-  await page.goto("/")
+  await page.goto("/?syncTrace=1")
   const dialog = await settings(page)
   await page.evaluate(() => {
     const original = Storage.prototype.setItem
@@ -165,4 +165,34 @@ test("Given unavailable preference storage, when device opts out, then the check
   await dialog.getByRole("checkbox", { name: "Send diagnostics from this device" }).click()
   await expect(dialog.getByRole("region", { name: "Device diagnostics", exact: true }).getByRole("alert")).toContainText("could not be saved")
   await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeChecked()
+})
+
+test("Given ordinary app use, when a user opens the board, stays active and hits an error, then analytics and error text export without routine mesh logs", async ({ page }) => {
+  const analytics: Array<{ schema_version: number; events: Array<{ event: string; path: string }> }> = []
+  const records: LogRecord[] = []
+  await interceptOtlp(page, 200, records)
+  await page.route("https://telemetry.invalid/events", async route => {
+    analytics.push(route.request().postDataJSON())
+    await route.fulfill({ status: 200, contentType: "application/json", body: '{"accepted":1}' })
+  })
+  await page.clock.install()
+  await page.goto("/?secret=must-not-leak#private-board")
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+  await expect.poll(() => analytics.flatMap(batch => batch.events).filter(event => event.event === "page_view").length).toBe(1)
+  await page.evaluate(async () => {
+    const { meshTrace } = await import("/src/sync/meshTrace.ts")
+    for (let i = 0; i < 20; i++) meshTrace("gossip.packet", { neighbors: 1 })
+    window.dispatchEvent(new ErrorEvent("error", { error: new TypeError("analytics acceptance failure token=secret-token"), message: "analytics acceptance failure" }))
+  })
+  await page.clock.runFor(4000)
+  await expect.poll(() => records.some(record => body(record) === "browser.error")).toBe(true)
+  const failure = records.find(record => body(record) === "browser.error")!
+  expect(attribute(failure, "exception.message")).toBe("analytics acceptance failure token=[REDACTED]")
+  expect(attribute(failure, "exception.stacktrace")).toBeTruthy()
+  expect(records.some(record => body(record) === "gossip.packet")).toBe(false)
+  await page.clock.runFor(30_000)
+  await expect.poll(() => analytics.flatMap(batch => batch.events).some(event => event.event === "active_read")).toBe(true)
+  expect(analytics.every(batch => batch.schema_version === 1)).toBe(true)
+  expect(analytics.flatMap(batch => batch.events).every(event => event.path === "/app")).toBe(true)
+  expect(JSON.stringify(analytics)).not.toMatch(/must-not-leak|private-board|secret-token|workspace_id|device_id/)
 })

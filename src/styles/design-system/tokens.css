@@ -24,7 +24,7 @@
   --line: #171717;
   --yellow: #ffd43b;
   --blue: #1f6feb;
-  --focus: #176b4d;
+  --focus: var(--ink);
   --red: #ff5a36;
   --green: #69db7c;
   --panel: #fffdf7;

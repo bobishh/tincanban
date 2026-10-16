@@ -7,6 +7,21 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Open workspaces" }).click()
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
+    const titleInput = dialog.getByLabel("Title", { exact: true })
+    await titleInput.focus()
+    await expect(titleInput).toBeFocused()
+    const focus = await titleInput.evaluate(element => {
+      const rect = element.getBoundingClientRect()
+      const viewport = element.closest(".workspace-create-content")!
+      const clip = viewport.getBoundingClientRect()
+      const style = getComputedStyle(element)
+      const outset = Number.parseFloat(style.borderImageOutset)
+      return { source: style.borderImageSource, left: rect.left - outset - clip.left,
+        right: clip.left + viewport.clientWidth - rect.right - outset }
+    })
+    expect(focus.source).toContain("ink-focus")
+    expect(focus.left, "left dotted focus contour stays inside scroll viewport").toBeGreaterThanOrEqual(0)
+    expect(focus.right, "right dotted focus contour stays inside scroll viewport").toBeGreaterThanOrEqual(0)
     for (const name of ["Blank board", "Job search"]) {
       const radio = dialog.getByRole("radio", { name })
       const control = await radio.boundingBox()
