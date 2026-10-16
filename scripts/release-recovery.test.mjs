@@ -1,8 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { sealArtifact } from './release-cohort.mjs';
 import { composeRollbackFrontend, selectCompatibleRollback, assertRecoveryRun } from './release-recovery.mjs';
 const sha = 'a'.repeat(40), sdk = 'b'.repeat(40);
+test('Given an invalid archived run, when invoking recovery as a CLI, then reject the input without an unsettled module import', () => {
+  const result = spawnSync(process.execPath, ['scripts/release-recovery.mjs', 'resume', '0', '1'], {
+    cwd: new URL('..', import.meta.url), encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, GITHUB_REPOSITORY: 'bobishh/tincanban' },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Select numeric trusted production run and attempt/);
+  assert.doesNotMatch(result.stderr, /unsettled top-level await/);
+});
 const file = (value) => Buffer.from(value);
 const frontend = (candidateId, text, additional = {}) => {
   const files = { 'frontend.mjs': file('adapter'), 'wrangler.json': file('{}'),

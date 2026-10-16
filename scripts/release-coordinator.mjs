@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { canonical, assembleCohort, verifyArtifact, readArtifactFiles, verifyComponentObservation, assertCompatibleRollback, assertCohortCapabilities } from './release-cohort.mjs';
 import { parseRustyDeploySpec, deployRustyArtifact } from './deploy-rusty-cohort.mjs';
 import { createHash } from 'node:crypto';
-import { materializeRollback } from './release-recovery.mjs';
+import { materializeRollback } from './release-recovery-core.mjs';
 import { uploadedVersion } from '../workers/frontend/release.mjs';
 
 const load = path => JSON.parse(readFileSync(path, 'utf8'));

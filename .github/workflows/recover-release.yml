@@ -67,6 +67,8 @@ jobs:
           cache: npm
           cache-dependency-path: workers/frontend/package-lock.json
       - run: npm ci --prefix workers/frontend
+      - name: Verify release recovery tooling
+        run: node --test scripts/release-cohort.test.mjs scripts/release-coordinator.test.mjs scripts/release-recovery.test.mjs scripts/deploy-rusty-cohort.test.mjs scripts/fetch-rusty-deploy-config.test.mjs
       - name: Recover exact trusted artifacts and protect retained schema floors
         run: |
           node scripts/release-recovery.mjs "$RECOVERY_OPERATION" "$ACTIVATION_RUN" "$ACTIVATION_ATTEMPT" "$TARGET_RUN" "$TARGET_ATTEMPT"
