@@ -1,3 +1,4 @@
+import type { ExecutionSqlTransactionPort } from "./executionPorts";
 import { z } from "zod";
 
 const recordSchema = z.strictObject({
@@ -15,7 +16,7 @@ type BindingRow = {
 };
 
 /** Private storage only. The coordinator verifies the signed proof and current authority before append. */
-export function initializeApplicationBindingStorage(storage: DurableObjectStorage): void {
+export function initializeApplicationBindingStorage(storage: ExecutionSqlTransactionPort): void {
   storage.sql.exec(`
     CREATE TABLE IF NOT EXISTS application_bindings (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT, binding_id TEXT NOT NULL UNIQUE,
@@ -41,7 +42,7 @@ export function initializeApplicationBindingStorage(storage: DurableObjectStorag
 }
 
 /** Advance a causal head, retain the original proof ciphertext and audit in one synchronous transaction. */
-export async function appendApplicationBinding(storage: DurableObjectStorage,
+export async function appendApplicationBinding(storage: ExecutionSqlTransactionPort,
   input: StoredApplicationBinding): Promise<{ duplicate: boolean }> {
   const value = recordSchema.parse(input);
   if (value.previousBindingId === value.bindingId) throw new Error("Application binding cannot reference itself");
@@ -66,19 +67,19 @@ export async function appendApplicationBinding(storage: DurableObjectStorage,
   });
 }
 
-export function readApplicationBinding(storage: DurableObjectStorage, eventId: string): StoredApplicationBinding | null {
+export function readApplicationBinding(storage: ExecutionSqlTransactionPort, eventId: string): StoredApplicationBinding | null {
   const row = storage.sql.exec<BindingRow>(`SELECT b.* FROM application_binding_heads h
     JOIN application_bindings b ON b.binding_id = h.binding_id AND b.event_id = h.event_id WHERE h.event_id = ?`, eventId).toArray()[0];
   return row ? fromRow(row) : null;
 }
 
-export function readApplicationBindingById(storage: DurableObjectStorage, bindingId: string): StoredApplicationBinding | null {
+export function readApplicationBindingById(storage: ExecutionSqlTransactionPort, bindingId: string): StoredApplicationBinding | null {
   const row = storage.sql.exec<BindingRow>("SELECT * FROM application_bindings WHERE binding_id = ?", bindingId).toArray()[0];
   return row ? fromRow(row) : null;
 }
 
 /** Record the actual signed CRDT change only after the replication receipt has been verified. */
-export function appendApplicationBindingAppliedAudit(storage: DurableObjectStorage,
+export function appendApplicationBindingAppliedAudit(storage: ExecutionSqlTransactionPort,
   value: { bindingId: string; eventId: string; changeHash: string; createdAt: number }): void {
   if (!/^[0-9a-f]{64}$/.test(value.changeHash) || !Number.isSafeInteger(value.createdAt) || value.createdAt <= 0) {
     throw new Error("Application binding action lacks a valid signed change hash");
@@ -97,11 +98,11 @@ export function appendApplicationBindingAppliedAudit(storage: DurableObjectStora
   });
 }
 
-export function readApplicationBindingHistory(storage: DurableObjectStorage, eventId: string): StoredApplicationBinding[] {
+export function readApplicationBindingHistory(storage: ExecutionSqlTransactionPort, eventId: string): StoredApplicationBinding[] {
   return storage.sql.exec<BindingRow>("SELECT * FROM application_bindings WHERE event_id = ? ORDER BY sequence", eventId).toArray().map(fromRow);
 }
 
-export function readApplicationBindingAudit(storage: DurableObjectStorage, eventId: string):
+export function readApplicationBindingAudit(storage: ExecutionSqlTransactionPort, eventId: string):
   Array<{ bindingId: string; eventId: string; kind: "saved" | "applied"; createdAt: number; changeHash?: string }> {
   return storage.sql.exec<{ binding_id: string; event_id: string; kind: "saved" | "applied"; change_hash: string | null; created_at: number }>(
     "SELECT binding_id, event_id, kind, change_hash, created_at FROM application_binding_audit WHERE event_id = ? ORDER BY sequence", eventId,

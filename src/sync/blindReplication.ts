@@ -1,7 +1,7 @@
 import { blindHash, inventoryBlindObjects, downloadBlindObject, uploadBlindObject, verifyBlindReceipt, type BlindReceipt, type BlindAccess } from "./blindClient"
 import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
 import type { BlindCheckpointRequest, submitBlindCheckpoint } from "./blindCheckpoint"
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalizeJson } from "../domain/identityCrypto"
 import { ReplicaEngine, emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type { BlindObject } from "./blindEnvelope"
 import type { BlindCheckpointRequest as HistoryCheckpointRequest } from "./blindCheckpoint"

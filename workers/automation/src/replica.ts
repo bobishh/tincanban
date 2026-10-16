@@ -6,8 +6,8 @@ import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/p
 import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
 import { executeOwnedCommand } from "../../../src/domain/commands";
-import { canonicalizeJson, publicKeyId, sha256Base64Url, type LocalProfile } from "../../../src/domain/identity";
-import type { SignedEnvelope } from "../../../src/domain/identity";
+import { canonicalizeJson, publicKeyId, sha256Base64Url, type SignedEnvelope } from "../../../src/domain/identityCrypto";
+import type { LocalProfile } from "../../../src/domain/identity";
 import { parseAutomationDefinition, type AutomationDefinition } from "../../../src/domain/automationContract";
 import { verifyAutomationDefinition } from "../../../src/domain/automationDefinitionProof";
 import { automationEntityId, automationLifecycle, type AutomationDesiredState } from "../../../src/domain/automationLifecycle";
@@ -15,7 +15,7 @@ import { parseAutomationApproval } from "../../../src/domain/automationApproval"
 import { itemWorkflow, workflowColumnId } from "../../../src/domain/archive";
 import { hasEntityKind, isItem, type AutomationGrantScope, type WorkspaceDocumentV2, type WorkspaceGrant } from "../../../src/domain/model";
 import type { WorkspaceChangeAuthorization } from "../../../src/sync/workspaceChangeProofStore";
-import { mergeAuthorizationRecords } from "../../../src/sync/workspaceChangeProofStore";
+import { mergeAuthorizationRecords } from "../../../src/sync/workspaceAuthorizationRecords";
 import { blindHash, downloadBlindObject, inventoryBlindObjects, uploadBlindObject, verifyBlindReceipt, type BlindAccess, type BlindReceipt } from "../../../src/sync/blindClient";
 import { decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject, type BlindObject } from "../../../src/sync/blindEnvelope";
 import type { BlindReplicaConfig } from "../../../src/sync/blindReplication";
@@ -97,6 +97,8 @@ export type ReplicaTransport = {
   upload: (access: BlindAccess, object: BlindObject, requestId?: string, observedSequence?: number) => Promise<BlindReceipt>;
   archive?: (access: BlindAccess, guard: () => void | Promise<void>) => HistoryBaselineFetchPort;
   publicDelivery?: typeof deliverPublicBoard;
+  receiptVerified?: (receipt: BlindReceipt, object: BlindObject, requestId: string,
+    includedEvents: Readonly<Record<string, { changeHash?: string }>>) => Promise<void>;
 };
 
 export type AutomationManagementInspector = {
@@ -238,6 +240,11 @@ const defaultTransport: ReplicaTransport = {
   download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id),
   upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence),
 };
+
+/** Hosts may journal a storage acknowledgement only after the shared verifier accepts it. */
+export function observeReplicaReceipts(observer: NonNullable<ReplicaTransport["receiptVerified"]>): ReplicaTransport {
+  return { ...defaultTransport, receiptVerified: observer };
+}
 
 /** Owner-approved, bounded Automerge writer for one existing workspace. */
 export class AutomationReplica {
@@ -691,7 +698,7 @@ export class AutomationReplica {
         const previousHistoryUsage = this.historyUsage;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
         await this.acceptAuthoredDocument(document, result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
-        this.applied[eventId] = { kind: "lead", cardId };
+        this.applied[eventId] = { kind: "lead", cardId, changeHash: result.value.receipt.changeHash };
         try { await this.persistState(); }
         catch (error) {
           this.rawDocument = previousRaw;
@@ -1074,7 +1081,13 @@ export class AutomationReplica {
         upload: (object, requestId, observedSequence) => this.transport.upload({ ...this.blind }, object, requestId, observedSequence),
       },
       admit: object => this.receiveSnapshot(object, managementGuard),
-      verifyReceipt: (receipt, object, requestId) => verifyBlindReceipt(receipt, this.blind, object, requestId),
+      verifyReceipt: async (receipt, object, requestId) => {
+        await verifyBlindReceipt(receipt, this.blind, object, requestId);
+        // A retry may deliver an older snapshot before publishing newer local commands.
+        // Only the exact current captured revision can attest to the current event map.
+        const included = this.progress.pending?.revision === this.contentRevision ? this.applied : {};
+        await this.transport.receiptVerified?.(receipt, object, requestId, included);
+      },
       guard: async () => {
         if (managementGuard) await managementGuard();
         else this.assertActive();

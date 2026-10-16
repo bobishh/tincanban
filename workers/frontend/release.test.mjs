@@ -18,6 +18,23 @@ test('Given several deployments while a tab stays open, when retaining assets, t
   assert.equal(retentionCandidates({ retained: { '../private': hash }, files: {} }, now).length, 0);
 });
 
+test('Given more than 2,000 legitimate chunks, when retaining a busy release week, then preserve every live chunk and discard expired or unrelated entries', () => {
+  const now = Date.parse('2026-10-16T16:00:00Z');
+  const hash = 'a'.repeat(64);
+  const retained = Object.fromEntries(Array.from({ length: 2100 }, (_, index) => [`assets/chunk-${String(index).padStart(8, '0')}.js`, hash]));
+  const retainedUntil = Object.fromEntries(Object.keys(retained).map(path => [path, now + 1000]));
+  const candidates = retentionCandidates({ files: { 'index.html': hash }, retained: { ...retained, 'assets/expired-Abc12345.js': hash },
+    retainedUntil: { ...retainedUntil, 'assets/expired-Abc12345.js': now - 1 } }, now);
+  assert.equal(candidates.length, 2100);
+  assert.ok(candidates.every(([path, checksum, until]) => path in retained && checksum === hash && until === now + 1000));
+});
+
+test('Given live chunks exceed reserved capacity, when retaining assets, then fail without silently evicting open-tab chunks', () => {
+  const hash = 'a'.repeat(64);
+  const files = Object.fromEntries(Array.from({ length: 10_001 }, (_, index) => [`assets/chunk-${String(index).padStart(8, '0')}.js`, hash]));
+  assert.throws(() => retentionCandidates({ files }), /retention capacity/);
+});
+
 test('Given a repeated release tag, when CI publishes, then deploy exact uploaded frontend version without bundling a Worker', async () => {
   const { readFileSync } = await import('node:fs');
   const workflow = readFileSync(new URL('../../.github/workflows/deploy-frontend.yml', import.meta.url), 'utf8');

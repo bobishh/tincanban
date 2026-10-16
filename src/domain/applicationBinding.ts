@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { canonicalizeJson, type SignedEnvelope } from "./identity"
+import { canonicalizeJson, type SignedEnvelope } from "./identityCrypto"
 import { isAutomationOrigin } from "./automationLifecycle"
 import { signWithContext, signingEvidence, type VerifiedSigningContext } from "./signingContext"
 import type { DeviceCertificate } from "./model"

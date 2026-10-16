@@ -1,4 +1,4 @@
-import { canonicalizeJson } from '../../../src/domain/identity.ts';
+import { canonicalizeJson } from '../../../src/domain/identityCrypto.ts';
 import { parseApplicationBindingProof, type ApplicationBindingProof } from '../../../src/domain/applicationBinding.ts';
 import { readApplicationEventClassification, type ApplicationEventClassification } from './clef.ts';
 import type { AutomationEvent } from './pipeline.ts';

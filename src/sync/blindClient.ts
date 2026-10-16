@@ -1,7 +1,7 @@
 import { fetchBlind, readBlindJson } from "./rustyHttp"
 export { fetchBlind, readBlindJson } from "./rustyHttp"
 import { z } from "zod"
-import { verifyEnvelope } from "../domain/identity"
+import { verifyEnvelope } from "../domain/identityCrypto"
 import type { BlindServiceCapabilities } from "./blindServiceCapabilities"
 import { blindOrigin } from "./blindOrigin"
 export { blindOrigin } from "./blindOrigin"

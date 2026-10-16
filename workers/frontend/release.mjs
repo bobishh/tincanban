@@ -7,15 +7,18 @@ import { canonical } from '../../scripts/release-cohort.mjs';
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const safePath = (path) => typeof path === 'string' && !path.startsWith('/') && path.split('/').every((part) => part && part !== '.' && part !== '..');
 export const retainedAsset = (path) => /^assets\/[\w.-]+-[\w-]{8,}\.(?:js|css|wasm)$/.test(path);
+// Reserve at least half of the Workers Free 20,000-asset capacity for the current build.
+const maximumRetainedChunks = 10_000;
 export function retentionCandidates(previous, now = Date.now()) {
   const expiry = now + 7 * 24 * 60 * 60 * 1000;
   const entries = Object.entries({ ...previous.retained, ...previous.files });
-  if (entries.length > 2000) throw new Error('Previous manifest too large');
-  return entries.flatMap(([path, hash]) => {
+  const candidates = entries.flatMap(([path, hash]) => {
     const until = previous.files?.[path] ? expiry : previous.retainedUntil?.[path] ?? expiry;
     return retainedAsset(path) && /^[a-f0-9]{64}$/.test(hash) && Number.isFinite(until) && until > now
       ? [[path, hash, Math.min(until, expiry)]] : [];
   });
+  if (candidates.length > maximumRetainedChunks) throw new Error('Previous live chunks exceed the retention capacity');
+  return candidates;
 }
 export function uploadedVersion(output) {
   const uploads = output.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))

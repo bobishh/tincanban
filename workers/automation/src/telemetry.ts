@@ -13,6 +13,8 @@ export type AutomationTelemetryBindings = {
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
   TELEMETRY_TOKEN?: string;
   RELEASE_SHA?: string;
+  /** Separate runtime identity; the intake tenant and server authentication remain unchanged. */
+  SERVICE_NAME?: string;
 };
 
 export type TelemetryAttributes = Record<string, string | number | boolean | undefined>;
@@ -41,7 +43,7 @@ export function configureAutomationTelemetry(env: AutomationTelemetryBindings): 
     "X-TinSink-Source": "server",
   };
   const resource = resourceFromAttributes({
-    "service.name": "tincanban-automation",
+    "service.name": env.SERVICE_NAME === "tincanban-executor" ? "tincanban-executor" : "tincanban-automation",
     "service.version": bounded(env.RELEASE_SHA ?? "unknown", 128),
     "deployment.environment.name": "production",
   });

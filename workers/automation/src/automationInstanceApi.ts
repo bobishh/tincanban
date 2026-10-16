@@ -4,6 +4,8 @@ import { verifyAutomationInstanceRequest, type AutomationInstanceAction, type Au
 import { parseIntegrations, type WorkerEnv } from "./index";
 import { privateEmailRoutes } from "./emailRoutes";
 import { json, readJson } from "./http";
+import { callActiveExecutor, ExecutorRpcError } from "./executorClient";
+import { ExecutorMigrationFencedError } from "./executorIntakeOutbox";
 
 /** Manage an existing executor under current workspace Owner rights, independently of bootstrap enrollment. */
 export async function handleAutomationInstanceApi(request: Request, env: WorkerEnv, cors: Headers): Promise<Response> {
@@ -36,7 +38,8 @@ export async function handleAutomationInstanceApi(request: Request, env: WorkerE
       if (routes.size > 64) throw new Error("Instance discovery exceeds the configured route limit");
       const integrations: Array<{ integrationId: string }> = [];
       for (const integrationId of routes) {
-        const found = await env.AUTOMATION.getByName(integrationId).manageInstance(proof, action, input.body, url.origin);
+        const found = await callActiveExecutor(env, integrationId, "manageInstance", [proof, action, input.body, url.origin],
+          local => local.manageInstance(proof, action, input.body, url.origin));
         if (found && "integrationId" in found) integrations.push({ integrationId: found.integrationId });
       }
       await verifyAutomationInstanceRequest(proof, expected);
@@ -44,13 +47,16 @@ export async function handleAutomationInstanceApi(request: Request, env: WorkerE
         executorPersonId: body.executorPersonId, integrations }, 200, cors);
     }
     if (!("integrationId" in body)) throw new TypeError("Instance route is missing");
-    const result = await env.AUTOMATION.getByName(body.integrationId).manageInstance(proof, action, input.body, url.origin);
+    const result = await callActiveExecutor(env, body.integrationId, "manageInstance", [proof, action, input.body, url.origin],
+      local => local.manageInstance(proof, action, input.body, url.origin));
     if (!result) return json({ error: "No existing instance is available to this owner and workspace" }, 403, cors);
     if ("ok" in result) return result.ok ? json({ status: result.status, synced: true }, 200, cors)
       : json({ error: result.error }, result.status, cors);
     return json(result, 200, cors);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Instance management is unavailable";
+    if (error instanceof ExecutorRpcError) return json({ error: message }, error.status, cors);
+    if (error instanceof ExecutorMigrationFencedError) return json({ error: message }, error.status, cors);
     const status = /currently authorized owner/.test(message) ? 403 : /signature|expired|expected scope/.test(message) ? 401
       : /already used|changed|superseded/.test(message) ? 409 : /Too many active/.test(message) ? 429 : 422;
     return json({ error: message }, status, cors);

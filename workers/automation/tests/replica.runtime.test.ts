@@ -34,6 +34,20 @@ import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from ".
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
 import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
 
+/** Test seams follow the shared executor; the real Durable Object still owns the public RPC surface. */
+function setExecutionFixture(instance: object, key: PropertyKey, value: unknown): void {
+  const execution = Reflect.get(instance, "execution");
+  if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
+  Reflect.set(instance, key, value);
+  Reflect.set(execution, key, value);
+}
+function loadedExecutionReplica(instance: object): { replica?: object } | undefined {
+  const execution = Reflect.get(instance, "execution");
+  if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
+  return Reflect.get(execution, "loadedReplica") as { replica?: object } | undefined;
+}
+
+
 async function executeCommand(...args: Parameters<typeof executeCommandWithoutSigningContext>) {
   const [doc, command, profile, actorId, authorityGrantHash] = args;
   const authorityRevision = `runtime-fixture:${profile.identity.personId}:${profile.device.deviceId}`;
@@ -164,8 +178,8 @@ it("Given a live Worker with a pending signed action, When its Owner refreshes c
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await stub.saveReplicaState(reviewStorageSecret, serialized);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
         data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
   });
@@ -244,9 +258,9 @@ it.each([false, true])("Given an existing executor with legacy=%s, When Owner co
     upload: async (access, object, requestId) => signedReceipt(access, object, requestId) };
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "__tincanban_test_replica_transport__", transport);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "__tincanban_test_replica_transport__", transport);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement(await instance.loadReplicaState(reviewStorageSecret) ?? initial,
         data.automation, value => instance.saveReplicaState(reviewStorageSecret, value), transport) }));
     ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id, routing) VALUES (1, ?, ?, ?, ?)",
@@ -290,8 +304,8 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
     mailbox: "owner@example.test" }]) } as WorkerEnv;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => replica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => replica);
   });
 
   const decisionEvidence = { event: "rejection" as const,
@@ -306,8 +320,8 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
     await worker.email({ from: "forwarder@anywhere.test", to: privateAddress, rawSize: new TextEncoder().encode(mime).byteLength,
       raw: new Response(mime).body!, setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
     await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", testEnv);
-      Reflect.set(instance, "refreshReplica", async () => replica);
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
       ctx.storage.sql.exec("UPDATE events SET status = 'review', result = ? WHERE event_id = ?",
         JSON.stringify({ status: "review", reason: "Owner review required", decision }), eventId);
     });
@@ -317,8 +331,8 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
   const unboundEventId = await retainEmail("Unbound retained application");
   const boundEventId = await retainEmail("Already bound application");
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => replica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => replica);
     const row = ctx.storage.sql.exec<{ event_id: string; source_id: string; body_hash: string; payload: string }>(
       "SELECT * FROM events WHERE event_id = ?", boundEventId).one();
     const [nonce, ciphertext] = row.payload.split(".");
@@ -351,8 +365,8 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
   const boundRequest = await signedReviewRequest(data.owner, "retry-unbound", changedBody, integrationId);
   expect((await postApplicationReview("retry-unbound", boundRequest, changedBody, testEnv)).status).not.toBe(200);
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => replica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => replica);
     expect(instance.getEvent(unboundEventId)?.status).toBe("pending");
     expect(instance.getEvent(boundEventId)?.status).toBe("review");
     await ctx.storage.deleteAlarm();
@@ -372,8 +386,8 @@ it("Given a current owner and configured legacy route, When requesting discovery
   const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
   const stub = (env as WorkerEnv).AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => replica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => replica);
   });
   const body = { workspaceId: data.packet.workspaceId, definitionId: "typed-intake" };
   const requestProof = await signedReviewRequest(data.owner, "discover", body);
@@ -413,9 +427,9 @@ it("Given an expired typed instance behind a legacy route, When its Owner discov
   const testEnv = { ...baseEnv, AUTOMATION_OWNER_IDS: "" } as WorkerEnv;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation, inspector }));
-    Reflect.set(instance, "provisionIdentity", vi.fn(async () => { throw new Error("Management discovery must not create identity"); }));
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation, inspector }));
+    setExecutionFixture(instance, "provisionIdentity", vi.fn(async () => { throw new Error("Management discovery must not create identity"); }));
   });
 
   vi.useFakeTimers();
@@ -451,7 +465,7 @@ it("Given an expired typed instance behind a legacy route, When its Owner discov
     const unknownBody = { ...discoveryBody, definitionId: "unknown-definition" };
     const unknownRouteId = testEnv.AUTOMATION.getByName(unknownBody.definitionId);
     const provisionUnknown = vi.fn(async () => { throw new Error("Read-only discovery must not provision an executor"); });
-    await runInDurableObject(unknownRouteId, instance => { Reflect.set(instance, "provisionIdentity", provisionUnknown); });
+    await runInDurableObject(unknownRouteId, instance => { setExecutionFixture(instance, "provisionIdentity", provisionUnknown); });
     const unknownRequest = await signedInstanceRequest(data.owner, "discover", unknownBody);
     const unknownDiscovery = await postAutomationInstance("discover", unknownRequest, unknownBody, testEnv);
     expect(unknownDiscovery.status).toBe(200);
@@ -497,8 +511,8 @@ it("Given a current owner and retained mailbox events, When listing, Then return
     mailbox: "owner@example.test" }]) } as WorkerEnv;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => activeReplica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => activeReplica);
   });
 
   const longSubject = `Application update ${"S".repeat(700)}`;
@@ -515,8 +529,8 @@ it("Given a current owner and retained mailbox events, When listing, Then return
   const { decision, decisionHash } = await hashApplicationBindingDecision(decisionEvidence);
   let bindingId = "";
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => activeReplica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => activeReplica);
     const row = ctx.storage.sql.exec<{ event_id: string; source_id: string; body_hash: string; payload: string }>(
       "SELECT * FROM events WHERE event_id = ?", eventId).one();
     const [nonce, ciphertext] = row.payload.split(".");
@@ -576,8 +590,8 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
   const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
   const stub = (env as WorkerEnv).AUTOMATION.getByName(integrationId);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "refreshReplica", async () => replica);
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "refreshReplica", async () => replica);
   });
   const mime = `From: hiring@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <review-${crypto.randomUUID()}@example.test>\r\nSubject: Application received\r\nContent-Type: text/plain\r\n\r\nWe received your application. No role or vacancy URL.`;
   const sourceMessageId = mime.match(/Message-ID: ([^\r\n]+)/i)![1]!;
@@ -588,8 +602,8 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
   const sync = vi.spyOn(replica, "sync").mockResolvedValue();
   try {
     await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", testEnv);
-      Reflect.set(instance, "refreshReplica", async () => replica);
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
       await instance.alarm();
       expect(instance.getEvent(eventId)).toMatchObject({ status: "review", result: { decision: { event: "applied" } } });
       await ctx.storage.deleteAlarm();
@@ -644,8 +658,8 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     expect((await postApplicationReview("retry", retryRequest, changedBody, testEnv)).status).toBe(401);
 
     await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", testEnv);
-      Reflect.set(instance, "refreshReplica", async () => replica);
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
       expect(instance.getEvent(eventId)?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       await ctx.storage.deleteAlarm();
@@ -721,8 +735,8 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
   const sync = vi.spyOn(replica, "sync").mockResolvedValue();
   try {
     await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", testEnv);
-      Reflect.set(instance, "refreshReplica", async () => replica);
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
       const row = ctx.storage.sql.exec<{ event_id: string; source_id: string; body_hash: string; payload: string }>(
         "SELECT * FROM events WHERE event_id = ?", eventId).one();
       const [nonce, ciphertext] = row.payload.split(".");
@@ -1060,8 +1074,8 @@ it("Given a queued Worker on an older conflicting epoch, when owner prepares joi
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await stub.saveReplicaState(reviewStorageSecret, before);
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
         data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
   });
@@ -1173,8 +1187,8 @@ it("Given a prepared frozen Worker, when receipt or current Owner proof is inval
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await stub.saveReplicaState(reviewStorageSecret, replica.serialize());
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
         data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
   });
@@ -1964,12 +1978,12 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
   const deliver = () => worker.email({ from: "owner@example.test", to: "intake@example.test", rawSize: mime.length,
     raw: new Response(mime).body!, setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
   const eventId = await blindHash(new TextEncoder().encode(`${id}:email:<new-application@example.test>`));
-  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
   await deliver();
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
     await instance.alarm();
     if (existing === 0) {
       expect(instance.getEvent(eventId)).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
@@ -2010,7 +2024,7 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
   const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
-  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   try {
     await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
     const state = JSON.parse((await stub.loadReplicaState(storageSecret))!);
@@ -2021,7 +2035,7 @@ it("Given a paused durable automation and queued event, when alarm fires, then q
     state.rawDocument = snapshot.document; state.authorizations = snapshot.authorization.records;
     await stub.saveReplicaState(storageSecret, JSON.stringify(state));
     await runInDurableObject(stub, async (instance, ctx) => {
-      Reflect.set(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret,
+      setExecutionFixture(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret,
         AI: { run: () => { throw new Error("Paused automation must not call AI"); } } });
       await ctx.storage.deleteAlarm();
       await instance.alarm();
@@ -2048,26 +2062,26 @@ it("Given a verified durable replica, when unchanged controls are polled, then a
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
   const registration = { integrationId: id, workspaceId: data.packet.workspaceId, ownerPersonId: data.owner.identity.personId };
-  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   await stub.enrollOwner(registration, identitySecret);
   await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
   await runInDurableObject(stub, async (instance, ctx) => {
-    Reflect.set(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
+    setExecutionFixture(instance, "env", { ...env, IDENTITY_STORAGE_SECRET: identitySecret, EVENT_STORAGE_SECRET: storageSecret });
     const firstNonce = crypto.randomUUID(), secondNonce = crypto.randomUUID();
     const first = await instance.observeOwner(registration, firstNonce, "https://automation.example.test");
-    const firstLoaded = Reflect.get(instance, "loadedReplica") as { replica?: object } | undefined;
+    const firstLoaded = loadedExecutionReplica(instance) as { replica?: object } | undefined;
     const firstAdmission = firstLoaded?.replica && Reflect.get(firstLoaded.replica, "admissionCache");
     const second = await instance.observeOwner(registration, secondNonce, "https://automation.example.test");
     expect(first?.signed.payload.nonce).toBe(firstNonce);
     expect(second?.signed.payload.nonce).toBe(secondNonce);
-    expect(Reflect.get(instance, "loadedReplica")?.replica).toBe(firstLoaded?.replica);
+    expect(loadedExecutionReplica(instance)?.replica).toBe(firstLoaded?.replica);
     expect(firstAdmission).toBeDefined();
     expect(firstLoaded?.replica && Reflect.get(firstLoaded.replica, "admissionCache")).toBe(firstAdmission);
     const state = JSON.parse((await instance.loadReplicaState(storageSecret))!);
     state.authorizations = [];
     await instance.saveReplicaState(storageSecret, JSON.stringify(state));
     await expect(instance.observeOwner(registration, crypto.randomUUID(), "https://automation.example.test")).rejects.toThrow();
-    expect(Reflect.get(instance, "loadedReplica")).toBeUndefined();
+    expect(loadedExecutionReplica(instance)).toBeUndefined();
     await ctx.storage.deleteAlarm();
   });
 });
@@ -2079,7 +2093,7 @@ it("Given an existing paused or deleted instance, when old activation is replaye
   const storageSecret = "test-only-storage-secret-at-least-thirty-two-bytes";
   const identity = await stub.provisionIdentity(id, identitySecret);
   const data = await typedFixture(identity.identity.personId);
-  await runInDurableObject(stub, instance => { Reflect.set(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
+  await runInDurableObject(stub, instance => { setExecutionFixture(instance, "__tincanban_test_replica_transport__", capturedRuntimeTransport()); });
   try {
     await stub.activateReplica(id, identitySecret, storageSecret, data.packet);
     for (const desired of ["paused", "deleted"] as const) {
@@ -2754,8 +2768,8 @@ it("Given a prepared history freeze, when retried or another transition arrives,
   const stub = testEnv.AUTOMATION.getByName(integrationId);
   await stub.saveReplicaState(reviewStorageSecret, replica.serialize());
   await runInDurableObject(stub, async instance => {
-    Reflect.set(instance, "env", testEnv);
-    Reflect.set(instance, "managementInspectorNow", async () => ({ profile: data.automation,
+    setExecutionFixture(instance, "env", testEnv);
+    setExecutionFixture(instance, "managementInspectorNow", async () => ({ profile: data.automation,
       inspector: await AutomationReplica.inspectForManagement((await instance.loadReplicaState(reviewStorageSecret))!,
         data.automation, next => instance.saveReplicaState(reviewStorageSecret, next), transport) }));
   });

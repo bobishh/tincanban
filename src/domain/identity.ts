@@ -1,12 +1,5 @@
 import {
   BrowserIdentityStore,
-  canonicalizeJson,
-  fromBase64Url,
-  publicKeyId,
-  sha256Base64Url,
-  signEnvelope,
-  toBase64Url,
-  verifyEnvelope,
   generateIdentityRecovery,
   identitySeedFromPrivateKey,
   identitySecurityForRecovery,
@@ -16,16 +9,8 @@ import {
   type IdentitySecurity,
   type IdentityAdoptionCommit,
   type LocalProfile as MeshLocalProfile,
-  type SignedEnvelope,
 } from "@meta-uber/mesh-identity"
-import type {
-  DeviceCertificate,
-  PublicIdentity,
-} from "./model"
-import { readLocal, writeLocal, deleteLocal } from "../localDb"
-import { normalizeDisplayName, randomDisplayName, validateDisplayName } from "../chat/names"
-
-export {
+import {
   canonicalizeJson,
   fromBase64Url,
   publicKeyId,
@@ -33,7 +18,16 @@ export {
   signEnvelope,
   toBase64Url,
   verifyEnvelope,
-}
+  type SignedEnvelope,
+} from "./identityCrypto"
+import type {
+  DeviceCertificate,
+  PublicIdentity,
+} from "./model"
+import { readLocal, writeLocal, deleteLocal } from "../localDb"
+import { normalizeDisplayName, randomDisplayName, validateDisplayName } from "../chat/names"
+
+export { canonicalizeJson, fromBase64Url, publicKeyId, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope }
 export type { SignedEnvelope }
 export type { IdentityRecoveryEnvelope, IdentitySecurity }
 

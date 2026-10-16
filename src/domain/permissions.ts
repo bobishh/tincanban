@@ -1,5 +1,5 @@
 import { entityKind, hasEntityKind, isItem, type WorkspaceDocumentV2 } from "./model"
-import { canonicalizeJson } from "./identity"
+import { canonicalizeJson } from "./identityCrypto"
 import { isMemberProfileData, memberProfileEntityId } from "./avatarData"
 import type { Command } from "./commandTypes"
 import { automationEntityId, automationLifecycle, isAutomationOrigin } from "./automationLifecycle"

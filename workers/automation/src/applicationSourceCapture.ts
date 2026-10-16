@@ -1,6 +1,6 @@
 import { assertPublicHttpsUrl, type JobPageResult } from "./extraction.ts";
 import { MAX_APPLICATION_SOURCE_BYTES, readApplicationSourceData, type ApplicationSourceData } from "../../../src/domain/applicationSourceData.ts";
-import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identity.ts";
+import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identityCrypto.ts";
 
 const EXTRACTOR_VERSION = "job-page-v1";
 export type ApplicationSourceReferences = { messageIds?: string[]; atsId?: string };

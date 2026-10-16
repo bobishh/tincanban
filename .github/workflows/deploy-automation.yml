@@ -30,6 +30,9 @@ jobs:
       VERIFIED_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       AUTOMATION_TELEMETRY_TOKEN: ${{ secrets.AUTOMATION_TELEMETRY_TOKEN }}
+      AUTOMATION_EXECUTOR_SERVICE_TOKEN: ${{ secrets.AUTOMATION_EXECUTOR_SERVICE_TOKEN }}
+      AUTOMATION_EXECUTOR_MIGRATION_SECRET: ${{ secrets.AUTOMATION_EXECUTOR_MIGRATION_SECRET }}
+      AUTOMATION_CLASSIFICATION_SERVICE_TOKEN: ${{ secrets.AUTOMATION_CLASSIFICATION_SERVICE_TOKEN }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
@@ -59,12 +62,10 @@ jobs:
           set -euo pipefail
           test -n "$CLOUDFLARE_API_TOKEN"
           secret_args=()
-          telemetry_secrets="$RUNNER_TEMP/automation-telemetry-secrets.json"
-          trap 'rm -f "$telemetry_secrets"' EXIT
-          if [ -n "$AUTOMATION_TELEMETRY_TOKEN" ]; then
-            AUTOMATION_SECRETS_FILE="$telemetry_secrets" node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(process.env.AUTOMATION_SECRETS_FILE, JSON.stringify({ TELEMETRY_TOKEN: process.env.AUTOMATION_TELEMETRY_TOKEN }), { mode: 0o600 });'
-            secret_args=(--secrets-file "$telemetry_secrets")
-          fi
+          automation_secrets="$RUNNER_TEMP/automation-secrets.json"
+          trap 'rm -f "$automation_secrets"' EXIT
+          node scripts/automation-secrets.mjs "$automation_secrets"
+          if [ -f "$automation_secrets" ]; then secret_args=(--secrets-file "$automation_secrets"); fi
           output="$RUNNER_TEMP/automation-upload.jsonl"
           WRANGLER_OUTPUT_FILE_PATH="$output" workers/frontend/node_modules/.bin/wrangler versions upload --config .release/deploy/automation/wrangler.json --no-bundle --keep-vars --tag "$RELEASE_SHA" "${secret_args[@]}"
           version="$(node workers/frontend/release.mjs uploaded-version "$output")"

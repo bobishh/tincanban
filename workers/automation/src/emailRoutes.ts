@@ -1,9 +1,7 @@
-import type { WorkerEnv } from "./index";
-
 export type PrivateEmailRoute = { id: string; address: string; mailbox: string };
 
 /** Recipient is a bearer capability: keep it in a Worker secret and the forwarding mailbox only. */
-export function privateEmailRoutes(env: Pick<WorkerEnv, "EMAIL_ROUTES_JSON">): PrivateEmailRoute[] {
+export function privateEmailRoutes(env: { EMAIL_ROUTES_JSON?: string }): PrivateEmailRoute[] {
   const values: unknown = JSON.parse(env.EMAIL_ROUTES_JSON || "[]");
   if (!Array.isArray(values) || values.length > 20) throw new Error("Invalid private email routes");
   const addresses = new Set<string>();

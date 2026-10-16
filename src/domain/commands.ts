@@ -8,7 +8,8 @@ import type {
   WorkspaceDocumentV2,
   WorkspaceEntity,
 } from "./model"
-import { canonicalizeJson, sha256Base64Url, type LocalProfile } from "./identity"
+import { canonicalizeJson, sha256Base64Url } from "./identityCrypto"
+import type { LocalProfile } from "./identity"
 import { createActorBinding, createChangeProof } from "./transactionProofs"
 import { prepareCommand } from "./commandHandlers"
 import { err, type Command, type ExecuteResult } from "./commandTypes"

@@ -1,3 +1,6 @@
+import { normalizeEmail, parseIntegrations, requiredString, type AutomationIntegration } from "./configuration";
+export { parseIntegrations } from "./configuration";
+export type { AutomationScope, AutomationIntegration } from "./configuration";
 import { privateEmailRoutes } from "./emailRoutes";
 import { parseForwardedMail, MAX_RAW_EMAIL_BYTES } from "./email";
 import { assertPublicHttpsUrl } from "./extraction";
@@ -12,24 +15,13 @@ import { corsHeaders, json, readJson } from "./http";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { workerReleaseIdentity, type WorkerReleaseBindings } from "./buildIdentity";
 import { configureAutomationTelemetry, normalizedWorkerRoute, withAutomationSpan } from "./telemetry";
+import { callActiveExecutor, ExecutorRpcError } from "./executorClient";
+import { handleClassificationRequest } from "./classificationEndpoint";
+import { encryptEventPayload, encodeBase64Url } from "./eventPayload";
+import { ExecutorMigrationFencedError } from "./executorIntakeOutbox";
+import { handleExecutorMigrationApi } from "./executorMigrationApi";
 
 export { AutomationCoordinator } from "./coordinator";
-
-export type AutomationScope = {
-  version: 1;
-  boardId: string;
-  columns: { lead: string; applied?: string; interview: string; rejected: string };
-  fieldIds: { company: string; role: string; jobUrl: string; notes?: string; sourceText?: string; roleType?: string; seniority?: string };
-  expiresAt: string;
-};
-
-export type AutomationIntegration = {
-  id: string;
-  workspaceId: string;
-  scope: AutomationScope;
-  emailAddress?: string;
-  allowedForwarders: string[];
-};
 
 export interface WorkerEnv {
   AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
@@ -44,6 +36,14 @@ export interface WorkerEnv {
   PROVISIONING_TOKEN?: string;
   IDENTITY_STORAGE_SECRET?: string;
   EVENT_STORAGE_SECRET?: string;
+  /** Private origin of the standalone executor. */
+  EXECUTOR_ORIGIN?: string;
+  /** Shared service credential used only for Worker-to-executor calls. */
+  EXECUTOR_SERVICE_TOKEN?: string;
+  /** Separate credential used only by the executor-to-Worker classification bridge. */
+  CLASSIFICATION_SERVICE_TOKEN?: string;
+  /** Encrypts migration pages exported to the private executor service. */
+  EXECUTOR_MIGRATION_SECRET?: string;
   /** Commit SHA embedded into this immutable Worker version; unset in local development. */
   RELEASE_SHA?: string;
   /** OTLP Collector base URL. Set as a Worker variable, never a public browser value. */
@@ -59,7 +59,6 @@ export interface WorkerEnv {
 type JsonObject = Record<string, unknown>;
 
 const maxActivationJsonBytes = 24 * 1024 * 1024;
-const allowedIntegrationId = /^[A-Za-z0-9_-]{1,128}$/;
 const defaultHandler = {
   async fetch(request: Request, env: WorkerEnv, executionCtx?: ExecutionContext): Promise<Response> {
     const telemetry = configureAutomationTelemetry(env);
@@ -77,7 +76,9 @@ const defaultHandler = {
     } catch (error) {
       let cors = new Headers();
       try { cors = corsHeaders(request, env); } catch { /* Disallowed origins receive no CORS access. */ }
-      if (error instanceof TypeError || error instanceof SyntaxError) response = json({ error: error.message || "Invalid request" }, 400, cors);
+      if (error instanceof ExecutorRpcError) response = json({ error: error.message }, error.status, cors);
+      else if (error instanceof ExecutorMigrationFencedError) response = json({ error: error.message }, error.status, cors);
+      else if (error instanceof TypeError || error instanceof SyntaxError) response = json({ error: error.message || "Invalid request" }, 400, cors);
       else if (error instanceof Error && /Integration is not configured/.test(error.message)) response = json({ error: error.message }, 404, cors);
       else if (error instanceof Error && /Provisioning authorization/.test(error.message)) response = json({ error: "Unauthorized" }, 401, cors);
       else if (error instanceof Error && /Integration authorization has expired/.test(error.message)) response = json({ error: error.message }, 403, cors);
@@ -143,6 +144,8 @@ export default defaultHandler;
 
 async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname.startsWith("/internal/executor-migrations/")) return handleExecutorMigrationApi(request, env);
+  if (url.pathname === "/internal/classify") return handleClassificationRequest(request, env);
   const cors = corsHeaders(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method === "GET" && url.pathname === "/health") return json({ status: "ready", ...workerReleaseIdentity(env) }, 200, cors);
@@ -168,7 +171,7 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     const integrationId = identityMatch[1]!;
     const secret = env.IDENTITY_STORAGE_SECRET;
     if (!secret || new TextEncoder().encode(secret).byteLength < 32) return json({ error: "Automation identity storage is not configured" }, 503, cors);
-    const profile = await coordinator(env, integrationId).provisionIdentity(integrationId, secret);
+    const profile = await callActiveExecutor(env, integrationId, "provisionIdentity", [integrationId, secret], local => local.provisionIdentity(integrationId, secret));
     return json({ integrationId, origin: url.origin, personId: profile.identity.personId, identityPublicKey: profile.identity.publicKey,
       deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
       deviceCertificate: profile.deviceCertificate }, 200, cors);
@@ -189,12 +192,13 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     }
     const input = await readJson(request, maxActivationJsonBytes) as unknown as AutomationActivationPacket;
     assertActivationMatchesIntegration(input, integration);
-    const result = await coordinator(env, integrationId).activateReplica(integrationId, identitySecret, encryptionSecret, input);
+    const result = await callActiveExecutor(env, integrationId, "activateReplica", [integrationId, identitySecret, encryptionSecret, input],
+      local => local.activateReplica(integrationId, identitySecret, encryptionSecret, input));
     return result.ok ? json({ status: result.status, workspaceId: result.workspaceId, synced: result.synced }, 200, cors)
       : json({ error: result.error, ...(result.detail ? { detail: result.detail } : {}) }, result.status, cors);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Automation activation failed";
-      return json({ error: message }, error instanceof TypeError || error instanceof SyntaxError ? 400 : 500, cors);
+      return json({ error: message }, error instanceof ExecutorMigrationFencedError ? error.status : error instanceof TypeError || error instanceof SyntaxError ? 400 : 500, cors);
     }
   }
 
@@ -230,14 +234,17 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     authorizeProvisioning(request, env);
     await getIntegration(env, emailSetupMatch[1]!);
     const route = privateEmailRoutes(env).find(value => value.id === emailSetupMatch[1]);
-    return json({ route: route ?? null, receipt: await coordinator(env, emailSetupMatch[1]!).emailSetup() }, 200, cors);
+    const integrationId = emailSetupMatch[1]!;
+    const receipt = await callActiveExecutor(env, integrationId, "emailSetup", [], local => local.emailSetup());
+    return json({ route: route ?? null, receipt }, 200, cors);
   }
 
   const eventMatch = url.pathname.match(/^\/v1\/integrations\/([A-Za-z0-9_-]{1,128})\/events\/([A-Za-z0-9_-]{20,64})$/);
   if (request.method === "GET" && eventMatch) {
     authorizeProvisioning(request, env);
     await getIntegration(env, eventMatch[1]!);
-    const event = await coordinator(env, eventMatch[1]!).getEvent(eventMatch[2]!);
+    const integrationId = eventMatch[1]!;
+    const event = await callActiveExecutor(env, integrationId, "getEvent", [eventMatch[2]!], local => local.getEvent(eventMatch[2]!));
     return event ? json(event, 200, cors) : json({ error: "Event not found" }, 404, cors);
   }
 
@@ -256,66 +263,6 @@ function acceptedResponse(result: EnqueueSuccess): JsonObject {
 
 function coordinator(env: WorkerEnv, integrationId: string): DurableObjectStub<AutomationCoordinator> {
   return env.AUTOMATION.getByName(integrationId);
-}
-
-export function parseIntegrations(env: WorkerEnv): AutomationIntegration[] {
-  let value: unknown;
-  try {
-    value = JSON.parse(env.INTEGRATIONS_JSON || "[]") as unknown;
-  } catch {
-    throw new Error("Integration configuration is invalid");
-  }
-  if (!Array.isArray(value)) throw new Error("Integration configuration must be a list");
-  const ids = new Set<string>();
-  const emailAddresses = new Set<string>();
-  return value.map((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error("Invalid integration configuration");
-    const input = candidate as Record<string, unknown>;
-    const id = requiredString(input.id, "integration.id", 128);
-    const workspaceId = requiredString(input.workspaceId, "integration.workspaceId", 128);
-    if (!allowedIntegrationId.test(id) || ids.has(id)) throw new Error("Integration IDs must be unique and URL-safe");
-    ids.add(id);
-    const scope = parseScope(input.scope);
-    const allowedForwarders = parseEmailList(input.allowedForwarders, "allowedForwarders");
-    const emailAddress = input.emailAddress === undefined ? undefined : normalizeEmail(requiredString(input.emailAddress, "emailAddress", 320));
-    if (emailAddress && emailAddresses.has(emailAddress)) throw new Error("Email routing addresses must be unique");
-    if (emailAddress) emailAddresses.add(emailAddress);
-    return { id, workspaceId, scope, allowedForwarders, ...(emailAddress ? { emailAddress } : {}) };
-  });
-}
-
-function parseScope(value: unknown): AutomationScope {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Integration scope is missing");
-  const input = value as Record<string, unknown>;
-  if (input.version !== 1) throw new Error("Unsupported integration scope version");
-  const columns = input.columns as Record<string, unknown> | undefined;
-  const fields = input.fieldIds as Record<string, unknown> | undefined;
-  if (!columns || typeof columns !== "object" || !fields || typeof fields !== "object") throw new Error("Integration scope bindings are invalid");
-  const expiresAt = requiredString(input.expiresAt, "scope.expiresAt", 64);
-  if (!Number.isFinite(Date.parse(expiresAt))) throw new Error("Integration scope expiry is invalid");
-  const scope: AutomationScope = {
-    version: 1,
-    boardId: requiredString(input.boardId, "scope.boardId", 128),
-    columns: {
-      ...(columns.applied === undefined ? {} : { applied: requiredString(columns.applied, "scope.columns.applied", 128) }),
-      lead: requiredString(columns.lead, "scope.columns.lead", 128),
-      interview: requiredString(columns.interview, "scope.columns.interview", 128),
-      rejected: requiredString(columns.rejected, "scope.columns.rejected", 128),
-    },
-    fieldIds: {
-      company: requiredString(fields.company, "scope.fieldIds.company", 128),
-      role: requiredString(fields.role, "scope.fieldIds.role", 128),
-      jobUrl: requiredString(fields.jobUrl, "scope.fieldIds.jobUrl", 128),
-      ...(optionalField(fields.notes, "scope.fieldIds.notes")),
-      ...(optionalField(fields.sourceText, "scope.fieldIds.sourceText")),
-      ...(optionalField(fields.roleType, "scope.fieldIds.roleType")),
-      ...(optionalField(fields.seniority, "scope.fieldIds.seniority")),
-    },
-    expiresAt,
-  };
-  const bindings = [scope.boardId, ...Object.values(scope.columns), ...Object.values(scope.fieldIds).filter((value): value is string => !!value)];
-  if (new Set(bindings).size !== bindings.length) throw new Error("Integration scope bindings must be distinct");
-  return scope;
 }
 
 function assertActivationMatchesIntegration(packet: AutomationActivationPacket, integration: AutomationIntegration): void {
@@ -355,13 +302,11 @@ function assertActivationMatchesIntegration(packet: AutomationActivationPacket, 
   }
 }
 
-function optionalField(value: unknown, name: string): { [key: string]: string } {
-  return value === undefined ? {} : { [name.split(".").at(-1)!]: requiredString(value, name, 128) };
-}
-
 async function getIntegration(env: WorkerEnv, integrationId: string): Promise<AutomationIntegration> {
   const integration = parseIntegrations(env).find((candidate) => candidate.id === integrationId) ??
-    (/^[0-9a-f-]{36}$/.test(integrationId) ? await coordinator(env, integrationId).getRegisteredIntegration() : null);
+    (/^[0-9a-f-]{36}$/.test(integrationId)
+      ? await callActiveExecutor(env, integrationId, "getRegisteredIntegration", [], local => local.getRegisteredIntegration())
+      : null);
   if (!integration) throw new Error("Integration is not configured");
   return integration;
 }
@@ -388,26 +333,6 @@ async function findEmailIntegration(env: WorkerEnv, recipient: string): Promise<
   return integration ? { integration } : null;
 }
 
-function normalizeEmail(value: string): string {
-  const match = value.trim().match(/^(?:[^<>]*<)?([^<>\s]+@[^<>\s]+)>?$/);
-  const address = (match?.[1] ?? "").toLocaleLowerCase("en-US");
-  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(address)) throw new TypeError("Email address is invalid");
-  return address;
-}
-
-function parseEmailList(value: unknown, name: string): string[] {
-  if (!Array.isArray(value) || value.length > 20) throw new Error(`${name} must contain at most 20 addresses`);
-  return [...new Set(value.map((item) => normalizeEmail(requiredString(item, name, 320))))];
-}
-
-
-function requiredString(value: unknown, name: string, maxLength: number): string {
-  if (typeof value !== "string") throw new TypeError(`${name} must be text`);
-  const normalized = value.trim();
-  if (!normalized || new TextEncoder().encode(normalized).byteLength > maxLength) throw new TypeError(`${name} is invalid`);
-  return normalized;
-}
-
 function stripHumanCheck(submission: WebsiteSubmission): Omit<WebsiteSubmission, "humanCheckToken" | "humanCheckAnswer"> {
   const normalized = { ...submission };
   delete normalized.humanCheckToken;
@@ -425,25 +350,8 @@ async function digestBytes(value: ArrayBuffer): Promise<string> {
   return encodeBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", value)));
 }
 
-async function encryptEventPayload(secret: string, eventId: string, event: AutomationEvent): Promise<string> {
-  if (new TextEncoder().encode(secret).byteLength < 32) throw new Error("Event storage secret must contain at least 32 bytes");
-  const keyBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`TIN/event-key/v1/${secret}`));
-  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-GCM" }, false, ["encrypt"]);
-  const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify(event));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce,
-    additionalData: new TextEncoder().encode(`TIN/event-payload/v1/${eventId}`), tagLength: 128 }, key, plaintext);
-  return `${encodeBase64Url(nonce)}.${encodeBase64Url(new Uint8Array(ciphertext))}`;
-}
-
 async function digestId(value: string): Promise<string> {
   return digest(value);
-}
-
-function encodeBase64Url(bytes: Uint8Array): string {
-  let text = "";
-  for (let index = 0; index < bytes.length; index += 0x8000) text += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function constantTimeEqual(left: string, right: string): boolean {

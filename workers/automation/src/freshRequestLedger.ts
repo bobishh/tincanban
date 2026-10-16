@@ -1,8 +1,9 @@
+import type { ExecutionSqlTransactionPort } from "./executionPorts";
 type RequestTable = "application_review_requests" | "automation_instance_requests";
 
 /** A bounded durable nonce ledger. Callers recheck live authority before reading any saved outcome. */
 export class FreshRequestLedger {
-  constructor(private readonly storage: DurableObjectStorage, private readonly table: RequestTable) {}
+  constructor(private readonly storage: ExecutionSqlTransactionPort, private readonly table: RequestTable) {}
 
   initialize(): void {
     this.storage.sql.exec(`CREATE TABLE IF NOT EXISTS ${this.table} (

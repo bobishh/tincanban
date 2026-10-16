@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { publicKeyId, verifyEnvelope, type SignedEnvelope } from "./identity"
-import { certHashDefault, validateCertificateChain } from "./proofs"
+import { publicKeyId, verifyEnvelope, type SignedEnvelope } from "./identityCrypto"
+import { certHashDefault, validateCertificateChain } from "./proofValidation"
 import type { DeviceCertificate } from "./model"
 
 const identifier = z.string().min(1).max(256).refine(value => Boolean(value.trim()))

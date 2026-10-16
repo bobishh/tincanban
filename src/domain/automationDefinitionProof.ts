@@ -1,5 +1,5 @@
-import { publicKeyId, verifyEnvelope, type SignedEnvelope } from "./identity"
-import { validateCertificateChain } from "./proofs"
+import { publicKeyId, verifyEnvelope, type SignedEnvelope } from "./identityCrypto"
+import { validateCertificateChain } from "./proofValidation"
 import type { DeviceCertificate } from "./model"
 import { parseAutomationDefinition, type AutomationDefinition } from "./automationContract"
 

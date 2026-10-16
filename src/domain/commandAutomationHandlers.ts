@@ -4,7 +4,7 @@ import { parseAutomationDefinition } from "./automationContract"
 import { automationEntityId, automationLifecycle, isAutomationOrigin } from "./automationLifecycle"
 import { hasEntityKind } from "./model"
 import { parseAutomationApproval } from "./automationApproval"
-import { canonicalizeJson } from "./identity"
+import { canonicalizeJson } from "./identityCrypto"
 
 export const createAutomation: CommandHandler<"createAutomation"> = (doc, command, context) => {
   let definition

@@ -1,5 +1,6 @@
 import { certificateHash, verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
-import { canonicalizeJson, signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "./identity"
+import { canonicalizeJson, signEnvelope, verifyEnvelope, type SignedEnvelope } from "./identityCrypto"
+import type { LocalProfile } from "./identity"
 import type { DeviceCertificate, PublicIdentity } from "./model"
 
 type CurrentAuthority = { personId: string; deviceId: string; authorityRevision: string }

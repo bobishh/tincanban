@@ -1,5 +1,5 @@
 import { assertApplicationSourceRecord, readApplicationSourceData, type ApplicationSourceData, type ApplicationSourceEntity } from "./applicationSourceData"
-import { canonicalizeJson, sha256Base64Url } from "./identity"
+import { canonicalizeJson, sha256Base64Url } from "./identityCrypto"
 import { err } from "./commandTypes"
 import type { CommandHandler } from "./commandHandlerTypes"
 import { createItem } from "./commandBasicHandlers"

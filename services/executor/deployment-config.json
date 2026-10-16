@@ -1,0 +1,6 @@
+{
+  "repository": "https://tangled.org/bobishh.bsky.social/hetzner_kamal",
+  "commit": "2ba230f771523b967977c74cdc582ba293a43c1f",
+  "path": "config/deploy.tincanban-executor.yml",
+  "origin": "https://executor.meta-uber-engineer.dev"
+}

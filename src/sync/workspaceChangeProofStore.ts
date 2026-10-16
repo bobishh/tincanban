@@ -1,6 +1,6 @@
 import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuthorizations, writeLocalJournal, readLocalJournal,
   withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalizeJson } from "../domain/identityCrypto"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 

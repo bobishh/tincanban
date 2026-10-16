@@ -1,5 +1,10 @@
 # Design
 
+> 2026-10-16: `../separate-automation-executor/` supersedes the statements below
+> that require the Cloudflare Worker to remain the executor and exclude a new
+> runtime service. Rusty remains blind; independent deployment/API constraints
+> still apply. Read that change for the approved participant and intake split.
+
 ## Fixed architecture
 
 The user's authoritative model is local-first + CRDT; Rusty is the only application

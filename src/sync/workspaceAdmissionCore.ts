@@ -1,5 +1,5 @@
 import * as Automerge from "@automerge/automerge/slim"
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalizeJson } from "../domain/identityCrypto"
 import { receivedHistoryBasisIdentity } from "./receivedHistoryBasisIdentity"
 import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { RustStateCore } from "@meta-uber/mesh-replication/runtime"

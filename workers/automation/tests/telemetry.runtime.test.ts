@@ -16,6 +16,7 @@ describe("automation OpenTelemetry producers", () => {
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318",
       TELEMETRY_TOKEN: "server-test-secret",
       RELEASE_SHA: "test-revision",
+      SERVICE_NAME: "tincanban-executor",
     });
     expect(telemetry.enabled).toBe(true);
 
@@ -52,6 +53,9 @@ describe("automation OpenTelemetry producers", () => {
       expect(request.body).not.toContain("do-not-export");
     }
     const log = JSON.parse(logs!.body);
+    expect(log.resourceLogs[0].resource.attributes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: "service.name", value: { stringValue: "tincanban-executor" } }),
+    ]));
     const traceExport = JSON.parse(traces!.body);
     expect(log.resourceLogs[0].scopeLogs[0].logRecords[0].attributes).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "exception.type", value: { stringValue: "Error" } }),

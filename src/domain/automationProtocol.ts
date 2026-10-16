@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { canonicalizeJson, publicKeyId, sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "./identity"
-import { validateCertificateChain } from "./proofs"
+import { canonicalizeJson, publicKeyId, sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "./identityCrypto"
+import { validateCertificateChain } from "./proofValidation"
 import { signingEvidence, signWithContext, type VerifiedSigningContext } from "./signingContext"
 import type { DeviceCertificate } from "./model"
 import { publicDeviceProofFields, verifyDeviceProofSignature } from "./deviceProof"

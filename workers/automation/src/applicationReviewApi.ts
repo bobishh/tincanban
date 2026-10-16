@@ -4,6 +4,8 @@ import { verifyApplicationReviewRequest, type ApplicationReviewRequestProof } fr
 import { parseIntegrations, type WorkerEnv } from "./index";
 import { privateEmailRoutes } from "./emailRoutes";
 import { json, readJson } from "./http";
+import { callActiveExecutor, ExecutorRpcError } from "./executorClient";
+import { ExecutorMigrationFencedError } from "./executorIntakeOutbox";
 
 /** Review existing data under current workspace Owner authority; deployment allowlists only bootstrap enrollment. */
 export async function handleApplicationReviewApi(request: Request, env: WorkerEnv, cors: Headers): Promise<Response> {
@@ -36,7 +38,8 @@ export async function handleApplicationReviewApi(request: Request, env: WorkerEn
       const integrations: Array<{ integrationId: string; personId: string }> = [];
       for (const id of routes) {
         try {
-          const identity = await env.AUTOMATION.getByName(id).applicationReview(proof, action, input.body, url.origin);
+          const identity = await callActiveExecutor(env, id, "applicationReview", [proof, action, input.body, url.origin],
+            local => local.applicationReview(proof, action, input.body, url.origin));
           if (identity && typeof identity === "object" && "integrationId" in identity && "personId" in identity &&
             typeof identity.integrationId === "string" && typeof identity.personId === "string") {
             integrations.push({ integrationId: identity.integrationId, personId: identity.personId });
@@ -50,9 +53,12 @@ export async function handleApplicationReviewApi(request: Request, env: WorkerEn
       return json({ origin: url.origin, workspaceId: body.workspaceId, definitionId: body.definitionId, integrations }, 200, cors);
     }
     if (!("integrationId" in body)) throw new TypeError("Application review integration is missing");
-    return json(await env.AUTOMATION.getByName(body.integrationId).applicationReview(proof, action, input.body, url.origin), 200, cors);
+    return json(await callActiveExecutor(env, body.integrationId, "applicationReview", [proof, action, input.body, url.origin],
+      local => local.applicationReview(proof, action, input.body, url.origin)), 200, cors);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Application review is unavailable";
+    if (error instanceof ExecutorRpcError) return json({ error: message }, error.status, cors);
+    if (error instanceof ExecutorMigrationFencedError) return json({ error: message }, error.status, cors);
     const status = /currently authorized owner/.test(message) ? 403 : /signature|expired|expected scope/.test(message) ? 401
       : /already used|changed|superseded/.test(message) ? 409 : /Too many active/.test(message) ? 429 : 422;
     return json({ error: message }, status, cors);

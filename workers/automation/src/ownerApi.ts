@@ -5,6 +5,8 @@ import type { WorkerEnv, AutomationIntegration } from "./index";
 import type { AutomationActivationPacket } from "./replica";
 import { json, readJson } from "./http";
 import { workerBuildSha, workerReleaseIdentity } from "./buildIdentity";
+import { callActiveExecutor, ExecutorRpcError } from "./executorClient";
+import { ExecutorMigrationFencedError } from "./executorIntakeOutbox";
 
 /** Browser bootstrap needs a deployment-approved identity, never the operator credential. */
 export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Headers): Promise<Response> {
@@ -31,11 +33,10 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
   const action = operation === "identity" ? "enroll" : operation === "activation" ? "activate" : operation === "email" ? "email" : "observe";
   if (intent.action !== action || intent.integrationId !== match[1] ||
     (action !== "activate" && action !== "email" && intent.bodyHash !== null)) return json({ error: "Owner request does not match this operation" }, 400, cors);
-  const coordinator = env.AUTOMATION.getByName(intent.integrationId);
   const registration = { integrationId: intent.integrationId, workspaceId: intent.workspaceId, ownerPersonId: intent.personId };
   try {
     if (operation === "identity") {
-      const profile = await coordinator.enrollOwner(registration, env.IDENTITY_STORAGE_SECRET);
+      const profile = await callActiveExecutor(env, intent.integrationId, "enrollOwner", [registration, env.IDENTITY_STORAGE_SECRET], local => local.enrollOwner(registration, env.IDENTITY_STORAGE_SECRET!));
       return json({ integrationId: intent.integrationId, origin: url.origin, personId: profile.identity.personId,
         identityPublicKey: profile.identity.publicKey, deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
         deviceCertificate: profile.deviceCertificate }, 200, cors);
@@ -43,13 +44,14 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
     if (operation === "email") {
       if (intent.bodyHash !== null && (typeof input.retryEventId !== "string" || !/^[A-Za-z0-9_-]{20,64}$/.test(input.retryEventId) ||
         intent.bodyHash !== await automationBodyHash({ retryEventId: input.retryEventId }))) return json({ error: "Email retry does not match its owner signature" }, 400, cors);
-      await coordinator.observeOwner(registration, intent.nonce, url.origin);
-      if (intent.bodyHash !== null) return json(await coordinator.retryEmail(registration, input.retryEventId as string), 200, cors);
+      await callActiveExecutor(env, intent.integrationId, "observeOwner", [registration, intent.nonce, url.origin], local => local.observeOwner(registration, intent.nonce, url.origin));
+      if (intent.bodyHash !== null) return json(await callActiveExecutor(env, intent.integrationId, "retryEmail", [registration, input.retryEventId as string],
+        local => local.retryEmail(registration, input.retryEventId as string)), 200, cors);
       const route = privateEmailRoutes(env).find(value => value.id === intent.integrationId);
-      return json({ route: route ?? null, receipt: await coordinator.emailSetup() }, 200, cors);
+      return json({ route: route ?? null, receipt: await callActiveExecutor(env, intent.integrationId, "emailSetup", [], local => local.emailSetup()) }, 200, cors);
     }
     if (operation === "observation") {
-      const observation = await coordinator.observeOwner(registration, intent.nonce, url.origin);
+      const observation = await callActiveExecutor(env, intent.integrationId, "observeOwner", [registration, intent.nonce, url.origin], local => local.observeOwner(registration, intent.nonce, url.origin));
       return observation ? json(observation, 200, cors) : json({ error: "Waiting for activation" }, 409, cors);
     }
     if (intent.bodyHash !== await automationBodyHash(input.packet)) return json({ error: "Activation body does not match its owner signature" }, 400, cors);
@@ -66,11 +68,14 @@ export async function handleOwnerApi(request: Request, env: WorkerEnv, cors: Hea
     }
     const integration: AutomationIntegration = { id: intent.integrationId, workspaceId: intent.workspaceId,
       scope: { ...packet.bindings, version: 1, expiresAt: new Date(grant.expiresAt).toISOString() }, allowedForwarders: [] };
-    const result = await coordinator.activateOwner(registration, packet, integration, url.origin);
+    const result = await callActiveExecutor(env, intent.integrationId, "activateOwner", [registration, packet, integration, url.origin],
+      local => local.activateOwner(registration, packet, integration, url.origin));
     return result.ok ? json({ status: result.status, synced: true }, 200, cors)
       : json({ error: result.error }, result.status, cors);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Automation setup failed";
+    if (error instanceof ExecutorRpcError) return json({ error: message }, error.status, cors);
+    if (error instanceof ExecutorMigrationFencedError) return json({ error: message }, error.status, cors);
     return json({ error: message }, /enrolled|bound/.test(message) ? 409 : 422, cors);
   }
 }

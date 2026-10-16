@@ -1,4 +1,4 @@
-import { emptyEmployeeProfile, evaluateJobAssessment, priorityOptionForScore, type EmployeeProfile, type JobAssessment } from "../../../src/domain/jobPriority.ts";
+import { defaultJobBands, emptyEmployeeProfile, evaluateJobAssessment, priorityOptionForScore, type EmployeeProfile, type JobAssessment } from "../../../src/domain/jobPriority.ts";
 export const CLEF_MODEL = '@cf/cloudflare/clef-flash';
 export const OPPORTUNITY_POLICY_VERSION = 'lead-clef-v2';
 export const APPLICATION_EVENT_POLICY_VERSION = 'application-event-clef-v2';
@@ -92,6 +92,61 @@ export function readApplicationEventClassification(value: unknown): ApplicationE
   if (value.event !== event) throw new Error('Retained application classification event disagrees with its evidence');
   return { event, distributions: { application_event: answer }, model: CLEF_MODEL,
     policyVersion: APPLICATION_EVENT_POLICY_VERSION };
+}
+
+/** Validate retained vacancy evidence and derive all labels and scores from its distributions. */
+export function readOpportunityClassification(value: unknown,
+  bands: Array<{ optionId: string; minScore: number }> = defaultJobBands, expectedProfile?: EmployeeProfile): OpportunityClassification {
+  if (!isPlainRecord(value) || !hasExactKeys(value, ['relevance', 'assessment', 'assessmentDistributions', 'priority',
+    'roleType', 'seniority', 'distributions', 'model', 'policyVersion'])) {
+    throw new Error('Retained opportunity classification has an invalid shape');
+  }
+  if (value.model !== CLEF_MODEL || value.policyVersion !== OPPORTUNITY_POLICY_VERSION) {
+    throw new Error('Retained opportunity classification uses an unsupported model or policy');
+  }
+  const distributions = value.distributions;
+  if (!isPlainRecord(distributions) || !hasExactKeys(distributions, ['job_opportunity', 'role_type', 'seniority'])) {
+    throw new Error('Retained opportunity classification has invalid distributions');
+  }
+  const relevance = readChoice(distributions.job_opportunity, Object.keys(OPPORTUNITY));
+  const roleType = readChoice(distributions.role_type, Object.keys(ROLE_TYPES));
+  const seniority = readChoice(distributions.seniority, Object.keys(SENIORITY));
+  const rawAssessmentDistributions = value.assessmentDistributions;
+  if (!isPlainRecord(rawAssessmentDistributions) || !hasExactKeys(rawAssessmentDistributions, Object.keys(assessmentKeys))) {
+    throw new Error('Retained opportunity classification has invalid assessment distributions');
+  }
+  const assessmentDistributions = Object.fromEntries(Object.entries(assessmentKeys).map(([key]) =>
+    [key, readChoice(rawAssessmentDistributions[key], ['strong', 'partial', 'weak', 'unknown'])])) as Record<JobCriterion, ClefChoiceAnswer>;
+  const assessmentValue = value.assessment;
+  if (!isPlainRecord(assessmentValue) || !hasExactKeys(assessmentValue, ['version', 'employee_profile', 'scores']) || assessmentValue.version !== 1) {
+    throw new Error('Retained opportunity assessment has an invalid shape');
+  }
+  const profileValue = assessmentValue.employee_profile;
+  const scoreValues = assessmentValue.scores;
+  if (!isPlainRecord(profileValue) || !hasExactKeys(profileValue, ['stack', 'work_profile']) ||
+    typeof profileValue.stack !== 'string' || typeof profileValue.work_profile !== 'string' ||
+    profileValue.stack.length > 4_000 || profileValue.work_profile.length > 8_000 ||
+    !isPlainRecord(scoreValues) || !hasExactKeys(scoreValues, Object.keys(assessmentKeys))) {
+    throw new Error('Retained opportunity assessment has an invalid shape');
+  }
+  const employeeProfile = { stack: profileValue.stack, work_profile: profileValue.work_profile };
+  if (expectedProfile && (employeeProfile.stack !== expectedProfile.stack || employeeProfile.work_profile !== expectedProfile.work_profile)) {
+    throw new Error('Retained opportunity assessment uses a stale employee profile');
+  }
+  const scores = Object.fromEntries(Object.entries(assessmentDistributions).map(([key, answer]) => [key, assessmentScore(answer)])) as JobAssessment['scores'];
+  for (const key of Object.keys(assessmentKeys) as JobCriterion[]) {
+    if (scoreValues[key] !== scores[key]) throw new Error('Retained opportunity score disagrees with its evidence');
+  }
+  const assessment: JobAssessment = { version: 1, employee_profile: employeeProfile, scores };
+  const score = evaluateJobAssessment(assessment, employeeProfile);
+  if (!isPlainRecord(value.priority) || !hasExactKeys(value.priority, ['score', 'optionId']) || value.priority.score !== score ||
+    !(value.priority.optionId === null || typeof value.priority.optionId === 'string' && value.priority.optionId.length <= 128)) {
+    throw new Error('Retained opportunity priority disagrees with its assessment');
+  }
+  return { relevance: relevance.choice as OpportunityClassification['relevance'], assessment, assessmentDistributions,
+    priority: { score, optionId: priorityOptionForScore(score, bands) }, roleType: roleType.choice, seniority: seniority.choice,
+    distributions: { job_opportunity: relevance, role_type: roleType, seniority }, model: CLEF_MODEL,
+    policyVersion: OPPORTUNITY_POLICY_VERSION };
 }
 
 const assessmentKeys: Record<JobCriterion, string> = {

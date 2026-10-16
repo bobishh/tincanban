@@ -1,0 +1,124 @@
+name: Release tincanban executor
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: tincanban-executor-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify-image:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      sdk_sha: ${{ steps.revisions.outputs.sdk_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Record exact SDK revision
+        id: revisions
+        run: echo "sdk_sha=$(git -C vendor/meta-mesh rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Verify executor deployment acceptance scenarios
+        run: node --test services/executor/deploy.test.mjs services/executor/migrate.test.mjs
+      - name: Build and verify the executor image once
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SDK_SHA: ${{ steps.revisions.outputs.sdk_sha }}
+        run: >-
+          docker build --platform linux/amd64
+          --file services/executor/Dockerfile
+          --build-arg RELEASE_SHA="$RELEASE_SHA"
+          --build-arg RELEASE_SDK_SHA="$RELEASE_SDK_SHA"
+          --tag tincanban-executor:checked .
+      - name: Seal checked image and runtime evidence
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_SDK_SHA: ${{ steps.revisions.outputs.sdk_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release/executor
+          container=$(docker create tincanban-executor:checked)
+          trap 'docker rm "$container" >/dev/null' EXIT
+          docker cp "$container:/app/artifact.json" .release/executor/artifact.json
+          docker save --output .release/executor/image.tar tincanban-executor:checked
+          node services/executor/deploy.mjs seal .release/executor "$RELEASE_SHA" "$RELEASE_SDK_SHA"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: executor-checked-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/executor/
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    needs: verify-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production-executor
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ github.sha }}
+      RELEASE_SDK_SHA: ${{ needs.verify-image.outputs.sdk_sha }}
+      EXECUTOR_HOST: ${{ vars.EXECUTOR_HOST }}
+      EXECUTOR_RUNTIME_ENV: ${{ secrets.EXECUTOR_RUNTIME_ENV }}
+      AUTOMATION_TELEMETRY_TOKEN: ${{ secrets.AUTOMATION_TELEMETRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v7
+        with:
+          name: executor-checked-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/executor/
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.7
+      - name: Install pinned service deployment tool
+        run: gem install kamal --version 2.10.1 --no-document
+      - name: Prepare pinned executor host access
+        env:
+          EXECUTOR_SSH_PRIVATE_KEY: ${{ secrets.EXECUTOR_SSH_PRIVATE_KEY }}
+          EXECUTOR_SSH_KNOWN_HOSTS: ${{ secrets.EXECUTOR_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$EXECUTOR_SSH_PRIVATE_KEY"
+          test -n "$EXECUTOR_SSH_KNOWN_HOSTS"
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$EXECUTOR_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/executor-deploy-key"
+          chmod 600 "$RUNNER_TEMP/executor-deploy-key"
+          printf '%s\n' "$EXECUTOR_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          echo "EXECUTOR_SSH_KEY_FILE=$RUNNER_TEMP/executor-deploy-key" >> "$GITHUB_ENV"
+      - name: Require current main before executor activation
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$RELEASE_SHA"
+      - name: Publish and activate the exact checked executor image
+        run: node services/executor/deploy.mjs deploy .release/executor "$RELEASE_SHA" "$RELEASE_SDK_SHA"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: executor-deployment-${{ github.sha }}-${{ github.run_attempt }}
+          path: .release/executor/*.json
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Remove private deployment files
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/executor-deploy-key"
+          rm -f .release-config/executor/.kamal/secrets
+          rm -f .release-config/executor/config/.deploy.executor.yml

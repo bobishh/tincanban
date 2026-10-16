@@ -78,6 +78,26 @@ async function fixture() {
 }
 
 describe("AutomationReplica shared engine contract in workerd", () => {
+  it("Given a signed item change, when storage confirms it, then the host observes only a verified receipt and the authored hash", async () => {
+    const data = await fixture();
+    const verified = vi.fn(async () => {});
+    data.packet.transport!.receiptVerified = verified;
+    const replica = await AutomationReplica.activate(data.packet, data.automation);
+    await replica.createLead("receipt-observation", { company: "Receipt proof", role: "Engineer" }, {});
+    await replica.sync();
+    expect(verified).toHaveBeenCalled();
+    expect(replica.appliedForRuntime("receipt-observation")?.changeHash).toMatch(/^[a-f0-9]{64}$/);
+    const reject = await fixture();
+    const invalidObserved = vi.fn(async () => {});
+    const upload = reject.packet.transport!.upload;
+    reject.packet.transport!.upload = async (...args) => ({ ...await upload(...args), signature: "invalid" });
+    reject.packet.transport!.receiptVerified = invalidObserved;
+    const invalid = await AutomationReplica.activate(reject.packet, reject.automation);
+    await invalid.createLead("invalid-receipt", { company: "Receipt proof", role: "Engineer" }, {});
+    await expect(invalid.sync()).rejects.toThrow();
+    expect(invalidObserved).not.toHaveBeenCalled();
+  });
+
   it("Given caller-owned profile keys change during actor signing, when intake runs, then the captured Worker identity still signs its own transaction", async () => {
     const data = await fixture()
     const replica = await AutomationReplica.activate(data.packet, data.automation)

@@ -1,4 +1,4 @@
-import { canonicalizeJson, type SignedEnvelope } from "../domain/identity"
+import { canonicalizeJson, type SignedEnvelope } from "../domain/identityCrypto"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 
 export type WorkspaceChangeAuthorization = {

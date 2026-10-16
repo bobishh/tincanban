@@ -1,0 +1,58 @@
+name: Migrate tincanban executor participant
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Import frozen pages, or activate an inspected imported participant
+        required: true
+        type: choice
+        options: [import, activate]
+        default: import
+      integration_id:
+        description: Exact existing integration ID
+        required: true
+        type: string
+      epoch:
+        description: Exact positive migration epoch
+        required: true
+        type: string
+      manual_resolutions:
+        description: Activation only; explicit JSON array of eventId, reason and optional itemId records
+        required: false
+        type: string
+        default: '[]'
+
+concurrency:
+  group: tincanban-executor-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: production-executor
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_SHA: ${{ github.sha }}
+      MIGRATION_ACTION: ${{ inputs.action }}
+      MIGRATION_INTEGRATION: ${{ inputs.integration_id }}
+      MIGRATION_EPOCH: ${{ inputs.epoch }}
+      EXECUTOR_MANUAL_RESOLUTIONS: ${{ inputs.manual_resolutions }}
+      EXECUTOR_RUNTIME_ENV: ${{ secrets.EXECUTOR_RUNTIME_ENV }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require current main before participant migration
+        run: test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$RELEASE_SHA"
+      - name: Transfer or activate the exact integration through authenticated service APIs
+        run: node services/executor/migrate.mjs "$MIGRATION_ACTION" "$MIGRATION_INTEGRATION" "$MIGRATION_EPOCH"
