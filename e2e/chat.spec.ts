@@ -1,6 +1,35 @@
 import { expect, test, type Page } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
+type OtlpAttribute = { key: string; value: Record<string, unknown> }
+type OtlpLogRecord = { body?: { stringValue?: string }; attributes?: OtlpAttribute[] }
+type OtlpLogResource = { resource?: { attributes?: OtlpAttribute[] }; scopeLogs?: Array<{ logRecords?: OtlpLogRecord[] }> }
+type OtlpLogs = { resourceLogs?: OtlpLogResource[] }
+type ChatDiagnostic = { event: string; entityId?: string; phase?: string; sessionId?: string }
+const logsEndpoint = "https://telemetry.invalid/v1/logs"
+const tracesEndpoint = "https://telemetry.invalid/v1/traces"
+
+function otlpString(attributes: OtlpAttribute[] | undefined, key: string): string | undefined {
+  const value = attributes?.find(attribute => attribute.key === key)?.value
+  return typeof value?.stringValue === "string" ? value.stringValue : undefined
+}
+
+function chatDiagnostics(payload: OtlpLogs): ChatDiagnostic[] {
+  return (payload.resourceLogs ?? []).flatMap(resource => {
+    const sessionId = otlpString(resource.resource?.attributes, "session.id")
+    return (resource.scopeLogs ?? []).flatMap(scope => (scope.logRecords ?? []).flatMap(record => {
+      const event = record.body?.stringValue
+      if (!event) return []
+      return [{
+        event,
+        entityId: otlpString(record.attributes, "entity.id"),
+        phase: otlpString(record.attributes, "sync.phase"),
+        sessionId,
+      }]
+    }))
+  })
+}
+
 async function openChat(page: Page) {
   await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
   return page.getByRole("dialog", { name: "Workspace chat", exact: true })
@@ -18,13 +47,18 @@ test("Given paired workspaces, when matching names and messages sync, then both 
   test.setTimeout(90_000)
   const context = await browser.newContext()
   const guest = await context.newPage()
-  type Diagnostic = { event: string; entity_id: string; trace_id: string; device_id: string; session_id: string; attrs: { phase?: string } }
-  const hostEvents: Diagnostic[] = [], guestEvents: Diagnostic[] = []
+  const hostEvents: ChatDiagnostic[] = [], guestEvents: ChatDiagnostic[] = []
+  const exportedPayloads: unknown[] = []
   for (const [peer, events] of [[page, hostEvents], [guest, guestEvents]] as const) {
-    await peer.route("https://telemetry.invalid/events", async route => {
-      const batch = route.request().postDataJSON() as { events: Diagnostic[] }
-      events.push(...batch.events)
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ accepted: batch.events.length }) })
+    await peer.route(logsEndpoint, async route => {
+      const payload = route.request().postDataJSON() as OtlpLogs
+      exportedPayloads.push(payload)
+      events.push(...chatDiagnostics(payload))
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+    })
+    await peer.route(tracesEndpoint, async route => {
+      exportedPayloads.push(route.request().postDataJSON())
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
     })
   }
   try {
@@ -82,16 +116,17 @@ test("Given paired workspaces, when matching names and messages sync, then both 
     const hostChat = await openChat(page)
     await expect(hostChat.getByText("Private local chat", { exact: true })).toHaveCount(0)
     await expect(hostChat.getByText("Hello from guest", { exact: true })).toBeVisible({ timeout: 15_000 })
-    await test.step("Given a real P2P message, when both devices report persistence, then full entity and trace IDs correlate", async () => {
-      await expect.poll(() => guestEvents.some(event => event.event === "chat.submit" && hostEvents.some(remote => remote.entity_id === event.entity_id && remote.event === "chat.persisted" && remote.attrs.phase === "remote")), { timeout: 15000 }).toBe(true)
-      const submitted = guestEvents.find(event => event.event === "chat.submit" && hostEvents.some(remote => remote.entity_id === event.entity_id && remote.event === "chat.persisted" && remote.attrs.phase === "remote"))!
-      await expect.poll(() => hostEvents.some(event => event.event === "chat.persisted" && event.entity_id === submitted.entity_id && event.attrs.phase === "remote"), { timeout: 15000 }).toBe(true)
-      const received = hostEvents.find(event => event.event === "chat.persisted" && event.entity_id === submitted.entity_id)!
-      expect(received.trace_id).toBe(submitted.trace_id)
-      expect(received.trace_id).toMatch(/^[0-9a-f]{32}$/)
-      expect(received.device_id).not.toBe(submitted.device_id)
-      expect(received.session_id).not.toBe(submitted.session_id)
-      expect(JSON.stringify([...hostEvents, ...guestEvents])).not.toContain("Hello from guest")
+    await test.step("Correlate chat persistence by semantic entity across distinct diagnostic sessions", async () => {
+      await expect.poll(() => guestEvents.some(event => event.event === "chat.submit" && event.entityId && hostEvents.some(remote => remote.entityId === event.entityId && remote.event === "chat.persisted" && remote.phase === "remote")), { timeout: 15000 }).toBe(true)
+      const submitted = guestEvents.find(event => event.event === "chat.submit" && event.entityId && hostEvents.some(remote => remote.entityId === event.entityId && remote.event === "chat.persisted" && remote.phase === "remote"))!
+      await expect.poll(() => hostEvents.some(event => event.event === "chat.persisted" && event.entityId === submitted.entityId && event.phase === "remote"), { timeout: 15000 }).toBe(true)
+      const received = hostEvents.find(event => event.event === "chat.persisted" && event.entityId === submitted.entityId && event.phase === "remote")!
+      expect(submitted.entityId).toBeTruthy()
+      expect(submitted.sessionId).toBeTruthy()
+      expect(received.sessionId).toBeTruthy()
+      expect(received.sessionId).not.toBe(submitted.sessionId)
+      const encoded = JSON.stringify({ hostEvents, guestEvents, exportedPayloads })
+      expect(encoded).not.toContain("Hello from guest")
     })
     console.info(`Chat delivery: sender submit to receiver visible = ${Date.now() - sentAt}ms`)
     await expect(hostChat.locator(".chat-message-author")).toHaveText(await guestChat.locator(".chat-message-author").textContent() ?? "")

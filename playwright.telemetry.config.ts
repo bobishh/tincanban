@@ -4,7 +4,7 @@ const port = Number(process.env.TINCANBAN_TELEMETRY_E2E_PORT ?? 4247)
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts"],
+  testMatch: ["**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/chat.spec.ts"],
   workers: 1,
   retries: 0,
   use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
