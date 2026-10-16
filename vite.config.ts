@@ -27,6 +27,7 @@ export default defineConfig(({ command }) => ({
   worker: { format: "es" },
   server: process.env.TINCANBAN_E2E_NO_HMR === "1" ? { hmr: false, watch: { ignored: ["**/*"] } } : undefined,
   define: {
+    __VUE_OPTIONS_API__: false,
     __TINCANBAN_BUILD_COMMIT__: JSON.stringify(command === "build" ? buildCommit() : "dev"),
     __TINCANBAN_RELEASE_CANDIDATE__: JSON.stringify(command === "build" ? process.env.RELEASE_CANDIDATE_ID ?? "uncoordinated" : "dev"),
   },
