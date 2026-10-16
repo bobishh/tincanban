@@ -15,6 +15,13 @@
   border-image-repeat: stretch !important;
 }
 
+/* Content groups use spacing; only their controls and window carry ink frames. */
+:where(.detail-inspector, .detail-grid, .detail-subsection, .quick-note-form,
+.source-snapshot, .document-form, .document-row, .item-history-entry,
+.subitem-row, .card-context) {
+  border-image: none !important;
+}
+
 /* Stable identity chooses paint once; moving changes neither outline nor hit box. */
 
 :where(.lead-card) {

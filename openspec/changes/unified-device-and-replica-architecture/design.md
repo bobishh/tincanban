@@ -652,7 +652,12 @@ archives or explicitly reports incomplete recovery coverage.
 
 Default baseline trigger: 512 admitted active changes or 4 MiB of active history,
 whichever occurs first. Validation may adjust these defaults from measured limits,
-with evidence in this change. Bootstrap and ordinary commands scale with current
+with evidence in this change. Reaching this trigger never blocks admission of
+valid remote changes. Automation pauses new authored changes until the Owner
+baseline completes, while synchronization and guarded management remain available.
+Cold restoration derives usage from the admitted document and verified baseline;
+legacy fallback counters cannot establish that the trigger was reached.
+Bootstrap and ordinary commands scale with current
 state plus bounded tail, not lifetime edit count. Archives and current content can
 still consume increasing total disk space; quota status, capacity failures and
 optional retention must be explicit. No automatic destruction of historical data.

@@ -119,7 +119,7 @@ it("Given an automation approved in the admitted board but absent from the peer 
       permissions: automationTypes.find(value => value.version === 1)!.permissions,
       scope: { workspaceId: doc.id, boardId: board.id, grantId: grant.payload.grantId } }
     const controlId = crypto.randomUUID()
-    withAutomation = Automerge.change(doc, value => {
+    withAutomation = Automerge.change(Automerge.clone(doc), value => {
       value.entities["automation:existing-automation"] = { id: "automation:existing-automation", kind: "automation", title: "Intake",
         placement: { parentId: board.id }, executor: { origin: "https://automation.example", personId: grant.payload.personId },
         definition: JSON.stringify(definition), approval: JSON.stringify({ grant,
@@ -128,8 +128,7 @@ it("Given an automation approved in the admitted board but absent from the peer 
     })
     const policy = await buildPublicBoardDeliveryPolicy(profile, doc.id, board.id, 2, () => {}, withAutomation)
     expect(policy.policy.payload.acceptedGrants).toEqual([grant])
-    const forgedSource = Automerge.clone(withAutomation)
-    const forged = Automerge.change(forgedSource, value => {
+    const forged = Automerge.change(Automerge.clone(withAutomation), value => {
       const entity = value.entities["automation:existing-automation"]
       if (!hasEntityKind(entity, "automation")) throw new Error("Expected automation fixture")
       const approval = JSON.parse(entity.approval) as { grant: { signature: string } }
@@ -139,8 +138,8 @@ it("Given an automation approved in the admitted board but absent from the peer 
     try {
       const forgedPolicy = await buildPublicBoardDeliveryPolicy(profile, doc.id, board.id, 3, () => {}, forged)
       expect(forgedPolicy.policy.payload.acceptedGrants).toEqual([])
-    } finally { Automerge.free(forged); Automerge.free(forgedSource) }
-    const revoked = Automerge.change(withAutomation, value => {
+    } finally { Automerge.free(forged) }
+    const revoked = Automerge.change(Automerge.clone(withAutomation), value => {
       const entity = value.entities["automation:existing-automation"]
       if (!hasEntityKind(entity, "automation")) throw new Error("Expected automation fixture")
       entity.controls[controlId] = JSON.stringify({ state: "deleted", supersedes: [] })

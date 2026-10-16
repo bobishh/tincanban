@@ -51,3 +51,8 @@ await their component CI and production evidence. Old letters, event queues, bin
 nonce ledgers are excluded rather than reconciled. Configured production routes
 do not use the compiled legacy adapter after cutover; legacy acceptance fixtures
 still import that adapter. Retired readable rows are deleted by acknowledgement.
+
+Production inspection found false saturated legacy usage (512 changes/4 MiB)
+for an admitted document containing 102 changes/527,932 encoded bytes. Cold
+restoration now derives usage from admitted evidence; reaching the real maintenance
+trigger permits remote admission while preserving the automation authoring gate.

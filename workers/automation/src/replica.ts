@@ -190,6 +190,11 @@ function countChanges(changes: Uint8Array[], baselineId: string | null): ActiveH
 function historyBudgetExceeded(value: ActiveHistoryUsage): boolean {
   return value.admittedChanges >= activeHistoryChangeLimit || value.encodedBytes >= activeHistoryByteLimit;
 }
+function receivedHistoryUsage(current: ActiveHistoryUsage, changes: Uint8Array[]): ActiveHistoryUsage {
+  return { baselineId: current.baselineId,
+    admittedChanges: Math.min(activeHistoryChangeLimit, current.admittedChanges + changes.length),
+    encodedBytes: Math.min(activeHistoryByteLimit, current.encodedBytes + changes.reduce((total, change) => total + change.byteLength, 0)) };
+}
 function ensureHistoryBudget(current: ActiveHistoryUsage, changes: Uint8Array[]): ActiveHistoryUsage {
   const addedBytes = changes.reduce((total, change) => total + change.byteLength, 0);
   const admittedChanges = current.admittedChanges + changes.length;
@@ -412,6 +417,9 @@ export class AutomationReplica {
       persist, transport, value);
     replica.historyBasis = basis;
     assertFullyAdmitted(await replica.revalidate(), decodeBlindBytes(replica.rawDocument));
+    // Legacy fallback counters are not evidence of actual active history size.
+    replica.historyUsage = measureInitialHistoryUsage(decodeBlindBytes(replica.rawDocument), basis?.document(),
+      replica.history ? historyBaselineId(replica.history.wire) : null);
     replica.controlForRuntime();
     await replica.validateStoredProgress();
     return replica;
@@ -431,6 +439,8 @@ export class AutomationReplica {
     replica.historyBasis = basis;
     replica.admissionCache = { rawDocument: replica.rawDocument, authorizations: replica.authorizations,
       authority: replica.authority, result: admission! };
+    replica.historyUsage = measureInitialHistoryUsage(decodeBlindBytes(replica.rawDocument), basis?.document(),
+      replica.history ? historyBaselineId(replica.history.wire) : null);
     return replica.managementInspector();
   }
 
@@ -1189,13 +1199,13 @@ export class AutomationReplica {
           try {
             const tail = Automerge.getChanges(baselineDocument, mergedDocument)
               .filter(change => admitted.has(Automerge.decodeChange(change).hash));
-            nextHistoryUsage = ensureHistoryBudget({ baselineId: historyBaselineId(nextHistory!.wire),
+            nextHistoryUsage = receivedHistoryUsage({ baselineId: historyBaselineId(nextHistory!.wire),
               admittedChanges: 0, encodedBytes: 0 }, tail);
           } finally { Automerge.free(baselineDocument); }
         } else {
           const tail = Automerge.getChanges(previousDocument, mergedDocument)
             .filter(change => admitted.has(Automerge.decodeChange(change).hash));
-          nextHistoryUsage = ensureHistoryBudget(this.historyUsage, tail);
+          nextHistoryUsage = receivedHistoryUsage(this.historyUsage, tail);
         }
       } finally { Automerge.free(previousDocument); }
     } catch (error) { if (switching) nextBasis?.free(); throw error; }
