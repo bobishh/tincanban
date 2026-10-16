@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-const state = vi.hoisted(() => ({ brokenStart: false, brokenEnd: false, starts: 0, queued: 0 }))
+const state = vi.hoisted(() => ({ brokenStart: false, brokenEnd: false, starts: 0, queued: 0, httpStarts: 0 }))
 vi.mock("./otelBrowserSdk", () => ({ BrowserOtelSdk: class {
   exportState = { sending: 0, queued: 0, lastSentAt: null, error: "" }
   emit() {}
@@ -8,7 +8,7 @@ vi.mock("./otelBrowserSdk", () => ({ BrowserOtelSdk: class {
   startOperation() { state.starts++; if (state.brokenStart) throw new Error("SDK failed"); return { span: {}, context: {} } }
   finishOperation() { if (state.brokenEnd) throw new Error("SDK failed") }
   shutdown() { return Promise.resolve() }
-  beginHttp() { return { headers: {}, end() {} } }
+  beginHttp() { state.httpStarts++; return { headers: {}, end() {} } }
 } }))
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
@@ -45,4 +45,22 @@ describe("optional operation diagnostics", () => {
     const original = new TypeError("storage failed")
     await expect(traceDiagnosticOperation("save", {}, async () => { throw original })).rejects.toBe(original)
   })
+})
+
+it("Given ordinary error reporting, when background HTTP runs, then verbose network spans require explicit sync debugging", async () => {
+  vi.resetModules()
+  vi.stubGlobal("localStorage", { getItem: () => null })
+  vi.stubGlobal("window", { location: { search: "" }, addEventListener() {} })
+  vi.stubEnv("VITE_SYNC_TELEMETRY_URL", "https://collector.invalid/events")
+  vi.stubEnv("VITE_SYNC_TELEMETRY_BROWSER_KEY", "public-browser-fixture-key-0123456789")
+  state.httpStarts = 0
+  const telemetry = await import("./telemetry")
+  telemetry.record("browser.error", { error: new Error("normal error reporting") }, "error")
+  await vi.dynamicImportSettled()
+  const { beginDiagnosticHttpRequest } = await import("./httpDiagnostics")
+  beginDiagnosticHttpRequest("HTTP_GET")
+  expect(state.httpStarts).toBe(0)
+  window.location.search = "?syncTrace=1"
+  beginDiagnosticHttpRequest("HTTP_GET")
+  expect(state.httpStarts).toBe(1)
 })

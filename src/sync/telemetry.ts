@@ -74,7 +74,9 @@ async function initialize(): Promise<BrowserOtelSdk | undefined> {
         notify()
       })
       sdk = instance
-      setHttpDiagnosticSpanFactory((name, attributes, parent) => instance.beginHttp(name, attributes, parent))
+      setHttpDiagnosticSpanFactory((name, attributes, parent) =>
+        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("syncTrace") === "1"
+          ? instance.beginHttp(name, attributes, parent) : undefined)
       for (const item of pending.splice(0)) {
         if (item.kind === "log") instance.emit(item.value)
         else instance.operation(item.value)
