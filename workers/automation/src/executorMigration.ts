@@ -2,11 +2,9 @@ import { canonicalizeJson, fromBase64Url, sha256Base64Url, toBase64Url } from ".
 import type { ExecutionSqlTransactionPort, ExecutionStoragePort } from "./executionPorts";
 
 export const migratedTables = [
-  "automation_registration", "consumed_challenges", "automation_identities", "automation_replica",
+  "automation_registration", "automation_identities", "automation_replica",
   "automation_replica_chunks", "automation_storage_transition", "automation_storage_transition_completed",
-  "automation_history_transition", "automation_history_transition_completed", "events",
-  "application_bindings", "application_binding_heads", "application_binding_audit",
-  "application_review_requests", "automation_instance_requests",
+  "automation_history_transition", "automation_history_transition_completed",
 ] as const;
 export type MigratedTable = typeof migratedTables[number];
 type MigrationRow = Record<string, string | number | null>;

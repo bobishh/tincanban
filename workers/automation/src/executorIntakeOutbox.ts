@@ -7,6 +7,8 @@ import { captureMigrationManifest, parseMigrationManifest, readMigrationPage, se
 import { decryptEventClassification, decryptEventPayload, encryptEventClassification } from "./eventPayload";
 import { classifyExecutorEvent, type ClassificationContext } from "./classificationEndpoint";
 import { callExecutorRpc, submitExecutorItemCommand } from "./executorClient";
+import { readCloudflareFreshRoute } from "./executorFresh";
+import { recordAutomationException } from "./telemetry";
 import type { WorkerEnv } from "./index";
 
 const maxOutboxRows = 1_000;
@@ -71,6 +73,11 @@ export class ExecutorIntakeOutbox {
     return state?.phase === "active" ? { origin: state.origin, epoch: state.epoch } : null;
   }
 
+  async freshExecutionRoute(): Promise<{ origin: string; epoch: number } | null> {
+    const binding = await readCloudflareFreshRoute(this.storage);
+    return binding ? { origin: binding.origin, epoch: binding.epoch } : null;
+  }
+
   async prepare(epoch: number): Promise<MigrationManifest> {
     const origin = configuredOrigin(this.env.EXECUTOR_ORIGIN);
     if (!Number.isSafeInteger(epoch) || epoch < 1) throw new TypeError("Executor migration epoch is invalid");
@@ -132,8 +139,10 @@ export class ExecutorIntakeOutbox {
       throw new TypeError("Website intake payload exceeds its bound");
     }
     const used = this.storage.sql.exec<{ nonce: string; event_id: string }>(
-      "SELECT nonce, event_id FROM consumed_challenges WHERE nonce = ? UNION ALL SELECT nonce, event_id FROM executor_intake_challenges WHERE nonce = ? LIMIT 1",
-      input.nonce, input.nonce,
+      hasSqlTable(this.storage, "consumed_challenges")
+        ? "SELECT nonce, event_id FROM consumed_challenges WHERE nonce = ? UNION ALL SELECT nonce, event_id FROM executor_intake_challenges WHERE nonce = ? LIMIT 1"
+        : "SELECT nonce, event_id FROM executor_intake_challenges WHERE nonce = ? LIMIT 1",
+      ...(hasSqlTable(this.storage, "consumed_challenges") ? [input.nonce, input.nonce] : [input.nonce]),
     ).toArray()[0];
     if (used) {
       if (used.event_id === input.eventId) {
@@ -191,10 +200,11 @@ export class ExecutorIntakeOutbox {
 
   async alarm(): Promise<void> {
     const state = await this.phase();
-    if (!state || state.phase === "frozen") {
+    if (state?.phase === "frozen") {
       await this.storage.deleteAlarm();
       return;
     }
+    if (!state && !(await this.freshExecutionRoute())) { await this.storage.deleteAlarm(); return; }
     await this.drainOne();
   }
 
@@ -210,11 +220,13 @@ export class ExecutorIntakeOutbox {
 
     try {
       const state = await this.phase();
-      if (!state || state.phase !== "active") { await this.storage.deleteAlarm(); return; }
+      const route = state?.phase === "active" ? { origin: state.origin, epoch: state.epoch } : !state ? await this.freshExecutionRoute() : null;
+      if (!route) { await this.storage.deleteAlarm(); return; }
+      if (configuredOrigin(this.env.EXECUTOR_ORIGIN) !== route.origin) throw new Error("Executor outbox route does not match configured origin");
       const secret = this.env.EVENT_STORAGE_SECRET;
       if (!secret) throw new Error("Event storage encryption is not configured");
       const event = await decryptEventPayload(secret, row.event_id, row.payload);
-      const rawContext = await callExecutorRpc<unknown>(this.env, this.integrationId, state.epoch, "classificationContext", [], 2 * 1024 * 1024);
+      const rawContext = await callExecutorRpc<unknown>(this.env, this.integrationId, route.epoch, "classificationContext", [], 2 * 1024 * 1024);
       const context = readNodeClassificationContext(rawContext, this.integrationId, event.source);
       let classification: AutomationPipelineResult;
       if (row.classification_payload) {
@@ -241,6 +253,8 @@ export class ExecutorIntakeOutbox {
       this.storage.transactionSync(() => this.storage.sql.exec(`UPDATE executor_intake_outbox
         SET attempt = ?, next_attempt_at = ?, updated_at = ? WHERE event_id = ? AND state != 'forwarded'`, attempt, next, Date.now(), row.event_id));
       await this.scheduleOutboxAlarm(next);
+      recordAutomationException(error, { event: "executor.intake.forward.retry", integrationId: this.integrationId,
+        eventId: row.event_id, attempt, operation: "executor-intake-forward" });
       console.warn(JSON.stringify({ event: "executor.intake.forward.retry", integrationId: this.integrationId,
         eventId: row.event_id, attempt, errorType: error instanceof Error ? error.name : "unknown" }));
     }
@@ -255,11 +269,13 @@ export class ExecutorIntakeOutbox {
   }
 
   private findLegacyByEventId(eventId: string): { event_id: string; status: StoredEventStatus; body_hash: string } | undefined {
+    if (!hasSqlTable(this.storage, "events")) return undefined;
     return this.storage.sql.exec<{ event_id: string; status: StoredEventStatus; body_hash: string }>(
       "SELECT event_id, status, body_hash FROM events WHERE event_id = ?", eventId).toArray()[0];
   }
 
   private findLegacyEmailBySource(sourceId: string): { event_id: string; status: StoredEventStatus; body_hash: string } | undefined {
+    if (!hasSqlTable(this.storage, "events")) return undefined;
     return this.storage.sql.exec<{ event_id: string; status: StoredEventStatus; body_hash: string }>(
       "SELECT event_id, status, body_hash FROM events WHERE source = 'email' AND source_id = ?", sourceId).toArray()[0];
   }
@@ -274,7 +290,8 @@ export class ExecutorIntakeOutbox {
   }
 
   private async scheduleIfActive(at: number): Promise<void> {
-    if ((await this.phase())?.phase === "active") await this.scheduleOutboxAlarm(at);
+    const state = await this.phase();
+    if (state?.phase === "active" || (!state && await this.freshExecutionRoute())) await this.scheduleOutboxAlarm(at);
   }
 
   private async scheduleOutboxAlarm(at: number): Promise<void> {
@@ -362,3 +379,7 @@ function reviewForDisabledSource(event: AutomationEvent): AutomationPipelineResu
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
+
+function hasSqlTable(storage: ExecutionStoragePort, name: "consumed_challenges" | "events"): boolean {
+  return storage.sql.exec<{ present: number }>("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?", name).toArray().length > 0;
+}

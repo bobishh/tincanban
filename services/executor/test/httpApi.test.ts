@@ -38,3 +38,20 @@ test("Given a service token, when a caller requests arbitrary replica persistenc
   }));
   assert.equal(response.status, 400);
 });
+
+test("Given fresh owner enrollment, when the private bootstrap route receives a service-authenticated binding, then it forwards only that instance", async () => {
+  const calls: unknown[] = [];
+  const handler = createExecutorHandler({ call: async (...args) => { calls.push(args); return { status: "enrolling" }; } }, config, artifact);
+  const binding = { integrationId: "one", ownerPersonId: "owner", workspaceId: "workspace", origin: "https://executor.test", epoch: 1 };
+  const response = await handler(new Request("https://executor.test/internal/integrations/one/bootstrap", {
+    method: "POST", headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(binding),
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(calls, [["one", { operation: "bootstrap", body: binding }]]);
+
+  const denied = await handler(new Request("https://executor.test/internal/integrations/one/bootstrap", {
+    method: "POST", headers: { authorization: `Bearer ${producer}` }, body: "not-json",
+  }));
+  assert.equal(denied.status, 401);
+  assert.equal(calls.length, 1);
+});

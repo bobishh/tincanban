@@ -37,7 +37,8 @@ import type { ExecutionCoordinator } from "../src/executionCoordinator";
 
 /** Test seams follow the shared executor; the real Durable Object still owns the public RPC surface. */
 function executionFixture(instance: object): ExecutionCoordinator {
-  const execution = Reflect.get(instance, "execution");
+  const legacyExecution = Reflect.get(instance, "legacyExecution");
+  const execution = typeof legacyExecution === "function" ? Reflect.apply(legacyExecution, instance, []) : undefined;
   if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
   return execution as ExecutionCoordinator;
 }

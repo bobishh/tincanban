@@ -1,7 +1,7 @@
 import { authorizeInternalRequest, executorRpcMethods } from "../../../workers/automation/src/executorClient";
 
 export type ParticipantRequest = {
-  operation: "rpc" | "status" | "import-manifest" | "import-page" | "activate" | "tick" | "review-migration-events";
+  operation: "rpc" | "status" | "bootstrap" | "import-manifest" | "import-page" | "activate" | "tick";
   method?: string; args?: unknown[]; epoch?: number; body?: unknown;
   traceparent?: string;
 };
@@ -37,13 +37,13 @@ export function createExecutorHandler(runtime: ParticipantRuntime, config: Execu
         return json({ error: "Method or route not supported" }, 405);
       }
       if (!authorizeInternalRequest(request, config.serviceToken)) return json({ error: "Service authentication required" }, 401);
-      const match = url.pathname.match(/^\/internal\/integrations\/([A-Za-z0-9_-]{1,128})\/(rpc|status|migration-manifest|migration-page|activate|review-migration-events)$/);
+      const match = url.pathname.match(/^\/internal\/integrations\/([A-Za-z0-9_-]{1,128})\/(rpc|status|bootstrap|migration-manifest|migration-page|activate)$/);
       if (!match) return json({ error: "Not found" }, 404);
       const [, integrationId, action] = match;
       if (request.method === "GET" && action === "status") return json(await runtime.call(integrationId!, { operation: "status" }));
-      if (request.method === "GET" && action === "review-migration-events") return json(await runtime.call(integrationId!, { operation: "review-migration-events" }));
       if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
       const body = await readJson(request, action === "rpc" ? 32 * 1024 * 1024 : 6 * 1024 * 1024);
+      if (action === "bootstrap") return json(await runtime.call(integrationId!, { operation: "bootstrap", body }));
       if (action === "rpc") {
         const value = body as { method?: unknown; args?: unknown };
         if (!value || typeof value.method !== "string" || !executorRpcMethods.some(method => method === value.method) ||

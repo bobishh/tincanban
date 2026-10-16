@@ -57,7 +57,7 @@ it("Given an authenticated producer command, when accepted and retried, then the
       "SELECT classification_payload FROM events WHERE event_id = ?", "A".repeat(43),
     ).toArray()[0]?.classification_payload).not.toContain("Source message");
     await coordinator.alarm();
-    expect(coordinator.getItemCommandResult("A".repeat(43), "command-integration")).toMatchObject({
+    expect(coordinator.getItemCommandResult("A".repeat(43), integrationId)).toMatchObject({
       commandId: "A".repeat(43), status: "review", result: { decision: { relevance: "yes" } },
     });
     await ctx.storage.deleteAlarm();

@@ -68,7 +68,7 @@ identical bytes returns the original command/result; changed content conflicts.
 Return `202` only after durable queue commit, with command ID and a result URL.
 Authentication, validation and conflicts return distinct failures. A durable
 acceptance receipt does not mean the board has changed. Result states distinguish
-queued/running/retryable/review-required/applied/rejected/manual-resolution, and
+queued/running/retryable/review-required/applied/rejected, and
 record the actual admitted item ID/change and verified storage receipt when
 applied. Result access has the same integration scope as submission. Preserve
 trace context across intake, queue, executor and storage without exposing source
@@ -99,11 +99,13 @@ silently abandon an incomplete authority transition.
 
 ## Existing state migration
 
-Inventory the real integration before cutover, including identity/certificate,
-signed activation/grants, replica/history keys and bases, pending exact writes,
-event ledger, source bindings, nonces, encrypted outbox and management receipts.
-Use authenticated encrypted transfer; verify bytes and authority on import.
-Never create a fresh identity with silently widened rights to avoid migration.
+Transfer only the existing approved participant: identity/certificate,
+registration, replica/chunks, signed activation/grants, replica/history keys and
+bases, exact signed pending writes, and storage/history transitions. Old letters,
+event queues, source bindings and request nonce ledgers are not imported. This
+cutover does not inspect, reconcile or replay historical mail. Use authenticated
+encrypted transfer; verify bytes and authority on import. Never create a fresh
+identity with silently widened rights to avoid transferring the approved actor.
 
 Fence old execution durably before enabling the new writer. Intake may continue
 durably queueing during the fence. Import must be idempotent and checkpointed;
@@ -114,11 +116,11 @@ state until verified import and recovery evidence exists; then remove retired
 readable key/state paths from Cloudflare through an explicit cleanup checkpoint.
 No permanent dual-write fallback or inactive CRDT dependency remains in intake.
 
-Before draining legacy events, reconcile the owner's manually created Tesla
-cards and manually moved Amazon card against source events and current admitted
-state. Persist source-specific manual-resolution outcomes, preserving original
-evidence; do not blindly replay or globally discard all older events. If exact
-mapping cannot be established, retain that event for review without mutation.
+The owner's manually created Tesla cards and manually moved Amazon card remain
+ordinary admitted board state. Historical letters and queued intake never enter
+the new executor, so this cutover cannot replay them. New intake retains the
+normal durable command/retry path after activation; this exclusion applies to
+the old backlog, not new accepted commands.
 
 ## Delivery and production evidence
 

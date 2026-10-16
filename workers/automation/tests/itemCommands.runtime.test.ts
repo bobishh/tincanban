@@ -90,5 +90,5 @@ test('Given a malformed present decision or an opportunity without its source de
   const missingDecision = await envelope();
   missingDecision.classification.decision = undefined;
   missingDecision.classification.opportunity = opportunity;
-  await assert.rejects(prepareItemCommand(missingDecision, 'integration-1'), /requires a decision/i);
+  await assert.rejects(prepareItemCommand(missingDecision, 'integration-1'), /requires a source decision/i);
 });

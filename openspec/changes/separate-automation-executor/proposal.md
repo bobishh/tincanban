@@ -30,8 +30,9 @@ requirements still apply.
 - Provide an authenticated items command API, shared by form/email producers.
   Requests propose item creation/update/workflow operations, never arbitrary CRDT
   bytes or unrestricted document replacement.
-- Preserve existing management URLs, identities, grants, queued decisions and
-  exact pending writes during an authenticated, single-writer cutover.
+- Preserve existing management URLs, approved identities/grants and exact signed
+  pending writes during an authenticated, single-writer participant cutover.
+  Exclude old letters, event queues, bindings and nonce ledgers from transfer.
 - Release intake and executor independently through component-owned CI. Rusty and
   TinSink are not rebuilt/restarted by either deployment.
 

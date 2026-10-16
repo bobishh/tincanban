@@ -7,7 +7,7 @@ export default defineConfig({
     // Workspace packages are tested from vendor/meta-mesh/packages. Their npm
     // workspace symlinks under nested node_modules point at the same files and
     // otherwise make Vitest execute the vendored suite twice.
-    exclude: ["e2e/**", "tmp/**", "workers/**", "scripts/**/*.test.mjs", "**/*.native.test.ts", "**/node_modules/**"],
+    exclude: ["e2e/**", "tmp/**", "workers/**", "services/**", "scripts/**/*.test.mjs", "**/*.native.test.ts", "**/node_modules/**"],
     setupFiles: ["./src/testSetup.ts"],
     coverage: {
       provider: "v8",

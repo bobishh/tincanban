@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: Import frozen pages, or activate an inspected imported participant
+        description: Import approved participant state, or activate its verified manifest
         required: true
         type: choice
         options: [import, activate]
@@ -17,11 +17,6 @@ on:
         description: Exact positive migration epoch
         required: true
         type: string
-      manual_resolutions:
-        description: Activation only; explicit JSON array of eventId, reason and optional itemId records
-        required: false
-        type: string
-        default: '[]'
 
 concurrency:
   group: tincanban-executor-production
@@ -42,7 +37,6 @@ jobs:
       MIGRATION_ACTION: ${{ inputs.action }}
       MIGRATION_INTEGRATION: ${{ inputs.integration_id }}
       MIGRATION_EPOCH: ${{ inputs.epoch }}
-      EXECUTOR_MANUAL_RESOLUTIONS: ${{ inputs.manual_resolutions }}
       EXECUTOR_RUNTIME_ENV: ${{ secrets.EXECUTOR_RUNTIME_ENV }}
     steps:
       - uses: actions/checkout@v7

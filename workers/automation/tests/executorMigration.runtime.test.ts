@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import { AutomationCoordinator } from "../src/coordinator";
+import { ExecutionCoordinator } from "../src/executionCoordinator";
 import type { WorkerEnv } from "../src/index";
 import { encryptEventPayload } from "../src/eventPayload";
 import type { AutomationEvent } from "../src/pipeline";
@@ -70,13 +71,23 @@ describe("Cloudflare executor migration fence", () => {
     } finally { vi.unstubAllGlobals(); }
   });
 
-  it("Given a frozen manifest, When website intake consumes a fresh challenge, Then every captured legacy page stays unchanged", async () => {
+  it("Given a frozen manifest with old intake evidence, When participant state migrates, Then queued letters and replay ledgers stay behind", async () => {
     const runtime = env as unknown as WorkerEnv;
     const stub = runtime.AUTOMATION.getByName("migration-immutable-challenges");
     await runInDurableObject(stub, async (_instance, ctx) => {
+      new ExecutionCoordinator(ctx, coordinatorEnv());
       ctx.storage.sql.exec("INSERT INTO consumed_challenges (nonce, expires_at, event_id) VALUES ('old-nonce', ?, 'old-event')", Date.now() + 60_000);
       const worker = new AutomationCoordinator(ctx, coordinatorEnv());
+      ctx.storage.sql.exec(`INSERT INTO events (event_id, source, source_id, body_hash, payload, status, created_at, updated_at)
+        VALUES ('d', 'email', 'old-message-id', 'old-body-hash', 'old-ciphertext', 'pending', ?, ?)`, Date.now(), Date.now());
       const manifest = await worker.prepareExecutorMigration(15);
+      expect(manifest.tables.map(table => table.name)).toEqual([
+        "automation_registration", "automation_identities", "automation_replica", "automation_replica_chunks",
+        "automation_storage_transition", "automation_storage_transition_completed",
+        "automation_history_transition", "automation_history_transition_completed",
+      ]);
+      const excluded = new Set(["events", "consumed_challenges", "application_bindings", "application_review_requests"]);
+      expect(manifest.tables.some(table => excluded.has(table.name))).toBe(false);
       const event: AutomationEvent = { source: "website", receivedAt: "2026-10-16T10:00:00.000Z", submission: {
         message: "Hiring", contact: "owner@example.test", company: "Example", role: "Engineer",
       } };
@@ -85,6 +96,7 @@ describe("Cloudflare executor migration fence", () => {
         nonce: "new-nonce", challengeExpiresAt: Date.now() + 60_000, payload })).resolves.toMatchObject({ status: "pending", duplicate: false });
 
       expect(ctx.storage.sql.exec("SELECT nonce FROM consumed_challenges").toArray()).toEqual([{ nonce: "old-nonce" }]);
+      expect(ctx.storage.sql.exec<{ event_id: string }>("SELECT event_id FROM events").toArray()).toEqual([{ event_id: "d" }]);
       expect(ctx.storage.sql.exec("SELECT nonce FROM executor_intake_challenges").toArray()).toEqual([{ nonce: "new-nonce" }]);
       for (const table of manifest.tables) {
         for (const page of table.pages) await worker.readExecutorMigrationPage(manifest.epoch, table.name, page.offset);
@@ -96,6 +108,7 @@ describe("Cloudflare executor migration fence", () => {
     const runtime = env as unknown as WorkerEnv;
     const stub = runtime.AUTOMATION.getByName("migration-sealed-pages");
     await runInDurableObject(stub, async (_instance, ctx) => {
+      new ExecutionCoordinator(ctx, coordinatorEnv());
       const worker = new AutomationCoordinator(ctx, coordinatorEnv());
       ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id) VALUES (1, 'owner', 'workspace', 'migration-sealed-pages')");
       const manifest = await worker.prepareExecutorMigration(13);

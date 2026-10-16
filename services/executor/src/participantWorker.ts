@@ -4,12 +4,11 @@ import { ExecutionCoordinator } from "../../../workers/automation/src/executionC
 import type { ExecutionEnvironment } from "../../../workers/automation/src/executionPorts";
 import { initializeImport, initializeImportTables, importMigrationPage, openMigrationPage,
   parseMigrationManifest, verifyCompleteImport, type MigrationManifest } from "../../../workers/automation/src/executorMigration";
-import { decryptEventPayload } from "../../../workers/automation/src/eventPayload";
 import { observeReplicaReceipts } from "../../../workers/automation/src/replica";
 import { automationTelemetry, recordAutomationException, withAutomationSpan } from "../../../workers/automation/src/telemetry";
 import { SqliteExecutionStorage } from "./sqliteStorage";
-import { resolveMigrationEvents, type ManualMigrationResolution } from "./manualResolution";
 import type { ParticipantRequest } from "./httpApi";
+import { freshBindingHash, readNodeFreshBinding, reserveNodeFreshBinding, validateExecutorFreshBinding } from "../../../workers/automation/src/executorFresh";
 
 const { integrationId, databasePath, publicOrigin, automationOrigin } = workerData as {
   integrationId: string; databasePath: string; publicOrigin: string; automationOrigin: string;
@@ -63,9 +62,23 @@ function importState() {
 async function dispatch(request: ParticipantRequest): Promise<unknown> {
   const state = importState();
   const manifest = state ? JSON.parse(state.manifest_json) as MigrationManifest : undefined;
-  if (request.operation === "status") return { status: state?.active ? "active" : state ? "importing" : "unconfigured",
-    epoch: manifest?.epoch ?? null, manifestHash: state?.manifest_hash ?? null };
+  const fresh = await readNodeFreshBinding(storage);
+  // Only the existing coordinator can publish this state, after validating activation authority.
+  const freshActivated = fresh !== null && storage.sql.exec(
+    "SELECT singleton FROM automation_replica WHERE singleton = 1 AND (state_generation IS NOT NULL OR encrypted_state IS NOT NULL)",
+  ).toArray().length > 0;
+  if (request.operation === "status") return fresh
+    ? { status: freshActivated ? "active" : "enrolling", epoch: fresh.epoch, manifestHash: null, bindingHash: await freshBindingHash(fresh) }
+    : { status: state?.active ? "active" : state ? "importing" : "unconfigured",
+      epoch: manifest?.epoch ?? null, manifestHash: state?.manifest_hash ?? null };
+  if (request.operation === "bootstrap") {
+    const binding = validateExecutorFreshBinding(request.body, { integrationId, origin: publicOrigin });
+    const reservation = await reserveNodeFreshBinding(storage, binding);
+    const profile = await coordinator.enrollOwner({ integrationId, ownerPersonId: binding.ownerPersonId, workspaceId: binding.workspaceId }, required("IDENTITY_STORAGE_SECRET"));
+    return { ...profile, epoch: binding.epoch, bindingHash: reservation.hash };
+  }
   if (request.operation === "import-manifest") {
+    if (fresh) throw new Error("Fresh enrollment already owns this participant; migration cannot replace it");
     const incoming = parseMigrationManifest(request.body, integrationId, publicOrigin);
     await initializeImport(storage, incoming);
     return { status: "importing", epoch: incoming.epoch };
@@ -77,39 +90,19 @@ async function dispatch(request: ParticipantRequest): Promise<unknown> {
     await importMigrationPage(storage, manifest, page);
     return { imported: true, table: body.table, offset: body.offset };
   }
-  if (request.operation === "review-migration-events") {
-    if (!manifest || state?.active) throw new Error("Migration review requires an inactive imported participant");
-    await verifyCompleteImport(storage, manifest);
-    const rows = storage.sql.exec<{ event_id: string; source_id: string; source: string; status: string; payload: string; body_hash: string; created_at: number }>(
-      "SELECT event_id, source_id, source, status, payload, body_hash, created_at FROM events WHERE status <> 'applied' ORDER BY created_at LIMIT 100",
-    ).toArray();
-    return Promise.all(rows.map(async row => {
-      const event = await decryptEventPayload(required("EVENT_STORAGE_SECRET"), row.event_id, row.payload);
-      return { eventId: row.event_id, sourceId: row.source_id, bodyHash: row.body_hash, source: row.source, status: row.status, createdAt: row.created_at,
-        ...(event.source === "email" ? { subject: event.message.subject, urls: event.message.urls, sentAt: event.message.date }
-          : { company: event.submission.company, role: event.submission.role, jobUrl: event.submission.jobUrl }) };
-    }));
-  }
   if (request.operation === "activate") {
-    const body = request.body as { epoch: number; manifestHash: string; manualResolutions: ManualMigrationResolution[] };
+    const body = request.body as { epoch: number; manifestHash: string };
     if (!manifest || body.epoch !== manifest.epoch || body.manifestHash !== state?.manifest_hash) throw new Error("Activation requires the exact imported migration");
     if (state.active) return { status: "active", epoch: manifest.epoch, manifestHash: state.manifest_hash };
-    if (!Array.isArray(body.manualResolutions)) throw new TypeError("Explicit migration resolution list required");
     await verifyCompleteImport(storage, manifest);
     await coordinator.validateMigrationState();
-    const serialized = await coordinator.loadReplicaState(required("EVENT_STORAGE_SECRET"));
-    const applied = serialized ? (JSON.parse(serialized) as { applied?: Record<string, unknown> }).applied ?? {} : {};
-    storage.transactionSync(() => {
-      if (body.manualResolutions.length) resolveMigrationEvents(storage, body.manualResolutions, {
-        instructionRef: "user:2026-10-16/tesla-amazon-already-handled", hasAuthoredEvent: eventId => Object.hasOwn(applied, eventId),
-      });
-      storage.sql.exec("UPDATE executor_import SET active = 1 WHERE singleton = 1");
-    });
+    storage.transactionSync(() => storage.sql.exec("UPDATE executor_import SET active = 1 WHERE singleton = 1"));
     return { status: "active", epoch: manifest.epoch, manifestHash: state.manifest_hash };
   }
-  if (!state?.active) {
+  const freshLifecycle = fresh && request.operation === "rpc" && ["enrollOwner", "activateOwner", "getRegisteredIntegration", "observeOwner"].includes(request.method ?? "");
+  if (!state?.active && !freshActivated && !freshLifecycle) {
     if (request.operation === "tick") return { active: false };
-    const error = new Error("Executor migration has not been activated") as Error & { status: number };
+    const error = new Error(fresh ? "Executor enrollment requires owner activation" : "Executor migration has not been activated") as Error & { status: number };
     error.status = 503; throw error;
   }
   if (request.operation === "tick") {
@@ -123,11 +116,15 @@ async function dispatch(request: ParticipantRequest): Promise<unknown> {
     return { active: true, nextAlarm: await storage.getAlarm() };
   }
   if (request.operation === "rpc") {
-    if (request.epoch !== undefined && request.epoch !== manifest?.epoch) throw new Error("Executor routing epoch is stale");
+    if (request.epoch !== undefined && request.epoch !== (fresh?.epoch ?? manifest?.epoch)) throw new Error("Executor routing epoch is stale");
     const method = request.method as keyof ExecutionCoordinator;
     const fn = coordinator[method];
     if (typeof fn !== "function") throw new TypeError("Unknown participant method");
-    const result = await Reflect.apply(fn, coordinator, request.args ?? []);
+    const args = [...(request.args ?? [])];
+    // Encryption keys belong to this runtime, never to the forwarding request.
+    if (method === "enrollOwner" || method === "provisionIdentity") args[1] = required("IDENTITY_STORAGE_SECRET");
+    if (method === "activateReplica") { args[1] = required("IDENTITY_STORAGE_SECRET"); args[2] = required("EVENT_STORAGE_SECRET"); }
+    const result = await Reflect.apply(fn, coordinator, args);
     if ((method === "getItemCommandResult" || method === "getEvent") && result?.status === "applied") {
       const receipt = storage.sql.exec<{ change_hash: string; receipt_json: string }>(
         "SELECT change_hash, receipt_json FROM executor_command_receipts WHERE event_id = ?", String(request.args?.[0]),
@@ -145,6 +142,7 @@ parentPort!.on("message", (message: { id: number; request: ParticipantRequest })
     try {
       const result = await withAutomationSpan(automationTelemetry(), `executor.${message.request.operation}`, {
         "integration.id": integrationId, "executor.operation": message.request.method ?? message.request.operation,
+        "automation.event.id": requestEventId(message.request),
       }, () => dispatch(message.request), message.request.traceparent);
       parentPort!.postMessage({ id: message.id, result });
     }
@@ -155,6 +153,13 @@ parentPort!.on("message", (message: { id: number; request: ParticipantRequest })
     } finally { await automationTelemetry().flush(); }
   });
 });
+
+function requestEventId(request: ParticipantRequest): string | undefined {
+  const first = request.args?.[0];
+  const value = request.method === "enqueueItemCommand" && first && typeof first === "object" && "sourceEventId" in first
+    ? first.sourceEventId : ["getEvent", "getItemCommandResult"].includes(request.method ?? "") ? first : undefined;
+  return typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
+}
 
 function required(name: string): string {
   const value = process.env[name];

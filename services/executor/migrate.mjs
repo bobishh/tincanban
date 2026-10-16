@@ -8,17 +8,10 @@ const expectedOrigin = 'https://executor.meta-uber-engineer.dev';
 const manifestHashPattern = /^[A-Za-z0-9_-]{43}$/;
 
 /** Transport only: admission, page authentication and cutover authority stay in the participants. */
-export async function migrateExecutor({ action, integrationId, epoch, origin, token, manualResolutions, fetcher = fetch, progress = () => {} }) {
+export async function migrateExecutor({ action, integrationId, epoch, origin, token, fetcher = fetch, progress = () => {} }) {
   if (!['import', 'activate'].includes(action) || !/^[A-Za-z0-9_-]{1,128}$/.test(integrationId ?? '') ||
       !Number.isSafeInteger(epoch) || epoch < 1 || origin !== expectedOrigin || typeof token !== 'string' || !token) {
     throw new Error('Migration requires an exact action, integration, positive epoch, fixed origin and service credential');
-  }
-  if (action === 'activate' && (!Array.isArray(manualResolutions) || manualResolutions.length > 100 || manualResolutions.some(value =>
-    !value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['eventId', 'reason', 'itemId'].includes(key)) ||
-    typeof value.eventId !== 'string' || !value.eventId || value.eventId.length > 128 ||
-    typeof value.reason !== 'string' || !value.reason.trim() || value.reason.length > 1000 ||
-    (value.itemId !== undefined && (typeof value.itemId !== 'string' || !value.itemId || value.itemId.length > 256))))) {
-    throw new Error('Activation requires an explicit bounded manual-resolution JSON array');
   }
   const executorBase = `${origin}/internal/integrations/${integrationId}`;
   const sourceBase = `${automationOrigin}/internal/executor-migrations/${integrationId}`;
@@ -26,32 +19,25 @@ export async function migrateExecutor({ action, integrationId, epoch, origin, to
     const response = await fetcher(url, { method, redirect: 'error', signal: AbortSignal.timeout(180_000),
       headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    // Responses can include retained private mail. Error output deliberately reports only the operation and HTTP status.
-    if (!response.ok) throw new Error(`Migration ${method} ${new URL(url).pathname} failed (HTTP ${response.status})`);
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error('Migration service returned an empty response');
-    const chunks = []; let size = 0;
-    try {
-      for (;;) {
-        const next = await reader.read();
-        if (next.done) break;
-        size += next.value.byteLength;
-        if (size > 8 * 1024 * 1024) { await reader.cancel(); throw new Error('Migration response exceeds its transport bound'); }
-        chunks.push(next.value);
-      }
-    } finally { reader.releaseLock(); }
-    try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
-    catch { throw new Error('Migration service returned invalid JSON'); }
+    if (!response.ok) {
+      let reason = '';
+      try {
+        const details = await responseJson(response, 8 * 1024);
+        if (typeof details?.error === 'string') reason = details.error.slice(0, 1024);
+      } catch { /* Non-JSON and oversized bodies can contain private state or gateway HTML. */ }
+      throw new Error(`Migration ${method} ${new URL(url).pathname} failed (HTTP ${response.status})${reason ? `: ${reason}` : ''}`);
+    }
+    return responseJson(response, 8 * 1024 * 1024);
   };
   const initial = await request(`${executorBase}/status`);
   if (action === 'activate') {
     requireImported(initial, epoch);
-    await request(`${executorBase}/activate`, 'POST', { epoch, manifestHash: initial.manifestHash, manualResolutions });
+    await request(`${executorBase}/activate`, 'POST', { epoch, manifestHash: initial.manifestHash });
     const active = await request(`${executorBase}/status`);
     if (active.status !== 'active' || active.epoch !== epoch || active.manifestHash !== initial.manifestHash) throw new Error('Executor has not confirmed the exact active migration');
     const acknowledged = await request(`${sourceBase}/ack`, 'POST', { epoch, manifestHash: initial.manifestHash });
     if (acknowledged.status !== 'active' || acknowledged.epoch !== epoch || acknowledged.manifestHash !== initial.manifestHash) throw new Error('Intake has not confirmed the exact active migration');
-    return { status: 'active', integrationId, epoch, resolvedEvents: manualResolutions.length };
+    return { status: 'active', integrationId, epoch };
   }
   if (initial.status === 'active') {
     requireImported(initial, epoch);
@@ -83,6 +69,23 @@ export async function migrateExecutor({ action, integrationId, epoch, origin, to
   return { status: 'importing', integrationId, epoch, tables: manifest.tables.length, pages };
 }
 
+async function responseJson(response, maximum) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('Migration service returned an empty response');
+  const chunks = []; let size = 0;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.byteLength;
+      if (size > maximum) { await reader.cancel(); throw new Error('Migration response exceeds its transport bound'); }
+      chunks.push(next.value);
+    }
+  } finally { reader.releaseLock(); }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new Error('Migration service returned invalid JSON'); }
+}
+
 function requireImported(value, epoch) {
   if (!['importing', 'active'].includes(value?.status) || value.epoch !== epoch || !manifestHashPattern.test(value.manifestHash ?? '')) {
     throw new Error('Executor requires the exact imported migration before activation');
@@ -94,13 +97,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   if (!/^[1-9][0-9]*$/.test(rawEpoch ?? '')) throw new Error('Migration epoch must be a positive integer');
   const pin = validateDeploymentPin(JSON.parse(readFileSync(new URL('./deployment-config.json', import.meta.url), 'utf8')));
   const environment = parseRuntimeEnvironment(process.env.EXECUTOR_RUNTIME_ENV);
-  let manualResolutions;
-  if (action === 'activate') {
-    try { manualResolutions = JSON.parse(process.env.EXECUTOR_MANUAL_RESOLUTIONS ?? 'null'); }
-    catch { throw new Error('Manual resolutions must be valid JSON'); }
-  }
   const result = await migrateExecutor({ action, integrationId, epoch: Number(rawEpoch), origin: pin.origin,
-    token: environment.EXECUTOR_SERVICE_TOKEN, manualResolutions,
+    token: environment.EXECUTOR_SERVICE_TOKEN,
     progress: counts => { if (counts.pages % 100 === 0) console.log(JSON.stringify({ event: 'executor.migration.progress', ...counts })); } });
   console.log(JSON.stringify({ event: 'executor.migration.complete', ...result }));
 }

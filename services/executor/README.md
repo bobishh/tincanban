@@ -84,30 +84,37 @@ token, SSH key, registry permission or Rusty storage credential. Its concurrency
 group prevents overlap with an executor deployment.
 
 Run `import` with the exact integration and migration epoch. The intake durably
-fences its old writer and returns a bounded inventory. The workflow transfers
-encrypted pages sequentially into the executor's durable journal. Repeating the
+fences its old writer and returns a bounded inventory of the existing approved
+actor: identity, registration, replica/chunks and storage/history transitions.
+Old letters, event queues, source bindings and request nonce ledgers are excluded.
+The workflow transfers encrypted pages sequentially into the executor's durable journal. Repeating the
 same import retries those exact pages idempotently; a failed page stops transfer
 without activating either participant. Progress output contains counts, not mail,
 page contents or credentials. A frozen participant remains inactive until the
 separate activation step succeeds.
-
-Inspect retained pending events through the executor's private review API before
-activation. Supply `manual_resolutions` as an explicit JSON array of exact event
-IDs, reasons, and optional existing item IDs for work already handled manually.
-The CLI contains no product-specific event or card IDs and never prints that
-review response. Empty `[]` explicitly means no manual resolutions.
+Failures include HTTP status and a bounded structured service `error` reason;
+unrelated JSON fields, raw page bodies and gateway HTML are omitted.
 
 Run `activate` with the same integration and epoch. Node validates the complete
-import, existing authority and manual-resolution guards before becoming active.
+import and existing authority before becoming active. Its activation body contains
+only the exact `epoch` and `manifestHash`.
 Only after Node confirms that exact manifest is active does the workflow ask
 intake to acknowledge its new route. A failed acknowledgement can retry activation
-without replaying migration resolutions. Intake independently checks the active
+idempotently. Intake independently checks the active
 executor before recording its acknowledgement.
 
 ## Verification status
 
-The packaged Node participant, persistence, HTTP and migration acceptance tests
-passed the executor image job in CI run `38939867314`. Activation failed while
-checking Docker 29's sparse image export; the receipt adapter correction still
-needs its next CI run. No production migration or real received-event result has
-been verified. Image checks alone do not establish that automation works.
+Executor release CI run `38940879267` passed image acceptance and deployment.
+Production `/health` confirmed `ready`, source
+`547ca3d43f78665e561e9b737380b063664a7191`, SDK
+`9d92a478495b471bf6a8075dcf23e77b412473cc` and runtime artifact
+`39a518987a9f984d7298b8353a29550ae4579307d335c2acdc49c50b2540981c`.
+The deployment receipt binds the exact checked config bytes to registry manifest
+`sha256:62de14ab9bd3b9c3c5273eecf98a4fe003fc7e4f27d80680002e2fc367bf617c`,
+including Docker 29's sparse containerd export.
+
+The narrowed participant-only transfer is a subsequent source change awaiting
+its CI release. Existing integration cutover, Cloudflare key cleanup and a real
+received-event result remain unverified. Process readiness and image identity do
+not establish that production automation works.

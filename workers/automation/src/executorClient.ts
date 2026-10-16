@@ -1,6 +1,7 @@
 import type { AutomationCoordinator, WorkerEnv } from "./index";
 import type { ExecutionCoordinator } from "./executionCoordinator";
 import type { ItemCommandEnvelope } from "./itemCommands";
+import { freshBindingHash, validateExecutorFreshBinding, type ExecutorFreshBinding } from "./executorFresh";
 
 /** Methods exposed to the standalone executor. Replica persistence and lifecycle stay local. */
 export const executorRpcMethods = [
@@ -15,7 +16,7 @@ type ExecutorRoutedMethod = ExecutorRpcMethod | "enqueueWebsite" | "enqueueEmail
 type ExecutorMethodResult<K extends ExecutorRoutedMethod> = K extends keyof ExecutionCoordinator
   ? Awaited<ReturnType<ExecutionCoordinator[K]>> : never;
 
-type ExecutorRouteSource = Pick<DurableObjectStub<AutomationCoordinator>, "executionRoute">;
+type ExecutorRouteSource = Pick<DurableObjectStub<AutomationCoordinator>, "executionRoute" | "freshExecutionBinding">;
 
 /** Use the executor only after the Durable Object has durably acknowledged the cutover. */
 export async function callActiveExecutor<K extends ExecutorRoutedMethod>(
@@ -28,7 +29,16 @@ export async function callActiveExecutor<K extends ExecutorRoutedMethod>(
   const coordinator = env.AUTOMATION.getByName(integrationId) as DurableObjectStub<AutomationCoordinator> & ExecutorRouteSource;
   if (method === "enqueueWebsite" || method === "enqueueEmail") return await localCall(coordinator) as ExecutorMethodResult<K>;
   const route = await coordinator.executionRoute();
-  if (!route) return await localCall(coordinator) as ExecutorMethodResult<K>;
+  if (method === "enrollOwner" && await coordinator.freshExecutionBinding()) {
+    if (route && route.origin !== executorOrigin(env.EXECUTOR_ORIGIN)) throw new Error("Fresh executor route does not match configured executor origin");
+    return await localCall(coordinator) as ExecutorMethodResult<K>;
+  }
+  if (!route) {
+    if (!env.EXECUTOR_ORIGIN) return await localCall(coordinator) as ExecutorMethodResult<K>;
+    const isEmptyDiscovery = (method === "manageInstance" || method === "applicationReview") && args[1] === "discover";
+    if (method === "enrollOwner" || isEmptyDiscovery) return await localCall(coordinator) as ExecutorMethodResult<K>;
+    throw new ExecutorRpcError(503, "Executor route is not active; legacy authoring is disabled");
+  }
 
   const configuredOrigin = executorOrigin(env.EXECUTOR_ORIGIN);
   if (route.origin !== configuredOrigin || !Number.isSafeInteger(route.epoch) || route.epoch < 1) {
@@ -63,6 +73,7 @@ export async function callExecutorRpc<T>(
     },
     body: JSON.stringify({ method, args }),
     redirect: "error",
+    signal: AbortSignal.timeout(180_000),
   });
   const payload = await readResponseJson(response, maxResponseBytes);
   if (!response.ok) {
@@ -95,6 +106,38 @@ export class ExecutorRpcError extends Error {
   }
 }
 
+/** Reserve Node-owned identity for a fresh Cloudflare enrollment. */
+export async function bootstrapFreshExecutor<T>(
+  env: Pick<WorkerEnv, "EXECUTOR_ORIGIN" | "EXECUTOR_SERVICE_TOKEN">,
+  bindingValue: ExecutorFreshBinding,
+): Promise<T> {
+  const binding = validateExecutorFreshBinding(bindingValue);
+  const origin = executorOrigin(env.EXECUTOR_ORIGIN);
+  const token = env.EXECUTOR_SERVICE_TOKEN;
+  if (!token || new TextEncoder().encode(token).byteLength < 32) throw new Error("Executor service authentication is not configured");
+  const response = await fetch(`${origin}/internal/integrations/${encodeURIComponent(binding.integrationId)}/bootstrap`, {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(binding), redirect: "error", signal: AbortSignal.timeout(90_000),
+  });
+  const payload = await readResponseJson(response, 2 * 1024 * 1024);
+  if (!response.ok) {
+    const message = isRecord(payload) && typeof payload.error === "string" ? payload.error : "Executor bootstrap failed";
+    throw new ExecutorRpcError(response.status, message);
+  }
+  if (!isRecord(payload) || payload.epoch !== binding.epoch || payload.bindingHash !== await freshBindingHash(binding) ||
+    !isRecord(payload.identity) || !isNonEmptyString(payload.identity.personId) || !isNonEmptyString(payload.identity.publicKey) ||
+    !isRecord(payload.device) || !isNonEmptyString(payload.device.deviceId) || !isNonEmptyString(payload.device.publicKey) ||
+    !isRecord(payload.deviceCertificate) || !isRecord(payload.deviceCertificate.payload) ||
+    payload.deviceCertificate.payload.kind !== "device-certificate" || payload.deviceCertificate.payload.version !== 1 ||
+    payload.deviceCertificate.payload.personId !== payload.identity.personId ||
+    payload.deviceCertificate.payload.deviceId !== payload.device.deviceId ||
+    payload.deviceCertificate.payload.devicePublicKey !== payload.device.publicKey ||
+    !isNonEmptyString(payload.deviceCertificate.signerKeyId) || !isNonEmptyString(payload.deviceCertificate.signature)) {
+    throw new Error("Executor bootstrap response does not match the reserved binding");
+  }
+  return payload as T;
+}
+
 /** Submit a normalized item command to the integration-scoped executor API. */
 export async function submitExecutorItemCommand<T>(
   env: Pick<WorkerEnv, "EXECUTOR_ORIGIN" | "EXECUTOR_SERVICE_TOKEN">,
@@ -109,6 +152,7 @@ export async function submitExecutorItemCommand<T>(
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "x-executor-integration": integrationId },
     body: JSON.stringify(envelope),
     redirect: "error",
+    signal: AbortSignal.timeout(90_000),
   });
   const payload = await readResponseJson(response, 2 * 1024 * 1024);
   if (!response.ok) {
@@ -164,3 +208,5 @@ async function readResponseJson(response: Response, maximumBytes: number): Promi
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
+
+function isNonEmptyString(value: unknown): value is string { return typeof value === "string" && value.length > 0; }

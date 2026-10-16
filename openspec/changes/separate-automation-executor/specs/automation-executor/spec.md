@@ -52,9 +52,10 @@ upload. Applied status SHALL require verified matching storage acknowledgement.
 - **AND** the command does not create a second item mutation
 
 ### Requirement: Fenced migration preserving manual work
-Migration SHALL preserve existing identity, scoped authority, history, deduplication
-and pending writes. Exactly one runtime SHALL author for an integration. Legacy
-events SHALL be reconciled with current manual outcomes before execution.
+Migration SHALL preserve the existing approved identity, registration, scoped
+authority, replica/chunks, history and exact signed pending writes. Exactly one
+runtime SHALL author for an integration. Migration SHALL NOT import old letters,
+event queues, source bindings or request nonce ledgers.
 
 #### Scenario: Interrupted import
 - **GIVEN** the Cloudflare writer is durably fenced and import is incomplete
@@ -62,11 +63,11 @@ events SHALL be reconciled with current manual outcomes before execution.
 - **THEN** neither an incomplete new writer nor the retired writer authors changes
 - **AND** migration resumes from its durable checkpoint without dropping accepted intake
 
-#### Scenario: Manually handled Tesla and Amazon events
+#### Scenario: Old intake cannot replay manual work
 - **GIVEN** Tesla cards already created and Amazon already moved by the owner
-- **WHEN** matching legacy events reach the migrated queue
+- **WHEN** the approved participant is transferred and activated
 - **THEN** manual outcomes remain unchanged and no duplicate Tesla card is created
-- **AND** exact manual-resolution evidence or a non-mutating review outcome is retained
+- **AND** old letters and queued intake are absent from the executor's imported state
 
 ### Requirement: Independent release and actual production acceptance
 Executor and intake SHALL release through their own component CI. Neither SHALL
