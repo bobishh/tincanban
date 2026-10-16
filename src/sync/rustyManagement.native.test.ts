@@ -125,17 +125,24 @@ async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>
 }
 
 async function waitForRusty(child: ChildProcess, origin: string, output: () => string, spawnError: () => Error | undefined): Promise<void> {
-  const deadline = Date.now() + 8_000
+  // The first health response hashes the complete cold debug executable.
+  const startedAt = Date.now()
+  const deadline = startedAt + 30_000
+  let lastProbe = "No health probe completed"
   while (Date.now() < deadline) {
     if (spawnError()) throw new Error(`Unable to spawn Rusty: ${spawnError()?.message}`)
     if (child.exitCode !== null || child.signalCode !== null) throw new Error(`Rusty exited during startup: ${output()}`)
     try {
-      const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(400) })
+      const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(Math.max(1, Math.min(5_000, deadline - Date.now()))) })
       if (response.ok) return
-    } catch { /* Listener may still be starting. */ }
-    await delay(40)
+      lastProbe = `HTTP ${response.status} ${response.statusText}`.slice(0, 1_024)
+    } catch (error) {
+      const cause = error instanceof Error && error.cause instanceof Error ? `; cause: ${error.cause.name}: ${error.cause.message}` : ""
+      lastProbe = `${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}${cause}`.slice(0, 1_024)
+    }
+    await delay(Math.max(0, Math.min(40, deadline - Date.now())))
   }
-  throw new Error(`Rusty did not become ready: ${output()}`)
+  throw new Error(`Rusty did not become ready after ${Date.now() - startedAt}ms; last health probe: ${lastProbe}; child output: ${output()}`)
 }
 
 async function stopRusty(child: ChildProcess): Promise<void> {

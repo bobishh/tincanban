@@ -157,6 +157,36 @@ describe("Cloudflare executor migration fence", () => {
     });
   });
 
+  it.each(["acknowledge", "email", "website"] as const)("Given active intake retains an overdue alarm and queued event, When %s arrives outside the alarm handler, Then rearm future work without dropping the retained event", async action => {
+    const runtime = env as unknown as WorkerEnv;
+    const integrationId = `migration-overdue-${action}`;
+    let manifestHash = "";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "active", epoch: 17, manifestHash })));
+    try {
+      await runInDurableObject(runtime.AUTOMATION.getByName(integrationId), async (_instance, ctx) => {
+        const worker = new AutomationCoordinator(ctx, coordinatorEnv());
+        const manifest = await worker.prepareExecutorMigration(17);
+        manifestHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(manifest)));
+        await worker.acknowledgeExecutorMigration(17, manifestHash);
+        const retained = { eventId: "r".repeat(43), sourceId: "retained-event", bodyHash: "retained-hash", payload: "opaque-encrypted-event" };
+        await worker.enqueueEmail(retained);
+        await ctx.storage.setAlarm(Date.now() - 60_000);
+
+        const input = { eventId: "n".repeat(43), sourceId: "new-event", bodyHash: "new-hash", payload: "opaque-encrypted-event" };
+        if (action === "acknowledge") await worker.acknowledgeExecutorMigration(17, manifestHash);
+        else if (action === "email") await worker.enqueueEmail(input);
+        else await worker.enqueueWebsite({ ...input, nonce: "new-challenge", challengeExpiresAt: Date.now() + 60_000 });
+
+        expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now());
+        const rows = ctx.storage.sql.exec<{ event_id: string; attempt: number; state: string }>(
+          "SELECT event_id, attempt, state FROM executor_intake_outbox ORDER BY event_id").toArray();
+        expect(rows).toContainEqual({ event_id: retained.eventId, attempt: 0, state: "queued" });
+        expect(rows).toHaveLength(action === "acknowledge" ? 1 : 2);
+        await ctx.storage.deleteAlarm();
+      });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("Given an item command response is lost, When outbox retries, Then the same frozen classification is forwarded", async () => {
     const runtime = env as unknown as WorkerEnv;
     const stub = runtime.AUTOMATION.getByName("migration-lost-forward-response");

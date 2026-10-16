@@ -301,7 +301,8 @@ export class ExecutorIntakeOutbox {
 
   private async scheduleOutboxAlarm(at: number): Promise<void> {
     const current = await this.storage.getAlarm();
-    if (current === null || at < current) await this.storage.setAlarm(at);
+    // New intake and repeated acknowledgements must rearm exhausted overdue alarms.
+    if (current === null || current <= Date.now() || at < current) await this.storage.setAlarm(at);
   }
 
   private async verifyNodeActive(state: MigrationState): Promise<void> {
