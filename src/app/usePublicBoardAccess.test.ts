@@ -1,0 +1,206 @@
+import { effectScope, nextTick, ref } from "vue"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { usePublicBoardAccess } from "./usePublicBoardAccess"
+
+const mocks = vi.hoisted(() => ({
+  read: vi.fn(), compare: vi.fn(), publish: vi.fn(), withdraw: vi.fn(),
+  buildPolicy: vi.fn(), policyHash: vi.fn(),
+}))
+vi.mock("../public/publicationClient", () => ({
+  readPublicBoardManagementState: mocks.read,
+  hasLocalPublicBoardChanges: mocks.compare,
+  publishBoardSnapshot: mocks.publish,
+  withdrawPublicBoard: mocks.withdraw,
+}))
+vi.mock("../public/publicDeliveryPolicy", () => ({
+  buildPublicBoardDeliveryPolicy: mocks.buildPolicy,
+  publicBoardDeliveryPolicyHash: mocks.policyHash,
+}))
+
+describe("public board owner access", () => {
+  let scope = effectScope()
+  let boardId = ref("board-a")
+  let workspaceId = ref("workspace-a")
+  let sourceVersion = ref(1)
+  let isOwner = ref(true)
+  let document = ref({ entities: {} })
+  let profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    scope = effectScope()
+    boardId = ref("board-a")
+    workspaceId = ref("workspace-a")
+    sourceVersion = ref(1)
+    isOwner = ref(true)
+    document = ref({ entities: {} })
+    profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
+    mocks.read.mockReset().mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+    mocks.compare.mockReset().mockResolvedValue(false)
+    mocks.publish.mockReset().mockResolvedValue({ revision: 5, hash: "next-hash", url: "https://app.test/boards/board-a" })
+    mocks.withdraw.mockReset().mockResolvedValue({ revision: 5, url: "https://app.test/boards/board-a" })
+    mocks.buildPolicy.mockReset().mockImplementation(async (_profile, workspaceId, boardId, generation) => ({
+      policy: { payload: { workspaceId, boardId, generation } }, ownerCertificates: [],
+    }))
+    mocks.policyHash.mockReset().mockResolvedValue("policy-hash")
+  })
+  afterEach(() => { scope.stop(); vi.useRealTimers() })
+
+  function create() {
+    return scope.run(() => usePublicBoardAccess({
+      origin: "https://rusty.test", boardId: () => boardId.value, boardTitle: () => "Board A", workspaceId: () => workspaceId.value,
+      sourceVersion: () => sourceVersion.value, document: () => document.value as never,
+      sourceHeads: () => ["head-a"],
+      owner: () => isOwner.value, profile: () => profile.value as never, debounceMs: 20,
+    }))!
+  }
+
+  it("updates a changed projection automatically and skips an unchanged projection", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledTimes(1))
+    mocks.compare.mockClear()
+    mocks.compare.mockResolvedValueOnce(false)
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledTimes(1))
+    expect(mocks.publish).not.toHaveBeenCalled()
+    mocks.compare.mockResolvedValueOnce(true)
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ action: "update", expectedRevision: 4 })
+    expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy).toBeUndefined()
+  })
+
+  it("advances policy generation only when the verified grant fingerprint changes", async () => {
+    mocks.read.mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: 2, deliveryPolicyHash: "stored-policy" })
+    mocks.policyHash.mockResolvedValueOnce("changed-policy").mockResolvedValueOnce("changed-policy")
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    expect(mocks.buildPolicy.mock.calls.map(call => call[3])).toEqual([2, 3])
+    expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy.policy.payload.generation).toBe(3)
+  })
+
+  it("Given an existing public board without delivery policy, when its owner refreshes the same source, then adopt policy in place without rebuilding the visitor board", async () => {
+    mocks.read.mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: null, deliveryPolicyHash: null })
+    mocks.compare.mockResolvedValue(false)
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+
+    expect(mocks.compare).toHaveBeenCalledTimes(1)
+    expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ action: "update", expectedRevision: 4, boardId: "board-a" })
+    expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy.policy.payload).toMatchObject({
+      workspaceId: "workspace-a", boardId: "board-a", generation: 1,
+    })
+    expect(mocks.publish.mock.calls[0]?.[0].document).toBe(document.value)
+    expect(access.published.value).toBe(true)
+    expect(access.revision.value).toBe(5)
+  })
+
+  it("withdraws explicitly and never republishes after a later source edit", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledTimes(1))
+    mocks.publish.mockClear()
+    await access.setPublic(false)
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(40)
+    expect(mocks.withdraw).toHaveBeenCalledTimes(1)
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(access.published.value).toBe(false)
+  })
+
+  it("shows capture failures from a public access change instead of silently dismissing confirmation", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false, hash: "" })
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    document.value = null as never
+
+    await expect(access.setPublic(true)).rejects.toThrow("Current owner, board, or workspace data is unavailable")
+    expect(access.error.value).toBe("Current owner, board, or workspace data is unavailable")
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+
+  it("rejects management actions after owner, board or profile changes", async () => {
+    mocks.read.mockResolvedValue({ revision: 4, published: false, hash: "" })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementation(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const publish = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    profile.value = { identity: { personId: "person-b" }, device: { deviceId: "device-b" } }
+    finishPublish({ revision: 5, hash: "new", url: "https://app.test/boards/board-a" })
+    await expect(publish).rejects.toThrow(/identity changed|no longer current/)
+  })
+
+  it("Given a withdrawn board, when its owner enables public access again, then advance the retained delivery policy generation", async () => {
+    mocks.read.mockResolvedValue({ revision: 8, published: false, hash: "", deliveryGeneration: 3, deliveryPolicyHash: "old-policy" })
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    await access.setPublic(true)
+    expect(mocks.buildPolicy.mock.calls[0]?.[3]).toBe(4)
+    expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ action: "publish", expectedRevision: 8 })
+    expect(access.published.value).toBe(true)
+  })
+
+  it("cancels an in-flight owner mutation when its scope is disposed", async () => {
+    mocks.read.mockResolvedValue({ revision: 4, published: false, hash: "" })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementation(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    scope.stop()
+    finishPublish({ revision: 5, hash: "new", url: "https://app.test/boards/board-a" })
+    await expect(operation).rejects.toThrow(/no longer current|changed/)
+    expect(access.published.value).toBe(false)
+  })
+
+  it("rejects a captured owner operation after authority flips away and back", async () => {
+    mocks.read.mockResolvedValue({ revision: 4, published: false, hash: "" })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementation(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+    isOwner.value = false
+    await nextTick()
+    isOwner.value = true
+    await nextTick()
+    finishPublish({ revision: 5, hash: "new", url: "https://app.test/boards/board-a" })
+    await expect(operation).rejects.toThrow(/no longer current/)
+  })
+
+  it("refreshes the signed management revision before retrying a failed publication", async () => {
+    mocks.read.mockResolvedValueOnce({ revision: 4, published: true, hash: "old", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+      .mockResolvedValueOnce({ revision: 7, published: true, hash: "latest", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+    mocks.compare.mockResolvedValue(true)
+    mocks.publish.mockRejectedValueOnce(new Error("revision conflict"))
+      .mockResolvedValueOnce({ revision: 8, hash: "next", url: "https://app.test/boards/board-a" })
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.publish).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_900)
+    await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(2))
+    expect(mocks.publish.mock.calls[1]?.[0].expectedRevision).toBe(7)
+  })
+})

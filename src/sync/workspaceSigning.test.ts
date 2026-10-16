@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises"
 import { IDBFactory } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
+import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
-import { resolveSigningContext } from "../domain/signingContext"
+import { resolveSigningContext, signWithContext } from "../domain/signingContext"
 import { createWorkspaceDoc } from "../domain/seeds"
 import { authorizeLocalChanges, recordGenesisAuthority, prepareLocalChangeAuthorizations, type WorkspaceSigningContextFactory } from "./changeAuthorization"
 import { createWorkspaceDeviceRevocation } from "./meshRecords"
@@ -15,6 +16,7 @@ import { readLocal, writeLocal } from "../localDb"
 import { records } from "./workspaceChangeProofStore"
 import { workspaceSigningContext } from "./workspaceSigning"
 import { readWorkspaceSigningAuthority, authorityValidationFingerprint, workspaceRole } from "./changeAuthorization"
+import { buildPublicBoardDeliveryPolicy } from "../public/publicDeliveryPolicy"
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -57,6 +59,42 @@ it("Given current workspace access, when creating a private history-read guard, 
     const result = await workspaceSigningContext(doc, profile, "history-recovery-read", "workspaceId", undefined, ports)
     await expect(result.requireCurrent()).resolves.toBeTypeOf("string")
     await expect(workspaceSigningContext(doc, profile, "unknown-history-operation", "workspaceId", undefined, ports)).rejects.toThrow(/permission/i)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given a current owner, when signing a public delivery policy, then bind its purpose and keep editors unable to sign it", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const ports = { readAuthority: () => readWorkspaceSigningAuthority(doc.id), authorityFingerprint: authorityValidationFingerprint,
+      workspaceRole: async () => "owner" as const }
+    const purpose = "rusty-public-board-delivery-policy"
+    const ownerContext = await workspaceSigningContext(doc, profile, purpose, "workspaceId", undefined, ports)
+    await expect(signWithContext(ownerContext.context, { kind: purpose, workspaceId: doc.id, boardId: "board-a", generation: 1 }))
+      .resolves.toMatchObject({ payload: { kind: purpose, workspaceId: doc.id, boardId: "board-a", generation: 1 } })
+    await expect(workspaceSigningContext(doc, profile, purpose, "workspaceId", undefined, {
+      ...ports, workspaceRole: async () => "editor",
+    })).rejects.toThrow(/permission is unavailable/i)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given an owner workspace, when building public delivery policy, then sign the actual policy kind and reject another identity", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Expected stored workspace authority")
+    // Genesis persists durable authority; the active mesh credential is
+    // supplied by transport enrollment. Keep this fixture offline while
+    // exercising the real policy builder and real owner signing keys.
+    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({
+      ...authority, transportSecret: "test-transport-secret",
+    })
+    const policy = await buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1)
+    expect(policy.policy.payload).toMatchObject({ kind: "rusty-public-board-delivery-policy", workspaceId: doc.id, boardId: "board-a", generation: 1 })
+
+    const editor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Not the owner")
+    await expect(buildPublicBoardDeliveryPolicy(editor, doc.id, "board-a", 1)).rejects.toThrow(/owner authority is unavailable/i)
   } finally { Automerge.free(doc) }
 })
 

@@ -6,7 +6,7 @@ const api = `${publicOrigin}/v1/public/boards/${boardId}`
 const fileHash = "A".repeat(43)
 const snapshot = {
   kind: "tincanban-public-board", version: 1, board: { id: boardId, title: "Published board" },
-  columns: [{ id: "column-a", title: "Doing", rank: "0/1" }],
+  columns: [{ id: "column-a", title: "Doing", rank: "0/1", collapsible: true }, { id: "column-b", title: "Backlog", rank: "1/1", collapsible: false }],
   fields: [{ id: "field-a", title: "Company", valueType: "text", required: false, rank: "0/1", options: [] }],
   cards: [{ id: "card-a", parentId: null, columnId: "column-a", title: "Public card", body: "**Public body**",
     values: { "field-a": "Example Co" }, rank: "0/1" }, { id: "card-child", parentId: "card-a", columnId: "column-a", title: "Nested card", body: "", values: {}, rank: "1/1" }],
@@ -43,8 +43,14 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
   await expect(page.locator('.topbar .brand-name')).toHaveText("TINCANBAN")
   await expect(page.getByRole("img", { name: "Read-only board", exact: true })).toBeVisible()
-  await expect(page.locator('.public-columns, .public-card, .public-header')).toHaveCount(0)
   await expect(page.locator('.board .column .lead-card')).toHaveCount(1)
+  const doing = page.getByRole("region", { name: "Doing", exact: true })
+  const backlog = page.getByRole("region", { name: "Backlog", exact: true })
+  await expect(doing.getByRole("button", { name: /Collapse/ })).toBeVisible()
+  await expect(backlog.getByRole("button", { name: /Collapse|Expand/ })).toHaveCount(0)
+  await doing.getByRole("button", { name: "Collapse Doing", exact: true }).click()
+  await expect(doing.getByRole("button", { name: "Open Doing with 1 cards", exact: true })).toBeVisible()
+  await doing.getByRole("button", { name: "Open Doing with 1 cards", exact: true }).click()
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Example Co")
   await expect(page.getByRole("button", { name: "Open Public card", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "Open Nested card", exact: true })).toHaveCount(0)
@@ -53,25 +59,28 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await page.getByRole("button", { name: "Clear search and filters" }).click()
   await expect(page.getByRole("button", { name: "Open Nested card", exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Open Public card", exact: true }).click()
-  const cardDialog = page.getByRole("dialog", { name: "Public card details", exact: true })
-  const closeCard = cardDialog.getByRole("button", { name: "Close card details", exact: true })
-  await expect(closeCard).toBeFocused()
-  await expect(cardDialog.getByText("Read-only card", { exact: true })).toBeVisible()
-  await expect(cardDialog.getByText("Nested card", { exact: true })).toHaveCount(0)
+  const cardDialog = page.getByRole("dialog", { name: "Item overview", exact: true })
+  await expect(cardDialog).toHaveClass(/spatial-window/)
+  const closeCard = cardDialog.getByRole("button", { name: "Dismiss", exact: true })
+  await expect(cardDialog.getByRole("button", { name: "Edit", exact: true })).toBeDisabled()
+  await expect(cardDialog.getByText("Nested card", { exact: true })).toBeVisible()
   await expect(cardDialog.getByText("Public body")).toBeVisible()
-  await cardDialog.getByRole("button", { name: "Open discussion", exact: true }).click()
-  const discussion = page.getByRole("dialog", { name: "Published discussion", exact: true })
+  await expect(cardDialog.getByText("Attached documents", { exact: true })).toBeVisible()
+  await expect(cardDialog.getByRole("group", { name: "Handout", exact: true }).getByRole("button", { name: "Preview", exact: true })).toBeVisible()
+  await closeCard.click()
+  await page.getByRole("button", { name: /Open discussion for Public card/ }).click()
+  const discussion = page.getByRole("dialog", { name: "Discussion", exact: true })
+  await expect(discussion).toHaveClass(/spatial-window/)
   await expect(discussion.getByText("Read only discussion")).toBeVisible()
   await expect(discussion.getByRole("textbox", { name: "Message" })).toHaveCount(0)
-  await expect(discussion).toContainText("Replies are not available")
-  await discussion.getByRole("button", { name: "Close discussion", exact: true }).click()
+  await discussion.getByRole("button", { name: "Close", exact: true }).click()
   await expect(page.getByRole("button", { name: /Reply|Post/ })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /Invite/ })).toHaveCount(0)
-  const handout = cardDialog.getByRole("link", { name: "Handout", exact: true })
-  await expect(handout).toHaveAttribute("download", "handout.txt")
+  const documentDownload = cardDialog.getByRole("link", { name: "Download Handout", exact: true })
+  await expect(documentDownload).toHaveAttribute("download", "handout.txt")
   if (browserName !== "webkit") {
     const downloadPromise = page.waitForEvent("download")
-    await handout.click()
+    await documentDownload.click()
     expect((await downloadPromise).suggestedFilename()).toBe("handout.txt")
   }
   await closeCard.click()
@@ -108,12 +117,52 @@ test("Given a public route, When the service is pending, unavailable, or returns
   await page.getByRole("button", { name: "Try again" }).click()
   await expect(page.getByRole("heading", { name: "Board unavailable" })).toBeVisible()
   expect(requestCount).toBe(3)
-  for (const path of ["/boards/!", "/boards/foo/bar", "/boards"]) {
+  for (const path of ["/boards/!", "/boards/foo/bar/extra", "/boards"]) {
     await page.goto(path)
     await expect(page.getByRole("heading", { name: "Publication invalid" })).toBeVisible()
   }
   expect(await page.evaluate(() => (window as typeof window & { __publicProbe: unknown }).__publicProbe)).toEqual({ workers: 0, wasm: 0, idbOpen: 0 })
   expect(getWasmRequests()).toBe(0)
+})
+
+test("Given a live public board, When its publication changes or is withdrawn, Then the shared visitor UI updates and closes stale windows", async ({ page }) => {
+  let revision = 1
+  let withdrawn = false
+  const updated = {
+    ...snapshot,
+    board: { id: boardId, title: "Updated publication" },
+    columns: [
+      { id: "column-a", title: "Doing", rank: "0/1", collapsible: false },
+      { id: "column-b", title: "Backlog", rank: "1/1", collapsible: true },
+    ],
+    cards: [{ ...snapshot.cards[0], title: "Updated public card" }, snapshot.cards[1]],
+  }
+  await page.route(api, route => withdrawn
+    ? route.fulfill({ status:  404, json: { message: "Public board unavailable" }, headers: { "cache-control": "no-store" } })
+    : route.fulfill({ json: { boardId, revision, projection: revision === 1 ? snapshot : updated }, headers: { "cache-control": "no-store" } }))
+  await page.goto(`/boards/${boardId}`)
+  await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Doing", exact: true }).getByRole("button", { name: "Collapse Doing", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Backlog", exact: true }).getByRole("button", { name: /Collapse|Open Backlog/ })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "Open Public card", exact: true }).click()
+  const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
+  await expect(detail).toHaveClass(/spatial-window/)
+  await page.getByRole("button", { name: "Workspace chat", exact: true }).click()
+  const chat = page.getByRole("dialog", { name: "Board discussion", exact: true })
+  await expect(chat).toHaveClass(/spatial-window/)
+
+  revision = 2
+  await expect(page.getByRole("heading", { name: "Updated publication" })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole("button", { name: "Open Updated public card", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Doing", exact: true }).getByRole("button", { name: /Collapse Doing|Open Doing/ })).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "Backlog", exact: true }).getByRole("button", { name: "Collapse Backlog", exact: true })).toBeVisible()
+  await expect(detail).toHaveClass(/spatial-window/)
+  await expect(detail.getByRole("heading", { name: "Updated public card", exact: true })).toBeVisible()
+  await expect(chat).toHaveClass(/spatial-window/)
+  withdrawn = true
+  await expect(page.getByRole("heading", { name: "Board unavailable" })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole("dialog")).toHaveCount(0)
 })
 
 for (const width of [390, 1440]) test(`Given a job-search publication at ${width}px, When opening a card, Then reuse visitor summaries, accents, filters and lead details`, async ({ page }, info) => {
@@ -138,10 +187,11 @@ for (const width of [390, 1440]) test(`Given a job-search publication at ${width
   await expect(column).toHaveCSS("--column-hatch-color", "#66b3ff")
   await page.screenshot({ path: info.outputPath(`visitor-jobs-${width}.png`), fullPage: true })
   await card.getByRole("button", { name: "Open Example Co — Senior Systems Engineer", exact: true }).click()
-  const detail = page.getByRole("dialog", { name: "Example Co — Senior Systems Engineer details", exact: true })
-  await expect(detail.getByRole("heading", { name: "Example Co — Senior Systems Engineer", exact: true })).toBeVisible()
-  await expect(detail.getByText("Read-only card", { exact: true })).toBeVisible()
-  await expect(detail.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0)
+  const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
+  await expect(detail).toHaveClass(/spatial-window/)
+  await expect(detail.getByRole("heading", { name: "Example Co", exact: true })).toBeVisible()
+  await expect(detail.getByText("Senior Systems Engineer", { exact: true })).toBeVisible()
+  await expect(detail.getByRole("button", { name: "Edit", exact: true })).toBeDisabled()
   await expect(detail.getByRole("link", { name: "Open job source" })).toHaveAttribute("href", "https://jobs.example.test/very-long-original-posting")
   await expect(detail).toContainText("Berlin, Germany")
   await page.screenshot({ path: info.outputPath(`visitor-lead-${width}.png`), fullPage: true })

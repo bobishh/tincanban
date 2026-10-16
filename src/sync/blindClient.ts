@@ -1,4 +1,5 @@
-/* global __TINCANBAN_BUILD_COMMIT__ */
+import { fetchBlind, readBlindJson } from "./rustyHttp"
+export { fetchBlind, readBlindJson } from "./rustyHttp"
 import { z } from "zod"
 import { verifyEnvelope } from "../domain/identity"
 import type { BlindServiceCapabilities } from "./blindServiceCapabilities"
@@ -55,42 +56,6 @@ export async function blindHash(bytes: Uint8Array): Promise<string> {
 export async function blindObjectId(object: BlindObject): Promise<string> { return blindHash(encoder.encode(canonicalBlindJson(object))) }
 
 
-export async function fetchBlind(url: string, init: RequestInit): Promise<Response> {
-  const headers = new Headers(init.headers)
-  if (!headers.has("X-Rusty-Client")) headers.set("X-Rusty-Client", "tincanban")
-  const build = typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "" : __TINCANBAN_BUILD_COMMIT__
-  if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(build) && !headers.has("X-Rusty-Build")) headers.set("X-Rusty-Build", build)
-  const response = await fetch(url, { ...init, headers, redirect: "manual" })
-  if (response.redirected || (response.status >= 300 && response.status < 400)) {
-    throw new Error("Rusty redirects are not allowed")
-  }
-  return response
-}
-
-export async function readBlindJson<T>(response: Response, maximumBytes = 32 * 1024 * 1024): Promise<T> {
-  if (!response.body) throw new Error("Empty Rusty response")
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let length = 0
-  try {
-    while (true) {
-      const chunk = await reader.read()
-      if (chunk.done) break
-      length += chunk.value.length
-      if (length > maximumBytes) { await reader.cancel(); throw new Error("Rusty response too large") }
-      chunks.push(chunk.value)
-    }
-  } finally { reader.releaseLock() }
-  const bytes = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
-  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as T
-  if (!response.ok) {
-    const error = value as { message?: string; code?: string }
-    throw Object.assign(new Error(error.message || `Rusty returned HTTP ${response.status}`), { code: error.code, status: response.status })
-  }
-  return value
-}
 
 export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; scopeEnrollmentRetry?: 1;
   encryptedBlobs?: { version: 1; maximumCiphertextBytes: number }; writerPolicy?: { version: 1; maximumWriterVersion: 2 };

@@ -35,6 +35,7 @@
     }
   ],
   "vars": {
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://analytics.meta-uber-engineer.dev",
     "AUTOMATION_OWNER_IDS": "QyfKlOj-8LNclXyOnPsbtudHSTEi7ecyLvFK7HZkRpY",
     "PUBLIC_ORIGIN": "https://automation.meta-uber-engineer.dev",
     "CORS_ORIGINS": "https://match.meta-uber-engineer.dev,https://meta-uber-engineer.dev",

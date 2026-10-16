@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: 497976d27104088bb4d39b6544d7e211982eed92
+  RUSTY_REVISION: 15cb5438159f1e6ce71dba59c7729b172d1102eb
 
 jobs:
   verify:
@@ -48,12 +48,13 @@ jobs:
       - name: Verify frontend deployment adapter
         run: node --test workers/frontend/*.test.mjs
       - name: Verify cohort artifact and deployment contracts
-        run: node --test scripts/release-cohort.test.mjs scripts/release-coordinator.test.mjs scripts/release-recovery.test.mjs scripts/deploy-rusty-cohort.test.mjs scripts/fetch-rusty-deploy-config.test.mjs
+        run: node --test scripts/release-cohort.test.mjs scripts/component-release.test.mjs
       - name: Build checked production frontend
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           VITE_PUBLIC_BOARD_ORIGIN: ${{ vars.VITE_PUBLIC_BOARD_ORIGIN }}
           VITE_SYNC_TELEMETRY_URL: ${{ vars.VITE_SYNC_TELEMETRY_URL }}
+          VITE_OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.VITE_OTEL_EXPORTER_OTLP_ENDPOINT }}
           VITE_SYNC_TELEMETRY_PROJECT: ${{ vars.VITE_SYNC_TELEMETRY_PROJECT || 'tincanban' }}
           VITE_SYNC_TELEMETRY_BROWSER_KEY: ${{ vars.VITE_SYNC_TELEMETRY_BROWSER_KEY }}
           VITE_SYNC_TELEMETRY_LEVEL: ${{ vars.VITE_SYNC_TELEMETRY_LEVEL || 'all' }}

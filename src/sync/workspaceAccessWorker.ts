@@ -1,10 +1,9 @@
 import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
 import type { AccessWorkerRequest } from "./workspaceAccessInput"
-import { diagnoseStartupStep, setStartupDiagnosticDevice } from "./startupDiagnostics"
+import { diagnoseStartupStep } from "./startupDiagnostics"
 import type { WorkspaceRole } from "../domain/permissions"
 
 export async function decideWorkspaceAccessInWorker(data: AccessWorkerRequest, runtime: Promise<{ memory: WebAssembly.Memory }>) {
-  if (data.diagnosticsEnabled && typeof data.input.deviceId === "string") setStartupDiagnosticDevice(data.input.deviceId)
   const diagnose = data.diagnosticsEnabled ? diagnoseStartupStep : async <T>(_stage: string, step: () => T | Promise<T>) => step()
   const detail = { workspaceId: data.input.snapshot.workspaceId, bytes: 0 }
   let wasm: { memory: WebAssembly.Memory }

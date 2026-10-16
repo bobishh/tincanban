@@ -1,13 +1,12 @@
 import { compareRanks } from "../domain/ancestry"
 import { columnColors } from "../domain/columnColors"
 import { itemNarrative } from "../domain/narrative"
-import { orderItemsByPriority } from "../domain/priority"
+import { orderItemsByPriority, projectItemPriority } from "../domain/priority"
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { isItem, type FileReference, type WorkspaceDocumentV2, type WorkspaceEntity } from "../domain/model"
 import { conversationRoots, type Anchor } from "../chat/context"
-import { getChatScope, loadChat } from "../chat/service"
 import type { StoredChatMessage } from "../chat/storePolicy"
-import { readAttachment } from "../attachments"
+import { archivedItemsForBoard } from "../domain/archive"
 import { validatePublicBoardProjection, type PublicBoardProjection } from "./publicSchema"
 export { validatePublicBoardProjection } from "./publicSchema"
 export type { PublicBoardProjection } from "./publicSchema"
@@ -26,6 +25,11 @@ type PublicField = PublicBoardProjection["fields"][number]
 
 type PublicFileReference = { reference?: FileReference | null; text?: string; suffix?: string; mediaType?: string }
 type ProjectedFiles = { files: PublicBoardProjection["files"]; assets: PublicBoardAsset[] }
+type PublicProjectionChat = { scope: string; messages: StoredChatMessage[]; profiles: Array<{ personId: string; name: string }> }
+export type PublicProjectionPorts = {
+  chat?: PublicProjectionChat
+  readFile?: (reference: FileReference) => Promise<Uint8Array | undefined>
+}
 
 export function snapshotPublicBoardSource(document: WorkspaceDocumentV2, boardId: string): WorkspaceDocumentV2 {
   const all = Object.values(document.entities) as Entity[]
@@ -50,27 +54,27 @@ function compare<T extends { placement: { rank: string }; id: string }>(left: T,
   return compareRanks(left.placement.rank, right.placement.rank) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
 }
 
-export async function createPublicBoardPublication(document: WorkspaceDocumentV2, workspaceId: string, boardId: string, stageAsset?: PublicAssetStager): Promise<PublicBoardPublication> {
+export async function createPublicBoardPublication(document: WorkspaceDocumentV2, workspaceId: string, boardId: string, stageAsset: PublicAssetStager | undefined, ports: PublicProjectionPorts): Promise<PublicBoardPublication> {
   const board = document.entities[boardId]
   if (!board || !("kind" in board) || board.kind !== "board" || !active(board)) throw new Error("Selected board is unavailable")
   const entities = Object.values(document.entities) as Entity[]
   const children = childLookup(entities)
   const boardColumns = children(boardId).filter((entity): entity is Extract<WorkspaceEntity, { kind: "column" }> => "kind" in entity && entity.kind === "column")
   const colors = columnColors(boardColumns)
-  const columns = boardColumns.filter(column => !isArchiveColumn(column, board))
+  const columns = boardColumns
   const fields = children(boardId).filter((entity): entity is PublicFieldEntity => "kind" in entity && entity.kind === "field")
   if (columns.length > MAX_COLUMNS || fields.length > MAX_FIELDS) throw new Error("Public board exceeds collection limits")
   const publicFields = projectFields(fields)
-  const cards = projectCards(board, columns, children, publicFields)
+  const archiveColumn = columns.find(column => isArchiveColumn(column, board))
+  const cards = projectCards(board, columns.filter(column => !isArchiveColumn(column, board)), children, publicFields, archiveColumn?.id, document)
   const projection: PublicBoardProjection = {
     kind: "tincanban-public-board", version: 1, board: { id: board.id, title: board.title, presentation: publicPresentation(board, columns, publicFields) },
-    columns: columns.map(entity => ({ id: entity.id, title: entity.title, rank: entity.placement.rank, color: colors.get(entity.id), ...( "collapsible" in entity ? { collapsible: entity.collapsible } : {}) })),
+    columns: columns.map(entity => ({ id: entity.id, title: entity.title, rank: entity.placement.rank, color: colors.get(entity.id), ...(isArchiveColumn(entity, board) ? { archive: true as const } : {}), ...( "collapsible" in entity ? { collapsible: entity.collapsible } : {}) })),
     fields: publicFields, cards, discussions: [], files: [],
   }
-  const chatScope = await getChatScope(workspaceId)
-  const chat = await loadChat(workspaceId)
-  projection.discussions = await projectDiscussions(chat.messages, chat.profiles, chatScope, boardId, publicFields, cards)
-  const projectedFiles = await projectFiles(entities, boardId, new Set(cards.map(card => card.id)), stageAsset)
+  const chat = ports.chat ?? { scope: workspaceId, messages: [], profiles: [] }
+  projection.discussions = await projectDiscussions(chat.messages, chat.profiles, chat.scope, boardId, publicFields, cards)
+  const projectedFiles = await projectFiles(entities, boardId, new Set(cards.map(card => card.id)), stageAsset, ports.readFile)
   projection.files = projectedFiles.files
   return { projection: validatePublicBoardProjection(projection), assets: projectedFiles.assets }
 }
@@ -79,6 +83,7 @@ function publicPresentation(board: Extract<WorkspaceEntity, { kind: "board" }>, 
   const visibleIds = new Set([...columns.map(column => column.id), ...fields.map(field => field.id), ...fields.flatMap(field => field.options.map(option => option.id))])
   return {
     ...(board.entityName ? { entityName: board.entityName } : {}),
+    ...( "archiveColumnId" in board ? { archiveColumnId: board.archiveColumnId } : {}),
     preset: board.preset ? { ...board.preset, bindings: Object.fromEntries(Object.entries(board.preset.bindings).filter(([, id]) => visibleIds.has(id))) } : null,
     ...(board.cardStageButtons ? { cardStageButtons: board.cardStageButtons.filter(button => columns.some(column => column.id === button.columnId)) } : {}),
     ...(board.cardAgingPolicy ? { cardAgingPolicy: board.cardAgingPolicy } : {}),
@@ -103,13 +108,14 @@ function projectFields(fields: PublicFieldEntity[]): PublicBoardProjection["fiel
       : [],
   }))
 }
-function projectCards(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], children: (id: string) => Entity[], fields: PublicBoardProjection["fields"]): PublicBoardProjection["cards"] {
+function projectCards(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], children: (id: string) => Entity[], fields: PublicBoardProjection["fields"], archiveColumnId: string | undefined, document: WorkspaceDocumentV2): PublicBoardProjection["cards"] {
   const fieldMap = new Map(fields.map(field => [field.id, field]))
   const cards: PublicBoardProjection["cards"] = []
   const visited = new Set<string>()
   const walk = (parentId: string, columnId: string, cardParentId: string | null): void => {
     const items = children(parentId).filter(isItem)
-    for (const entity of orderItemsByPriority(board, items, board.preset?.bindings["field.notes"])) {
+    for (const source of orderItemsByPriority(board, items, board.preset?.bindings["field.notes"])) {
+      const entity = projectItemPriority(board, source, board.preset?.bindings["field.notes"])
       if (visited.has(entity.id)) throw new Error("Public card hierarchy contains a cycle")
       visited.add(entity.id)
       const values = Object.fromEntries(Object.entries(entity.values ?? {}).filter(([fieldId, value]) => validFieldValue(fieldMap.get(fieldId), value)))
@@ -119,6 +125,18 @@ function projectCards(board: Extract<WorkspaceEntity, { kind: "board" }>, column
     }
   }
   for (const column of columns) walk(column.id, column.id, null)
+  if (archiveColumnId) {
+    for (const source of orderItemsByPriority(board, archivedItemsForBoard(document, board.id), board.preset?.bindings["field.notes"])) {
+      if (visited.has(source.id)) throw new Error("Public card hierarchy contains a cycle")
+      visited.add(source.id)
+      const entity = projectItemPriority(board, source, board.preset?.bindings["field.notes"])
+      const values = Object.fromEntries(Object.entries(entity.values ?? {}).filter(([fieldId, value]) => validFieldValue(fieldMap.get(fieldId), value)))
+      cards.push({ id: entity.id, parentId: null, columnId: archiveColumnId, title: entity.title,
+        body: itemNarrative(entity, board.preset?.bindings["field.notes"], children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]),
+        values, rank: entity.placement.rank, ...(entity.createdAt ? { createdAt: entity.createdAt } : {}), ...(entity.updatedAt ? { updatedAt: entity.updatedAt } : {}), ...(entity.lastActivityAt ? { lastActivityAt: entity.lastActivityAt } : {}) })
+      if (cards.length > MAX_CARDS) throw new Error("Public board exceeds card limit")
+    }
+  }
   return cards
 }
 function validFieldValue(field: PublicField | undefined, value: unknown): value is string | number | boolean | null {
@@ -189,7 +207,7 @@ function includedDiscussionRoots(messages: StoredChatMessage[], roots: ReturnTyp
   return included
 }
 function isDefined<T>(value: T | undefined): value is T { return value !== undefined }
-async function projectFiles(entities: Entity[], boardId: string, cardIds: Set<string>, stageAsset?: PublicAssetStager): Promise<ProjectedFiles> {
+async function projectFiles(entities: Entity[], boardId: string, cardIds: Set<string>, stageAsset?: PublicAssetStager, readFile?: PublicProjectionPorts["readFile"]): Promise<ProjectedFiles> {
   const files: PublicBoardProjection["files"] = []
   const knownAssets = new Map<string, number>()
   const assets: PublicBoardAsset[] = []
@@ -197,7 +215,7 @@ async function projectFiles(entities: Entity[], boardId: string, cardIds: Set<st
     if (!active(entity) || entity.placement.parentId !== boardId && !cardIds.has(entity.placement.parentId ?? "") || !("kind" in entity)) continue
     const refs = attachedReferences(entity)
     for (let index = 0; index < refs.length; index++) {
-      const content = await readPublicFile(entity, refs[index])
+      const content = await readPublicFile(entity, refs[index], readFile)
       if (content.bytes.byteLength > MAX_FILE_BYTES) throw new Error(`Attachment ${content.fileName} exceeds the 16 MiB public file limit`)
       const sha256 = await hashBytes(content.bytes)
       if (!knownAssets.has(sha256)) {
@@ -222,11 +240,11 @@ function attachedReferences(entity: Entity): PublicFileReference[] {
   if ("kind" in entity && entity.kind === "artifact") return [{ reference: entity.pdf, suffix: "pdf" }, ...(entity.sourceMarkdown ? [{ reference: entity.sourceMarkdown, suffix: "md" }] : [])]
   return []
 }
-async function readPublicFile(entity: Entity, file: PublicFileReference): Promise<{ bytes: Uint8Array; fileName: string; mediaType: string }> {
+async function readPublicFile(entity: Entity, file: PublicFileReference, readFile?: PublicProjectionPorts["readFile"]): Promise<{ bytes: Uint8Array; fileName: string; mediaType: string }> {
   if (file.reference) {
     if (file.reference.type !== "blob") throw new Error(`Attachment ${file.reference.fileName} is local to one device and cannot be published`)
     let bytes: Uint8Array | undefined
-    try { bytes = await readAttachment(file.reference) }
+    try { bytes = await readFile?.(file.reference) }
     catch (cause) { throw new Error(`Attachment ${file.reference.fileName} is unavailable; reconnect a source device before publishing`, { cause }) }
     if (!bytes) throw new Error(`Attachment ${file.reference.fileName} is unavailable; reconnect a source device before publishing`)
     return { bytes, fileName: file.reference.fileName, mediaType: file.reference.mimeType }

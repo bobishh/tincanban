@@ -30,9 +30,10 @@ second device and keep working across both.
   reclassification; failed checks preserve the
   saved view and show a retry message.
 - Share selected boards with an editor or a read-only visitor.
-- Publish a selected board as a read-only public link. Public copies include active
-  cards, fields, selected-board/card discussions and attached files; viewers need no
-  account or workspace invitation. Updates and withdrawal are explicit.
+- The visitor-access design gives a selected board one read-only public URL for its
+  existing ID, settings and visitor-visible content. Authorized owner/editor/
+  automation changes are designed to reach readers automatically; rollout remains
+  incomplete (see **Public board links** below).
 - Inspect item history and restore an earlier version without erasing history.
 - Cards with saved messages show a count on their permanent chat icon. Open the
   thread with the latest saved activity from the icon; empty cards offer a new
@@ -53,9 +54,8 @@ can resume after reload. Restoring the same identity keeps this device's key and
 local replication progress. Older root-only recovery files remain readable, with
 their limited scope shown before restoration. Board history and attachment bytes
 still need a workspace backup or an available Rusty copy; credentials alone do
-not guarantee that a remote copy exists. Production availability follows the
-verified [compatible release cohort](docs/rusty-release-deployment.md), rather
-than the presence of implementation source.
+not guarantee that a remote copy exists. Production availability depends on the
+Rusty service release and this app's client release, each verified by its own CI.
 
 **Sync → Backups → Private recovery backup** serves the
 selected workspace. It encrypts original local evidence, retained archive sources
@@ -68,8 +68,8 @@ archive coverage from retained objects, and checks original signed workspace
 history before offering restoration. Restoring uses the same identity, requires
 explicit consent before replacing an existing workspace, preserves the previous
 local journal, and resumes interrupted private-state projection before startup
-opens that workspace. Production availability follows the exact compatible
-release cohort and its retained activation evidence.
+opens that workspace. Production availability depends on the Rusty service and
+app releases that carry these formats; each is verified by its owning CI.
 
 tincanban is an experimental application. Keep an independent backup of important
 work. Browser storage is a local copy, not a hosted backup service.
@@ -125,8 +125,9 @@ See [keeper service](../mesh-lighthouse/README.md) for setup and migration.
 
 The [architecture diagram](openspec/changes/unified-device-and-replica-architecture/design.md#current-working-tree-boundaries)
 separates Rusty's HTTP storage, direct device sync, private identity state and the
-authorized automation Worker. Exact deployed revisions and artifact digests are
-recorded by the compatible release coordinator.
+authorized automation Worker. Each service records its own deployed revision and
+artifact evidence; app, Worker, Rusty and TinSink releases do not share a release
+coordinator or activation cohort.
 
 The writer upgrade also coordinates existing automation Workers:
 it checks maintenance support before changing Rusty policy, retains the confirmed
@@ -150,35 +151,37 @@ cannot authorize checkpoint deletion.
 
 ### Public board links
 
-Owners can open **Settings → Workspace → Public board** to review and publish
-that board's public copy. The public link is `/boards/<board-id>`. It shows active
-columns, fields and cards, selected-board/card discussion messages with display
-labels, and board/card attachments. Public readers use the same board, filters,
-cards, detail windows and read-only discussion UI as invited visitors. The
-publication includes display bindings, column accents and folded descriptions;
-existing snapshots remain readable and gain those settings after an explicit update.
-Viewers can search, read and download; they
-cannot edit, comment, enroll, or join the mesh. A public copy is a separate snapshot:
-private edits do not change it until the owner chooses **Update**. **Unpublish**
-blocks new snapshot and file reads; it cannot recall copies already downloaded.
+The visitor-access contract gives owners control of public access for the existing
+board under **Settings → Workspace → Public board**. Canonical links use
+`/boards/<board-id>/<title-slug>`; the older `/boards/<board-id>` path remains
+valid. The ID selects the board and the slug is descriptive. The shared visitor
+presentation covers public and invited visitors, including archive visibility,
+fields, collapse settings, discussions and files.
+Public readers can search, read and download; they cannot edit, comment, enroll or
+join the mesh. Owner, editor and approved automation changes follow the existing
+board's authorized write path and are intended to update public readers
+automatically. Disabling public access stops future reads; it cannot recall bytes
+already downloaded.
 
-Set the public frontend build variable `VITE_PUBLIC_BOARD_ORIGIN` to the compatible
-Rusty HTTPS origin. Configure Rusty with its existing `RUSTY_TRUSTED_OWNER` root and
-controller-device allowlist, plus the exact frontend CORS origin. Missing config or
-Keeper capability disables publication with a clear error. Publication sends the
-selected projection and separate file copies to Rusty; it never sends private access
-keys, storage tokens, local file paths, or other boards. The Rusty service can
-authorize its configured publication controller, but cannot inspect the encrypted
-workspace to independently prove current board ownership. Workspace owners should
-publish only through a client that confirms current owner rights. Rusty publication
-storage and its binary require a compatible service image advertising
-`publicBoardPublication.presentationVersion: 1` before publishing or updating
-the shared visitor presentation. The working-tree
-release coordinator stages exact Rusty, automation and frontend artifacts and
-activates them in that order. The Rusty adapter follows the existing Kamal service
-config and verifies the sealed registry digest plus source and binary identity;
-the runner's pinned Hetzner checkout and deployment credentials remain external
-setup. See [Rusty release deployment](docs/rusty-release-deployment.md).
+The shared visitor-access implementation is present in source. Final integration
+acceptance and production release remain pending; source changes and focused unit
+tests do not establish production behavior. Public data remains in Rusty's
+publication namespace, separate from encrypted workspace records.
+
+Set `VITE_PUBLIC_BOARD_ORIGIN` to the Rusty HTTPS origin. Configure Rusty with its
+existing `RUSTY_TRUSTED_OWNER` root and controller-device allowlist, plus the exact
+frontend CORS origin. Missing config or publication capability disables public
+access with a clear error. Public read storage
+contains a board-scoped readable representation and file copies; private keys,
+storage tokens, local paths and other boards stay outside that scope. Rusty cannot
+inspect private workspace history or prove that a submitted projection matches
+it. Honest clients and the Worker derive updates from locally admitted source;
+signed source heads bind the writer's assertion but are not server-side proof of
+private CRDT admission. Revocation applies when the signed checkpoint reaches a
+writer. Frontend and Worker, Rusty, and TinSink/platform configuration use
+separate CI and release paths. No release cohort is required; an unavailable
+optional diagnostic exporter does not block board use. See the [Rusty service
+operations guide](../mesh-lighthouse/README.md).
 
 Optional public-view events use the existing diagnostics endpoint and consent. They
 contain an ephemeral page session and public board entity ID, with viewer device and
@@ -321,23 +324,31 @@ npm run build            # type-check and create dist/
 npm run preview          # serve the production build locally
 ```
 
-External sync diagnostics require a collector configured once per deployment.
-Set the public frontend build values listed in [.env.example](.env.example): intake
-URL, project, browser write key, level, sample rate and batch size. Both URL and key
-are required; invalid values disable sending. Use `.env` locally or Cloudflare build
-variables in production. These values become public browser assets; backend/desktop
-secret write keys belong only in backend runtime secrets.
+External sync diagnostics use the standard OpenTelemetry Logs and Traces SDKs.
+Export is optional. Set the public frontend build values listed in
+[.env.example](.env.example): TinSink intake URL, project, browser write key,
+level, sample rate and batch size. Both URL and key are required for sending;
+missing or invalid values disable export. Use `.env` locally or
+Cloudflare build variables in production. These values become public browser
+assets; backend/desktop write keys belong only in backend runtime secrets. TinSink
+validates project/source/origin and quota, then forwards to the private pinned
+Collector, which writes standard OTel tables in ClickHouse. The existing TinSink
+log view reads the old diagnostic rows and the new OTel tables.
 
 **Settings → Workspace → Diagnostics** contains **Send diagnostics from this device** when a
 collector is configured. The consent choice applies to this browser across
 workspaces and survives reload. Old local collector URLs and keys are ignored;
 explicit old opt-out survives. **Settings → Workspace → Diagnostics → Diagnostic delivery**
 shows queued/dropped events, last confirmed send and delivery failures. The
-collector must accept the [version 2 contract](openspec/changes/configurable-telemetry/design.md).
+collector must accept the [standard observability contract](openspec/changes/standard-observability/specs/diagnostic-delivery/spec.md).
 Local diagnostic snapshots remain available when external sending is disabled.
-No message/card contents or raw errors are sent. IDs are complete and numeric
-attributes retain their types. Chat/change events share an entity correlation
-trace across devices; this does not measure precise cross-device network latency.
+Bounded exception type, message, stack and causes are sent after credential
+redaction; board/card contents, files, request bodies and signing credentials are
+not diagnostic attributes. IDs remain bounded and numeric attributes retain their
+types. Operation spans use W3C Trace Context where requests are related. Export
+failure does not block board writes, authentication or product deployment. Source
+implementation and focused tests do not establish full-chain acceptance or
+production delivery; see the [execution record](openspec/changes/standard-observability/README.md).
 
 [MetaMesh](https://github.com/bobishh/meta-mesh) is a public repository pinned as a
 Git submodule. No GitHub credentials or deploy key are required to fetch it. Its

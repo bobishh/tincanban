@@ -12,25 +12,9 @@
       "automationState": 5,
       "workspaceSnapshot": 2,
       "instanceManagementActions": 3
-    },
-    "rusty": {
-      "scopePolicy": 2,
-      "managementPolicy": 1,
-      "archiveStorage": 1
     }
   },
   "capabilities": {
-    "rusty": {
-      "scopeEnrollmentRetry": 1,
-      "scopeManagement": 1,
-      "personManagement": 1,
-      "writerPolicy": 1,
-      "encryptedArchives": 1,
-      "snapshotCheckpoints": {
-        "version": 1,
-        "observedSequence": true
-      }
-    },
     "automation": {
       "instanceManagement": {
         "version": 1,

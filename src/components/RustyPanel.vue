@@ -51,7 +51,7 @@ async function updateDeviceAccess(origin: string) {
     </div>
     <ul v-if="records.length" class="rusty-connections">
       <li v-for="config in records" :key="`${config.origin}/${config.scopeId}`">
-        <div class="rusty-connection"><strong>{{ config.origin }}</strong><span>{{ replicaStatus(config, controller.statuses.value[replicaKey(config)], controller.now.value) }}</span>
+        <div class="rusty-connection"><strong class="technical-value">{{ config.origin }}</strong><span class="reading-explanation">{{ replicaStatus(config, controller.statuses.value[replicaKey(config)], controller.now.value) }}</span>
           <small v-if="controller.statuses.value[replicaKey(config)]?.lastSyncedAt">Last sync: <time :datetime="new Date(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!).toISOString()">{{ syncTime(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!) }}</time></small>
           <small v-if="controller.statuses.value[replicaKey(config)]?.error" role="alert">{{ controller.statuses.value[replicaKey(config)]!.error }}</small>
         </div>
@@ -63,7 +63,7 @@ async function updateDeviceAccess(origin: string) {
       <p class="dialog-copy">Profile photo and private settings sync independently from board data.</p>
       <ul class="rusty-connections">
         <li v-for="profile in profileRecords" :key="profile.key" class="rusty-profile-connection">
-          <div class="rusty-connection"><strong>{{ profile.origin }}</strong><span>{{ profile.status }}</span>
+          <div class="rusty-connection"><strong class="technical-value">{{ profile.origin }}</strong><span class="reading-explanation">{{ profile.status }}</span>
             <small v-if="profile.lastSyncedAt">Last sync: <time :datetime="new Date(profile.lastSyncedAt).toISOString()">{{ syncTime(profile.lastSyncedAt) }}</time></small>
             <small v-if="profile.error" role="alert">{{ profile.error }}</small>
             <small v-if="profile.status === 'Profile delivery not configured' && controller.profileSetupErrors.value[profile.origin]" role="alert">{{ controller.profileSetupErrors.value[profile.origin] }}</small>
@@ -86,10 +86,11 @@ async function updateDeviceAccess(origin: string) {
       <button class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="adding = false">Cancel</button>
     </form>
     <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(controller.syncNow)">Sync now</button>
-    <p v-if="failure" role="alert">{{ failure }}</p>
+    <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
 
   </section>
 </template>
+<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
 .rusty-panel { display: grid; gap: var(--space-3); padding-block: var(--space-2); }
 .rusty-panel > .button, form > .button { justify-self: start; }

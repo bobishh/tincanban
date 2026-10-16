@@ -34,7 +34,7 @@ const logsUrl = computed(() => props.accessRole === "owner" || props.accessRole 
       <div v-for="member in members" :key="member.personId">
         <p>{{ member.name }}</p>
         <div v-for="device in member.deviceList" :key="device.deviceId" class="mesh-device-ua">
-          <small>{{ device.name }} · {{ device.deviceId }}</small>
+          <small>{{ device.name }} · <span class="technical-value">{{ device.deviceId }}</span></small>
           <code v-if="device.userAgent">User agent: {{ device.userAgent }}</code>
         </div>
       </div>

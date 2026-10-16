@@ -1,13 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { clearMeshTrace, meshTrace, meshTraceSnapshot, setMeshTraceVerboseLogging } from "./meshTrace"
 
+const { record } = vi.hoisted(() => ({ record: vi.fn() }))
+vi.mock("./telemetry", () => ({ record }))
+
 describe("mesh trace", () => {
   beforeEach(() => {
     clearMeshTrace()
     setMeshTraceVerboseLogging(false)
+    record.mockReset()
   })
 
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
   it("keeps routine gossip out of the console by default while retaining it for diagnostic snapshots", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
@@ -56,5 +60,19 @@ describe("mesh trace", () => {
     expect(events).toHaveLength(500)
     expect(events[0]?.index).toBe(20)
     expect(events.at(-1)?.index).toBe(519)
+  })
+
+  it("Given an error supplied in detail, When meshTrace forwards telemetry, Then retain it unless explicit error overrides it", async () => {
+    vi.stubGlobal("window", {})
+    const detailError = new TypeError("detail failure")
+    const explicitError = new RangeError("explicit failure")
+
+    meshTrace("workspace.replica.failed", { error: detailError }, "warn")
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(1))
+    expect(record.mock.calls[0]?.[1]).toMatchObject({ error: detailError })
+
+    meshTrace("workspace.replica.failed", { error: detailError }, "warn", explicitError)
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
+    expect(record.mock.calls[1]?.[1]).toMatchObject({ error: explicitError })
   })
 })

@@ -11,7 +11,7 @@ module.exports = {
       },
       to: {
         reachable: true,
-        path: "^src/(?:App[.]vue|app/|chat/|attachments[.]ts|storage[^/]*[.]ts|domain/(?:identity|permissions|proofs|model)[.]ts|public/(?:publicProjection|publicClient|publicationClient|PublicationDialog)[.]|sync/(?!telemetryConfig[.]ts|telemetryEvent[.]ts))|^(?:vendor/meta-mesh/|(?:node_modules/)?(?:@automerge/|@meta-uber/mesh-))",
+        path: "^src/(?:App[.]vue|app/|chat/(?!context[.]ts$|referenceChoices[.]ts$|messageReference[.]ts$|avatar[.]ts$)|attachments[.]ts|storage[^/]*[.]ts|domain/(?:identity|permissions|proofs|model)[.]ts|public/(?:publicProjection|publicClient|publicationClient|PublicationDialog)[.]|sync/(?!telemetryConfig[.]ts|telemetryEvent[.]ts))|^(?:vendor/meta-mesh/|(?:node_modules/)?(?:@automerge/|@meta-uber/mesh-))",
       },
     },
     {

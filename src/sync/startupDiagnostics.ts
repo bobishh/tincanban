@@ -7,10 +7,6 @@ async function diagnostics(): Promise<Diagnostics | undefined> {
   catch { return undefined }
 }
 
-export function setStartupDiagnosticDevice(id: string): void {
-  void diagnostics().then(value => value?.setStartupDiagnosticDevice(id))
-}
-
 export async function diagnoseStartupStep<T>(stage: string, step: () => T | Promise<T>, detail: Record<string, unknown> = {}): Promise<T> {
   const value = await diagnostics()
   return value ? value.diagnoseStartupStep(stage, step, detail) : step()

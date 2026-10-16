@@ -41,7 +41,7 @@ import { applyInjectedFixture } from "./stateInjectedFixture";
 import { canReuseAdmittedDocument } from "./sync/localAdmissionReuse";
 import { clearPendingItemMoves } from "./pendingItemMoves";
 import { startPendingWrite } from "./statePendingWrites";
-import { diagnoseStartupStep, setStartupDiagnosticDevice } from "./sync/startupDiagnostics";
+import { diagnoseStartupStep } from "./sync/startupDiagnostics";
 import { causalReviewMetadata, hasUnresolvedCausalChanges } from "./stateCausalReviewMetadata";
 import { persistDeltaCommand } from "./stateDeltaAdmission";
 
@@ -104,7 +104,6 @@ export async function prepareLocalState(storage = defaultStorage): Promise<void>
     await diagnoseStartupStep("automerge-wasm", initializeAutomerge);
     console.info("[tincanban.startup] prepare", "identity")
     stateRuntime.currentProfile = await diagnoseStartupStep("identity-load", bootstrapIdentity);
-    setStartupDiagnosticDevice(stateRuntime.currentProfile.device.deviceId);
     const recoveryProfile = stateRuntime.currentProfile;
     await diagnoseStartupStep("workspace-backup-recovery", async () => {
       const { resumeWorkspaceHistoryRecoveryProjection } = await import("./sync/workspaceHistoryRecoveryProjection");

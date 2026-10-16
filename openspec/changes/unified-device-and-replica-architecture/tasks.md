@@ -1,5 +1,10 @@
 # Release completion contract
 
+> Historical release plan: its coordinated cohort requirements below are
+> superseded. Each service now verifies and deploys through its own pipeline; see
+> [current architecture](../../../docs/architecture.md) and the
+> [independent platform boundaries](../independent-platform-boundaries/design.md).
+
 Requirements and acceptance mappings remain in [the specification](specs/device-and-replica-contracts/spec.md),
 [architecture](design.md), [history contract](history-archive-contract.md) and
 [acceptance map](verification-map.md). Execution state belongs to the active goal,

@@ -1,130 +1,137 @@
-name: Recover compatible production cohort
+name: Recover one tincanban component
 
 on:
   workflow_dispatch:
     inputs:
-      operation:
-        description: Resume an interrupted exact cohort, or select a compatible prior cohort
+      component:
+        description: Component to restore from a successful main Verify run
         type: choice
-        options: [resume, rollback]
+        options: [frontend, automation]
         required: true
-      activation_run:
-        description: Production activation or recovery workflow run ID to recover
-        required: true
-        type: string
-      activation_attempt:
-        description: Exact attempt of that workflow run
+      source_run:
+        description: Exact successful Verify run ID containing the sealed artifact
         required: true
         type: string
-      rollback_target_run:
-        description: Previously confirmed production run ID (rollback only)
+      source_attempt:
+        description: Exact attempt of that Verify run
+        required: true
         type: string
-      rollback_target_attempt:
-        description: Exact attempt of the target run (rollback only)
+      current_deployment_run:
+        description: Exact currently active frontend deploy/recovery run ID (frontend only)
+        required: false
+        type: string
+      current_deployment_attempt:
+        description: Exact attempt of the currently active frontend deploy/recovery run
+        required: false
         type: string
 
 concurrency:
-  group: tincanban-production
+  group: tincanban-${{ inputs.component }}-production
   cancel-in-progress: false
 
 permissions:
   contents: read
   actions: read
-  packages: write
 
 jobs:
   recover:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+    environment: production
     env:
-      RECOVERY_OPERATION: ${{ inputs.operation }}
-      ACTIVATION_RUN: ${{ inputs.activation_run }}
-      ACTIVATION_ATTEMPT: ${{ inputs.activation_attempt }}
-      TARGET_RUN: ${{ inputs.rollback_target_run }}
-      TARGET_ATTEMPT: ${{ inputs.rollback_target_attempt }}
-      RUSTY_DEPLOY_SPEC: ${{ vars.RUSTY_DEPLOY_SPEC }}
+      COMPONENT: ${{ inputs.component }}
+      SOURCE_RUN: ${{ inputs.source_run }}
+      SOURCE_ATTEMPT: ${{ inputs.source_attempt }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      AUTOMATION_TELEMETRY_TOKEN: ${{ secrets.AUTOMATION_TELEMETRY_TOKEN }}
       GH_TOKEN: ${{ github.token }}
-      DOCKER_REGISTRY_USERNAME: ${{ github.repository_owner }}
-      RUSTY_TRUSTED_OWNER: ${{ secrets.RUSTY_TRUSTED_OWNER }}
-      RUSTY_TELEMETRY_TOKEN: ${{ secrets.RUSTY_TELEMETRY_TOKEN }}
-      CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Fetch the exact existing Rusty config from Tangled
-        run: node scripts/fetch-rusty-deploy-config.mjs
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: 3.4.7
-      - name: Install the pinned Kamal release tool
-        run: gem install kamal --version 2.10.1 --no-document
       - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: workers/frontend/package-lock.json
       - run: npm ci --prefix workers/frontend
-      - name: Verify release recovery tooling
-        run: node --test scripts/release-cohort.test.mjs scripts/release-coordinator.test.mjs scripts/release-recovery.test.mjs scripts/deploy-rusty-cohort.test.mjs scripts/fetch-rusty-deploy-config.test.mjs
-      - name: Recover exact trusted artifacts and protect retained schema floors
-        run: |
-          node scripts/release-recovery.mjs "$RECOVERY_OPERATION" "$ACTIVATION_RUN" "$ACTIVATION_ATTEMPT" "$TARGET_RUN" "$TARGET_ATTEMPT"
-          release_sha=$(node scripts/release-coordinator.mjs source-sha .release)
-          echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
-      - name: Prepare existing Rusty host transport
-        env:
-          RUSTY_DEPLOY_SSH_KEY: ${{ secrets.RUSTY_DEPLOY_SSH_KEY }}
-          RUSTY_DEPLOY_KNOWN_HOSTS: ${{ secrets.RUSTY_DEPLOY_KNOWN_HOSTS }}
-        run: |
-          test -n "$RUSTY_DEPLOY_SSH_KEY"
-          test -n "$RUSTY_DEPLOY_KNOWN_HOSTS"
-          install -m 700 -d "$HOME/.ssh"
-          printf '%s\n' "$RUSTY_DEPLOY_SSH_KEY" > "$RUNNER_TEMP/rusty-deploy-key"
-          chmod 600 "$RUNNER_TEMP/rusty-deploy-key"
-          printf '%s\n' "$RUSTY_DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          echo "RUSTY_SSH_KEY_FILE=$RUNNER_TEMP/rusty-deploy-key" >> "$GITHUB_ENV"
-      - name: Prepare private Rusty runtime secrets for Kamal
-        env:
-          DEPLOY_CONFIG_DIR: .release-config/hetzner_playground
-        shell: bash
+      - name: Require exact successful main Verify run
+        id: source
         run: |
           set -euo pipefail
-          test -n "$RUSTY_TRUSTED_OWNER"
-          test -n "$RUSTY_TELEMETRY_TOKEN"
-          test -n "$CLICKHOUSE_PASSWORD"
-          case "$RUSTY_TELEMETRY_TOKEN$CLICKHOUSE_PASSWORD" in *$'\n'*|*$'\r'*) exit 1;; esac
-          install -m 700 -d "$DEPLOY_CONFIG_DIR/.kamal"
-          umask 077
-          printf 'RUSTY_TELEMETRY_TOKEN=%s\nCLICKHOUSE_PASSWORD=%s\n' "$RUSTY_TELEMETRY_TOKEN" "$CLICKHOUSE_PASSWORD" > "$DEPLOY_CONFIG_DIR/.kamal/secrets"
-          chmod 600 "$DEPLOY_CONFIG_DIR/.kamal/secrets"
-      - name: Stage only missing exact Worker versions without rebuilding
+          [[ "$SOURCE_RUN" =~ ^[1-9][0-9]*$ && "$SOURCE_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/attempts/$SOURCE_ATTEMPT")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.head_branch == "main" and .event == "push" and .conclusion == "success" and .run_attempt == ($ENV.SOURCE_ATTEMPT|tonumber) and .repository.full_name == $repo and .head_repository.full_name == $repo and .path == ".github/workflows/ci.yml"' <<<"$run" >/dev/null
+          sha="$(jq -r .head_sha <<<"$run")"
+          echo "RELEASE_SHA=$sha" >> "$GITHUB_ENV"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Require current frontend deployment evidence for frontend rollback
+        if: inputs.component == 'frontend'
+        env:
+          CURRENT_RUN: ${{ inputs.current_deployment_run }}
+          CURRENT_ATTEMPT: ${{ inputs.current_deployment_attempt }}
         run: |
-          test -n "$CLOUDFLARE_API_TOKEN"
-          for component in automation frontend; do
-            if [ "$(node scripts/release-coordinator.mjs needs-stage .release "$component")" = true ]; then
-              upload_output="$RUNNER_TEMP/$component-upload.jsonl"
-              WRANGLER_OUTPUT_FILE_PATH="$upload_output" workers/frontend/node_modules/.bin/wrangler versions upload --config ".release/deploy/$component.json" --no-bundle --keep-vars --tag "$RELEASE_SHA"
-              node scripts/release-coordinator.mjs record-version .release "$component" "$upload_output"
-            fi
-          done
-      - uses: actions/upload-artifact@v6
+          set -euo pipefail
+          [[ "$CURRENT_RUN" =~ ^[1-9][0-9]*$ && "$CURRENT_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+          run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CURRENT_RUN/attempts/$CURRENT_ATTEMPT")"
+          jq -e --arg repo "$GITHUB_REPOSITORY" '.head_branch == "main" and (.event == "workflow_run" or .event == "workflow_dispatch") and .conclusion == "success" and .run_attempt == ($ENV.CURRENT_ATTEMPT|tonumber) and .repository.full_name == $repo and .head_repository.full_name == $repo and (.path == ".github/workflows/deploy-frontend.yml" or .path == ".github/workflows/recover-release.yml")' <<<"$run" >/dev/null
+      - uses: actions/download-artifact@v7
+        if: inputs.component == 'frontend'
         with:
-          name: cohort-staged-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .release/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-      - name: Confirm uncertain stages and resume ordered activation
-        run: node scripts/release-coordinator.mjs resume .release
-      - name: Preserve exact interrupted or completed recovery evidence
-        uses: actions/upload-artifact@v6
+          name: frontend-deployment-${{ inputs.current_deployment_run }}-${{ inputs.current_deployment_attempt }}
+          path: .recovery/current/
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.current_deployment_run }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: tincanban-${{ inputs.component }}-cohort-${{ steps.source.outputs.sha }}-${{ inputs.source_attempt }}
+          path: .release/${{ inputs.component }}/
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run }}
+      - name: Confirm selected frontend is currently active before preserving its chunks
+        if: inputs.component == 'frontend'
+        run: node scripts/component-release.mjs verify .recovery/current/deploy/frontend/expected.json "$(cat .recovery/current/deploy/frontend/provider-version.txt)"
+      - name: Verify selected component artifact and prepare isolated deployment
+        run: |
+          if [ "$COMPONENT" = frontend ]; then
+            node scripts/component-release.mjs compose-frontend-rollback .release/frontend .recovery/current/frontend .release/frontend-rollback
+            rm -rf .release/frontend
+            mv .release/frontend-rollback .release/frontend
+            node scripts/component-release.mjs prepare frontend .release/frontend .release/deploy/frontend "$RELEASE_SHA" "$SOURCE_RUN" "$SOURCE_ATTEMPT"
+          else
+            node scripts/component-release.mjs prepare automation .release/automation .release/deploy/automation "$RELEASE_SHA" "$SOURCE_RUN" "$SOURCE_ATTEMPT"
+          fi
+      - name: Preserve active component reader floors
+        run: |
+          node scripts/component-release.mjs compatibility "$COMPONENT" ".release/$COMPONENT"
+      - name: Stage and activate the selected component only
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          secret_args=()
+          telemetry_secrets="$RUNNER_TEMP/automation-telemetry-secrets.json"
+          trap 'rm -f "$telemetry_secrets"' EXIT
+          if [ "$COMPONENT" = automation ] && [ -n "$AUTOMATION_TELEMETRY_TOKEN" ]; then
+            AUTOMATION_SECRETS_FILE="$telemetry_secrets" node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(process.env.AUTOMATION_SECRETS_FILE, JSON.stringify({ TELEMETRY_TOKEN: process.env.AUTOMATION_TELEMETRY_TOKEN }), { mode: 0o600 });'
+            secret_args=(--secrets-file "$telemetry_secrets")
+          fi
+          output="$RUNNER_TEMP/$COMPONENT-upload.jsonl"
+          config=".release/deploy/$COMPONENT/wrangler.json"
+          WRANGLER_OUTPUT_FILE_PATH="$output" workers/frontend/node_modules/.bin/wrangler versions upload --config "$config" --no-bundle --keep-vars --tag "$RELEASE_SHA" "${secret_args[@]}"
+          version="$(node workers/frontend/release.mjs uploaded-version "$output")"
+          echo "COMPONENT_VERSION=$version" >> "$GITHUB_ENV"
+          printf '%s\n' "$version" > ".release/deploy/$COMPONENT/provider-version.txt"
+          deploy_args=()
+          if [ "$COMPONENT" = automation ]; then deploy_args+=(--durable-objects-code-update-mode immediate); fi
+          workers/frontend/node_modules/.bin/wrangler versions deploy --config "$config" "$version@100" --yes "${deploy_args[@]}"
+      - name: Confirm selected component and frontend bytes
+        run: node scripts/component-release.mjs verify ".release/deploy/$COMPONENT/expected.json" "$COMPONENT_VERSION"
+      - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: cohort-result-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.component }}-deployment-${{ github.run_id }}-${{ github.run_attempt }}
           path: .release/
           include-hidden-files: true
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 90

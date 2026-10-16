@@ -178,6 +178,9 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
 .spatial-window .status-strip button { flex-shrink: 0; }
 .spatial-window .status-strip button { transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+.spatial-window .source-snapshot { max-height: 190px; overflow: auto; padding: var(--space-2) 0; border: 0; font: 400 var(--site-font-body-size, 16px)/1.5 var(--site-font-reading); }
+.spatial-window .document-form { padding: var(--space-3) 0 0; border: 0; border-top: 1px solid var(--soft); }
+.spatial-window .document-row { padding-inline: 0; border: 0; border-bottom: 1px solid var(--soft); }
 .scroll-frame .detail-section:first-child { margin-top: 0; }
 @media (max-width: 600px) {
   .spatial-titlebar { padding: var(--space-1) var(--space-2); gap: var(--space-1); }

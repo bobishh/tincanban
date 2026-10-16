@@ -349,7 +349,7 @@ function formatDisplayTime(createdAt: string): string {
           <div v-if="visibleReferences(msg).length" class="reference-chips">
             <button v-for="(anchor, index) in visibleReferences(msg)" :key="index" class="button button-small" type="button" @click="emit('reference', anchor)">{{ anchorLabel(anchor) }}</button>
           </div>
-          <MarkdownContent class="chat-message-body" :source="msg.body" />
+          <MarkdownContent class="chat-message-body reading-prose" :source="msg.body" />
           <div class="message-actions">
             <button v-if="!inThread && !readOnly && !msg.status && !msg.context?.replyTo && !replyCounts.get(msg.id)" class="message-action" type="button" aria-label="Reply to message" @click="emit('thread', msg.id, true)">Reply</button>
             <button v-if="!inThread && !msg.context?.replyTo && replyCounts.get(msg.id) && !msg.status" class="message-action" type="button" @click="emit('thread', msg.id)">{{ replyCounts.get(msg.id) }} {{ replyCounts.get(msg.id) === 1 ? 'reply' : 'replies' }}</button>
@@ -359,7 +359,7 @@ function formatDisplayTime(createdAt: string): string {
         </article>
         <div v-if="typingLabel" class="chat-typing" role="status" aria-label="Typing presence">{{ typingLabel }}</div>
       </div>
-      <p v-if="error" class="form-error chat-error-banner" role="alert">{{ error }}</p>
+      <p v-if="error" class="form-error chat-error-banner reading-explanation" role="alert">{{ error }}</p>
       <p v-if="readOnly" class="chat-status">Visitor · view only</p>
       <footer v-else class="chat-footer">
         <div class="reference-chips">
@@ -378,7 +378,7 @@ function formatDisplayTime(createdAt: string): string {
         <form class="chat-composer-form" @submit.prevent="handleSubmit">
           <button v-if="referenceChoices?.length || members?.length" class="button button-quiet chat-tools-toggle" type="button" aria-label="Add reference or participant" :aria-expanded="toolsOpen" @click="toolsOpen = !toolsOpen">+</button>
           <label :for="`message-${windowId ?? 'chat'}`" class="chat-composer-label">Message</label>
-          <textarea :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea" aria-label="Message" placeholder="Message…" :disabled="isSubmitting" rows="3" @keydown="handleKeyDown" @compositionstart="isComposing = true" @compositionend="isComposing = false" />
+          <textarea :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea reading-input" aria-label="Message" placeholder="Message…" :disabled="isSubmitting" rows="3" @keydown="handleKeyDown" @compositionstart="isComposing = true" @compositionend="isComposing = false" />
           <button class="button button-primary chat-submit-btn" type="submit" aria-label="Send message" :disabled="!draft.trim() || sending || isSubmitting">{{ sending ? 'Saving…' : 'Send' }}</button>
         </form>
       </footer>

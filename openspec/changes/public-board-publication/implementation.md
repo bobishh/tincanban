@@ -125,38 +125,27 @@ mark an untrue chronology complete.
 
 ## Rollout and authority boundaries
 
-`VITE_PUBLIC_BOARD_ORIGIN` is documented in `.env.example` and mapped from the
-same repository variable into the checked frontend CI build. Configure an exact
-HTTPS Rusty origin, the service's `RUSTY_TRUSTED_OWNER` root/controller-device
-allowlist, durable volume and exact frontend CORS origin. Missing origin or
-publication capability produces an explicit error. The follow-up release sets
-the repository variable to `https://ingest.meta-uber-engineer.dev`, retaining the
-existing server owner trust, CORS origin, service key and durable volume.
+`VITE_PUBLIC_BOARD_ORIGIN` is documented in `.env.example`; set it to the exact
+Rusty HTTPS origin for a product build. Rusty keeps its configured owner root and
+controller-device allowlist, durable volume, and exact frontend CORS origin.
+Missing origin or publication capability produces an explicit error. Public
+publication remains in Rusty's separate readable-record namespace; private
+workspace history, credentials and encrypted object storage remain separate.
 
 Rusty verifies configured publication-controller authority. It cannot independently
-inspect encrypted workspace history to prove current source-board ownership; the
-private client confirms that owner role. Transferring private workspace ownership
+inspect encrypted workspace history to prove that a submitted projection matches
+the admitted source; clients and the Worker derive updates from their admitted
+local state and bind signed source heads. Those heads are an authorized writer's
+assertion, not server-side CRDT proof. Transferring private workspace ownership
 does not silently transfer management of an existing public copy. Withdraw or
 manage that publication explicitly. Downloaded copies cannot be recalled.
 
-Frontend CI does not deploy the sibling Rusty service. The earlier CI pin,
-`d811e9d2d8b2de26c3b852506ea991cb674a654b`, predates this API. The publication
-protocol is consolidated into Rusty's authoritative blind-storage `main`,
-preserving its current service history without maintaining a parallel feature
-branch. Frontend CI pins an immutable compatible commit from that `main` and
-builds/tests its native binary. The compatible release passes all 21 native
-tests. CI also checks actual Keeper lifecycle in Chromium/WebKit and the compiled
-anonymous reader, in addition to core/mobile mocked scenarios. Frontend releases
-still require every Verify job to succeed.
-
-Kamal owns the native release at `ingest.meta-uber-engineer.dev`. Build and pull
-the immutable image before stopping the old writer, then back up the stopped
-`mesh_lighthouse_blind_20261008` volume and start the replacement. Two processes
-cannot share its exclusive storage lock. Verify the existing service identity,
-encrypted storage inventory and new publication capability after startup. The
-old binary rejects a `publications/` namespace after its first signed challenge;
-roll forward or preserve that subtree separately before rolling back. Never
-delete it or recreate the service key/volume.
+Frontend/automation CI releases product artifacts only. Rusty uses its own service
+CI and deployment path; TinSink/platform configuration uses its own pipeline.
+There is no shared release cohort or cross-service build-SHA equality gate. A
+frontend CI run does not deploy Rusty, and Rusty deployment does not release the
+frontend or Worker. Production state must be verified from each service's own
+release evidence; historical combined release records are not executable plans.
 
 Sibling user changes in `src/keeper.rs`, `src/replication.rs` and `.sloposcope/`
 were preserved. Domain purchase, indexing/SSR and publishing a real board remain

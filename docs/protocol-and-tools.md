@@ -2,9 +2,9 @@
 
 Implementation details for contributors. Start with the [README](../README.md) for the product, demo, and setup. This is not a security audit.
 
-This reference describes the implementation. Exact production rollout is
-established by the release coordinator's component revisions, artifact digests
-and served-byte checks; source presence alone does not establish deployment.
+This reference describes the implementation. Each service's owning CI verifies
+its own artifact and deployment; source presence alone does not establish
+production behavior or cross-service acceptance.
 
 ## Features
 
@@ -24,7 +24,7 @@ and served-byte checks; source presence alone does not establish deployment.
 - **Export Guarantees**: Exported `.tincanban` bundles contain workspace metadata, item documents, retained Automerge bytes, and public cryptographic proofs (`proofs.json`). Private signing keys, personal root documents, and pairing secrets are strictly excluded. The separate encrypted private recovery backup includes available original archive/attachment evidence and required private reading keys; missing objects make coverage explicitly incomplete. An ordinary workspace export is not a claim of complete archived recovery coverage.
 - **Browser Lifetime & Persistence**: A stable device identity, active transport credentials, and signed workspace authority persist in IndexedDB. Authority (owner history, grants, revocations, transfer and succession records) lives separately from disposable routes and transport secrets; leaving or rebuilding transport cannot turn an owner/editor into a visitor. Every tab owns an independent Iroh instance route; no tab is leader. Delivery targets the durable device through any live route, then sibling tabs reload committed state from IndexedDB. Connections and Automerge sync state are isolated per instance; direction and route-sequence tie-breaks only compare connections to the same instance. Trusted peers reconnect after every tab closes and reopens; peers introduced by a common owner can later sync directly without that owner online.
 - **Workspace Roles**: Owner can edit everything, invite, and revoke. Editor can rename the workspace and edit items, attachments, and chat, but cannot change board structure, fields, templates, access, imports, or recovery. Visitor can view the workspace and chat; writes and dragging are disabled. UI controls, local commands, imports, chat admission, and signed incoming changes use the same capability policy in `permissions.ts`.
-- **Write Authorization**: Shared document changes carry device signatures and owner-issued grants. Every network merge requires those authorizations; no raw document merge API is exposed. Forwarded changes retain their original authorization. An Owner-attested compact basis has a distinct Native admission path; it does not replace original authorship proofs. The active tail still requires signed causal admission. Reload all user tabs into the coordinated current prerelease cohort before sharing new writes.
+- **Write Authorization**: Shared document changes carry device signatures and owner-issued grants. Every network merge requires those authorizations; no raw document merge API is exposed. Forwarded changes retain their original authorization. An Owner-attested compact basis has a distinct Native admission path; it does not replace original authorship proofs. The active tail still requires signed causal admission. Reload tabs when the frontend's own compatibility check reports a stale client before sharing new writes.
 - **Schema Architecture**: Entity schemas in `src/domain/entitySchemas.ts` define both runtime validation and inferred TypeScript types. `validation.ts` adapts schema errors and parent rules; `permissions.ts` owns role policy. Protocol types remain in `model.ts`.
 - **Owner-Controlled Access**: Sync lists participants, trusted devices and presence. Only the workspace owner can invite or revoke. Signed revocations gossip through the mesh without consensus.
 - **Trusted-Group Ownership Recovery**: Owner may name one editor successor or enable strict-majority editor recovery. One signed vote per editor and epoch-bound claims prevent ordinary double election. Conflicting valid claims pause writes instead of silently selecting divergent owners; tincanban does not claim Byzantine consensus.
@@ -33,6 +33,37 @@ and served-byte checks; source presence alone does not establish deployment.
 - **Shared Device Identity**: Identity keys and device certificates come from the vendored `@meta-uber/mesh-identity` package. tincanban has no local identity fork; browser profiles remain compatible with existing installations.
 - **Current Schema**: Clients are expected to use the current document format. Loading and saving snapshots never adds CRDT changes; legacy workspace and preset migrations have been removed.
 - **Explicit Limitations**: No application-hosted account database, permanent workspace replica, or server-side secret recovery. Iroh connectivity still uses discovery and relay infrastructure when needed. Revocation is eventually consistent while peers are offline: a partitioned peer rejects revoked access only after receiving the owner's signed tombstone from an up-to-date peer.
+
+## Public visitor access
+
+The target public-access model is a read-only mode for the existing board. It keeps
+the board's IDs, settings and visitor-visible content; it does not create an editable
+publication copy or require a manual update action. Public and invited visitors
+share the same board, card, detail, discussion, file and responsive-window
+presentation. Archive visibility, collapse capability, preset bindings and
+effective card values come from the admitted board state. Caveat remains on the
+handwritten board and controls; long detail and chat prose uses compact Fira Sans.
+
+Canonical routes use `/boards/<board-id>/<title-slug>`. The stable ID resolves the
+board; the title slug is descriptive, and legacy `/boards/<board-id>` links remain
+valid. A private route hint may locate a candidate workspace, but it never grants
+access. Opening a private address still checks the active identity, saved workspace
+and current role. A fresh anonymous public read must not create an identity or
+initialize private workspace storage.
+
+Authorized owner/editor changes, admitted peer updates and approved automation
+changes are intended to update the public read representation automatically.
+Clients and Workers must use the normal signed causal-admission policy and current
+accepted grant snapshot; they must not trust a server storage token as board-write
+authority. An offline writer learns a revocation when the signed authoritative
+checkpoint reaches it. Rusty stores the readable board-scoped response but cannot
+inspect private workspace history to prove the source change's author or authority.
+
+**Evidence status (2026-10-16):** source now includes native public delivery and
+automation Worker integration, with focused protocol and retry coverage. Final
+browser acceptance remains pending; no production deployment is established by
+this source evidence. Frontend, automation and Rusty release through their own
+service pipelines.
 
 ## WebMCP Tools
 

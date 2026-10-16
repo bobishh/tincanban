@@ -7,6 +7,7 @@ if (!Number.isInteger(webPort) || webPort < 1 || !publicOrigin?.startsWith("http
 
 export default defineConfig({
   testDir: "./e2e", testMatch: previewBuild ? ["public-board.spec.ts"] : ["public-board-keeper.spec.ts", "public-board.spec.ts"], workers: 1, retries: 0,
+  outputDir: process.env.TINCANBAN_PUBLIC_E2E_OUTPUT_DIR ?? "test-results/public-board",
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
     { name: "webkit", use: { browserName: "webkit" } },

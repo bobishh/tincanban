@@ -1,4 +1,4 @@
-export type TelemetryConfig = { enabled: boolean; endpoint: string; project: string; browserKey?: string; level: "all" | "errors"; sampleRate: number; batchSize?: number }
+export type TelemetryConfig = { enabled: boolean; endpoint: string; logsEndpoint: string; tracesEndpoint: string; project: string; browserKey?: string; level: "all" | "errors"; sampleRate: number; batchSize?: number }
 const TELEMETRY_CONFIG_KEY = "tincanban.telemetry.v2"
 const listeners = new Set<() => void>()
 function validEndpoint(endpoint: string): boolean {
@@ -8,6 +8,23 @@ function validEndpoint(endpoint: string): boolean {
     return (url.protocol === "https:" || (url.protocol === "http:" && local)) && !url.username && !url.password && !url.search && !url.hash
   } catch { return false }
 }
+function otlpEndpoints(legacyEndpoint: string, explicitBase: string): { logsEndpoint: string; tracesEndpoint: string } | undefined {
+  const base = explicitBase || legacyEndpoint
+  if (!base) return { logsEndpoint: "", tracesEndpoint: "" }
+  try {
+    const url = new URL(base)
+    const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    if (!(url.protocol === "https:" || (url.protocol === "http:" && local)) || url.username || url.password || url.search || url.hash) return undefined
+    const path = url.pathname.replace(/\/+$/, "")
+    const origin = url.origin
+    const endpoint = (signal: "logs" | "traces") => {
+      if (/\/v1\/(logs|traces)$/.test(path)) return `${origin}${path.replace(/\/(logs|traces)$/, `/${signal}`)}`
+      if (/\/v1$/.test(path)) return `${origin}${path}/${signal}`
+      return explicitBase ? `${origin}${path}/v1/${signal}` : `${origin}/v1/${signal}`
+    }
+    return { logsEndpoint: endpoint("logs"), tracesEndpoint: endpoint("traces") }
+  } catch { return undefined }
+}
 function validCollectionLimits(value: TelemetryConfig): boolean {
   const batch = value.batchSize ?? 50
   return Number.isFinite(value.sampleRate) && value.sampleRate >= 0 && value.sampleRate <= 1 && Number.isInteger(batch) && batch >= 1 && batch <= 50
@@ -15,6 +32,9 @@ function validCollectionLimits(value: TelemetryConfig): boolean {
 function validBrowserKey(value: TelemetryConfig): boolean {
   const key = value.browserKey ?? ""
   return typeof key === "string" && (!value.enabled || key.length > 0) && (key === "" || /^[A-Za-z0-9_-]{16,256}$/.test(key))
+}
+function configuredEndpoint(legacyEndpoint: string, explicitEndpoint: string): string {
+  return explicitEndpoint || legacyEndpoint
 }
 function validateTelemetryConfig(value: TelemetryConfig): string {
   if (typeof value.enabled !== "boolean" || !["all", "errors"].includes(value.level)) return "Invalid diagnostic settings."
@@ -27,13 +47,17 @@ function validateTelemetryConfig(value: TelemetryConfig): string {
 }
 function deploymentConfig(): TelemetryConfig {
   const env = import.meta.env
-  const endpoint = String(env.VITE_SYNC_TELEMETRY_URL || "").trim()
+  const legacyEndpoint = String(env.VITE_SYNC_TELEMETRY_URL || "").trim()
+  const explicitEndpoint = String(env.VITE_OTEL_EXPORTER_OTLP_ENDPOINT || "").trim()
+  const endpoint = configuredEndpoint(legacyEndpoint, explicitEndpoint)
+  const otlp = otlpEndpoints(legacyEndpoint, explicitEndpoint)
   const project = String(env.VITE_SYNC_TELEMETRY_PROJECT || "tincanban").trim()
   const browserKey = String(env.VITE_SYNC_TELEMETRY_BROWSER_KEY || "").trim()
-  const value: TelemetryConfig = { enabled: !!endpoint && !!browserKey, endpoint, project, browserKey,
+  const value: TelemetryConfig = { enabled: !!endpoint && !!browserKey && !!otlp, endpoint,
+    logsEndpoint: otlp?.logsEndpoint ?? "", tracesEndpoint: otlp?.tracesEndpoint ?? "", project, browserKey,
     level: (env.VITE_SYNC_TELEMETRY_LEVEL || "all") as TelemetryConfig["level"],
     sampleRate: Number(env.VITE_SYNC_TELEMETRY_SAMPLE_RATE || "1"), batchSize: Number(env.VITE_SYNC_TELEMETRY_BATCH_SIZE || "50") }
-  return validateTelemetryConfig(value) ? { enabled: false, endpoint: "", project: "tincanban", browserKey: "", level: "all", sampleRate: 0, batchSize: 50 } : value
+  return validateTelemetryConfig(value) ? { enabled: false, endpoint: "", logsEndpoint: "", tracesEndpoint: "", project: "tincanban", browserKey: "", level: "all", sampleRate: 0, batchSize: 50 } : value
 }
 const DEVICE_CONSENT_KEY = "tincanban.telemetry.enabled.v1"
 const deployment = deploymentConfig()

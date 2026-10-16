@@ -9,6 +9,21 @@ const signer = await createReceiptSigner()
 let receiptSequence = 0
 const receiptCache = new Map<string, BlindReceipt>()
 
+test("Given a first WASM snapshot failure, when replication catches it, then retain the original exception and exact phase before reporting UI failure", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey,
+    readToken: "private-read", writeToken: "private-write", policyRevision: 1, keyEpoch: 1,
+    contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const failure = new WebAssembly.RuntimeError("unreachable during snapshot capture")
+  const events: Array<{ event: string; detail: Record<string, unknown> }> = []
+  const replica = new BlindReplica(config, { read: async () => { throw failure }, authorization: async () => ({}),
+    readChat: async () => null, mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+    diagnostic: (event, detail) => events.push({ event, detail }) },
+  { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") }, upload: signedReceipt })
+  await expect(replica.push()).rejects.toBe(failure)
+  expect(events).toContainEqual({ event: "mesh.rusty.snapshot.failed", detail: expect.objectContaining({ workspaceId: "board", phase: "snapshot", error: failure }) })
+  expect(JSON.stringify(events)).not.toMatch(/private-read|private-write|contentKey/)
+})
+
 test("Given an older uncertain snapshot, when attachment discovery is flushed, then finish its exact retry and acknowledge the new index before returning", async () => {
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey,
     readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1,

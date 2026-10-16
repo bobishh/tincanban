@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { isArchiveColumn, isItemArchived } from "../domain/archive"
-import type { Column, Item } from "../domain/model"
+import { isArchiveColumn } from "../domain/archiveColumn"
+import { isItemArchived } from "../domain/itemLifecycle"
+import type { Column, Item } from "../domain/entitySchemas"
 import type { CardStageButton } from "../domain/cardStageButtons"
 
 const props = defineProps<{

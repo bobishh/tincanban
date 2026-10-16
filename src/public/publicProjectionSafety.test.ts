@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import type { Board, WorkspaceDocumentV2 } from "../domain/model"
-import { createPublicBoardPublication, snapshotPublicBoardSource } from "./publicProjection"
+import { snapshotPublicBoardSource } from "./publicProjection"
+import { createBrowserBoardPublication as createPublicBoardPublication } from "../app/publicBoardPublication"
 
 const mocks = vi.hoisted(() => ({ messages: [] as unknown[], reads: [] as string[] }))
 vi.mock("../chat/service", () => ({ getChatScope: async () => "mesh-scope", loadChat: async () => ({ messages: mocks.messages, profiles: [] }) }))
@@ -22,7 +23,7 @@ function fixture(): WorkspaceDocumentV2 {
     }, placement: place("board"), archivedAt: null },
     hiddenField: { id: "hiddenField", kind: "field", title: "private field sentinel", valueType: "text", required: false, placement: place("board", "1/1"), archivedAt: "2026-01-01" },
     card: { id: "card", title: "Public card", body: "Published body", values: { select: "hidden", hiddenField: "private value sentinel" }, placement: place("todo"), archivedAt: null },
-    archivedCard: { id: "archivedCard", title: "private card sentinel", body: "private archived body", values: {}, placement: place("archive"), archivedAt: null },
+    archivedCard: { id: "archivedCard", title: "archived card", body: "archived body", values: {}, placement: place("archive"), archivedAt: null, lifecycle: JSON.stringify({ state: "archived", changedAt: "2026-01-01" }) },
     other: { id: "other", kind: "board", title: "private other board", placement: place(null), archivedAt: null },
     privateFile: { id: "privateFile", kind: "document", title: "private file", documentKind: "attachment", format: "path", content: "/private/file", file: null, placement: place("other"), archivedAt: null },
   } } as unknown as WorkspaceDocumentV2
@@ -34,12 +35,15 @@ function message(id: string, itemId: string, fieldId?: string) {
 beforeEach(() => { mocks.messages = []; mocks.reads = [] })
 
 describe("publication boundary regressions", () => {
-  it("Given archived fields, options and designated archive column, When publishing, Then neither their identifiers nor content escape", async () => {
+  it("Given archived fields and options, When publishing, Then keep them hidden while preserving the visitor archive surface", async () => {
     const publication = await createPublicBoardPublication(fixture(), "private-workspace", "board")
-    expect(publication.projection.columns.map(column => column.id)).toEqual(["todo"])
-    expect(publication.projection.cards.map(card => card.id)).toEqual(["card"])
+    expect(publication.projection.columns.map(column => column.id)).toEqual(["todo", "archive"])
+    expect(publication.projection.columns[1]).toMatchObject({ archive: true })
+    expect(publication.projection.board.presentation?.archiveColumnId).toBe("archive")
+    expect(publication.projection.cards.map(card => card.id)).toEqual(["card", "archivedCard"])
+    expect(publication.projection.cards[1]).toMatchObject({ id: "archivedCard", columnId: "archive", parentId: null })
     expect(publication.projection.cards[0].values).toEqual({})
-    expect(JSON.stringify(publication.projection)).not.toMatch(/hidden|archive|private/)
+    expect(JSON.stringify(publication.projection)).not.toMatch(/hiddenField|private other board|private value sentinel/)
     expect(mocks.reads).toEqual([])
   })
   it("Given a restored card retaining an old timestamp, When publishing, Then canonical active lifecycle includes its current content", async () => {
@@ -53,9 +57,9 @@ describe("publication boundary regressions", () => {
     expect(publication.projection.discussions).toHaveLength(1)
     expect(publication.projection.discussions[0].targets).toEqual([{ type: "card", id: "card" }])
   })
-  it("Given only private or archived discussion anchors, When publishing, Then no thread body is disclosed", async () => {
+  it("Given private and archived discussion anchors, When publishing, Then only the private anchor is excluded", async () => {
     mocks.messages = [message("private thread", "card", "hiddenField"), message("archived thread", "archivedCard")]
-    expect((await createPublicBoardPublication(fixture(), "private-workspace", "board")).projection.discussions).toEqual([])
+    expect((await createPublicBoardPublication(fixture(), "private-workspace", "board")).projection.discussions.map(item => item.body)).toEqual(["archived thread"])
   })
   it("Given a selected-board snapshot, When the source changes, Then captured content stays independent and unrelated metadata is absent", () => {
     const original = fixture()
@@ -74,10 +78,10 @@ describe("publication boundary regressions", () => {
     } }, employee_profile: { stack: "private preferences", work_profile: "private preferences" }, cardStageButtons: [{ columnId: "todo" }, { columnId: "archive" }] })
     Object.assign(document.entities.todo!, { color: "#66b3ff", collapsible: true })
     const publication = await createPublicBoardPublication(document, "private-workspace", "board")
-    expect(publication.projection.board.presentation).toEqual({ entityName: "lead", preset: { key: "job-search", version: 1,
-      bindings: { "status.lead": "todo", "field.stage": "select", "option.stage.active": "visible" } }, cardStageButtons: [{ columnId: "todo" }] })
+    expect(publication.projection.board.presentation).toEqual({ entityName: "lead", archiveColumnId: "archive", preset: { key: "job-search", version: 1,
+      bindings: { "status.lead": "todo", "status.archived": "archive", "field.stage": "select", "option.stage.active": "visible" } }, cardStageButtons: [{ columnId: "todo" }, { columnId: "archive" }] })
     expect(publication.projection.columns[0]).toMatchObject({ color: "#66b3ff", collapsible: true })
-    expect(JSON.stringify(publication.projection)).not.toMatch(/archive|hiddenField|private preferences|employee_profile/)
+    expect(JSON.stringify(publication.projection)).not.toMatch(/hiddenField|private preferences|employee_profile/)
     expect((document.entities.board as Board).preset?.bindings["status.archived"]).toBe("archive")
   })
   it("Given an attachment stage failure, When creating a publication, Then later files are not uploaded and no complete plan is returned", async () => {

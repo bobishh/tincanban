@@ -40,6 +40,7 @@ export type BlindReplicaStore = {
   checkpointAllowed?: (request?: BlindCheckpointRequest) => Promise<boolean>
   prepareCheckpoint?: (bytes: Uint8Array, object: Awaited<ReturnType<typeof encryptBlindObject>>, expectedSequence: number) => Promise<BlindCheckpointRequest | undefined>
   diagnostic?: (event: string, detail: Record<string, unknown>) => void
+  operation?: <T>(name: string, operation: () => Promise<T>) => Promise<T>
 }
 type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject; upload: (access: BlindAccess, object: BlindObject, requestId: string, observedSequence?: number) => Promise<BlindReceipt>; checkpoint?: typeof submitBlindCheckpoint }
 type Snapshot = { version: 1 | 2; workspaceId: string; document: string; authorization: unknown; chat: unknown;
@@ -81,10 +82,10 @@ export class BlindReplica {
     this.memoryProgress = emptyReplicaState(binding, config.cursor, config.lastUploaded)
     this.engine = new ReplicaEngine(binding, {
       repository: { read: () => this.readProgress(), commit: (expected, next) => this.persistProgress(expected, next) },
-      content: { revision: () => this.snapshotRevision(), capture: () => this.captureSnapshot(),
-        seal: plaintext => encryptBlindObject(config.scopeId, config.keyEpoch, decodeBlindBytes(config.contentKey), plaintext) },
-      transport: { inventory: cursor => transport.inventory({ ...config }, cursor),
-        download: id => transport.download({ ...config }, id), upload: (object, requestId, observedSequence) => this.upload(object, requestId, observedSequence) },
+      content: { revision: () => this.snapshotRevision(), capture: () => this.phase("snapshot", () => this.captureSnapshot()),
+        seal: plaintext => this.phase("encrypt", () => encryptBlindObject(config.scopeId, config.keyEpoch, decodeBlindBytes(config.contentKey), plaintext)) },
+      transport: { inventory: cursor => this.phase("inventory", () => transport.inventory({ ...config }, cursor)),
+        download: id => this.phase("download", () => transport.download({ ...config }, id)), upload: (object, requestId, observedSequence) => this.upload(object, requestId, observedSequence) },
       admit: object => this.receiveSnapshot(object),
       verifyReceipt: (receipt, object, requestId) => verifyBlindReceipt(receipt, config, object, requestId),
       guard: () => this.ensureCurrent(),
@@ -184,8 +185,8 @@ export class BlindReplica {
         ? canonicalizeJson([revision, attachments, history])
         : revision !== undefined && attachments !== undefined ? canonicalizeJson([revision, attachments]) : revision
     }
-    catch {
-      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode: "snapshot_revision_unavailable" })
+    catch (error) {
+      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode: "snapshot_revision_unavailable", error })
       return undefined
     }
   }
@@ -206,8 +207,8 @@ export class BlindReplica {
   }
 
   private async receiveSnapshot(object: BlindObject) {
-    const plaintext = await openWithReplicaContentKeys(this.config, object.keyEpoch,
-      key => decryptBlindObject(object, this.config.scopeId, object.keyEpoch, decodeBlindBytes(key)))
+    const plaintext = await this.phase("decrypt", () => openWithReplicaContentKeys(this.config, object.keyEpoch,
+      key => decryptBlindObject(object, this.config.scopeId, object.keyEpoch, decodeBlindBytes(key))))
     if (plaintext.length > maximumPlaintextBytes) throw new Error("Encrypted snapshot exceeds client limit")
     const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) as Snapshot
     if (snapshot.workspaceId !== this.config.workspaceId || typeof snapshot.document !== "string" || !snapshot.authorization ||
@@ -219,11 +220,11 @@ export class BlindReplica {
     const document = decodeBlindBytes(snapshot.document)
     if (snapshot.history !== undefined) {
       if (!this.store.receiveHistoryBaseline) throw new Error("History baseline reader upgrade required")
-      await this.store.receiveHistoryBaseline(this.config.workspaceId, document, snapshot.authorization, structuredClone(snapshot.history))
+      await this.phase("history-admission", () => this.store.receiveHistoryBaseline!(this.config.workspaceId, document, snapshot.authorization, structuredClone(snapshot.history)))
     } else {
-      await this.store.merge(this.config.workspaceId, document, snapshot.authorization)
+      await this.phase("admission-merge", () => this.store.merge(this.config.workspaceId, document, snapshot.authorization))
     }
-    if (snapshot.chat != null) await this.store.mergeChat(this.config.workspaceId, snapshot.chat)
+    if (snapshot.chat != null) await this.phase("chat-merge", () => this.store.mergeChat(this.config.workspaceId, snapshot.chat))
     if (attachments.length) await this.store.mergeAttachments!(this.config.workspaceId, attachments)
     this.receivedHash = await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot)))
     this.receivedParts = await this.parts(snapshot)
@@ -236,7 +237,7 @@ export class BlindReplica {
     this.freshUpload = false
     this.observe("mesh.rusty.upload.started", { phase, changedFields })
     try { return await this.transport.upload({ ...this.config }, object, requestId, observedSequence) }
-    catch (error) { this.observe("mesh.rusty.upload.failed", { phase: "delivery" }); throw error }
+    catch (error) { this.observe("mesh.rusty.upload.failed", { phase: "delivery", error }); throw error }
   }
 
   private observeProgress(detail: Record<string, unknown>) {
@@ -307,7 +308,7 @@ export class BlindReplica {
         this.observe("mesh.rusty.checkpoint.skipped", { phase: "concurrent_writer" })
         return "conflict"
       }
-      this.observe("mesh.rusty.checkpoint.failed", { phase: "delivery", bytes: pending.bytes })
+      this.observe("mesh.rusty.checkpoint.failed", { phase: "delivery", bytes: pending.bytes, error })
       throw error
     }
     const progress = await this.readProgress()
@@ -340,7 +341,7 @@ export class BlindReplica {
     try { return await this.store.documentRevision?.(bytes) }
     catch (error) {
       const errorCode = error instanceof RangeError ? "revision_invalid_document" : error instanceof TypeError ? "revision_invalid_type" : "revision_unavailable"
-      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode })
+      this.observe("mesh.rusty.revision.failed", { phase: "revision", errorCode, error })
       return undefined
     }
   }
@@ -348,6 +349,14 @@ export class BlindReplica {
   private observe(event: string, detail: Record<string, unknown>) {
     try { this.store.diagnostic?.(event, { workspaceId: this.config.workspaceId, entityType: "scope", entityId: this.config.scopeId, component: "rusty", operation: event.includes("checkpoint") ? "checkpoint" : event.includes("revision") ? "revision" : "upload", ...detail }) }
     catch { /* Diagnostic failures must not affect durable replication. */ }
+  }
+
+  private phase<T>(name: string, operation: () => Promise<T>): Promise<T> {
+    const run = async () => {
+      try { return await operation() }
+      catch (error) { this.observe(`mesh.rusty.${name}.failed`, { phase: name, operation: name, error }); throw error }
+    }
+    return this.store.operation ? this.store.operation(`rusty.${name}`, run) : run()
   }
 
   sync(): Promise<boolean> {

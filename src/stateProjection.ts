@@ -1,3 +1,4 @@
+import { leadPresentationBindings, presentLead, type LeadPresentationBindings } from "./domain/leadPresentation"
 import { hasEntityKind } from "./domain/model"
 import type * as Automerge from "@automerge/automerge/slim";
 import { isEntityVisible } from "./domain/ancestry";
@@ -19,34 +20,9 @@ import type {
   Artifact,
   Document,
   Lead,
-  LeadPriority,
-  LeadStatus,
   Template,
   Workspace,
 } from "./types";
-
-type Bindings = {
-  columnStatuses: Record<string, LeadStatus>;
-  fieldNames: Record<string, string>;
-  optionValues: Record<string, string>;
-};
-
-function invertBindings(bindings: Record<string, string>): Bindings {
-  const result: Bindings = {
-    columnStatuses: {},
-    fieldNames: {},
-    optionValues: {},
-  };
-  for (const [key, id] of Object.entries(bindings)) {
-    if (key.startsWith("status."))
-      result.columnStatuses[id] = key.slice("status.".length) as LeadStatus;
-    if (key.startsWith("field."))
-      result.fieldNames[id] = key.slice("field.".length);
-    if (key.startsWith("option."))
-      result.optionValues[id] = key.split(".").at(-1) ?? "";
-  }
-  return result;
-}
 
 function findColumn(
   entities: Record<string, WorkspaceEntity>,
@@ -64,38 +40,6 @@ function findColumn(
   return current as Column | undefined;
 }
 
-function splitTitle(title: string): { company: string; role: string } {
-  if (!title.includes(" — ")) return { company: title, role: "" };
-  const [company, ...role] = title.split(" — ");
-  return { company, role: role.join(" — ") };
-}
-
-function workMode(value: unknown): Lead["workMode"] {
-  return ["remote", "hybrid", "onsite", "unknown"].includes(String(value))
-    ? (String(value) as Lead["workMode"])
-    : undefined;
-}
-
-function priority(value: unknown): LeadPriority | undefined {
-  return ["p0", "p1", "p2", "p3"].includes(String(value))
-    ? (String(value) as LeadPriority)
-    : undefined;
-}
-
-function applyLeadValue(lead: Lead, fieldName: string, value: unknown): void {
-  if (fieldName === "company") lead.company = String(value);
-  else if (fieldName === "role") lead.role = String(value);
-  else if (fieldName === "url") lead.url = String(value);
-  else if (fieldName === "location") lead.location = String(value);
-  else if (fieldName === "notes") lead.notes = String(value);
-  else if (fieldName === "sourceText") lead.sourceText = String(value);
-  else if (fieldName === "rejectionReason")
-    lead.rejectionReason = String(value);
-  else if (fieldName === "fitScore") lead.fitScore = Number(value);
-  else if (fieldName === "workMode") lead.workMode = workMode(value);
-  else if (fieldName === "priority") lead.priority = priority(value);
-}
-
 function textNotesFieldId(doc: Automerge.Doc<WorkspaceDocumentV2>, board: Board | undefined): string | undefined {
   const notesFieldId = board?.preset?.bindings["field.notes"]
   const field = notesFieldId ? doc.entities[notesFieldId] : undefined
@@ -106,32 +50,13 @@ function projectLead(
   doc: Automerge.Doc<WorkspaceDocumentV2>,
   board: Board | undefined,
   source: Item,
-  bindings: Bindings,
+  bindings: LeadPresentationBindings,
 ): Lead | undefined {
   const item = projectItemPriority(board, source, textNotesFieldId(doc, board))
   const column = findColumn(doc.entities, item.placement.parentId);
   if (!column) return undefined;
   if (isArchiveColumn(column, board) && !isItemArchived(item)) return undefined;
-  const title = splitTitle(item.title);
-  const lead: Lead = {
-    id: item.id,
-    company: title.company,
-    role: title.role,
-    status: isItemArchived(item) ? "archived" : effectiveColumnStatus(column, board, bindings.columnStatuses[column.id]) ?? "lead",
-    description: item.body,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
-  for (const [fieldId, rawValue] of Object.entries(item.values)) {
-    const fieldName = bindings.fieldNames[fieldId];
-    if (!fieldName || rawValue === null) continue;
-    applyLeadValue(
-      lead,
-      fieldName,
-      bindings.optionValues[String(rawValue)] ?? rawValue,
-    );
-  }
-  return lead;
+  return presentLead(item, isItemArchived(item) ? "archived" : effectiveColumnStatus(column, board, bindings.columnStatuses[column.id]) ?? "lead", bindings);
 }
 
 function localFileName(
@@ -201,7 +126,7 @@ export function projectWorkspace(
   const board = Object.values(doc.entities).find(
     (entity): entity is Board => hasEntityKind(entity, "board"),
   );
-  const bindings = invertBindings(board?.preset?.bindings ?? {});
+  const bindings = leadPresentationBindings(board?.preset?.bindings ?? {});
   const archiveExists = Boolean(board && (board.archiveColumnId !== undefined
     ? board.archiveColumnId !== null
     : Object.values(doc.entities).some(entity => hasEntityKind(entity, "column") && !entity.archivedAt && entity.placement.parentId === board.id && isArchiveColumn(entity, board))));

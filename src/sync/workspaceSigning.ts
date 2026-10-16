@@ -65,7 +65,7 @@ async function assertWorkspaceSigningAccess(doc: Automerge.Doc<WorkspaceDocument
 }
 
 function signingRoleAllowed(role: WorkspaceRole, purpose: string, authority: StoredAuthority, profile: LocalProfile): boolean {
-  if (purpose === "scope-genesis" || purpose === "rusty-writer-policy") return role === "owner"
+  if (purpose === "scope-genesis" || purpose === "rusty-writer-policy" || purpose === "rusty-public-board-delivery-policy") return role === "owner"
   if (purpose === "attachment-upload") return role === "owner" || role === "editor"
   if (purpose === "attachment-read" || purpose === "history-recovery-read") {
     if (role === "owner" || role === "editor") return true

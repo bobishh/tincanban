@@ -1,7 +1,7 @@
 <!-- Workspace role gates are enforced again at command and sync boundaries. -->
 <script setup lang="ts">
 import { useAppController } from "./app/useAppController"
-import { createAttachmentSaveForItem } from "./app/attachmentSave"
+import { useAppItemDocumentSave } from "./app/useAppItemDocumentSave"
 import { isArchiveColumn, isItemArchived } from "./domain/archive"
 import { cardStageButtons } from "./domain/cardStageButtons"
 import { useCardAges } from "./app/useAgingClock"
@@ -11,8 +11,7 @@ import TincanbanPageLayout from "./components/TincanbanPageLayout.vue"
 import TincanbanHeading from "./components/TincanbanHeading.vue"
 import BrandCan from "./components/BrandCan.vue"
 import BoardDragOverlay from "./components/BoardDragOverlay.vue"
-import BoardColumns from "./components/BoardColumns.vue"
-import BoardItemCard from "./components/BoardItemCard.vue"
+import BoardSurface from "./components/BoardSurface.vue"
 import BoardToolbar from "./components/BoardToolbar.vue"
 import { useObjectConversations } from "./app/useObjectConversations"
 import ObjectConversationLayer from "./components/ObjectConversationLayer.vue"
@@ -24,20 +23,26 @@ import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
 import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
-import { computed, defineAsyncComponent, onBeforeUnmount, ref } from "vue"
-import type { Component } from "vue"
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
-import { useColumnCollapse } from "./app/useColumnCollapse"
+import { useColumnCollapse } from "./ui/useColumnCollapse"
 import { useAppViewState } from "./app/useAppViewState"
+import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
+import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { AutosaveTextarea, CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, LeadDetailWindow, MoveItemDialog, QuickNoteForm, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+const boardAddress = useBoardAddress(app.workspace)
+const routeContent = ref<HTMLElement | null>(null)
 type IdentityNameSaver = typeof identityNameSaverType
 const saveIdentityName: IdentityNameSaver = async (...args) => (await import("./app/identityName")).saveIdentityName(...args)
 const LeadArtifactsSection = defineAsyncComponent(() => import("./components/LeadArtifactsSection.vue") as Promise<{ default: Component }>)
+const LeadOriginalPostingEvidence = defineAsyncComponent(() => import("./components/LeadOriginalPostingEvidence.vue") as Promise<{ default: Component }>)
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
-const { SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible, startupMessage, startupCoverVisible } = useAppViewState(app)
+const { historyNames, stopSyncForIdentityRestore, restoredIdentity, SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible: workspaceBoardVisible, startupMessage, startupCoverVisible } = useAppViewState(app, routeContent)
+const boardAddressResolved = computed(() => boardAddress.status.value !== "resolving" && boardAddress.status.value !== "unavailable")
+const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressResolved.value)
 const conversations = useObjectConversations(app)
 const [showIdentityRecovery, showSettings] = [ref(false), ref(false)]
 const syncInitialTab = ref<"Participants" | "Rusty" | "Backups">("Participants")
@@ -47,8 +52,6 @@ function openConnections(tab: "Participants" | "Rusty" | "Backups") {
   sync.open()
 }
 const editingFoldSnapshot = ref<NarrativeFoldSources | undefined>()
-const stopSyncForIdentityRestore = () => app.collaboration.device.sync.shutdown()
-const restoredIdentity = () => window.location.reload()
 const { workspace, ready, saveState, availableWorkspaces, archivedWorkspaces, causalReview, causalReviewError, activeWorkspace, activeBoard, docVersion, isBlankBoard, genericColumns, boardFields, getActiveDoc, documentsFor } = app.workspace
 onBeforeUnmount(startOfflineDetailPreload(() => ready.value))
 const { state: ui, controls: uiControls } = app.ui
@@ -84,7 +87,7 @@ const { devicePresence, meshPresence, meshPresenceLabel,
 } = app.collaboration.mesh
 const {
   selectedLead, selectedLeadItem, selectedDocuments, selectedArtifacts, availableArtifactTemplates, openBoardItem,
-  restoreSelectedItemVersion, saveQuickNote, submitDocument, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
+  restoreSelectedItemVersion, saveQuickNote, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
   openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
   exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
   openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
@@ -93,39 +96,30 @@ const {
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
-
+const { publicAccess, publicDelivery, backgroundPublicDeliveryError } = useAppPublicBoards(app, uiReady)
 const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
 async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event) }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 
-function captureItemDocumentSave(itemId: string | null, workspaceId: string, personId: string | undefined) {
-  return createAttachmentSaveForItem({
-    itemId,
-    workspaceId,
-    personId,
-    current: () => ({
-      workspaceId: activeWorkspace.id,
-      personId: app.workspace.getCurrentProfile()?.identity.personId,
-      itemExists: itemId !== null && Boolean(getActiveDoc()?.entities[itemId]),
-    }),
-    save: submitDocument,
-  })
-}
-const saveSelectedLeadDocument = computed(() => captureItemDocumentSave(
-  selectedLeadItem.value?.id ?? null, activeWorkspace.id, app.workspace.getCurrentProfile()?.identity.personId,
-))
-const saveSelectedItemDocument = computed(() => captureItemDocumentSave(
-  selectedItem.value?.id ?? null, activeWorkspace.id, app.workspace.getCurrentProfile()?.identity.personId,
-))
+const { saveSelectedLeadDocument, saveSelectedItemDocument } = useAppItemDocumentSave(app)
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
   if (rejectionEditor.value && !(await rejectionEditor.value.flush())) return
   const { createNarrativeEditHandler } = await import("./app/narrativeEditor")
   createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)(item)
 }
-
 async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) { if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false }
 const cardAgeFor = useCardAges(() => activeBoard.value?.cardAgingPolicy)
+function setBoardElement(element: HTMLElement | null) { boardRef.value = element }
+function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Parameters<typeof cardAgeFor>[1]) {
+  const match = cardNoteSearchMatch(item)
+  const age = cardAgeFor(item, column)
+  return { lead: leadForItem(item), notes: cardNotes(item), fields: cardFields(item),
+    hasFilters: expandFilteredCards.value || Boolean(match), showFields: hasFilters.value,
+    searchQuery: match?.query, searchMatchIndex: match?.index,
+    discussion: conversations.cardDiscussions.value.get(item.id), moved: movedItemId.value === item.id,
+    ageLevel: age?.level, ageLabel: age?.label }
+}
 const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision } = useMemberAvatars(app.workspace)
 function saveProfile(draft: { name: string; avatarData?: string | null; revision?: string }) {
   return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity,
@@ -140,7 +134,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
   </Transition>
   <TincanbanPageLayout :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || undefined" :busy="!uiReady && !startupError">
     <template #header>
-      <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
+      <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady || !boardAddressResolved" @click="showWorkspaces = true">
         <span class="brand-presence">
           <span v-if="ready.value && workspaceRoleStatus === 'unavailable'" class="sr-only" role="img" aria-label="Workspace permissions: unavailable" />
           <BrandCan :presence="meshPresence" :label="uiReady ? meshPresenceLabel : 'Workspace access is not yet confirmed'" :access-role="confirmedRole" />
@@ -150,13 +144,13 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
         </div>
       </button>
       <div class="topbar-mobile-controls">
-        <button class="button button-quiet button-small" type="button" aria-label="Workspace chat" :disabled="!uiReady" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
+        <button class="button button-quiet button-small" type="button" aria-label="Workspace chat" :disabled="!uiReady || !boardAddressResolved" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button
           ref="menuButtonRef"
           class="button button-quiet mobile-menu-button"
           type="button"
           aria-label="Menu"
-          :disabled="!uiReady"
+          :disabled="!uiReady || !boardAddressResolved"
           :aria-expanded="showMobileMenu ? 'true' : 'false'"
           aria-controls="mobile-drawer"
           @click="toggleMobileMenu"
@@ -164,7 +158,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
           <span class="hamburger-icon" aria-hidden="true">☰</span>
         </button>
       </div>
-      <div class="top-actions top-actions-desktop" :inert="!uiReady || undefined">
+      <div class="top-actions top-actions-desktop" :inert="!uiReady || !boardAddressResolved || undefined">
         <button class="button button-quiet" type="button" aria-label="Workspace chat" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button class="button button-quiet" type="button" @click="openConnections('Participants')">Sync</button>
         <button class="button button-quiet" type="button" aria-label="Settings" @click="showSettings = true">Settings</button>
@@ -175,11 +169,19 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       </div>
     </template>
 
-    <CausalChangeReview v-if="causalReview.length || causalReviewError" :changes="causalReview" :error="causalReviewError"
+    <section v-if="boardAddress.status.value === 'unavailable'" ref="routeContent" class="board-address-unavailable" role="alert">
+      <h1>Board unavailable</h1>
+      <p>This board is not available to the current identity on this device.</p>
+      <button class="button button-small" type="button" @click="boardAddress.retry">Try again</button>
+      <a class="button button-small" href="/">Open local boards</a>
+    </section>
+    <p v-else-if="boardAddress.status.value === 'resolving'" ref="routeContent" class="board-address-progress" role="status">Opening board…</p>
+
+    <CausalChangeReview v-if="boardVisible && (causalReview.length || causalReviewError)" :changes="causalReview" :error="causalReviewError"
       :can-review="uiReady && canEditItems" :review-change="reviewCausalChange"
       :dismiss-change="dismissCausalChange" :restore-change="restoreCausalChange" />
 
-    <BoardToolbar v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
+    <BoardToolbar v-if="boardVisible" v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
       :placeholder="isBlankBoard ? 'Search cards' : 'Search company, role, notes'" :inert="!boardVisible || undefined">
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
     </BoardToolbar>
@@ -221,41 +223,25 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       <button class="button button-small button-quiet" type="button" @click="clearFilters">Clear search and filters</button>
     </div>
 
-    <section :key="boardRenderKey" ref="boardRef" class="board" :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)), 'board-filtered': hasFilters, 'board-single-column': visibleColumns.length === 1 }" role="region" :aria-label="activeWorkspace.title" @scroll.passive="trackBoardScroll">
-      <BoardColumns :visible-columns="visibleColumns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
-        :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
-        @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event">
+    <BoardSurface :key="boardRenderKey" :columns="visibleColumns" :items-for-column="itemsForColumn"
+      :column-color="columnColor" :column-status="columnStatus" :is-column-collapsed="isColumnCollapsed"
+      :has-filters="hasFilters" :entity-name="entityName" :board-title="activeWorkspace.title"
+      :can-edit-items="canEditItems" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
+      :card-presentation="boardCardPresentation" :on-element="setBoardElement"
+      :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)) }"
+      @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event" @scroll="trackBoardScroll"
+      @open="openCard" @select="openBoardItem" @discuss="conversations.openCardDiscussion" @task-toggle="toggleCardTask">
       <template #before-item="{ column, item, index }">
               <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
-      </template>
-      <template #card="{ item, column }">
-              <BoardItemCard
-                :item="item"
-                :lead="leadForItem(item)"
-                :notes="cardNotes(item)"
-                :fields="cardFields(item)"
-                :has-filters="expandFilteredCards || Boolean(cardNoteSearchMatch(item))"
-                :show-fields="hasFilters"
-                :search-query="cardNoteSearchMatch(item)?.query"
-                :search-match-index="cardNoteSearchMatch(item)?.index"
-                :can-edit-items="canEditItems"
-                :discussion="conversations.cardDiscussions.value.get(item.id)"
-                :moved="movedItemId === item.id"
-                :age-level="cardAgeFor(item, column)?.level"
-                :age-label="cardAgeFor(item, column)?.label"
-                @open="openCard"
-                @select="openBoardItem"
-                @discuss="conversations.openCardDiscussion"
-                @task-toggle="toggleCardTask"
-              />
       </template>
       <template #add-item="{ column }">
         <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
       </template>
-      </BoardColumns>
+      <template #empty>
       <div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div>
       <form v-if="isEditingBoard" class="add-column-card" @submit.prevent="addBoardColumn"><label class="sr-only" for="new-board-column">New column</label><input id="new-board-column" v-model="newBoardColumnTitle" placeholder="New column" :disabled="addingBoardColumn" /><label><input type="checkbox" :checked="newBoardColumnArchive" :disabled="genericColumns.some(column => isArchiveColumn(column)) || addingBoardColumn" @change="selectArchiveColumn(($event.target as HTMLInputElement).checked)" /> Archive column</label><label><input v-model="newBoardColumnCollapsible" type="checkbox" :disabled="addingBoardColumn" /> Allow this column to collapse</label><button class="button button-primary" type="submit" :disabled="addingBoardColumn">{{ addingBoardColumn ? 'Adding…' : '+ Add column' }}</button><p v-if="addBoardColumnError" class="form-error" role="alert">{{ addBoardColumnError }}</p></form>
-    </section>
+      </template>
+    </BoardSurface>
 
     <BoardDragOverlay :controller="app.board" />
 
@@ -311,7 +297,12 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
         <WorkspaceSettingsPanel :workspace="app.workspace" :workspace-id="activeWorkspace.id"
           :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" :presence="meshPresenceLabel" :save-state="saveState" :access-role="confirmedRole"
           :diagnostic="sync.meshDiagnostic.value" :members="meshMembers">
-          <PublicBoardControls v-if="uiReady" :board="activeBoard" :workspace-id="activeWorkspace.id" :document="getActiveDoc()!" :source-version="docVersion" :owner="confirmedRole === 'owner'" />
+          <PublicBoardControls v-if="uiReady" :access="publicAccess" />
+          <p v-if="backgroundPublicDeliveryError" class="form-error reading-explanation" role="alert">Public board delivery: {{ backgroundPublicDeliveryError }}</p>
+          <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'sending'" class="reading-explanation" role="status">Sending public board changes…</p>
+          <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'delivered'" class="reading-explanation" role="status">Public board changes delivered.</p>
+          <p v-if="publicDelivery.error.value" class="form-error reading-explanation" role="alert">Public board delivery: {{ publicDelivery.error.value }}</p>
+          <button v-if="publicDelivery.error.value" class="button button-small" type="button" :disabled="publicDelivery.busy.value" @click="publicDelivery.retry">Retry public delivery</button>
         </WorkspaceSettingsPanel>
       </template>
     </SchemaEditorDialog>
@@ -361,7 +352,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :documents="documentsFor(selectedItem.id)"
       :save-document="saveSelectedItemDocument"
       :update-document="updateDocumentMarkdown"
-      :history="selectedItemHistory"
+      :history="selectedItemHistory" :history-names="historyNames"
       :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
       :history-notice="archivedHistoryNotice" :history-has-more="archivedHistoryHasMore"
       :archive-error="archiveError"
@@ -381,7 +372,13 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       @update:quick-note="quickNoteDraft = $event"
       @save-note="saveQuickNote(selectedItem)"
       @update-markdown="updateItemMarkdown"
-    />
+    >
+      <template #documents>
+        <ItemDocuments :documents="documentsFor(selectedItem.id)" :workspace-id="activeWorkspace.id"
+          :attachment-coverage="app.collaboration.device.blindReplication.attachmentCoverage.value"
+          :read-only="!canEditItems" :save="saveSelectedItemDocument" :update="updateDocumentMarkdown" />
+      </template>
+    </ItemDetailDialog>
 
     <ItemFormDialog
       v-if="showItemForm" :workspace-id="activeWorkspace.id"
@@ -411,12 +408,15 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
     />
     <LeadDetailWindow v-if="selectedLead" :lead="selectedLead" :item="selectedLeadItem" :board="activeBoard" :columns="genericColumns"
       :workspace-id="activeWorkspace.id" :read-only="!canEditItems" :narrative="selectedLeadItem ? cardNotes(selectedLeadItem) : ''" :move="moveCardToColumn"
-      :application-source-document="getActiveDoc()" :application-source-doc-version="docVersion"
-      :history="selectedItemHistory" :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
+      :history="selectedItemHistory" :history-names="historyNames" :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
       :history-notice="archivedHistoryNotice" :history-has-more="archivedHistoryHasMore"
       :restore-saving="historyRestoreSaving" :restore-error="historyRestoreError" :restore-notice="historyRestoreNotice"
       @close="closeDetail" @edit="editItem" @update-markdown="selectedLeadItem && updateItemMarkdown(selectedLeadItem, $event)" @content="detailDialog = $event"
       @restore-version="restoreSelectedItemVersion" @load-earlier-history="loadEarlierItemHistory">
+      <template #sourceEvidence>
+        <LeadOriginalPostingEvidence :lead-id="selectedLead.id" :lead-url="selectedLead.url"
+          :workspace-id="activeWorkspace.id" :document="getActiveDoc()" :document-version="docVersion" />
+      </template>
       <template #toolbar>
         <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
         <button v-if="archiveUndo && archiveUndo.workspaceId === activeWorkspace.id" class="button button-small" type="button" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo archive' }}</button>
@@ -510,6 +510,10 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
 </template>
 
 <style>
+.board-address-unavailable { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
+.board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
+.board-address-unavailable h1 { margin: 0 0 var(--space-2); }
+.board-address-unavailable p { margin: 0 0 var(--space-4); }
 .startup-concealed { visibility: hidden; }
 .startup-revealed { animation: startup-reveal 320ms ease-out; }
 .startup-cover-enter-active, .startup-cover-leave-active { transition: opacity 320ms ease; }

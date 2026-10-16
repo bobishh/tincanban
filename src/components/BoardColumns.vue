@@ -1,19 +1,18 @@
-<script setup lang="ts">
-import type { Column, Item } from "../domain/model"
-import { isArchiveColumn } from "../domain/archive"
+<script setup lang="ts" generic="ItemType extends { id: string }, ColumnType extends { id: string; title: string; collapsible?: boolean; archive?: true; items: ItemType[] }">
+import { isArchiveColumn } from "../domain/archiveColumn"
 import ColumnFoldCover from "./ColumnFoldCover.vue"
 withDefaults(defineProps<{
-  visibleColumns: Array<Column & { items: Item[] }>
-  itemsForColumn: (column: Column & { items: Item[] }) => Item[]
+  visibleColumns: ColumnType[]
+  itemsForColumn: (column: ColumnType) => ItemType[]
   columnColor: (id: string) => string | undefined
   columnStatus: (id: string) => string | null
-  isColumnCollapsed: (column: Column) => boolean
+  isColumnCollapsed: (column: ColumnType) => boolean
   hasFilters: boolean
   entityName: string
   isEditingBoard?: boolean
   movedColumnId?: string | null
 }>(), { isEditingBoard: false, movedColumnId: null })
-const emit = defineEmits<{ toggleColumn: [column: Column]; editColumn: [column: Column] }>()
+const emit = defineEmits<{ toggleColumn: [column: ColumnType]; editColumn: [column: ColumnType] }>()
 </script>
 
 <template>

@@ -7,6 +7,9 @@
   --motion-fast: 140ms;
   --motion-panel: 220ms;
   --motion-ease: cubic-bezier(.2, .8, .2, 1);
+  --site-font-body-size: 16px;
+  --site-font-line: 1.5;
+  --site-font-technical-size: 14px;
   --paper: #f3f0e8;
   --ink: #171717;
   --muted: #6b675f;

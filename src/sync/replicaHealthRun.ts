@@ -1,6 +1,7 @@
 import type { Ref } from "vue"
 import type { PrivateReplicaConfig } from "./blindReplication"
 import { replicaKey, type ReplicaHealth } from "./replicationHealth"
+import { traceDiagnosticOperation } from "./telemetry"
 
 export async function syncReplicaConnections(configs: PrivateReplicaConfig[], isCurrent: () => boolean,
   run: (config: PrivateReplicaConfig) => Promise<string | undefined>, label: string): Promise<string[]> {
@@ -19,7 +20,10 @@ export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses
   const previous = statuses.value[key]
   statuses.value = { ...statuses.value, [key]: { phase: "syncing", lastSyncedAt: previous?.lastSyncedAt } }
   try {
-    const caughtUp = await operation()
+    const caughtUp = await traceDiagnosticOperation("rusty.sync", {
+      "workspace.id": "workspaceId" in config ? config.workspaceId : "",
+      "sync.scope.kind": config.purpose ?? "workspace", "server.address": new URL(config.origin).host,
+    }, operation)
     if (!isCurrent() || config.removalPending) return
     statuses.value = { ...statuses.value, [key]: caughtUp === false
       ? { phase: "catching-up", lastSyncedAt: previous?.lastSyncedAt }

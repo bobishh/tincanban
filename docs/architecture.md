@@ -14,14 +14,31 @@ named scenarios and required evidence live in the
 | Domain commands and shared Rust policy | Signed changes, causal admission, current roles and revocations | Availability of remote copies |
 | IndexedDB repositories | Local identity, private preferences, workspace journal, recovery intents and file chunks | A hosted backup |
 | MetaMesh | Shared identity primitives, verified signing, protocol framing, transport and replication engine | Board UI or job-processing rules |
-| Rusty | HTTP storage of opaque encrypted objects and signed durable receipts | Decryption, card classification or application editing rights |
+| Rusty | HTTP storage of opaque encrypted objects and signed durable receipts; separate selected-board public publication records and assets | Decryption, private-source admission, card classification or application editing rights |
 | Approved automation Worker | Readable authorized workspace replica, intake, classification and scoped commands | Owner rights beyond its signed grant |
 
 Desktop and phone keep their own documents and device keys. Iroh exchanges device
 changes, proofs and files directly. Browser and automation HTTPS adapters use the
 shared `ReplicaEngine` against Rusty. Identity state has a separate encrypted
 Rusty scope from board state. Each device keeps its own cursor and pending outbox.
-Public-board publication is a separate, deliberately readable namespace.
+Public visitor access uses the existing board ID and source state. Rusty serves a
+board-scoped readable representation from a namespace separate from encrypted
+workspace records. It cannot inspect private history to prove a writer's
+projection matches admitted source. Honest owner, editor and approved automation
+clients derive delivery from locally admitted state and bind signed source heads;
+that frontier is a writer assertion, not server-side CRDT admission proof.
+Revocation applies to an offline writer after its authoritative signed checkpoint
+arrives. Current source paths include native and Worker delivery; final acceptance
+and production rollout remain separate evidence gates.
+
+The visitor contract gives public and invited visitors the same board presentation.
+Canonical routes are
+`/boards/<board-id>/<title-slug>`; the ID resolves the board and the slug is only a
+label. The legacy ID-only route remains supported. Private URLs select a board
+candidate but never grant access; normal identity, workspace and role checks still
+apply. Fresh anonymous public reads do not initialize private identity/workspace
+storage. Caveat remains on handwritten board cards and controls; shared detail and
+chat prose uses the compact Fira reading tokens defined by the visitor contract.
 
 The [architecture design](../openspec/changes/unified-device-and-replica-architecture/design.md#current-working-tree-boundaries)
 contains the component diagram and protocol contracts. There is no central account
@@ -163,17 +180,17 @@ Keep four statements separate:
 | --- | --- |
 | Implemented | Current source path and its contract |
 | Scenario passed | Named test, exact revision, environment and retained output |
-| Deployed | Successful cohort activation and matching production artifacts/capabilities |
+| Deployed | Successful CI release from the service's owning repository and matching production artifact/capability |
 | Works on the user's phone | That phone loads the intended build and completes the observed flow |
 
 `release/implementation-gate.json` records source readiness only. It is not a CI
-result or a production acknowledgement. The compatible release coordinator stages
-exact artifacts, then confirms Rusty, automation and frontend in that order. It
-checks executable/image identity, Worker UUIDs, SDK revision, capabilities and
-served frontend bytes. Interrupted activation retains evidence and stays incomplete.
-A previously green run does not certify later corrective commits. Running CI and
-activation results belong in [GitHub Actions](https://github.com/bobishh/tincanban/actions),
-not an accumulating list of test totals in this architecture document.
+result or production acknowledgement. Tincanban frontend/automation, Rusty, and
+TinSink each verify and release their own artifacts through their owning pipelines.
+There is no shared activation cohort or cross-service build-SHA gate. A green run
+for one service does not certify another or prove end-to-end diagnostic delivery.
+Running CI and deployment results belong in
+[GitHub Actions](https://github.com/bobishh/tincanban/actions), not an accumulating
+list of test totals in this architecture document.
 
 As of the 2026-10-16 investigation, the user's existing phone repeatedly stopped at
 `initial-workspace-load` / **Reading saved boards**. TinSink recorded the start but

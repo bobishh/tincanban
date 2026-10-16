@@ -29,6 +29,22 @@ describe("public visitor presentation", () => {
     expect(view.columns[0]).toMatchObject({ color: "#66b3ff", collapsible: true })
     expect(view.items[0]?.body).toBe("Description")
   })
+  it("Given bound option IDs and nested cards, When presenting a publication, Then lead values and status match visitor cards", () => {
+    const view = publicBoardView({ ...snapshot, board: { ...snapshot.board,
+      presentation: { preset: { key: "job-search", version: 1, bindings: {
+        "field.priority": "priority", "option.priority.p0": "priority-high",
+        "field.workMode": "mode", "option.workMode.remote": "mode-remote", "status.applied": "applied",
+      } } } }, fields: [
+        { id: "priority", title: "Priority", valueType: "select", required: false, rank: "0/1", options: [{ id: "priority-high", title: "Highest", rank: "0/1" }] },
+        { id: "mode", title: "Mode", valueType: "select", required: false, rank: "1/1", options: [{ id: "mode-remote", title: "Anywhere", rank: "0/1" }] },
+      ], cards: snapshot.cards.map(card => ({ ...card, values: { priority: "priority-high", mode: "mode-remote" } })) })
+    expect(view.leads.get("card")).toMatchObject({ priority: "p0", workMode: "remote", status: "applied" })
+    expect(view.leads.get("child")?.status).toBe("applied")
+    expect(view.board).toMatchObject({ kind: "board", preset: { key: "job-search" } })
+    expect(view.columns[0]).toMatchObject({ kind: "column", placement: { parentId: "board", rank: "0/1" } })
+    expect(view.fields[0]).toMatchObject({ kind: "field", placement: { parentId: "board", rank: "0/1" } })
+    expect(view.items[0]?.archivedAt).toBeNull()
+  })
   it("Given presentation metadata referencing an unpublished field, When validating, Then reject the publication", () => {
     expect(() => validatePublicBoardProjection({ ...snapshot, board: { ...snapshot.board,
       presentation: { preset: { key: "job-search", version: 1, bindings: { "field.company": "private-field" } } } } })).toThrow()

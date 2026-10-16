@@ -12,7 +12,6 @@
   },
   "writerVersions": {
     "frontend": 2,
-    "automation": 2,
-    "rusty": 2
+    "automation": 2
   }
 }

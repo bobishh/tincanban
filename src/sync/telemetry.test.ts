@@ -1,181 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-vi.mock("../domain/identity", () => ({ bootstrapIdentity: async () => ({ device: { deviceId: "device-a" } }) }))
 let storage: Map<string, string>
-let shutdown: (() => void) | undefined
 beforeEach(() => {
   vi.resetModules()
-  vi.useFakeTimers()
-  vi.stubEnv("VITE_SYNC_TELEMETRY_URL", "")
-  vi.stubEnv("VITE_SYNC_TELEMETRY_BROWSER_KEY", "")
   storage = new Map()
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) })
-  vi.stubGlobal("navigator", { onLine: true })
-  shutdown = undefined
-})
-afterEach(() => { shutdown?.(); vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
-
-async function setup() {
   vi.stubEnv("VITE_SYNC_TELEMETRY_URL", "https://collector.invalid/events")
   vi.stubEnv("VITE_SYNC_TELEMETRY_PROJECT", "tincanban")
   vi.stubEnv("VITE_SYNC_TELEMETRY_BROWSER_KEY", "public-browser-fixture-key-0123456789")
-  const config = await import("./telemetryConfig")
-  const telemetry = await import("./telemetry")
-  shutdown = () => config.setTelemetryEnabled(false)
-  return { config, telemetry }
-}
-async function prepared(telemetry: Awaited<ReturnType<typeof setup>>["telemetry"], count: number) {
-  await vi.waitFor(() => {
-    expect(telemetry.telemetryStatus().queued).toBe(count)
-    expect(telemetry.telemetryStatus().state).toBe("pending")
-    expect(telemetry.telemetryStatus().preparing).toBe(0)
-    expect(vi.getTimerCount()).toBeGreaterThan(0)
-  })
-}
+  vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "")
+})
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
-describe("bounded telemetry delivery", () => {
-  it("Given a rejected batch, When delivery is explicitly retried, Then new diagnostics can be confirmed without resending discarded events", async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(new Response("", { status: 400 }))
-      .mockResolvedValue(Response.json({ accepted: 1 }))
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    telemetry.record("chat.persisted", { recordId: "discarded-message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(telemetry.telemetryStatus().state).toBe("error")
-    telemetry.retryTelemetry()
-    telemetry.record("chat.persisted", { recordId: "new-message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch.mock.calls[1]![1].body).not.toContain("discarded-message")
-    expect(telemetry.telemetryStatus().state).toBe("ready")
-  })
-  it("Given errors-only diagnostics, When many workspaces fail, Then the hourly budget caps delivery at thirty events", async () => {
-    vi.stubEnv("VITE_SYNC_TELEMETRY_LEVEL", "errors")
-    const fetch = vi.fn().mockResolvedValue(Response.json({ accepted: 30 }))
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    for (let index = 0; index < 100; index++) telemetry.record("workspace.frame.rejected", { workspaceId: `workspace-${index}` }, "warn")
-    await prepared(telemetry, 30)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(fetch).toHaveBeenCalledOnce()
-    expect(JSON.parse(fetch.mock.calls[0]![1].body).events).toHaveLength(30)
-  })
-  it("Given errors-only diagnostics, When sync repeats or succeeds, Then only one failure per five minutes is sent", async () => {
-    vi.stubEnv("VITE_SYNC_TELEMETRY_LEVEL", "errors")
-    const fetch = vi.fn().mockResolvedValue(Response.json({ accepted: 1 }))
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    for (let index = 0; index < 100; index++) {
-      telemetry.record("workspace.store.slow", { workspaceId: "workspace" }, "warn")
-      telemetry.record("workspace.admission.completed", { workspaceId: "workspace" })
-      telemetry.record("workspace.frame.rejected", { workspaceId: "workspace" }, "warn")
-    }
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(fetch).toHaveBeenCalledOnce()
-    const batch = JSON.parse(fetch.mock.calls[0]![1].body)
-    expect(batch.events.map((event: { event: string }) => event.event)).toEqual(["workspace.frame.rejected"])
-  })
-  it("Given an in-flight batch, when device opts out and back in, then old request aborts and old events are discarded", async () => {
-    let resolveOld: (response: Response) => void = () => {}
-    const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { resolveOld = resolve }))
-      .mockImplementation(async (_url: string, options: RequestInit) => {
-        const batch = JSON.parse(options.body as string) as { events: unknown[] }
-        return Response.json({ accepted: batch.events.length })
-      })
-    vi.stubGlobal("fetch", fetch)
-    const { config, telemetry } = await setup()
-    telemetry.record("chat.persisted", { recordId: "old-message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    const oldSignal = (fetch.mock.calls[0]![1] as RequestInit).signal!
-    config.setTelemetryEnabled(false)
-    expect(oldSignal.aborted).toBe(true)
-    expect(telemetry.telemetryStatus().queued).toBe(0)
-    resolveOld(Response.json({ accepted: 1 }))
-    config.setTelemetryEnabled(true)
-    telemetry.record("chat.persisted", { recordId: "new-message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch.mock.calls[1]![0]).toBe("https://collector.invalid/events")
-    expect((fetch.mock.calls[1]![1] as RequestInit).body).not.toContain("old-message")
-    expect((fetch.mock.calls[1]![1] as RequestInit).body).toContain("new-message")
-  })
-  it("Given large attribute lists, when delivered, then every request fits the byte and event limits", async () => {
-    const fetch = vi.fn().mockImplementation(async (_url: string, options: RequestInit) => {
-      const batch = JSON.parse(options.body as string) as { events: unknown[] }
-      expect(new Headers(options.headers).get("Authorization")).toBe("Bearer public-browser-fixture-key-0123456789")
-      expect(options.body).not.toContain("public-browser-fixture-key")
-      expect(new TextEncoder().encode(options.body as string).byteLength).toBeLessThanOrEqual(65536)
-      expect(batch.events.length).toBeLessThanOrEqual(50)
-      return Response.json({ accepted: batch.events.length })
-    })
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    for (let index = 0; index < 20; index++) telemetry.record("document.persisted", { recordId: `change-${index}`, heads: Array.from({ length: 32 }, () => "a".repeat(160)) })
-    await prepared(telemetry, 20)
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(telemetry.telemetryStatus().queued).toBe(0)
-    expect(fetch.mock.calls.length).toBeGreaterThan(1)
-    const ids = fetch.mock.calls.flatMap(([, options]) => (JSON.parse((options as RequestInit).body as string) as { events: Array<{ event_id: string }> }).events.map(event => event.event_id))
-    expect(new Set(ids).size).toBe(20)
-  })
-  it("Given default settings on production hostname, when traced, then no fetch is scheduled", async () => {
-    vi.stubGlobal("location", { hostname: "match.meta-uber-engineer.dev" })
+describe("browser diagnostics facade", () => {
+  it("Given startup diagnostics are disabled by consent, when recorded, then no export starts", async () => {
     const fetch = vi.fn()
     vi.stubGlobal("fetch", fetch)
+    const config = await import("./telemetryConfig")
     const telemetry = await import("./telemetry")
-    telemetry.record("chat.persisted", { recordId: "message" })
-    await vi.advanceTimersByTimeAsync(70_000)
+    config.setTelemetryEnabled(false)
+    telemetry.record("chat.persisted", { recordId: "private-message-id" })
+    await new Promise(resolve => setTimeout(resolve, 10))
     expect(fetch).not.toHaveBeenCalled()
     expect(telemetry.telemetryStatus().state).toBe("disabled")
-  })
-  it("Given temporary failure, when retried, then event IDs remain stable and confirmed receipt clears queue", async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(new Response("", { status: 503 })).mockImplementation(async (_url, options) => {
-      const batch = JSON.parse(options.body)
-      return Response.json({ accepted: batch.events.length })
-    })
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    telemetry.record("chat.persisted", { recordId: "message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(2000)
-    expect(telemetry.telemetryStatus().state).toBe("pending")
-    await vi.advanceTimersByTimeAsync(4000)
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(JSON.parse(fetch.mock.calls[0]![1].body).events[0].event_id).toBe(JSON.parse(fetch.mock.calls[1]![1].body).events[0].event_id)
     expect(telemetry.telemetryStatus().queued).toBe(0)
-    expect(telemetry.telemetryStatus().lastSentAt).not.toBeNull()
   })
-  it("Given permanent 404, when delivery fails, then retries halt until device opts out", async () => {
-    const fetch = vi.fn().mockResolvedValue(new Response("", { status: 404 }))
-    vi.stubGlobal("fetch", fetch)
-    const { config, telemetry } = await setup()
-    telemetry.record("chat.persisted", { recordId: "message" })
-    await prepared(telemetry, 1)
-    await vi.advanceTimersByTimeAsync(70_000)
-    expect(fetch).toHaveBeenCalledOnce()
-    expect(telemetry.telemetryStatus().error).toContain("HTTP 404")
+
+  it("Given an in-flight diagnostic, when the device opts out, then buffered SDK records are dropped and later records stay disabled", async () => {
+    const config = await import("./telemetryConfig")
+    const telemetry = await import("./telemetry")
+    telemetry.record("sync.phase", { phase: "admission" })
+    expect(telemetry.telemetryStatus().queued).toBe(1)
     config.setTelemetryEnabled(false)
     expect(telemetry.telemetryStatus().state).toBe("disabled")
     expect(telemetry.telemetryStatus().queued).toBe(0)
-  })
-  it("Given offline collection beyond capacity, when events age out, then memory stays bounded and expired events are dropped", async () => {
-    vi.stubGlobal("navigator", { onLine: false })
-    const fetch = vi.fn()
-    vi.stubGlobal("fetch", fetch)
-    const { telemetry } = await setup()
-    for (let index = 0; index < 1010; index++) telemetry.record("chat.persisted", { recordId: `message-${index}` })
-    expect(telemetry.telemetryStatus().queued).toBe(1000)
-    await vi.waitFor(() => expect(telemetry.telemetryStatus().dropped).toBe(10))
-    // Allow real WebCrypto promises to finish before advancing the queue expiry.
-    await prepared(telemetry, 1000)
-    await vi.advanceTimersByTimeAsync(310_000)
-    expect(telemetry.telemetryStatus().queued).toBe(0)
-    expect(telemetry.telemetryStatus().dropped).toBe(1010)
-    expect(fetch).not.toHaveBeenCalled()
+    expect(telemetry.telemetryStatus().dropped).toBe(1)
   })
 })

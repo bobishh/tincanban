@@ -1,42 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
-import type { Board, Column, Item } from "../domain/model"
+import { computed, defineAsyncComponent, type Component } from "vue"
+import type { Board, Column, Item } from "../domain/entitySchemas"
 import type { Lead } from "../types"
 import { priorityLabels } from "../types"
 import { cardStageButtons } from "../domain/cardStageButtons"
 import { MarkdownContent } from "../ui/markdownContent"
 import SpatialWindow from "./SpatialWindow.vue"
 import CardStageStrip from "./CardStageStrip.vue"
-import type { ApplicationSourceData } from "../domain/applicationSourceData"
-import type { WorkspaceDocumentV2 } from "../domain/entitySchemas"
-import type { HistoryEntry } from "../domain/history"
-import ItemHistoryPanel from "./ItemHistoryPanel.vue"
-const props = defineProps<{ lead: Lead; item?: Item | null; board?: Board | null; columns: Column[]; workspaceId: string; readOnly: boolean; narrative: string; applicationSourceDocument?: WorkspaceDocumentV2 | null; applicationSourceDocVersion?: number; move: (item: Item, columnId: string) => Promise<void>;
-  history?: HistoryEntry[]; historyLoading?: boolean; historyError?: string; historyNotice?: string; historyHasMore?: boolean;
+import type { HistoryEntry } from "../domain/historyTypes"
+const ItemHistoryPanel = defineAsyncComponent<Component>(() => import("./ItemHistoryPanel.vue"))
+const props = defineProps<{ lead: Lead; item?: Item | null; board?: Board | null; columns: Column[]; workspaceId: string; readOnly: boolean; narrative: string; move: (item: Item, columnId: string) => Promise<void>;
+  history?: HistoryEntry[]; historyNames?: Record<string, string>; historyLoading?: boolean; historyError?: string; historyNotice?: string; historyHasMore?: boolean;
   restoreSaving?: boolean; restoreError?: string; restoreNotice?: string }>()
-const applicationSource = ref<ApplicationSourceData | null>(null)
-let sourceReadGeneration = 0
-watch(() => [props.lead.id, props.workspaceId, props.applicationSourceDocVersion, props.applicationSourceDocument] as const,
-  async ([leadId, workspaceId, docVersion, doc]) => {
-    const generation = ++sourceReadGeneration
-    applicationSource.value = null
-    if (!doc || doc.id !== workspaceId) return
-    try {
-      const { assertApplicationSourceRecord } = await import("../domain/applicationSourceData")
-      const { verifyApplicationSourceDigest } = await import("../domain/commandApplicationSource")
-      const originals = Object.values(doc.entities).filter(entity => entity.kind === "application_source" &&
-        entity.placement.parentId === leadId).map(entity => assertApplicationSourceRecord(entity, doc.entities, workspaceId))
-        .filter(data => data.observation.phase === "original")
-      if (originals.length !== 1) return
-      const verified = await verifyApplicationSourceDigest(originals[0])
-      if (generation === sourceReadGeneration && props.lead.id === leadId && props.workspaceId === workspaceId &&
-        props.applicationSourceDocVersion === docVersion && props.applicationSourceDocument === doc) {
-        applicationSource.value = verified
-      }
-    } catch {
-      if (generation === sourceReadGeneration) applicationSource.value = null
-    }
-  }, { immediate: true })
 const sourceUrl = computed(() => {
   try { const url = new URL(props.lead.url ?? ""); return ["https:", "http:"].includes(url.protocol) ? url.href : null }
   catch { return null }
@@ -56,21 +31,16 @@ const emit = defineEmits<{ close: []; edit: [item: Item]; updateMarkdown: [markd
     </template>
     <section :ref="element => emit('content', element as HTMLElement | null)" class="detail-layout" data-detail-layout tabindex="-1" :data-discussion-item="lead.id">
       <div class="detail-primary" data-detail-primary role="region" aria-label="Lead description and documents">
-        <section v-if="item && narrative" class="detail-section"><span class="detail-label">Description</span><MarkdownContent class="detail-copy" data-discussion-text data-discussion-field="narrative" :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', $event)" /></section>
-        <section v-if="lead.sourceText" class="detail-section"><span class="detail-label">Source snapshot</span><p class="source-snapshot" data-discussion-text :data-discussion-field="board?.preset?.bindings['field.sourceText']">{{ lead.sourceText }}</p></section>
-        <section v-if="applicationSource || lead.url" class="detail-section" role="region" aria-label="Original posting evidence">
-          <span class="detail-label">Original posting title</span>
-          <template v-if="applicationSource?.observation.status === 'available'">
-            <h3>{{ applicationSource.observation.title }}</h3>
-            <p>{{ applicationSource.observation.company }}</p>
-            <p class="detail-copy">{{ applicationSource.observation.text }}</p>
-          </template>
-          <p v-else-if="applicationSource" role="status">Original posting evidence unavailable{{ applicationSource.observation.reason ? `: ${applicationSource.observation.reason}` : "." }}</p>
-          <p v-else role="status">Original posting evidence pending · no original title is available.</p>
-          <a v-if="applicationSource?.observation.jobUrl" class="source-link" :href="applicationSource.observation.jobUrl" target="_blank" rel="noreferrer">Open original posting ↗</a>
-        </section>
+        <section v-if="item && narrative" class="detail-section"><span class="detail-label">Description</span><MarkdownContent class="detail-copy reading-prose" data-discussion-text data-discussion-field="narrative" :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', $event)" /></section>
+        <section v-if="lead.sourceText" class="detail-section"><span class="detail-label">Source snapshot</span><p class="source-snapshot reading-prose" data-discussion-text :data-discussion-field="board?.preset?.bindings['field.sourceText']">{{ lead.sourceText }}</p></section>
+        <slot name="sourceEvidence">
+          <section v-if="lead.url" class="detail-section" role="region" aria-label="Original posting evidence">
+            <span class="detail-label">Original posting</span>
+            <p class="reading-explanation" role="status">Original posting evidence is unavailable.</p>
+          </section>
+        </slot>
         <slot name="primary" />
-        <ItemHistoryPanel v-if="item" :history="history ?? []" :read-only="readOnly"
+        <ItemHistoryPanel v-if="item" :history="history ?? []" :verified-people="historyNames" :read-only="readOnly"
           :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
           :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
           @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />

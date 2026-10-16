@@ -1,19 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceDocumentV2 } from "./model"
-
-export interface HistoryEntry {
-  hash: string
-  time: number
-  actor: string
-  action: string
-  entityIds: string[]
-  personId?: string
-  deviceId?: string
-  authorLabel: string
-  isLegacy: boolean
-  message?: string | null
-  archive?: { sourceId: string; baselineId: string; historyEpoch: number; observation: "admitted" | "pending" | "quarantined" }
-}
+import type { HistoryEntry } from "./historyTypes"
+export type { HistoryEntry } from "./historyTypes"
 
 export function projectDocumentHistory(doc: Automerge.Doc<WorkspaceDocumentV2>): HistoryEntry[] {
   const history = Automerge.getChangesMetaSince(doc, [])
@@ -35,9 +23,7 @@ export function projectDocumentHistory(doc: Automerge.Doc<WorkspaceDocumentV2>):
           entityIds = meta.entityIds
           personId = meta.personId
           deviceId = meta.deviceId
-          authorLabel = personId
-            ? `${personId}${deviceId ? ` / ${deviceId}` : ""}`
-            : (change.actor || "Unknown")
+          authorLabel = personId ? "Unverified author" : "System change"
           isLegacy = false
         } else {
           isLegacy = true

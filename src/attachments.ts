@@ -1,6 +1,8 @@
 import type { BlobDescriptor, MeshBlobStore } from "@meta-uber/mesh-blob"
 import type { BlobByteSource } from "@meta-uber/mesh-blob/stream"
 import type { FileReference } from "./domain/model"
+import { blobDescriptor } from "./domain/filePresentation"
+export { blobDescriptor, attachmentMediaType, attachmentName, attachmentSize } from "./domain/filePresentation"
 
 let storage: Promise<MeshBlobStore> | undefined
 const blobs = () => storage ??= import("./attachmentBlobStore").then(module => module.attachmentBlobStore)
@@ -58,20 +60,6 @@ export async function writeStoredAttachment(
   await (await blobs()).put(descriptor, bytes)
 }
 
-export function attachmentName(reference: FileReference): string {
-  return reference.fileName
-}
-
-export function attachmentMediaType(reference: FileReference): string {
-  return reference.type === "blob"
-    ? reference.mimeType
-    : "application/octet-stream"
-}
-
-export function attachmentSize(reference: FileReference): number | undefined {
-  return reference.type === "blob" ? reference.byteLength : undefined
-}
-
 function referenceFromDescriptor(descriptor: BlobDescriptor): FileReference {
   return {
     type: "blob",
@@ -82,27 +70,5 @@ function referenceFromDescriptor(descriptor: BlobDescriptor): FileReference {
     byteLength: descriptor.size,
     mimeType: descriptor.mediaType,
     fileName: descriptor.name,
-  }
-}
-
-export function blobDescriptor(
-  reference: FileReference,
-): BlobDescriptor | undefined {
-  if (reference.type !== "blob") return undefined
-  const blobId = reference.sha256
-    ? `sha256:${reference.sha256}`
-    : reference.hash
-      ? `blake3:${reference.hash}`
-      : undefined
-  if (!blobId) return undefined
-  return {
-    kind: "blob",
-    version: 1,
-    blobId,
-    name: reference.fileName,
-    mediaType: reference.mimeType,
-    size: reference.byteLength,
-    ...(reference.hash ? { hash: reference.hash } : {}),
-    ...(reference.ticket ? { ticket: reference.ticket } : {}),
   }
 }

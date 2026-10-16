@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { MeshNetworkError, MeshTerminalError } from "@meta-uber/mesh-transport"
 import { diagnosticErrorCode } from "./failureDiagnostic"
-import { diagnosticEvent } from "./telemetryEvent"
-
-const context = { project: "tincanban", sessionId: "session", deviceId: "device", timestamp: Date.now(), level: "warn" }
 
 describe("safe failure diagnostics", () => {
   it.each([
@@ -13,18 +10,28 @@ describe("safe failure diagnostics", () => {
     [new DOMException("private storage contents", "QuotaExceededError"), "quota_exceeded_error"],
     [new AggregateError([new MeshNetworkError("private route one"), new MeshNetworkError("private route two")]), "mesh_network_error"],
     [new AggregateError([new MeshNetworkError("private route"), new MeshTerminalError("private authority")]), "aggregate_error"],
-  ])("Given a typed failure, When telemetry encodes it, Then its code survives without private error content", async (error, code) => {
-    const event = await diagnosticEvent("workspace.frame.rejected", {
-      error, reason: String(error),
-    }, context)
-    expect(event.attrs.error_code).toBe(code)
-    expect(event.attrs.error_code).toMatch(/^[a-z][a-z0-9_.-]*$/)
-    expect(JSON.stringify(event)).not.toContain("private")
+  ])("Given a typed failure, When classified, Then its stable code survives without user-defined names", (error, code) => {
+    expect(diagnosticErrorCode(error)).toBe(code.replace(/_([a-z])/g, (_match, letter: string) => letter.toUpperCase()).replace(/^./, letter => letter.toUpperCase()).replace("Wasm", "Wasm"))
   })
 
   it("Given a wrapped network failure, When classified, Then the underlying type remains visible", () => {
     const error = new Error("Workspace board-title snapshot failed", { cause: new MeshNetworkError("private peer") })
     expect(diagnosticErrorCode(error)).toBe("MeshNetworkError")
+  })
+
+  it.each([
+    [new WebAssembly.RuntimeError("private WASM panic"), "WasmRuntimeError"],
+    [new Error("Module terminated"), "WasmModuleTerminated"],
+    [new DOMException("private clone payload", "DataCloneError"), "DataCloneError"],
+    [new TypeError("private board title"), "TypeError"],
+    [new RangeError("private item content"), "RangeError"],
+    [new Error("outer wrapper", { cause: new WebAssembly.RuntimeError("private WASM panic") }), "WasmRuntimeError"],
+  ])("Given a runtime or platform failure, When classified, Then its stable type is retained", (error, code) => {
+    expect(diagnosticErrorCode(error)).toBe(code)
+  })
+
+  it("Given a message that resembles module termination but adds context, When classified, Then arbitrary wording stays unknown", () => {
+    expect(diagnosticErrorCode(new Error("Module terminated while rendering private board 123"))).toBe("UnknownError")
   })
 
   it("Given an unknown or cyclic failure, When classified, Then no dynamic name or content is exposed", () => {

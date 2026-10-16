@@ -8,16 +8,33 @@ const longText = `${latin}. ${cyrillic}. `.repeat(3)
 async function makeLongBoard(page: Page) {
   await page.goto("/")
   await createJobSearchWorkspace(page, "Reading test")
-  for (let index = 0; index < 74; index += 1) {
-    await page.getByRole("button", { name: /Add lead to/ }).first().click()
-    const dialog = page.getByRole("dialog", { name: /Add item|Item details/ })
-    await dialog.getByLabel("Company *").fill(`Компания ${index + 1} · Northstar product engineering group`)
-    await dialog.getByLabel("Role *").fill(`Staff platform engineer ${index + 1} · Старший инженер платформы`)
-    const description = dialog.getByPlaceholder("Description or notes...")
-    if (await description.count()) await description.fill(longText)
-    await dialog.getByRole("button", { name: "Create item" }).click()
-    await page.getByRole("button", { name: "Close detail" }).click()
-  }
+  await page.evaluate(async longText => {
+    const { useTincanban } = await import("/src/state.ts")
+    const { prepareLocalChangeAuthorizations, exportDocumentAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const app = useTincanban()
+    await app.whenReady()
+    const base = app.getActiveDoc()!
+    const board = Object.values(base.entities).find(entity => entity.kind === "board")!
+    const parent = Object.values(base.entities).find(entity => entity.kind === "column" && entity.title === "Lead")!
+    const companyId = board.preset!.bindings["field.company"]!
+    const roleId = board.preset!.bindings["field.role"]!
+    const now = new Date().toISOString()
+    const updated = A.change(A.clone(base), draft => {
+      for (let index = 0; index < 74; index += 1) {
+        const company = `Компания ${index + 1} · Northstar product engineering group`
+        const id = `reading-typography-card-${index}`
+        draft.entities[id] = { id, title: `${company} — Senior platform engineer ${index + 1}`, body: longText,
+          placement: { parentId: parent.id, rank: `${index}/1` }, archivedAt: null, createdAt: now, updatedAt: now,
+          lastActivityAt: now, values: { [companyId]: company, [roleId]: `Staff platform engineer ${index + 1} · Старший инженер платформы` } }
+      }
+    })
+    const profile = app.getCurrentProfile()!
+    const hashes = A.getChangesMetaSince(updated, A.getHeads(base)).map(change => change.hash)
+    const proofs = await prepareLocalChangeAuthorizations(updated, profile, hashes)
+    const authorization = await exportDocumentAuthorizationBundle(base, profile)
+    await app.mergeAuthorizedWorkspace(updated.id, A.save(updated), { ...authorization, records: [...authorization.records, ...proofs] })
+  }, longText)
   await expect(page.locator(".lead-card")).toHaveCount(74)
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Senior platform engineer")
   await expect(page.locator(".card-notes").first()).toBeVisible()
@@ -90,6 +107,8 @@ test("Given long bilingual details, chat and settings, when each surface opens, 
   const detail = page.getByRole("dialog", { name: "Lead details" })
   await expect(detail.locator(".detail-copy")).toBeVisible()
   await expect(detail.locator(".detail-copy")).toHaveCSS("font-family", /Fira Sans/)
+  await expect(detail.locator(".detail-copy")).toHaveCSS("font-size", "16px")
+  await expect(detail.locator(".detail-copy")).toHaveCSS("line-height", "24px")
   await assertNoHorizontalClipping(page, ".detail-layout, .detail-primary, .detail-copy")
   await assertNoHiddenVerticalOverflow(page, ".detail-layout, .detail-primary, .detail-copy")
   await detail.getByRole("button", { name: "Close detail" }).click()
@@ -100,6 +119,7 @@ test("Given long bilingual details, chat and settings, when each surface opens, 
   await chat.getByRole("button", { name: "Send message" }).click()
   await expect(chat.locator(".chat-message-body")).toContainText("Старший инженер платформы")
   await expect(chat.locator(".chat-message-body")).toHaveCSS("font-family", /Fira Sans/)
+  await expect(chat.locator(".chat-message-body")).toHaveCSS("font-size", "16px")
   await assertNoHorizontalClipping(page, ".chat-dialog, .chat-messages-log, .chat-message-item, .chat-message-body")
   await assertNoHiddenVerticalOverflow(page, ".chat-dialog, .chat-messages-log, .chat-message-item, .chat-message-body")
   await chat.getByRole("button", { name: "Close", exact: true }).click()

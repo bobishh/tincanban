@@ -1,5 +1,7 @@
 ## Context
 
+Superseded decisions (2026-10-16): [unified-board-visitor-access](../unified-board-visitor-access/design.md) replaces the independent snapshot/manual Update lifecycle, separate public presentation and divergent visitor settings. The design below is retained as historical context for migration.
+
 Reviewed current files on 2026-10-10. `WorkspaceDocumentV2.id` identifies a workspace; each board has a distinct entity UUID and descendants linked through `placement.parentId`. A workspace can contain multiple boards. The public URL identifies the board entity, never the workspace ID or an opaque Rusty scope.
 
 Rusty currently serves encrypted immutable objects through `src/blind.rs`. Signed challenge enrollment pins a configured owner root and allowed controller devices. The service has no plaintext workspace, application grant or decryption key. `BlindStore::open` rejects unrecognized filesystem entries. Existing unrelated changes in sibling `src/keeper.rs`, `src/replication.rs` and `.sloposcope/` must be preserved.

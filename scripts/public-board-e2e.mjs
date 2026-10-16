@@ -29,13 +29,14 @@ if (previewBuild) {
   } })
   if (build.status !== 0) process.exit(build.status ?? 1)
 }
-const child = spawn("npx", ["playwright", "test", "--config", "playwright.public-board.config.ts"], {
+const child = spawn("npx", ["playwright", "test", "--config", "playwright.public-board.config.ts", ...process.argv.slice(2)], {
   stdio: "inherit", env: {
     ...process.env,
     TINCANBAN_PUBLIC_E2E_WEB_PORT: String(webPort),
     TINCANBAN_PUBLIC_E2E_KEEPER_ORIGIN: keeperOrigin,
     TINCANBAN_PUBLIC_E2E_PREVIEW: previewBuild ? "1" : "",
     TINCANBAN_PUBLIC_E2E_KEEPER_PORT: String(keeperPort),
+    TINCANBAN_PUBLIC_E2E_OUTPUT_DIR: `/tmp/tincanban-public-board-${keeperPort}`,
     TINCANBAN_RUSTY_BINARY: rustyBinary,
     VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_BROWSER_KEY: "",
   },

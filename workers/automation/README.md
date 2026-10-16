@@ -24,8 +24,8 @@ not renew authorization, activate work or synchronize. Repeating the action is
 idempotent. Browser writer migration preflights compatible instances, durably
 retains receipt/route evidence and waits for those confirmations before local
 activation. Older Workers need a compatible rollout first; live untyped grants
-require explicit route adoption/removal. Production identity comes from the sealed
-release cohort, not source presence.
+require explicit route adoption/removal. Each deployed component reports its own
+release identity; automation does not require a matching frontend or Rusty release.
 
 ## Compact history maintenance
 
@@ -53,7 +53,7 @@ and encrypted basis/coverage evidence survive restart and are reverified offline
 Native verification and activation. Browser acceptance in
 [attachment-session-recovery.spec.ts](../../e2e/attachment-session-recovery.spec.ts)
 covers compact history, cold receivers and offline recovery. These checks do not
-establish which cohort is active in production.
+establish which automation Worker version is active in production.
 
 ## Application sources
 
@@ -175,9 +175,21 @@ HUMAN_CHECK_SECRET=replace-with-at-least-32-random-bytes
 PROVISIONING_TOKEN=replace-with-a-long-random-operator-token
 IDENTITY_STORAGE_SECRET=replace-with-at-least-32-random-bytes
 EVENT_STORAGE_SECRET=replace-with-at-least-32-random-bytes
+TELEMETRY_TOKEN=project-server-write-key
 ```
 
 Do not commit these values. `IDENTITY_STORAGE_SECRET` encrypts the automation identity seed and device entropy before Durable Object storage. `EVENT_STORAGE_SECRET` encrypts accepted website payloads and both parsed email fields and original MIME bytes before storage. Rotating either secret without re-encrypting the stored value prevents it from loading.
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` and the project-scoped server
+`TELEMETRY_TOKEN` are configured, the Worker emits standard OTLP/HTTP JSON logs
+and spans to TinSink. It identifies as project `tincanban-automation`, source
+`server`, and includes the sealed release SHA as its service version. The token
+stays in the Worker secret binding. Exception messages, stacks and causes are
+bounded and redacted; accepted email content, board text, payloads and credentials
+are not exported as diagnostic context. Rusty HTTP requests carry W3C trace context
+from the Worker span. This source wiring and runtime tests do not establish
+production delivery; the TinSink pipeline records its independent full-chain and
+deployed-row verification.
 
 ## Integration routing
 
@@ -328,8 +340,8 @@ reject nonce reuse for different proof/body content. Interrupted activation can
 retain a valid approval while reporting missing Rusty confirmation; retry the same
 existing instance. The signed management paths have Native/HTTP and Workerd
 acceptance; browser flows cover ordinary enrollment, approval renewal and explicit
-legacy adoption.
-Exact production revisions still require the release cohort evidence.
+legacy adoption. Exact production revisions require this Worker's deployment
+evidence; they do not imply a coordinated frontend or Rusty release.
 
 - `GET /health` reports Worker readiness.
 - `POST /v1/challenge` with `{ "integrationId": "applications" }` returns an HMAC-signed arithmetic challenge.
@@ -345,24 +357,25 @@ New intake returns HTTP 202 after the Durable Object has stored the event. Clef 
 
 ## Production deployment
 
-[Deploy compatible production cohort](../../.github/workflows/deploy-frontend.yml)
-runs after `Verify` succeeds for the current main push. It downloads the exact
-verified frontend and captured Worker artifacts, selects the sealed Rusty image
-for the pinned source/SDK revisions and requires successful verification of that
-same SDK revision. It stages immutable Worker versions without rebuilding, then
-activates and confirms Rusty, automation and frontend in that order. Final checks
-bind the cohort to artifact/image/binary digests, Cloudflare version IDs and served
-frontend bytes. [Recover compatible production cohort](../../.github/workflows/recover-release.yml)
-resumes an interrupted exact cohort or selects a compatible prior confirmed cohort;
-rollback still respects retained reader requirements and required capabilities.
+[Deploy tincanban automation](../../.github/workflows/deploy-automation.yml)
+runs after `Verify` succeeds for a main-branch push. It downloads and validates
+the automation artifact from that exact run, checks automation reader floors,
+then stages and activates the automation Worker version only. Frontend and Rusty
+use their own release pipelines; a successful automation deployment neither
+deploys nor certifies either component.
+
+[Recover one tincanban component](../../.github/workflows/recover-release.yml)
+can restore the automation artifact from an exact successful main `Verify` run.
+It validates and activates only the selected component. Recovery does not
+coordinate a frontend or Rusty release.
 
 The configured production route is
 [`automation.meta-uber-engineer.dev`](https://automation.meta-uber-engineer.dev).
-`/health` reports readiness plus source SHA, artifact SHA-256, cohort ID, SDK SHA,
+`/health` reports readiness plus this Worker's source SHA, artifact SHA-256,
 Cloudflare version ID and reader/writer capabilities. Local builds without release
 bindings return null release identities. Source presence or a source SHA alone
-does not establish a current deployment: use the release coordinator's saved cohort
-and live identity/served-byte confirmations. Production uses `wrangler.jsonc`;
+does not establish the active deployment; use this Worker's deployment artifact
+and live version confirmation. Production uses `wrangler.jsonc`;
 `wrangler.e2e.jsonc` is local-only and never published. `workers.dev` is disabled.
 Configured browser CORS permits `https://match.meta-uber-engineer.dev` and the
 public intake form at `https://meta-uber-engineer.dev`.

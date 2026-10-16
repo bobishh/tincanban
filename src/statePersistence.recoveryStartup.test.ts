@@ -14,7 +14,6 @@ vi.mock("./crdt", () => ({ initializeAutomerge: vi.fn() }))
 vi.mock("./domain/identity", () => ({ bootstrapIdentity: ports.bootstrap }))
 vi.mock("./sync/startupDiagnostics", () => ({
   diagnoseStartupStep: async (_name: string, step: () => unknown) => step(),
-  setStartupDiagnosticDevice: vi.fn(),
 }))
 vi.mock("./sync/workspaceHistoryRecoveryProjection", () => ({ resumeWorkspaceHistoryRecoveryProjection: ports.resume }))
 

@@ -35,7 +35,7 @@ async function remove(origin: string, deviceId: string) {
     <h4>Approved devices</h4>
     <p class="dialog-copy">Removing a device revokes its identity-wide access to every Rusty connection at that origin. You must own every connected board. Saved boards stay unchanged. Interrupted removals can resume.</p>
     <div v-for="origin in origins" :key="origin" class="rusty-device-origin">
-      <strong>{{ origin }}</strong>
+      <strong class="technical-value">{{ origin }}</strong>
       <ul>
         <li v-for="device in devices" :key="device.deviceId">
           <span>{{ device.displayName || 'Unnamed device' }}<small>Added {{ new Date(device.addedAt).toLocaleDateString() }}</small></span>
@@ -47,9 +47,10 @@ async function remove(origin: string, deviceId: string) {
         </li>
       </ul>
     </div>
-    <p v-if="failure" role="alert">{{ failure }}</p>
+    <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
   </section>
 </template>
+<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
 .rusty-device-access { display: grid; gap: var(--space-2); }
 .rusty-device-access h4, .rusty-device-access p { margin: 0; }

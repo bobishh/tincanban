@@ -1,183 +1,186 @@
-import { telemetryConfig, subscribeTelemetryConfig, type TelemetryConfig } from "./telemetryConfig"
-import { diagnosticEvent, type TelemetryEvent } from "./telemetryEvent"
+import { telemetryConfig, subscribeTelemetryConfig } from "./telemetryConfig"
+import type { BrowserOtelSdk, DiagnosticInput, OperationInput } from "./otelBrowserSdk"
+import { setHttpDiagnosticSpanFactory } from "./httpDiagnostics"
+import type { Context } from "@opentelemetry/api"
 
-type Queued = { event: TelemetryEvent; queuedAt: number }
-export type TelemetryStatus = { state: "disabled" | "ready" | "sending" | "pending" | "error"; queued: number; preparing: number; dropped: number; lastSentAt: number | null; error: string }
-const sessionId = crypto.randomUUID()
-const queue: Queued[] = []
+export type TelemetryStatus = {
+  state: "disabled" | "ready" | "sending" | "pending" | "error"
+  queued: number
+  preparing: number
+  dropped: number
+  lastSentAt: number | null
+  error: string
+}
+type Pending = { kind: "log"; value: DiagnosticInput } | { kind: "operation"; value: OperationInput }
+const maxPending = 256
+const pending: Pending[] = []
 const listeners = new Set<() => void>()
-const expiryMs = 300_000
-const maxQueue = 1000
-const maxBytes = 64 * 1024
-let status: TelemetryStatus = { state: telemetryConfig().enabled ? "ready" : "disabled", queued: 0, preparing: 0, dropped: 0, lastSentAt: null, error: "" }
-let timer: ReturnType<typeof setTimeout> | undefined
-let controller: AbortController | undefined
+let sdk: BrowserOtelSdk | undefined
+let sdkPromise: Promise<BrowserOtelSdk | undefined> | undefined
 let generation = 0
-let pending = 0
-let failures = 0
-let suspended = false
-let flushing = false
-let inFlight = 0
-const recentErrors = new Map<string, number>()
-let errorWindowStartedAt = Date.now()
-let errorWindowCount = 0
+let dropped = 0
+let stateError = ""
+let lastSentAt: number | null = null
+let sending = 0
+let seenExceptions = new WeakSet<object>()
+let globalHandlersInstalled = false
 
-function admitErrorDiagnostic(event: string, detail: Record<string, unknown>): boolean {
-  if (!/failed|rejected|authority-changed/.test(event)) return false
-  const now = Date.now()
-  if (now - errorWindowStartedAt >= 3_600_000) { errorWindowStartedAt = now; errorWindowCount = 0; recentErrors.clear() }
-  const key = `${event}:${typeof detail.workspaceId === "string" ? detail.workspaceId : ""}`
-  const previous = recentErrors.get(key)
-  if (errorWindowCount >= 30 || (previous !== undefined && now - previous < 300_000)) return false
-  recentErrors.set(key, now)
-  errorWindowCount++
+function notify() { for (const listener of listeners) listener() }
+function state(): TelemetryStatus["state"] {
+  if (!telemetryConfig().enabled) return "disabled"
+  if (sending) return "sending"
+  if (pending.length || (sdk?.exportState.queued ?? 0) > 0) return "pending"
+  if (stateError) return "error"
+  return "ready"
+}
+export function telemetryStatus(): TelemetryStatus {
+  return { state: state(), queued: pending.length + (sdk?.exportState.queued ?? 0), preparing: 0,
+    dropped: dropped + (sdk?.exportState.dropped ?? 0), lastSentAt, error: stateError }
+}
+export function subscribeTelemetryStatus(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } }
+
+function uniqueException(error: unknown): boolean {
+  if (!error || typeof error !== "object") return true
+  if (seenExceptions.has(error)) return false
+  seenExceptions.add(error)
   return true
 }
-
-export function telemetryStatus(): TelemetryStatus { return { ...status, queued: queue.length + pending + inFlight, preparing: pending } }
-export function subscribeTelemetryStatus(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } }
-export function retryTelemetry() {
-  if (!telemetryConfig().enabled || flushing) return
-  suspended = false
-  failures = 0
-  status.error = ""
-  if (timer !== undefined) clearTimeout(timer)
-  timer = undefined
-  void flush()
-}
-function notify() { for (const listener of listeners) listener() }
-function schedule(delay: number) {
-  if (timer !== undefined || flushing || suspended || !telemetryConfig().enabled) return
-  timer = setTimeout(() => { timer = undefined; void flush() }, delay)
-}
-function expire() {
-  const cutoff = Date.now() - expiryMs
-  const alive = queue.filter(item => item.queuedAt > cutoff)
-  status.dropped += queue.length - alive.length
-  queue.splice(0, queue.length, ...alive)
-}
-function envelope(events: TelemetryEvent[], project: string): string {
-  return JSON.stringify({ schema_version: 2, project, stream: "telemetry", source: "browser", events })
-}
-
-export function record(event: string, detail: Record<string, unknown>, level = "info") {
-  const config = telemetryConfig()
-  if (!config.enabled || suspended || (config.level === "errors" && !admitErrorDiagnostic(event, detail))) return
-  if (queue.length + pending + inFlight >= maxQueue) { status.dropped++; notify(); return }
-  const version = generation
-  const timestamp = typeof detail.timestampMs === "number" && Number.isFinite(detail.timestampMs) ? detail.timestampMs : Date.now()
-  pending++
-  void (async () => {
-    try {
-      const { bootstrapIdentity } = await import("../domain/identity")
-      const profile = await bootstrapIdentity()
-      const diagnostic = await diagnosticEvent(event, detail, { project: config.project, sessionId, deviceId: profile.device.deviceId, timestamp, level })
-      if (version !== generation) return
-      if (suspended) { status.dropped++; return }
-      const sampleKey = diagnostic.trace_id || diagnostic.event_id.replaceAll("-", "")
-      if (!diagnostic.event || parseInt(sampleKey.slice(0, 8), 16) / 0x1_0000_0000 >= config.sampleRate) return
-      queue.push({ event: diagnostic, queuedAt: Date.now() })
-      if (!flushing) status.state = "pending"
-      schedule(2000)
-    } catch {
-      if (version === generation) { status.dropped++; status.error = "A diagnostic event could not be prepared." }
-    } finally {
-      if (version === generation) { pending--; notify() }
-    }
-  })()
-}
-
-function takeBatch(project: string, limit: number): Queued[] {
-  const batch: Queued[] = []
-  while (queue.length && batch.length < limit) {
-    const next = queue[0]!
-    const bytes = new TextEncoder().encode(envelope([...batch.map(item => item.event), next.event], project)).byteLength
-    if (bytes > maxBytes) {
-      if (!batch.length) { queue.shift(); status.dropped++; continue }
-      break
-    }
-    batch.push(queue.shift()!)
-  }
-  return batch
-}
-class IntakeRejection extends Error {
-  constructor(readonly statusCode: number) { super(`HTTP ${statusCode}`) }
-}
-async function transmit(config: TelemetryConfig, batch: Queued[], signal: AbortSignal): Promise<void> {
-  const response = await fetch(config.endpoint, { method: "POST", credentials: "omit", keepalive: true,
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.browserKey}` }, body: envelope(batch.map(item => item.event), config.project), signal })
-  if ([400, 401, 403, 404, 413, 422].includes(response.status)) throw new IntakeRejection(response.status)
-  if (!response.ok) throw new Error()
-  const receipt = await response.json() as { accepted?: number }
-  if (receipt.accepted !== batch.length) throw new Error()
-}
-function failedBatch(batch: Queued[], cause: unknown) {
-  if (cause instanceof IntakeRejection) {
-    suspended = true
-    status.dropped += batch.length + queue.length
-    queue.length = 0
-    status.state = "error"
-    status.error = `Diagnostic service rejected a batch (${cause.message}). Board changes are saved separately. Update the app, then resume diagnostics; the rejected batch was discarded.`
+function admit(input: Pending) {
+  if (!telemetryConfig().enabled) return
+  if (sdk) {
+    if (input.kind === "log") sdk.emit(input.value)
+    else sdk.operation(input.value)
+    notify()
     return
   }
-  queue.unshift(...batch)
-  if (queue.length + pending > maxQueue) status.dropped += queue.splice(Math.max(0, maxQueue - pending)).length
-  expire()
-  failures++
-  status.state = "pending"
-  status.error = "Intake unavailable. Diagnostics are queued; application data is saved independently."
-}
-async function flush() {
-  if (flushing || suspended || !telemetryConfig().enabled) return
-  expire()
-  if (!queue.length) { status.state = "ready"; notify(); return }
-  if (!navigator.onLine) { status.state = "pending"; schedule(5000); notify(); return }
-  const config = telemetryConfig()
-  const version = generation
-  const batch = takeBatch(config.project, config.batchSize ?? 50)
-  if (!batch.length) { notify(); return }
-  flushing = true
-  inFlight = batch.length
-  status.state = "sending"
-  const activeController = new AbortController()
-  controller = activeController
-  const timeout = setTimeout(() => activeController.abort(), 5000)
+  if (pending.length >= maxPending) { dropped++; notify(); return }
+  pending.push(input)
   notify()
-  try {
-    await transmit(config, batch, activeController.signal)
-    if (version !== generation) return
-    failures = 0
-    status.lastSentAt = Date.now()
-    status.error = ""
-    status.state = queue.length ? "pending" : "ready"
-  } catch (cause) {
-    if (version === generation) failedBatch(batch, cause)
-  } finally {
-    clearTimeout(timeout)
-    if (version === generation) {
-      flushing = false
-      inFlight = 0
-      controller = undefined
-      if (queue.length) schedule(failures ? Math.min(60_000, 2000 * 2 ** Math.min(failures, 5)) : 2000)
+  void initialize()
+}
+async function initialize(): Promise<BrowserOtelSdk | undefined> {
+  if (!telemetryConfig().enabled) return undefined
+  if (sdk) return sdk
+  if (!sdkPromise) {
+    const version = generation
+    const config = telemetryConfig()
+    sdkPromise = import("./otelBrowserSdk").then(({ BrowserOtelSdk: Sdk }) => {
+      if (!telemetryConfig().enabled || version !== generation) return undefined
+      const instance = new Sdk(config, () => {
+        if (!sdk) return
+        sending = sdk.exportState.sending
+        lastSentAt = sdk.exportState.lastSentAt
+        stateError = sdk.exportState.error
+        notify()
+      })
+      sdk = instance
+      setHttpDiagnosticSpanFactory((name, attributes, parent) => instance.beginHttp(name, attributes, parent))
+      for (const item of pending.splice(0)) {
+        if (item.kind === "log") instance.emit(item.value)
+        else instance.operation(item.value)
+      }
       notify()
-    }
+      return instance
+    }).catch(() => {
+      if (version === generation) {
+        stateError = "OpenTelemetry could not start. Application work continues without diagnostics."
+        dropped += pending.length
+        pending.length = 0
+        notify()
+      }
+      return undefined
+    }).finally(() => { sdkPromise = undefined })
+  }
+  return sdkPromise
+}
+
+export function record(event: string, detail: Record<string, unknown> = {}, level = "info") {
+  const isFailure = isFailureEvent(event)
+  if (!shouldRecord(level, isFailure) || !sampledIn()) return
+  const error = detail.error
+  if (error !== undefined && !uniqueException(error)) return
+  const safeEvent = /^[A-Za-z0-9_.:-]{1,160}$/.test(event) ? event : "diagnostic.event"
+  const effectiveLevel = isFailure && level === "warn" ? "error" : level
+  const timestamp = typeof detail.timestampMs === "number" && Number.isFinite(detail.timestampMs) ? detail.timestampMs : Date.now()
+  const value: DiagnosticInput = { event: safeEvent, detail, level: effectiveLevel, timestamp, ...(error === undefined ? {} : { exception: error }) }
+  if (sdk) sdk.emit(value)
+  else admit({ kind: "log", value })
+}
+function isFailureEvent(event: string): boolean { return /failed|rejected|authority-changed|error/i.test(event) }
+function shouldRecord(level: string, isFailure: boolean): boolean {
+  return telemetryConfig().enabled && (telemetryConfig().level !== "errors" || level === "error" || level === "fatal" || isFailure)
+}
+function sampledIn(): boolean { return Math.random() < telemetryConfig().sampleRate }
+
+export async function traceDiagnosticOperation<T>(
+  name: string,
+  attributes: Record<string, string | number>,
+  operation: (context?: Context) => Promise<T> | T,
+): Promise<T> {
+  const selected = telemetryConfig().enabled && sampledIn()
+  const startedAt = performance.now()
+  const activeSdk = selected ? sdk : undefined
+  let active: ReturnType<BrowserOtelSdk["startOperation"]> | undefined
+  try { active = activeSdk?.startOperation(name, attributes, startedAt) } catch { dropped++ }
+  function finish(exception?: unknown) {
+    if (!selected) return
+    try {
+      if (activeSdk) {
+        if (active) activeSdk.finishOperation(active.span, active.context, name, attributes, performance.now(), exception)
+      }
+      else admit({ kind: "operation", value: { name, attributes, startedAt, endedAt: performance.now(), exception } })
+    } catch { dropped++ }
+  }
+  try {
+    const result = await operation(active?.context)
+    finish()
+    return result
+  } catch (exception) {
+    finish(exception)
+    throw exception
   }
 }
+
+export function retryTelemetry() {
+  if (!telemetryConfig().enabled) return
+  stateError = ""
+  if (sdk) void sdk.forceFlush()
+  else void initialize()
+  notify()
+}
+
+function installGlobalHandlers() {
+  if (globalHandlersInstalled || typeof window === "undefined") return
+  globalHandlersInstalled = true
+  window.addEventListener("error", event => {
+    const error: unknown = event.error as unknown ?? new Error(event.message || "Uncaught browser error")
+    record("browser.error", { error }, "error")
+  })
+  window.addEventListener("unhandledrejection", event => {
+    const error: unknown = event.reason as unknown ?? new Error("Unhandled promise rejection")
+    record("browser.unhandled_rejection", { error }, "error")
+  })
+}
+installGlobalHandlers()
 
 subscribeTelemetryConfig(() => {
   generation++
-  controller?.abort()
-  controller = undefined
-  if (timer !== undefined) clearTimeout(timer)
-  timer = undefined
-  status.dropped += queue.length + pending + inFlight
-  queue.length = 0
-  pending = 0
-  failures = 0
-  suspended = false
-  flushing = false
-  inFlight = 0
-  status = { ...status, state: telemetryConfig().enabled ? "ready" : "disabled", error: "", lastSentAt: null }
+  const active = sdk
+  sdk = undefined
+  sdkPromise = undefined
+  setHttpDiagnosticSpanFactory(undefined)
+  dropped += pending.length
+  pending.length = 0
+  sending = 0
+  stateError = ""
+  lastSentAt = null
+  seenExceptions = new WeakSet<object>()
+  if (active) {
+    const shutdown = active.shutdown()
+    dropped += active.exportState.dropped
+    void shutdown
+  }
   notify()
 })
-if (typeof window !== "undefined") window.addEventListener("online", () => { if (!flushing) { if (timer !== undefined) clearTimeout(timer); timer = undefined; void flush() } })
+
+if (telemetryConfig().enabled) void initialize()

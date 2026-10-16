@@ -5,11 +5,13 @@ import { publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoa
 import { RustyManagementRepository, type ManagementBinding } from "../sync/rustyManagementRepository"
 import type { RustyManagementCapability } from "../sync/rustyManagementCapability"
 
-const mocks = vi.hoisted(() => ({ projection: { kind: "tincanban-public-board", version: 1, board: { id: "public-fixture", title: "Published" }, columns: [], fields: [], cards: [], discussions: [], files: [] }, includeAsset: false }))
+const mocks = vi.hoisted(() => ({ projection: { kind: "tincanban-public-board", version: 1, board: { id: "public-fixture", title: "Published" }, columns: [], fields: [], cards: [], discussions: [], files: [] }, includeAsset: false, capturedSource: undefined as unknown }))
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [] }, certHashDefault: async () => "unused" }))
-vi.mock("./publicProjection", () => ({ snapshotPublicBoardSource: (document: unknown) => document, createPublicBoardPublication: async (
-  _document: unknown, _workspaceId: string, _boardId: string, stageAsset: (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>,
+vi.mock("./publicProjection", () => ({ snapshotPublicBoardSource: (document: { entities?: Record<string, unknown> }, boardId: string) => structuredClone({ entities: document.entities?.[boardId] ? { [boardId]: document.entities[boardId] } : {} }) }))
+vi.mock("../app/publicBoardPublication", () => ({ createBrowserBoardPublication: async (
+  document: unknown, _workspaceId: string, _boardId: string, stageAsset: (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>,
 ) => {
+  mocks.capturedSource = document
   if (mocks.includeAsset) await stageAsset({ sha256: "F".repeat(43), bytes: new Uint8Array([1, 2, 3]) })
   return { projection: mocks.projection, assets: [] }
 } }))
@@ -65,6 +67,20 @@ it("Given malformed or unsupported management advertisement, when reading public
   expect(challengeBody).toBeUndefined()
 })
 
+it("rechecks caller-supplied access before signing and after each publication request", async () => {
+  const ensureCurrent = vi.fn()
+  await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2,
+    profile: owner, action: "publish", expectedRevision: revision, ensureCurrent })
+  expect(ensureCurrent.mock.calls.length).toBeGreaterThan(4)
+})
+
+it("copies only selected-board source entities while keeping authority metadata separate", async () => {
+  const board = { id: boardId, kind: "board" }
+  const document = { entities: { [boardId]: board, private: { id: "private", kind: "board", uncloneable: () => "private" } } } as unknown as WorkspaceDocumentV2
+  await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document, profile: owner, action: "publish", expectedRevision: revision })
+  expect(mocks.capturedSource).toEqual({ entities: { [boardId]: board } })
+})
+
 async function signed(payload: EnvelopePayload, forged = false): Promise<SignedEnvelope<EnvelopePayload>> {
   return signEnvelope((forged ? outsider : keeper).privateKeys.devicePrivateKey, payload, keeper.device.deviceId, "RUSTY/2")
 }
@@ -86,9 +102,11 @@ async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   if (url.endsWith("/v1/public/challenges")) {
     challengeBody = JSON.parse(String(init?.body)) as Record<string, unknown>
     const now = Date.now()
+    const sourceHeads = Array.isArray(challengeBody.sourceHeads) ? challengeBody.sourceHeads : []
     return json({ challenge: await signed({ kind: "rusty-publication-challenge", version: 1, challengeId: "C".repeat(43), nonce: "N".repeat(43), serviceId: keeper.device.deviceId,
       publicOrigin: origin, boardId, personId: owner.identity.personId, deviceId: owner.device.deviceId, deviceKeyId: owner.device.deviceId,
-      expectedRevision: revision, issuedAt: now, expiresAt: now + 120000, withdrawn, projectionHash: snapshotHash, ...challengePatch }, forgeChallenge) })
+      expectedRevision: revision, issuedAt: now, expiresAt: now + 120000, withdrawn, projectionHash: snapshotHash,
+      sourceHeadsHash: sourceHeads.length ? await hash(sourceHeads) : null, currentSourceHeads: [], ...challengePatch }, forgeChallenge) })
   }
   if (url.endsWith(`/v1/public/boards/${boardId}/files`)) {
     assetCount++
@@ -256,6 +274,12 @@ describe("publication client signed state and receipts", () => {
   it.each(["serviceId", "publicOrigin", "boardId", "personId", "deviceId", "deviceKeyId", "challengeId", "nonce", "expectedRevision", "expiresAt"])("Given a signed challenge with wrong %s, When publishing, Then no mutation is sent", async field => {
     challengePatch[field] = ["expectedRevision", "expiresAt"].includes(field) ? -1 : "foreign-binding"
     await expect(publish()).rejects.toThrow(/challenge|binding/i)
+    expect(mutationCount).toBe(0)
+  })
+
+  it("Given a challenge bound to another source frontier, When publishing, Then reject before signing or mutation", async () => {
+    challengePatch = { sourceHeadsHash: "C".repeat(43) }
+    await expect(publish()).rejects.toThrow(/source frontier/i)
     expect(mutationCount).toBe(0)
   })
   it("Given a challenge signed by a different key, When publishing, Then no mutation is sent", async () => {

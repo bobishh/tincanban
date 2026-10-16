@@ -18,15 +18,15 @@ test('Given several deployments while a tab stays open, when retaining assets, t
   assert.equal(retentionCandidates({ retained: { '../private': hash }, files: {} }, now).length, 0);
 });
 
-test('Given a repeated release tag, when CI publishes, then deploy the exact uploaded version rather than resolving the tag', async () => {
+test('Given a repeated release tag, when CI publishes, then deploy exact uploaded frontend version without bundling a Worker', async () => {
   const { readFileSync } = await import('node:fs');
   const workflow = readFileSync(new URL('../../.github/workflows/deploy-frontend.yml', import.meta.url), 'utf8');
-  const coordinator = readFileSync(new URL('../../scripts/release-coordinator.mjs', import.meta.url), 'utf8');
-  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$upload_output"/);
-  assert.match(workflow, /release-coordinator\.mjs record-version/);
-  assert.match(coordinator, /uploadedVersion\(readFileSync/);
-  assert.match(coordinator, /versionId\}@100/);
+  assert.match(workflow, /WRANGLER_OUTPUT_FILE_PATH="\$output"/);
+  assert.match(workflow, /release\.mjs uploaded-version/);
+  assert.match(workflow, /"\$version@100"/);
   assert.doesNotMatch(workflow, /--version-tag/);
+  assert.match(workflow, /prepare frontend/);
+  assert.doesNotMatch(workflow, /automation/);
 });
 
 test('Given a sealed build with Vite hidden manifest, when CI uploads dist, then include hidden files for deployment', async () => {

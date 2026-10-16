@@ -6,11 +6,11 @@ const privateStartup = startupBudgetFiles(manifest, "private")
 const publicStartup = startupBudgetFiles(manifest, "public")
 
 export default [
-  // Same-identity Rusty session hooks add under 1 kB to the previous budget.
-  // Private preference verification and delegation load on network use.
-  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "239 kB" },
-  // Include the synchronous startup status/loader; anonymous-reader budget stays separate.
-  { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.75 kB" },
+  // Stable board routes, public-delivery scheduling and optional OTel admission add 10 kB.
+  // Signing, projection, delivery transport and the OTel SDK load on demand.
+  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "249 kB" },
+  // Shared semantic prose and technical-value rules add under 200 bytes.
+  { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "10.95 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },
   // Shared keyboard focus frames add 24 bytes to the previous public CSS budget.
   { name: "public reader CSS", path: publicStartup.css, limit: "10.6 kB" },

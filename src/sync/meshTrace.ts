@@ -18,7 +18,7 @@ export function meshTrace(event: string, detail: Record<string, unknown> = {}, l
   traceBuffer.trace(event, detail, level)
   if (typeof window !== "undefined") {
     const timestampMs = Date.now()
-    void import("./telemetry").then(module => module.record(event, { timestampMs, ...detail, error }, level)).catch(() => {})
+    void import("./telemetry").then(module => module.record(event, { timestampMs, ...detail, error: error ?? detail.error }, level)).catch(() => {})
   }
 }
 

@@ -4,6 +4,11 @@ export type ServiceLoginRequest = {
   expires_at: number
 }
 
+/** Copy only validated scalar fields so reactive Vue proxies never reach structured cloning. */
+export function snapshotServiceLoginRequest(value: ServiceLoginRequest): ServiceLoginRequest {
+  return { origin: value.origin, challenge: value.challenge, expires_at: value.expires_at }
+}
+
 export function parseServiceLoginRequest(encoded: string, now: number): ServiceLoginRequest {
   if (encoded.length > 4096) throw new Error("Invalid sign-in request")
   const value = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0)))) as ServiceLoginRequest

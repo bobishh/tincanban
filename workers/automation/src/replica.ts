@@ -1,5 +1,6 @@
 import { emptyEmployeeProfile, type EmployeeProfile } from "../../../src/domain/jobPriority";
 import * as Automerge from "@automerge/automerge/slim";
+import type { Context } from "@opentelemetry/api";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
@@ -37,6 +38,9 @@ import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../../../src
 import { parseWireHistoryBaseline } from "../../../src/sync/historyBaselineReceiver";
 import { assertWorkerHistoryCoversHeads, receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority,
   type StoredWorkerHistoryBasis } from "./historyBaseline";
+import { deliverPublicBoard } from "../../../src/public/publicDelivery";
+import { automationPublicProjection } from "./publicBoardDelivery";
+import { automationDiagnosticContext, automationTelemetry, recordAutomationException, withAutomationSpan } from "./telemetry";
 
 initSync({ module: wasmModule });
 
@@ -92,6 +96,7 @@ export type ReplicaTransport = {
   download: typeof downloadBlindObject;
   upload: (access: BlindAccess, object: BlindObject, requestId?: string, observedSequence?: number) => Promise<BlindReceipt>;
   archive?: (access: BlindAccess, guard: () => void | Promise<void>) => HistoryBaselineFetchPort;
+  publicDelivery?: typeof deliverPublicBoard;
 };
 
 export type AutomationManagementInspector = {
@@ -222,11 +227,13 @@ type SerializedReplica = {
   pending?: PendingUpload;
   replication?: ReplicaMetadata;
   applied: Record<string, AppliedEvent>;
+  publicDelivery?: { pending: boolean; sourceHeads: string[]; error?: string };
 };
 type WireSnapshot = { version: 1 | 2; history?: WireHistoryBaseline; workspaceId: string; document: string; authorization: IncomingAuthorizationBundle;
   chat: OpaqueChatBatch | null; attachments?: AttachmentLocator[] };
 
 const defaultTransport: ReplicaTransport = {
+  publicDelivery: input => deliverPublicBoard({ ...input, client: "automation" }),
   inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after),
   download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id),
   upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence),
@@ -234,6 +241,7 @@ const defaultTransport: ReplicaTransport = {
 
 /** Owner-approved, bounded Automerge writer for one existing workspace. */
 export class AutomationReplica {
+  private publicDelivery?: SerializedReplica["publicDelivery"];
   private history?: StoredWorkerHistoryBasis;
   private historyBasis?: WasmVerifiedReceivedHistoryBaseline;
   private historyUsage: ActiveHistoryUsage = { baselineId: null, admittedChanges: 0, encodedBytes: 0 };
@@ -294,6 +302,7 @@ export class AutomationReplica {
     this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, serialized?.applied ?? {});
     this.definition = serialized?.definition;
     this.tombstoned = serialized?.tombstoned === true;
+    this.publicDelivery = structuredClone(serialized?.publicDelivery);
   }
 
   static async activate(packet: AutomationActivationPacket, profile: LocalProfile, expectedOrigin?: string): Promise<AutomationReplica> {
@@ -611,20 +620,30 @@ export class AutomationReplica {
 
   sync(): Promise<void> {
     return this.enqueue(async () => {
-      this.assertActive();
-      this.assertPersistence();
-      // A sync that starts with an uncertain old upload only resolves that
-      // exact outbox. Newer local content waits for the next sync pass.
-      if (this.progress.pending) {
-        await this.engine.drainPending();
-        return;
-      }
-      await this.engine.pull();
-      if (!this.tombstoned && this.controlForRuntime().state === "deleted") {
-        this.tombstoned = true;
-        await this.persistState();
-      }
-      await this.engine.push();
+      await withAutomationSpan(automationTelemetry(), "automation.replication.sync", {
+        "workspace.id": this.workspaceId,
+        "board.id": this.bindings.boardId,
+        "operation.scope": "local-admission,serialization,transport,decrypt-merge,confirmation",
+      }, async span => {
+        this.assertActive();
+        this.assertPersistence();
+        if (this.progress.pending) {
+          span?.setAttribute("replication.phase", "confirm-pending-upload");
+          await this.engine.drainPending();
+          await this.deliverPublicChanges(automationDiagnosticContext(span));
+          return;
+        }
+        span?.setAttribute("replication.phase", "pull-decrypt-merge");
+        await this.engine.pull();
+        if (!this.tombstoned && this.controlForRuntime().state === "deleted") {
+          this.tombstoned = true;
+          await this.persistState();
+        }
+        span?.setAttribute("replication.phase", "local-admission-serialize-push");
+        await this.engine.push();
+        span?.setAttribute("replication.phase", "confirm-public-delivery");
+        await this.deliverPublicChanges(automationDiagnosticContext(span));
+      });
     });
   }
 
@@ -956,7 +975,53 @@ export class AutomationReplica {
       grant: this.grant, ...(this.definition ? { definition: this.definition } : {}), bindings: this.bindings, authority: this.authority, rawDocument: this.rawDocument,
       authorizations: this.authorizations, chat: this.chat, ...(this.tombstoned ? { tombstoned: true as const } : {}),
       ...(this.attachments.length ? { attachments: this.attachments } : {}),
-      ...(this.pending ? { pending: this.pending } : {}), replication: this.replicationMetadata(), applied: this.applied } satisfies SerializedReplica);
+      ...(this.pending ? { pending: this.pending } : {}), ...(this.publicDelivery ? { publicDelivery: this.publicDelivery } : {}),
+      replication: this.replicationMetadata(), applied: this.applied } satisfies SerializedReplica);
+  }
+
+  private async deliverPublicChanges(diagnosticContext?: Context): Promise<void> {
+    if (!this.transport.publicDelivery || this.tombstoned || this.controlForRuntime().state !== "active") return;
+    const document = this.admittedDocument();
+    const sourceHeads = Automerge.getHeads(document).sort();
+    const captured = { raw: this.rawDocument, authority: this.authority, grant: this.grant };
+    const ensureCurrent = async () => {
+      this.assertActive(); this.assertExecuting();
+      if (captured.raw !== this.rawDocument || captured.authority !== this.authority || captured.grant !== this.grant ||
+        this.deviceRoleForRuntime({ personId: this.profile.identity.personId, publicKey: this.profile.identity.publicKey,
+          certificates: [this.profile.certificate] }, this.profile.device.deviceId, this.grant) !== "automation") {
+        throw new Error("Public delivery authority changed");
+      }
+    };
+    try {
+      // The admitted document itself is durable; this marker records an unconfirmed delivery across restarts.
+      this.publicDelivery = { pending: true, sourceHeads };
+      await this.persistState();
+      await this.transport.publicDelivery({ origin: this.blind.origin, workspaceId: this.workspaceId, boardId: this.bindings.boardId,
+        identity: this.profile.identity, deviceId: this.profile.device.deviceId, certificates: [this.profile.certificate],
+        grant: this.grant, sourceHeads, ensureCurrent, diagnosticContext,
+        ensureSourceCovers: async heads => {
+          const missing = heads.filter(head => !Automerge.hasHeads(document, [head]));
+          if (!missing.length) return;
+          if (!this.historyBasis) throw new Error("Synchronize this board before public delivery");
+          await assertWorkerHistoryCoversHeads(this.historyBasis, missing, this.blind, this.archiveReader(ensureCurrent), ensureCurrent);
+        },
+        sign: async payload => {
+          const context = await this.executionSigningContext("rusty-publication-command", {
+            boardId: payload.boardId, challengeId: payload.challengeId, projectionHash: payload.projectionHash });
+          return signWithContext(context, payload);
+        },
+        buildProjection: current => automationPublicProjection(document, this.workspaceId, this.bindings.boardId, current) });
+      await ensureCurrent();
+      this.publicDelivery = { pending: false, sourceHeads };
+      await this.persistState();
+    } catch (cause) {
+      const error = cause instanceof Error ? cause.message : "Public delivery unavailable";
+      recordAutomationException(cause, { event: "automation.public_delivery.failed", operation: "public-board-delivery",
+        "workspace.id": this.workspaceId, "board.id": this.bindings.boardId });
+      this.publicDelivery = { pending: true, sourceHeads, error };
+      await this.persistState();
+      console.error(JSON.stringify({ event: "automation.public-delivery-failed", workspaceId: this.workspaceId, error: "delivery failed; inspect OpenTelemetry exception details" }));
+    } finally { Automerge.free(document); }
   }
 
   private enqueue<T>(action: () => Promise<T>): Promise<T> {

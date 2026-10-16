@@ -1,14 +1,25 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import { reactive } from "vue"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, verifyEnvelope,
   type LocalProfile } from "../domain/identity"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
-import type { ServiceLoginRequest } from "./serviceLogin"
+import { snapshotServiceLoginRequest, type ServiceLoginRequest } from "./serviceLogin"
 import { assertServiceLoginSession, createServiceLoginApproval } from "./serviceLoginApproval"
 
 let owner: LocalProfile
 const request = (): ServiceLoginRequest => ({ origin: "https://sink.example", challenge: "a".repeat(64),
   expires_at: Math.floor(Date.now() / 1000) + 120 })
 const workspaces = [{ workspace: "workspace-1", name: "Hiring", grant: null, policy: { scope: { value: 1 } } }]
+
+it("Given a reactive sign-in request, when taking the approval snapshot, then produce cloneable request data", () => {
+  const reactiveRequest = reactive(request())
+  const snapshot = snapshotServiceLoginRequest(reactiveRequest)
+  expect(structuredClone(snapshot)).toEqual(requestWithValues(reactiveRequest))
+})
+
+function requestWithValues(value: ServiceLoginRequest): ServiceLoginRequest {
+  return { origin: value.origin, challenge: value.challenge, expires_at: value.expires_at }
+}
 
 beforeEach(async () => { resetIdentityStorageForTest(); owner = await bootstrapIdentity("Owner") })
 afterEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest() })

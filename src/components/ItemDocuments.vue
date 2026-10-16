@@ -2,14 +2,8 @@
 import { attachmentTextPreview } from "../attachmentTextPreview"
 import { MarkdownContent } from "../ui/markdownContent"
 import { computed, onBeforeUnmount, ref } from "vue"
-import {
-  attachmentMediaType,
-  attachmentName,
-  attachmentSize,
-  readAttachment,
-  storeAttachment,
-} from "../attachments"
-import type { FileReference } from "../domain/model"
+import type { FileReference } from "../domain/entitySchemas"
+import { attachmentMediaType, attachmentName, attachmentSize } from "../domain/filePresentation"
 import type { Document, DocumentInput } from "../types"
 import { isInlineNarrativeNote } from "../domain/narrative"
 import ModalLayer from "./ModalLayer.vue"
@@ -23,6 +17,7 @@ const props = defineProps<{
   attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
   readFile?: (file: FileReference) => Promise<Uint8Array | undefined>
+  storeFile?: (file: File) => Promise<FileReference>
   downloadUrl?: (document: Document) => string
   save: (document: DocumentDraft) => Promise<void>
   update: (documentId: string, content: string) => Promise<void>
@@ -58,7 +53,8 @@ async function attach() {
       error.value = "Choose a file"
       return
     }
-    const reference = await storeAttachment(file.value)
+    if (!props.storeFile) throw new Error("File attachments are unavailable.")
+    const reference = await props.storeFile(file.value)
     await save({
       kind: "attachment",
       title: trimmedTitle,
@@ -102,7 +98,7 @@ async function openPreview(document: Document) {
   }
   previewStatus.value = "Loading preview…"
   try {
-    const bytes = await (props.readFile ?? readAttachment)(document.file)
+    const bytes = await readDocumentFile(document.file)
     if (request !== previewRequest) return
     if (!bytes) {
       previewError.value = "File is not available on this device."
@@ -160,7 +156,7 @@ async function download(document: Document) {
   if (!document.file) return
   error.value = ""
   try {
-    const bytes = await (props.readFile ?? readAttachment)(document.file)
+    const bytes = await readDocumentFile(document.file)
     if (!bytes) {
       error.value = "File is not available on this device."
       return
@@ -182,6 +178,10 @@ function fileDescription(document: Document): string {
   if (!document.file) return document.format
   const size = attachmentSize(document.file)
   return `${attachmentName(document.file)}${size === undefined ? "" : ` · ${formatBytes(size)}`}`
+}
+
+async function readDocumentFile(reference: FileReference): Promise<Uint8Array | undefined> {
+  return props.readFile?.(reference)
 }
 
 function formatBytes(bytes: number): string {
@@ -255,7 +255,7 @@ onBeforeUnmount(closePreview)
       <div>
         <strong>{{ document.title }}</strong>
         <span>{{ fileDescription(document) }}</span>
-        <span v-if="document.file?.type === 'blob' && !readFile" class="attachment-coverage" role="status" aria-label="Encrypted attachment coverage">
+        <span v-if="document.file?.type === 'blob' && attachmentCoverage" class="attachment-coverage" role="status" aria-label="Encrypted attachment coverage">
           {{ coverageFor(document).label }}
           <small v-if="coverageFor(document).error">{{ coverageFor(document).error }}</small>
         </span>

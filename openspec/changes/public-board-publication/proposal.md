@@ -1,5 +1,7 @@
 ## Why
 
+Planning status (2026-10-16): snapshot/manual-Update and separate-reader presentation decisions below are superseded by [unified-board-visitor-access](../unified-board-visitor-access/proposal.md). This document records the previous implementation contract, not the new target behavior.
+
 People need a board link they can post in a blog and open without pairing, an invitation, or an online author device. Public readers should not become workspace participants merely to see published content.
 
 ## What Changes

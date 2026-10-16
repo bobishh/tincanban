@@ -31,7 +31,7 @@ test('Given a health request, then report exact deployed SHA without reading ass
 });
 
 test('Given a coordinated release, when a tab checks release state, then report the artifact cohort without claiming device acknowledgement', async () => {
-  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: {}, contract: {} };
+  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: { frontend: {} }, contract: {} };
   const response = await worker.fetch(new Request('https://match.meta-uber-engineer.dev/release-cohort.json'), {
     RELEASE_COHORT_JSON: JSON.stringify(cohort), RELEASE_ARTIFACT_SHA256: 'a'.repeat(64),
     CF_VERSION_METADATA: { id: 'exact-version' },

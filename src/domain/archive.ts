@@ -1,48 +1,12 @@
 import { getAncestryPath } from "./ancestry"
 import { hasEntityKind, isItem, type Board, type Item, type WorkspaceDocumentV2, type WorkspaceEntity } from "./model"
-
-export type ItemLifecycle = { state: "active" | "archived"; changedAt: string }
-export type ItemWorkflow = { columnId: string; changedAt: string }
-
-function transitionRecord<T>(value: T | string | undefined): T | undefined {
-  if (typeof value !== "string") return value
-  try { return JSON.parse(value) as T } catch { return undefined }
-}
-
-export function itemLifecycle(item: Pick<Item, "archivedAt" | "lifecycle">): ItemLifecycle | undefined {
-  return transitionRecord<ItemLifecycle>(item.lifecycle)
-}
-
-export function itemWorkflow(item: Pick<Item, "workflow">): ItemWorkflow | undefined {
-  return transitionRecord<ItemWorkflow>(item.workflow)
-}
-
-export function isItemArchived(item: Pick<Item, "archivedAt" | "lifecycle">): boolean {
-  return itemLifecycle(item)?.state === "archived" || (!itemLifecycle(item) && Boolean(item.archivedAt))
-}
-
-export function setItemLifecycle(item: Item, archived: boolean, changedAt: string): void {
-  item.lifecycle = JSON.stringify({ state: archived ? "archived" : "active", changedAt } satisfies ItemLifecycle)
-  delete item.archivedAt
-}
-
-export function setItemWorkflow(item: Item, columnId: string, changedAt: string): void {
-  item.workflow = JSON.stringify({ columnId, changedAt } satisfies ItemWorkflow)
-}
+import { isArchiveColumn, type ArchiveColumnLike } from "./archiveColumn"
+import { isItemArchived } from "./itemLifecycle"
+export { isArchiveColumn, type ArchiveColumnLike } from "./archiveColumn"
+export { isItemArchived, itemLifecycle, itemWorkflow, setItemLifecycle, setItemWorkflow, type ItemWorkflow } from "./itemLifecycle"
 
 export function workflowColumnId(entities: Record<string, WorkspaceEntity>, entityId: string): string | undefined {
   return getAncestryPath(entities, entityId).path.find(id => hasEntityKind(entities[id], "column"))
-}
-
-export type ArchiveColumnLike = {
-  archive?: true
-  id?: string
-  collapsible?: boolean
-}
-
-export function isArchiveColumn(column: ArchiveColumnLike, board?: { archiveColumnId?: string | null }): boolean {
-  if (board && board.archiveColumnId !== undefined) return board.archiveColumnId === column.id
-  return column.archive === true
 }
 
 export function effectiveColumnStatus<T extends string>(column: ArchiveColumnLike, board: Pick<Board, "archiveColumnId"> | undefined, status: T | undefined): T | undefined {

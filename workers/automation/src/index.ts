@@ -11,6 +11,7 @@ import { handleAutomationInstanceApi } from "./automationInstanceApi";
 import { corsHeaders, json, readJson } from "./http";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { workerReleaseIdentity, type WorkerReleaseBindings } from "./buildIdentity";
+import { configureAutomationTelemetry, normalizedWorkerRoute, withAutomationSpan } from "./telemetry";
 
 export { AutomationCoordinator } from "./coordinator";
 
@@ -45,6 +46,10 @@ export interface WorkerEnv {
   EVENT_STORAGE_SECRET?: string;
   /** Commit SHA embedded into this immutable Worker version; unset in local development. */
   RELEASE_SHA?: string;
+  /** OTLP Collector base URL. Set as a Worker variable, never a public browser value. */
+  OTEL_EXPORTER_OTLP_ENDPOINT?: string;
+  /** TinSink server-source key; configure as a Worker secret. */
+  TELEMETRY_TOKEN?: string;
   RELEASE_ARTIFACT_SHA256?: WorkerReleaseBindings["RELEASE_ARTIFACT_SHA256"];
   RELEASE_COHORT_ID?: WorkerReleaseBindings["RELEASE_COHORT_ID"];
   RELEASE_SDK_SHA?: WorkerReleaseBindings["RELEASE_SDK_SHA"];
@@ -56,23 +61,33 @@ type JsonObject = Record<string, unknown>;
 const maxActivationJsonBytes = 24 * 1024 * 1024;
 const allowedIntegrationId = /^[A-Za-z0-9_-]{1,128}$/;
 const defaultHandler = {
-  async fetch(request: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(request: Request, env: WorkerEnv, executionCtx?: ExecutionContext): Promise<Response> {
+    const telemetry = configureAutomationTelemetry(env);
+    let response: Response = json({ error: "Automation request failed" }, 500);
     try {
-      return await handleFetch(request, env);
+      response = await withAutomationSpan(telemetry, "automation.http.request", {
+        "http.request.method": request.method,
+        "http.route": normalizedWorkerRoute(new URL(request.url).pathname),
+        "service.name": "tincanban-automation",
+      }, async span => {
+        const result = await handleFetch(request, env);
+        span?.setAttribute("http.response.status_code", result.status);
+        return result;
+      }, request.headers.get("traceparent"));
     } catch (error) {
       let cors = new Headers();
       try { cors = corsHeaders(request, env); } catch { /* Disallowed origins receive no CORS access. */ }
-      if (error instanceof TypeError || error instanceof SyntaxError) return json({ error: error.message || "Invalid request" }, 400, cors);
-      if (error instanceof Error && /Integration is not configured/.test(error.message)) return json({ error: error.message }, 404, cors);
-      if (error instanceof Error && /Provisioning authorization/.test(error.message)) return json({ error: "Unauthorized" }, 401, cors);
-      if (error instanceof Error && /Integration authorization has expired/.test(error.message)) return json({ error: error.message }, 403, cors);
-      if (error instanceof Error && /expired|already used|already used for different content/.test(error.message)) return json({ error: error.message }, 409, cors);
-      if (error instanceof Error && /Integration configuration|Integration scope|Integration IDs/.test(error.message)) {
-        return json({ error: error.message }, 500, cors);
-      }
-      if (error instanceof Error && /Human check/.test(error.message)) return json({ error: error.message }, 409, cors);
-      return json({ error: "Automation request failed" }, 500, cors);
+      if (error instanceof TypeError || error instanceof SyntaxError) response = json({ error: error.message || "Invalid request" }, 400, cors);
+      else if (error instanceof Error && /Integration is not configured/.test(error.message)) response = json({ error: error.message }, 404, cors);
+      else if (error instanceof Error && /Provisioning authorization/.test(error.message)) response = json({ error: "Unauthorized" }, 401, cors);
+      else if (error instanceof Error && /Integration authorization has expired/.test(error.message)) response = json({ error: error.message }, 403, cors);
+      else if (error instanceof Error && /expired|already used|already used for different content/.test(error.message)) response = json({ error: error.message }, 409, cors);
+      else if (error instanceof Error && /Integration configuration|Integration scope|Integration IDs/.test(error.message)) response = json({ error: error.message }, 500, cors);
+      else if (error instanceof Error && /Human check/.test(error.message)) response = json({ error: error.message }, 409, cors);
+      else response = json({ error: "Automation request failed" }, 500, cors);
     }
+    executionCtx?.waitUntil(telemetry.flush());
+    return response;
   },
 
   async email(message: ForwardableEmailMessage, env: WorkerEnv): Promise<void> {

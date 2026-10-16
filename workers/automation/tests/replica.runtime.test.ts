@@ -128,6 +128,25 @@ function capturedRuntimeTransport(): ReplicaTransport {
   };
 }
 
+it("Given saved automation work and unavailable public delivery, when the Worker restarts, then retry publication without repeating the card action", async () => {
+  const data = await typedFixture();
+  let saved = "";
+  const publicDelivery = vi.fn(async () => { throw new Error("Public delivery temporarily unavailable"); });
+  const transport: ReplicaTransport = { inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+    download: async () => { throw new Error("No download expected"); },
+    upload: async (access, object, requestId) => signedReceipt(access, object, requestId), publicDelivery };
+  const replica = await AutomationReplica.activate({ ...data.packet, transport, persist: async next => { saved = next; } }, data.automation);
+  await replica.createLead("public-retry", { company: "Acme", role: "Engineer" }, {});
+  await replica.sync();
+  expect(JSON.parse(saved).publicDelivery).toMatchObject({ pending: true, error: "Public delivery temporarily unavailable" });
+  const delivered = vi.fn(async () => ({ revision: 2, hash: "A".repeat(43) }));
+  const restored = await AutomationReplica.restore(saved, data.automation, async next => { saved = next; }, { ...transport, publicDelivery: delivered });
+  await restored.sync();
+  expect(delivered).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(saved).publicDelivery).toMatchObject({ pending: false });
+  expect((await restored.createLead("public-retry", { company: "Acme", role: "Engineer" }, {})).duplicate).toBe(true);
+})
+
 it("Given a live Worker with a pending signed action, When its Owner refreshes confirmed Rusty access over HTTP, Then preserve exact queue and grant and return nonce-bound storage evidence", async () => {
   const integrationId = `refresh-${crypto.randomUUID().replace(/-/g, "")}`;
   const data = await typedFixture(undefined, true, 2);
@@ -2374,6 +2393,7 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
       const method = init?.method ?? "GET";
       const headers = new Headers(init?.headers);
       requests.push({ method, url, headers });
+      if (new URL(url).pathname.startsWith("/v1/public/boards/")) return new Response(null, { status: 404 });
       if (url.includes("?after=")) {
         const after = Number(new URL(url).searchParams.get("after"));
         return Response.json(after < remoteSequence
@@ -2394,16 +2414,19 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
     try {
       const replica = await AutomationReplica.activate(packet, automation);
       await replica.sync();
-      expect(requests.map(request => request.method)).toEqual(["GET", "GET"]);
+      expect(requests.map(request => request.method)).toEqual(["GET", "GET", "GET"]);
+      expect(new URL(requests.at(-1)!.url).pathname).toBe(`/v1/public/boards/${packet.bindings.boardId}`);
+      for (const request of requests) expect(request.headers.get("X-Rusty-Client")).toBe("automation");
       await replica.createLead("header-contract-lead", { company: "Acme", role: "Engineer" }, {});
       await replica.sync();
-      expect(requests.map(request => request.method)).toEqual(["GET", "GET", "GET", "PUT"]);
-      expect(new URL(requests.at(-1)!.url).searchParams.get("writerVersion")).toBe("2");
+      const storageRequests = requests.filter(request => !new URL(request.url).pathname.startsWith("/v1/public/boards/"));
+      expect(storageRequests.map(request => request.method)).toEqual(["GET", "GET", "GET", "PUT"]);
+      expect(new URL(storageRequests.at(-1)!.url).searchParams.get("writerVersion")).toBe("2");
       for (const request of requests) {
         expect(request.headers.get("X-Rusty-Client")).toBe("automation");
         expect(request.headers.get("X-Rusty-Build")).toBeNull();
       }
-      expect(requests.at(-1)?.headers.get("X-Rusty-Request-Id")).toMatch(/^[0-9a-f-]{36}$/i);
+      expect(storageRequests.at(-1)?.headers.get("X-Rusty-Request-Id")).toMatch(/^[0-9a-f-]{36}$/i);
       expect(JSON.parse(replica.serialize()).pending).toBeUndefined();
     } finally { network.mockRestore(); }
   });

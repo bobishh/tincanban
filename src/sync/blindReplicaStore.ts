@@ -3,6 +3,7 @@ import type { useTincanban } from "../state"
 import { exportAuthorizationBundle } from "./changeAuthorization"
 import { exportChat, receiveChat } from "../chat/service"
 import { meshTrace } from "./meshTrace"
+import { traceDiagnosticOperation } from "./telemetry"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { checkpointHooks } from "./blindCheckpointAdmission"
 import { createBlindSnapshotRevision } from "./blindSnapshotRevision"
@@ -58,10 +59,10 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
         }).catch(cause => { attachments = undefined; throw cause }))
         guardIdentity()
         await runtime.run()
-      })().catch(() => {
+      })().catch(cause => {
         try { guardIdentity() } catch { return }
         meshTrace("mesh.rusty.attachments.failed", { workspaceId: config.workspaceId, entityType: "scope", entityId: config.scopeId,
-          errorCode: "attachment_replication_failed" }, "warn")
+          errorCode: "attachment_replication_failed", error: cause }, "warn")
       }).finally(() => { attachmentWork = undefined })
     },
     readAttachments: async workspaceId => {
@@ -120,6 +121,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
     },
     ...checkpointHooks(tincanban, config, guardIdentity),
     diagnostic: (event, detail) => meshTrace(event, detail, event.endsWith("failed") ? "warn" : "info"),
+    operation: (name, operation) => traceDiagnosticOperation(name, { "workspace.id": config.workspaceId, "sync.scope.id": config.scopeId }, () => operation()),
     persist,
   })
   return replica

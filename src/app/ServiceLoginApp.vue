@@ -4,7 +4,7 @@ import { bootstrapIdentity, canonicalizeJson, type LocalProfile } from "../domai
 import { readWorkspaceCatalogRecords } from "../storageCatalog"
 import { peerStore } from "../sync/peerStore"
 import { assertServiceLoginSession, createServiceLoginApproval } from "./serviceLoginApproval"
-import { parseServiceLoginRequest, type ServiceLoginRequest } from "./serviceLogin"
+import { parseServiceLoginRequest, snapshotServiceLoginRequest, type ServiceLoginRequest } from "./serviceLogin"
 
 const request = ref<ServiceLoginRequest>()
 const identityName = ref("")
@@ -28,12 +28,12 @@ function cancel() { window.close() }
 
 async function approve() {
   if (!request.value || pending.value) return
-  const requestSnapshot = structuredClone(request.value)
   const opener = window.opener as Window | null
   if (!opener) { error.value = "TinSink sign-in window is unavailable"; return }
   pending.value = true
   error.value = ""
   try {
+    const requestSnapshot = snapshotServiceLoginRequest(request.value)
     const activeProfile = await bootstrapIdentity()
     const profile = { ...activeProfile, identity: structuredClone(activeProfile.identity), device: structuredClone(activeProfile.device),
       certificate: structuredClone(activeProfile.certificate), privateKeys: { ...activeProfile.privateKeys } }

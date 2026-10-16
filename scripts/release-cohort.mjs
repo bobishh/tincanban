@@ -14,7 +14,7 @@ function assertReaders(readers) {
     Object.values(readers).some(version => !Number.isSafeInteger(version) || version < 1)) throw new Error('Invalid schema readers');
 }
 export function sealArtifact(identity, files) {
-  if (!['frontend', 'automation', 'rusty'].includes(identity.component) || !fullSha(identity.sourceSha) || !fullSha(identity.sdkSha) ||
+  if (!['frontend', 'automation'].includes(identity.component) || !fullSha(identity.sourceSha) || !fullSha(identity.sdkSha) ||
     !/^[A-Za-z0-9_-]{1,100}$/.test(identity.candidateId ?? '') || !Number.isSafeInteger(identity.writerVersion) || identity.writerVersion < 1) throw new Error('Invalid artifact identity');
   assertReaders(identity.readers);
   const entries = Object.entries(files).sort(([a], [b]) => a.localeCompare(b));
@@ -33,49 +33,6 @@ export function verifyArtifact(artifact, files) {
 export function assertCompatibleRollback(reader, retainedSchemas) {
   assertReaders(reader.readers); assertReaders(retainedSchemas);
   for (const [schema, minimum] of Object.entries(retainedSchemas)) if ((Object.hasOwn(reader.readers, schema) ? reader.readers[schema] : 0) < minimum) throw new Error(`Incompatible rollback reader: ${schema}`);
-}
-/** One capability policy for declared rollback support and live component observations. */
-export function assertCohortCapabilities(capabilities, required) {
-  for (const [name, requirement] of Object.entries(required)) {
-    const minimum = typeof requirement === 'number' ? requirement : requirement?.version;
-    const actual = capabilities?.[name];
-    const version = typeof actual === 'number' ? actual : actual?.version;
-    if (!Number.isSafeInteger(minimum) || minimum < 1 || !Number.isSafeInteger(version) || version < minimum ||
-      typeof requirement === 'object' && Object.entries(requirement).some(([field, value]) => {
-        if (field === 'version') return false;
-        if (field === 'actions') return !Array.isArray(value) || !Array.isArray(actual?.actions) || value.some(action => !actual.actions.includes(action));
-        return actual?.[field] !== value;
-      })) throw new Error(`Missing cohort capability ${name}`);
-  }
-}
-export function assembleCohort(components, contract) {
-  if (contract.version !== 1 || !Number.isSafeInteger(contract.minimumWriterVersion) || contract.minimumWriterVersion < 1 ||
-    !Array.isArray(contract.migrations) || !Array.isArray(contract.rollbackReaders) || !contract.rollbackReaders.length) throw new Error('Invalid release contract');
-  if (!contract.readers || typeof contract.readers !== 'object') throw new Error('Missing component reader floors');
-  for (const component of ['frontend', 'automation', 'rusty']) {
-    const artifact = components[component];
-    if (artifact?.component !== component || !digest(artifact.artifactSha256)) throw new Error(`Missing checked ${component} artifact`);
-    const { artifactSha256, ...sealed } = artifact;
-    if (hash(canonical(sealed)) !== artifactSha256) throw new Error(`Invalid ${component} artifact seal`);
-    assertCompatibleRollback(artifact, contract.readers[component]);
-    if (artifact.writerVersion < contract.minimumWriterVersion) throw new Error(`Outdated ${component} writer`);
-  }
-  if (components.frontend.sourceSha !== components.automation.sourceSha || components.frontend.candidateId !== components.automation.candidateId || components.frontend.sdkSha !== components.automation.sdkSha ||
-    components.frontend.sdkSha !== components.rusty.sdkSha) throw new Error('Components do not share the checked application/SDK cohort');
-  if (!/^ghcr\.io\/bobishh\/rusty@sha256:[a-f0-9]{64}$/.test(components.rusty.image ?? '') || !digest(components.rusty.binarySha256)) throw new Error('Rusty requires immutable image and executable identity');
-  for (const reader of contract.rollbackReaders) {
-    if (!digest(reader.artifactSha256) || !components[reader.component]) throw new Error('Rollback reader has no artifact identity');
-    assertCompatibleRollback(reader, contract.readers[reader.component]);
-  }
-  for (const component of ['frontend', 'automation', 'rusty']) if (!contract.rollbackReaders.some(reader => reader.component === component)) throw new Error(`Missing ${component} rollback reader`);
-  const body = { kind: 'tincanban-release-cohort', version: 1, components, contract };
-  return { ...body, cohortId: hash(canonical(body)) };
-}
-export function verifyComponentObservation(artifact, observed, cohortId) {
-  const expectedArtifact = artifact.component === 'rusty' ? artifact.binarySha256 : artifact.artifactSha256;
-  if (!['ready', 'ok'].includes(observed.status) || observed.buildSha !== artifact.sourceSha || observed.artifactSha256 !== expectedArtifact ||
-    (cohortId && artifact.component !== 'rusty' && observed.cohortId !== cohortId)) throw new Error(`Deployed ${artifact.component} artifact does not match checked release`);
-  return true;
 }
 export function readArtifactFiles(directory) {
   const files = {};
@@ -97,12 +54,6 @@ async function main() {
     const identity = JSON.parse(readFileSync(identityPath, 'utf8'));
     writeFileSync(join(directory, 'artifact.json'), JSON.stringify(sealArtifact(identity, readArtifactFiles(directory))));
   } else if (command === 'check') verifyArtifact(JSON.parse(readFileSync(join(directory, 'artifact.json'), 'utf8')), readArtifactFiles(directory));
-  else if (command === 'assemble') {
-    const input = JSON.parse(readFileSync(identityPath, 'utf8'));
-    const components = Object.fromEntries(['frontend', 'automation', 'rusty'].map(component => [component,
-      JSON.parse(readFileSync(join(directory, component, 'artifact.json'), 'utf8'))]));
-    for (const component of ['frontend', 'automation', 'rusty']) verifyArtifact(components[component], readArtifactFiles(join(directory, component)));
-    writeFileSync(join(directory, 'cohort.json'), JSON.stringify(assembleCohort(components, input)));
-  } else throw new Error('Use seal, check or assemble');
+  else throw new Error('Use seal or check');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();

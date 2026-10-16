@@ -3,6 +3,7 @@ import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from
 import { parseIntegrations, type WorkerEnv, type AutomationIntegration } from "./index";
 import { privateEmailRoutes } from "./emailRoutes";
 import { gmailForwardingConfirmationUrl } from "./email";
+import { configureAutomationTelemetry, recordAutomationException } from "./telemetry";
 import type { JobPageFetcher } from "./extraction";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
   type AutomationManagementInspector, type ReplicaTransport } from "./replica";
@@ -93,6 +94,7 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
   private loadedReplica?: { serialized: string; storageSecret: string; personId: string; deviceId: string; replica: AutomationReplica };
   constructor(ctx: DurableObjectState, env: WorkerEnv) {
     super(ctx, env);
+    configureAutomationTelemetry(env);
     ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS automation_registration (
         singleton INTEGER PRIMARY KEY CHECK (singleton = 1), owner_id TEXT NOT NULL, workspace_id TEXT NOT NULL, integration_id TEXT NOT NULL, routing TEXT
@@ -312,12 +314,14 @@ export class AutomationCoordinator extends DurableObject<WorkerEnv> {
       if (origin) replica.observationForRuntime(origin, crypto.randomUUID());
     }
     catch (error) {
+      recordAutomationException(error, { event: "automation.activation.proof_validation_failed", operation: "activation-proof-validation", integrationId });
       return { ok: false, status: 422, error: error instanceof Error ? error.message : "Activation proof validation failed" };
     }
     await persist(replica.serialize());
     await this.scheduleEarlierAlarm(Date.now() + controlPollMs);
     try { await replica.sync(); }
     catch (error) {
+      recordAutomationException(error, { event: "automation.activation.replication_failed", operation: "activation-replication", workspaceId: packet.workspaceId });
       return { ok: false, status: 503, error: "Activation is stored but the encrypted snapshot did not sync; retry activation",
         detail: error instanceof Error ? error.message : "Rusty synchronization failed" };
     }

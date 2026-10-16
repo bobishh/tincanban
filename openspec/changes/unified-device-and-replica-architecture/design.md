@@ -1,3 +1,8 @@
+> Historical release model: the coordinated rollout and cross-service cohort
+> described below are superseded. Current deployments and recovery are owned by
+> each service's pipeline; see [current architecture](../../../docs/architecture.md)
+> and [independent platform boundaries](../independent-platform-boundaries/design.md).
+
 ## Audit Baseline
 
 These nine findings describe the inspected baseline before this change, not the

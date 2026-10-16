@@ -8,7 +8,7 @@ const i128Max = (1n << 127n) - 1n
 const i128Min = -(1n << 127n)
 const rank = z.string().max(128).refine(value => isValidRank(value) && validI128Rank(value))
 const optionSchema = z.strictObject({ id, title: z.string().max(4096), rank })
-const columnSchema = z.strictObject({ id, title: z.string().max(4096), rank, color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), collapsible: z.boolean().optional() })
+const columnSchema = z.strictObject({ id, title: z.string().max(4096), rank, color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), archive: z.literal(true).optional(), collapsible: z.boolean().optional() })
 const fieldSchema = z.strictObject({ id, title: z.string().max(4096), valueType: z.enum(["text", "url", "date", "datetime", "boolean", "number", "select"]), required: z.boolean(), rank, options: z.array(optionSchema).max(200), min: z.number().finite().nullable().optional(), max: z.number().finite().nullable().optional() })
 const scalar = z.union([z.string().max(200_000), z.number().finite(), z.boolean(), z.null()])
 const cardSchema = z.strictObject({ id, parentId: id.nullable(), columnId: id, title: z.string().max(4096), body: z.string().max(200_000), values: z.record(id, scalar), rank, createdAt: z.string().max(128).optional(), updatedAt: z.string().max(128).optional(), lastActivityAt: z.string().max(128).optional() })
@@ -17,6 +17,7 @@ const discussionSchema = z.strictObject({ id, threadId: id, replyTo: id.nullable
 const fileSchema = z.strictObject({ id, parentId: id, title: z.string().max(4096), fileName: z.string().max(512), mediaType: z.string().max(256), byteLength: z.number().int().nonnegative().max(16 * 1024 * 1024), sha256: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
 const presentationSchema = z.strictObject({
   entityName: z.string().min(1).max(100).optional(),
+  archiveColumnId: id.nullable().optional(),
   preset: z.strictObject({ key: z.enum(["job-search", "blank"]), version: z.literal(1), bindings: z.record(z.string().max(128), id) }).nullable().optional(),
   cardStageButtons: z.array(z.strictObject({ columnId: id, label: z.string().min(1).max(4096).optional() })).max(100).optional(),
   cardAgingPolicy: cardAgingPolicySchema.optional(),
@@ -30,15 +31,37 @@ export const publicBoardProjectionSchema = z.strictObject({
 function validateProjection(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
   const cards = new Map(p.cards.map(card => [card.id, card]))
   const fields = new Set(p.fields.map(field => field.id))
-  const ids = [p.board.id, ...p.columns.map(x => x.id), ...p.fields.map(x => x.id), ...p.fields.flatMap(x => x.options.map(o => o.id)), ...p.cards.map(x => x.id), ...p.discussions.map(x => x.id), ...p.files.map(x => x.id)]
-  if (new Set(ids).size !== ids.length) issue(ctx, "Public identifiers must be unique")
-  const visibleIds = new Set([...p.columns.map(column => column.id), ...p.fields.map(field => field.id), ...p.fields.flatMap(field => field.options.map(option => option.id))])
-  if (Object.values(p.board.presentation?.preset?.bindings ?? {}).some(id => !visibleIds.has(id))) issue(ctx, "Presentation binding is outside publication")
-  if (p.board.presentation?.cardStageButtons?.some(button => !p.columns.some(column => column.id === button.columnId))) issue(ctx, "Stage button is outside publication")
+  validateUniqueIdentifiers(p, ctx)
+  validatePresentationBindings(p, ctx)
+  validateArchiveColumn(p, ctx)
   validateCards(p, cards, ctx)
   validateDiscussions(p, cards, fields, ctx)
   validateFiles(p, cards, ctx)
-  for (const field of p.fields) if (field.valueType !== "select" && field.options.length) issue(ctx, "Only select fields may have options")
+  validateFieldOptions(p, ctx)
+}
+
+function validateUniqueIdentifiers(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
+  const ids = [p.board.id, ...p.columns.map(x => x.id), ...p.fields.map(x => x.id), ...p.fields.flatMap(x => x.options.map(o => o.id)), ...p.cards.map(x => x.id), ...p.discussions.map(x => x.id), ...p.files.map(x => x.id)]
+  if (new Set(ids).size !== ids.length) issue(ctx, "Public identifiers must be unique")
+}
+
+function validatePresentationBindings(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
+  const visibleIds = new Set([...p.columns.map(column => column.id), ...p.fields.map(field => field.id), ...p.fields.flatMap(field => field.options.map(option => option.id))])
+  if (Object.values(p.board.presentation?.preset?.bindings ?? {}).some(id => !visibleIds.has(id))) issue(ctx, "Presentation binding is outside publication")
+  if (p.board.presentation?.cardStageButtons?.some(button => !p.columns.some(column => column.id === button.columnId))) issue(ctx, "Stage button is outside publication")
+}
+
+function validateArchiveColumn(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
+  const archiveColumns = p.columns.filter(column => column.archive === true)
+  const archiveColumnId = p.board.presentation?.archiveColumnId
+  if (archiveColumnId !== undefined && (archiveColumnId === null ? archiveColumns.length !== 0 : archiveColumns.length !== 1 || archiveColumns[0]?.id !== archiveColumnId)) issue(ctx, "Archive column binding is inconsistent")
+  if (archiveColumnId === undefined && archiveColumns.length > 1) issue(ctx, "Publication has multiple archive columns")
+}
+
+function validateFieldOptions(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
+  for (const field of p.fields) {
+    if (field.valueType !== "select" && field.options.length) issue(ctx, "Only select fields may have options")
+  }
 }
 function issue(ctx: z.RefinementCtx, message: string): void { ctx.addIssue({ code: "custom", message }) }
 function validI128Rank(value: string): boolean {
@@ -55,6 +78,8 @@ function validateCards(p: PublicBoardProjection, cards: Map<string, PublicBoardP
     if (Object.entries(card.values).some(([fieldId, value]) => !validValue(fieldMap.get(fieldId), value))) issue(ctx, "Card value does not match its published field")
     if (hasCardCycle(card.id, cards)) issue(ctx, "Card hierarchy contains a cycle")
   }
+  const archiveColumnId = p.board.presentation?.archiveColumnId
+  if (archiveColumnId && p.cards.some(card => card.columnId === archiveColumnId && card.parentId !== null)) issue(ctx, "Archived cards must be placed at the archive root")
 }
 function validValue(field: PublicBoardProjection["fields"][number] | undefined, value: string | number | boolean | null): boolean {
   if (!field) return false
@@ -103,13 +128,14 @@ function validateFiles(p: PublicBoardProjection, cards: Map<string, PublicBoardP
 }
 export type PublicBoardPresentation = {
   entityName?: string
+  archiveColumnId?: string | null
   preset?: { key: "job-search" | "blank"; version: 1; bindings: Record<string, string> } | null
   cardStageButtons?: Array<{ columnId: string; label?: string }>
   cardAgingPolicy?: z.infer<typeof cardAgingPolicySchema>
 }
 export type PublicBoardProjection = {
   kind: "tincanban-public-board"; version: 1; board: { id: string; title: string; presentation?: PublicBoardPresentation }
-  columns: Array<{ id: string; title: string; rank: string; color?: string; collapsible?: boolean }>
+  columns: Array<{ id: string; title: string; rank: string; color?: string; archive?: true; collapsible?: boolean }>
   fields: Array<{ id: string; title: string; valueType: "text" | "url" | "date" | "datetime" | "boolean" | "number" | "select"; required: boolean; rank: string; min?: number | null; max?: number | null; options: Array<{ id: string; title: string; rank: string }> }>
   cards: Array<{ id: string; parentId: string | null; columnId: string; title: string; body: string; values: Record<string, string | number | boolean | null>; rank: string; createdAt?: string; updatedAt?: string; lastActivityAt?: string }>
   discussions: Array<{ id: string; threadId: string; replyTo: string | null; targets: Array<{ type: "board" | "card" | "field"; id: string; cardId?: string }>; author: string; createdAt: string; body: string }>

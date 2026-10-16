@@ -1,8 +1,8 @@
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, onBeforeUnmount, ref, watch, type Ref } from "vue"
 import type { useAppController } from "./useAppController"
 import { createLazySyncDialog } from "./syncDialogStatus"
 
-export function useAppViewState(app: ReturnType<typeof useAppController>) {
+export function useAppViewState(app: ReturnType<typeof useAppController>, routeContent?: Ref<HTMLElement | null>) {
   const { activeWorkspace, ready, startupStage, docVersion, getActiveDoc } = app.workspace
   const { sync } = app.collaboration.device
   const { confirmedRole, workspaceRoleStatus } = app.collaboration.permissions
@@ -10,8 +10,8 @@ export function useAppViewState(app: ReturnType<typeof useAppController>) {
   let cancelled = false
   let revealTimer: ReturnType<typeof setTimeout> | undefined
   onBeforeUnmount(() => { cancelled = true; clearTimeout(revealTimer) })
-  watch(app.ui.state.boardRef, board => {
-    if (!board || boardPainted.value) return
+  watch(() => app.ui.state.boardRef.value ?? routeContent?.value, content => {
+    if (!content || boardPainted.value) return
     const reveal = () => {
       clearTimeout(revealTimer)
       if (!cancelled) boardPainted.value = true
@@ -21,6 +21,14 @@ export function useAppViewState(app: ReturnType<typeof useAppController>) {
     requestAnimationFrame(() => requestAnimationFrame(reveal))
   }, { flush: "post" })
   return {
+    stopSyncForIdentityRestore: () => sync.shutdown(),
+    restoredIdentity: () => window.location.reload(),
+    historyNames: computed(() => {
+      const names = Object.fromEntries(app.collaboration.device.chat.members.value.map(member => [member.personId, member.name]))
+      const identity = app.workspace.getCurrentProfile()?.identity
+      if (identity) names[identity.personId] = identity.displayName
+      return names
+    }),
     startupCoverVisible: computed(() => !boardPainted.value && !app.ui.state.startupError.value),
     SyncDialog: createLazySyncDialog(sync.dismiss),
     reviewCausalChange: (hash: string) => app.workspace.reviewCausalChange(hash),

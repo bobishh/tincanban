@@ -2,7 +2,7 @@ import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
 import { afterEach, expect, it, vi } from "vitest"
 import type { AccessWorkerRequest } from "./workspaceAccess"
 const stages = vi.hoisted(() => [] as string[])
-vi.mock("./startupDiagnostics", () => ({ setStartupDiagnosticDevice: vi.fn(),
+vi.mock("./startupDiagnostics", () => ({
   diagnoseStartupStep: async (stage: string, step: () => unknown) => {
     stages.push(`${stage}:started`)
     const result = await step()

@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { MarkdownContent } from "../ui/markdownContent"
+import { defineAsyncComponent, type Component } from "vue"
 import SpatialWindow from "./SpatialWindow.vue"
-import ItemHistoryPanel from "./ItemHistoryPanel.vue"
 import QuickNoteForm from "./QuickNoteForm.vue"
-import type { Item, FieldDefinition } from "../domain/model"
-import type { HistoryEntry } from "../domain/history"
+import type { Item, FieldDefinition, Column } from "../domain/entitySchemas"
+import type { HistoryEntry } from "../domain/historyTypes"
 import type { Document, DocumentInput } from "../types"
 import CardStageStrip from "./CardStageStrip.vue"
-import type { Column } from "../domain/model"
 import type { CardStageButton } from "../domain/cardStageButtons"
-import { LazyItemDocuments as ItemDocuments } from "../app/lazyItemDocuments"
+const ItemHistoryPanel = defineAsyncComponent<Component>(() => import("./ItemHistoryPanel.vue"))
 import type { AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
 const props = defineProps<{
@@ -29,6 +28,7 @@ const props = defineProps<{
   saveDocument: (document: Omit<DocumentInput, "leadId">) => Promise<void>
   updateDocument: (documentId: string, content: string) => Promise<void>
   history?: HistoryEntry[]
+  historyNames?: Record<string, string>
   historyLoading?: boolean
   historyError?: string
   historyNotice?: string
@@ -100,16 +100,9 @@ const emit = defineEmits<{
         <div class="detail-primary" data-detail-primary role="region" aria-label="Item content">
           <div v-if="narrative" class="detail-section" :data-discussion-field="narrativeFieldId">
             <span class="detail-label">Description</span>
-            <MarkdownContent class="detail-copy" data-discussion-field="narrative" data-discussion-text :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', item, $event)" />
+            <MarkdownContent class="detail-copy reading-prose" data-discussion-field="narrative" data-discussion-text :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', item, $event)" />
           </div>
-          <slot name="documents"><ItemDocuments
-            :documents="documents"
-            :workspace-id="props.workspaceId"
-            :attachment-coverage="props.attachmentCoverage"
-            :read-only="readOnly"
-            :save="saveDocument"
-            :update="updateDocument"
-          /></slot>
+          <slot name="documents" />
           <slot name="discussion" />
 
         <section class="detail-section detail-subsection">
@@ -140,7 +133,7 @@ const emit = defineEmits<{
           </div>
         </section>
 
-        <ItemHistoryPanel v-if="history !== undefined" :history="history" :read-only="readOnly"
+        <ItemHistoryPanel v-if="history !== undefined" :history="history" :verified-people="historyNames" :read-only="readOnly"
           :history-loading="historyLoading" :history-error="historyError" :history-notice="historyNotice" :history-has-more="historyHasMore"
           :restore-saving="restoreSaving" :restore-error="restoreError" :restore-notice="restoreNotice"
           @restore-version="emit('restoreVersion', $event)" @load-earlier-history="emit('loadEarlierHistory')" />
@@ -154,14 +147,14 @@ const emit = defineEmits<{
           <button class="button button-quiet" type="button" aria-label="Close detail" @click="emit('close')">Close detail</button>
         </div>
       </div>
-      <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
+      <p v-if="archiveError" class="form-error reading-explanation" role="alert">{{ archiveError }}</p>
     </section>
   </SpatialWindow>
 </template>
 
 <style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
-.detail-subsection { padding-top: var(--space-4); border-top: 2px solid var(--line); }
+.detail-subsection { padding-top: var(--space-4); border-top: 1px solid var(--line); }
 .detail-section-head { margin-bottom: var(--space-3); }
 .detail-section-head h3 { margin: 0; font-size: 1rem; }
 .subitem-list { display: grid; gap: var(--space-2); }

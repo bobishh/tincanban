@@ -45,6 +45,8 @@ describe("Native history projection and attribution (Requirement 2.4)", () => {
     expect(lastEntry.action).toBe("createItem")
     expect(lastEntry.personId).toBe(profile.identity.personId)
     expect(lastEntry.deviceId).toBe(profile.device.deviceId)
+    expect(lastEntry.authorLabel).toBe("Unverified author")
+    expect(lastEntry.authorLabel).not.toContain(profile.identity.personId)
     expect(lastEntry.isLegacy).toBe(false)
   })
 
