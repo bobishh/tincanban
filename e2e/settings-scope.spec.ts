@@ -87,7 +87,7 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when choosi
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
   await expect(settings.getByRole("switch", { name: "Public board", exact: true })).toBeVisible()
   await expect(settings.getByRole("region", { name: "Workspace status", exact: true })).toBeVisible()
-  await expect(settings.getByRole("heading", { name: "Automations", exact: true })).toBeVisible()
+  await expect(settings.getByRole("heading", { name: "Automations", exact: true })).toHaveCount(0)
   await expect(settings.getByRole("button", { name: "Open Device sync", exact: true })).toHaveCount(0)
   await expect(settings.getByRole("region", { name: "Identity photo" })).toHaveCount(0)
   await settings.getByRole("tab", { name: "Priority rules", exact: true }).click()

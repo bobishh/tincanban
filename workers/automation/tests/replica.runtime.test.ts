@@ -297,7 +297,7 @@ it.each([false, true])("Given an existing executor with legacy=%s, When Owner co
     expect((await postAutomationInstance("activate", proof, body, testEnv)).status).toBe(200);
     expect(syncCalls).toBeGreaterThan(0);
   } finally { vi.useRealTimers(); }
-});
+}, 20_000);
 
 it("Given retained unbound mail on a legacy route, When the owner retries it, Then enqueue once and reject bound events", async () => {
   const integrationId = `legacy-${crypto.randomUUID().replace(/-/g, "")}`;

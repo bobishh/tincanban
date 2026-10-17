@@ -235,9 +235,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </template>
       <template #workspace>
-        <WorkspaceSettingsPanel :workspace="app.workspace" :workspace-id="activeWorkspace.id"
-          :controller="app.collaboration.device.blindReplication" :owner="canManageAccess" :presence="meshPresenceLabel" :save-state="saveState" :access-role="confirmedRole"
-          :diagnostic="sync.meshDiagnostic.value" :members="meshMembers">
+        <WorkspaceSettingsPanel :presence="meshPresenceLabel" :save-state="saveState" :diagnostic="sync.meshDiagnostic.value">
           <PublicBoardControls v-if="uiReady" :access="publicAccess" />
           <p v-if="backgroundPublicDeliveryError" class="form-error reading-explanation" role="alert">Public board delivery: {{ backgroundPublicDeliveryError }}</p>
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'sending'" class="reading-explanation" role="status">Sending public board changes…</p>
