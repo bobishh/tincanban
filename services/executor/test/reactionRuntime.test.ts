@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { runReaction, type ReactionParticipant, type ReactionRequest } from "../src/reactionRuntime.ts";
+import { createReactionAi, runReaction, type ReactionParticipant, type ReactionRequest } from "../src/reactionRuntime.ts";
 
 const input: ReactionRequest = {
   version: 1,
@@ -12,6 +12,31 @@ const input: ReactionRequest = {
   participant: { integrationId: "integration-1", epoch: 1 },
   capabilities: { operations: ["item-command"], targets: ["integration-1"] },
 };
+
+test("Given the CLEF model path, when issuing Cloudflare inference, then preserve its slash segments and @ prefix", async () => {
+  const previousAccount = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const previousToken = process.env.CLOUDFLARE_API_TOKEN;
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  process.env.CLOUDFLARE_ACCOUNT_ID = "a".repeat(32);
+  process.env.CLOUDFLARE_API_TOKEN = "test-token-that-is-long-enough";
+  globalThis.fetch = async input => {
+    requestedUrl = String(input);
+    return new Response(JSON.stringify({ success: true, result: { response: "{}" } }),
+      { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    await createReactionAi().run("@cf/cloudflare/clef-flash", { prompt: "test" });
+    assert.equal(new URL(requestedUrl).pathname,
+      "/client/v4/accounts/" + "a".repeat(32) + "/ai/run/@cf/cloudflare/clef-flash");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousAccount === undefined) delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    else process.env.CLOUDFLARE_ACCOUNT_ID = previousAccount;
+    if (previousToken === undefined) delete process.env.CLOUDFLARE_API_TOKEN;
+    else process.env.CLOUDFLARE_API_TOKEN = previousToken;
+  }
+});
 
 test("Given a reaction that submits a participant command, when run twice, then it reuses stable command identity and requires the Rusty receipt", async () => {
   const calls: unknown[] = [];

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import ts from "typescript";
-import { classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification,
+import { CLEF_MODEL, classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification,
   type OpportunityClassification, type DecisionAi } from "../../../workers/automation/src/clef.ts";
 import type { EmployeeProfile } from "../../../src/domain/jobPriority.ts";
 
@@ -154,6 +154,7 @@ export async function runReaction(request: ReactionRequest & { source: string },
 export function createReactionAi(): DecisionAi {
   return {
     async run(model, input) {
+      if (model !== CLEF_MODEL) throw new Error("Reaction CLEF model is not supported");
       const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
       const token = process.env.CLOUDFLARE_API_TOKEN;
       if (!accountId || !/^[a-f0-9]{32}$/.test(accountId) || !token || token.length < 20) {
@@ -161,7 +162,7 @@ export function createReactionAi(): DecisionAi {
       }
       const body = JSON.stringify(input);
       if (Buffer.byteLength(body, "utf8") > reactionJsonLimit) throw new TypeError("CLEF request exceeds its JSON bound");
-      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${encodeURIComponent(model)}`, {
+      const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${model}`, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(90_000),
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body,
       });
