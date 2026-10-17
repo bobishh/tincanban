@@ -1648,6 +1648,42 @@ async function pendingManagementFixture() {
   return { data, inspector, owner, pending, before, inventory, download, upload, persist }
 }
 
+it("Given a saved upload fenced by a newer Rusty checkpoint, when sync retries, then it refreshes inventory before preparing a replacement", async () => {
+  const data = await fixture();
+  let checkpointAvailable = false;
+  let checkpointObject: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const observedSequences: number[] = [];
+  let uploadCount = 0;
+  const transport: ReplicaTransport = {
+    inventory: async (_access, after) => checkpointAvailable && after < 7
+      ? { objects: [{ objectId: await blindObjectId(checkpointObject!), sequence: 7 }], cursor: 7, hasMore: false }
+      : { objects: [], cursor: after, hasMore: false },
+    download: async (_access, objectId) => {
+      if (!checkpointObject || objectId !== await blindObjectId(checkpointObject)) throw new Error("Checkpoint object is missing");
+      return checkpointObject;
+    },
+    upload: async (access, object, requestId, observedSequence = 0) => {
+      uploadCount += 1;
+      observedSequences.push(observedSequence);
+      if (uploadCount === 1) throw new Error("Original upload reply was lost");
+      if (uploadCount === 2) throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+        { code: "checkpoint_generation_required", status: 409 });
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  await replica.createLead("checkpoint-retry", { company: "Acme", role: "Engineer" }, {});
+  await expect(replica.sync()).rejects.toThrow("Original upload reply was lost");
+  const checkpoint = { version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial };
+  checkpointObject = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify(checkpoint)));
+  checkpointAvailable = true;
+
+  await expect(replica.sync()).resolves.toBeUndefined();
+  expect(observedSequences).toEqual([0, 0, 7]);
+  expect(JSON.parse(replica.serialize()).pending).toBeUndefined();
+});
+
 it("Given expired management history with newer local content and a saved upload, When Owner drains pending, Then retry exact ciphertext without pulling or capturing", async () => {
   const f = await pendingManagementFixture()
   const guard = vi.fn(async () => f.inspector.assertOwner(f.owner, f.data.owner.device.deviceId))

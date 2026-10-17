@@ -8,6 +8,7 @@ on:
       - 'services/reaction-runtime/**'
       - 'services/executor/src/reaction*.ts'
       - 'services/executor/src/participantWorker.ts'
+      - 'workers/automation/src/**'
       - '.github/workflows/reaction-runtime.yml'
 
 permissions:

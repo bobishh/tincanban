@@ -652,7 +652,17 @@ export class AutomationReplica {
         this.assertPersistence();
         if (this.progress.pending) {
           span?.setAttribute("replication.phase", "confirm-pending-upload");
-          await this.engine.drainPending();
+          try { await this.engine.drainPending(); }
+          catch (error) {
+            if (!isCheckpointGenerationRequired(error)) throw error;
+            // Rusty guarantees this conflict happens before storing the prepared object. Retire only
+            // that rejected request, durably refresh the checkpoint frontier, then prepare a new upload.
+            span?.setAttribute("replication.phase", "refresh-checkpoint-generation");
+            this.pending = undefined;
+            await this.persistState();
+            await this.engine.pull();
+            await this.engine.push();
+          }
           await this.deliverPublicChanges(automationDiagnosticContext(span));
           return;
         }
@@ -1614,4 +1624,8 @@ function sourceMessageIds(source: string): string[] {
     const value = JSON.parse(source) as { messageIds?: unknown };
     return Array.isArray(value.messageIds) ? value.messageIds.filter((id): id is string => typeof id === "string" && id.length <= 500).slice(0, 40) : [];
   } catch { return []; }
+}
+
+function isCheckpointGenerationRequired(error: unknown): boolean {
+  return error !== null && typeof error === "object" && "code" in error && error.code === "checkpoint_generation_required" && "status" in error && error.status === 409;
 }
