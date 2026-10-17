@@ -6,7 +6,7 @@ test("Markdown descriptions and templates render consistently without executing 
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title").fill("Markdown board")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Item details" })

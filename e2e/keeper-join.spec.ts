@@ -110,8 +110,14 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
 
     await stop(server)
     server = undefined
-    joining = lighthouse("create-lead", join(directory, "config.json"), "From lighthouse", "Engineer")
-    await output(joining, /Created lead/, 30_000)
+    const retained = JSON.parse(await readFile(state, "utf8")) as { document: number[] }
+    const configured = Automerge.toJS(Automerge.load(Uint8Array.from(retained.document))) as any
+    const board = Object.values(configured.entities).find((entity: any) => entity.kind === "board") as any
+    const bindings = board.preset.bindings
+    joining = lighthouse("create-item", join(directory, "config.json"), bindings["status.lead"], "From lighthouse — Engineer", JSON.stringify({
+      [bindings["field.company"]]: "From lighthouse", [bindings["field.role"]]: "Engineer",
+    }))
+    await output(joining, /Created item/, 30_000)
     joining = undefined
     await expect.poll(() => stateContains(state, "From lighthouse")).toBe(true)
     const nativeState = JSON.parse(await readFile(state, "utf8")) as { document: number[] }

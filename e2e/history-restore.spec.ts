@@ -6,7 +6,7 @@ async function createBoardAndItem(page: Page) {
   await page.getByRole("button", { name: "New workspace" }).click()
   const workspace = page.getByRole("dialog", { name: "Create workspace" })
   await workspace.getByLabel("Title").fill("History board")
-  await workspace.getByRole("radio", { name: "Blank board" }).check()
+
   await workspace.getByRole("button", { name: "Create" }).click()
   await page.getByRole("button", { name: "Add item to To do" }).click()
   const item = page.getByRole("dialog", { name: "Item details" })

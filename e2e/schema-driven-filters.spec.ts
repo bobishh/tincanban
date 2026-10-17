@@ -32,7 +32,7 @@ test.describe("Schema-driven board filters", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const create = page.getByRole("dialog", { name: "Create workspace" })
     await create.getByLabel("Title").fill("Reading filters")
-    await create.getByRole("radio", { name: "Blank board" }).check()
+
     await create.getByRole("button", { name: "Create" }).click()
 
     const { dialog, editor } = await openSettingsJson(page)

@@ -88,7 +88,7 @@ test("Given a generic item overview, when maximized then narrow, then content re
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title").fill("Readable item")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await page.getByRole("button", { name: "Add item to To do" }).click()
   const form = page.getByRole("dialog", { name: "Item details" })

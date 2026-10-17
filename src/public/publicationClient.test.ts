@@ -87,7 +87,7 @@ async function signed(payload: EnvelopePayload, forged = false): Promise<SignedE
 function json(value: unknown, status = 200): Response { return new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } }) }
 async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input)
-  if (url.endsWith("/.well-known/mesh-lighthouse")) return json({ publicOrigin: origin, service: { serviceId: keeper.device.deviceId, publicKey: keeper.certificate.payload.devicePublicKey }, capabilities: { publicBoardPublication: { version: 1, presentationVersion }, ...(scopeManagement ? { scopeManagement: { version: 1 } } : {}) } })
+  if (url.endsWith("/.well-known/mesh-lighthouse")) return json({ publicOrigin: origin, service: { serviceId: keeper.device.deviceId, publicKey: keeper.certificate.payload.devicePublicKey }, capabilities: { publicBoardPublication: { version: 1, presentationVersion, fieldConfigurationVersion: 1 }, ...(scopeManagement ? { scopeManagement: { version: 1 } } : {}) } })
   if (url.endsWith(`/v2/management/board/${boardId}/status`)) {
     managementStatusCount++
     const request = JSON.parse(String(init?.body)) as { authorization: SignedEnvelope<EnvelopePayload> }

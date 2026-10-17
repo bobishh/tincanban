@@ -49,6 +49,11 @@ function validateUniqueIdentifiers(p: PublicBoardProjection, ctx: z.RefinementCt
 function validatePresentationBindings(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
   const visibleIds = new Set([...p.columns.map(column => column.id), ...p.fields.map(field => field.id), ...p.fields.flatMap(field => field.options.map(option => option.id))])
   if (Object.values(p.board.presentation?.preset?.bindings ?? {}).some(id => !visibleIds.has(id))) issue(ctx, "Presentation binding is outside publication")
+  const presentation = p.board.presentation?.cardPresentation
+  const fieldIds = new Set(p.fields.map(field => field.id))
+  const configuredIds = [...(presentation?.titleFieldIds ?? []), ...(presentation?.summaryFieldIds ?? []), ...(presentation?.narrativeFieldId ? [presentation.narrativeFieldId] : [])]
+  if (configuredIds.some(id => !fieldIds.has(id))) issue(ctx, "Card presentation field is outside publication")
+  if (p.fields.some(field => field.format && field.valueType !== "text")) issue(ctx, "Text format requires a text field")
   if (p.board.presentation?.cardStageButtons?.some(button => !p.columns.some(column => column.id === button.columnId))) issue(ctx, "Stage button is outside publication")
 }
 

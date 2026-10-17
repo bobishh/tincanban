@@ -51,7 +51,7 @@ test("Given multiple workspaces, when active content changes, then inactive acce
   await workspaces.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title", { exact: true }).fill("Catalog refresh probe")
-  await create.getByRole("radio", { name: "Blank" }).check()
+
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await expect(create).toBeHidden()
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()

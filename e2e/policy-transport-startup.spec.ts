@@ -7,7 +7,7 @@ async function createBoard(page: Page) {
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title", { exact: true }).fill("Policy only")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await expect(create).toBeHidden()
 }

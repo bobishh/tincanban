@@ -21,7 +21,7 @@ test.describe("Column add actions and overlay notices", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Notice board")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     const notice = page.getByRole("status").filter({ hasText: "Workspace \"Notice board\" created" })
@@ -36,7 +36,7 @@ test.describe("Column add actions and overlay notices", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Column add board")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     const doing = page.getByRole("region", { name: "Doing" })

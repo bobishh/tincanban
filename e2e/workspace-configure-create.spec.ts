@@ -158,7 +158,7 @@ test("Given initial workspace persistence is pending, when Create is submitted a
   await expect(dialog.getByRole("button", { name: "Creating…" })).toBeDisabled()
   await expect(dialog.getByRole("button", { name: "Create", exact: true })).toHaveCount(0)
   await expect(dialog.getByLabel("Title", { exact: true })).toBeDisabled()
-  await expect(dialog.getByRole("radio", { name: "Job search" })).toBeDisabled()
+  await expect(dialog.getByRole("button", { name: "Customize board" })).toBeDisabled()
   await page.evaluate(() => { (window as any).__testStorageGate.release() })
   await expect(dialog).toBeHidden()
   await page.getByRole("button", { name: "Open workspaces" }).click()

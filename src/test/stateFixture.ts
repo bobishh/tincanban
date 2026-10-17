@@ -9,7 +9,7 @@ export function useTincanban() {
     if (template !== "job-search") return create(title, template, storage, config)
     const doc = createWorkspaceDoc("fixture", title, "fixture-owner", template)
     const board = Object.values(doc.entities).find(entity => entity.kind === "board")!
-    return create(title, "blank", storage, config ?? { ...projectBoardSchema(doc, board.id), presetBindings: { ...board.preset?.bindings } })
+    return create(title, template, storage, config ?? { ...projectBoardSchema(doc, board.id), presetBindings: { ...board.preset?.bindings } })
   }
   return app
 }

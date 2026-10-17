@@ -6,7 +6,7 @@ test("Given a blank board, when colors are configured in JSON, then unique defau
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title").fill("Colors")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create" }).click()
   await expect(create).toBeHidden()
   const board = page.getByRole("region", { name: "Colors", exact: true })

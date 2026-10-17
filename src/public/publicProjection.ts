@@ -81,8 +81,15 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
 
 function publicPresentation(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], fields: PublicBoardProjection["fields"]): NonNullable<PublicBoardProjection["board"]["presentation"]> {
   const visibleIds = new Set([...columns.map(column => column.id), ...fields.map(field => field.id), ...fields.flatMap(field => field.options.map(option => option.id))])
+  const fieldIds = new Set(fields.map(field => field.id))
+  const cardPresentation = board.cardPresentation ? {
+    ...(board.cardPresentation.openAfterSave !== undefined ? { openAfterSave: board.cardPresentation.openAfterSave } : {}),
+    ...(board.cardPresentation.titleFieldIds ? { titleFieldIds: board.cardPresentation.titleFieldIds.filter(id => fieldIds.has(id)) } : {}),
+    ...(board.cardPresentation.summaryFieldIds ? { summaryFieldIds: board.cardPresentation.summaryFieldIds.filter(id => fieldIds.has(id)) } : {}),
+    ...(board.cardPresentation.narrativeFieldId && fieldIds.has(board.cardPresentation.narrativeFieldId) ? { narrativeFieldId: board.cardPresentation.narrativeFieldId } : {}),
+  } : undefined
   return {
-    ...(board.cardPresentation ? { cardPresentation: board.cardPresentation } : {}),
+    ...(cardPresentation ? { cardPresentation } : {}),
     ...(board.entityName ? { entityName: board.entityName } : {}),
     ...( "archiveColumnId" in board ? { archiveColumnId: board.archiveColumnId } : {}),
     preset: board.preset ? { ...board.preset, bindings: Object.fromEntries(Object.entries(board.preset.bindings).filter(([, id]) => visibleIds.has(id))) } : null,

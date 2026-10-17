@@ -11,7 +11,7 @@ async function createSource(page: Page) {
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title", { exact: true }).fill("Context sync")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await expect(create).toBeHidden()
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()

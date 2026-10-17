@@ -8,18 +8,20 @@ use std::{
 };
 
 use iroh::{EndpointAddr, EndpointId};
-use tincanban_lighthouse::{TincanbanLighthouseHost, TincanbanLighthouseState, TincanbanScopeStore, now_ms};
 use meta_mesh_core::{
-    DEFAULT_SIGNATURE_DOMAIN, MeshHandshake, MeshRuntimeState, VerifyWorkspaceMemberOptions,
-    sign_json_envelope, verify_workspace_member_bundle,
+    sign_json_envelope, verify_workspace_member_bundle, MeshHandshake, MeshRuntimeState,
+    VerifyWorkspaceMemberOptions, DEFAULT_SIGNATURE_DOMAIN,
 };
 use meta_mesh_native::{
-    FileScopeStore, NativeBrowserConnection, NativeNode, NativeNodeOptions, NativeScopeService,
-    publish_scope_to, serve_scope_connection, serve_scope_request,
+    publish_scope_to, serve_scope_connection, serve_scope_request, FileScopeStore,
+    NativeBrowserConnection, NativeNode, NativeNodeOptions, NativeScopeService,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use time::{OffsetDateTime, macros::format_description};
+use time::{macros::format_description, OffsetDateTime};
+use tincanban_lighthouse::{
+    now_ms, TincanbanLighthouseHost, TincanbanLighthouseState, TincanbanScopeStore,
+};
 use tokio::sync::Mutex;
 
 mod join;
@@ -59,12 +61,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         join::join(&invite, PathBuf::from(directory)).await?;
         return Ok(());
     }
-    if path == "create-lead" {
+    if path == "create-item" {
         let config_path = args.next().ok_or("Missing lighthouse config path")?;
-        let company = args.next().ok_or("Missing lead company")?;
-        let role = args.next().ok_or("Missing lead role")?;
+        let column_id = args.next().ok_or("Missing item column ID")?;
+        let title = args.next().ok_or("Missing item title")?;
+        let field_values: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(&args.next().ok_or("Missing item field values JSON")?)?;
         if args.next().is_some() {
-            return Err("Too many create-lead arguments".into());
+            return Err("Too many create-item arguments".into());
         }
         let config: Config = serde_json::from_slice(&fs::read(config_path)?)?;
         let seed: [u8; 32] = config
@@ -78,8 +82,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             config.state_path,
             config.initial_state,
         )?;
-        let id = store.create_lead(&config.local_handshake.peer, &seed, &company, &role)?;
-        println!("Created lead {id}");
+        let id = store.create_item(
+            &config.local_handshake.peer,
+            &seed,
+            &column_id,
+            &title,
+            &field_values,
+        )?;
+        println!("Created item {id}");
         return Ok(());
     }
     if args.next().is_some() {

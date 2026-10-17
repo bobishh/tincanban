@@ -18,7 +18,7 @@ async function createBoard(page: Page, index: number) {
   await page.getByRole("button", { name: "New workspace", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Create workspace", exact: true })
   await dialog.getByLabel("Title", { exact: true }).fill(`Catalog load ${index}`)
-  await dialog.getByRole("radio", { name: "Blank board", exact: true }).check()
+
   await dialog.getByRole("button", { name: "Create", exact: true }).click()
   await expect(page.getByRole("heading", { name: `TINCANBAN // Catalog load ${index}`, exact: true })).toBeVisible()
 }

@@ -69,7 +69,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const create = page.getByRole("dialog", { name: "Create workspace" })
     await create.getByLabel("Title").fill("Project board")
-    await create.getByRole("radio", { name: "Blank board" }).check()
+
     await create.getByRole("button", { name: "Create" }).click()
     await page.getByRole("button", { name: /Add item to/ }).first().click()
     const item = page.getByRole("dialog", { name: "Item details" })
@@ -118,7 +118,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await dialog.getByRole("button", { name: "New workspace" }).click()
     const create = page.getByRole("dialog", { name: "Create workspace" })
     await create.getByLabel("Title").fill("Archive pending board")
-    await create.getByRole("radio", { name: "Blank board" }).check()
+
     await create.getByRole("button", { name: "Create" }).click()
     await page.getByRole("button", { name: "Open workspaces" }).click()
     const workspace = dialog.locator(".workspace-item", { hasText: "Archive pending board" })
@@ -177,7 +177,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const create = page.getByRole("dialog", { name: "Create workspace" })
     await create.getByLabel("Title").fill("Temporary board")
-    await create.getByRole("radio", { name: "Blank board" }).check()
+
     await create.getByRole("button", { name: "Create" }).click()
     await page.getByRole("button", { name: /Add item to/ }).first().click()
     const item = page.getByRole("dialog", { name: "Item details" })
@@ -229,7 +229,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await expect(dialog).toBeVisible()
     await dialog.getByLabel("Title").fill("Reading List")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     // Expect generic board with default columns
@@ -257,7 +257,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Project Board")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     // Rename "To do" column to "Backlog"
@@ -283,7 +283,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Bug Tracker")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     // Add a required text field "Severity"
@@ -321,7 +321,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Feature Planning")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     // Create Parent A in To do
@@ -378,7 +378,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.getByRole("button", { name: "New workspace" }).click()
     const dialog = page.getByRole("dialog", { name: "Create workspace" })
     await dialog.getByLabel("Title").fill("Reading board")
-    await dialog.getByRole("radio", { name: "Blank board" }).check()
+
     await dialog.getByRole("button", { name: "Create" }).click()
 
     await expect(page.getByRole("heading", { name: "Reading board" })).toBeVisible()

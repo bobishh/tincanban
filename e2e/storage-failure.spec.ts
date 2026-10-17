@@ -55,7 +55,7 @@ test("Given storage failure, when an item is saved, then failure stays visible a
   await page.getByRole("button", { name: "New workspace" }).click()
   const create = page.getByRole("dialog", { name: "Create workspace" })
   await create.getByLabel("Title").fill("Failure board")
-  await create.getByRole("radio", { name: "Blank board" }).check()
+
   await create.getByRole("button", { name: "Create" }).click()
   await page.getByRole("button", { name: /Add item to/ }).first().click()
   const form = page.getByRole("dialog", { name: "Item details" })

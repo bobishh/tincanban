@@ -6,7 +6,7 @@ async function createBlankWorkspace(page: import("@playwright/test").Page, title
   await page.getByRole("button", { name: "New workspace" }).click()
   const dialog = page.getByRole("dialog", { name: "Create workspace" })
   await dialog.getByLabel("Title").fill(title)
-  await dialog.getByRole("radio", { name: "Blank board" }).check()
+
   await dialog.getByRole("button", { name: "Create" }).click()
 }
 

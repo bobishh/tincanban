@@ -15,7 +15,7 @@ import { includesWorkspaceHeads } from "../storageCatalog"
 type Challenge = { kind: "rusty-publication-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string; publicOrigin: string; boardId: string; personId: string; deviceId: string; deviceKeyId: string; expectedRevision: number; issuedAt: number; expiresAt: number; withdrawn: boolean; projectionHash: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryGrantId?: string | null; sourceHeadsHash?: string | null; currentSourceHeads?: string[] }
 type Receipt = SignedEnvelope<{ kind: "rusty-publication-receipt"; version: 1; serviceId: string; boardId: string; controllerPersonId: string; revision: number; action: string; projectionHash: string; challengeId: string; authorizationHash: string; withdrawn: boolean }>
 const encoder = new TextEncoder()
-type PublicationService = { origin: string; serviceId: string; serviceKey: string; scopeManagement: boolean; presentation: boolean }
+type PublicationService = { origin: string; serviceId: string; serviceKey: string; scopeManagement: boolean; presentation: boolean; fieldConfiguration: boolean }
 
 async function controllerCertificates(profile: LocalProfile): Promise<DeviceCertificate[]> {
   const context = await resolveLocalSigningContext(profile, "rusty-publication-command", { personId: profile.identity.personId })
@@ -23,7 +23,7 @@ async function controllerCertificates(profile: LocalProfile): Promise<DeviceCert
 }
 async function service(origin: string): Promise<PublicationService> {
   const normalized = blindOrigin(origin)
-  const descriptor = await readBlindJson<{ publicOrigin: string; service: { serviceId: string; publicKey: string }; capabilities: { publicBoardPublication?: { version: number; presentationVersion?: number }; scopeManagement?: { version: number } } }>(
+  const descriptor = await readBlindJson<{ publicOrigin: string; service: { serviceId: string; publicKey: string }; capabilities: { publicBoardPublication?: { version: number; presentationVersion?: number; fieldConfigurationVersion?: number }; scopeManagement?: { version: number } } }>(
     await fetchBlind(`${normalized}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
   if (descriptor.publicOrigin !== normalized || descriptor.capabilities?.publicBoardPublication?.version !== 1 ||
       await sha256Base64Url((await import("../domain/identity")).fromBase64Url(descriptor.service.publicKey)) !== descriptor.service.serviceId) {
@@ -33,7 +33,7 @@ async function service(origin: string): Promise<PublicationService> {
     throw new Error("Keeper advertises an unsupported management capability version")
   }
   return { origin: normalized, serviceId: descriptor.service.serviceId, serviceKey: descriptor.service.publicKey,
-    scopeManagement: descriptor.capabilities.scopeManagement?.version === 1, presentation: descriptor.capabilities.publicBoardPublication?.presentationVersion === 1 }
+    scopeManagement: descriptor.capabilities.scopeManagement?.version === 1, presentation: descriptor.capabilities.publicBoardPublication?.presentationVersion === 1, fieldConfiguration: descriptor.capabilities.publicBoardPublication?.fieldConfigurationVersion === 1 }
 }
 function managementBinding(server: PublicationService, boardId: string): ManagementBinding {
   return { origin: server.origin, servicePublicKey: server.serviceKey, resourceKind: "board", resourceId: boardId }
@@ -153,6 +153,9 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   const certificates = await controllerCertificates(profile)
   const publication = await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId,
     asset => stageAsset(server, snapshot.boardId, profile, certificates, snapshot.expectedRevision, asset, capability, ensureCurrent, sourceHeads, input.document))
+  if (!server.fieldConfiguration && (publication.projection.board.presentation?.cardPresentation || publication.projection.fields.some(field => field.format))) {
+    throw new Error("Upgrade Rusty to publish configured card fields and text formats")
+  }
   await ensureCurrent?.()
   return commit(server, snapshot.boardId, profile, certificates, snapshot.action, publication.projection, snapshot.expectedRevision, capability, ensureCurrent, snapshot.deliveryPolicy, sourceHeads, input.document)
 }
