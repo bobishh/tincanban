@@ -4,7 +4,6 @@ import type { AutomationConfiguration } from "../app/automation"
 import type { PrivateReplicationState } from "./privateReplicationState"
 import type { createPrivateReplicaRuntime } from "./privateReplicaLoop"
 import { createHistoryCompactionAction } from "./privateHistoryCompactionAction"
-import { traceDiagnosticOperation } from "./telemetry"
 
 type Runtime = ReturnType<typeof createPrivateReplicaRuntime>
 export type ReplicationLifecycle = { identity: () => string; epoch: () => number; disposed: () => boolean;
@@ -75,6 +74,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     notice.value = ""
     try {
       const { recoverRustyCredentialConflict } = await import("./replicaCredentialConflictWorkflow")
+      const { traceDiagnosticOperation } = await import("./telemetry")
       guard()
       await traceDiagnosticOperation("rusty.credential-recovery", { "workspace.id": workspaceId,
         "server.address": new URL(origin).host }, () => recoverRustyCredentialConflict(tincanban, origin, scopeId, workspaceId, guard))

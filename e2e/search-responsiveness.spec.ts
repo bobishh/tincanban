@@ -13,6 +13,9 @@ test("Given 55 detailed leads, when search narrows then has no matches, then key
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
   })
   const session = await page.context().newCDPSession(page)
+  // Exclude garbage left by the large signed-board fixture from the interaction measurement.
+  // Collections caused by the search itself remain inside the measured interval.
+  await session.send("HeapProfiler.collectGarbage")
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
   await session.send("Profiler.enable")
   await page.evaluate(async () => {
