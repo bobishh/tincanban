@@ -109,6 +109,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
+    await expect(panel.getByRole("group", { name: "Confirm public board change" })).toBeVisible()
     await panel.getByRole("button", { name: "Cancel", exact: true }).click()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()

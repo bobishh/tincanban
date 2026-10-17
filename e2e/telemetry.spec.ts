@@ -24,7 +24,7 @@ async function settings(page: Page) {
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true })
   await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeVisible()
+  await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toHaveCount(0)
   await expect(dialog.getByLabel("Intake URL")).toHaveCount(0)
   return dialog
 }
@@ -77,10 +77,7 @@ for (const status of [202, 503]) {
     expect(requests.every(url => url === endpoint || url === tracesEndpoint)).toBe(true)
     await chat.getByRole("button", { name: "Close", exact: true }).click()
     const dialog = await settings(page)
-    await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeChecked()
-    await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-    await expect(dialog.getByRole("status", { name: "Diagnostic delivery" })).toContainText(status === 503 ? /OTLP|Exporting diagnostics|Waiting to export/ : "Last OTLP response received")
-    if (status === 503) await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true })).toBeVisible()
+    await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true })).toHaveCount(0)
     await page.reload()
     await send(page, "reload-check")
     await expect(page.getByRole("dialog", { name: "Workspace chat", exact: true }).getByText(text, { exact: true })).toBeVisible()
@@ -134,7 +131,7 @@ test("Given legacy collector settings, when deployment loads, then only the depl
   expect(legacyRequests).toBe(0)
 })
 
-for (const rejection of [401, 404]) test(`Given OTLP intake returns ${rejection}, when chat saves, then export failure is visible and user can disable diagnostics`, async ({ page }) => {
+for (const rejection of [401, 404]) test(`Given OTLP intake returns ${rejection}, when chat saves, then chat persists and host opt-out survives reload without a diagnostics panel`, async ({ page }) => {
   let requests = 0
   await page.route("https://telemetry.invalid/**", async route => { requests++; await route.fulfill({ status: rejection }) })
   await page.goto("/?syncTrace=1")
@@ -142,19 +139,20 @@ for (const rejection of [401, 404]) test(`Given OTLP intake returns ${rejection}
   await expect.poll(() => requests).toBeGreaterThan(0)
   await chat.getByRole("button", { name: "Close", exact: true }).click()
   const dialog = await settings(page)
-  await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true }).getByRole("alert")).toContainText(/OTLP (log|trace) export failed/)
-  await dialog.getByRole("checkbox", { name: "Send diagnostics from this device" }).uncheck()
+  await expect(dialog.getByRole("region", { name: "Diagnostic delivery", exact: true })).toHaveCount(0)
+  await page.evaluate(async () => (await import("/src/sync/telemetryConfig.ts")).setTelemetryEnabled(false))
   await page.reload()
-  await expect((await settings(page)).getByRole("checkbox", { name: "Send diagnostics from this device" })).not.toBeChecked()
+  expect(await page.evaluate(async () => (await import("/src/sync/telemetryConfig.ts")).telemetryConfig().enabled)).toBe(false)
+  await settings(page)
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss" }).click()
   await send(page, "opt-out-survives-reload")
   expect(requests).toBeGreaterThan(0)
 })
 
-test("Given unavailable preference storage, when device opts out, then the checkbox reverts and reports the failure", async ({ page }) => {
+test("Given unavailable preference storage, when device opts out, then host preference reports failure and retains its prior setting", async ({ page }) => {
   await page.route("https://telemetry.invalid/**", async route => await route.fulfill({ status: 200, contentType: "application/json", body: "{}" }))
   await page.goto("/?syncTrace=1")
-  const dialog = await settings(page)
+  await settings(page)
   await page.evaluate(() => {
     const original = Storage.prototype.setItem
     Storage.prototype.setItem = function(key, value) {
@@ -162,9 +160,14 @@ test("Given unavailable preference storage, when device opts out, then the check
       original.call(this, key, value)
     }
   })
-  await dialog.getByRole("checkbox", { name: "Send diagnostics from this device" }).click()
-  await expect(dialog.getByRole("region", { name: "Device diagnostics", exact: true }).getByRole("alert")).toContainText("could not be saved")
-  await expect(dialog.getByRole("checkbox", { name: "Send diagnostics from this device" })).toBeChecked()
+  const preference = await page.evaluate(async () => {
+    const { setTelemetryEnabled, telemetryConfig } = await import("/src/sync/telemetryConfig.ts")
+    let error = ""
+    try { setTelemetryEnabled(false) } catch (cause) { error = String(cause) }
+    return { error, enabled: telemetryConfig().enabled }
+  })
+  expect(preference.error).toContain("could not be saved")
+  expect(preference.enabled).toBe(true)
 })
 
 test("Given ordinary app use, when a user opens the board, stays active and hits an error, then analytics and error text export without routine mesh logs", async ({ page }) => {

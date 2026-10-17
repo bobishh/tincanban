@@ -6,10 +6,8 @@ const props = defineProps<{ access: ReturnType<typeof usePublicBoardAccess> }>()
 const pendingVisibility = ref<boolean | null>(null)
 const actionError = ref("")
 const disclosure = "Anyone with this link can read the board’s visitor-visible cards, descriptions, fields, discussions, and attached files. Other boards, workspace chat, and identity secrets stay private."
-function requestVisibility(event: Event) {
-  const input = event.target as HTMLInputElement
-  pendingVisibility.value = input.checked
-  input.checked = props.access.published.value
+function requestVisibility() {
+  pendingVisibility.value = !props.access.published.value
 }
 async function confirmVisibility() {
   const enabled = pendingVisibility.value
@@ -27,7 +25,7 @@ async function retry() {
 
 <template>
   <section v-if="access.owner.value" class="publication-panel" aria-label="Public board access" :data-public-revision="access.revision.value">
-    <label class="publication-toggle"><input type="checkbox" role="switch" :checked="access.published.value" :disabled="access.busy.value || !access.checked.value || pendingVisibility !== null" @change="requestVisibility" />Public board</label>
+    <label class="publication-toggle"><input type="checkbox" role="switch" :checked="access.published.value" :disabled="access.busy.value || !access.checked.value || pendingVisibility !== null" @click.prevent="requestVisibility" />Public board</label>
     <p v-if="access.busy.value" role="status">{{ access.published.value ? 'Syncing public board…' : 'Checking public access…' }}</p>
     <template v-else-if="access.checked.value">
       <p v-if="access.published.value" role="status">Public · Changes sync automatically.</p>

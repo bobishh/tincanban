@@ -51,11 +51,8 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
   const source = page.getByRole("button", { name: "Open Performance card 54", exact: true })
   await source.hover()
   const sourceBounds = (await source.boundingBox())!
-  const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
   const x = sourceBounds.x + sourceBounds.width / 2
   const y = sourceBounds.y + Math.min(30, sourceBounds.height / 2)
-  const destinationY = Math.min(y, columnBounds.y + columnBounds.height - 80)
-  expect(destinationY - columnBounds.y).toBeGreaterThan(500)
   await page.mouse.move(x, y)
   await expect.poll(() => page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-item-id]")?.getAttribute("data-item-id"), { x, y })).toBe("performance-card-54")
 
@@ -83,7 +80,8 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
   await page.mouse.down()
   await page.mouse.move(x + 12, y, { steps: 3 })
   await page.waitForFunction(() => document.querySelector(".board-drag-preview"))
-  await page.mouse.move(columnBounds.x + columnBounds.width / 2, destinationY, { steps: 18 })
+  const destination = await blankColumnPoint(page)
+  await page.mouse.move(destination.x, destination.y, { steps: 18 })
   await page.waitForFunction(targetId => document.querySelector(".board-drop-gap")?.getAttribute("data-target-id") === targetId, destinationId)
   await page.waitForFunction(() => {
     const preview = document.querySelector(".board-drag-preview")
@@ -116,12 +114,8 @@ async function dropNearBottom(page: import("@playwright/test").Page) {
   await source.hover()
   const sourceBounds = (await source.boundingBox())!
   const sourceContent = await page.locator('[data-item-id="performance-card-54"] .card-layout').textContent()
-  const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
   const x = sourceBounds.x + sourceBounds.width / 2
   const y = sourceBounds.y + Math.min(30, sourceBounds.height / 2)
-  const destinationY = Math.min(y, columnBounds.y + columnBounds.height - 80)
-  // This position is far below the destination's cards/header, inside blank column space.
-  expect(destinationY - columnBounds.y).toBeGreaterThan(500)
   await page.mouse.move(x, y)
   await expect.poll(() => page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-item-id]")?.getAttribute("data-item-id"), { x, y })).toBe("performance-card-54")
   await page.mouse.down()
@@ -129,9 +123,22 @@ async function dropNearBottom(page: import("@playwright/test").Page) {
   const preview = page.locator(".board-drag-preview")
   await expect(preview).toBeVisible()
   await expect(preview.locator(".card-layout")).toHaveText(sourceContent!)
-  await page.mouse.move(columnBounds.x + columnBounds.width / 2, destinationY, { steps: 18 })
+  const destination = await blankColumnPoint(page)
+  await page.mouse.move(destination.x, destination.y, { steps: 18 })
   const target = page.getByRole("region", { name: "Applied", exact: true })
   await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await target.getAttribute("data-column-id"))
   await expect(target.locator('[data-item-id="performance-card-54"]')).toHaveCount(0)
   await page.mouse.up()
+}
+
+async function blankColumnPoint(page: import("@playwright/test").Page) {
+  // Starting a drag can scroll and reveal virtualized cards; use current column bounds.
+  const column = page.getByRole("region", { name: "Applied", exact: true })
+  const bounds = (await column.boundingBox())!
+  const point = { x: bounds.x + bounds.width / 2,
+    y: Math.min(page.viewportSize()!.height - 120, bounds.y + bounds.height - 80) }
+  expect(point.y - bounds.y).toBeGreaterThan(500)
+  const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-column-id]")?.getAttribute("data-column-id"), point)
+  expect(hit, JSON.stringify({ bounds, point, hit })).toBe(await column.getAttribute("data-column-id"))
+  return point
 }
