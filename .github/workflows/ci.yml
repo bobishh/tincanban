@@ -442,6 +442,11 @@ jobs:
             npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
           done
           exit "$status"
+      - name: Verify mobile Rusty credential recovery in WebKit
+        if: matrix.browser == 'webkit'
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+        run: npx playwright test --config playwright.rusty.config.ts rusty-credential-conflict.spec.ts --reporter=list --output=test-results/rusty-credential-recovery-webkit
       - uses: actions/upload-artifact@v6
         if: failure()
         with:

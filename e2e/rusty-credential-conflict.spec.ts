@@ -2,7 +2,8 @@ import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 
-test.use({ browserName: "webkit", viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+test.use({ browserName: process.platform === "darwin" ? "webkit" : "chromium",
+  viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
 
 test("Given a phone with conflicting Rusty credentials, when snapshot confirmation fails and the owner retries after reload, then finish the saved transition and retain the board", async ({ page, baseURL }) => {
   test.setTimeout(90_000)
