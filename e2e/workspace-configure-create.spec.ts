@@ -71,7 +71,7 @@ for (const width of [1440, 390]) {
   })
 }
 
-test("Given edited configuration, when preset changes, then draft stays intact; invalid and failed saves keep draft for retry", async ({ page }) => {
+test("Given edited configuration, when customization is reopened, then draft stays intact; invalid and failed saves keep draft for retry", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Open workspaces" }).click()
   await page.getByRole("button", { name: "New workspace" }).click()
@@ -79,9 +79,9 @@ test("Given edited configuration, when preset changes, then draft stays intact; 
   await dialog.getByLabel("Title", { exact: true }).fill("Draft board")
   await dialog.getByRole("button", { name: "Customize board" }).click()
   await dialog.getByLabel("Column 1", { exact: true }).fill("Draft column")
-  await dialog.getByRole("radio", { name: "Job search" }).check()
+  await dialog.getByRole("button", { name: "Customize board" }).click()
+  await dialog.getByRole("button", { name: "Customize board" }).click()
   await expect(dialog.getByLabel("Column 1", { exact: true })).toHaveValue("Draft column")
-  await dialog.getByRole("radio", { name: "Blank board" }).check()
   await dialog.getByLabel("Column 1", { exact: true }).fill("")
   await dialog.getByRole("button", { name: "Create", exact: true }).click()
   await expect(dialog.getByRole("alert")).toContainText("Column title is required")
@@ -100,44 +100,34 @@ test("Given edited configuration, when preset changes, then draft stays intact; 
   await expect(page.getByRole("region", { name: "Draft column", exact: true })).toBeVisible()
 })
 
-test("Given clean defaults or edited configuration, when presets change or reset is chosen, then changes happen only as requested", async ({ page }) => {
+test("Given edited board configuration, when reset is chosen, then board defaults return without a template selector", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Open workspaces" }).click()
   await page.getByRole("button", { name: "New workspace" }).click()
   const dialog = page.getByRole("dialog", { name: "Create workspace" })
+  await expect(dialog.getByRole("radio")).toHaveCount(0)
   await dialog.getByRole("button", { name: "Customize board" }).click()
-  await dialog.getByRole("radio", { name: "Job search" }).check()
-  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("lead, 6 columns, 10 fields")
-  await dialog.getByRole("radio", { name: "Blank board" }).check()
-  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("item, 3 columns, 0 fields")
   await dialog.getByLabel("Column 1", { exact: true }).fill("Manual")
-  await dialog.getByRole("radio", { name: "Job search" }).check()
-  await expect(dialog.getByLabel("Column 1", { exact: true })).toHaveValue("Manual")
-  await dialog.getByRole("button", { name: "Reset to Job search defaults" }).click()
-  await expect(dialog.getByLabel("Column 1", { exact: true })).toHaveValue("Lead")
-  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("lead, 6 columns, 10 fields")
-  await dialog.getByRole("radio", { name: "Blank board" }).check()
+  await dialog.getByRole("button", { name: "Reset board defaults" }).click()
   await expect(dialog.getByLabel("Column 1", { exact: true })).toHaveValue("To do")
+  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("item, 3 columns, 0 fields")
 })
 
-test("Given preset Archive column and a removed column, when the draft is created, then archive behavior stays intact without stale stage references", async ({ page }) => {
+test("Given a removed configured column, when the board is created, then only the remaining columns appear", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Open workspaces" }).click()
   await page.getByRole("button", { name: "New workspace" }).click()
   const dialog = page.getByRole("dialog", { name: "Create workspace" })
-  await dialog.getByLabel("Title", { exact: true }).fill("Custom jobs")
-  await dialog.getByRole("radio", { name: "Job search" }).check()
+  await dialog.getByLabel("Title", { exact: true }).fill("Custom board")
   await dialog.getByRole("button", { name: "Customize board" }).click()
   await dialog.getByLabel("Column 1", { exact: true }).waitFor()
   await dialog.getByRole("button", { name: "Remove column 2" }).click()
-  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("lead, 5 columns, 10 fields")
+  await expect(dialog.getByRole("button", { name: "Customize board" })).toContainText("item, 2 columns, 0 fields")
   await dialog.getByRole("button", { name: "Create", exact: true }).click()
   await expect(dialog).toBeHidden()
-  await expect(page.getByRole("region", { name: "Lead", exact: true })).toBeVisible()
-  await expect(page.getByRole("region", { name: "Applied", exact: true })).toHaveCount(0)
-  const archive = page.getByRole("region", { name: "Archive", exact: true })
-  await expect(archive).toBeVisible()
-  await expect(archive.getByRole("button", { name: /Add lead to Archive/ })).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "To do", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Doing", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "Done", exact: true })).toBeVisible()
 })
 
 test("Given initial workspace persistence is pending, when Create is submitted again, then duplicate submission stays disabled", async ({ page }) => {
