@@ -53,6 +53,15 @@ const coordinator: ExecutionCoordinator = new ExecutionCoordinator({ storage, id
     return JSON.parse(new TextDecoder().decode(bytes));
   },
 });
+
+async function dispatchCoordinatorAlarm(force: boolean): Promise<boolean> {
+  const scheduledAt = await storage.getAlarm();
+  if (!force && (scheduledAt === null || scheduledAt > Date.now())) return false;
+  if (scheduledAt !== null) await storage.deleteAlarm();
+  try { await coordinator.alarm(); }
+  catch (error) { await storage.setAlarm(Date.now() + 15_000); throw error; }
+  return true;
+}
 initializeImportTables(storage);
 storage.sql.exec(`CREATE TABLE IF NOT EXISTS executor_command_receipts (
   event_id TEXT PRIMARY KEY, change_hash TEXT NOT NULL, request_id TEXT NOT NULL, receipt_json TEXT NOT NULL
@@ -165,6 +174,7 @@ async function dispatch(request: ParticipantRequest): Promise<unknown> {
     const body = request.body as ReactionRequest & { source: string };
     if (body.participant.integrationId !== integrationId) throw new Error("Reaction participant does not match its journal");
     return runReaction(body, {
+      async flushPendingCommands() { await dispatchCoordinatorAlarm(true); },
       async enqueueItemCommand(commandId, value, identity) {
         verifyReactionCommandIdentity(commandId, identity);
         const journalKey = `command:${commandId}`;
@@ -198,13 +208,7 @@ async function dispatch(request: ParticipantRequest): Promise<unknown> {
     });
   }
   if (request.operation === "tick") {
-    const time = await storage.getAlarm();
-    if (time !== null && time <= Date.now()) {
-      // Clear before dispatch, just as the platform consumes an alarm. The shared coordinator rearms on failure.
-      await storage.deleteAlarm();
-      try { await coordinator.alarm(); }
-      catch (error) { await storage.setAlarm(Date.now() + 15_000); throw error; }
-    }
+    await dispatchCoordinatorAlarm(false);
     return { active: true, nextAlarm: await storage.getAlarm() };
   }
   if (request.operation === "rpc") {

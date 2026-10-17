@@ -26,6 +26,7 @@ export type ReactionCommandIdentity = { runId: string; sourceDigest: string; slo
 export interface ReactionParticipant {
   enqueueItemCommand(commandId: string, command: unknown, identity: ReactionCommandIdentity): Promise<unknown>;
   getItemCommandResult(commandId: string): Promise<ReactionCommandResult | null>;
+  flushPendingCommands?(): Promise<void>;
   getOrCreateOpportunity(evidenceKey: string, inputHash: string, compute: () => Promise<OpportunityClassification>): Promise<OpportunityClassification>;
   getOrCreateApplicationEvent(evidenceKey: string, inputHash: string, compute: () => Promise<ApplicationEventClassification>): Promise<ApplicationEventClassification>;
   classificationContext(): Promise<{ employeeProfile?: EmployeeProfile; priorityBands?: Array<{ optionId: string; minScore: number }> }>;
@@ -132,6 +133,10 @@ export async function runReaction(request: ReactionRequest & { source: string },
   assertBoundedJson(result, "Reaction result");
   if (result !== undefined && (result === null || typeof result !== "object" || Array.isArray(result))) {
     throw new TypeError("Reaction result must be a JSON object");
+  }
+  if (participant.flushPendingCommands && commands.some(command => command.status !== "failed" &&
+    (command.status !== "applied" || !command.changeHash || command.storageReceipt === undefined))) {
+    try { await participant.flushPendingCommands(); } catch { /* Durable queue remains available for the next retry. */ }
   }
   for (const command of commands) {
     if (command.status === "applied" && command.changeHash && command.storageReceipt !== undefined) continue;

@@ -46,6 +46,23 @@ test("Given an enqueued command without its durable receipt, when the reaction r
   assert.equal(result.commands[0]?.storageReceipt, undefined);
 });
 
+test("Given a fast CLI reaction with a queued command, when it is about to exit, then it flushes the shared writer before polling the receipt", async () => {
+  let processed = false;
+  const participant = stubParticipant({
+    async enqueueItemCommand() { return { status: "pending" }; },
+    async flushPendingCommands() { processed = true; },
+    async getItemCommandResult() {
+      return processed ? { status: "applied", changeHash: "change-flushed", storageReceipt: { requestId: "receipt-flushed" } }
+        : { status: "pending" };
+    },
+  });
+  const source = `export default async (_input, participant) => participant.enqueueItemCommand({ event: { id: "fast-cli" } })`;
+  const result = await runReaction({ ...input, source, sourceDigest: createHash("sha256").update(source).digest("hex") }, participant);
+  assert.equal(processed, true);
+  assert.equal(result.status, "completed");
+  assert.equal(result.commands[0]?.changeHash, "change-flushed");
+});
+
 test("Given a Rusty write whose command response is lost, when the same run resumes, then it reconciles the original command receipt", async () => {
   let stored = false;
   let storedId = "";
