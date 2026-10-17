@@ -1,16 +1,17 @@
 import type { BlindReplicaConfig } from "./blindReplication"
-export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "error"; lastSyncedAt?: number; error?: string }
+export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "paused" | "error"; lastSyncedAt?: number; error?: string; errorKind?: "unavailable" | "access" | "response" }
 export type ConnectionPresence = "connected" | "reconnecting" | "offline" | "empty"
 export const replicaConfirmationLifetime = 45_000
 export const replicaKey = (config: Pick<BlindReplicaConfig, "origin" | "scopeId">) => `${config.origin}/${config.scopeId}`
 export const syncTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString()
 
-export function replicaStatus(config: BlindReplicaConfig, health: ReplicaHealth | undefined, now: number): string {
+export function replicaStatus(config: Pick<BlindReplicaConfig, "removalPending">, health: ReplicaHealth | undefined, now: number): string {
   if (config.removalPending) return "Removal pending"
   if (!health) return "Not checked"
   if (health.phase === "syncing") return "Syncing"
   if (health.phase === "catching-up") return "Catching up"
-  if (health.phase === "error") return "Unavailable"
+  if (health.phase === "paused") return "Sync paused"
+  if (health.phase === "error") return health.errorKind === "access" ? "Access required" : health.errorKind === "response" ? "Response rejected" : "Unavailable"
   return health.lastSyncedAt && now - health.lastSyncedAt <= replicaConfirmationLifetime ? "Synced" : "Check overdue"
 }
 

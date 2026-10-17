@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   pending: vi.fn(), create: vi.fn(), resume: vi.fn(), configurations: vi.fn(), conflicts: vi.fn(), persist: vi.fn(),
 }))
 
-vi.mock("./privateReplicaRepository", () => ({ readReplicaWriterUpgrade: mocks.pending,
+vi.mock("./privateReplicaRepository", () => ({ privateReplicaBinding: () => "fixture-binding", readReplicaWriterUpgrade: mocks.pending,
   getPrivateReplicaConfigurations: mocks.configurations, getPrivateReplicaConflictSummaries: mocks.conflicts,
   persistPrivateReplicaProgress: mocks.persist }))
 vi.mock("./blindReplicaStore", () => ({ createBlindReplica: mocks.create }))
@@ -86,4 +86,16 @@ test("Given locally active policy and a newer signed receipt retained after inte
   await resolvePrivateReplica(app as never, current, session as never)
   expect(mocks.resume).toHaveBeenCalledWith(app, current, session.guard, { storageOnly: true })
   expect(mocks.create.mock.calls[0]?.[0]).toEqual(updated)
+})
+
+test("Given concurrent requests for the same replica, when its adapter loads, then construct one client and share its operation queue", async () => {
+  const { resolvePrivateReplica } = await import("./privateReplicaFactory")
+  const session = { owner: "owner", guard: vi.fn(), configs: ref([config]), cache: new Map(), reload: vi.fn(async () => {}) }
+  const app = { getCurrentProfile: () => ({ identity: { personId: "owner" } }) }
+  const [left, right] = await Promise.all([
+    resolvePrivateReplica(app as never, config, session as never),
+    resolvePrivateReplica(app as never, config, session as never),
+  ])
+  expect(left).toBe(right)
+  expect(mocks.create).toHaveBeenCalledOnce()
 })

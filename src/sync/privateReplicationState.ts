@@ -12,6 +12,7 @@ export function createReplicationState() {
     profilePermissionUpdates: ref<string[]>([]),
     registeredDevices: ref<RegisteredDevice[]>([]), pendingDeviceRevocations: ref<string[]>([]), revokedDeviceAccess: ref<string[]>([]),
     currentDeviceId: ref(""),
+    deviceSyncIssues: ref<Record<string, string>>({}),
     statuses: ref<Record<string, ReplicaHealth>>({}), now: ref(Date.now()),
     attachmentCoverage: ref<Record<string, AttachmentCoverageStatus[]>>({}),
     busy: ref(false), error: ref(""), notice: ref(""), historyNotices: ref<Record<string, string>>({}),
@@ -29,6 +30,7 @@ export function clearReplicationSessionState(state: ReturnType<typeof createRepl
   state.revokedDeviceAccess.value = []
   state.currentDeviceId.value = ""
   state.statuses.value = {}
+  state.deviceSyncIssues.value = {}
   state.attachmentCoverage.value = {}
   state.error.value = ""
   state.notice.value = ""
@@ -36,3 +38,10 @@ export function clearReplicationSessionState(state: ReturnType<typeof createRepl
 }
 
 export type PrivateReplicationState = ReturnType<typeof createReplicationState>
+
+/** Unexpected local failures belong to device sync, independently of any server. */
+export function reportDeviceSyncProblem(state: PrivateReplicationState, cause: unknown): void {
+  state.error.value = "Sync paused on this device. Your saved changes are retained. Retry sync."
+  state.deviceSyncIssues.value = { ...state.deviceSyncIssues.value, session: state.error.value }
+  void import("./meshTrace").then(({ meshTrace }) => meshTrace("replication.device.failed", {}, "warn", cause)).catch(() => {})
+}

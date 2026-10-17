@@ -87,7 +87,6 @@ async function updateDeviceAccess(origin: string) {
     </form>
     <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(controller.syncNow)">Sync now</button>
     <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
-    <p v-else-if="controller.error.value" class="reading-explanation" role="alert">{{ controller.error.value }}</p>
 
   </section>
 </template>

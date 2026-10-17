@@ -1,5 +1,5 @@
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
-import { replicaKey, replicaConfirmationLifetime, type ReplicaHealth } from "./replicationHealth"
+import { replicaKey, replicaStatus, replicaConfirmationLifetime, type ReplicaHealth } from "./replicationHealth"
 
 export type ProfileDeliveryState = { key: string; origin: string; status: string; lastSyncedAt?: number; error?: string }
 
@@ -16,8 +16,9 @@ export function profileDeliveryStates(boardConfigs: BlindReplicaConfig[], identi
     const failed = states.filter(({ health: state }) => state?.phase === "error")
     if (failed.length) {
       const failures = failed.flatMap(({ health: state }) => state?.error ? [state.error] : [])
-      return { key: origin, origin, status: "Unavailable", ...(failures.length ? { error: failures.join("; ") } : {}) }
+      return { key: origin, origin, status: replicaStatus(failed[0]!.config, failed[0]!.health, now), ...(failures.length ? { error: failures.join("; ") } : {}) }
     }
+    if (states.some(({ health: state }) => state?.phase === "paused")) return { key: origin, origin, status: "Sync paused" }
     if (states.some(({ health: state }) => !state)) return { key: origin, origin, status: "Not checked" }
     if (states.some(({ health: state }) => state?.phase === "syncing")) return { key: origin, origin, status: "Syncing" }
     if (states.some(({ health: state }) => state?.phase === "catching-up")) return { key: origin, origin, status: "Catching up" }

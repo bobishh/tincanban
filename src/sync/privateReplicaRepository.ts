@@ -1,3 +1,4 @@
+import { ReplicaProgressConflictError } from "./replicationErrors"
 import { canonicalizeJson } from "../domain/identity"
 import { compareAndSwapLocal,readLocal,type LocalStatePlan } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
@@ -516,9 +517,8 @@ export async function persistPrivateReplicaState(owner: string, config: PrivateR
     const binding = privateReplicaBinding(owner, selected)
     const next = parseReplicaState<BlindObject>(incoming, binding)
     const previous = state.progress[scopeKey(config)]?.replication
-    if ((previous?.generation ?? 0) !== expectedGeneration || next.generation !== expectedGeneration + 1 || next.cursor < selected.cursor) {
-      throw new Error("Replica progress generation changed during persistence")
-    }
+    if (next.generation !== expectedGeneration + 1) throw new Error("Invalid replica progress generation")
+    if ((previous?.generation ?? 0) !== expectedGeneration || next.cursor < selected.cursor) throw new ReplicaProgressConflictError()
     const copy = structuredClone(state)
     copy.progress[scopeKey(config)] = { revision: selected.preferenceRevision!, cursor: next.cursor, lastUploaded: next.lastUploaded, replication: next }
     return copy

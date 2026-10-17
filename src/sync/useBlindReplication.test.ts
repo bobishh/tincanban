@@ -282,9 +282,9 @@ it("Given an identity replica reports missing Rusty permission, then mark its or
   const controller = f.start()
 
   await vi.waitFor(() => expect(controller.profilePermissionUpdates.value).toEqual([f.identity.origin]))
-  await vi.waitFor(() => expect(controller.statuses.value[replicaKey(f.identity)]?.phase).toBe("error"))
+  await vi.waitFor(() => expect(controller.statuses.value[replicaKey(f.identity)]?.phase).toBe("paused"))
   expect(controller.statuses.value[replicaKey(f.identity)]).toMatchObject({
-    phase: "error", error: expect.stringMatching(/Update Rusty device access/i),
+    phase: "paused",
   })
 })
 
@@ -345,9 +345,9 @@ it("Given personal replication fails, when a board sync succeeds, then health di
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled()
-  expect(controller.statuses.value[replicaKey(f.identity)]).toMatchObject({ phase: "error", error: "Private scope revoked" })
+  expect(controller.statuses.value[replicaKey(f.identity)]).toMatchObject({ phase: "paused" })
   expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced")
-  expect(controller.error.value).toContain("Profile")
+  expect(controller.deviceSyncIssues.value[replicaKey(f.identity)]).toContain("Profile sync paused on this device")
   expect(controller.profilePermissionUpdates.value).toEqual([])
 })
 
@@ -422,4 +422,21 @@ it("Given the app unmounts, then a cached private replica's identity guard rejec
   await vi.waitFor(() => expect(runtime.calls).toHaveLength(1))
   runtime.cleanup[0]!()
   expect(() => runtime.calls[0]!.guard()).toThrow("Identity changed")
+})
+
+it("Given local settings fail before replica construction, when the device retries sync, then reload retained settings and clear the device issue", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  const local = await import("../localDb")
+  const read = vi.spyOn(local, "readLocal").mockRejectedValueOnce(new Error("raw-local-startup-failure"))
+  let controller: ReturnType<typeof useBlindReplication>
+  try {
+    controller = f.start()
+    await vi.waitFor(() => expect(controller.deviceSyncIssues.value.session).toContain("Sync paused on this device"))
+    expect(controller.statuses.value).toEqual({})
+    expect(controller.error.value).not.toContain("raw-local-startup-failure")
+  } finally { read.mockRestore() }
+  await controller!.syncNow()
+  expect(runtime.workspaceSync).toHaveBeenCalled()
+  expect(controller!.deviceSyncIssues.value).toEqual({})
 })

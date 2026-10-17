@@ -1,0 +1,17 @@
+const requestFailures = new WeakSet<Error>()
+
+/** Preserve HTTP error identity and protocol fields while recording its actual source. */
+export function rustyRequestFailure(cause: unknown, status?: number): Error {
+  const error = cause instanceof Error ? cause : new Error("Rusty request failed", { cause })
+  if (status !== undefined && !("status" in error)) Object.assign(error, { status })
+  requestFailures.add(error)
+  return error
+}
+export function isRustyRequestFailure(cause: unknown): cause is Error {
+  return cause instanceof Error && requestFailures.has(cause)
+}
+
+/** A competing local writer committed first; restart from its durable state. */
+export class ReplicaProgressConflictError extends Error {
+  constructor() { super("Replica progress generation changed during persistence"); this.name = "ReplicaProgressConflictError" }
+}

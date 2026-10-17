@@ -154,3 +154,18 @@ it("Given a durable pending upload, when its verified acknowledgement and cursor
   expect(await getPrivateReplicaProgress(owner, selected)).toEqual(acknowledged)
   expect(await exportPrivateReplicaState(owner)).not.toHaveProperty("progress")
 })
+
+it("Given legacy progress advances before the first engine commit, when an older cursor tries to persist, then retain newer progress and allow retry from it", async () => {
+  const { persistPrivateReplicaProgress } = await import("./privateReplicaRepository")
+  const { ReplicaProgressConflictError } = await import("./replicationErrors")
+  const owner = crypto.randomUUID()
+  const selected = await selectedConfig(owner)
+  const before = await getPrivateReplicaProgress(owner, selected)
+  await persistPrivateReplicaProgress(owner, { ...selected, cursor: 8 })
+  await expect(persistPrivateReplicaState(owner, selected, before.generation,
+    { ...before, generation: before.generation + 1, cursor: 3 })).rejects.toBeInstanceOf(ReplicaProgressConflictError)
+  const current = await getPrivateReplicaProgress(owner, selected)
+  expect(current.cursor).toBe(8)
+  await persistPrivateReplicaState(owner, selected, current.generation, { ...current, generation: current.generation + 1 })
+  expect((await getPrivateReplicaProgress(owner, selected)).cursor).toBe(8)
+})

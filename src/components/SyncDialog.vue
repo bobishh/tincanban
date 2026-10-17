@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import ParticipantAvatar from "./ParticipantAvatar.vue"
 import RustyPanel from "./RustyPanel.vue"
+import DeviceSyncProblems from "./DeviceSyncProblems.vue"
 import OwnershipRecoveryPanel from "./OwnershipRecoveryPanel.vue"
 import type { BlindReplicationController } from "../app/blindReplication"
 import RustyMark from "./RustyMark.vue"
@@ -209,6 +210,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </div>
         <button class="icon-button" type="button" aria-label="Close" :disabled="leavingMesh" @click="emit('dismiss')">×</button>
       </div>
+
+      <DeviceSyncProblems v-if="blindReplication" :controller="blindReplication" />
 
       <section v-for="request in visiblePendingJoins" :key="request.id" class="join-request" aria-label="Access request">
         <h3>{{ request.name }} wants to join</h3>

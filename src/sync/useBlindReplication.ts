@@ -1,5 +1,5 @@
 import { createDeviceAccessRefresh } from "./privateDeviceAccessRefresh"
-import { createReplicationState,clearReplicationSessionState } from "./privateReplicationState"
+import { createReplicationState,clearReplicationSessionState,reportDeviceSyncProblem } from "./privateReplicationState"
 import { createPrivateReplicationActions } from "./privateReplicationActions"
 import { onBeforeUnmount,watch } from "vue"
 import type { useTincanban } from "../state"
@@ -16,13 +16,13 @@ export type BlindReplicationController = ReturnType<typeof useBlindReplication>
 export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) {
   const state = createReplicationState()
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice, historyNotices } = state
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
   let identity = ""
   let session = 0
   let running: Promise<void> | undefined
   let disposed = false
   const automaticHistoryCompactions = new Set<string>()
-  const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, attachmentCoverage }, {
+  const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, deviceSyncIssues, attachmentCoverage }, {
     identity: () => identity, epoch: () => session, disposed: () => disposed,
   })
   const deviceAccess = createDeviceAccessRefresh(tincanban, state, runtime,
@@ -51,9 +51,10 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   }
   function syncNow(): Promise<void> {
     if (running) return running
-    if (busy.value || !identity || disposed || configs.value.length + identityConfigs.value.length === 0) return Promise.resolve()
+    if (busy.value || !identity || disposed || (configs.value.length + identityConfigs.value.length === 0 && !deviceSyncIssues.value.session)) return Promise.resolve()
     busy.value = true
     error.value = ""
+    deviceSyncIssues.value = Object.fromEntries(Object.entries(deviceSyncIssues.value).filter(([key]) => key !== "session"))
     notice.value = ""
     const owner = identity
     const epoch = session
@@ -61,6 +62,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     const run = async () => {
       const { syncReplicaConnections, recordReplicaHealth } = await import("./replicaHealthRun")
       if (!isCurrent()) return
+      if (!configs.value.length && !identityConfigs.value.length) await reload(owner, epoch)
       const failures = await runtime.provision(owner, epoch)
       failures.push(...await syncReplicaConnections([...identityConfigs.value], isCurrent, config =>
         recordReplicaHealth(config, statuses, async () => {
@@ -72,7 +74,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
             }
             throw cause
           }
-        }, isCurrent), "Profile"))
+        }, isCurrent, deviceSyncIssues), "Profile"))
       if (!isCurrent()) return
       // A personal snapshot may introduce a workspace connection. Use it in this same pass.
       await reload(owner, epoch)
@@ -80,16 +82,14 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
         recordReplicaHealth(config, statuses, async () => {
           if (config.purpose === "identity") throw new Error("Workspace scope required")
           return config.removalPending ? revoke(config) : (await replica(config)).sync()
-        }, isCurrent), "Board"))
+        }, isCurrent, deviceSyncIssues), "Board"))
       if (!isCurrent()) return
       void runtime.runWriterMaintenance(owner, epoch)
       if (!isCurrent()) return
       if (failures.length) error.value = failures.join("; ")
-      else notice.value = "Configured encrypted replicas synchronized."
+      else if (!Object.keys(deviceSyncIssues.value).length) notice.value = "Configured encrypted replicas synchronized."
     }
-    running = run().catch(cause => {
-      if (isCurrent()) error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable"
-    }).finally(() => {
+    running = run().catch(cause => { if (isCurrent()) reportDeviceSyncProblem(state, cause) }).finally(() => {
       running = undefined
       busy.value = false
       void maybeCompactActiveHistory(owner, epoch)
@@ -113,7 +113,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       await reload(owner, epoch)
       if (identity !== owner || session !== epoch || disposed) return
       await syncNow()
-    } catch (cause) { error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable" }
+    } catch (cause) { if (identity === owner && session === epoch && !disposed) reportDeviceSyncProblem(state, cause) }
   }, { immediate: true })
   const healthClock = setInterval(() => { now.value = Date.now() }, 1000)
   const timer = setInterval(() => { void syncNow() }, 15000)
@@ -126,11 +126,11 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       await running?.catch(() => {})
       await reload(owner, epoch)
       if (owner === identity && session === epoch && !disposed) await syncNow()
-    })().catch(cause => { if (owner === identity && session === epoch && !disposed) error.value = cause instanceof Error ? cause.message : "Rusty settings unavailable" })
+    })().catch(cause => { if (owner === identity && session === epoch && !disposed) reportDeviceSyncProblem(state, cause) })
   })
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, attachmentCoverage, now, busy, error, notice, historyNotices,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
     attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
     remove, syncNow, fetchAttachment }
 }

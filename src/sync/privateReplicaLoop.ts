@@ -8,7 +8,7 @@ import { replicaKey, type ReplicaHealth } from "./replicationHealth"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 
 type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<IdentityReplicaConfig[]>;
-  statuses: Ref<Record<string, ReplicaHealth>>; profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>;
+  statuses: Ref<Record<string, ReplicaHealth>>; profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>; deviceSyncIssues?: Ref<Record<string, string>>;
   preferenceConflicts?: Ref<PrivateReplicaConflictSummary[]>;
   attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>> }
 type Session = { identity: () => string; epoch: () => number; disposed: () => boolean }
@@ -63,7 +63,7 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
     const owner = session.identity(), epoch = session.epoch(), guard = captureSession()
     guard()
     return import("./privateReplicaFactory").then(module => module.resolvePrivateReplica(app, config,
-      { owner, guard, configs: state.configs, cache: replicas, attachmentCoverage: state.attachmentCoverage,
+      { owner, epoch, guard, configs: state.configs, cache: replicas, attachmentCoverage: state.attachmentCoverage,
         reload: () => reload(owner, epoch), queueWriterMaintenance: value => writerMaintenance.set(replicaKey(value), structuredClone(value)) }))
   }
   function runWriterMaintenance(owner: string, epoch: number): Promise<void> {

@@ -1,4 +1,5 @@
 /* global __TINCANBAN_BUILD_COMMIT__ */
+import { rustyRequestFailure } from "./replicationErrors"
 import type { Context } from "@opentelemetry/api"
 import { beginDiagnosticHttpRequest } from "./httpDiagnostics"
 
@@ -24,13 +25,18 @@ export async function fetchBlind(url: string, init: RustyRequestInit): Promise<R
     return response
   } catch (error) {
     failure = error
-    throw error
+    throw rustyRequestFailure(error, status)
   } finally {
     try { diagnostic.end(failure, status) } catch { /* Diagnostics must preserve the transport result. */ }
   }
 }
 
 export async function readBlindJson<T>(response: Response, maximumBytes = 32 * 1024 * 1024): Promise<T> {
+  try { return await readResponseJson<T>(response, maximumBytes) }
+  catch (cause) { throw rustyRequestFailure(cause, response.status) }
+}
+
+async function readResponseJson<T>(response: Response, maximumBytes: number): Promise<T> {
   if (!response.body) throw new Error("Empty Rusty response")
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []

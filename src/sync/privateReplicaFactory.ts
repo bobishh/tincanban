@@ -10,11 +10,11 @@ import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 
 type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
-type Session = { owner: string; guard: () => void; reload: () => Promise<void>;
+type Session = { owner: string; epoch?: number; guard: () => void; reload: () => Promise<void>;
   configs: Ref<BlindReplicaConfig[]>; cache: Map<string, Replica>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>>;
   queueWriterMaintenance?: (config: BlindReplicaConfig) => void }
 type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<IdentityReplicaConfig[]>; statuses: Ref<Record<string, ReplicaHealth>>;
-  profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>;
+  profileSetupErrors: Ref<Record<string, string>>; profilePermissionUpdates?: Ref<string[]>; deviceSyncIssues?: Ref<Record<string, string>>;
   preferenceConflicts?: Ref<PrivateReplicaConflictSummary[]>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>> }
 
 export async function provisionPrivateReplicas(app: ReturnType<typeof useTincanban>, state: State,
@@ -40,6 +40,7 @@ export async function reloadPrivateReplicas(owner: string, state: State, cache: 
   if (state.preferenceConflicts) state.preferenceConflicts.value = conflicts
   const keys = new Set(saved.map(replicaKey))
   for (const key of cache.keys()) if (!keys.has(key)) cache.delete(key)
+  if (state.deviceSyncIssues) state.deviceSyncIssues.value = Object.fromEntries(Object.entries(state.deviceSyncIssues.value).filter(([key]) => keys.has(key)))
   state.statuses.value = Object.fromEntries(Object.entries(state.statuses.value).filter(([key]) => keys.has(key)))
   if (state.attachmentCoverage) {
     state.attachmentCoverage.value = Object.fromEntries(Object.entries(state.attachmentCoverage.value).filter(([key]) => keys.has(key)))
@@ -50,6 +51,7 @@ export async function reloadPrivateReplicas(owner: string, state: State, cache: 
 export function forgetPrivateReplica(config: PrivateReplicaConfig, state: State, cache: Map<string, Replica>) {
   const key = replicaKey(config)
   cache.delete(key)
+  if (state.deviceSyncIssues) { const next = { ...state.deviceSyncIssues.value }; delete next[key]; state.deviceSyncIssues.value = next }
   const statuses = { ...state.statuses.value }
   delete statuses[key]
   state.statuses.value = statuses
@@ -65,8 +67,24 @@ function requiresWriterRecovery(config: PrivateReplicaConfig, upgrade: ReplicaWr
   return !upgrade.localActivated || (upgrade.confirmed?.payload.revision ?? 0) > config.policyRevision
 }
 
-/** Network-only construction and compatibility do not participate in rendering the saved local board. */
-export async function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
+/** Share construction so concurrent callers use one replica operation queue. */
+const constructing = new WeakMap<Session["cache"], Map<string, Promise<Replica>>>()
+
+export function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
+  session.guard()
+  const { cursor, lastUploaded, ...credentials } = config
+  void cursor; void lastUploaded
+  const key = canonicalizeJson([session.owner, session.epoch ?? null, credentials])
+  let pending = constructing.get(session.cache)
+  if (!pending) { pending = new Map(); constructing.set(session.cache, pending) }
+  const existing = pending.get(key)
+  if (existing) return existing.then(replica => { session.guard(); return replica })
+  const run = constructPrivateReplica(app, config, session).finally(() => { pending.delete(key) })
+  pending.set(key, run)
+  return run
+}
+
+async function constructPrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   const { owner, guard, configs, cache } = session
   config = JSON.parse(canonicalizeJson(config)) as PrivateReplicaConfig
   guard()
