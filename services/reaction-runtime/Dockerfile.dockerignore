@@ -1,6 +1,8 @@
 **
 !package.json
 !package-lock.json
+!release/
+!release/**
 !services/
 services/**
 !services/executor/
