@@ -25,6 +25,7 @@ src/**
 workers/**
 !workers/automation/
 workers/automation/**
+!workers/automation/automation-types.json
 !workers/automation/package.json
 !workers/automation/pnpm-lock.yaml
 !workers/automation/src/

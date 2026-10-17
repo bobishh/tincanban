@@ -60,7 +60,7 @@ const boardSchema = z.object({
   settings: z.record(z.string(), z.unknown()).optional(),
   cardAgingPolicy: cardAgingPolicySchema.optional(),
   archiveColumnId: id.nullable().optional(),
-}).catchall(z.json())
+}).catchall(z.json().transform((value): unknown => value))
 const columnSchema = z.strictObject({
   ...common,
   kind: z.literal("column"),

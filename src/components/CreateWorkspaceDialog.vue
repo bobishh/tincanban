@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ (event: "close"): void }>()
 const title = ref("")
-const preset = ref<Preset>("blank")
+const preset = ref<keyof typeof templateData>("blank")
 const error = ref("")
 const creating = ref(false)
 const customizeBoard = ref(false)
