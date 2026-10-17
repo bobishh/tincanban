@@ -57,3 +57,17 @@ function proxyExchange(port, request) {
     client.on("connect", () => client.write(request));
   });
 }
+
+test("Given immutable website job hosts, allow only those hosts and still reject private DNS", async t => {
+  const allowlist = parseAllowedHosts('["https://rusty.example"]', '["www.amazon.jobs"]');
+  assert.deepEqual(parseConnectAuthority("www.amazon.jobs:443", allowlist), { hostname: "www.amazon.jobs", port: 443 });
+  assert.throws(() => parseConnectAuthority("evil.example:443", allowlist), /not allowlisted/);
+  assert.throws(() => parseAllowedHosts('["https://rusty.example"]', '["127.0.0.1"]'), /public DNS host/);
+
+  const server = createProxyServer({ allowlist, resolve: async () => [{ address: "10.0.0.2", family: 4 }], logger: () => {} });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const denied = await proxyExchange(server.address().port,
+    "CONNECT www.amazon.jobs:443 HTTP/1.1\r\nHost: www.amazon.jobs:443\r\n\r\n");
+  assert.match(denied, /^HTTP\/1\.1 403 Forbidden/);
+});

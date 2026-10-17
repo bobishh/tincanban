@@ -7,7 +7,7 @@ const cloudflareHost = "api.cloudflare.com";
 const maxHeaderBytes = 8_192;
 const maxConnections = 128;
 
-export function parseAllowedHosts(value) {
+export function parseAllowedHosts(value, jobUrlHosts = "[]") {
   if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > 16_384) {
     throw new TypeError("REACTION_RUSTY_ORIGINS is required and must be bounded JSON");
   }
@@ -23,6 +23,24 @@ export function parseAllowedHosts(value) {
       throw new TypeError("Rusty egress entries must be bare public HTTPS origins");
     }
     hosts.add(url.hostname.toLowerCase());
+  }
+  if (typeof jobUrlHosts !== "string" || Buffer.byteLength(jobUrlHosts, "utf8") > 4_096) {
+    throw new TypeError("REACTION_JOB_URL_HOSTS must be bounded JSON");
+  }
+  const jobHosts = JSON.parse(jobUrlHosts);
+  if (!Array.isArray(jobHosts) || jobHosts.length > 3 || jobHosts.some(host => typeof host !== "string")) {
+    throw new TypeError("REACTION_JOB_URL_HOSTS must contain at most three public DNS hosts");
+  }
+  for (const host of jobHosts) {
+    if (host.length > 253 || isIP(host) || !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(host)) {
+      throw new TypeError("REACTION_JOB_URL_HOSTS entries must be public DNS hostnames");
+    }
+    const normalized = host.toLowerCase();
+    if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local") ||
+      normalized.endsWith(".internal") || normalized === "metadata.google.internal") {
+      throw new TypeError("REACTION_JOB_URL_HOSTS entries must be public DNS hostnames");
+    }
+    hosts.add(normalized);
   }
   return hosts;
 }
@@ -158,7 +176,7 @@ export function createProxyServer({ allowlist, resolve = lookup, connect = net.c
 }
 
 function main() {
-  const allowlist = parseAllowedHosts(process.env.REACTION_RUSTY_ORIGINS);
+  const allowlist = parseAllowedHosts(process.env.REACTION_RUSTY_ORIGINS, process.env.REACTION_JOB_URL_HOSTS ?? "[]");
   const port = Number(process.env.REACTION_PROXY_PORT ?? 3128);
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) throw new TypeError("REACTION_PROXY_PORT is invalid");
   const server = createProxyServer({ allowlist });

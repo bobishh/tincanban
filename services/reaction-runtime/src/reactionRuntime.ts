@@ -56,7 +56,7 @@ export async function runReaction(request: ReactionRequest & { source: string },
     signals: request.signals, ...(request.classification === undefined ? {} : { classification: request.classification }),
     participant: request.participant, capabilities: request.capabilities };
   assertBoundedJson(input, "Reaction input");
-  const moduleSource = compileReaction(request.source);
+  const moduleSource = compileReaction(request.source, request.capabilities.operations);
   const commands: ReactionOutput["commands"] = [];
   let commandFailure: string | undefined;
   const api: ReactionContext = {
@@ -176,7 +176,7 @@ export function createReactionAi(): DecisionAi {
   };
 }
 
-function compileReaction(source: string): string {
+function compileReaction(source: string, capabilities: string[] = []): string {
   const file = ts.createSourceFile("reaction.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   if (file.parseDiagnostics.length) throw new TypeError("Reaction source has invalid TypeScript syntax");
   const visit = (node: ts.Node) => {
@@ -193,8 +193,11 @@ function compileReaction(source: string): string {
       ts.isIdentifier(node.expression.expression) && node.expression.expression.text === "Math" && node.expression.name.text === "random") {
       throw new TypeError("Reaction cannot use nondeterministic Math.random");
     }
-    if (ts.isIdentifier(node) && ["process", "fetch", "require", "Date", "crypto", "performance", "globalThis", "setTimeout", "setInterval", "eval", "Function"].includes(node.text)) {
+    if (ts.isIdentifier(node) && ["process", "require", "Date", "crypto", "performance", "globalThis", "setTimeout", "setInterval", "eval", "Function"].includes(node.text)) {
       throw new TypeError(`Reaction cannot access ${node.text}`);
+    }
+    if (ts.isIdentifier(node) && node.text === "fetch" && !capabilities.includes("job-page-fetch")) {
+      throw new TypeError("Reaction capability denied: job-page-fetch");
     }
     ts.forEachChild(node, visit);
   };
