@@ -49,6 +49,38 @@ it("Given a missing original object, when exporting, then list its exact ID and 
   expect(manifest.unresolvedDirectories).toEqual([])
 })
 
+it("Given several sources retaining the same authenticated directory, when exporting, then traverse it once while preserving every signed source", async () => {
+  const f = await fixture(), records: HistoryRecoveryRecord[] = [], requested: string[] = []
+  const manifest = await exportHistoryRecoveryArchive(f.workspaceId, [
+    { ...f.source, roots: [f.root, f.root] }, { ...f.source, id: "second-baseline" },
+  ], {
+    ensureCurrent: () => {}, write: async record => { records.push(record) },
+    download: async (_source, id) => { requested.push(id); return f.objects.get(id) },
+  })
+  expect(manifest).toMatchObject({ coverage: "complete", sourceCount: 2, objectCount: f.objects.size })
+  expect(requested).toHaveLength(f.objects.size)
+  expect(records.filter(record => record.kind === "archive-source")).toHaveLength(2)
+})
+
+it("Given an incomplete first directory copy, when another source supplies its missing bytes, then retry that directory and finish with complete coverage", async () => {
+  const f = await fixture(), missing = f.entries[1]!.ciphertextId
+  const manifest = await exportHistoryRecoveryArchive(f.workspaceId, [f.source, { ...f.source, id: "second-baseline" }], {
+    ensureCurrent: () => {}, write: async () => {},
+    download: async (source, id) => source.id === f.source.id && id === missing ? undefined : f.objects.get(id),
+  })
+  expect(manifest).toMatchObject({ coverage: "complete", sourceCount: 2, objectCount: f.objects.size, missingObjects: [] })
+})
+
+it("Given a repeated directory with a different reading key, when exporting, then authenticate that key instead of reusing another source's traversal", async () => {
+  const f = await fixture(), records: HistoryRecoveryRecord[] = []
+  await expect(exportHistoryRecoveryArchive(f.workspaceId, [f.source, { ...f.source, id: "wrong-key",
+    scope: { ...f.scope, key: new Uint8Array(32).fill(42) } }], {
+    ensureCurrent: () => {}, write: async record => { records.push(record) },
+    download: async (_source, id) => f.objects.get(id),
+  })).rejects.toThrow()
+  expect(records.some(record => record.kind === "history-recovery-manifest")).toBe(false)
+})
+
 it("Given a missing directory, when exporting, then disclose unresolved descendants and never label it a complete backup", async () => {
   const f = await fixture()
   f.objects.delete(f.root.root.ciphertextId)

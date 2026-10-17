@@ -371,7 +371,7 @@ jobs:
       - name: Verify public board lifecycle with native storage
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
-        run: npm run test:e2e:public-board
+        run: npm run test:e2e:public-board -- --project=chromium
       - name: Verify compiled anonymous reader
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
@@ -446,6 +446,11 @@ jobs:
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
         run: npx playwright test --config playwright.rusty.config.ts rusty-credential-conflict.spec.ts --reporter=list --output=test-results/rusty-credential-recovery-webkit
+      - name: Verify public board lifecycle in WebKit with native Ed25519
+        if: matrix.browser == 'webkit'
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+        run: npm run test:e2e:public-board -- --project=webkit
       - uses: actions/upload-artifact@v6
         if: failure()
         with:

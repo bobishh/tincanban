@@ -83,6 +83,7 @@ function unavailableExportCoverage(ports: ExportPorts) {
 class PrivateHistoryExport {
   private readonly sourceIds = new Set<string>()
   private readonly objects = new Map<string, string>()
+  private readonly completedRoots = new Set<string>()
   private readonly missing = new Map<string, { scopeId: string; ciphertextId: string }>()
   private readonly unresolvedDirectories: HistoryRecoveryManifest["unresolvedDirectories"] = []
   private encryptedBytes = 0
@@ -145,10 +146,17 @@ class PrivateHistoryExport {
       key: toBase64Url(scope.key), roots: source.roots, signedJson: toBase64Url(source.signedJson), authorityEvidence: source.authorityEvidence })
     for (const root of source.roots) {
       if (root.context.workspaceId !== this.workspaceId) throw new Error("Recovery directory belongs to another workspace")
+      // Signed generations often retain the same directory. Its content-addressed
+      // bytes are already in the encrypted stream; keep the source, not another traversal.
+      const rootIdentity = canonicalizeJson([scope.scopeId, scope.keyEpoch, toBase64Url(scope.key), root])
+      if (this.completedRoots.has(rootIdentity)) continue
       try {
+        let complete = true
         for await (const entry of iterateArchiveLocatorEntries(scope, root, {
           ensureCurrent: () => this.guard(), download: async id => { const object = await this.download(source, scope, id); if (!object) throw new MissingObject(id); return object },
-        })) await this.download(source, scope, entry.ciphertextId)
+        })) if (!await this.download(source, scope, entry.ciphertextId)) complete = false
+        // A later source may supply bytes missing from this source's local or remote copy.
+        if (complete) this.completedRoots.add(rootIdentity)
       } catch (error) {
         if (!(error instanceof MissingObject)) throw error
         this.unresolvedDirectories.push({ sourceId: source.id, ciphertextId: error.ciphertextId })
