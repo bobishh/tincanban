@@ -37,7 +37,7 @@ export async function prepareItemCommand(value: unknown, expectedIntegrationId: 
   const idempotencyKey = boundedText(envelope.idempotencyKey, "idempotencyKey", 256);
   if (!sourceEventPattern.test(idempotencyKey)) throw new TypeError("idempotencyKey must be the stable intake payload digest");
   const event = normalizeEvent(envelope.event);
-  if (await sourceBodyHash(event) !== idempotencyKey) throw new TypeError("idempotencyKey does not match the original intake payload");
+  if (await itemCommandSourceBodyHash(event) !== idempotencyKey) throw new TypeError("idempotencyKey does not match the original intake payload");
   const classification = validateItemCommandClassification(envelope.classification, event, []);
   const canonical = canonicalizeJson({ integrationId, sourceEventId, idempotencyKey, event, classification });
   if (new TextEncoder().encode(canonical).byteLength > maxCommandBytes) throw new TypeError("Item command exceeds the size limit");
@@ -45,7 +45,7 @@ export async function prepareItemCommand(value: unknown, expectedIntegrationId: 
     bodyHash: await sha256Base64Url(new TextEncoder().encode(canonical)), event, classification };
 }
 
-async function sourceBodyHash(event: AutomationEvent): Promise<string> {
+export async function itemCommandSourceBodyHash(event: AutomationEvent): Promise<string> {
   const bytes = event.source === "website"
     ? new TextEncoder().encode(JSON.stringify(event.submission))
     : decodeBase64Url(event.rawMime);

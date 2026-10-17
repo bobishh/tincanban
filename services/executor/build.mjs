@@ -33,13 +33,17 @@ const wasm = {
 const options = {
   absWorkingDir: root, bundle: true, platform: 'node', target: 'node24', format: 'esm',
   external: ['node:*'], plugins: [wasm], logLevel: 'info',
-  banner: { js: 'import { createRequire as __executorCreateRequire } from "node:module"; const require = __executorCreateRequire(import.meta.url);' },
+  banner: { js: 'import { createRequire as __executorCreateRequire } from "node:module"; const require = __executorCreateRequire(import.meta.url); const __filename = new URL(import.meta.url).pathname; const __dirname = new URL(".", import.meta.url).pathname;' },
 };
 await mkdir(output, { recursive: true });
+await mkdir(join(output, 'reaction-runtime'), { recursive: true });
+await writeFile(join(output, 'reaction-runtime/defaultReaction.ts'), await readFile(join(root, 'services/reaction-runtime/defaultReaction.ts')));
 const runtimeFiles = ['main.mjs', 'participantWorker.mjs'].sort();
 for (const filename of runtimeFiles) {
   await build({ ...options, entryPoints: [join(service, 'src', filename.replace(/\.mjs$/, '.ts'))], outfile: join(output, filename) });
 }
+await build({ ...options, entryPoints: [join(service, 'src', 'reactionRunner.ts')], outfile: join(output, 'reactionRunner.mjs') });
+await build({ ...options, entryPoints: [join(service, 'src', 'inspectReactionState.ts')], outfile: join(output, 'inspectReactionState.mjs') });
 const artifactHash = createHash('sha256');
 const files = {};
 for (const filename of runtimeFiles) {

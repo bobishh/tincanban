@@ -1583,6 +1583,11 @@ async function decryptReplicaValue(secret: string, integrationId: string, kind: 
   return new TextDecoder("utf-8", { fatal: true }).decode(plaintext);
 }
 
+/** Decode the existing encrypted participant state for read-only operator inventory tools. */
+export function decryptParticipantReplicaState(secret: string, integrationId: string, value: string): Promise<string> {
+  return decryptReplicaValue(secret, integrationId, "state", value);
+}
+
 async function replicaStorageKey(secret: string): Promise<CryptoKey> {
   if (new TextEncoder().encode(secret).byteLength < 32) throw new Error("Event storage secret must contain at least 32 bytes");
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`TIN/event-key/v1/${secret}`));

@@ -1,7 +1,7 @@
 import { authorizeInternalRequest, executorRpcMethods } from "../../../workers/automation/src/executorClient";
 
 export type ParticipantRequest = {
-  operation: "rpc" | "status" | "bootstrap" | "import-manifest" | "import-page" | "activate" | "tick";
+  operation: "rpc" | "reaction" | "status" | "bootstrap" | "import-manifest" | "import-page" | "activate" | "tick";
   method?: string; args?: unknown[]; epoch?: number; body?: unknown;
   traceparent?: string;
 };

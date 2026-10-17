@@ -1,0 +1,69 @@
+name: Build Reflux reaction runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'services/reaction-runtime/**'
+      - 'services/executor/src/reaction*.ts'
+      - 'services/executor/src/participantWorker.ts'
+      - '.github/workflows/reaction-runtime.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: reflux-reaction-runtime
+  cancel-in-progress: false
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+      - name: Record pinned SDK revision
+        id: revisions
+        run: echo "sdk_sha=$(git -C vendor/meta-mesh rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Verify enforcing egress proxy
+        run: node --test services/reaction-runtime/proxy.test.mjs
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish pinned reaction runtime
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: services/reaction-runtime/Dockerfile
+          build-args: |
+            RELEASE_SHA=${{ github.sha }}
+            RELEASE_SDK_SHA=${{ steps.revisions.outputs.sdk_sha }}
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/bobishh/tincanban-reaction:${{ github.sha }}
+          cache-from: type=gha,scope=reaction
+          cache-to: type=gha,mode=max,scope=reaction
+          load: true
+      - name: Verify packaged reaction engine
+        run: |
+          docker run --rm --entrypoint /bin/sh ghcr.io/bobishh/tincanban-reaction:${{ github.sha }} -ec 'command -v flock; test -f /reaction/runner.mjs; test -f /app/participantWorker.mjs'
+      - name: Build and publish enforcing proxy
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: services/reaction-runtime/proxy.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/bobishh/tincanban-reaction-proxy:${{ github.sha }}
+          cache-from: type=gha,scope=reaction-proxy
+          cache-to: type=gha,mode=max,scope=reaction-proxy

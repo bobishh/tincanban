@@ -1,5 +1,6 @@
 import { parentPort, workerData } from "node:worker_threads";
 import { chmodSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { ExecutionCoordinator } from "../../../workers/automation/src/executionCoordinator";
 import type { ExecutionEnvironment } from "../../../workers/automation/src/executionPorts";
 import { initializeImport, initializeImportTables, importMigrationPage, openMigrationPage,
@@ -9,6 +10,8 @@ import { automationTelemetry, recordAutomationException, withAutomationSpan } fr
 import { SqliteExecutionStorage } from "./sqliteStorage";
 import type { ParticipantRequest } from "./httpApi";
 import { freshBindingHash, readNodeFreshBinding, reserveNodeFreshBinding, validateExecutorFreshBinding } from "../../../workers/automation/src/executorFresh";
+import { createReactionAi, runReaction, type ReactionCommandIdentity, type ReactionRequest } from "./reactionRuntime";
+import { itemCommandSourceBodyHash } from "../../../workers/automation/src/itemCommands";
 
 const { integrationId, databasePath, publicOrigin, automationOrigin } = workerData as {
   integrationId: string; databasePath: string; publicOrigin: string; automationOrigin: string;
@@ -54,6 +57,58 @@ initializeImportTables(storage);
 storage.sql.exec(`CREATE TABLE IF NOT EXISTS executor_command_receipts (
   event_id TEXT PRIMARY KEY, change_hash TEXT NOT NULL, request_id TEXT NOT NULL, receipt_json TEXT NOT NULL
 );`);
+storage.sql.exec(`CREATE TABLE IF NOT EXISTS reaction_journal (
+  journal_key TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('command', 'clef-opportunity', 'clef-application-event')),
+  input_hash TEXT NOT NULL,
+  value_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);`);
+
+const reactionEvidenceInFlight = new Map<string, Promise<unknown>>();
+async function getOrCreateReactionJournalValue<T>(journalKey: string, kind: string, inputHash: string,
+  compute: () => Promise<T>): Promise<T> {
+  const read = () => storage.sql.exec<{ kind: string; input_hash: string; value_json: string }>(
+    "SELECT kind, input_hash, value_json FROM reaction_journal WHERE journal_key = ?", journalKey,
+  ).toArray()[0];
+  const existing = read();
+  if (existing) {
+    if (existing.kind !== kind || existing.input_hash !== inputHash) throw new Error("Reaction journal identity conflicts with retained evidence");
+    return JSON.parse(existing.value_json) as T;
+  }
+  const prior = reactionEvidenceInFlight.get(journalKey);
+  if (prior) return prior as Promise<T>;
+  const pending = (async () => {
+    const value = await compute();
+    const valueJson = JSON.stringify(value);
+    if (!valueJson || Buffer.byteLength(valueJson, "utf8") > 1_048_576) throw new TypeError("Reaction journal value exceeds its bound");
+    storage.transactionSync(() => storage.sql.exec(
+      `INSERT OR IGNORE INTO reaction_journal(journal_key, kind, input_hash, value_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+      journalKey, kind, inputHash, valueJson, Date.now(),
+    ));
+    const retained = read();
+    if (!retained || retained.kind !== kind || retained.input_hash !== inputHash) {
+      throw new Error("Reaction journal evidence could not be retained");
+    }
+    return JSON.parse(retained.value_json) as T;
+  })();
+  reactionEvidenceInFlight.set(journalKey, pending);
+  try { return await pending; }
+  finally { reactionEvidenceInFlight.delete(journalKey); }
+}
+
+function hashJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function verifyReactionCommandIdentity(commandId: string, identity: ReactionCommandIdentity): void {
+  if (!Number.isSafeInteger(identity.slot) || identity.slot < 0 || identity.slot >= 100 ||
+    !/^[A-Za-z0-9_-]{1,128}$/.test(identity.runId) || !/^[a-f0-9]{64}$/.test(identity.sourceDigest)) {
+    throw new TypeError("Reaction command identity is invalid");
+  }
+  const expected = createHash("sha256").update(`${identity.runId}\0${identity.sourceDigest}\0${identity.slot}`).digest("base64url");
+  if (commandId !== expected) throw new TypeError("Reaction command ID is not bound to its run and source");
+}
 
 function importState() {
   return storage.sql.exec<{ manifest_hash: string; manifest_json: string; active: number }>("SELECT manifest_hash, manifest_json, active FROM executor_import WHERE singleton = 1").toArray()[0];
@@ -104,6 +159,43 @@ async function dispatch(request: ParticipantRequest): Promise<unknown> {
     if (request.operation === "tick") return { active: false };
     const error = new Error(fresh ? "Executor enrollment requires owner activation" : "Executor migration has not been activated") as Error & { status: number };
     error.status = 503; throw error;
+  }
+  if (request.operation === "reaction") {
+    if (request.epoch !== (fresh?.epoch ?? manifest?.epoch)) throw new Error("Reaction participant epoch is stale");
+    const body = request.body as ReactionRequest & { source: string };
+    if (body.participant.integrationId !== integrationId) throw new Error("Reaction participant does not match its journal");
+    return runReaction(body, {
+      async enqueueItemCommand(commandId, value, identity) {
+        verifyReactionCommandIdentity(commandId, identity);
+        const journalKey = `command:${commandId}`;
+        const inputHash = hashJson({ runId: identity.runId, sourceDigest: identity.sourceDigest, slot: identity.slot });
+        const commandValue = await getOrCreateReactionJournalValue(journalKey, "command", inputHash, async () => value);
+        const command = commandValue as { event?: unknown; classification?: unknown };
+        if (!command || !command.event || !command.classification) throw new TypeError("Reaction command requires event and classification");
+        const idempotencyKey = await itemCommandSourceBodyHash(command.event as Parameters<typeof itemCommandSourceBodyHash>[0]);
+        return coordinator.enqueueItemCommand({ integrationId, sourceEventId: commandId, idempotencyKey,
+          event: command.event, classification: command.classification });
+      },
+      async getItemCommandResult(commandId) {
+        const result = coordinator.getItemCommandResult(commandId, integrationId);
+        if (!result || result.status !== "applied") return result as never;
+        const receipt = storage.sql.exec<{ change_hash: string; receipt_json: string }>(
+          "SELECT change_hash, receipt_json FROM executor_command_receipts WHERE event_id = ?", commandId,
+        ).toArray()[0];
+        return receipt ? { ...result, changeHash: receipt.change_hash, storageReceipt: JSON.parse(receipt.receipt_json) } : result as never;
+      },
+      async getOrCreateOpportunity(evidenceKey, inputHash, compute) {
+        return getOrCreateReactionJournalValue(`clef-opportunity:${evidenceKey}`, "clef-opportunity", inputHash, compute);
+      },
+      async getOrCreateApplicationEvent(evidenceKey, inputHash, compute) {
+        return getOrCreateReactionJournalValue(`clef-application-event:${evidenceKey}`, "clef-application-event", inputHash, compute);
+      },
+      async classificationContext() {
+        const context = await coordinator.classificationContext();
+        if (!context) throw new Error("An admitted participant is required before classification");
+        return { employeeProfile: context.employeeProfile, priorityBands: context.priorityBands };
+      },
+    });
   }
   if (request.operation === "tick") {
     const time = await storage.getAlarm();
