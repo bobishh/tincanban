@@ -11,7 +11,9 @@ RUN node --test services/reaction-runtime/dist/test/reactionRuntime.test.mjs ser
 
 FROM node:24-bookworm-slim@sha256:a5f4366e834695d5f363b920c104953a535d3a9864d1bdf74566a0ebe01daee5 AS runtime
 ARG RELEASE_SHA
-ENV NODE_ENV=production NODE_USE_ENV_PROXY=1 RELEASE_SHA=${RELEASE_SHA}
+ENV NODE_ENV=production NODE_USE_ENV_PROXY=1 \
+    HTTP_PROXY=http://reaction-egress-proxy:3128 HTTPS_PROXY=http://reaction-egress-proxy:3128 \
+    NO_PROXY= no_proxy= RELEASE_SHA=${RELEASE_SHA}
 WORKDIR /reaction
 COPY --from=build /source/services/reaction-runtime/dist/engine.mjs /reaction/engine.mjs
 RUN chown 1000:1000 /reaction

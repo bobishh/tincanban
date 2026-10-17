@@ -66,3 +66,23 @@ jobs:
           tags: ghcr.io/bobishh/tincanban-reaction-proxy:${{ github.sha }}
           cache-from: type=gha,scope=reaction-proxy
           cache-to: type=gha,mode=max,scope=reaction-proxy
+
+      - name: Verify native fetch uses proxy configured at Node startup
+        run: |
+          set -eu
+          runner_network="reaction-runner-smoke-${GITHUB_RUN_ID}"
+          egress_network="reaction-egress-smoke-${GITHUB_RUN_ID}"
+          proxy="reaction-proxy-smoke-${GITHUB_RUN_ID}"
+          trap 'docker rm -f "$proxy" >/dev/null 2>&1 || true; docker network rm "$runner_network" "$egress_network" >/dev/null 2>&1 || true' EXIT
+          docker pull ghcr.io/bobishh/tincanban-reaction:${{ github.sha }}
+          docker pull ghcr.io/bobishh/tincanban-reaction-proxy:${{ github.sha }}
+          docker network create --internal "$runner_network"
+          docker network create "$egress_network"
+          docker run -d --name "$proxy" --network "$runner_network" --network-alias reaction-egress-proxy \
+            --env REACTION_RUSTY_ORIGINS='[]' --env REACTION_JOB_URL_HOSTS='["www.amazon.jobs"]' \
+            ghcr.io/bobishh/tincanban-reaction-proxy:${{ github.sha }}
+          docker network connect "$egress_network" "$proxy"
+          sleep 1
+          docker run --rm --network "$runner_network" --env REACTION_RUSTY_PROXY=http://reaction-egress-proxy:3128 \
+            --entrypoint /usr/local/bin/node ghcr.io/bobishh/tincanban-reaction:${{ github.sha }} \
+            -e 'if (process.env.HTTPS_PROXY !== "http://reaction-egress-proxy:3128" || process.env.HTTP_PROXY !== "http://reaction-egress-proxy:3128" || process.env.NO_PROXY !== "") throw new Error("startup proxy environment is missing"); fetch("https://www.amazon.jobs/de/jobs/10471492/software-development-engineer", { signal: AbortSignal.timeout(15000) }).then(async response => { if (response.status !== 200) throw new Error(`HTTP ${response.status}`); await response.body?.cancel(); }).catch(error => { console.error(error); process.exitCode = 1; });'
