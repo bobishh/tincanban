@@ -1,4 +1,4 @@
-import type { Ref } from "vue"
+import { shallowRef, type Ref } from "vue"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import type { useTincanban } from "../state"
 import { canonicalizeJson } from "../domain/identity"
@@ -42,11 +42,12 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
   async function reload(owner: string, epoch: number) {
     const knownOrigins = new Set([...state.configs.value, ...state.identityConfigs.value, ...(state.preferenceConflicts?.value ?? [])].map(value => value.origin))
     const module = await import("./privateReplicaFactory")
-    await module.reloadPrivateReplicas(owner, state, replicas, () => current(owner, epoch))
+    const conflicts = shallowRef<PrivateReplicaConflictSummary[]>([])
+    await module.reloadPrivateReplicas(owner, { ...state, preferenceConflicts: conflicts }, replicas, () => current(owner, epoch))
     if (!current(owner, epoch) || !state.preferenceConflicts) return
     const profile = app.getCurrentProfile()
     if (!profile || profile.identity.personId !== owner) return
-    for (const value of [...state.configs.value, ...state.identityConfigs.value, ...state.preferenceConflicts.value]) knownOrigins.add(value.origin)
+    for (const value of [...state.configs.value, ...state.identityConfigs.value, ...conflicts.value]) knownOrigins.add(value.origin)
     const { readPendingRustyCredentialConflict } = await import("./replicaCredentialConflictWorkflow")
     const pending: PrivateReplicaConflictSummary[] = []
     for (const origin of knownOrigins) {
@@ -55,7 +56,7 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
       if (summary) pending.push(summary)
     }
     if (!current(owner, epoch)) return
-    state.preferenceConflicts.value = [...new Map([...state.preferenceConflicts.value, ...pending]
+    state.preferenceConflicts.value = [...new Map([...conflicts.value, ...pending]
       .map(value => [`${value.origin}/${value.scopeId}`, value])).values()]
   }
   async function replica(config: PrivateReplicaConfig) {

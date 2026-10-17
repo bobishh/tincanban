@@ -16,6 +16,7 @@ async function recoverConnection() {
     <p>Recover this connection with a fresh key. Every previous key and saved upload stays available.</p>
     <button v-if="owner" class="button" type="button" :disabled="pending || disabled" @click="recoverConnection">{{ pending ? 'Recovering connection…' : 'Recover connection' }}</button>
     <p v-else>Ask the board owner to recover this connection.</p>
+    <p v-if="owner && disabled && !pending" role="status">Waiting for the current Rusty operation to finish…</p>
     <p v-if="failure" role="alert">{{ failure }}</p>
   </div>
 </template>

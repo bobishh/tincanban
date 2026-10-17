@@ -293,7 +293,7 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
     const live = async () => {
       await guard()
       if (await readLocal(freezeKey) !== (journal!.activated ? null : frozenRaw)) throw new Error('Recovery freeze changed')
-      if (!journal!.activated && !same(await capturePrivateReplicaConflict(personId, origin, scopeId), journal!.capture)) throw new Error('Exact conflict source or original outbox changed during recovery')
+      if (!journal!.activated && !same(await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture)) throw new Error('Exact conflict source or original outbox changed during recovery')
       await guard()
     }
     const save = async (changed: Journal, plan?: LocalStatePlan) => {

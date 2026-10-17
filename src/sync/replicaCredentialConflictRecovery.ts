@@ -4,7 +4,7 @@ import { parsePrivateReplicaConfig } from './blindReplicaConfig'
 import { decodeBlindBytes, encodeBlindBytes } from './blindEnvelope'
 import { blindOrigin } from './blindOrigin'
 import { mergeReplicaContentKeyVariants, replicaContentKeyEntries } from './replicaContentKeys'
-import { parsePrivateReplicaWire, replicaPreferenceConflicts, type PrivateReplicaWire } from './privateReplicaPreferences'
+import { parsePrivateReplicaWire, type PrivateReplicaWire } from './privateReplicaPreferences'
 
 export type ReplicaCredentialConflictRecoveryRequest = {
   origin: string
@@ -36,9 +36,12 @@ export function buildReplicaCredentialConflictRecovery(input: unknown,
   requestInput: ReplicaCredentialConflictRecoveryRequest): ReplicaCredentialConflictRecoveryProposal {
   const sourceWire = parsePrivateReplicaWire(structuredClone(input)), request = structuredClone(requestInput)
   const origin = blindOrigin(request.origin)
-  if (!replicaPreferenceConflicts({ ...sourceWire, actorId: 'proposal', progress: {}, migrated: true })
-    .some(entry => entry.origin === origin && entry.scopeId === request.scopeId)) throw new Error('Exact conflicting Rusty scope is required for recovery')
-  const entry = sourceWire.entries.find(value => value.origin === origin && value.scopeId === request.scopeId)!
+  const entry = sourceWire.entries.find(value => value.origin === origin && value.scopeId === request.scopeId)
+  // Retained journals may predate the policy-only join. Resume their exact frozen proposal;
+  // new recovery captures still require an unresolved repository conflict.
+  if (!entry || new Set(entry.operations.map(operation => canonicalizeJson(operation.config))).size < 2) {
+    throw new Error('Exact conflicting Rusty scope is required for recovery')
+  }
   if (entry.operations.some(operation => !operation.config || operation.config.removalPending)) throw new Error('A removed connection cannot be resurrected by credential conflict recovery')
   const previousVariants = entry.operations.map(operation => ({ ...structuredClone(operation.config!),
     preferenceRevision: `${operation.dot.actorId}:${operation.dot.counter}` }))

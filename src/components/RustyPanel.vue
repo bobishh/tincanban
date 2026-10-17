@@ -46,7 +46,7 @@ async function updateDeviceAccess(origin: string) {
     <p class="dialog-copy">Keeps a copy of this board while your devices are offline.</p>
     <RustyIdentityDeviceAccess :controller="controller" :owner="owner" />
     <div v-for="conflict in boardConflicts" :key="`board/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
-      <p>Rusty connection needs recovery for {{ conflict.origin }}. Your saved changes are retained.</p>
+      <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
     </div>
     <ul v-if="records.length" class="rusty-connections">
@@ -76,7 +76,7 @@ async function updateDeviceAccess(origin: string) {
       </ul>
     </div>
     <div v-for="conflict in profileConflicts" :key="`profile/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty profile settings conflict">
-      <p>Profile delivery needs recovery for {{ conflict.origin }}. Your saved changes are retained.</p>
+      <p>Profile delivery is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
     </div>
     <button v-if="owner && !adding" class="button" type="button" :disabled="pending || controller.busy.value" @click="adding = true">Add Rusty</button>
@@ -87,6 +87,7 @@ async function updateDeviceAccess(origin: string) {
     </form>
     <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(controller.syncNow)">Sync now</button>
     <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
+    <p v-else-if="controller.error.value" class="reading-explanation" role="alert">{{ controller.error.value }}</p>
 
   </section>
 </template>

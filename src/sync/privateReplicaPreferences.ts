@@ -251,8 +251,21 @@ export function mergePrivateReplicaState(state: PrivateReplicaState, incoming: u
 
 function selectedConfig(entry: Entry): PrivateReplicaConfig | undefined {
   if (entry.operations.some(operation => operation.config === null)) return
-  const configs = new Map(entry.operations.map(operation => [canonicalizeJson(operation.config), operation.config!]))
-  return configs.size === 1 ? [...configs.values()][0] : undefined
+  const configs = entry.operations.map(operation => operation.config!)
+  // Policy revisions and the writer floor advance independently on enrolled devices.
+  // They do not rotate keys. Preserve causal evidence while joining only these monotonic fields.
+  const credentials = configs.map(config => {
+    const { policyRevision, ...value } = config
+    void policyRevision
+    if (value.purpose !== "identity") delete value.minimumWriterVersion
+    return canonicalizeJson(value)
+  })
+  if (new Set(credentials).size !== 1) return
+  const selected = { ...configs[0]!, policyRevision: Math.max(...configs.map(config => config.policyRevision)) }
+  if (selected.purpose !== "identity" && configs.some(config => config.purpose !== "identity" && config.minimumWriterVersion === 2)) {
+    selected.minimumWriterVersion = 2
+  }
+  return selected
 }
 
 function assertRetainedResourceKeys(previous: PrivateReplicaConfig, next: PrivateReplicaConfig): void {

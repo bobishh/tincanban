@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest"
 import * as local from "../localDb"
 import type { LocalStatePlan } from "../localDb"
 import { encodeBlindBytes } from "./blindEnvelope"
+import { changeReplicaPreference, emptyPrivateReplicaState, mergePrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
 import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations, getReplicaPreferenceConflicts, getPrivateReplicaConflictSummaries, persistPrivateReplicaProgress, persistPrivateReplicaState,
   receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
@@ -94,6 +95,25 @@ it("Given legacy credentials and progress, when migrating and restarting the rep
   const wire = await exportPrivateReplicaState(owner)
   expect(wire.version).toBe(3)
   expect(JSON.stringify(wire)).not.toContain('"cursor":19')
+})
+
+it("Given unchanged keys with concurrent policy observations and an uncertain upload, when importing and reopening, then keep ciphertext, request identity and cursor without recovery", async () => {
+  const owner = crypto.randomUUID()
+  await setReplicaPreference(owner, config)
+  const selected = (await getReplicaConfigurations(owner))[0]!
+  const base = await exportPrivateReplicaState(owner)
+  const peer = mergePrivateReplicaState(emptyPrivateReplicaState(owner, "peer"), base)
+  const progress = await getPrivateReplicaProgress(owner, selected)
+  const pending = { requestId: crypto.randomUUID(), hash: token, bytes: 1, object: { version: 1 as const,
+    scopeId: config.scopeId, keyEpoch: 1, nonce: "A".repeat(16), ciphertext: "A".repeat(23) } }
+  await persistPrivateReplicaState(owner, selected, progress.generation, { ...progress, cursor: 17, generation: progress.generation + 1, pending })
+  await setReplicaPreference(owner, { ...selected, policyRevision: 2, minimumWriterVersion: 2 })
+  await receivePrivateReplicaState(owner, portableReplicaState(changeReplicaPreference(peer, { ...config, policyRevision: 3 })))
+  expect(await getReplicaPreferenceConflicts(owner)).toEqual([])
+  const updated = (await getReplicaConfigurations(owner))[0]!
+  expect(updated).toMatchObject({ policyRevision: 3, minimumWriterVersion: 2, cursor: 17 })
+  expect((await getPrivateReplicaProgress(owner, updated)).pending).toEqual(pending)
+  expect(await getReplicaConfigurations(owner)).toEqual([updated])
 })
 
 it("Given same-person identity credentials, when stored and read, then keep them out of workspace configuration APIs and bind progress to identity purpose", async () => {

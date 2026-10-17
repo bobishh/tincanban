@@ -586,6 +586,23 @@ concurrent credentials for one scope produce a resolvable conflict, not arbitrar
 selection by string ordering. Retain tombstones until acknowledgment or a validated
 state checkpoint proves they are no longer needed.
 
+Concurrent observations with identical resource bindings, service pin, keys,
+tokens, retained key history and removal state join the maximum policy revision
+and writer floor. These fields are monotonic storage metadata, not different
+credentials; their disagreement alone must not trigger key rotation. Keep the
+original causal operations so merge order and restarts do not invent precedence.
+Different keys, tokens, subjects or pins still stop replication for review.
+
+Key activation retains the download cursor and reading keys, but clears all upload
+confirmation shortcuts, including content identity. A confirmation under an old
+key cannot satisfy the required new-key snapshot. The recovery panel publishes
+repository conflicts and unfinished journal summaries together, preserving its
+pending action and failure across asynchronous reloads. The mobile WebKit scenario
+`e2e/rusty-credential-conflict.spec.ts` uses a real Rusty, rejects the replacement
+snapshot upload, reloads the browser, retries the saved request and verifies the
+board and old reading key remain available. Recovery failures emit the
+`rusty.credential-recovery` diagnostic operation without credential values.
+
 Migration reads both legacy keys, writes a complete new record and migration marker
 in one transaction, then switches readers. Do not erase old records before verified
 restart recovery. A cursor commit requires the exact credential revision it used.

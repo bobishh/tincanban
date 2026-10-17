@@ -58,7 +58,7 @@ test("Given conflicting board credentials, when Rusty loads, then say connection
   ]))
 
   const alert = page.getByRole("alert", { name: "Rusty settings conflict" })
-  await expect(alert).toContainText("needs recovery")
+  await expect(alert).toContainText("devices saved different connection settings")
   await expect(alert).toContainText("saved changes are retained")
   await expect(alert).toContainText("Every previous key and saved upload stays available")
   await expect(alert.getByRole("button", { name: "Recover connection" })).toBeVisible()
@@ -75,7 +75,7 @@ test("Given conflicting profile credentials for a connected origin, when Rusty l
   ]))
 
   const alert = page.getByRole("alert", { name: "Rusty profile settings conflict" })
-  await expect(alert).toContainText("Profile delivery needs recovery")
+  await expect(alert).toContainText("Profile delivery is paused")
   await expect(alert).toContainText("saved changes are retained")
   await expect(alert).toContainText("Every previous key and saved upload stays available")
   await expect(alert.getByRole("button", { name: "Recover connection" })).toBeVisible()

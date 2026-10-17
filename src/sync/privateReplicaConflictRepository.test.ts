@@ -47,6 +47,29 @@ it("Given a frozen recovery capture, when source bytes change, then reject activ
   expect(await readLocal(storageKey)).toBe(changed)
 })
 
+it("Given an older client froze a policy-only conflict, when resuming its exact saved proposal, then activate without stranding the freeze", async () => {
+  const owner = crypto.randomUUID(), config = { origin: "https://rusty.example", scopeId: "scope", workspaceId: "board",
+    servicePublicKey: key(7), readToken: key(8), writeToken: key(9), contentKey: key(1), keyEpoch: 1,
+    policyRevision: 1, cursor: 0, lastUploaded: "" }
+  await setReplicaPreference(owner, config)
+  await receivePrivateReplicaState(owner, portableReplicaState(changeReplicaPreference(emptyPrivateReplicaState(owner, "remote"),
+    { ...config, policyRevision: 2, minimumWriterVersion: 2 })))
+  const raw = (await readLocal(privateReplicaStateStorageKey(owner)))!
+  const sourceWire = portableReplicaState(JSON.parse(raw))
+  const proposal = buildReplicaCredentialConflictRecovery(sourceWire, { ...config, expectedPolicyRevision: 2,
+    freshContentKey: key(3), freshReadToken: key(4), freshWriteToken: key(5) })
+  const freeze: ReplicaCredentialConflictFreeze = { kind: "rusty-credential-conflict-freeze", version: 2, id: crypto.randomUUID(),
+    personId: owner, signerDeviceId: "device", origin: config.origin, scopeId: config.scopeId, proposal }
+  await writeLocal(await replicaCredentialFreezeKey(owner, config.origin), JSON.stringify(freeze))
+  // A new action must not turn compatible policy observations into another rotation.
+  await expect(capturePrivateReplicaConflict(owner, config.origin, config.scopeId)).rejects.toThrow(/conflict/i)
+  const capture = await capturePrivateReplicaConflict(owner, config.origin, config.scopeId, freeze)
+  const activation = await planPrivateReplicaConflictActivation(owner, capture, proposal.next, {}, freeze)
+  expect(await compareAndSwapLocal(activation.plan)).toBe(true)
+  await deleteLocal(await replicaCredentialFreezeKey(owner, config.origin))
+  expect((await getReplicaConfigurations(owner))[0]).toMatchObject({ keyEpoch: 2, policyRevision: 3 })
+})
+
 it("Given an exact recovery proposal, when a historical key is omitted, then reject activation before writing", async () => {
   const { owner, capture, freeze, next } = await fixture(), before = await readLocal(privateReplicaStateStorageKey(owner))
   const changed = { ...next, historicalContentKeyVariants: undefined, historicalContentKeys: { "1": key(1) } }
@@ -79,7 +102,8 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
   const selected = (await getReplicaConfigurations(owner))[0]!, original = await getPrivateReplicaProgress(owner, selected)
   const pending = { requestId: crypto.randomUUID(), hash: key(19), bytes: 1, object: { version: 1 as const,
     scopeId: config.scopeId, keyEpoch: 1, nonce: encodeBlindBytes(new Uint8Array(12)), ciphertext: encodeBlindBytes(new Uint8Array(17)) } }
-  await persistPrivateReplicaState(owner, selected, original.generation, { ...original, cursor: 17, generation: original.generation + 1, pending })
+  await persistPrivateReplicaState(owner, selected, original.generation, { ...original, cursor: 17, generation: original.generation + 1,
+    contentIdentity: "old-key-confirmed-content", pending })
   for (const [actor, byte] of [["remote-a", 2], ["remote-b", 3]] as const) {
     await receivePrivateReplicaState(owner, portableReplicaState(changeReplicaPreference(emptyPrivateReplicaState(owner, actor), { ...config, contentKey: key(byte) })))
   }
@@ -110,4 +134,5 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
   expect(activated.cursor).toBe(17)
   expect(contentKeysForEpoch(activated, 1)).toEqual([key(1), key(2), key(3)].sort())
   expect((await getPrivateReplicaProgress(owner, activated)).lastUploaded).toBe("")
+  expect((await getPrivateReplicaProgress(owner, activated)).contentIdentity).toBeUndefined()
 })

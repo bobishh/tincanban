@@ -57,6 +57,32 @@ it("Given concurrent incompatible credentials, when merged, then expose a confli
   expect(effectiveReplicaConfigs(resolved)[0].writeToken).toBe(token)
 })
 
+it("Given identical keys with concurrent writer policy updates, when devices merge in either order, then retain the highest policy and writer floor without credential recovery", () => {
+  const base = changeReplicaPreference(emptyPrivateReplicaState("owner", "device-a"), config)
+  const peer = mergePrivateReplicaState(emptyPrivateReplicaState("owner", "device-b"), portableReplicaState(base))
+  const upgraded = changeReplicaPreference(base, { ...config, policyRevision: 2, minimumWriterVersion: 2 })
+  const refreshed = changeReplicaPreference(peer, { ...config, policyRevision: 3 })
+  const merged = mergePrivateReplicaState(upgraded, portableReplicaState(refreshed))
+  const reverse = mergePrivateReplicaState(refreshed, portableReplicaState(upgraded))
+  expect(replicaPreferenceConflicts(merged)).toEqual([])
+  expect(effectiveReplicaConfigs(merged)[0]).toMatchObject({ policyRevision: 3, minimumWriterVersion: 2,
+    contentKey: config.contentKey, readToken: config.readToken, writeToken: config.writeToken })
+  expect(effectiveReplicaConfigs(reverse)).toEqual(effectiveReplicaConfigs(merged))
+  expect(portableReplicaState(reverse)).toEqual(portableReplicaState(merged))
+  expect(merged.entries[0]!.operations).toHaveLength(2)
+})
+
+it.each(["contentKey", "readToken", "writeToken", "servicePublicKey", "workspaceId", "removalPending"] as const)(
+  "Given concurrent policy updates also change %s, when merged, then retain an unresolved conflict", field => {
+    const a = changeReplicaPreference(emptyPrivateReplicaState("owner", "device-a"), config)
+    const changed = { ...config, policyRevision: 2, [field]: field === "removalPending" ? true : "B".repeat(42) + "A" }
+    const b = changeReplicaPreference(emptyPrivateReplicaState("owner", "device-b"), changed)
+    const merged = mergePrivateReplicaState(a, portableReplicaState(b))
+    expect(replicaPreferenceConflicts(merged)).toHaveLength(1)
+    expect(effectiveReplicaConfigs(merged)).toEqual([])
+  },
+)
+
 it("Given a removed then re-added identical credential, when old replication progress commits, then reject its obsolete revision", () => {
   const before = changeReplicaPreference(emptyPrivateReplicaState("owner", "device-a"), config)
   const oldPass = { ...effectiveReplicaConfigs(before)[0], cursor: 100 }

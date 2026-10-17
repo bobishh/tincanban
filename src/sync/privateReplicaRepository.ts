@@ -92,9 +92,9 @@ function configFromProgressBinding(owner: string, origin: string, scopeId: strin
   return config
 }
 
-function conflictEntry(state: PrivateReplicaState, origin: string, scopeId: string) {
+function conflictEntry(state: PrivateReplicaState, origin: string, scopeId: string, frozen = false) {
   const entry = state.entries.find(entry => entry.origin === origin && entry.scopeId === scopeId)
-  if (!entry || !replicaPreferenceConflicts(state).some(entry => entry.origin === origin && entry.scopeId === scopeId) ||
+  if (!entry || (!frozen && !replicaPreferenceConflicts(state).some(entry => entry.origin === origin && entry.scopeId === scopeId)) ||
     entry.operations.some(operation => !operation.config || operation.config.removalPending) || state.writerUpgrades?.[scopeKey(entry)]) {
     throw new Error("An unresolved active credential conflict without a writer upgrade is required")
   }
@@ -107,8 +107,17 @@ function assertCapturedPending(progress: ReplicaState<BlindObject> | undefined, 
   }
 }
 
+async function assertFrozenConflictSource(owner: string, origin: string, scopeId: string, sourceWire: PrivateReplicaWire,
+  frozen: ReplicaCredentialConflictFreeze): Promise<void> {
+  const saved = await readLocal(await replicaCredentialFreezeKey(owner, origin))
+  const expected = parseReplicaCredentialConflictFreeze(frozen, owner, origin)
+  if (!saved || expected.scopeId !== scopeId || canonicalizeJson(parseReplicaCredentialConflictFreeze(saved, owner, origin)) !== canonicalizeJson(expected) ||
+    canonicalizeJson(expected.proposal.sourceWire) !== canonicalizeJson(sourceWire)) throw new Error("Frozen conflict source changed")
+}
+
 /** Capture one physical outbox, including its original binding even if causal preferences no longer select it. */
-export async function capturePrivateReplicaConflict(owner: string, origin: string, scopeId: string): Promise<PrivateReplicaConflictCapture> {
+export async function capturePrivateReplicaConflict(owner: string, origin: string, scopeId: string,
+  frozen?: ReplicaCredentialConflictFreeze): Promise<PrivateReplicaConflictCapture> {
   await read(owner)
   const keys = [stateKey(owner), settingsKey(owner), preferenceKey(owner), legacySnapshotKey(owner)]
   const values = await Promise.all(keys.map(key => readLocal(key)))
@@ -117,7 +126,8 @@ export async function capturePrivateReplicaConflict(owner: string, origin: strin
     throw new Error("Private replica source changed during conflict capture")
   }
   const state = parseState(raw, owner), sourceWire = portableReplicaState(state)
-  const entry = conflictEntry(state, origin, scopeId)
+  if (frozen) await assertFrozenConflictSource(owner, origin, scopeId, sourceWire, frozen)
+  const entry = conflictEntry(state, origin, scopeId, Boolean(frozen))
   const previousVariants = entry.operations.map(operation => ({ ...structuredClone(operation.config!),
     preferenceRevision: `${operation.dot.actorId}:${operation.dot.counter}` }))
   const progressRecord = state.progress[scopeKey(entry)]
@@ -153,8 +163,8 @@ function installRecoveredProgress(next: PrivateReplicaState, owner: string, conf
   capture: PrivateReplicaConflictCapture, prior: ReplicaState<BlindObject> | undefined): void {
   const cursor = prior?.cursor ?? capture.progressRecord?.cursor ?? 0
   if (prior?.generation === Number.MAX_SAFE_INTEGER) throw new Error("Replica generation is exhausted")
-  const replication = { ...emptyReplicaState<BlindObject>(privateReplicaBinding(owner, config), cursor, ""), generation: prior ? prior.generation + 1 : 0,
-    ...(prior?.contentIdentity ? { contentIdentity: prior.contentIdentity } : {}) }
+  // A receipt under the previous key cannot confirm a snapshot under the replacement key.
+  const replication = { ...emptyReplicaState<BlindObject>(privateReplicaBinding(owner, config), cursor, ""), generation: prior ? prior.generation + 1 : 0 }
   next.progress[scopeKey(config)] = { revision: config.preferenceRevision!, cursor, lastUploaded: "", replication }
 }
 
@@ -164,7 +174,7 @@ export async function planPrivateReplicaConflictActivation(owner: string, captur
   freeze: ReplicaCredentialConflictFreeze): Promise<{ config: PrivateReplicaConfig; plan: LocalStatePlan }> {
   capture = structuredClone(capture); replacement = structuredClone(replacement); drained = structuredClone(drained)
   freeze = parseReplicaCredentialConflictFreeze(freeze, owner, replacement.origin)
-  const current = await capturePrivateReplicaConflict(owner, replacement.origin, replacement.scopeId)
+  const current = await capturePrivateReplicaConflict(owner, replacement.origin, replacement.scopeId, freeze)
   if (canonicalizeJson(current) !== canonicalizeJson(capture) || canonicalizeJson(capture.sourceWire) !== canonicalizeJson(freeze.proposal.sourceWire) ||
     capture.sourceRevision !== freeze.proposal.sourceRevision || canonicalizeJson(replacement) !== canonicalizeJson(freeze.proposal.next)) {
     throw new Error("Credential recovery source or exact proposal changed")
@@ -448,8 +458,7 @@ function installActivatedResourceProgress(next: PrivateReplicaState, owner: stri
     const previousReplica = progress?.replication
     if (previousReplica?.generation === Number.MAX_SAFE_INTEGER) throw new Error("Replica generation is exhausted")
     const replication = { ...emptyReplicaState<BlindObject>(binding, progress?.cursor ?? selected.cursor, ""),
-      generation: previousReplica ? previousReplica.generation + 1 : 0,
-      ...(previousReplica?.contentIdentity ? { contentIdentity: previousReplica.contentIdentity } : {}) }
+      generation: previousReplica ? previousReplica.generation + 1 : 0 }
     next.progress[scopeKey(selected)] = { revision: activated.preferenceRevision, cursor: replication.cursor, lastUploaded: "", replication }
 }
 
