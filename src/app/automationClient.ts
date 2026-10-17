@@ -27,7 +27,7 @@ async function requestJson(origin: string, path: string, body?: unknown, method:
 }
 
 export async function enrollAutomation(profile: LocalProfile, origin: string, workspaceId: string, integrationId: string,
-  requiredType: Pick<AutomationDefinition, "type" | "typeVersion"> = { type: "job-intake", typeVersion: 1 }): Promise<AutomationWorkerIdentity> {
+  requiredType: Pick<AutomationDefinition, "type" | "typeVersion"> = { type: automationTypes[0]!.type, typeVersion: automationTypes[0]!.version }): Promise<AutomationWorkerIdentity> {
   profile = structuredClone(profile)
   requiredType = { ...requiredType }
   const capabilities = await requestJson(origin, "/v2/capabilities", undefined, "GET") as { version?: unknown; origin?: unknown; enrollment?: unknown; types?: Array<{ type: string; version: number }> }

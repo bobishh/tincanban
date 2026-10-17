@@ -14,7 +14,7 @@ test("Given a held legacy journal with committed board and receipts, when tincan
     const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
     await A.initializeWasm(wasmUrl)
     const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-    const { createWorkspaceDoc } = await import("/src/domain/seeds.ts")
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { executeCommand } = await import("/src/domain/commands.ts")
     const { recordGenesisAuthority, prepareLocalChangeAuthorizations } = await import("/src/sync/changeAuthorization.ts")
     const { openWorkspaceJournal, transactionDone } = await import("/src/storageJournal.ts")
@@ -69,7 +69,7 @@ test("Given a held legacy journal with committed board and receipts, when tincan
   await expect(app.getByRole("heading", { name: /Preserved legacy board/ })).toBeVisible({ timeout: 15_000 })
   await expect(app.getByText("Preserved legacy card", { exact: true })).toBeVisible()
   const preserved = await app.evaluate(async seed => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const tincanban = useTincanban()
     await tincanban.whenReady()

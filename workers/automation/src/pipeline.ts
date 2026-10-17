@@ -1,4 +1,4 @@
-import type { EmployeeProfile } from "../../../src/domain/jobPriority";
+import type { EmployeeProfile } from "./jobPriority";
 import { classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification, type DecisionAi, type OpportunityClassification } from "./clef";
 import type { ForwardedMail } from "./email";
 import { emailVacancyUrls } from "./emailVacancy";

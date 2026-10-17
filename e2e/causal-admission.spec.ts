@@ -6,7 +6,7 @@ test("Given an offline editor change accepted before revocation, when the signed
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
 
   const fixture = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { executeCommand } = await import("/src/domain/commands.ts")
     const { createWorkspaceGrant, createWorkspaceDeviceRevocation } = await import("/vendor/meta-mesh/packages/mesh-workspace/src/index.ts")
     const { profileFromIdentitySeedForDevice } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
@@ -119,7 +119,7 @@ test("Given an offline editor change accepted before revocation, when the signed
   expect(fixture.projectedTitle).toBe(fixture.originalTitle)
   expect(fixture.projectedItemTitle).toBe(fixture.baselineItemTitle)
   await expect.poll(() => page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     await useTincanban().whenReady()
     return useTincanban().getActiveDoc()!.title
   })).toBe(fixture.originalTitle)
@@ -132,7 +132,7 @@ test("Given an offline editor change accepted before revocation, when the signed
   await reloadedReview.getByText("2 workspace changes need review", { exact: true }).click()
   const afterReload = await page.evaluate(async hash => {
     const { WorkspaceStorage } = await import("/src/storage.ts")
-    const evidence = await new WorkspaceStorage().loadCausalEvidence((await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    const evidence = await new WorkspaceStorage().loadCausalEvidence((await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
     if (!evidence) throw new Error("Causal evidence disappeared on reload")
     return { sameRawBytes: Array.from(evidence.bytes).join(",") === hash.rawBytes.join(","),
       decision: evidence.decisions.find(item => item.hash === hash.changeHash)?.status.type,
@@ -145,7 +145,7 @@ test("Given an offline editor change accepted before revocation, when the signed
   // A checkpoint from an older policy requires a new durable classification.
   // Unchanged current-policy reads no longer need a storage write at all.
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const storage = (await import("/src/storage.ts")).defaultStorage
     const A = await import("/@id/@automerge/automerge/slim")
     const doc = app.getActiveDoc()!
@@ -155,7 +155,7 @@ test("Given an offline editor change accepted before revocation, when the signed
     ;(window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true
   })
   const retryError = await page.evaluate(async id => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     try { await useTincanban().reclassifyWorkspace(id); return "unexpected success" }
     catch (error) { return String(error) }
   }, fixture.workspaceId)
@@ -171,7 +171,7 @@ test("Given an offline editor change accepted before revocation, when the signed
 
   await page.getByRole("button", { name: "Create authorized change from this review" }).click()
   await expect.poll(() => page.evaluate(async hash => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { WorkspaceStorage } = await import("/src/storage.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const app = useTincanban()

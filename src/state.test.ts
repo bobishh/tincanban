@@ -1,3 +1,4 @@
+import { createLeadFixture } from "./test/leadFixture"
 import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
 import { defaultStorage } from "./storage"
@@ -6,10 +7,10 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "./crdt"
 import { setStorageFailureHookForTest, WorkspaceStorage } from "./storage"
 import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope } from "./domain/identity"
-import { useTincanban, hydrate, reconcile, resetStateForTest } from "./state"
+import { useTincanban, hydrate, reconcile, resetStateForTest } from "./test/stateFixture"
 import { persistAuthorizedCommand, refreshAvailableWorkspaces, reviewCausalChange } from "./statePersistence"
 import * as Automerge from "@automerge/automerge/slim"
-import { createWorkspaceDoc } from "./domain/seeds"
+import { createWorkspaceDoc } from "./test/boardFixture"
 import { projectBoardSchema } from "./domain/schema"
 import { isItem } from "./domain/model"
 import { authorizeLocalChanges, exportAuthorizationBundle, exportAuthorizations, prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync/changeAuthorization"
@@ -53,7 +54,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a tab behind a verified local delta, When reclassification reuses the durable frontier, Then its active view catches up without publishing another shared change", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Before catch-up", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Before catch-up", role: "Engineer", status: "lead" })
     const base = app.getActiveDoc()!
     const profile = app.getCurrentProfile()!
     const other = new WorkspaceStorage()
@@ -98,7 +99,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a large admitted board warmed for local edits, When Archive and Applied alternate, Then writes serialize and hash only new changes and preserve the final stage after reload", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Delta writes", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Delta writes", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!
     const item = Object.values(doc.entities).find(isItem)!
     const applied = Object.values(doc.entities).find(entity => entity.kind === "column" && entity.title === "Applied")!
@@ -133,14 +134,14 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given an atomically admitted saved board, When startup reads unchanged history and authority, Then it reuses the saved projection without replay or workspace writes", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Admitted once", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Admitted once", role: "Engineer", status: "lead" })
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     const commit = vi.spyOn(defaultStorage, "commitWorkspace")
     resetStateForTest()
     try {
       await hydrate()
       expect(app.ready.value).toBe(true)
-      expect(app.workspace.leads.map(lead => lead.company)).toContain("Admitted once")
+      expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Admitted once")
       expect(admission).not.toHaveBeenCalled()
       expect(commit).not.toHaveBeenCalled()
     } finally { admission.mockRestore(); commit.mockRestore() }
@@ -148,7 +149,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Incremental save", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Incremental save", role: "Engineer", status: "lead" })
     const item = Object.values(app.getActiveDoc()!.entities).find(isItem)!
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     const history = vi.mocked(Automerge.getChangesMetaSince)
@@ -164,13 +165,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       resetStateForTest()
       await hydrate()
       expect(admission).not.toHaveBeenCalled()
-      expect(app.workspace.leads.map(lead => lead.company)).toContain("Incremental save")
+      expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Incremental save")
     } finally { admission.mockRestore(); history.mockClear() }
   })
 
   it("Given an owner with two device certificates, When Archive and Applied alternate repeatedly, Then every save extends admission without replaying history", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Repeat transitions", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Repeat transitions", role: "Engineer", status: "lead" })
     const profile = await bootstrapIdentity()
     const keys = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]) as CryptoKeyPair
     const publicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))
@@ -199,7 +200,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it.each(["missing", "policy", "raw", "decisions", "pending"])("Given %s admission evidence, When a local card is archived, Then complete admission runs before saving", async changed => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Fallback save", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Fallback save", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!
     const item = Object.values(doc.entities).find(isItem)!
     const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
@@ -223,7 +224,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given unchanged admitted data, When only the local admission checkpoint is renewed, Then it persists without publishing a shared change", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Unchanged data", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Unchanged data", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!
     const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
     evidence.admissionCheckpoint!.policy = "previous-policy"
@@ -234,14 +235,14 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       await createSyncActions().reclassifyWorkspace(doc.id)
       expect((await defaultStorage.loadCausalEvidence(doc.id))!.admissionCheckpoint!.policy).not.toBe("previous-policy")
       expect(publish).not.toHaveBeenCalled()
-      await app.createLeadAsync({ company: "Real change", role: "Engineer", status: "lead" })
+      await createLeadFixture(app, { company: "Real change", role: "Engineer", status: "lead" })
       expect(publish).toHaveBeenCalledOnce()
     } finally { unsubscribe() }
   })
 
   it.each(["missing", "policy", "raw", "decisions"])("Given a saved board with %s admission evidence, When startup runs, Then history is checked again before editing", async changed => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Kept admitted", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Kept admitted", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!
     const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
     if (changed === "missing") delete evidence.admissionCheckpoint
@@ -265,7 +266,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it.each([false, true])("Given a saved board, When reload history validation fails=%s, Then the saved projection appears before validation and command writes stay blocked", async fail => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Saved preview", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Saved preview", role: "Engineer", status: "lead" })
     const original = causalAdmission.reclassifyStoredWorkspace
     let finish!: () => void
     const gate = new Promise<void>(resolve => { finish = resolve })
@@ -278,14 +279,14 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const startup = hydrate().then(() => undefined, error => error as Error)
     try {
       await vi.waitFor(() => expect(validation).toHaveBeenCalled())
-      expect(app.workspace.leads.map(lead => lead.company)).toContain("Saved preview")
+      expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Saved preview")
       expect(app.ready.value).toBe(false)
       await expect(app.executeCommandAsync({ kind: "renameWorkspace", title: "Changed during checks" })).rejects.toThrow(/still being checked/)
     } finally { finish(); validation.mockRestore() }
     const error = await startup
     expect(app.ready.value).toBe(!fail)
     if (fail) expect(error).toMatchObject({ message: "History check failed" })
-    expect(app.workspace.leads.map(lead => lead.company)).toContain("Saved preview")
+    expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Saved preview")
   })
 
   it("rejects an invalid configured workspace before durable or active-state changes", async () => {
@@ -302,7 +303,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const saveSnapshot = vi.spyOn(defaultStorage, "saveSnapshot")
     const registerWorkspace = vi.spyOn(defaultStorage, "registerWorkspace")
 
-    await expect(tincanban.createWorkspaceAsync("Invalid config", "job-search", defaultStorage, draft)).rejects.toThrow(/field title/i)
+    await expect(tincanban.createWorkspaceAsync("Invalid config", "job-search", defaultStorage, draft)).rejects.toThrow(/field title|Presentation must reference/i)
 
     expect(saveSnapshot).not.toHaveBeenCalled()
     expect(registerWorkspace).not.toHaveBeenCalled()
@@ -345,7 +346,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       changedWorkspaceId = workspaceId
     })
 
-    const lead = await tincanban.createLeadAsync({
+    const lead = await createLeadFixture(tincanban, {
       company: "Stripe",
       role: "Backend Engineer",
       status: "lead",
@@ -354,7 +355,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
     expect(lead).toBeDefined()
     expect(changedWorkspaceId).toBe(tincanban.activeWorkspace.id)
-    expect(tincanban.workspace.leads.some((l) => l.company === "Stripe")).toBe(true)
+    expect(tincanban.workspace.items.some((l) => l.title.split(" — ")[0] === "Stripe")).toBe(true)
 
     unsubscribe()
   })
@@ -364,11 +365,11 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const workspaceId = tincanban.activeWorkspace.id
 
     await Promise.all([
-      tincanban.createLeadAsync({ company: "Concurrent A", role: "Engineer", status: "lead" }),
-      tincanban.createLeadAsync({ company: "Concurrent B", role: "Engineer", status: "lead" }),
+      createLeadFixture(tincanban, { company: "Concurrent A", role: "Engineer", status: "lead" }),
+      createLeadFixture(tincanban, { company: "Concurrent B", role: "Engineer", status: "lead" }),
     ])
 
-    expect(tincanban.workspace.leads.map(lead => lead.company)).toEqual(expect.arrayContaining(["Concurrent A", "Concurrent B"]))
+    expect(tincanban.workspace.items.map(item => item.title.split(" — ")[0])).toEqual(expect.arrayContaining(["Concurrent A", "Concurrent B"]))
     const reopened = await new WorkspaceStorage({ changes: new Map(), proofs: new Map(), receipts: new Map(),
       snapshots: new Map(), workspaces: new Map(), personalRoots: new Map() }).loadWorkspaceDoc(workspaceId)
     const titles = Object.values(reopened!.doc.entities)
@@ -397,7 +398,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a committed detailed peer packet, When identical fresh packet objects repeat, Then validation reuses the committed result without serialization, evidence loading or workspace writes", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Repeated packet", role: "Engineer", status: "lead", description: "Large source text. ".repeat(2000) })
+    await createLeadFixture(app, { company: "Repeated packet", role: "Engineer", status: "lead", description: "Large source text. ".repeat(2000) })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const bytes = Automerge.save(doc)
     const authorization = await exportAuthorizationBundle(bytes, profile)
@@ -413,13 +414,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       expect(evidence).not.toHaveBeenCalled()
       expect(commit).not.toHaveBeenCalled()
       expect(save).not.toHaveBeenCalled()
-      expect(app.workspace.leads.map(lead => lead.company)).toContain("Repeated packet")
+      expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Repeated packet")
     } finally { admission.mockRestore(); evidence.mockRestore(); commit.mockRestore(); save.mockClear() }
   })
 
   it("Given a valid peer packet, When optional cache maintenance fails after commit, Then merging still succeeds and reopened storage retains the saved view", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Cache maintenance failure", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Cache maintenance failure", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
     const incomingReuse = await import("./stateIncomingReuse")
@@ -433,7 +434,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a fully verified cached packet, When a local delta advances history and the same peer packet repeats, Then the local edit remains and history is not replayed", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Before local delta", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Before local delta", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
     await app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)
@@ -448,7 +449,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a cached peer packet, When a relevant signature changes, Then the packet is checked again and rejected without replacing the saved view", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Signature guard", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Signature guard", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
     await app.mergeAuthorizedWorkspace(doc.id, bytes, bundle)
@@ -458,13 +459,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     try {
       await expect(app.mergeAuthorizedWorkspace(doc.id, bytes, altered)).rejects.toThrow(/signature|authorization/i)
       expect(admission).toHaveBeenCalledOnce()
-      expect(app.workspace.leads.map(lead => lead.company)).toContain("Signature guard")
+      expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Signature guard")
     } finally { admission.mockRestore() }
   })
 
   it("Given a cached packet with a previously unknown forged proof, When its claimed hash enters local history, Then repeating the packet revalidates that newly relevant proof", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Unknown hash guard", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Unknown hash guard", role: "Engineer", status: "lead" })
     const base = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const candidate = await executeCommand(base, { kind: "renameWorkspace", title: "Newly present hash" }, profile)
     if (!candidate.ok) throw new Error(candidate.error.message)
@@ -487,7 +488,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a cached committed packet, When the caller mutates its old input, Then a fresh genuine copy still reuses the private committed packet", async () => {
     const app = useTincanban()
-    await app.createLeadAsync({ company: "Private packet copy", role: "Engineer", status: "lead" })
+    await createLeadFixture(app, { company: "Private packet copy", role: "Engineer", status: "lead" })
     const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
     const bytes = Automerge.save(doc), bundle = await exportAuthorizationBundle(bytes, profile)
     const genuine = { bytes: bytes.slice(), bundle: structuredClone(bundle) }
@@ -531,7 +532,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const authorizations = await exportAuthorizations(before)
     setStorageFailureHookForTest(true)
     try {
-      await expect(tincanban.createLeadAsync({ company: "Atomic rejection", role: "Engineer", status: "lead" })).rejects.toThrow(/Storage failure/)
+      await expect(createLeadFixture(tincanban, { company: "Atomic rejection", role: "Engineer", status: "lead" })).rejects.toThrow(/Storage failure/)
     } finally { setStorageFailureHookForTest(false) }
     expect(await exportAuthorizations(before)).toEqual(authorizations)
     expect(Automerge.getHeads((await defaultStorage.loadWorkspaceDoc(tincanban.activeWorkspace.id))!.doc)).toEqual(Automerge.getHeads(tincanban.getActiveDoc()!))
@@ -549,7 +550,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     setStorageFailureHookForTest(true)
 
     await expect(
-      tincanban.createLeadAsync({
+      createLeadFixture(tincanban, {
         company: "Failed Corp",
         role: "Dev",
         status: "lead",
@@ -560,7 +561,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     expect(changeNotified).toBe(false)
 
     // State MUST NOT contain the failed card!
-    expect(tincanban.workspace.leads.some((l) => l.company === "Failed Corp")).toBe(false)
+    expect(tincanban.workspace.items.some((l) => l.title.split(" — ")[0] === "Failed Corp")).toBe(false)
 
     unsubscribe()
   })
@@ -678,14 +679,14 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("rejects an unrelated same-ID workspace without changing local documents or identity", async () => {
     const tincanban = useTincanban()
-    await tincanban.createLeadAsync({ company: "Local data", role: "Engineer", status: "lead" })
+    await createLeadFixture(tincanban, { company: "Local data", role: "Engineer", status: "lead" })
     const id = tincanban.getActiveDoc()!.id
     const unrelated = Automerge.from(createWorkspaceDoc(id, "Remote board", tincanban.getActiveDoc()!.ownerPersonId, "blank"))
     const bytes = Automerge.save(unrelated)
     await expect(tincanban.mergeAuthorizedWorkspace(id, bytes, await exportAuthorizationBundle(bytes, tincanban.getCurrentProfile()!))).rejects.toThrow("Workspace conflict")
     expect(tincanban.activeWorkspace.id).toBe(id)
     expect(tincanban.activeWorkspace.title).toBe("Job search")
-    expect(tincanban.workspace.leads.some(lead => lead.company === "Local data")).toBe(true)
+    expect(tincanban.workspace.items.some(lead => lead.title.split(" — ")[0] === "Local data")).toBe(true)
   })
 
   it("rejects a document addressed to another workspace without touching the active board", async () => {

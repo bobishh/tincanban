@@ -1,17 +1,17 @@
-import { emptyEmployeeProfile } from "./jobPriority"
+import { cloneJsonData } from "./jsonData"
 import type { Board, CardAgingPolicy, Column, FieldDefinition, PriorityPolicy, WorkspaceDocumentV2 } from "./model"
 import { getAncestryPath, getChildren, compareRanks } from "./ancestry"
 import { isArchiveColumn } from "./archive"
 import { isItemArchived } from "./archive"
-import { cardAgingPolicySchema, employeeProfileSchema, priorityPolicySchema } from "./entitySchemas"
+import { boardAutomationSchema, cardPresentationSchema, textFormatSchema, cardAgingPolicySchema, priorityPolicySchema } from "./entitySchemas"
 import { validatePriorityPolicy } from "./priority"
 import { entityKind, hasEntityKind, isItem } from "./model"
 import { cardStageButtons, type CardStageButton } from "./cardStageButtons"
 
 type BoardSchemaColumn = { id?: string; title: string; color?: string; archive?: true; collapsible?: boolean }
 type BoardSchemaSelectOption = { id?: string; title: string }
-type BoardSchemaField = { id?: string; title: string; valueType: "text" | "number" | "boolean" | "select" | "url" | "date" | "datetime"; required: boolean; min?: number | null; max?: number | null; options?: BoardSchemaSelectOption[] }
-export type BoardSchemaDraft = { boardId: string; boardTitle: string; entityName: string; columns: BoardSchemaColumn[]; fields: BoardSchemaField[]; cardStageButtons?: CardStageButton[]; priorityPolicy?: PriorityPolicy | null; employee_profile?: Board["employee_profile"]; cardAgingPolicy?: CardAgingPolicy }
+type BoardSchemaField = { id?: string; title: string; valueType: "text" | "number" | "boolean" | "select" | "url" | "date" | "datetime"; required: boolean; format?: "plain" | "markdown" | "json" | "code"; min?: number | null; max?: number | null; options?: BoardSchemaSelectOption[] }
+export type BoardSchemaDraft = { boardId: string; boardTitle: string; entityName: string; columns: BoardSchemaColumn[]; fields: BoardSchemaField[]; automation?: Board["automation"]; cardPresentation?: Board["cardPresentation"]; cardStageButtons?: CardStageButton[]; priorityPolicy?: PriorityPolicy | null; settings?: Board["settings"]; cardAgingPolicy?: CardAgingPolicy }
 export type SchemaValidationError = { path: string; message: string }
 export type SchemaValidationResult = { valid: boolean; errors: SchemaValidationError[] }
 export type SchemaDiff = {
@@ -28,13 +28,14 @@ export function projectBoardSchema(doc: WorkspaceDocumentV2, boardId: string): B
   return {
     boardId,
     boardTitle: board?.title || "Board",
-    entityName: board?.entityName || (board?.preset?.key === "job-search" ? "lead" : "item"),
+    entityName: board?.entityName || "item",
     columns,
+    ...configuredBoardData(board),
     cardStageButtons: cardStageButtons(board, childEntities<Column>(doc, boardId, "column")),
     fields,
-    employee_profile: { ...(board?.employee_profile ?? emptyEmployeeProfile()) },
+
     priorityPolicy: board?.priorityPolicy
-      ? { ...JSON.parse(JSON.stringify(board.priorityPolicy)), sort: board.priorityPolicy.sort ?? "fit_desc" }
+      ? { ...cloneJsonData(board.priorityPolicy), sort: board.priorityPolicy.sort ?? "fit_desc" }
       : null,
     cardAgingPolicy: board?.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } },
   }
@@ -45,6 +46,7 @@ function childEntities<T extends Column | FieldDefinition>(doc: WorkspaceDocumen
 }
 function projectField(field: FieldDefinition): BoardSchemaField {
   const result: BoardSchemaField = { id: field.id, title: field.title, valueType: field.valueType, required: field.required }
+  if (field.valueType === "text" && field.format) result.format = field.format
   if (field.valueType === "number") Object.assign(result, { min: field.min, max: field.max })
   if (field.valueType === "select") result.options = Object.values(field.options).filter(option => !option.archivedAt).sort((a, b) => compareRanks(a.rank, b.rank)).map(option => ({ id: option.id, title: option.title }))
   return result
@@ -56,9 +58,21 @@ export function validateBoardSchemaDraft(draft: unknown, doc?: WorkspaceDocument
   const errors: SchemaValidationError[] = []
   requiredText(draft.boardTitle, "/boardTitle", "Board title is required", errors)
   requiredText(draft.entityName, "/entityName", "Entity name is required", errors)
-  if (draft.employee_profile !== undefined) {
-    const parsed = employeeProfileSchema.safeParse(draft.employee_profile)
-    if (!parsed.success) errors.push(...parsed.error.issues.map(issue => ({ path: `/employee_profile/${issue.path.join("/")}`, message: issue.message })))
+  if (draft.settings !== undefined && !record(draft.settings)) errors.push({ path: "/settings", message: "Settings must be an object" })
+  if (draft.automation !== undefined) {
+    const parsed = boardAutomationSchema.safeParse(draft.automation)
+    if (!parsed.success) errors.push(...parsed.error.issues.map(issue => ({ path: `/automation/${issue.path.join("/")}`, message: issue.message })))
+  }
+  if (draft.cardPresentation !== undefined) {
+    const parsed = cardPresentationSchema.safeParse(draft.cardPresentation)
+    if (!parsed.success) errors.push(...parsed.error.issues.map(issue => ({ path: `/cardPresentation/${issue.path.join("/")}`, message: issue.message })))
+    else {
+      const fields = Array.isArray(draft.fields) ? draft.fields.filter(record) : []
+      const ids = new Set(fields.map(field => field.id))
+      for (const fieldId of [...parsed.data.titleFieldIds ?? [], ...parsed.data.summaryFieldIds ?? [], ...parsed.data.narrativeFieldId ? [parsed.data.narrativeFieldId] : []]) {
+        if (!ids.has(fieldId)) errors.push({ path: "/cardPresentation", message: "Presentation must reference an active configured field" })
+      }
+    }
   }
   validateColumns(draft.columns, errors)
   validateArchiveRoleRemoval(draft, doc, errors)
@@ -149,6 +163,10 @@ function validateField(value: unknown, index: number, errors: SchemaValidationEr
   }
   requiredText(value.title, `${path}/title`, "Field title is required", errors)
   if (typeof value.valueType !== "string" || !valueTypes.has(value.valueType)) errors.push({ path: `${path}/valueType`, message: "valueType must be one of: text, number, boolean, select, url, date, datetime" })
+  if (value.format !== undefined) {
+    if (value.valueType !== "text") errors.push({ path: `${path}/format`, message: "Format is only supported for text fields" })
+    else if (!textFormatSchema.safeParse(value.format).success) errors.push({ path: `${path}/format`, message: "Format must be plain, markdown, json or code" })
+  }
   if (typeof value.required !== "boolean") errors.push({ path: `${path}/required`, message: "required must be a boolean" })
   if (value.valueType === "select") validateOptions(value.options, path, errors)
 }
@@ -176,7 +194,6 @@ function validatePolicy(draft: Record<string, unknown>, doc: WorkspaceDocumentV2
   if (!Array.isArray(draft.fields)) return
   const ids = new Set(draft.fields.map(value => record(value) && typeof value.id === "string" ? value.id : ""))
   parsed.data.rules.forEach((rule, index) => { if (!ids.has(rule.fieldId)) errors.push({ path: `/priorityPolicy/rules/${index}/fieldId`, message: "Rule field must remain on this board" }) })
-  if (parsed.data.assessmentFieldId && !ids.has(parsed.data.assessmentFieldId)) errors.push({ path: "/priorityPolicy/assessmentFieldId", message: "Assessment field must remain on this board" })
   if (!ids.has(parsed.data.priorityFieldId)) errors.push({ path: "/priorityPolicy/priorityFieldId", message: "Priority output field must remain on this board" })
   if (parsed.data.fitFieldId && !ids.has(parsed.data.fitFieldId)) errors.push({ path: "/priorityPolicy/fitFieldId", message: "Fit output field must remain on this board" })
 }
@@ -212,6 +229,7 @@ function addFieldChanges(previous: BoardSchemaField, next: BoardSchemaField, res
     ["title", previous.title, next.title],
     ["required", previous.required, next.required],
     ["type", previous.valueType, next.valueType],
+    ["format", previous.format, next.format],
   ].flatMap(([label, before, after]) => (
     before === after ? [] : [`${label}: "${before}" → "${after}"`]
   ))
@@ -248,3 +266,11 @@ function emptyFieldDiff(): Pick<SchemaDiff, "fieldsAdded" | "fieldsModified" | "
 function byId<T extends { id?: string }>(values: T[]): Map<string, T> { return new Map(values.flatMap(value => value.id ? [[value.id, value] as [string, T]] : [])) }
 function requiredText(value: unknown, path: string, message: string, errors: SchemaValidationError[]): void { if (typeof value !== "string" || !value.trim()) errors.push({ path, message }) }
 function record(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === "object" && !Array.isArray(value) }
+
+function configuredBoardData(board: Board | undefined) {
+  return {
+    ...(board?.automation ? { automation: cloneJsonData(board.automation) } : {}),
+    ...(board?.cardPresentation ? { cardPresentation: cloneJsonData(board.cardPresentation) } : {}),
+    ...(board?.settings ? { settings: cloneJsonData(board.settings) } : {}),
+  }
+}

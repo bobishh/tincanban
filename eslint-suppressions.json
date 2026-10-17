@@ -19,11 +19,6 @@
       "count": 1
     }
   },
-  "src/domain/commandSupport.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 2
-    }
-  },
   "src/domain/fields.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 3
@@ -50,11 +45,6 @@
   "src/domain/schema.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 5
-    }
-  },
-  "src/domain/schema.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
     }
   },
   "src/domain/workspaceSettings.test.ts": {

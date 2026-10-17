@@ -7,14 +7,14 @@ test("Given multiple workspaces, when active content changes, then inactive acce
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const firstId = state.activeWorkspace.id
     await state.createWorkspaceAsync("Access refresh probe", "blank")
     await state.switchWorkspace(firstId)
   })
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
   await page.evaluate(async () => {
-    const tincanban = (await import("/src/state.ts")).useTincanban()
+    const tincanban = (await import("/src/test/stateFixture.ts")).useTincanban()
     const storage = (await import("/src/storage.ts")).defaultStorage
     const probeId = tincanban.availableWorkspaces.value.find(item => item.title === "Access refresh probe")!.id
     const original = storage.loadWorkspaceDoc.bind(storage)

@@ -12,9 +12,9 @@ async function createItem(page: Page) {
   await form.getByLabel("Description", { exact: true }).fill("Offer: 80k plus equity. Ask about vesting.")
   await form.getByRole("button", { name: "Create item" }).click()
   await expect(form).toBeHidden()
-  if (!await page.getByRole("dialog", { name: "Lead details" }).isVisible()) await page.getByRole("button", { name: /Open Anchor Labs/ }).click()
-  await expect(page.getByRole("dialog", { name: "Lead details" }).locator(".detail-copy p").first()).toBeVisible()
-  return page.getByRole("dialog", { name: "Lead details" })
+  if (!await page.getByRole("dialog", { name: "Item overview" }).isVisible()) await page.getByRole("button", { name: /Open Anchor Labs/ }).click()
+  await expect(page.getByRole("dialog", { name: "Item overview" }).locator(".detail-copy p").first()).toBeVisible()
+  return page.getByRole("dialog", { name: "Item overview" })
 }
 
 async function send(page: Page, body: string) {
@@ -32,7 +32,7 @@ test("Given an offline discussion with an incompatible known peer, when sending,
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).getByRole("textbox", { name: "Message", exact: true })).toBeVisible()
   await page.evaluate(async () => {
     const service = await import("/src/chat/service.ts")
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     await service.receiveChat(state.activeWorkspace.id, { version: 1, messages: [], profiles: [] }, false, "legacy-offline-peer")
   })
   await context.setOffline(true)
@@ -40,7 +40,7 @@ test("Given an offline discussion with an incompatible known peer, when sending,
   await context.setOffline(false)
   const saved = await page.evaluate(async () => {
     const service = await import("/src/chat/service.ts")
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const snapshot = await service.loadChat(state.activeWorkspace.id)
     const message = snapshot.messages.find(value => value.body === "Saved without a compatible peer")!
     const legacy = await service.exportChat(state.activeWorkspace.id, new Set(), "legacy-offline-peer")
@@ -165,7 +165,7 @@ test("Given two items and a participant, when one discussion attaches both items
   await form.getByLabel("Role *").fill("Engineer")
   await form.getByRole("button", { name: "Create item" }).click()
   await expect(form).toBeHidden()
-  await discussObject(page, page.getByRole("dialog", { name: "Lead details" }))
+  await discussObject(page, page.getByRole("dialog", { name: "Item overview" }))
   const discussion = page.getByRole("dialog", { name: /^Discussion/ })
   await discussion.getByText("Attach item reference", { exact: true }).click()
   await discussion.getByRole("button", { name: "Anchor Labs — Engineer", exact: true }).click()
@@ -186,9 +186,9 @@ test("Given two items and a participant, when one discussion attaches both items
   expect(context!.references).toHaveLength(2)
   expect(context!.mentions).toHaveLength(1)
   await discussion.getByRole("button", { name: "Close", exact: true }).click()
-  await page.getByRole("dialog", { name: "Lead details" }).getByRole("button", { name: "Close detail", exact: true }).click()
+  await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Close detail", exact: true }).click()
   await page.getByRole("button", { name: /Open Anchor Labs/ }).click()
-  await discussObject(page, page.getByRole("dialog", { name: "Lead details" }))
+  await discussObject(page, page.getByRole("dialog", { name: "Item overview" }))
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).locator(".chat-message-item")).toHaveCount(1)
 })
 

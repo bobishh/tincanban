@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, type LocalProfile } from "./identity"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { executeCommand } from "./commands"
 import { projectWorkspaceSettings, validateWorkspaceSettingsDraft } from "./workspaceSettings"
 import type { WorkspaceDocumentV2 } from "./model"
@@ -114,11 +114,11 @@ describe("workspace settings transaction", () => {
       };
     });
     const settings = projectWorkspaceSettings(doc);
-    settings.board.employee_profile = { stack: "Ruby, Rails", work_profile: "Senior Software Engineer" };
+    settings.board.settings = { stack: "Ruby, Rails", work_profile: "Senior Software Engineer" };
     const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings }, profile);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(projectWorkspaceSettings(result.value.newDoc).board.employee_profile).toEqual(settings.board.employee_profile);
+    expect(projectWorkspaceSettings(result.value.newDoc).board.settings).toEqual(settings.board.settings);
     expect(result.value.newDoc.entities["archived-card"]).toEqual(doc.entities["archived-card"]);
   });
 
@@ -165,7 +165,8 @@ describe("workspace settings transaction", () => {
     if (!hasEntityKind(board, "board")) throw new Error("board missing")
     const fields = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "field"))
     settings.board.priorityPolicy = createDefaultPriorityPolicy(board, fields)
-    settings.board.employee_profile = { stack: "Rust", work_profile: "Backend IC" }
+    settings.board.priorityPolicy!.rules = [{ id: "source-set", fieldId: board.preset!.bindings["field.sourceText"], operator: "is_set", value: null, weight: 1 }]
+    settings.board.settings = { stack: "Rust", work_profile: "Backend IC" }
 
     const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings }, profile)
     if (!result.ok) throw new Error(JSON.stringify(result.error))
@@ -173,13 +174,12 @@ describe("workspace settings transaction", () => {
     if (!result.ok) return
     expect(projectWorkspaceSettings(result.value.newDoc).board.priorityPolicy).toMatchObject({
       version: 1,
-      evaluator: "job-fit-v1",
+      evaluator: "weighted-rules-v1",
       sort: "fit_desc",
-      assessmentFieldId: board.preset!.bindings["field.sourceText"],
-      rules: [],
+      rules: [{ id: "source-set", fieldId: board.preset!.bindings["field.sourceText"], operator: "is_set", value: null, weight: 1 }],
     })
 
-    expect(projectWorkspaceSettings(result.value.newDoc).board.employee_profile).toEqual({ stack: "Rust", work_profile: "Backend IC" })
+    expect(projectWorkspaceSettings(result.value.newDoc).board.settings).toEqual({ stack: "Rust", work_profile: "Backend IC" })
     const reordered = projectWorkspaceSettings(result.value.newDoc)
     reordered.board.priorityPolicy!.sort = "fit_asc"
     const reorderedResult = await executeCommand(result.value.newDoc, { kind: "updateWorkspaceSettings", settings: reordered }, profile)
@@ -188,10 +188,10 @@ describe("workspace settings transaction", () => {
     expect(projectWorkspaceSettings(reorderedResult.value.newDoc).board.priorityPolicy?.sort).toBe("fit_asc")
 
     const invalid = projectWorkspaceSettings(reorderedResult.value.newDoc)
-    invalid.board.priorityPolicy!.assessmentFieldId = "missing"
+    invalid.board.priorityPolicy!.rules[0]!.fieldId = "missing"
     expect(validateWorkspaceSettingsDraft(invalid, result.value.newDoc).errors).toContainEqual({
-      path: "/board/priorityPolicy/assessmentFieldId",
-      message: "Job assessment requires an active text field on this board",
+      path: "/board/priorityPolicy/rules/0/fieldId",
+      message: "Rule field must be active on this board",
     })
   })
 

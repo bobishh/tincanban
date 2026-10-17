@@ -3,7 +3,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity } from "../domain/identity"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { executeCommand } from "../domain/commands"
 import { evaluateIncomingWorkspaceAdmission, exportDocumentAuthorizationBundle,
   prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./changeAuthorization"

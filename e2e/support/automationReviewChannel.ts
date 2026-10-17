@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test"
 // Callers synchronize workspace evidence before invoking this helper.
 export async function reviewRetainedEmail(page: Page, eventId: string, cardId?: string) {
   return page.evaluate(async ({ eventId, cardId }) => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { createApplicationReviewManagement } = await import("/src/app/applicationReviewManagement.ts")
     const { parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
     const workspace = useTincanban()

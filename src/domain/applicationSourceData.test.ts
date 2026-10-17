@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import { canonicalizeJson } from "./identity"
 import { assertApplicationSourceRecord, MAX_APPLICATION_SOURCE_BYTES, parseApplicationSourceData, readApplicationSourceData } from "./applicationSourceData"
 import { assertWorkspaceEntityTransitions } from "./permissions"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateEntity, type WorkspaceDocumentV2, type WorkspaceEntity } from "./model"
 
 const time = "2026-10-14T10:00:00.000Z"

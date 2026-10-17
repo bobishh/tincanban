@@ -1,6 +1,6 @@
 import { hasEntityKind } from "./model"
 import { describe, expect, it } from "vitest"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateWorkspaceDoc } from "./model"
 
 describe("Workspace creation and seeds (Requirement 1.3)", () => {

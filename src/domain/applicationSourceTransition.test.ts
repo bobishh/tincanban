@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { assertWorkspaceTransition } from "./permissions"
 import { canonicalizeJson } from "./identity"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateEntity, validateWorkspaceDoc, type WorkspaceDocumentV2, type WorkspaceEntity } from "./model"
 
 const time = "2026-10-14T10:00:00.000Z"

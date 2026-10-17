@@ -15,7 +15,7 @@ for (const width of [390, 1440]) {
       await form.getByLabel("Location", { exact: true }).fill("Remote Europe")
       await form.getByLabel("Fit score").fill("8")
       await form.getByRole("button", { name: "Create item" }).click()
-      await page.getByRole("dialog", { name: "Lead details" }).getByRole("button", { name: "Close detail", exact: true }).click()
+      await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Close detail", exact: true }).click()
     }
     await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
     const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })

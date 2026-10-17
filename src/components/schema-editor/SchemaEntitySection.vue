@@ -192,6 +192,7 @@ function resetAddField() {
               Remove
             </button>
           </header>
+          <label v-if="field.valueType === 'text'"><span>Text format</span><select v-model="field.format" :aria-label="`${field.title} text format`"><option :value="undefined">Plain text</option><option value="markdown">Markdown</option><option value="json">JSON</option><option value="code">Code</option></select></label>
           <div v-if="field.valueType === 'select'" class="schema-options-box">
             <div class="options-pills">
               <span

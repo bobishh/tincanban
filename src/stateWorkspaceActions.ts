@@ -1,3 +1,4 @@
+import type { Preset } from "./domain/seeds"
 import * as Automerge from "@automerge/automerge/slim";
 import type { WorkspaceRole } from "./domain/permissions";
 import { bootstrapIdentity } from "./domain/identity";
@@ -29,7 +30,7 @@ export function createWorkspaceActions() {
 
 async function createWorkspaceAsync(
   title: string,
-  presetKey: "job-search" | "blank",
+  presetKey: Preset,
   storage = defaultStorage,
   creationDraft?: WorkspaceCreationDraft,
 ) {

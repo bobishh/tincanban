@@ -6,8 +6,8 @@ import type { createWorkspaceArchivedHistorySession } from "./workspaceArchivedH
 type Session = Awaited<ReturnType<typeof createWorkspaceArchivedHistorySession>>
 
 /** Explicit, paged archive browsing; selection changes invalidate every outstanding read. */
-export function useArchivedItemHistory(core: Pick<AppBoardContext, "tincanban" | "selectedItemId" | "sync"> & Partial<Pick<AppBoardContext, "selectedLeadId">>) {
-  const selectedHistoryItemId = computed(() => core.selectedItemId.value ?? core.selectedLeadId?.value ?? null)
+export function useArchivedItemHistory(core: Pick<AppBoardContext, "tincanban" | "selectedItemId" | "sync">) {
+  const selectedHistoryItemId = computed(() => core.selectedItemId.value)
   const archivedItemHistory = shallowRef<HistoryEntry[]>([])
   const archivedHistoryLoading = ref(false), archivedHistoryError = ref(""), archivedHistoryNotice = ref("")
   const archivedHistoryHasMore = ref(true)

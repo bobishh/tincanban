@@ -16,7 +16,6 @@ import type {
   Heads,
   WorkspaceDocumentV2,
 } from "../domain/model";
-import { emptyEmployeeProfile } from "../domain/jobPriority";
 import { createDefaultPriorityPolicy } from "../domain/priority";
 import {
   diffBoardSchema,
@@ -120,12 +119,7 @@ watch(workspaceSettings, () => {
 const editorEntityName = computed(
   () => draft.value.entityName || props.board.entityName || "item",
 );
-const supportsAutomaticPriority = computed(() =>
-  Boolean(
-    props.board.preset?.bindings["field.priority"] &&
-      props.board.preset?.bindings["field.fitScore"],
-  ),
-);
+const supportsAutomaticPriority = computed(() => props.fields.some(field => field.valueType === "select" && !field.archivedAt));
 const priorityPolicy = computed(
   () => workspaceSettings.value.board.priorityPolicy ?? null,
 );
@@ -177,7 +171,6 @@ function updateWorkspaceJson(value: string) {
     workspaceErrors.value = validateWorkspaceSettingsDraft(parsed, props.doc).errors;
     if (workspaceErrors.value.length) return;
     const settings = parsed as WorkspaceSettingsDraft;
-    settings.board.employee_profile ??= emptyEmployeeProfile();
     workspaceSettings.value = settings;
   } catch (error) {
     workspaceErrors.value = [invalidJsonError(error)];
@@ -208,11 +201,6 @@ function disableAutomaticPriority() {
   workspaceSettings.value.board.priorityPolicy = null;
 }
 
-function useJobMatchPriority() {
-  disabledPolicy.value = null;
-  enableAutomaticPriority();
-}
-
 function addPriorityRule() {
   const policy = priorityPolicy.value;
   const field = criterionFields.value[0];
@@ -241,7 +229,7 @@ function savePriorityRules() {
   const errors = validateWorkspaceSettingsDraft(
     workspaceSettings.value,
     props.doc,
-  ).errors.filter((error) => error.path.startsWith("/board/priorityPolicy") || error.path.startsWith("/board/employee_profile"));
+  ).errors.filter((error) => error.path.startsWith("/board/priorityPolicy"));
   if (errors.length) {
     priorityErrors.value = errors.map((error) => error.message);
     return;
@@ -354,10 +342,9 @@ function invalidJsonError(error: unknown): SchemaValidationError {
                 <p class="dialog-copy">Templates are shared across this workspace.</p>
                 <SchemaTemplateSection v-model:editor="templateEditor" :read-only="readOnly" :templates="templates" :save-template="saveTemplate" />
               </template>
-              <SchemaPrioritySection v-else-if="activeTab === 'priority'" :employee-profile="workspaceSettings.board.employee_profile!"
-                :criterion-fields="criterionFields" :errors="priorityErrors" :policy="priorityPolicy" :priority-options="priorityOptions"
+              <SchemaPrioritySection v-else-if="activeTab === 'priority'"                 :criterion-fields="criterionFields" :errors="priorityErrors" :policy="priorityPolicy" :priority-options="priorityOptions"
                 :read-only="readOnly || saving" @add-rule="addPriorityRule" @disable="disableAutomaticPriority"
-                @enable="enableAutomaticPriority" @use-job-match="useJobMatchPriority" @remove-rule="removePriorityRule" />
+                @enable="enableAutomaticPriority" @remove-rule="removePriorityRule" />
               <SchemaWorkspaceJsonSection v-else :errors="workspaceErrors" :read-only="readOnly || saving" :value="workspaceJson" @update:value="updateWorkspaceJson" />
             </template>
           </div>

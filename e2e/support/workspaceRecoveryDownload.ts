@@ -50,7 +50,7 @@ async function withinDeadline<T>(operation: Promise<T>, deadline: number): Promi
 
 async function settleSourceWrites(page: Page, binding: Binding) {
   await page.evaluate(async expected => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const current = () => {
       const profile = state.getCurrentProfile()
       if (state.activeWorkspace.id !== expected.workspaceId || profile?.identity.personId !== expected.personId ||
@@ -66,7 +66,7 @@ async function settleSourceWrites(page: Page, binding: Binding) {
 export async function downloadPrivateWorkspaceRecovery(page: Page, panel: Locator): Promise<Download> {
   const deadline = Date.now() + 60_000
   const binding = await withinDeadline(page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban(), profile = state.getCurrentProfile()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban(), profile = state.getCurrentProfile()
     if (!profile) throw new Error("Backup identity or workspace changed")
     return { personId: profile.identity.personId, deviceId: profile.device.deviceId, workspaceId: state.activeWorkspace.id }
   }), deadline)

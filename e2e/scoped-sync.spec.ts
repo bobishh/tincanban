@@ -48,7 +48,7 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       await expect(secondDialog.getByRole("heading", { name: "Add your device" })).toBeVisible()
       const guestBootstrapId = await secondPage.evaluate(async () => {
         const { whenReady } = await import("/src/statePersistence.ts")
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         await whenReady()
         return useTincanban().activeWorkspace.id
       })
@@ -62,12 +62,12 @@ test.describe("Scoped Sync Outer Scenarios", () => {
 
       await expect(secondPage.getByRole("button", { name: "Open Enrollment proof — Engineer" })).toHaveCount(0)
       const beforeApproval = await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().availableWorkspaces.value.map(workspace => workspace.id)
       })
       expect(beforeApproval).toContain(guestBootstrapId)
       const hostWorkspaceId = await page.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().activeWorkspace.id
       })
       expect(beforeApproval).not.toContain(hostWorkspaceId)
@@ -93,7 +93,7 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       await expect(secondPage.getByRole("button", { name: "Open Enrollment proof — Engineer" })).toBeVisible()
       await expect(secondPage.getByLabel("Workspace role: owner")).toBeVisible()
       const afterApproval = await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return {
           activeId: useTincanban().activeWorkspace.id,
           availableIds: useTincanban().availableWorkspaces.value.map(workspace => workspace.id),
@@ -113,7 +113,7 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       await expect(secondPage.getByLabel("Workspace role: owner")).toBeVisible()
       await expect(secondPage.getByRole("button", { name: "Open Enrollment proof — Engineer" })).toBeVisible()
       const afterReloadIds = await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().availableWorkspaces.value.map(workspace => workspace.id)
       })
       expect(afterReloadIds).toContain(hostWorkspaceId)
@@ -149,7 +149,7 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       // Identity replacement preserves local boards. Archive the guest's bootstrap board
       // under its original identity so this scenario reaches the enrolled owner's final board.
       await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         const { defaultStorage } = await import("/src/storage.ts")
         const { commitAndPersist, refreshAvailableWorkspaces, whenReady } = await import("/src/statePersistence.ts")
         const tincanban = useTincanban()
@@ -170,7 +170,7 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       await secondPage.getByRole("button", { name: "Open workspaces" }).click()
       const workspaces = secondPage.getByRole("dialog", { name: "Workspaces" })
       const archivedWorkspaceIds = await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().availableWorkspaces.value.map(workspace => workspace.id)
       })
       await expect(workspaces).toBeVisible()
@@ -186,19 +186,19 @@ test.describe("Scoped Sync Outer Scenarios", () => {
       await workspaces.getByRole("button", { name: "Close", exact: true }).last().click()
       await expect(secondPage.getByRole("heading", { name: "TINCANBAN // Untitled" })).toBeVisible()
       await expect.poll(async () => secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().activeWorkspace.id
       }).then(id => archivedWorkspaceIds.includes(id))).toBe(false)
       await expect(secondPage.getByLabel("Workspace role: owner")).toBeVisible({ timeout: 30_000 })
       const fallbackId = await secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().activeWorkspace.id
       })
       expect(archivedWorkspaceIds).not.toContain(fallbackId)
       await secondPage.reload()
       await expect(secondPage.getByLabel("Workspace role: owner")).toBeVisible({ timeout: 30_000 })
       await expect.poll(async () => secondPage.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         return useTincanban().activeWorkspace.id
       })).toBe(fallbackId)
     } finally {
@@ -559,14 +559,14 @@ test("Given existing data under another identity, when enrollment is approved, t
     const guest = await context.newPage()
     await guest.goto("/")
     await ensureJobSearchWorkspace(guest)
-    const previousWorkspaceId = await guest.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    const previousWorkspaceId = await guest.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
     await guest.getByRole("button", { name: /Add lead to/ }).first().click()
     await guest.getByLabel("Company *").fill("Keep my data")
     await guest.getByLabel("Role *").fill("Engineer")
     await guest.getByRole("button", { name: "Create item" }).click()
     await guest.getByRole("button", { name: "Close detail" }).click()
     const previousWorkspaceBytes = await guest.evaluate(async id =>
-      Array.from(await (await import("/src/state.ts")).useTincanban().readWorkspaceBytes(id)), previousWorkspaceId)
+      Array.from(await (await import("/src/test/stateFixture.ts")).useTincanban().readWorkspaceBytes(id)), previousWorkspaceId)
     // This identity previously enabled mesh for its own local board.
     await guest.getByRole("button", { name: "Sync", exact: true }).click()
     const oldIdentityDialog = guest.getByRole("dialog", { name: "Device sync" })
@@ -607,10 +607,10 @@ test("Given existing data under another identity, when enrollment is approved, t
     }, previousWorkspaceId)
     expect(retainedWorkspace).toMatchObject({ title: "Job search", itemTitles: ["Keep my data — Engineer"] })
     const entitledWorkspaceIds = await guest.evaluate(async () =>
-      (await import("/src/state.ts")).useTincanban().availableWorkspaces.value.map(workspace => workspace.id))
+      (await import("/src/test/stateFixture.ts")).useTincanban().availableWorkspaces.value.map(workspace => workspace.id))
     expect(entitledWorkspaceIds).not.toContain(previousWorkspaceId)
     const retainedWorkspaceBytes = await guest.evaluate(async id =>
-      Array.from(await (await import("/src/state.ts")).useTincanban().readWorkspaceBytes(id)), previousWorkspaceId)
+      Array.from(await (await import("/src/test/stateFixture.ts")).useTincanban().readWorkspaceBytes(id)), previousWorkspaceId)
     expect(retainedWorkspaceBytes).toEqual(previousWorkspaceBytes)
     await guest.getByRole("button", { name: "Open workspaces" }).click()
     const workspaces = guest.getByRole("dialog", { name: "Workspaces" })

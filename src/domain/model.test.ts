@@ -17,7 +17,7 @@ import {
 describe("model runtime types and validators (Requirement 1.1)", () => {
   const validPlacement = { parentId: null, rank: "0/1" }
 
-  it("validates Board entity and rejects unknown keys", () => {
+  it("validates Board structure and retains opaque JSON metadata", () => {
     const validBoard: Board = {
       id: "board_1",
       kind: "board",
@@ -37,7 +37,7 @@ describe("model runtime types and validators (Requirement 1.1)", () => {
 
     const withUnknown = { ...validBoard, extraKey: "not_allowed" }
     const result = validateEntity(withUnknown)
-    expect(result.ok).toBe(false)
+    expect(result.ok).toBe(true)
     if (!result.ok) {
       expect(result.error.code).toBe("invalid_input")
       expect(result.error.message).toContain("extraKey")

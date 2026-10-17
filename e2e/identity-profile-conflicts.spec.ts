@@ -5,7 +5,7 @@ const photoData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfw
 async function seedProfileConflicts(page: import("@playwright/test").Page) {
   await page.goto("/")
   return page.evaluate(async fixturePhoto => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { bootstrapIdentity } = await import("/src/domain/identity.ts")
     const { createPersonalRoot } = await import("/src/domain/personalRoot.ts")
     const { defaultStorage } = await import("/src/storage.ts")
@@ -165,7 +165,7 @@ test("Given private profile revision loading, when Identity settings opens, then
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
   const personId = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
     await useTincanban().whenReady()

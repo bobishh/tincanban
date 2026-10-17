@@ -45,7 +45,7 @@ function validateBoard(value: unknown, doc: WorkspaceDocumentV2 | undefined, err
   const result = validateBoardSchemaDraft(value, doc)
   errors.push(...result.errors.map(error => ({ path: `/board${error.path}`, message: error.message })))
   if (!isRecord(value)) return
-  rejectUnknown(value, ["boardId", "boardTitle", "entityName", "columns", "cardStageButtons", "fields", "priorityPolicy", "employee_profile", "cardAgingPolicy"], "/board", errors)
+  rejectUnknown(value, ["boardId", "boardTitle", "entityName", "columns", "cardStageButtons", "fields", "automation", "cardPresentation", "priorityPolicy", "settings", "cardAgingPolicy"], "/board", errors)
   const boardId = value.boardId
   if (typeof boardId !== "string" || !boardId) {
     errors.push({ path: "/board/boardId", message: "boardId is required" })
@@ -71,7 +71,7 @@ function validateEntityReferences(values: unknown, kind: "column" | "field", boa
   const ids = new Set<string>()
   values.forEach((value, index) => {
     if (!isRecord(value)) return
-    rejectUnknown(value, kind === "column" ? ["id", "title", "archive", "collapsible", "color"] : ["id", "title", "valueType", "required", "min", "max", "options"], `/board/${name}/${index}`, errors)
+    rejectUnknown(value, kind === "column" ? ["id", "title", "archive", "collapsible", "color"] : ["id", "title", "valueType", "format", "required", "min", "max", "options"], `/board/${name}/${index}`, errors)
     if (typeof value.id !== "string") return
     if (ids.has(value.id)) errors.push({ path: `/board/${name}/${index}/id`, message: `${kind === "column" ? "Column" : "Field"} id is duplicated` })
     ids.add(value.id)

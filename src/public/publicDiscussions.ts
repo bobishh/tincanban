@@ -63,7 +63,7 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
 
 export function publicItemDocuments(projection: PublicBoardProjection, itemId: string) {
   const files = projection.files.filter(file => file.parentId === itemId)
-  return files.map(file => ({ id: file.id, leadId: itemId, kind: "attachment" as const, title: file.title,
+  return files.map(file => ({ id: file.id, itemId: itemId, kind: "attachment" as const, title: file.title,
     format: file.mediaType === "application/pdf" ? "pdf" as const : "file" as const,
     file: { type: "blob" as const, sha256: file.sha256, byteLength: file.byteLength, mimeType: file.mediaType, fileName: file.fileName },
     createdAt: "", updatedAt: "" }))

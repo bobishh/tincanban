@@ -59,6 +59,7 @@ const formFields = computed(() => props.fields
     title: field.title,
     required: field.required,
     valueType: field.valueType,
+    format: field.valueType === "text" ? field.format : undefined,
     min: field.valueType === "number" ? field.min : undefined,
     max: field.valueType === "number" ? field.max : undefined,
     options: field.valueType === "select"
@@ -148,8 +149,9 @@ function handleSave() {
           <template v-for="field in formFields" :key="field.id">
             <label>
               <span>{{ field.title }}{{ field.required ? " *" : "" }}</span>
+              <textarea v-if="field.valueType === 'text'" :value="String(values[field.id] ?? '')" @input="values[field.id] = ($event.target as HTMLTextAreaElement).value" rows="3" :required="field.required" :class="{ 'field-code': field.format === 'json' || field.format === 'code' }" />
               <input
-                v-if="field.valueType === 'text' || field.valueType === 'url'"
+                v-else-if="field.valueType === 'url'"
                 v-model="values[field.id]"
                 :type="field.valueType === 'url' ? 'url' : 'text'"
                 :required="field.required"
@@ -213,6 +215,7 @@ function handleSave() {
 </template>
 
 <style scoped>
+.field-code { font-family: monospace; }
 .item-form { display: grid; gap: var(--section-gap); min-width: 0; }
 .item-form-content { min-width: 0; }
 .item-form-footer { display: grid; gap: var(--field-gap); }

@@ -5,7 +5,7 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     await app.reclassifyWorkspace(app.activeWorkspace.id)
   })
   const other = await context.newPage()
@@ -14,13 +14,13 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
   const pages = [page, other]
   for (const tab of pages) {
     await tab.evaluate(async () => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       await app.reclassifyWorkspace(app.activeWorkspace.id)
     })
     await tab.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
   }
   for (const tab of pages) await tab.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const { workspaceRole } = await import("/src/sync/changeAuthorization.ts")
     if (await workspaceRole(app.getActiveDoc()!, app.getCurrentProfile()!) !== "owner") throw new Error("Expected warmed owner access")
   })
@@ -29,7 +29,7 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
       ;(await import("/src/sync/meshTrace.ts")).clearMeshTrace()
       const prototype = (await import("/src/workspaceDeltaJournal.ts")).WorkspaceDeltaJournal.prototype
       const original = prototype.read
-      const workspaceId = (await import("/src/state.ts")).useTincanban().activeWorkspace.id
+      const workspaceId = (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id
       const state = window as Window & { coldReads?: number; accessChecks?: number; coldReadDetails?: string[] }
       state.coldReads = 0
       state.accessChecks = 0
@@ -53,9 +53,9 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
   await context.setOffline(true)
   for (const [index, stage] of ["Archive", "Applied", "Archive", "Applied", "Archive", "Applied"].entries()) {
     const writer = pages[index % 2]!
-    await writer.getByRole("dialog", { name: "Lead details", exact: true }).getByRole("button", { name: stage, exact: true }).click()
+    await writer.getByRole("dialog", { name: "Item overview", exact: true }).getByRole("button", { name: stage, exact: true }).click()
     for (const tab of pages) {
-      const detail = tab.getByRole("dialog", { name: "Lead details", exact: true })
+      const detail = tab.getByRole("dialog", { name: "Item overview", exact: true })
       await expect(detail.getByRole("button", { name: stage, exact: true })).toHaveAttribute("aria-pressed", "true")
       await expect(detail.getByRole("status")).toHaveCount(0)
       await expect(detail.getByRole("alert")).toHaveCount(0)

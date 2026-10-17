@@ -61,7 +61,7 @@ for (const exit of ["Dismiss", "Close", "Escape"]) {
     const boardLabel = await page.locator(".workspace-heading").textContent()
     const boardAddress = new URL(page.url())
     const invite = await page.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const profile = state.getCurrentProfile()
       if (!profile) throw new Error("Expected a local profile for invitation fixture")
       const params = new URLSearchParams({

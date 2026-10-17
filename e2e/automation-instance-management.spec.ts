@@ -75,7 +75,7 @@ async function prepareAutomationManagement(page: Page, baseURL: string, scenario
   const fixture = await page.evaluate(async ({ workerOrigin, definitionId, scenario }) => {
     const { bootstrapIdentity, signEnvelope, publicKeyId, toBase64Url } = await import("/src/domain/identity.ts")
     const { identitySeedFromPrivateKey, profileFromIdentitySeedForDevice } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { recordReplicaPreference } = await import("/src/sync/identityDevicePreferences.ts")
     const { automationTypes, parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
     const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")

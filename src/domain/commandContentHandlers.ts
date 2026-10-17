@@ -1,3 +1,4 @@
+import { textFormatSchema } from "./entitySchemas"
 import { hasEntityKind } from "./model"
 import type { AttachedDocument, Column, DocumentTemplate, FieldDefinition, WorkspaceDocumentV2 } from "./model"
 import { compareRanks, calculateRankBetween } from "./ancestry"
@@ -35,6 +36,7 @@ export const createField: CommandHandler<"createField"> = (doc, command, context
   if (!command.title.trim()) return err("invalid_input", "Field title cannot be empty", "title")
   const valueType = command.valueType
   if (!isSupportedFieldType(valueType)) return err("invalid_input", "Field type is invalid", "valueType")
+  if (command.format !== undefined && (command.valueType !== "text" || !textFormatSchema.safeParse(command.format).success)) return err("invalid_input", "Invalid text field format", "format")
   const board = doc.entities[command.boardId]
   if (!board || !hasEntityKind(board, "board")) return err("not_found", `Board ${command.boardId} not found`)
   const id = crypto.randomUUID()
@@ -46,7 +48,7 @@ function fieldEntity(command: CommandByKind<"createField">, valueType: FieldDefi
   const base = { id, kind: "field" as const, title: command.title.trim(), placement: { parentId: command.boardId, rank }, archivedAt: null, createdAt: nowIso, updatedAt: nowIso, required: command.required }
   if (valueType === "select") return { ...base, valueType, options: fieldOptions(command) }
   if (valueType === "number") return { ...base, valueType, min: command.min ?? null, max: command.max ?? null }
-  return { ...base, valueType }
+  return { ...base, valueType, ...(valueType === "text" && command.format ? { format: command.format } : {}) }
 }
 
 function isSupportedFieldType(

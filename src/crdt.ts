@@ -1,6 +1,7 @@
+import type { Item } from "./domain/model"
 import * as Automerge from "@automerge/automerge/slim"
 import automergeWasmUrl from "@automerge/automerge/automerge.wasm?url"
-import type { Artifact, Document, Lead, Template, Workspace } from "./types"
+import type { Artifact, Document, Template, Workspace } from "./types"
 
 let automergeReady: Promise<void> | undefined
 
@@ -9,7 +10,7 @@ export function initializeAutomerge(): Promise<void> {
 }
 
 type WorkspaceDocument = {
-  leads: Lead[]
+  items: Item[]
   documents: Document[]
   templates: Template[]
   artifacts: Artifact[]
@@ -20,7 +21,7 @@ export type WorkspaceDoc = Automerge.Doc<WorkspaceDocument>
 export function newWorkspaceDoc(workspace: Workspace): WorkspaceDoc {
   let doc = Automerge.init<WorkspaceDocument>()
   doc = Automerge.change(doc, { message: "Create tincanban workspace" }, (draft) => {
-    draft.leads = clone(workspace.leads)
+    draft.items = clone(workspace.items)
     draft.documents = clone(workspace.documents)
     draft.templates = clone(workspace.templates)
     draft.artifacts = clone(workspace.artifacts)
@@ -30,7 +31,7 @@ export function newWorkspaceDoc(workspace: Workspace): WorkspaceDoc {
 
 export function updateWorkspaceDoc(doc: WorkspaceDoc, workspace: Workspace, message: string): WorkspaceDoc {
   return Automerge.change(doc, { message }, (draft) => {
-    draft.leads = clone(workspace.leads)
+    draft.items = clone(workspace.items)
     draft.documents = clone(workspace.documents)
     draft.templates = clone(workspace.templates)
     draft.artifacts = clone(workspace.artifacts)

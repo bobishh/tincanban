@@ -5,7 +5,7 @@ import AutomationsPanel from "./AutomationsPanel.vue"
 import type { AutomationManagement } from "../app/useAutomations"
 
 it("Given retained email outcomes, When opening automation settings, Then expose connection controls without an accumulating processing feed", async () => {
-  const management = {
+  const management = { types: ref([]),
     records: ref([{ entity: { id: "automation", executor: { origin: "https://automation.example" } },
       definition: { name: "Job intake", type: "job-intake", typeVersion: 2, parameters: { sources: ["website", "email"] } }, control: { state: "active" } }]),
     busy: ref(false), failure: ref(""), observationErrors: ref({}), storage: ref([]),

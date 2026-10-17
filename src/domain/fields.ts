@@ -1,3 +1,4 @@
+import { textFormatSchema } from "./entitySchemas"
 import type {
   CommandResult,
   FieldDefinition,
@@ -16,6 +17,9 @@ export function validateFieldValue(
     return { valid: true }
   }
 
+  if (field.valueType === "text" && field.format === "json" && typeof value === "string") {
+    try { JSON.parse(value) } catch { return invalid(`${field.title} must be valid JSON`) }
+  }
   return field.valueType === "number" ? validateNumber(field, value)
     : field.valueType === "select" ? validateSelect(field, value, allowDeprecatedOptions)
       : validateScalar(field.valueType, field.title, value)
@@ -97,6 +101,7 @@ export function patchFieldDefinition(
     min?: number | null
     max?: number | null
     valueType?: string
+    format?: "plain" | "markdown" | "json" | "code" | null
   }
 ): CommandResult<FieldDefinition> {
   if (patch.valueType && patch.valueType !== field.valueType) {
@@ -109,11 +114,18 @@ export function patchFieldDefinition(
     }
   }
 
+  if (patch.format !== undefined && (field.valueType !== "text" || patch.format !== null && !textFormatSchema.safeParse(patch.format).success)) return { ok: false, error: { code: "invalid_input", message: "Invalid text field format" } }
+
   const updated: FieldDefinition = {
     ...field,
     title: patch.title !== undefined ? patch.title.trim() : field.title,
     required: patch.required !== undefined ? patch.required : field.required,
     updatedAt: new Date().toISOString(),
+  }
+
+  if (updated.valueType === "text" && patch.format !== undefined) {
+    if (patch.format === null) delete updated.format
+    else updated.format = patch.format
   }
 
   if (field.valueType === "number") {

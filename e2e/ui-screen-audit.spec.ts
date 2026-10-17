@@ -38,7 +38,7 @@ test("Given an unsaved template, When settings tabs change and Save is repeated,
   await settings.getByLabel("Markdown", { exact: true }).fill("# Updated draft")
   await settings.getByRole("button", { name: "Save template", exact: true }).click()
   await expect(settings.getByRole("status", { name: "Template save status" })).toContainText("Saved")
-  const saved = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().workspace.templates.filter(template => template.name === "Audit template").map(template => template.markdown))
+  const saved = await page.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().workspace.templates.filter(template => template.name === "Audit template").map(template => template.markdown))
   expect(saved).toEqual(["# Updated draft"])
 })
 

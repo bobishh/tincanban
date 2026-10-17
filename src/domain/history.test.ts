@@ -6,7 +6,7 @@ import {
   bootstrapIdentity,
   resetIdentityStorageForTest,
 } from "./identity"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { projectDocumentHistory, projectEntityHistory } from "./history"
 import type { WorkspaceDocumentV2 } from "./model"
 

@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref } from "vue"
-import type { WorkspaceCreationDraft } from "../domain/seeds"
+import templateData from "../board-templates.json"
+import type { Preset, WorkspaceCreationDraft } from "../domain/seeds"
 
 const BoardCreationEditor = defineAsyncComponent(() => import("./BoardCreationEditor.vue"))
 const props = defineProps<{
-  createWorkspace: (payload: { title: string; preset: "blank" | "job-search"; config?: WorkspaceCreationDraft }) => Promise<void>
+  createWorkspace: (payload: { title: string; preset: Preset; config?: WorkspaceCreationDraft }) => Promise<void>
 }>()
 const emit = defineEmits<{ (event: "close"): void }>()
 const title = ref("")
-const preset = ref<"blank" | "job-search">("blank")
+const preset = ref<Preset>("blank")
 const error = ref("")
 const creating = ref(false)
 const customizeBoard = ref(false)
@@ -18,7 +19,8 @@ const configErrors = ref<string[]>([])
 const configSummary = computed(() => {
   const draft = configDraft.value
   if (draft) return `${draft.entityName}, ${draft.columns.length} columns, ${draft.fields.length} fields`
-  return preset.value === "blank" ? "item, 3 columns, 0 fields" : "lead, 6 columns, 10 fields"
+  const template = templateData[preset.value]
+  return `${template.entityName}, ${template.columns.length} columns, ${template.fields.length} fields`
 })
 
 function toggleCustomizeBoard() {
@@ -60,13 +62,6 @@ async function handleCreate() {
       <div class="workspace-create-content">
         <div class="workspace-create-form ui-stack">
           <label><span>Title</span><input v-model="title" autofocus required placeholder="e.g. Reading List" :disabled="creating" /></label>
-          <fieldset class="workspace-preset" :disabled="creating">
-            <legend>Preset</legend>
-            <div class="workspace-preset-options">
-              <label><input v-model="preset" type="radio" value="blank" /><span>Blank board</span></label>
-              <label><input v-model="preset" type="radio" value="job-search" /><span>Job search</span></label>
-            </div>
-          </fieldset>
           <section class="workspace-customize">
             <button class="workspace-customize-toggle" type="button" :aria-expanded="customizeBoard" :disabled="creating" @click="toggleCustomizeBoard">
               <span><strong>Customize board</strong><small>{{ configSummary }}</small></span><span aria-hidden="true">{{ customizeBoard ? '−' : '+' }}</span>

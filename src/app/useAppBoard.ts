@@ -3,10 +3,10 @@ import { computed, nextTick, watch } from "vue"
 import type { useAppCore } from "./useAppCore"
 import { useBoardDragController } from "./useBoardDrag"
 import { activeFilterCount, defaultBoardFilters, matchesItemFilters } from "../filters"
-import { effectiveColumnStatus, isArchiveColumn, isItemArchived } from "../domain/archive"
+import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { projectEntityHistory } from "../domain/history"
 import { isItem, type AttachedDocument, type Item } from "../domain/model"
-import type { Lead, LeadStatus } from "../types"
+import { configuredCardFields, narrativeFieldId } from "../domain/cardPresentation"
 import type { WorkspaceDocumentV2 } from "../domain/entitySchemas"
 import { orderItemsByPriority } from "../domain/priority"
 import { itemNarrative } from "../domain/narrative"
@@ -19,7 +19,7 @@ export type AppBoardContext = Pick<ReturnType<typeof useAppCore>,
   | "search" | "filters" | "isEditingBoard" | "itemFormParentId"
   | "boardRef" | "movedItemId" | "movedColumnId" | "onlineWorkspaceDevices"
   | "canEditItems" | "canEditBoard" | "notice" | "archiveUndo" | "boardRenderKey"
-  | "selectedItemId" | "editingItemId" | "itemToMove" | "selectedLeadId" | "detailDialog"
+  | "selectedItemId" | "editingItemId" | "itemToMove" | "detailDialog"
   | "quickNoteDraft" | "quickNoteError"
 > & { sync?: { fetchHistoryObject: PeerHistoryRemoteRead
   fetchHistoryBaseline?: (workspaceId: string, baselineId: string) => Promise<PeerHistoryBaselineDescriptor | undefined>
@@ -34,26 +34,18 @@ export function useAppBoard(core: AppBoardContext) {
 
 function useBoardPresentation(core: AppBoardContext) {
   const { tincanban, search, filters, isEditingBoard, itemFormParentId, boardRef, movedItemId, movedColumnId } = core
-  const workspaceLabel = computed(() => tincanban.activeWorkspace.title.toLowerCase() === "job search" ? "jobs" : tincanban.activeWorkspace.title)
-  const entityName = computed(() => tincanban.activeBoard.value?.entityName || (tincanban.activeBoard.value?.preset?.key === "job-search" ? "lead" : "item"))
+  const workspaceLabel = computed(() => tincanban.activeWorkspace.title)
+  const entityName = computed(() => tincanban.activeBoard.value?.entityName || "item")
   const addItemLabel = computed(() => `+ Add ${entityName.value}`)
-  const columnStatus = (columnId: string): LeadStatus | null => {
-    const bindings = tincanban.activeBoard.value?.preset?.bindings
-    const status = bindings ? Object.entries(bindings).find(([, id]) => id === columnId)?.[0].replace("status.", "") as LeadStatus | undefined : undefined
-    const column = tincanban.genericColumns.value.find(candidate => candidate.id === columnId) ?? { id: columnId }
-    return (effectiveColumnStatus(column, tincanban.activeBoard.value ?? undefined, status) as LeadStatus | undefined) ?? null
-  }
+  const columnStatus = (columnId: string): string | null => isArchiveColumn(tincanban.genericColumns.value.find(column => column.id === columnId) ?? { id: columnId }, tincanban.activeBoard.value ?? undefined) ? "archived" : null
   const colors = computed(() => columnColors(tincanban.genericColumns.value))
   const columnColor = (id: string) => colors.value.get(id)
-  const itemFormColumns = computed(() => tincanban.genericColumns.value.filter(column => !isArchiveColumn(column)).map(column => ({ ...column, formValue: tincanban.isBlankBoard.value ? column.id : columnStatus(column.id) ?? column.id })))
-  const itemFormParentValue = computed(() => tincanban.isBlankBoard.value ? itemFormParentId.value : columnStatus(itemFormParentId.value) ?? itemFormParentId.value)
+  const itemFormColumns = computed(() => tincanban.genericColumns.value.filter(column => !isArchiveColumn(column)))
+  const itemFormParentValue = computed(() => itemFormParentId.value)
   const computedItemFieldIds = computed(() => {
     const policy = tincanban.activeBoard.value?.priorityPolicy
-    return policy ? [policy.priorityFieldId, policy.fitFieldId].filter((id): id is string => Boolean(id)) : []
+    return policy?.evaluator === "weighted-rules-v1" ? [policy.priorityFieldId, policy.fitFieldId].filter((id): id is string => Boolean(id)) : []
   })
-  const itemFormOptionValues = computed(() => Object.fromEntries(Object.entries(tincanban.activeBoard.value?.preset?.bindings ?? {}).filter(([binding]) => binding.startsWith("option.")).map(([binding, optionId]) => [optionId, binding.split(".").at(-1)!])))
-  const leadsById = computed(() => new Map(tincanban.workspace.leads.map(lead => [lead.id, lead])))
-  const leadForItem = (item: Item) => tincanban.isBlankBoard.value ? undefined : leadsById.value.get(item.id)
   const notesByItem = computed(() => {
     void tincanban.docVersion.value
     const notes = new Map<string, AttachedDocument[]>()
@@ -69,30 +61,23 @@ function useBoardPresentation(core: AppBoardContext) {
     void tincanban.docVersion.value
     return searchableItemTextById(
       tincanban.getActiveDoc() ?? undefined,
-      leadsById.value,
       notesByItem.value,
       textNotesFieldId(),
-      tincanban.isBlankBoard.value,
     )
   })
   const normalizedSearch = computed(() => search.value.trim().toLowerCase())
-  const textNotesFieldId = () => {
-    const id = tincanban.activeBoard.value?.preset?.bindings["field.notes"]
-    return id && tincanban.boardFields.value.some(field => field.id === id && field.valueType === "text") ? id : undefined
-  }
+  const textNotesFieldId = () => narrativeFieldId(tincanban.activeBoard.value, tincanban.boardFields.value)
   const narrativeForCard = computed(() => {
     void tincanban.docVersion.value
     const notes = notesByItem.value
-    const leads = leadsById.value
     const notesFieldId = textNotesFieldId()
-    return cachedItemProjection(item => itemNarrative(item, leads.has(item.id) ? notesFieldId : undefined, notes.get(item.id) ?? []))
+    return cachedItemProjection(item => itemNarrative(item, notesFieldId, notes.get(item.id) ?? []))
   })
+  const cardSummaryFields = (item: Item) => configuredCardFields(item, tincanban.boardFields.value, tincanban.activeBoard.value?.cardPresentation?.summaryFieldIds ?? [])
   const fieldsForCard = computed(() => {
     void tincanban.docVersion.value
     const fields = tincanban.boardFields.value
-    const bindings = tincanban.activeBoard.value?.preset?.bindings ?? {}
-    const leads = leadsById.value
-    return cachedItemProjection(item => cardFieldValues(item, fields, bindings, leads.get(item.id)))
+    return cachedItemProjection(item => configuredCardFields(item, fields))
   })
   const cardNotes = (item: Item) => narrativeForCard.value(item)
   const cardFields = (item: Item) => fieldsForCard.value(item)
@@ -151,25 +136,22 @@ function useBoardPresentation(core: AppBoardContext) {
     highlightTimer = setTimeout(() => { movedItemId.value = null; movedColumnId.value = null }, 700)
   }
   const clearHighlightTimer = () => { if (highlightTimer) clearTimeout(highlightTimer) }
-  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, itemFormOptionValues, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, columnColor, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, trackBoardScroll, resetBoardScroll, highlightMoved, clearHighlightTimer }
+  return { workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue, computedItemFieldIds, cardNotes, cardFields, cardSummaryFields, cardNoteSearchMatch, columnColor, columnStatus, itemsForColumn, totalItems, visibleItems, hasFilters, expandFilteredCards, workspacePresenceSummary, visibleColumns, clearFilters, trackBoardScroll, resetBoardScroll, highlightMoved, clearHighlightTimer }
 }
 
 function searchableItemTextById(
   doc: WorkspaceDocumentV2 | undefined,
-  leads: Map<string, Lead>,
   notes: Map<string, AttachedDocument[]>,
   notesFieldId: string | undefined,
-  isBlankBoard: boolean,
 ) {
   const searchable = new Map<string, { text: string; narrative: string; narrativeOffset: number }>()
   if (!doc) return searchable
   for (const entity of Object.values(doc.entities)) {
     if (!isItem(entity)) continue
-    const lead = isBlankBoard ? undefined : leads.get(entity.id)
-    const narrative = itemNarrative(entity, lead ? notesFieldId : undefined, notes.get(entity.id) ?? [])
+    const narrative = itemNarrative(entity, notesFieldId, notes.get(entity.id) ?? [])
     const fieldText = Object.values(entity.values).filter(value => value !== null).join(" ")
     const searchableNarrative = narrative.toLowerCase()
-    const prefix = lead ? `${lead.company} ${lead.role} ` : `${entity.title} `
+    const prefix = `${entity.title} `
     const searchablePrefix = prefix.toLowerCase()
     searchable.set(entity.id, {
       narrative: searchableNarrative,
@@ -210,16 +192,6 @@ function cardNoteSearchMatchFor(
   return match >= indexed.narrativeOffset && match + query.length <= narrativeEnd ? { query, index: match - indexed.narrativeOffset } : null
 }
 
-function cardFieldValues(item: Item, fields: ReturnType<typeof useAppCore>["tincanban"]["boardFields"]["value"], bindings: Record<string, string>, lead: unknown) {
-  const summaryFields = lead ? ["company", "role", "priority", "location", "fitScore"].map(name => bindings[`field.${name}`]) : []
-  return fields.flatMap(field => {
-    const value = item.values[field.id]
-    if (field.archivedAt || summaryFields.includes(field.id) || value === null || value === undefined || value === "") return []
-    const label = field.valueType === "select" ? field.options[String(value)]?.title : typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)
-    return label ? [{ id: field.id, title: field.title, value: label }] : []
-  })
-}
-
 function summarizeWorkspace(totalItems: number, visibleItems: number, totalDocuments: number, devices: number, hasFilters: boolean) {
   const cards = hasFilters ? `${visibleItems} of ${totalItems} cards` : `${totalItems} ${totalItems === 1 ? "card" : "cards"}`
   const docs = `${totalDocuments} ${totalDocuments === 1 ? "doc" : "docs"}`
@@ -246,8 +218,8 @@ function useBoardSelection(core: AppBoardContext) {
   })
   const editingItem = computed(() => core.editingItemId.value ? readItem(core, core.editingItemId.value) : null)
   const candidateParentsForMove = computed(() => itemParents(core))
-  watch(core.selectedLeadId, async leadId => { if (leadId) { await nextTick(); core.detailDialog.value?.focus() } })
-  watch([core.selectedLeadId, core.selectedItemId], () => { core.quickNoteDraft.value = ""; core.quickNoteError.value = "" })
+  watch(core.selectedItemId, async itemId => { if (itemId) { await nextTick(); core.detailDialog.value?.focus() } })
+  watch(core.selectedItemId, () => { core.quickNoteDraft.value = ""; core.quickNoteError.value = "" })
   return { selectedItem, subitemsForSelectedItem, selectedItemHistory, editingItem, candidateParentsForMove, ...archiveHistory }
 }
 

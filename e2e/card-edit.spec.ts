@@ -12,7 +12,7 @@ async function createLead(page: Page, company = "OpenProject") {
   await form.getByLabel("Work mode").selectOption({ label: "Remote" })
   await form.getByRole("button", { name: "Create item" }).click()
   await expect(form).toBeHidden()
-  if (!await page.getByRole("dialog", { name: "Lead details" }).isVisible()) {
+  if (!await page.getByRole("dialog", { name: "Item overview" }).isVisible()) {
     await page.getByRole("button", { name: new RegExp(`Open ${company}`) }).click()
   }
 }
@@ -21,7 +21,7 @@ test.describe("schema-driven lead editing", () => {
   test("Given a long lead, when details open and schema values change, then Edit stays visible and values survive reload", async ({ page }) => {
     await createLead(page)
 
-    const detail = page.getByRole("dialog", { name: "Lead details" })
+    const detail = page.getByRole("dialog", { name: "Item overview" })
     const edit = detail.getByRole("button", { name: "Edit" })
     await expect(edit).toBeVisible()
     await expect(edit).toBeInViewport()
@@ -39,19 +39,19 @@ test.describe("schema-driven lead editing", () => {
     await form.getByRole("button", { name: "Save changes" }).click()
 
     await expect(form).toBeHidden()
-    await expect(page.getByRole("dialog", { name: "Lead details" })).toContainText("OpenProject GmbH")
-    await expect(page.getByRole("dialog", { name: "Lead details" })).toContainText("Updated from the shared schema form")
+    await expect(page.getByRole("dialog", { name: "Item overview" })).toContainText("OpenProject GmbH")
+    await expect(page.getByRole("dialog", { name: "Item overview" })).toContainText("Updated from the shared schema form")
 
     await page.reload()
     await page.getByRole("button", { name: /Open OpenProject GmbH/ }).click()
-    const reloaded = page.getByRole("dialog", { name: "Lead details" })
+    const reloaded = page.getByRole("dialog", { name: "Item overview" })
     await expect(reloaded).toContainText("Remote / Berlin")
     await expect(reloaded).toContainText(/hybrid/i)
   })
 
   test("Given storage failure, when lead edit saves, then the form stays open and retry commits atomically", async ({ page }) => {
     await createLead(page, "Failure Labs")
-    await page.getByRole("dialog", { name: "Lead details" }).getByRole("button", { name: "Edit" }).click()
+    await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Edit" }).click()
     const form = page.getByRole("dialog", { name: "Edit item" })
     await form.getByLabel("Company *").fill("Must Retry")
 
@@ -64,6 +64,6 @@ test.describe("schema-driven lead editing", () => {
     await page.evaluate(() => { (window as any).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
     await form.getByRole("button", { name: "Retry save" }).click()
     await expect(form).toBeHidden()
-    await expect(page.getByRole("dialog", { name: "Lead details" })).toContainText("Must Retry")
+    await expect(page.getByRole("dialog", { name: "Item overview" })).toContainText("Must Retry")
   })
 })

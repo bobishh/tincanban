@@ -23,7 +23,7 @@ import { parseApplicationReviewBody, parseApplicationReviewResponse, parseApplic
   type ApplicationReviewAction, type ApplicationReviewResponse, type ApplicationReviewMailbox } from "../../../src/domain/applicationReviewData";
 import { automationBodyHash, parseAutomationObservationProof, type AutomationObservationProof } from "../../../src/domain/automationProtocol";
 import { readApplicationEventClassification } from "./clef";
-import { emptyEmployeeProfile } from "../../../src/domain/jobPriority";
+import { emptyEmployeeProfile } from "./jobPriority";
 import { prepareItemCommand, validateItemCommandClassification } from "./itemCommands";
 import { decryptEventClassification, decryptEventPayload, encryptEventClassification, encryptEventPayload } from "./eventPayload";
 import { FreshRequestLedger } from "./freshRequestLedger";

@@ -7,7 +7,7 @@ export async function populatedBoard(page: Page, jobSearch = false) {
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
   if (jobSearch) await createJobSearchWorkspace(page, "Detailed leads")
   await page.evaluate(async jobSearch => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { prepareLocalChangeAuthorizations, exportDocumentAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const tincanban = useTincanban()

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { MarkdownContent } from "../ui/markdownContent"
 import SpatialWindow from "./SpatialWindow.vue"
+import CardFields from "./CardFields.vue"
 import QuickNoteForm from "./QuickNoteForm.vue"
 import type { Item, FieldDefinition, Column } from "../domain/entitySchemas"
 import type { HistoryEntry } from "../domain/historyTypes"
@@ -24,7 +25,7 @@ const props = defineProps<{
   subitems: Item[]
   fields: FieldDefinition[]
   documents: Document[]
-  saveDocument: (document: Omit<DocumentInput, "leadId">) => Promise<void>
+  saveDocument: (document: Omit<DocumentInput, "itemId">) => Promise<void>
   updateDocument: (documentId: string, content: string) => Promise<void>
   history?: HistoryEntry[]
   historyNames?: Record<string, string>
@@ -87,17 +88,8 @@ const emit = defineEmits<{
             @save="emit('saveNote')"
           />
 
-          <div v-if="fields.length" class="detail-grid" data-discussion-text data-discussion-field="overview">
-            <template v-for="field in fields" :key="field.id">
-              <div v-if="item.values[field.id] !== undefined && item.values[field.id] !== null && item.values[field.id] !== ''">
-                <span class="detail-label">{{ field.title }}</span>
-                <strong v-if="field.valueType === 'select'" :data-discussion-field="field.id" data-discussion-text>
-                  {{ field.options[String(item.values[field.id])]?.title ?? item.values[field.id] }}
-                </strong>
-                <strong v-else :data-discussion-field="field.id" data-discussion-text>{{ String(item.values[field.id]) }}</strong>
-              </div>
-            </template>
-          </div>
+          <CardFields :fields="fields" :item="item" />
+
         </aside>
 
         <div class="detail-primary" data-detail-primary role="region" aria-label="Item content">

@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import type { Preset } from "../domain/seeds"
+
 import { onMounted, ref, watch } from "vue"
 import { createWorkspaceDoc } from "../domain/seeds"
 import { projectBoardSchema, type BoardSchemaDraft } from "../domain/schema"
 
-type Preset = "blank" | "job-search"
 type CreationDraft = BoardSchemaDraft & { presetBindings: Record<string, string> }
 
 const props = defineProps<{ preset: Preset; modelValue: CreationDraft | null; disabled?: boolean }>()
@@ -57,6 +58,7 @@ function removeOption(field: CreationDraft["fields"][number], index: number) { m
 function setFieldType(field: CreationDraft["fields"][number], value: string) {
   markDirty()
   field.valueType = value as CreationDraft["fields"][number]["valueType"]
+  if (field.valueType !== "text") delete field.format
   if (field.valueType !== "select") delete field.options
   if (field.valueType !== "number") { delete field.min; delete field.max }
   if (field.valueType === "select") field.options ??= []
@@ -120,6 +122,7 @@ onMounted(() => emit("update:modelValue", draft.value))
               <option value="select">Select</option><option value="url">URL</option><option value="date">Date</option><option value="datetime">Date and time</option>
             </select>
           </label>
+          <label v-if="field.valueType === 'text'"><span>Text format</span><select v-model="field.format" aria-label="Text format" @change="markDirty"><option :value="undefined">Plain text</option><option value="markdown">Markdown</option><option value="json">JSON</option><option value="code">Code</option></select></label>
           <label class="creation-config-required"><input v-model="field.required" type="checkbox" aria-label="Required" /> Required</label>
           <div v-if="field.valueType === 'select'" class="creation-config-options">
             <button class="button button-quiet button-small" type="button" :aria-expanded="optionsExpanded.includes(field.id ?? '')" @click="toggleOptions(field.id ?? String(index))">{{ optionsExpanded.includes(field.id ?? '') ? 'Hide options' : 'Edit options' }}</button>
@@ -137,7 +140,7 @@ onMounted(() => emit("update:modelValue", draft.value))
       <button class="button button-quiet button-small" type="button" @click="addField">Add field</button>
     </fieldset>
 
-    <button v-if="dirty" class="button button-quiet button-small" type="button" @click="resetToPreset">Reset to {{ preset === 'blank' ? 'Blank board' : 'Job search' }} defaults</button>
+    <button v-if="dirty" class="button button-quiet button-small" type="button" @click="resetToPreset">Reset board defaults</button>
   </section>
   </fieldset>
 </template>

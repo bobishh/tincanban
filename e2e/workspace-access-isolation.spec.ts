@@ -6,7 +6,7 @@ test("Given an unreadable authority on one board, when creating and importing an
   await page.goto("/")
   await createJobSearchWorkspace(page, "Broken authority")
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
-  const brokenWorkspaceId = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+  const brokenWorkspaceId = await page.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
   await createJobSearchWorkspace(page, "Healthy sibling")
   await page.evaluate(async workspaceId => {
     const { STORE_AUTHORITY } = await import("/src/sync/peerStore.ts")

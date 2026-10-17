@@ -1,4 +1,4 @@
-import { emptyEmployeeProfile, type EmployeeProfile } from "../../../src/domain/jobPriority";
+import { emptyEmployeeProfile, type EmployeeProfile } from "./jobPriority";
 import * as Automerge from "@automerge/automerge/slim";
 import type { Context } from "@opentelemetry/api";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
@@ -162,7 +162,7 @@ export type AutomationCandidate = {
   sources?: ApplicationSourceData[];
 };
 
-type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }) & { changeHash?: string };
+type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }) & { changeHash?: string; messageIds?: string[] };
 type PendingUpload = { hash: string; object: BlindObject; requestId?: string; observedSequence?: number; bytes?: number; revision?: string; identity?: string };
 type ActiveHistoryUsage = { baselineId: string | null; admittedChanges: number; encodedBytes: number };
 const activeHistoryChangeLimit = 512;
@@ -700,12 +700,12 @@ export class AutomationReplica {
         if (isItem(document.entities[cardId])) {
           const previousApplied = this.applied;
           this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-          this.applied[eventId] = { kind: "lead", cardId };
+          this.applied[eventId] = { kind: "lead", cardId, ...(normalized.messageIds ? { messageIds: [...normalized.messageIds] } : {}) };
           try { await this.persistState(); }
           catch (error) { this.applied = previousApplied; delete this.applied[eventId]; throw error; }
           return { cardId, duplicate: true };
         }
-        const values = this.leadValues(normalized, decision, eventId);
+        const values = this.leadValues(normalized);
         const card = { id: cardId,
           parentId: columnId, title: `${requiredText(normalized.company, "company")} — ${requiredText(normalized.role, "role")}`,
           body: normalized.message?.slice(0, 8_000) ?? "", values };
@@ -724,7 +724,7 @@ export class AutomationReplica {
         const previousHistoryUsage = this.historyUsage;
         this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
         await this.acceptAuthoredDocument(document, result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
-        this.applied[eventId] = { kind: "lead", cardId, changeHash: result.value.receipt.changeHash };
+        this.applied[eventId] = { kind: "lead", cardId, changeHash: result.value.receipt.changeHash, ...(normalized.messageIds ? { messageIds: [...normalized.messageIds] } : {}) };
         try { await this.persistState(); }
         catch (error) {
           this.rawDocument = previousRaw;
@@ -791,6 +791,7 @@ export class AutomationReplica {
     this.assertActive();
     const document = this.admittedDocument();
     try {
+      const messageIds = new Map(Object.values(this.applied).filter(event => event.kind === "lead" && event.messageIds?.length).map(event => [event.cardId, event.messageIds!]));
       const sources = new Map<string, ApplicationSourceData[]>();
       for (const entity of Object.values(document.entities)) {
         if (entity.kind !== "application_source") continue;
@@ -803,8 +804,7 @@ export class AutomationReplica {
           role: stringValue(item.values[this.bindings.fieldIds.role]),
           ...(this.bindings.fieldIds.jobUrl && stringValue(item.values[this.bindings.fieldIds.jobUrl])
             ? { jobUrl: stringValue(item.values[this.bindings.fieldIds.jobUrl]) } : {}),
-          ...(this.grant.payload.automation!.version === 1 && !sources.has(item.id)
-            ? { messageIds: sourceMessageIds(stringValue(item.values[this.bindings.fieldIds.sourceText ?? ""])) } : {}),
+          ...(messageIds.has(item.id) ? { messageIds: [...messageIds.get(item.id)!] } : {}),
           columnId: workflowColumnId(document.entities, item.id) ?? item.placement.parentId ?? "",
           ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}),
           ...(this.grant.payload.automation!.version === 2 || sources.has(item.id) ? { sources: sources.get(item.id) ?? [] } : {}),
@@ -816,7 +816,10 @@ export class AutomationReplica {
     const document = this.admittedDocument();
     try {
       const board = document.entities[this.bindings.boardId];
-      return hasEntityKind(board, "board") && board.employee_profile ? { ...board.employee_profile } : emptyEmployeeProfile();
+      const profile = hasEntityKind(board, "board") ? board.settings?.employee_profile : undefined;
+      return profile && typeof profile === "object" && "stack" in profile && "work_profile" in profile
+        && typeof profile.stack === "string" && typeof profile.work_profile === "string"
+        ? { stack: profile.stack, work_profile: profile.work_profile } : emptyEmployeeProfile();
     } finally { Automerge.free(document); }
   }
 
@@ -824,7 +827,7 @@ export class AutomationReplica {
     const document = this.admittedDocument();
     try {
       const board = document.entities[this.bindings.boardId];
-      return hasEntityKind(board, "board") && board.priorityPolicy?.evaluator === "job-fit-v1"
+      return hasEntityKind(board, "board") && board.priorityPolicy?.bands?.length
         ? board.priorityPolicy.bands.map(band => ({ ...band })) : undefined;
     } finally { Automerge.free(document); }
   }
@@ -997,7 +1000,8 @@ export class AutomationReplica {
   }
 
   allowsSource(source: "website" | "email"): boolean {
-    return this.controlForRuntime().state === "active" && (this.definitionForRuntime()?.parameters.sources.includes(source) ?? true);
+    const sources = this.definitionForRuntime()?.parameters.sources;
+    return this.controlForRuntime().state === "active" && (sources === undefined || Array.isArray(sources) && sources.includes(source));
   }
 
   serialize(): string {
@@ -1342,7 +1346,7 @@ export class AutomationReplica {
         return { personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId, authorityRevision: captured.revision };
       } });
   }
-  private leadValues(normalized: NormalizedLead, decision: unknown, eventId: string): Record<string, string> {
+  private leadValues(normalized: NormalizedLead): Record<string, string> {
     const scope = this.grant.payload.automation!;
     const values: Record<string, string> = {
       [this.bindings.fieldIds.company]: requiredText(normalized.company, "company"),
@@ -1351,10 +1355,8 @@ export class AutomationReplica {
     if (normalized.jobUrl) values[this.bindings.fieldIds.jobUrl] = normalized.jobUrl.slice(0, 2048);
     if (this.bindings.fieldIds.roleType && normalized.roleType) values[this.bindings.fieldIds.roleType] = normalized.roleType.slice(0, 256);
     if (this.bindings.fieldIds.seniority && normalized.seniority) values[this.bindings.fieldIds.seniority] = normalized.seniority.slice(0, 256);
-    const source = JSON.stringify({ eventId, receivedAt: normalized.receivedAt, contact: normalized.contact, messageIds: normalized.messageIds?.slice(0, 40),
-      message: normalized.message?.slice(0, 2000), sourceText: normalized.sourceText?.slice(0, 2000), decision });
     if (this.bindings.fieldIds.notes && normalized.message) values[this.bindings.fieldIds.notes] = normalized.message.slice(0, 8_000);
-    if (this.bindings.fieldIds.sourceText) values[this.bindings.fieldIds.sourceText] = source;
+    if (this.bindings.fieldIds.sourceText && normalized.sourceText !== undefined) values[this.bindings.fieldIds.sourceText] = normalized.sourceText;
     for (const fieldId of Object.keys(values)) {
       if (!scope.fieldIds.includes(fieldId)) throw new Error("Automation field binding exceeds the signed grant scope");
     }
@@ -1617,13 +1619,6 @@ function requiredText(value: unknown, field: string): string {
 async function deterministicCardId(eventId: string): Promise<string> {
   if (typeof eventId !== "string" || !eventId.trim() || eventId.length > 256) throw new TypeError("Automation event ID is invalid");
   return `automation-${(await sha256Base64Url(new TextEncoder().encode(eventId))).slice(0, 32)}`;
-}
-
-function sourceMessageIds(source: string): string[] {
-  try {
-    const value = JSON.parse(source) as { messageIds?: unknown };
-    return Array.isArray(value.messageIds) ? value.messageIds.filter((id): id is string => typeof id === "string" && id.length <= 500).slice(0, 40) : [];
-  } catch { return []; }
 }
 
 function isCheckpointGenerationRequired(error: unknown): boolean {

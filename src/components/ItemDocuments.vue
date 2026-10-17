@@ -9,7 +9,7 @@ import { isInlineNarrativeNote } from "../domain/narrative"
 import ModalLayer from "./ModalLayer.vue"
 import { attachmentCoveragePresentation, type AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
-type DocumentDraft = Omit<DocumentInput, "leadId">
+type DocumentDraft = Omit<DocumentInput, "itemId">
 
 const props = defineProps<{
   documents: Document[]
@@ -251,7 +251,7 @@ onBeforeUnmount(closePreview)
       role="group"
       :aria-label="document.title"
     >
-      <span class="document-icon">{{ document.kind === "cv" ? "CV" : document.kind === "cover_letter" ? "CL" : document.file ? "FILE" : "NOTE" }}</span>
+      <span class="document-icon">{{ document.file ? "FILE" : "NOTE" }}</span>
       <div>
         <strong>{{ document.title }}</strong>
         <span>{{ fileDescription(document) }}</span>

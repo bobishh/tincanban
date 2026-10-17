@@ -46,5 +46,5 @@ export async function validateApplicationReviewSelection(reviewValue: Applicatio
 function assertReviewApproval(review: ApplicationReviewResponse, doc: WorkspaceDocumentV2, definition: AutomationDefinition) {
   if (review.workspaceId !== doc.id || definition.scope.workspaceId !== doc.id || review.definitionId !== definition.id ||
     review.grantId !== definition.scope.grantId || !review.decisionHash || review.automationState !== "active" ||
-    !definition.parameters.sources.includes("email")) throw new Error("Application review approval or decision changed")
+    !(Array.isArray(definition.parameters.sources) && definition.parameters.sources.includes("email"))) throw new Error("Application review approval or decision changed")
 }

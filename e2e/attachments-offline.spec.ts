@@ -10,7 +10,7 @@ test("Given file controls and streaming storage were preloaded online, when the 
     const [signing, spatial, detail, itemDetail, itemForm, documents, blobStore, fileStream] = await Promise.all([
       import("/src/sync/localCommandSigning.ts"),
       import("/src/components/SpatialWindow.vue"),
-      import("/src/components/LeadDetailWindow.vue"),
+      import("/src/components/ItemDetailDialog.vue"),
       import("/src/components/ItemDetailDialog.vue"),
       import("/src/components/ItemFormDialog.vue"),
       import("/src/components/ItemDocuments.vue"),
@@ -31,7 +31,7 @@ test("Given file controls and streaming storage were preloaded online, when the 
     await form.getByLabel("Role *").fill("Local file")
     await form.getByRole("button", { name: "Create item", exact: true }).click()
     await page.getByRole("button", { name: "Open Offline attachment — Local file", exact: true }).click()
-    const detail = page.getByRole("dialog", { name: "Lead details" })
+    const detail = page.getByRole("dialog", { name: "Item overview" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const attach = detail.getByRole("form", { name: "Attach document" })
     await attach.getByLabel("Title").fill("Offline file")

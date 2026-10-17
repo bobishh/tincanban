@@ -9,7 +9,7 @@ async function openRejectedCard(page: Page) {
   await form.getByLabel("Company *", { exact: true }).fill("Draft Corp")
   await form.getByLabel("Role *", { exact: true }).fill("Engineer")
   await form.getByRole("button", { name: "Create item", exact: true }).click()
-  const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
+  const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   await detail.getByRole("button", { name: "Rejected", exact: true }).click()
   await expect(detail.getByRole("textbox", { name: "Rejection notes", exact: true })).toBeVisible()
   return detail

@@ -1,36 +1,64 @@
+import { cloneJsonData } from "./jsonData"
+import templateData from "../board-templates.json" with { type: "json" }
 import type { Board, Column, FieldDefinition, WorkspaceDocumentV2, WorkspaceEntity } from "./model"
 import type { BoardSchemaDraft } from "./schema"
 
-type Preset = "job-search" | "blank"
+export type Preset = string
+export type BoardTemplate = { entityName: string; columns: ColumnSeed[]; fields: FieldSeed[]; automation?: Board["automation"]; cardPresentation?: Board["cardPresentation"] }
+const templates = templateData as Record<Preset, BoardTemplate>
 type SeedContext = { boardId: string; nowIso: string; entities: Record<string, WorkspaceEntity>; bindings: Record<string, string> }
 type ColumnSeed = { key: string; title: string; archive?: true; collapsible?: boolean }
 type FieldSeed = { key: string; title: string; valueType: FieldDefinition["valueType"]; required?: boolean; min?: number; max?: number; options?: Array<[string, string]> }
 
 export type WorkspaceCreationDraft = BoardSchemaDraft & { presetBindings: Record<string, string> }
 
-export function createWorkspaceDoc(id: string, title: string, ownerPersonId: string, presetKey: Preset, nowIso = new Date().toISOString()): WorkspaceDocumentV2 {
+export function createWorkspaceDoc(id: string, title: string, ownerPersonId: string, presetKey: Preset, nowIso = new Date().toISOString(), configuration?: BoardTemplate): WorkspaceDocumentV2 {
   const boardId = crypto.randomUUID()
   const context: SeedContext = { boardId, nowIso, entities: {}, bindings: {} }
-  seedColumns(context, presetKey === "blank" ? blankColumns : jobColumns)
-  if (presetKey === "job-search") seedFields(context, jobFields)
-  context.entities[boardId] = createBoard(boardId, title, presetKey, nowIso, context.bindings)
+  const template = configuration ?? templates[presetKey]
+  if (!template) throw new Error("Board configuration is required")
+  seedColumns(context, template.columns)
+  seedFields(context, template.fields)
+  context.entities[boardId] = createBoard(boardId, title, presetKey, nowIso, context.bindings, template)
   return { kind: "workspace", formatVersion: 3, id, title, archivedAt: null, ownerPersonId, entities: context.entities, migration: null }
 }
 
-export function seedBoard(entities: Record<string, WorkspaceEntity>, title: string, presetKey: Preset, nowIso = new Date().toISOString()): Board {
+export function seedBoard(entities: Record<string, WorkspaceEntity>, title: string, presetKey: Preset, nowIso = new Date().toISOString(), configuration?: BoardTemplate): Board {
   const boardId = crypto.randomUUID()
   const context: SeedContext = { boardId, nowIso, entities, bindings: {} }
-  seedColumns(context, presetKey === "blank" ? blankColumns : jobColumns)
-  if (presetKey === "job-search") seedFields(context, jobFields)
-  const board = createBoard(boardId, title, presetKey, nowIso, context.bindings)
+  const template = configuration ?? templates[presetKey]
+  if (!template) throw new Error("Board configuration is required")
+  seedColumns(context, template.columns)
+  seedFields(context, template.fields)
+  const board = createBoard(boardId, title, presetKey, nowIso, context.bindings, template)
   entities[boardId] = board
   return board
 }
 
-function createBoard(id: string, title: string, preset: Preset, nowIso: string, bindings: Record<string, string>): Board {
-  const columns = preset === "job-search" ? jobColumns : blankColumns
-  const archiveColumnId = bindings["status.archived"]
-  return { id, kind: "board", title, entityName: preset === "job-search" ? "lead" : "item", placement: { parentId: null, rank: "0/1" }, archivedAt: null, createdAt: nowIso, updatedAt: nowIso, preset: { key: preset, version: 1, bindings }, cardStageButtons: columns.map(column => ({ columnId: bindings[column.key] })), archiveColumnId: archiveColumnId ?? null }
+function createBoard(id: string, title: string, preset: Preset, nowIso: string, bindings: Record<string, string>, template: BoardTemplate): Board {
+  const columns = template.columns
+  const archiveColumnId = columns.find(column => column.archive)?.key
+  const presentation = template.cardPresentation
+  return { id, kind: "board", title, entityName: template.entityName,
+    placement: { parentId: null, rank: "0/1" }, archivedAt: null, createdAt: nowIso, updatedAt: nowIso,
+    preset: { key: preset, version: 1, bindings },
+    ...(template.automation ? { automation: {
+      types: cloneJsonData(template.automation.types),
+      ...(template.automation.conditions ? { conditions: cloneJsonData(template.automation.conditions) } : {}),
+      bindings: {
+        columns: Object.fromEntries(Object.entries(template.automation.bindings.columns).map(([key, ref]) => [key, bindings[ref]])),
+        fieldIds: Object.fromEntries(Object.entries(template.automation.bindings.fieldIds).map(([key, ref]) => [key, bindings[ref]])),
+      },
+    } } : {}),
+    ...(presentation ? { cardPresentation: {
+      ...(presentation.titleFieldIds ? { titleFieldIds: presentation.titleFieldIds.map(key => bindings[key]) } : {}),
+      ...(presentation.summaryFieldIds ? { summaryFieldIds: presentation.summaryFieldIds.map(key => bindings[key]) } : {}),
+      ...(presentation.narrativeFieldId ? { narrativeFieldId: bindings[presentation.narrativeFieldId] } : {}),
+      ...(presentation.openAfterSave ? { openAfterSave: true } : {}),
+    } } : {}),
+    cardStageButtons: columns.map(column => ({ columnId: bindings[column.key] })),
+    archiveColumnId: archiveColumnId ? bindings[archiveColumnId] : null }
+
 }
 
 function seedColumns(context: SeedContext, columns: ColumnSeed[]): void {
@@ -63,11 +91,3 @@ function seedOptions(context: SeedContext, options: Array<[string, string]>): Re
   }))
 }
 
-const blankColumns: ColumnSeed[] = [["column.todo", "To do"], ["column.doing", "Doing"], ["column.done", "Done"]].map(([key, title]) => ({ key, title }))
-const jobColumns: ColumnSeed[] = [["status.lead", "Lead"], ["status.applied", "Applied"], ["status.interview", "Interview"], ["status.rejected", "Rejected"], ["status.offer", "Offer"], ["status.archived", "Archive"]].map(([key, title], index) => ({ key, title, ...(index === 3 ? { collapsible: true } : {}), ...(index === 5 ? { archive: true as const, collapsible: true } : {}) }))
-const jobFields: FieldSeed[] = [
-  { key: "field.company", title: "Company", valueType: "text", required: true }, { key: "field.role", title: "Role", valueType: "text", required: true }, { key: "field.url", title: "URL", valueType: "url" }, { key: "field.location", title: "Location", valueType: "text" },
-  { key: "field.workMode", title: "Work mode", valueType: "select", options: [["option.workMode.remote", "Remote"], ["option.workMode.hybrid", "Hybrid"], ["option.workMode.onsite", "Onsite"], ["option.workMode.unknown", "Unknown"]] },
-  { key: "field.priority", title: "Priority", valueType: "select", options: [["option.priority.p0", "P0"], ["option.priority.p1", "P1"], ["option.priority.p2", "P2"], ["option.priority.p3", "P3"]] },
-  { key: "field.fitScore", title: "Fit score", valueType: "number", min: 0, max: 10 }, { key: "field.notes", title: "Notes", valueType: "text" }, { key: "field.sourceText", title: "Source text", valueType: "text" }, { key: "field.rejectionReason", title: "Rejection notes / retrospective", valueType: "text" },
-]

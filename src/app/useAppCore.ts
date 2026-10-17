@@ -3,7 +3,6 @@ import { workspaceRole, effectiveWorkspaceOwner, exportAuthorizationBundle } fro
 import { canWorkspace, type WorkspaceRole } from "../domain/permissions"
 import { bootstrapIdentity } from "../domain/identity"
 import { useTincanban } from "../state"
-import type { ArtifactKind } from "../types"
 import { type Column, type Item } from "../domain/model"
 import { configureChat, exportChat, receiveChat, subscribeChat } from "../chat/service"
 import type { WorkspaceAccessResult } from "./workspaceAccessState"
@@ -26,15 +25,12 @@ export function useAppCore() {
   const tincanban = useTincanban()
   const ui = useAppUiState()
   const collaboration = useAppCollaboration(tincanban, ui)
-  const drafts = useAppDrafts()
-  return { tincanban, ...ui, ...collaboration, ...drafts }
+  return { tincanban, ...ui, ...collaboration }
 }
 
 function useAppUiState() {
-  const selectedLeadId = ref<string | null>(null)
   const detailDialog = ref<HTMLElement | null>(null)
   const importInput = ref<HTMLInputElement | null>(null)
-  const showArtifactForm = ref(false)
   const search = ref("")
   const filters = ref<BoardFilters>(defaultBoardFilters())
   const notice = ref("")
@@ -45,7 +41,6 @@ function useAppUiState() {
   const historyRestoreError = ref("")
   const historyRestoreNotice = ref("")
   const isArchiveOpen = ref(false)
-  const artifactError = ref("")
   const showWorkspaces = ref(false)
   const showEntitySettings = ref(false)
   const isEditingBoard = ref(false)
@@ -74,19 +69,14 @@ function useAppUiState() {
   const toggleMobileMenu = () => { showMobileMenu.value = !showMobileMenu.value }
   const closeMobileMenu = () => { showMobileMenu.value = false }
   return {
-    selectedLeadId, detailDialog, importInput, showArtifactForm, search, filters, notice,
+    detailDialog, importInput, search, filters, notice,
     archiveUndo, undoSaving, archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice,
-    isArchiveOpen, artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
+    isArchiveOpen, showWorkspaces, showEntitySettings, isEditingBoard,
     newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
     showItemForm, itemFormParentId, itemFormError, savingItem, editingColumn, selectedItemId, editingItemId,
     itemToMove, showMoveDialog, storageError, quickNoteDraft, quickNoteSaving, quickNoteError,
     hasExperimentalMcp, showMobileMenu, menuButtonRef, startupError, toggleMobileMenu, closeMobileMenu,
   }
-}
-
-function useAppDrafts() {
-  const artifactDraft = ref({ kind: "cv" as ArtifactKind, title: "", templateId: "", pdfPath: "", sourceMarkdownPath: "" })
-  return { artifactDraft }
 }
 
 function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>) {
@@ -253,7 +243,6 @@ function useWorkspacePolicy(tincanban: ReturnType<typeof useTincanban>, ui: Retu
 function closeRestrictedEditors(ui: ReturnType<typeof useAppUiState>) {
   ui.showItemForm.value = false
   ui.editingItemId.value = null
-  ui.showArtifactForm.value = false
   ui.showMoveDialog.value = false
   ui.itemToMove.value = null
 }

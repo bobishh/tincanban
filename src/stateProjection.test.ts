@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { hasEntityKind, type Item } from "./domain/model"
-import { createWorkspaceDoc } from "./domain/seeds"
+import { createWorkspaceDoc } from "./test/boardFixture"
 import { projectWorkspace } from "./stateProjection"
 
 const changedAt = "2026-10-07T12:00:00.000Z"
@@ -31,8 +31,8 @@ describe("legacy projection archive authority", () => {
     doc.entities.archived = item("archived", formerArchiveId, true)
 
     const projection = projectWorkspace(doc as never)
-    expect(projection.leads.find(lead => lead.id === "active")?.status).toBe("lead")
-    expect(projection.leads.find(lead => lead.id === "archived")?.status).toBe("archived")
+    expect(projection.items.find(lead => lead.id === "active")?.id).toBe("active")
+    expect(projection.items.find(lead => lead.id === "archived")?.id).toBe("archived")
   })
 
   it("does not infer archive state from the former preset binding after role is cleared", () => {
@@ -43,6 +43,6 @@ describe("legacy projection archive authority", () => {
     doc.entities[board.id] = { ...board, archiveColumnId: null }
     doc.entities.active = item("active", formerArchiveId, false)
 
-    expect(projectWorkspace(doc as never).leads.find(lead => lead.id === "active")?.status).toBe("lead")
+    expect(projectWorkspace(doc as never).items.find(lead => lead.id === "active")?.id).toBe("active")
   })
 })

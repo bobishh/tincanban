@@ -25,7 +25,7 @@ describe("public visitor presentation", () => {
       columns: [{ ...snapshot.columns[0], color: "#66b3ff", collapsible: true }] })
     const view = publicBoardView(projection)
     expect(view.board.preset?.key).toBe("job-search")
-    expect(view.leads.get("card")).toMatchObject({ company: "Acme", role: "Engineer", status: "applied" })
+    expect(view.items.find(item => item.id === "card")).toMatchObject({ title: "Acme — Engineer", values: { company: "Acme" } })
     expect(view.columns[0]).toMatchObject({ color: "#66b3ff", collapsible: true })
     expect(view.items[0]?.body).toBe("Description")
   })
@@ -38,8 +38,8 @@ describe("public visitor presentation", () => {
         { id: "priority", title: "Priority", valueType: "select", required: false, rank: "0/1", options: [{ id: "priority-high", title: "Highest", rank: "0/1" }] },
         { id: "mode", title: "Mode", valueType: "select", required: false, rank: "1/1", options: [{ id: "mode-remote", title: "Anywhere", rank: "0/1" }] },
       ], cards: snapshot.cards.map(card => ({ ...card, values: { priority: "priority-high", mode: "mode-remote" } })) })
-    expect(view.leads.get("card")).toMatchObject({ priority: "p0", workMode: "remote", status: "applied" })
-    expect(view.leads.get("child")?.status).toBe("applied")
+    expect(view.items.find(item => item.id === "card")?.values).toMatchObject({ priority: "priority-high", mode: "mode-remote" })
+    expect(view.items.find(item => item.id === "child")?.placement.parentId).toBe("card")
     expect(view.board).toMatchObject({ kind: "board", preset: { key: "job-search" } })
     expect(view.columns[0]).toMatchObject({ kind: "column", placement: { parentId: "board", rank: "0/1" } })
     expect(view.fields[0]).toMatchObject({ kind: "field", placement: { parentId: "board", rank: "0/1" } })

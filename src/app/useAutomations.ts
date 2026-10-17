@@ -12,6 +12,7 @@ import type { ApplicationReviewRecord } from "./applicationReviewManagement"
 import type { AutomationObservation } from "../domain/automationProtocol"
 
 export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind: BlindReplicationController, owner: () => boolean) {
+  const types = computed(() => workspace.activeBoard.value?.automation?.types ?? [])
   const busy = ref(false)
   const failure = ref("")
   const observations = ref<Record<string, AutomationObservation>>({})
@@ -110,7 +111,7 @@ export function useAutomations(workspace: ReturnType<typeof useTincanban>, blind
   const stop = watch(() => { void workspace.docVersion.value; return workspace.getActiveDoc()?.id }, () => { void observeAll() }, { immediate: true })
   const interval = setInterval(() => { now.value = Date.now(); void observeAll() }, 3_000)
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(interval) })
-  return { records, storage, email, busy, failure, observationErrors, confirmation, instanceDescription: instanceStatus.description, add, retry, setState }
+  return { types, records, storage, email, busy, failure, observationErrors, confirmation, instanceDescription: instanceStatus.description, add, retry, setState }
 }
 export type AutomationWorkspace = ReturnType<typeof useTincanban>
 export type AutomationManagement = ReturnType<typeof useAutomations>

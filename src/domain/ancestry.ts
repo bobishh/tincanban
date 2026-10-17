@@ -226,7 +226,7 @@ function entityLifecycleArchived(entity: WorkspaceEntity): boolean {
     try {
       const lifecycle = typeof entity.lifecycle === "string"
         ? JSON.parse(entity.lifecycle) as { state?: string }
-        : entity.lifecycle
+        : entity.lifecycle as { state?: string }
       return lifecycle.state === "archived"
     } catch { return Boolean(entity.archivedAt) }
   }

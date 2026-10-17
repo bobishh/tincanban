@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import ts from "typescript";
 import { CLEF_MODEL, classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification,
   type OpportunityClassification, type DecisionAi } from "../../../workers/automation/src/clef.ts";
-import type { EmployeeProfile } from "../../../src/domain/jobPriority.ts";
+import type { EmployeeProfile } from "../../../workers/automation/src/jobPriority.ts";
 
 export const reactionJsonLimit = 1_048_576;
 

@@ -39,7 +39,7 @@ test("Given newer local databases, when tincanban saves workspace and chat data,
   await form.getByLabel("Company *").fill("Schema-safe")
   await form.getByLabel("Role *").fill("Engineer")
   await form.getByRole("button", { name: "Create item" }).click()
-  await expect(page.getByRole("dialog", { name: "Lead details" })).toContainText("Schema-safe")
+  await expect(page.getByRole("dialog", { name: "Item overview" })).toContainText("Schema-safe")
   await page.getByRole("button", { name: "Close detail" }).click()
   await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
   const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })

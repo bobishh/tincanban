@@ -19,7 +19,7 @@ test.describe("Job Search Rejected Column & Retrospective Notes (Gate F)", () =>
     await page.getByRole("button", { name: "Create item" }).click()
 
     // Creation automatically opens the detail dialog
-    const detailDialog = page.getByRole("dialog", { name: "Lead details" })
+    const detailDialog = page.getByRole("dialog", { name: "Item overview" })
     await expect(detailDialog).toBeVisible()
 
     // 2. Move status to "Rejected" via status strip
@@ -46,7 +46,7 @@ test.describe("Job Search Rejected Column & Retrospective Notes (Gate F)", () =>
 
     // 7. Re-open detail and verify retrospective note is retained
     await reloadedRejectedCol.getByRole("button", { name: "Open Acme Robotics — Autonomy Lead" }).click()
-    const reloadedDetail = page.getByRole("dialog", { name: "Lead details" })
+    const reloadedDetail = page.getByRole("dialog", { name: "Item overview" })
     await expect(reloadedDetail.getByLabel("Rejection notes")).toHaveValue(
       "Role closed unexpectedly due to hiring freeze. Interviewer feedback praised distributed systems experience."
     )
@@ -80,7 +80,7 @@ test.describe("Job Search Rejected Column & Retrospective Notes (Gate F)", () =>
     await page.reload()
     const reloadedCard = page.getByRole("button", { name: "Open Cyberdyne — Security Engineer" })
     await reloadedCard.click()
-    const detailDialog = page.getByRole("dialog", { name: "Lead details" })
+    const detailDialog = page.getByRole("dialog", { name: "Item overview" })
     await expect(detailDialog.getByLabel("Rejection notes")).toHaveValue(
       "Position required 100% on-site in Tokyo; mismatch on remote preference."
     )

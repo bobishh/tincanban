@@ -8,7 +8,7 @@ test("Given 55 detailed leads, when Company and Role are typed, then keystrokes 
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
-  await page.getByRole("dialog", { name: "Lead details" }).getByRole("button", { name: "Edit", exact: true }).click()
+  await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Edit", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Edit item" })
   await expect(form).toBeVisible()
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
@@ -17,7 +17,7 @@ test("Given 55 detailed leads, when Company and Role are typed, then keystrokes 
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
   await session.send("Profiler.enable")
   await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const paints: number[] = []
     const events: number[] = []
     const tasks: number[] = []
@@ -47,7 +47,7 @@ test("Given 55 detailed leads, when Company and Role are typed, then keystrokes 
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   const { profile } = await session.send("Profiler.stop")
   const measured = await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const data = (window as unknown as { editMeasurement: {
       paints: number[]; events: number[]; tasks: number[]; version: number;
       eventObserver: PerformanceObserver; taskObserver: PerformanceObserver;
@@ -72,5 +72,5 @@ test("Given 55 detailed leads, when Company and Role are typed, then keystrokes 
   // Full-history admission gates workspace readiness after reload; the typing and paint limits stay unchanged.
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled({ timeout: 60_000 })
   await page.getByRole("button", { name: /^Open Performance card 0 responsive draft/ }).click()
-  await expect(page.getByRole("dialog", { name: "Lead details" })).toContainText("Senior Software Engineer responsive draft")
+  await expect(page.getByRole("dialog", { name: "Item overview" })).toContainText("Senior Software Engineer responsive draft")
 })

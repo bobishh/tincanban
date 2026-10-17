@@ -9,7 +9,7 @@ test("Given snapshots in local kv and changes in legacy journal, when default st
     const A = await import("/@id/@automerge/automerge/slim")
     const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
     await A.initializeWasm(wasmUrl)
-    const { createWorkspaceDoc } = await import("/src/domain/seeds.ts")
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { writeLocal } = await import("/src/localDb.ts")
     const { defaultStorage } = await import("/src/storage.ts")
 

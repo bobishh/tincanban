@@ -185,7 +185,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
       const { InvitationService } = await import("/src/sync/invitations.ts")
       const { enrollmentPayload } = await import("/src/sync/enrollment.ts")
       const { defaultStorage } = await import("/src/storage.ts")
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const owner = await bootstrapIdentity()
       const invite = createDeviceEnrollmentInvite("fixture-enrollment-endpoint", "fixture-enrollment-secret", owner)
       const invitations = new InvitationService()
@@ -211,7 +211,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
     }, recipientProfile)
     const before = await recipient.evaluate(async () => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const current = await bootstrapIdentity()
       return { personId: current.identity.personId, deviceId: current.device.deviceId,
         profile: await (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"),
@@ -228,7 +228,7 @@ test("Given an older recipient receives an owner-signed approval with an unknown
         try { await enroll(encoded, invite, profile, profile.identity.personId) }
         catch (error) { errors.push(error instanceof Error ? error.message : String(error)) }
       }
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       return { errors, profile: await (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"),
         workspaceId: useTincanban().activeWorkspace.id }
     }, approval)

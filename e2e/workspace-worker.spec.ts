@@ -33,7 +33,7 @@ test("Given an already admitted board, when its exact signed evidence repeats, t
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
   const result = await page.evaluate(async () => {
-    const tincanban = (await import("/src/state.ts")).useTincanban()
+    const tincanban = (await import("/src/test/stateFixture.ts")).useTincanban()
     await tincanban.whenReady()
     const bytes = await tincanban.readWorkspaceBytes(tincanban.activeWorkspace.id)
     const { exportAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
@@ -59,7 +59,7 @@ test("Given a large signed peer history, when admission runs, then board control
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
   await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { prepareLocalChangeAuthorizations, exportAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const tincanban = useTincanban()
@@ -85,7 +85,7 @@ test("Given a large signed peer history, when admission runs, then board control
   await page.evaluate(() => {
     const state = window as unknown as { admissionFixture: { id: string; bytes: Uint8Array; authorization: unknown }; admissionState: string; admissionPromise: Promise<void> }
     state.admissionState = "pending"
-    state.admissionPromise = import("/src/state.ts").then(({ useTincanban }) => useTincanban().mergeAuthorizedWorkspace(
+    state.admissionPromise = import("/src/test/stateFixture.ts").then(({ useTincanban }) => useTincanban().mergeAuthorizedWorkspace(
       state.admissionFixture.id, state.admissionFixture.bytes, state.admissionFixture.authorization,
     )).then(() => { state.admissionState = "committed" }, error => { state.admissionState = `failed: ${String(error)}` })
   })
@@ -113,7 +113,7 @@ test("Given a large signed peer history, when admission runs, then board control
   // Cold startup restores the accepted history before enabling board controls.
   // Its duration is separate from the menu responsiveness assertion above.
   expect(await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     await useTincanban().whenReady()
     return useTincanban().getActiveDoc()!.title
   })).toBe("Remote history 20000")
@@ -126,7 +126,7 @@ for (const failure of ["worker startup", "forged signature"] as const) {
     await page.goto("/")
     await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
     const result = await page.evaluate(async failure => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { prepareLocalChangeAuthorizations, exportAuthorizationBundle, exportAuthorizations } = await import("/src/sync/changeAuthorization.ts")
       const { WorkspaceStorage } = await import("/src/storage.ts")
       const A = await import("/@id/@automerge/automerge/slim")

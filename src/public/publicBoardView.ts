@@ -1,6 +1,4 @@
 import type { Board, Column, FieldDefinition, Item } from "../domain/model"
-import { leadPresentationBindings, presentLead } from "../domain/leadPresentation"
-import type { Lead } from "../types"
 import type { PublicBoardProjection } from "./publicSchema"
 
 export type PublicItem = Item
@@ -14,7 +12,7 @@ function displayBase(id: string, title: string, parentId: string | null, rank: s
 function mapPublicFields(projection: PublicBoardProjection): PublicField[] {
   return projection.fields.map(field => {
     const base = { ...displayBase(field.id, field.title, projection.board.id, field.rank), kind: "field" as const,
-      required: field.required, rank: field.rank,
+      required: field.required, rank: field.rank, ...(field.valueType === "text" && field.format ? { format: field.format } : {}),
       options: Object.fromEntries(field.options.map(option => [option.id, { ...option, archivedAt: null }])) }
     if (field.valueType === "number") return { ...base, valueType: field.valueType, min: field.min ?? null, max: field.max ?? null }
     return { ...base, valueType: field.valueType }
@@ -27,13 +25,6 @@ function mapPublicItems(projection: PublicBoardProjection): PublicItem[] {
     ...(card.lastActivityAt ? { lastActivityAt: card.lastActivityAt } : {}) }))
 }
 
-function projectPublicLeads(board: Board, items: PublicItem[], projection: PublicBoardProjection): Map<string, Lead> {
-  if (board.preset?.key !== "job-search") return new Map()
-  const bindings = leadPresentationBindings(board.preset.bindings)
-  const columns = new Map(projection.cards.map(card => [card.id, card.columnId]))
-  return new Map(items.map(item => [item.id, presentLead(item, bindings.columnStatuses[columns.get(item.id) ?? ""] ?? "lead", bindings)]))
-}
-
 // Display records contain only published data. They carry no workspace, identity, grant or write capability.
 export function publicBoardView(projection: PublicBoardProjection) {
   const board: Board = { ...displayBase(projection.board.id, projection.board.title, null, "0/1"),
@@ -43,5 +34,5 @@ export function publicBoardView(projection: PublicBoardProjection) {
   const columns: PublicColumn[] = projection.columns.map(column => ({
     ...displayBase(column.id, column.title, board.id, column.rank), kind: "column", ...column,
     items: items.filter(item => item.placement.parentId === column.id) }))
-  return { board, columns, fields, items, leads: projectPublicLeads(board, items, projection) }
+  return { board, columns, fields, items }
 }

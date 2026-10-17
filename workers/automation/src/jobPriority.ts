@@ -30,24 +30,3 @@ export function evaluateJobAssessment(assessment: JobAssessment | null, profile?
   }, 0)
   return Math.round(score * 10) / 10
 }
-
-function record(value: unknown): value is Record<string, unknown> {
-  return !!value && typeof value === "object" && !Array.isArray(value)
-}
-
-export function readJobAssessment(source: unknown): JobAssessment | null {
-  if (typeof source !== "string") return null
-  try {
-    const envelope: unknown = JSON.parse(source)
-    if (!record(envelope) || !record(envelope.decision)) return null
-    const value = envelope.decision.assessment
-    if (!record(value) || value.version !== 1 || !record(value.employee_profile) || !record(value.scores)) return null
-    const profile = value.employee_profile
-    if (typeof profile.stack !== "string" || typeof profile.work_profile !== "string") return null
-    const scores = value.scores
-    if (!jobCriteria.every(key => scores[key] === null || typeof scores[key] === "number"
-      && Number.isFinite(scores[key]) && scores[key] >= 0 && scores[key] <= 10)) return null
-    return { version: 1, employee_profile: { stack: profile.stack, work_profile: profile.work_profile },
-      scores: Object.fromEntries(jobCriteria.map(key => [key, scores[key]])) as JobAssessment["scores"] }
-  } catch { return null }
-}

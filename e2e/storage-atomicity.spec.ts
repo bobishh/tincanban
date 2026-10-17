@@ -77,7 +77,7 @@ test("Given two open tabs, when both edit one workspace together, then both conv
   const second = await page.context().newPage()
   await second.goto("/")
   const edit = async (target: typeof page, id: string, title: string) => target.evaluate(async ({ id, title }) => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const tincanban = useTincanban()
     await tincanban.whenReady()
     const doc = tincanban.getActiveDoc()!
@@ -91,7 +91,7 @@ test("Given two open tabs, when both edit one workspace together, then both conv
       edit(second, crypto.randomUUID(), "Cross-tab B"),
     ])
     await expect.poll(async () => Promise.all([page, second].map(target => target.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const tincanban = useTincanban()
       await tincanban.whenReady()
       return Object.values(tincanban.getActiveDoc()!.entities)
@@ -113,7 +113,7 @@ test("Given independent tabs receive peer branches together, when both admission
   await second.goto("/")
   try {
     const branches = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { executeCommand } = await import("/src/domain/commands.ts")
       const { prepareLocalChangeAuthorizations, exportAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
       const Automerge = await import("/@id/@automerge/automerge/slim")
@@ -132,12 +132,12 @@ test("Given independent tabs receive peer branches together, when both admission
     })
     await Promise.all([
       ...[page, second].map((target, index) => target.evaluate(async branch => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         await useTincanban().whenReady()
         await useTincanban().mergeAuthorizedWorkspace(branch.id, new Uint8Array(branch.bytes), branch.authorization)
       }, branches[index]!)),
       second.evaluate(async () => {
-        const { useTincanban } = await import("/src/state.ts")
+        const { useTincanban } = await import("/src/test/stateFixture.ts")
         const tincanban = useTincanban()
         await tincanban.whenReady()
         const column = Object.values(tincanban.getActiveDoc()!.entities).find(entity => entity.kind === "column")!
@@ -146,7 +146,7 @@ test("Given independent tabs receive peer branches together, when both admission
     ])
     await second.reload()
     await expect.poll(() => second.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       await useTincanban().whenReady()
       return Object.values(useTincanban().getActiveDoc()!.entities).flatMap(entity => "title" in entity && ["Incoming A", "Incoming B", "Local alongside peers"].includes(entity.title) ? [entity.title] : []).sort()
     })).toEqual(["Incoming A", "Incoming B", "Local alongside peers"])
@@ -156,7 +156,7 @@ test("Given independent tabs receive peer branches together, when both admission
 test("Given authorization write fails during admission, when transaction aborts, then document, UI and notifications remain unchanged", async ({ page }) => {
   await page.goto("/")
   const result = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { WorkspaceStorage } = await import("/src/storage.ts")
     const { executeCommand } = await import("/src/domain/commands.ts")
     const { prepareLocalChangeAuthorizations, exportAuthorizationBundle, exportAuthorizations } = await import("/src/sync/changeAuthorization.ts")
@@ -196,11 +196,11 @@ test("Given authorization write fails during admission, when transaction aborts,
 test("Given legacy snapshot and proof databases, when a command commits, then migration preserves history and reopened catalog", async ({ page }) => {
   await page.goto("/")
   const result = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { WorkspaceStorage } = await import("/src/storage.ts")
     const { writeLocal } = await import("/src/localDb.ts")
     const { toBase64Url } = await import("/src/domain/identity.ts")
-    const { createWorkspaceDoc } = await import("/src/domain/seeds.ts")
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { prepareLocalChangeAuthorizations, exportAuthorizations } = await import("/src/sync/changeAuthorization.ts")
     const { persistAuthorizedCommand } = await import("/src/statePersistence.ts")
     const { recordGenesisAuthority } = await import("/src/sync/changeAuthorization.ts")

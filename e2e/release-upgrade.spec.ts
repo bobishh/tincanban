@@ -4,7 +4,7 @@ import { createJobSearchWorkspace } from "./support/workspaces"
 test("Given an older tab below the workspace snapshot reader floor, when a baseline write is attempted, then refuse signing and retain local history", async ({ page, baseURL }) => {
   await page.goto(baseURL ?? "http://127.0.0.1:4244")
   await createJobSearchWorkspace(page, "Older reader")
-  const workspaceId = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+  const workspaceId = await page.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
   const before = await page.evaluate(async id => {
     const storage = (await import("/src/storage.ts")).defaultStorage
     return (await storage.ensureHistoryProgress(id)).baselineId
@@ -29,7 +29,7 @@ test("Given an older tab below the workspace snapshot reader floor, when a basel
   await expect(page.getByRole("button", { name: "Open Must stay local — No stale write", exact: true })).toHaveCount(0)
 
   const baselineAttempt = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { resolveLocalSigningContext } = await import("/src/domain/localSigningContext.ts")
     const app = useTincanban()
     try {

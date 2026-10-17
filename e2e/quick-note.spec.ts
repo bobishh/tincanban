@@ -59,7 +59,7 @@ test("Given a Job search lead, when a quick note is added, then it appends to it
   await form.getByLabel("Role *", { exact: true }).fill("Engineer")
   await form.getByLabel("Description", { exact: true }).fill("Existing context")
   await form.getByRole("button", { name: "Create item", exact: true }).click()
-  const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
+  const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   await expect(detail).toBeVisible()
 
   await detail.getByRole("textbox", { name: "Quick note", exact: true }).fill("Follow up Friday")
@@ -68,6 +68,6 @@ test("Given a Job search lead, when a quick note is added, then it appends to it
   await expect(detail.getByText("Existing context\n\nFollow up Friday", { exact: true })).toBeVisible()
   await page.reload()
   await page.getByRole("button", { name: "Open Quick Note Corp — Engineer", exact: true }).click()
-  await expect(page.getByRole("dialog", { name: "Lead details", exact: true })
+  await expect(page.getByRole("dialog", { name: "Item overview", exact: true })
     .getByText("Existing context\n\nFollow up Friday", { exact: true })).toBeVisible()
 })

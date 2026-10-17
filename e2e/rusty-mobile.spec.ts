@@ -74,7 +74,7 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     const publication = await phone.evaluate(async origin => {
       const { readPublicBoardManagementState } = await import("/src/public/publicationClient.ts")
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const board = Object.values(useTincanban().getActiveDoc()!.entities).find(entity => entity.kind === "board")!
       return readPublicBoardManagementState({ origin, boardId: board.id, profile: await bootstrapIdentity() })
     }, rusty.origin)

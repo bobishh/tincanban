@@ -55,7 +55,7 @@ test("Given a Lead detail window, when its container maximizes and then narrows,
   await form.getByLabel("Description", { exact: true }).fill(longDescription)
   await form.getByRole("button", { name: "Create item" }).click()
 
-  const detail = page.getByRole("dialog", { name: "Lead details" })
+  const detail = page.getByRole("dialog", { name: "Item overview" })
   const prose = detail.locator("[data-detail-primary] .detail-copy")
   const inspector = detail.locator("[data-detail-inspector]")
   await expect(prose.locator("p").first()).toContainText("comfortable measure")

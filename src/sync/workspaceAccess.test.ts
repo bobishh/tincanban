@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
 import { afterEach, beforeAll, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { decideAccess, inheritLocalMoveAccess } from "./workspaceAccess"
 

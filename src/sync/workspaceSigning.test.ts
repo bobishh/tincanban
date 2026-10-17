@@ -10,7 +10,7 @@ import { certHashDefault, createAutomationWorkspaceGrant, createDelegatedCertifi
 import { automationTypes } from "../domain/automationContract"
 import { hasEntityKind } from "../domain/model"
 import { resolveSigningContext, signWithContext } from "../domain/signingContext"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { authorizeLocalChanges, recordGenesisAuthority, prepareLocalChangeAuthorizations, type WorkspaceSigningContextFactory } from "./changeAuthorization"
 import { createWorkspaceDeviceRevocation } from "./meshRecords"
 import { peerStore } from "./peerStore"

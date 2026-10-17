@@ -1,4 +1,4 @@
-import { defaultJobBands, emptyEmployeeProfile, evaluateJobAssessment, priorityOptionForScore, type EmployeeProfile, type JobAssessment } from "../../../src/domain/jobPriority.ts";
+import { defaultJobBands, emptyEmployeeProfile, evaluateJobAssessment, priorityOptionForScore, type EmployeeProfile, type JobAssessment } from "./jobPriority.ts";
 export const CLEF_MODEL = '@cf/cloudflare/clef-flash';
 export const OPPORTUNITY_POLICY_VERSION = 'lead-clef-v2';
 export const APPLICATION_EVENT_POLICY_VERSION = 'application-event-clef-v2';

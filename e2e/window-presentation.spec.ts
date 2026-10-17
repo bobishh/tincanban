@@ -9,7 +9,7 @@ for (const width of [390, 1280]) test(`Given a detailed lead at ${width}px, When
     document.documentElement.style.setProperty("--safe-bottom", "34px")
   })
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "Lead details" })
+  const dialog = page.getByRole("dialog", { name: "Item overview" })
   await expect(dialog).toBeVisible()
   await expect(dialog).toHaveCSS("animation-name", "window-appear")
   const scroll = dialog.locator(".scroll-frame-viewport")
@@ -67,13 +67,13 @@ test("Given sync settings, When tabs change, Then panels fade in and reduced mot
 for (const width of [320, 390]) test(`Given a ${width}px lead window with a long role, When stages overflow, Then Edit stays on one line and arrows reveal hidden stages`, async ({ page }, info) => {
   await populatedBoard(page, true)
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const role = app.activeBoard.value!.preset!.bindings["field.role"]!
     await app.executeCommandAsync({ kind: "patchItem", entityId: "performance-card-0", values: { [role]: "Senior Software Backend RoR Engineer" } })
   })
   await page.setViewportSize({ width, height: 844 })
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "Lead details" })
+  const dialog = page.getByRole("dialog", { name: "Item overview" })
   const edit = dialog.getByRole("button", { name: "Edit", exact: true })
   await expect(edit).toHaveCSS("white-space", "nowrap")
   expect((await edit.boundingBox())!.width).toBeGreaterThanOrEqual(44)

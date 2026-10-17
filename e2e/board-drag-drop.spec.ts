@@ -22,7 +22,7 @@ async function createItem(page: Page, title: string, column: string) {
 async function setItemBody(page: Page, title: string, body: string) {
   const id = await page.locator(".lead-card").filter({ has: page.getByText(title, { exact: true }) }).getAttribute("data-item-id")
   await page.evaluate(async ({ id, body }) => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     await useTincanban().executeCommandAsync({ kind: "patchItem", entityId: id!, body })
   }, { id, body })
 }

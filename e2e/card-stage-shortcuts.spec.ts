@@ -18,7 +18,7 @@ async function createBoard(page: import("@playwright/test").Page) {
 
 async function holdWorkspaceWrites(page: import("@playwright/test").Page) {
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     await new Promise<void>(acquired => {
       void navigator.locks.request(`tincanban-workspace-command:${app.activeWorkspace.id}`, () => {
         acquired()

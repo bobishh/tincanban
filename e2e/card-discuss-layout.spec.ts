@@ -13,7 +13,7 @@ for (const width of [390, 1440]) {
     await form.getByLabel("Location", { exact: true }).fill("Remote Europe")
     await form.getByLabel("Fit score").fill("8")
     await form.getByRole("button", { name: "Create item" }).click()
-    const details = page.getByRole("dialog", { name: "Lead details" })
+    const details = page.getByRole("dialog", { name: "Item overview" })
     await details.getByRole("button", { name: "Close detail", exact: true }).click()
     const card = page.locator(".item-card").filter({ hasText: "Reedsy" })
     const discuss = card.getByRole("button", { name: /Discuss Reedsy/ })
@@ -70,7 +70,7 @@ for (const width of [390, 1440]) {
     await expect(thread.getByRole("button", { name: "Reply to message" })).toHaveCount(0)
     const saved = await page.evaluate(async () => {
       const service = await import("/src/chat/service.ts")
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return (await service.loadChat(state.activeWorkspace.id)).messages
     })
     const root = saved.find(message => message.body === "Unsent card question")!

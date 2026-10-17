@@ -19,7 +19,7 @@ test("Given 55 detailed leads, when search narrows then has no matches, then key
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
   await session.send("Profiler.enable")
   await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const events: Array<{ name: string; duration: number; input: number; processing: number }> = []
     const paints: number[] = []
     const observer = new PerformanceObserver(list => {
@@ -45,7 +45,7 @@ test("Given 55 detailed leads, when search narrows then has no matches, then key
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
   const { profile } = await session.send("Profiler.stop")
   const measured = await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const data = (window as unknown as { searchMeasurement: { events: Array<{ name: string; duration: number; input: number; processing: number }>;
       paints: number[]; observer: PerformanceObserver; version: number } }).searchMeasurement
     data.observer.disconnect()
@@ -70,7 +70,7 @@ test("Given 55 detailed leads, when search narrows then has no matches, then key
   await expect(notePreview).toContainText("Portfolio link available on request")
   expect((await notePreview.textContent())?.length).toBeLessThan(500)
   await filteredCard.locator(".card-open-button").click()
-  const detail = page.getByRole("dialog", { name: "Lead details" })
+  const detail = page.getByRole("dialog", { name: "Item overview" })
   await expect(detail).toBeVisible()
   const fullNarrative = await detail.locator(".detail-copy").textContent()
   expect(fullNarrative).toContain("Detailed job requirements")

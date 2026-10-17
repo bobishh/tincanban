@@ -1,5 +1,5 @@
 import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identityCrypto";
-import type { EmployeeProfile } from "../../../src/domain/jobPriority";
+import type { EmployeeProfile } from "./jobPriority";
 import { assertPublicHttpsUrl, type JobPageResult } from "./extraction";
 import { readApplicationEventClassification, readOpportunityClassification } from "./clef";
 import { parseWebsiteSubmission } from "./intake";

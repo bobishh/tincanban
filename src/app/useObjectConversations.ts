@@ -142,7 +142,7 @@ function createReferenceChoices(app: ReturnType<typeof useAppController>, scope:
   return computed(() => itemReferenceChoices(
     Object.values(app.workspace.getActiveDoc()?.entities ?? {}).filter((entity): entity is Item => isItem(entity) && !isItemArchived(entity)),
     app.workspace.boardFields.value, scope.value, app.workspace.activeBoard.value?.id ?? "",
-    app.workspace.activeBoard.value?.preset?.bindings["field.notes"],
+    app.workspace.activeBoard.value?.cardPresentation?.narrativeFieldId,
   ))
 }
 

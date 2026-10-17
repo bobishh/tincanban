@@ -29,7 +29,7 @@ test("Given two tabs share a detailed board, when one moves a card and another e
   await Promise.all([
     moveFirst(page),
     other.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       await state.executeCommandAsync({ kind: "patchItem", entityId: "performance-card-1", title: "Concurrent neighbor edit" })
     }),
   ])

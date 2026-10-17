@@ -12,8 +12,8 @@ export const createAutomation: CommandHandler<"createAutomation"> = (doc, comman
   const id = automationEntityId(definition.id)
   if (doc.entities[id]) return err("invalid_input", "Automation instance already exists")
   const board = doc.entities[definition.scope.boardId]
-  if (definition.scope.workspaceId !== doc.id || !hasEntityKind(board, "board") || board.archivedAt || board.preset?.key !== "job-search") {
-    return err("invalid_input", "Automation scope must identify an active job-search board in this workspace")
+  if (definition.scope.workspaceId !== doc.id || !hasEntityKind(board, "board") || board.archivedAt) {
+    return err("invalid_input", "Automation scope must identify an active board in this workspace")
   }
   if (!isAutomationOrigin(command.executor.origin)) return err("invalid_input", "Automation executor origin is invalid")
   if (!command.executor.personId || command.executor.personId === context.actorPersonId) return err("invalid_input", "Automation requires a separate executor identity")

@@ -174,8 +174,6 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-window .stage-scroll-later { right: 0; background: linear-gradient(to left, var(--panel) 60%, transparent); }
 .spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
 .spatial-window .status-strip button { flex-shrink: 0; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
-/* eslint-disable-next-line css/no-invalid-properties -- Valid font shorthand with two var() fallbacks is misparsed by the CSS validator. */
-.spatial-window .source-snapshot { margin-top: var(--space-2); color: var(--ink); white-space: pre-wrap; max-height: 190px; overflow: auto; padding: var(--space-2) 0; border: 0; font: 400 var(--site-font-reading-size, 14px)/var(--site-font-reading-line, 1.65) var(--site-font-reading); }
 .scroll-frame .detail-section:first-child { margin-top: 0; }
 @media (max-width: 600px) {
   .spatial-titlebar { padding: var(--space-1) var(--space-2); gap: var(--space-1); }

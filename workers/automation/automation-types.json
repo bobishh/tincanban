@@ -1,0 +1,61 @@
+[
+  {
+    "type": "job-intake",
+    "version": 1,
+    "title": "Job intake",
+    "description": "Process configured submission and email events with an approved workflow.",
+    "permissions": [
+      "workspace.read",
+      "board.lead.create",
+      "board.application.advance"
+    ],
+    "defaults": {
+      "sources": [
+        "website"
+      ]
+    },
+    "parameterFields": {
+      "sources": {
+        "valueType": "select",
+        "options": [
+          "website",
+          "email"
+        ],
+        "multiple": true,
+        "required": true,
+        "min": 1,
+        "max": 2
+      }
+    }
+  },
+  {
+    "type": "job-intake",
+    "version": 2,
+    "title": "Job intake",
+    "description": "Process configured submission and email events with an approved workflow.",
+    "permissions": [
+      "workspace.read",
+      "board.lead.create",
+      "board.application.advance",
+      "board.application.source.append"
+    ],
+    "defaults": {
+      "sources": [
+        "website"
+      ]
+    },
+    "parameterFields": {
+      "sources": {
+        "valueType": "select",
+        "options": [
+          "website",
+          "email"
+        ],
+        "multiple": true,
+        "required": true,
+        "min": 1,
+        "max": 2
+      }
+    }
+  }
+]

@@ -1,3 +1,5 @@
+import type { Preset } from "../domain/seeds"
+import { cardTitle, narrativeFieldId } from "../domain/cardPresentation"
 import { recordUsageAction } from "../usageActions"
 import { hasEntityKind } from "../domain/model"
 import { computed, ref } from "vue"
@@ -14,27 +16,13 @@ import { isItem, type AttachedDocument, type Column, type FieldValue, type Heads
 import type { DocumentInput } from "../types"
 
 export function useAppActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>) {
-  const selection = useLeadSelection(core)
-  const content = useContentActions(core, board, selection)
+  const content = useContentActions(core, board)
   const boardActions = useBoardActions(core, board)
   const workspace = useWorkspaceActions(core)
-  return { ...selection, ...content, ...boardActions, ...workspace }
+  return { ...content, ...boardActions, ...workspace }
 }
 
-function useLeadSelection(core: ReturnType<typeof useAppCore>) {
-  const selectedLead = computed(() => core.tincanban.workspace.leads.find(lead => lead.id === core.selectedLeadId.value) ?? null)
-  const selectedLeadItem = computed(() => {
-    void core.tincanban.docVersion.value
-    const entity = core.selectedLeadId.value ? core.tincanban.getActiveDoc()?.entities[core.selectedLeadId.value] : null
-    return isItem(entity) ? entity : null
-  })
-  const selectedDocuments = computed(() => selectedLead.value ? core.tincanban.documentsFor(selectedLead.value.id) : [])
-  const selectedArtifacts = computed(() => selectedLead.value ? core.tincanban.artifactsFor(selectedLead.value.id) : [])
-  const availableArtifactTemplates = computed(() => core.tincanban.workspace.templates)
-  return { selectedLead, selectedLeadItem, selectedDocuments, selectedArtifacts, availableArtifactTemplates }
-}
-
-function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>, selection: ReturnType<typeof useLeadSelection>) {
+function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>) {
   const restoreSelectedItemVersion = async (changeHash: string) => {
     if (!board.selectedHistoryItemId.value || core.historyRestoreSaving.value) return
     core.historyRestoreSaving.value = true
@@ -57,9 +45,9 @@ function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnTyp
     if (!note || core.quickNoteSaving.value) return
     core.quickNoteSaving.value = true
     core.quickNoteError.value = ""
-    const notesFieldId = core.tincanban.activeBoard.value?.preset?.bindings["field.notes"]
+    const notesFieldId = narrativeFieldId(core.tincanban.activeBoard.value, core.tincanban.boardFields.value)
     try {
-      const fieldId = notesFieldId && board.leadForItem(item) && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
+      const fieldId = notesFieldId && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
       const narrative = appendQuickNote(board.cardNotes(item), note)
       await core.tincanban.executeCommandAsync({ kind: "patchItem", entityId: item.id, body: narrative, ...(fieldId ? { values: { [fieldId]: "" } } : {}), foldNarrativeSources: foldSources(core, item, fieldId) })
       core.quickNoteDraft.value = ""
@@ -67,14 +55,14 @@ function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnTyp
     } catch (error) { core.quickNoteError.value = `Note not saved: ${messageFrom(error)}` }
     finally { core.quickNoteSaving.value = false }
   }
-  const submitDocument = async (itemId: string, draft: Omit<DocumentInput, "leadId">) => {
-    await core.tincanban.createDocumentAsync({ leadId: itemId, ...draft, title: draft.title.trim() })
+  const submitDocument = async (itemId: string, draft: Omit<DocumentInput, "itemId">) => {
+    await core.tincanban.createDocumentAsync({ itemId: itemId, ...draft, title: draft.title.trim() })
     core.notice.value = "Document attached"
   }
   const updateDocumentMarkdown = (documentId: string, markdown: string) => core.tincanban.updateDocumentAsync(documentId, markdown)
   const updateItemMarkdown = async (item: Item, markdown: string) => {
-    const notesFieldId = core.tincanban.activeBoard.value?.preset?.bindings["field.notes"]
-    const fieldId = notesFieldId && board.leadForItem(item) && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
+    const notesFieldId = narrativeFieldId(core.tincanban.activeBoard.value, core.tincanban.boardFields.value)
+    const fieldId = notesFieldId && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
     try {
       await core.tincanban.executeCommandAsync({ kind: "patchItem", entityId: item.id, body: markdown, ...(fieldId ? { values: { [fieldId]: "" } } : {}), foldNarrativeSources: foldSources(core, item, fieldId) })
       core.notice.value = "Checklist updated"
@@ -84,20 +72,9 @@ function useContentActions(core: ReturnType<typeof useAppCore>, board: ReturnTyp
   }
   const handleSaveTemplate = async (payload: { id?: string; newId?: string; name: string; markdown: string }) =>
     (await import("./workspaceFiles")).saveWorkspaceTemplate(core, payload)
-  const openArtifactForm = () => {
-    core.artifactError.value = ""
-    core.artifactDraft.value = { kind: "cv", title: "", templateId: "", pdfPath: "", sourceMarkdownPath: "" }
-    core.showArtifactForm.value = true
-  }
-  const submitArtifact = () => saveArtifact(core, selection.selectedLead.value)
   const moveCardToColumn = (item: Item, columnId: string) => moveItemToColumn(core, item, columnId)
-  const handleUpdateRejectionReason = async (workspaceId: string, itemId: string, reason: string) => {
-    if (core.tincanban.activeWorkspace.id !== workspaceId) throw new Error("Workspace changed before saving")
-    const fieldId = core.tincanban.activeBoard.value?.preset?.bindings["field.rejectionReason"]
-    if (!fieldId) throw new Error("Rejection notes field is missing from the board")
-    await core.tincanban.executeCommandAsync({ kind: "patchItem", entityId: itemId, values: { [fieldId]: reason } })
-  }
-  return { restoreSelectedItemVersion, saveQuickNote, submitDocument, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate, openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason }
+
+  return { restoreSelectedItemVersion, saveQuickNote, submitDocument, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate, moveCardToColumn }
 }
 
 function appendQuickNote(existing: unknown, note: string) {
@@ -118,23 +95,6 @@ function foldSources(core: ReturnType<typeof useAppCore>, item: Item, notesField
     ...(notesFieldId ? { notesFieldId, expectedNotes: item.values[notesFieldId] } : {}),
     notes: notes.map(({ id, title, content, format }) => ({ id, title, content, format })),
   }
-}
-
-async function saveArtifact(core: ReturnType<typeof useAppCore>, lead: ReturnType<typeof useLeadSelection>["selectedLead"]["value"]) {
-  if (!lead) return
-  const artifact = core.artifactDraft.value
-  if (!artifact.title.trim() || !artifact.templateId || !artifact.pdfPath.trim()) {
-    core.artifactError.value = "Title, base template, and PDF path required"
-    return
-  }
-  if (!core.tincanban.workspace.templates.some(template => template.id === artifact.templateId)) {
-    core.artifactError.value = "Choose a base template"
-    return
-  }
-  await core.tincanban.createArtifactAsync({ leadId: lead.id, kind: artifact.kind, title: artifact.title.trim(), templateId: artifact.templateId, pdfPath: artifact.pdfPath.trim(), sourceMarkdownPath: artifact.sourceMarkdownPath.trim() || undefined })
-  core.showArtifactForm.value = false
-  core.artifactError.value = ""
-  core.notice.value = "PDF artifact attached"
 }
 
 async function moveItemToColumn(core: ReturnType<typeof useAppCore>, item: Item, columnId: string) {
@@ -162,11 +122,9 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
   const newBoardColumnCollapsible = ref(false)
   const addingBoardColumn = ref(false)
   const addBoardColumnError = ref("")
-  const openBoardItem = (item: Item) => { if (!core.tincanban.isBlankBoard.value && board.leadForItem(item)) core.selectedLeadId.value = item.id; else handleOpenItem(item) }
+  const openBoardItem = (item: Item) => handleOpenItem(item)
   const closeDetail = () => {
-    core.selectedLeadId.value = null
     core.selectedItemId.value = null
-    core.showArtifactForm.value = false
   }
   const openAddItem = (columnId?: string, beforeId?: string) => {
     itemInsertion.value = columnId && beforeId ? { columnId, beforeId } : null
@@ -233,8 +191,8 @@ async function saveItem(core: ReturnType<typeof useAppCore>, board: ReturnType<t
     core.storageError.value = ""
     core.itemFormError.value = ""
     const narrativePayload = { ...payload, values: { ...payload.values } }
-    const notesFieldId = core.tincanban.activeBoard.value?.preset?.bindings["field.notes"]
-    const fieldId = notesFieldId && !core.tincanban.isBlankBoard.value && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
+    const notesFieldId = narrativeFieldId(core.tincanban.activeBoard.value, core.tincanban.boardFields.value)
+    const fieldId = notesFieldId && isPresetTextNotesField(core, notesFieldId) ? notesFieldId : undefined
     if (fieldId) narrativePayload.values[fieldId] = ""
     const details = itemSaveDetails(core, board, narrativePayload)
     if (details.item) await saveExistingItem(core, details.item, details, payload.body, fieldId, payload.foldSnapshot)
@@ -252,25 +210,23 @@ function itemSaveDetails(core: ReturnType<typeof useAppCore>, board: ReturnType<
   const requestedParent = payload.parentId || core.itemFormParentId.value
   const parentId = core.tincanban.genericColumns.value.find(column => column.id === requestedParent || board.columnStatus(column.id) === requestedParent)?.id ?? requestedParent
   const item = board.editingItem.value
-  const bindings = core.tincanban.activeBoard.value?.preset?.bindings ?? {}
-  const titleParts = [values[bindings["field.company"]], values[bindings["field.role"]]].filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map(value => value.trim())
-  return { item, parentId, values, title: core.tincanban.isBlankBoard.value ? payload.title || item?.title || "Untitled item" : titleParts.join(" — ") || item?.title || "Untitled item" }
+  return { item, parentId, values, title: cardTitle(core.tincanban.activeBoard.value, values, payload.title || item?.title || "Untitled item") }
 }
 
 async function saveExistingItem(core: ReturnType<typeof useAppCore>, item: Item, details: ReturnType<typeof itemSaveDetails>, body: string, notesFieldId?: string, snapshot?: NarrativeFoldSources) {
   await core.tincanban.executeCommandAsync({ kind: "patchItem", entityId: item.id, title: details.title, body, values: details.values, foldNarrativeSources: snapshot ?? foldSources(core, item, notesFieldId) })
   if (details.parentId && details.parentId !== item.placement.parentId) await core.tincanban.executeCommandAsync({ kind: "moveEntity", entityId: item.id, parentId: details.parentId, beforeId: null })
   core.editingItemId.value = null
-  if (!core.tincanban.isBlankBoard.value) core.selectedLeadId.value = item.id
+  if (core.tincanban.activeBoard.value?.cardPresentation?.openAfterSave) core.selectedItemId.value = item.id
 }
 
 async function saveNewItem(core: ReturnType<typeof useAppCore>, details: ReturnType<typeof itemSaveDetails>, body: string, beforeId?: string) {
   const before = new Set(Object.keys(core.tincanban.getActiveDoc()?.entities ?? {}))
   await core.tincanban.executeCommandAsync({ kind: "createItem", parentId: details.parentId, title: details.title, body, values: details.values, beforeId })
   recordUsageAction("item_create")
-  if (core.tincanban.isBlankBoard.value) return
+  if (!core.tincanban.activeBoard.value?.cardPresentation?.openAfterSave) return
   const created = Object.values(core.tincanban.getActiveDoc()?.entities ?? {}).find(entity => isItem(entity) && !before.has(entity.id))
-  if (created) core.selectedLeadId.value = created.id
+  if (created) core.selectedItemId.value = created.id
 }
 
 async function applySchema(core: ReturnType<typeof useAppCore>, payload: { schema: BoardSchemaDraft; expectedHeads?: Heads }) {
@@ -339,7 +295,6 @@ function openItemEdit(core: ReturnType<typeof useAppCore>, item: Item) {
   core.itemFormParentId.value = item.placement.parentId ?? ""
   core.showItemForm.value = true
   core.selectedItemId.value = null
-  core.selectedLeadId.value = null
   core.historyRestoreError.value = ""
   core.historyRestoreNotice.value = ""
 }
@@ -406,9 +361,9 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     try { await (await import("./workspaceFiles")).importWorkspaceFile(core, event, workspaceImportState.value) }
     catch (error) { workspaceImportState.value.error = messageFrom(error) }
   }
-  const createAndSyncWorkspace = (title: string, preset: "blank" | "job-search") =>
+  const createAndSyncWorkspace = (title: string, preset: Preset) =>
     createWorkspaceWithOwnerCredential(core, title, preset)
-  const handleCreateWorkspace = async (payload: { title: string; preset: "blank" | "job-search"; config?: WorkspaceCreationDraft }) => {
+  const handleCreateWorkspace = async (payload: { title: string; preset: Preset; config?: WorkspaceCreationDraft }) => {
     const doc = await core.tincanban.createWorkspaceAsync(payload.title, payload.preset, undefined, payload.config)
     recordUsageAction("workspace_create")
     core.notice.value = `Workspace "${payload.title}" created`
@@ -433,7 +388,7 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
 }
 
 async function createWorkspaceWithOwnerCredential(core: ReturnType<typeof useAppCore>, title: string,
-  preset: "blank" | "job-search") {
+  preset: Preset) {
   const doc = await core.tincanban.createWorkspaceAsync(title, preset)
   await core.sync.addOwnerWorkspace(doc.id)
   return doc

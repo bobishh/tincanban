@@ -16,7 +16,6 @@ export function useAppItemDocumentSave(app: ReturnType<typeof useAppController>)
     save: app.actions.submitDocument,
   })
   return {
-    saveSelectedLeadDocument: computed(() => capture(app.actions.selectedLeadItem.value?.id ?? null)),
     saveSelectedItemDocument: computed(() => capture(app.board.selectedItem.value?.id ?? null)),
   }
 }

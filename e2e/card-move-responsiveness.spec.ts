@@ -15,7 +15,7 @@ test("Given 55 detailed cards, when a card moves, then persistence does not stal
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
   await expect(page.getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible({ timeout: 60_000 })
   const hasCurrentFrontier = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const app = useTincanban()

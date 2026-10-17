@@ -82,6 +82,7 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
 function publicPresentation(board: Extract<WorkspaceEntity, { kind: "board" }>, columns: Entity[], fields: PublicBoardProjection["fields"]): NonNullable<PublicBoardProjection["board"]["presentation"]> {
   const visibleIds = new Set([...columns.map(column => column.id), ...fields.map(field => field.id), ...fields.flatMap(field => field.options.map(option => option.id))])
   return {
+    ...(board.cardPresentation ? { cardPresentation: board.cardPresentation } : {}),
     ...(board.entityName ? { entityName: board.entityName } : {}),
     ...( "archiveColumnId" in board ? { archiveColumnId: board.archiveColumnId } : {}),
     preset: board.preset ? { ...board.preset, bindings: Object.fromEntries(Object.entries(board.preset.bindings).filter(([, id]) => visibleIds.has(id))) } : null,
@@ -102,7 +103,7 @@ function childLookup(entities: Entity[]) {
 }
 function projectFields(fields: PublicFieldEntity[]): PublicBoardProjection["fields"] {
   return fields.map(field => ({
-    id: field.id, title: field.title, valueType: field.valueType, required: field.required, rank: field.placement.rank, ...(field.valueType === "number" ? { min: field.min, max: field.max } : {}),
+    id: field.id, title: field.title, valueType: field.valueType, ...(field.valueType === "text" && field.format ? { format: field.format } : {}), required: field.required, rank: field.placement.rank, ...(field.valueType === "number" ? { min: field.min, max: field.max } : {}),
     options: field.valueType === "select"
       ? Object.values(field.options).filter(option => option.archivedAt == null).sort((a, b) => compareRanks(a.rank, b.rank) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map(option => ({ id: option.id, title: option.title, rank: option.rank }))
       : [],
@@ -114,25 +115,25 @@ function projectCards(board: Extract<WorkspaceEntity, { kind: "board" }>, column
   const visited = new Set<string>()
   const walk = (parentId: string, columnId: string, cardParentId: string | null): void => {
     const items = children(parentId).filter(isItem)
-    for (const source of orderItemsByPriority(board, items, board.preset?.bindings["field.notes"])) {
-      const entity = projectItemPriority(board, source, board.preset?.bindings["field.notes"])
+    for (const source of orderItemsByPriority(board, items, board.cardPresentation?.narrativeFieldId)) {
+      const entity = projectItemPriority(board, source, board.cardPresentation?.narrativeFieldId)
       if (visited.has(entity.id)) throw new Error("Public card hierarchy contains a cycle")
       visited.add(entity.id)
       const values = Object.fromEntries(Object.entries(entity.values ?? {}).filter(([fieldId, value]) => validFieldValue(fieldMap.get(fieldId), value)))
-      cards.push({ id: entity.id, parentId: cardParentId, columnId, title: entity.title, body: itemNarrative(entity, board.preset?.bindings["field.notes"], children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]), values, rank: entity.placement.rank, ...(entity.createdAt ? { createdAt: entity.createdAt } : {}), ...(entity.updatedAt ? { updatedAt: entity.updatedAt } : {}), ...(entity.lastActivityAt ? { lastActivityAt: entity.lastActivityAt } : {}) })
+      cards.push({ id: entity.id, parentId: cardParentId, columnId, title: entity.title, body: itemNarrative(entity, board.cardPresentation?.narrativeFieldId, children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]), values, rank: entity.placement.rank, ...(entity.createdAt ? { createdAt: entity.createdAt } : {}), ...(entity.updatedAt ? { updatedAt: entity.updatedAt } : {}), ...(entity.lastActivityAt ? { lastActivityAt: entity.lastActivityAt } : {}) })
       if (cards.length > MAX_CARDS) throw new Error("Public board exceeds card limit")
       walk(entity.id, columnId, entity.id)
     }
   }
   for (const column of columns) walk(column.id, column.id, null)
   if (archiveColumnId) {
-    for (const source of orderItemsByPriority(board, archivedItemsForBoard(document, board.id), board.preset?.bindings["field.notes"])) {
+    for (const source of orderItemsByPriority(board, archivedItemsForBoard(document, board.id), board.cardPresentation?.narrativeFieldId)) {
       if (visited.has(source.id)) throw new Error("Public card hierarchy contains a cycle")
       visited.add(source.id)
-      const entity = projectItemPriority(board, source, board.preset?.bindings["field.notes"])
+      const entity = projectItemPriority(board, source, board.cardPresentation?.narrativeFieldId)
       const values = Object.fromEntries(Object.entries(entity.values ?? {}).filter(([fieldId, value]) => validFieldValue(fieldMap.get(fieldId), value)))
       cards.push({ id: entity.id, parentId: null, columnId: archiveColumnId, title: entity.title,
-        body: itemNarrative(entity, board.preset?.bindings["field.notes"], children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]),
+        body: itemNarrative(entity, board.cardPresentation?.narrativeFieldId, children(entity.id).filter(candidate => "kind" in candidate && candidate.kind === "document") as Extract<WorkspaceEntity, { kind: "document" }>[]),
         values, rank: entity.placement.rank, ...(entity.createdAt ? { createdAt: entity.createdAt } : {}), ...(entity.updatedAt ? { updatedAt: entity.updatedAt } : {}), ...(entity.lastActivityAt ? { lastActivityAt: entity.lastActivityAt } : {}) })
       if (cards.length > MAX_CARDS) throw new Error("Public board exceeds card limit")
     }

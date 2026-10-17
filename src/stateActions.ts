@@ -4,7 +4,7 @@ import { commitAndPersist, dismissCausalChange, reconcile, restoreCausalChange, 
 import { stateRuntime } from "./stateContext";
 import { createStateDerived } from "./stateDerived";
 import { createWorkspaceActions } from "./stateWorkspaceActions";
-import { createLeadActions } from "./stateLeadActions";
+import { createItemActions } from "./stateItemActions";
 import { createContentActions } from "./stateContentActions";
 import { createSyncActions } from "./stateSyncActions";
 import { projectPendingItemMoves } from "./pendingItemMoves";
@@ -24,7 +24,7 @@ export function createTincanbanActions() {
     activeWorkspace: stateRuntime.activeWorkspaceMeta,
     docVersion: stateRuntime.docVersion,
     ...createWorkspaceActions(),
-    ...createLeadActions(derived.activeBoard),
+    ...createItemActions(),
     ...createContentActions(),
     executeCommandAsync: commitAndPersist,
     executeWorkspaceCommandAsync: (id: string, command: Parameters<typeof commitAndPersist>[0]) => commitAndPersist(command, undefined, id),

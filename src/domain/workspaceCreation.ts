@@ -1,7 +1,9 @@
+import { cloneJsonData } from "./jsonData"
+import type { Preset } from "./seeds"
 import type { Board, Column, FieldDefinition, WorkspaceDocumentV2, WorkspaceEntity } from "./model"
 import type { WorkspaceCreationDraft } from "./seeds"
 
-export function createWorkspaceDocFromDraft(id: string, title: string, ownerPersonId: string, presetKey: "job-search" | "blank", draft: WorkspaceCreationDraft, nowIso = new Date().toISOString()): WorkspaceDocumentV2 {
+export function createWorkspaceDocFromDraft(id: string, title: string, ownerPersonId: string, presetKey: Preset, draft: WorkspaceCreationDraft, nowIso = new Date().toISOString()): WorkspaceDocumentV2 {
   const boardId = draft.boardId
   const entities: Record<string, WorkspaceEntity> = {}
   const columns = draft.columns.map((definition, index): Column => ({
@@ -25,7 +27,7 @@ export function createWorkspaceDocFromDraft(id: string, title: string, ownerPers
         return [optionId, { id: optionId, title: option.title.trim(), rank: `${optionIndex}/1`, archivedAt: null }]
       })),
     }
-    return { ...common, valueType: definition.valueType }
+    return { ...common, valueType: definition.valueType, ...(definition.valueType === "text" && definition.format ? { format: definition.format } : {}) }
   })
   fields.forEach(field => { entities[field.id] = field })
   const retainedIds = new Set([...columns.map(column => column.id), ...fields.flatMap(field => [field.id, ...(field.valueType === "select" ? Object.keys(field.options) : [])])])
@@ -34,12 +36,14 @@ export function createWorkspaceDocFromDraft(id: string, title: string, ownerPers
     id: boardId, kind: "board", title: title.trim(), entityName: draft.entityName.trim(),
     placement: { parentId: null, rank: "0/1" }, archivedAt: null, createdAt: nowIso, updatedAt: nowIso,
     preset: { key: presetKey, version: 1, bindings },
+    ...(draft.automation ? { automation: cloneJsonData(draft.automation) } : {}),
+    ...(draft.cardPresentation ? { cardPresentation: cloneJsonData(draft.cardPresentation) } : {}),
     cardStageButtons: columns.filter((_, index) => !draft.columns[index]?.archive).map(column => ({ columnId: column.id })),
     archiveColumnId: columns.find((_, index) => draft.columns[index]?.archive)?.id ?? null,
     priorityPolicy: null,
     cardAgingPolicy: draft.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } },
   }
-  if (draft.employee_profile) board.employee_profile = { ...draft.employee_profile }
+  if (draft.settings) board.settings = { ...draft.settings }
   if (draft.priorityPolicy) board.priorityPolicy = draft.priorityPolicy
   entities[boardId] = board
   return { kind: "workspace", formatVersion: 3, id, title: title.trim(), archivedAt: null, ownerPersonId, entities, migration: null }

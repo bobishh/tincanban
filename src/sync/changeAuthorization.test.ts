@@ -7,7 +7,7 @@ import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
 import { readLocal, writeLocal } from "../localDb"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { publicKeyId, toBase64Url } from "../domain/identity"
 import { createWorkspaceOwnershipTransfer, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"

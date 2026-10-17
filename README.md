@@ -13,7 +13,7 @@ second device and keep working across both.
 
 ## What you can do
 
-- Create a blank board or a job-search pipeline; edit cards, columns, and fields.
+- Create a board; configure cards, columns, and fields.
 - Columns receive distinct default accent colors, stable across reordering and
   filtering. Set `board.columns[].color` to a six-digit hex value (for example
   `"#66b3ff"`) in Workspace settings JSON to override; omit it to restore defaults.
@@ -78,6 +78,27 @@ app releases that carry these formats; each is verified by its owning CI.
 
 tincanban is an experimental application. Keep an independent backup of important
 work. Browser storage is a local copy, not a hosted backup service.
+
+## Card fields
+
+Cards use the board's configured fields on private and public routes. The default board structure is data in
+`src/board-templates.json`; creation has no jobs template or template selector. Existing values are never inferred or migrated.
+
+Text fields default to literal text. Set `format` to `markdown`, `json`, or `code`
+on a text field for that presentation; JSON fields validate JSON when saved, and
+code is displayed without execution. Names such as “Source text” have no special
+meaning. Automation writes its supplied source text directly, without an envelope.
+
+Optional `board.cardPresentation` references field IDs with `titleFieldIds`,
+`summaryFieldIds`, and `narrativeFieldId`; `openAfterSave` controls opening details
+after a save. Without presentation settings, cards use their normal title/body
+and configured fields. Field labels, types, options and formats roundtrip through
+workspace settings and public publication.
+
+Priority uses explicit `weighted-rules-v1` configuration. Unsupported saved
+evaluators leave stored card values and ordering unchanged. Workflow types,
+parameters and field/column mappings are declared under `board.automation`;
+extension settings belong under `board.settings`.
 
 ## Card aging
 

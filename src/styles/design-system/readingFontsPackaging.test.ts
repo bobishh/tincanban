@@ -23,7 +23,7 @@ it("Given reading typography surfaces, when styles are packaged, then Fira Sans 
   expect(typography).not.toContain(".chat-dialog .chat-message-body")
   expect(typography).not.toContain(".chat-dialog textarea.chat-textarea")
   expect(typography).not.toContain("--site-font-line:")
-  expect(readingFonts).toContain(".detail-layout .detail-copy, .detail-layout .source-snapshot")
+  expect(readingFonts).toContain(".detail-layout .detail-copy, .detail-layout .configured-card-text")
   expect(readingFonts).toContain(".chat-dialog .chat-message-body,")
   expect(readingFonts).toContain(".chat-dialog textarea.chat-textarea, .reading-input")
   expect(readingFonts).toContain("font-family: var(--site-font-reading)")

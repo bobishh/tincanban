@@ -56,7 +56,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
 
     const previewText = "Encrypted attachment survives source shutdown.\n"
     const payload = Buffer.concat([Buffer.from(previewText), Buffer.alloc(384 * 1024 + 19, 0x5a)])
-    const detail = source.getByRole("dialog", { name: "Lead details" })
+    const detail = source.getByRole("dialog", { name: "Item overview" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const fileForm = detail.getByRole("form", { name: "Attach document" })
     await fileForm.getByLabel("Title").fill("Private transfer fixture")
@@ -68,7 +68,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await fileForm.getByRole("button", { name: "Attach", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
     await source.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const savedSourceDetail = source.getByRole("dialog", { name: "Lead details" })
+    const savedSourceDetail = source.getByRole("dialog", { name: "Item overview" })
     await expect(savedSourceDetail.getByRole("group", { name: "Private transfer fixture" })).toBeVisible({ timeout: 30_000 })
     await savedSourceDetail.getByRole("button", { name: "Close detail", exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
@@ -80,7 +80,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await source.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await source.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const sourceDetail = source.getByRole("dialog", { name: "Lead details" })
+    const sourceDetail = source.getByRole("dialog", { name: "Item overview" })
     const attachment = sourceDetail.getByRole("group", { name: "Private transfer fixture" })
     await expect(attachment.getByRole("status", { name: "Encrypted attachment coverage" }))
       .toHaveText("Complete on Rusty", { timeout: 30_000 })
@@ -94,13 +94,13 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await expect(recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }))
       .toBeVisible({ timeout: 30_000 })
     await recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const recipientDetail = recipient.getByRole("dialog", { name: "Lead details" })
+    const recipientDetail = recipient.getByRole("dialog", { name: "Item overview" })
     const recipientAttachment = recipientDetail.getByRole("group", { name: "Private transfer fixture" })
     // Metadata can be synced before the next poll receives the acknowledged file locator.
     await expect(recipientAttachment.getByRole("status", { name: "Encrypted attachment coverage" }))
       .toHaveText("Complete on Rusty", { timeout: 30_000 })
     const localBytesBeforeClose = await recipient.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { blobDescriptor, readStoredAttachment } = await import("/src/attachments.ts")
       const doc = useTincanban().getActiveDoc()!
       const attachment = Object.values(doc.entities).find(entity => entity.kind === "document" && entity.title === "Private transfer fixture")
@@ -116,7 +116,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await sourceContext.close()
     sourceClosed = true
     await recipient.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
-    const remoteDetail = recipient.getByRole("dialog", { name: "Lead details" })
+    const remoteDetail = recipient.getByRole("dialog", { name: "Item overview" })
     const remoteAttachment = remoteDetail.getByRole("group", { name: "Private transfer fixture" })
     await remoteAttachment.getByRole("button", { name: "Preview", exact: true }).click()
     await expect(recipient.getByRole("dialog", { name: "Document preview" })).toContainText(previewText.trim(), { timeout: 30_000 })
@@ -165,7 +165,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
     await create.getByRole("button", { name: "Create item", exact: true }).click()
     const open = page.getByRole("button", { name: "Open File failure fixture — Independent card save", exact: true })
     await open.click()
-    const detail = page.getByRole("dialog", { name: "Lead details" })
+    const detail = page.getByRole("dialog", { name: "Item overview" })
     await detail.getByRole("button", { name: "+ File", exact: true }).click()
     const form = detail.getByRole("form", { name: "Attach document" })
     await form.getByLabel("Title").fill("Pending private file")

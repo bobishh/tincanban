@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { hasEntityKind } from "./model"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { assertWorkspaceCommand, assertWorkspaceEntityTransitions, assertWorkspaceRootTransition, assertWorkspaceTransition, canWorkspace, type WorkspaceCapability, type WorkspaceRole } from "./permissions"
 import type { Command } from "./commandTypes"
 

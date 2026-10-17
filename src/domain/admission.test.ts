@@ -11,7 +11,7 @@ import {
 } from "./identity"
 import { ProofStore } from "./proofs"
 import { AdmissionController } from "./admission"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "./model"
 
 beforeAll(async () => {

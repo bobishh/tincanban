@@ -5,6 +5,7 @@ import { publicBoardView, type PublicColumn, type PublicItem } from "./publicBoa
 import type { PublicBoardProjection } from "./publicSchema"
 import { usePublicCardAges } from "./publicCardAges"
 import { publicDiscussionView, publicItemDocuments, publicReferenceItem } from "./publicDiscussions"
+import { configuredCardFields } from "../domain/cardPresentation"
 import { itemNarrative } from "../domain/narrative"
 import { cardStageButtons } from "../domain/cardStageButtons"
 import { useColumnCollapse } from "../ui/useColumnCollapse"
@@ -13,7 +14,6 @@ import TincanbanPageLayout from "../components/TincanbanPageLayout.vue"
 import TincanbanHeading from "../components/TincanbanHeading.vue"
 import BoardToolbar from "../components/BoardToolbar.vue"
 const ItemDetailDialog = defineAsyncComponent<Component>(() => import("../components/ItemDetailDialog.vue"))
-const LeadDetailWindow = defineAsyncComponent<Component>(() => import("../components/LeadDetailWindow.vue"))
 const ItemDocuments = defineAsyncComponent<Component>(() => import("../components/ItemDocuments.vue"))
 const WorkspaceChat = defineAsyncComponent<Component>(() => import("../components/WorkspaceChat.vue"))
 
@@ -26,12 +26,11 @@ const filters = ref(defaultBoardFilters())
 const selectedId = ref<string | null>(null)
 const conversation = ref<{ targetId: string; messageId?: string; rootId?: string } | null>(null)
 const selected = computed(() => view.value.items.find(item => item.id === selectedId.value) ?? null)
-const selectedLead = computed(() => selected.value ? view.value.leads.get(selected.value.id) : undefined)
 const hasFilters = computed(() => Boolean(search.value.trim()) || activeFilterCount(filters.value) > 0)
 const { isCollapsed, toggle } = useColumnCollapse(() => `public:${props.projection.board.id}`, () => hasFilters.value)
 const cardAgeFor = usePublicCardAges(() => view.value.board.cardAgingPolicy)
-const entityName = computed(() => view.value.board.entityName || (view.value.board.preset?.key === "job-search" ? "lead" : "item"))
-const workspaceLabel = computed(() => view.value.board.title.toLowerCase() === "job search" ? "jobs" : view.value.board.title)
+const entityName = computed(() => view.value.board.entityName || "item")
+const workspaceLabel = computed(() => view.value.board.title)
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase()
   return new Map(view.value.columns.map(column => [column.id, column.items.filter(item => {
@@ -70,17 +69,17 @@ function open(item: PublicItem, event?: MouseEvent) {
   selectedId.value = item.id
 }
 function cardFields(item: PublicItem) {
-  const summary = view.value.leads.has(item.id) ? ["company", "role", "priority", "location", "fitScore"].map(name => view.value.board.preset?.bindings[`field.${name}`]) : []
+
   return view.value.fields.flatMap(field => {
     const value = item.values[field.id]
-    if (summary.includes(field.id) || value === null || value === undefined || value === "") return []
+    if (value === null || value === undefined || value === "") return []
     const label = field.valueType === "select" ? field.options[String(value)]?.title : typeof value === "boolean" ? value ? "Yes" : "No" : String(value)
     return label ? [{ id: field.id, title: field.title, value: label }] : []
   })
 }
 function cardPresentation(item: PublicItem, column: PublicColumn) {
   const age = cardAgeFor(item, column)
-  return { lead: view.value.leads.get(item.id), notes: item.body, fields: cardFields(item),
+  return { notes: item.body, fields: cardFields(item), summaryFields: configuredCardFields(item, view.value.fields, view.value.board.cardPresentation?.summaryFieldIds ?? []),
     showFields: hasFilters.value, discussion: discussions.value.cardDiscussions.get(item.id), moved: false,
     ageLevel: age?.level, ageLabel: age?.label }
 }
@@ -100,7 +99,7 @@ const chatWindowId = computed(() => conversation.value?.rootId ? `conversation:$
 const boardDocuments = computed(() => publicItemDocuments(props.projection, view.value.board.id))
 const selectedDocuments = computed(() => selected.value ? publicItemDocuments(props.projection, selected.value.id) : [])
 const selectedSubitems = computed(() => selected.value ? view.value.items.filter(item => item.placement.parentId === selected.value?.id) : [])
-const notesFieldId = computed(() => view.value.board.preset?.bindings["field.notes"])
+const notesFieldId = computed(() => view.value.board.cardPresentation?.narrativeFieldId)
 const selectedNarrative = computed(() => selected.value ? itemNarrative(selected.value, notesFieldId.value) : "")
 const noOpMove = async () => undefined
 const noOpSaveDocument = async () => undefined
@@ -124,7 +123,7 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
       <div class="brand"><span class="brand-presence"><span class="brand-mark is-empty" title="Read-only board"><svg viewBox="0 0 64 80" role="img" aria-label="Read-only board"><use href="/logo.svg?v=4#can-logo" /></svg></span></span><div><TincanbanHeading :label="workspaceLabel" /></div></div>
       <div class="top-actions"><button class="button button-quiet" type="button" aria-label="Workspace chat" @click="conversation = { targetId: view.board.id }">Chat</button></div>
     </template>
-    <BoardToolbar v-model:search="search" v-model:filters="filters" :columns="view.columns" :fields="view.fields" :placeholder="view.board.preset?.key === 'job-search' ? 'Search company, role, notes' : 'Search cards'">
+    <BoardToolbar v-model:search="search" v-model:filters="filters" :columns="view.columns" :fields="view.fields" placeholder="Search cards">
       <span class="save-state">{{ hasFilters ? `${visibleItems} of ${totalItems}` : totalItems }} cards</span>
     </BoardToolbar>
     <div v-if="hasFilters" class="filter-summary" aria-live="polite"><span>{{ visibleItems ? 'Showing matching cards' : 'No matching cards' }}</span><button class="button button-small button-quiet" type="button" @click="clearFilters">Clear search and filters</button></div>
@@ -133,10 +132,7 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
     </BoardSurface>
     <ItemDocuments :documents="boardDocuments" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" />
 
-    <LeadDetailWindow v-if="selected && selectedLead" :lead="selectedLead" :item="selected" :board="view.board" :columns="view.columns" :workspace-id="scope" :read-only="true" :narrative="selectedNarrative" :move="noOpMove" @close="selectedId = null">
-      <template #primary><ItemDocuments :documents="selectedDocuments" :workspace-id="scope" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" /></template>
-    </LeadDetailWindow>
-    <ItemDetailDialog v-else-if="selected" :workspace-id="scope" :item="selected" :columns="view.columns" :card-stage-buttons="cardStageButtons(view.board, view.columns)" :read-only="true" :move-to-column="noOpMove" :narrative="selectedNarrative" :narrative-field-id="notesFieldId" :subitems="selectedSubitems" :fields="view.fields" :documents="selectedDocuments" :save-document="noOpSaveDocument" :update-document="noOpUpdateDocument" :quick-note="''" @close="selectedId = null">
+    <ItemDetailDialog v-if="selected" :workspace-id="scope" :item="selected" :columns="view.columns" :card-stage-buttons="cardStageButtons(view.board, view.columns)" :read-only="true" :move-to-column="noOpMove" :narrative="selectedNarrative" :narrative-field-id="notesFieldId" :subitems="selectedSubitems" :fields="view.fields" :documents="selectedDocuments" :save-document="noOpSaveDocument" :update-document="noOpUpdateDocument" :quick-note="''" @close="selectedId = null">
       <template #documents><ItemDocuments :documents="selectedDocuments" :workspace-id="scope" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" /></template>
     </ItemDetailDialog>
     <WorkspaceChat v-if="conversation" :key="chatWindowId" :read-only="true" :workspace-id="scope" :workspace-scope="scope" :window-id="chatWindowId" :title="conversation.rootId ? 'Discussion' : conversation.targetId === view.board.id ? 'Board discussion' : 'Discussion'" :field-titles="discussions.fieldTitles" :reference-choices="discussions.referenceChoices" :all-messages="discussions.allMessages" :messages="chatMessages" :target-id="conversation.messageId" :workspace-title="view.board.title" :current-person-id="''" :sending="false" :error="''" :loading="false" :connected="false" :typing-people="[]" @close="conversation = null" @reference="openReference" @thread="openMessageThread" />

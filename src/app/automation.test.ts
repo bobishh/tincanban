@@ -3,7 +3,7 @@ import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, verif
 import { createDelegatedCertificate, certHashDefault } from "../domain/proofs"
 import { profileFromIdentitySeedForDevice, identitySeedFromPrivateKey } from "@meta-uber/mesh-identity"
 import { resolveSigningContext } from "../domain/signingContext"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { prepareAutomationActivation, type AutomationWorkerIdentity } from "./automation"
 
 beforeEach(resetIdentityStorageForTest)
@@ -28,8 +28,8 @@ it("Given owner and job board, when approving Worker, then grants only bound col
   expect(packet.initial.document).toBe("AQ")
   expect(packet.version).toBe(2)
   expect(packet.definition.payload).toMatchObject({
-    kind: "automation-definition", version: 1, type: "job-intake", typeVersion: 1,
-    parameters: { sources: ["website", "email"] },
+    kind: "automation-definition", version: 1, type: "job-intake", typeVersion: 2,
+    parameters: { sources: ["website"] },
     scope: { workspaceId: doc.id, boardId: packet.bindings.boardId, grantId: packet.grant.payload.grantId },
   })
   expect(await verifyEnvelope(packet.definition, owner.device.publicKey)).toBe(true)

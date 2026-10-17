@@ -5,7 +5,7 @@ test("Given a detailed board already uploaded to Rusty, When unchanged polls rep
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   const result = await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     await app.reclassifyWorkspace(app.activeWorkspace.id)
     const { BlindReplica } = await import("/src/sync/blindReplication.ts")
     const { createBlindSnapshotRevision } = await import("/src/sync/blindSnapshotRevision.ts")

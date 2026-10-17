@@ -16,7 +16,7 @@ test("Given an enrolled mobile owner device with large history, when desktop pho
     await page.goto("/")
     await ensureJobSearchWorkspace(page)
     await page.evaluate(async () => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       const column = Object.values(app.getActiveDoc()!.entities).find(entity => entity.kind === "column" && entity.title === "Lead")!
       await app.executeCommandAsync({ kind: "createItem", parentId: column.id, title: "Mobile profile history", body: "Description line.\n".repeat(18400) })
     })

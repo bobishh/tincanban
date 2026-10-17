@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { beforeAll, expect, it } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { strToU8, unzipSync, zipSync } from "fflate"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { exportWorkspaceBundleV2, forkWorkspaceDocumentV2, readWorkspaceBundleV2 } from "./workspaceBundle"
 import type { WorkspaceDocumentV2 } from "./model"
 

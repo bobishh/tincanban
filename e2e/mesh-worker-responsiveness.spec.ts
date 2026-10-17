@@ -6,7 +6,7 @@ test("Given mesh computation pending in its worker, when searching cards, then b
   const workerCreated = page.waitForEvent("worker", worker => worker.url().includes("meshScopeWorker"))
   await page.evaluate(async () => {
     const { createBackgroundMeshScope } = await import("/src/sync/meshScopeClient.ts")
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const runtime = createBackgroundMeshScope(state.activeWorkspace.id, "test-secret")
     await runtime.startDocumentSync("test-local", "test-remote")
     Object.assign(window, { testMeshScope: runtime, testMeshDocument: await state.readWorkspaceBytes(state.activeWorkspace.id) })
@@ -37,7 +37,7 @@ test("Given malformed mesh data, when worker rejects it, then board remains usab
   await populatedBoard(page)
   const result = await page.evaluate(async () => {
     const { createBackgroundMeshScope } = await import("/src/sync/meshScopeClient.ts")
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const runtime = createBackgroundMeshScope(state.activeWorkspace.id, "test-secret")
     await runtime.startDocumentSync("test-local", "test-remote")
     let rejected = false

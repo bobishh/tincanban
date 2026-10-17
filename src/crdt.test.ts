@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest"
 import { initializeAutomerge, mergeWorkspaceDocs, newWorkspaceDoc, saveWorkspaceDoc, loadWorkspaceDoc, updateWorkspaceDoc, workspaceHeads } from "./crdt"
 import type { Workspace } from "./types"
 
-const emptyWorkspace: Workspace = { leads: [], documents: [], templates: [], artifacts: [] }
+const emptyWorkspace: Workspace = { items: [], documents: [], templates: [], artifacts: [] }
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")

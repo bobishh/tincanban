@@ -17,19 +17,9 @@ import {
 import { projectItemPriority } from "./domain/priority";
 import { archivedItemsForBoard, isArchiveColumn, isItemArchived } from "./domain/archive";
 import { stateRuntime } from "./stateContext";
-import { statusOrder } from "./types";
 import { projectPendingItemMoves } from "./pendingItemMoves";
 
 export function createStateDerived() {
-  const columns = computed(() =>
-    statusOrder.map((status) => ({
-      status,
-      leads: stateRuntime.workspace.leads.filter(
-        (lead) => lead.status === status,
-      ),
-    })),
-  );
-
   const activeBoard = computed(() => {
     void stateRuntime.docVersion.value;
     return stateRuntime.activeDoc
@@ -38,9 +28,6 @@ export function createStateDerived() {
         ) ?? null)
       : null;
   });
-  const isBlankBoard = computed(
-    () => activeBoard.value?.preset?.key === "blank",
-  );
   const genericColumns = computed(() =>
     projectGenericColumns(activeBoard.value),
   );
@@ -48,9 +35,7 @@ export function createStateDerived() {
   const placementIssues = computed(() => projectPlacementIssues());
 
   return {
-    columns,
     activeBoard,
-    isBlankBoard,
     genericColumns,
     boardFields,
     placementIssues,
@@ -83,7 +68,7 @@ function projectGenericColumns(board: Board | null) {
 }
 
 function textNotesFieldId(entities: WorkspaceDocumentV2["entities"], board: Board): string | undefined {
-  const id = board.preset?.bindings["field.notes"]
+  const id = board.cardPresentation?.narrativeFieldId
   return id && entities[id]?.kind === "field" && entities[id].valueType === "text" ? id : undefined
 }
 

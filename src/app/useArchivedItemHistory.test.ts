@@ -54,15 +54,15 @@ it("Given a pending history read, when selection changes, then discard its late 
 })
 
 it("Given a job-search lead, when earlier history is requested then selection changes, then read that lead and discard its stale page", async () => {
-  const selectedItemId = ref<string | null>(null), selectedLeadId = ref<string | null>("lead")
+  const selectedItemId = ref<string | null>("lead")
   const scope = effectScope()
-  const history = scope.run(() => useArchivedItemHistory({ tincanban: { activeWorkspace: reactive({ id: "board" }) } as never, selectedItemId, selectedLeadId }))!
+  const history = scope.run(() => useArchivedItemHistory({ tincanban: { activeWorkspace: reactive({ id: "board" }) } as never, selectedItemId }))!
   let complete!: (page: unknown) => void
   ports.load.mockImplementation(() => new Promise(resolve => { complete = resolve }))
   const pending = history.loadEarlierItemHistory()
   await vi.waitUntil(() => ports.create.mock.calls.length === 1)
   expect(ports.create.mock.calls[0]?.[2]).toBe("lead")
-  selectedLeadId.value = "other-lead"
+  selectedItemId.value = "other-lead"
   complete({ entries: [{ hash: "stale-lead" }], hasMore: false })
   await pending
   expect(history.archivedItemHistory.value).toEqual([])

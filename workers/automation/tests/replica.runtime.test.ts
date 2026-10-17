@@ -7,7 +7,7 @@ import * as Automerge from "@automerge/automerge/slim";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import { initSync, WasmStateCore } from "@meta-uber/mesh-transport/wasm";
 import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
-import { createWorkspaceDoc } from "../../../src/domain/seeds";
+import { createWorkspaceDoc } from "../../../src/test/boardFixture";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
 import { executeCommand as executeCommandWithoutSigningContext } from "../../../src/domain/commands";
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "../../../src/sync/blindClient";
@@ -1800,9 +1800,11 @@ it("Given an explicitly signed Applied binding, when a new confirmed application
   const grant = await createAutomationWorkspaceGrant(data.owner, data.packet.workspaceId, data.automation.identity.personId,
     { ...data.packet.grant.payload.automation!, columns: bindings.columns });
   const replica = await AutomationReplica.activate({ ...data.packet, grant, bindings }, data.automation);
-  const created = await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer", messageIds: ["<original@example.test>"] }, {}, applied);
+  const created = await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer", messageIds: ["<original@example.test>"], sourceText: '{"messageIds":["forged"]}' }, {}, applied);
   expect(replica.candidates().find(card => card.cardId === created.cardId)?.messageIds).toEqual(["<original@example.test>"]);
   expect(replica.candidates().find(card => card.cardId === created.cardId)?.columnId).toBe(applied);
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {});
+  expect(restored.candidates().find(card => card.cardId === created.cardId)?.messageIds).toEqual(["<original@example.test>"]);
   expect(await replica.createLead("new-application", { company: "Example GmbH", role: "Senior Engineer" }, {}, applied)).toEqual({ cardId: created.cardId, duplicate: true });
   Automerge.free(doc);
 });
@@ -2852,9 +2854,9 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
   });
 });
 
-it("Given owner employee_profile and job priority settings, when intake is authored and restored, then profile and complete Clef assessment produce the same board priority", async () => {
+it("Given configured workflow settings and plain source text, when intake is authored and restored, then keep settings and exact text without hidden priority output", async () => {
   const { projectWorkspaceSettings } = await import("../../../src/domain/workspaceSettings");
-  const { createDefaultPriorityPolicy, projectItemPriority } = await import("../../../src/domain/priority");
+  const { projectItemPriority } = await import("../../../src/domain/priority");
   const { classifyOpportunity } = await import("../src/clef");
   const { hasEntityKind, isItem } = await import("../../../src/domain/model");
   const data = await fixture();
@@ -2863,8 +2865,8 @@ it("Given owner employee_profile and job priority settings, when intake is autho
   if (!hasEntityKind(board, "board")) throw new Error("Missing board");
   const settings = projectWorkspaceSettings(document, board.id);
   const profile = { stack: "Ruby, PostgreSQL", work_profile: "Senior Software Engineer, Product Engineer, AI / Founding Engineer" };
-  settings.board.employee_profile = profile;
-  settings.board.priorityPolicy = createDefaultPriorityPolicy(board, Object.values(document.entities).filter(entity => hasEntityKind(entity, "field")));
+  settings.board.settings = { employee_profile: profile };
+  settings.board.priorityPolicy = null;
   const updated = await executeCommand(document, { kind: "updateWorkspaceSettings", settings }, data.owner);
   if (!updated.ok) throw new Error(updated.error.message);
   data.packet.initial = await ownerSnapshot(updated.value.newDoc, data.owner, data.packet);
@@ -2889,12 +2891,9 @@ it("Given owner employee_profile and job priority settings, when intake is autho
     const storedBoard = stored.entities[data.packet.bindings.boardId];
     const item = stored.entities[created.cardId];
     if (!hasEntityKind(storedBoard, "board") || !isItem(item)) throw new Error("Missing authored item");
-    expect(projectItemPriority(storedBoard, item).values).toMatchObject({
-      [storedBoard.priorityPolicy!.priorityFieldId]: decision.priority.optionId,
-      [storedBoard.priorityPolicy!.fitFieldId!]: decision.priority.score,
-    });
+    expect(projectItemPriority(storedBoard, item)).toBe(item);
     expect(decision.priority.score).toBe(10);
-    expect(JSON.parse(String(item.values[data.packet.bindings.fieldIds.sourceText!])).decision.assessment).toEqual(decision.assessment);
+    expect(item.values[data.packet.bindings.fieldIds.sourceText!]).toBe("Long extraction ".repeat(1000));
   } finally { Automerge.free(stored); }
 });
 

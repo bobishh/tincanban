@@ -1,7 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { readFile } from "node:fs/promises"
 import { beforeAll, expect, it, vi } from "vitest"
-import { createWorkspaceDoc } from "./domain/seeds"
+import { createWorkspaceDoc } from "./test/boardFixture"
 import { createWorkspaceViewReader, workspaceEntitiesAtHeads } from "./crdtHistory"
 
 beforeAll(async () => {

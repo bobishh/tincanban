@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
 import { prepareCommand } from "./commandHandlers"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { hasEntityKind, type WorkspaceDocumentV2 } from "./model"
 import { validateWorkspaceDoc } from "./validation"
 

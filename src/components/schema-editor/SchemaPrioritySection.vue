@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import AutoGrowTextarea from "../AutoGrowTextarea.vue";
-import { computed, ref, useId } from "vue";
-import { employeeProfileSchema } from "../../domain/entitySchemas";
-import type { EmployeeProfile } from "../../domain/jobPriority";
+import { computed } from "vue";
 import type { FieldDefinition, PriorityPolicy } from "../../domain/model";
 
 type RuleOperator = "equals" | "at_least" | "at_most" | "is_set" | "contains";
 
 const props = defineProps<{
-  employeeProfile: EmployeeProfile;
   criterionFields: FieldDefinition[];
   errors: string[];
   policy: PriorityPolicy | null;
@@ -20,36 +16,10 @@ const emit = defineEmits<{
   (event: "add-rule"): void;
   (event: "disable"): void;
   (event: "enable"): void;
-  (event: "use-job-match"): void;
   (event: "remove-rule", index: number): void;
 }>();
 
 const currentPolicy = computed(() => props.policy);
-const currentProfile = computed(() => props.employeeProfile);
-
-const importError = ref("");
-const importNotice = ref("");
-const importId = useId();
-async function importProfile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  importError.value = "";
-  importNotice.value = "";
-  try {
-    if (file.size > 20_000) throw new Error("Employee profile file must be under 20 KB");
-    const json: unknown = JSON.parse(await file.text());
-    const candidate = json && typeof json === "object" && "employee_profile" in json ? json.employee_profile : json;
-    const result = employeeProfileSchema.safeParse(candidate);
-    if (!result.success) throw new Error("Profile must contain stack and work_profile text within their length limits");
-    if (props.readOnly) return;
-    Object.assign(currentProfile.value, result.data);
-    importNotice.value = "Profile imported. Save priority rules to apply.";
-  } catch (error) {
-    importError.value = error instanceof Error ? error.message : "Cannot read employee profile";
-  } finally { input.value = ""; }
-}
-
 function fieldForRule(fieldId: string) {
   return props.criterionFields.find((field) => field.id === fieldId);
 }
@@ -118,27 +88,16 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
 <template>
   <div class="schema-tab-content priority-settings">
     <label class="priority-toggle"><input type="checkbox" role="switch" :checked="!!currentPolicy" :disabled="readOnly" @change="($event.target as HTMLInputElement).checked ? emit('enable') : emit('disable')" />Automatic priority</label>
-    <p class="dialog-copy">CLEF supplies vacancy assessments through an approved automation. This board calculates fit and priority from the saved assessments.</p>
-    <p class="dialog-copy">This changes priority calculation, not whether CLEF runs.</p>
+    <p class="dialog-copy">Calculate values from configured fields and weighted rules.</p>
     <div v-if="errors.length" class="schema-error-banner" role="alert">
       {{ errors[0] }}
     </div>
-
-    <fieldset :disabled="readOnly" class="priority-profile" aria-label="Employee profile">
-      <legend>Employee profile</legend>
-      <div class="priority-profile-import"><label class="button button-small" :for="importId">Import profile JSON</label><input :id="importId" class="sr-only" type="file" accept="application/json,.json" aria-label="Import employee profile" @change="importProfile" /><p v-if="importNotice" class="dialog-copy" role="status">{{ importNotice }}</p></div>
-      <p v-if="importError" role="alert">{{ importError }}</p>
-      <p>Shared with this board and its approved automation. Clef compares vacancies with this profile.</p>
-      <label><span>Employee stack</span><AutoGrowTextarea v-model="currentProfile.stack" aria-label="Employee stack" rows="3" placeholder="Languages, frameworks, infrastructure and experience" /></label>
-      <label><span>Employee work profile</span><AutoGrowTextarea v-model="currentProfile.work_profile" aria-label="Employee work profile" rows="4" placeholder="Responsibilities, role, seniority and preferred work" /></label>
-    </fieldset>
 
     <template v-if="currentPolicy">
       <header class="priority-settings-head">
         <div>
           <h3>Automatic priority</h3>
-          <p v-if="currentPolicy.evaluator === 'job-fit-v1'">Missing or uncertain evidence earns no points. Changing the profile invalidates earlier fit comparisons.</p>
-          <p v-else>
+          <p>
             Matching rules add points. Fit is clamped to 0–10; priority follows
             the thresholds.
           </p>
@@ -159,13 +118,6 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
         </select>
       </label>
 
-      <fieldset v-if="currentPolicy.evaluator === 'job-fit-v1'" :disabled="readOnly" aria-label="Job match criteria">
-        <legend>Job match criteria</legend>
-        <p>Company recognition · 20%</p><p>Company stability · 20%</p>
-        <p>Stack match · 30%</p><p>Work profile match · 30%</p>
-        <p>Clef supplies assessments during intake. Existing and manually added cards without assessments start at 0.</p>
-      </fieldset>
-      <button v-else class="button" type="button" :disabled="readOnly" @click="emit('use-job-match')">Use job match priority</button>
       <fieldset
         v-if="currentPolicy.evaluator === 'weighted-rules-v1'"
         :disabled="readOnly"
@@ -299,7 +251,7 @@ function defaultRuleValue(field: FieldDefinition): boolean | number | string {
     <section v-else class="priority-empty">
       <h3>Manual priority</h3>
       <p>
-        Priority is set manually. Enable the switch and save to calculate priority from saved assessments.
+        Values are set manually. Enable automatic priority and configure rules to calculate values from fields.
       </p>
 
     </section>

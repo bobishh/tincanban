@@ -104,7 +104,7 @@ test("Given archive role moves, when the board updates, then old preset bindings
   await expect(oldArchive).toHaveClass(/column-archived/)
 
   await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { projectWorkspaceSettings } = await import("/src/domain/workspaceSettings.ts")
     const tincanban = useTincanban()
     const doc = tincanban.getActiveDoc()
@@ -208,7 +208,7 @@ test("Given a board taller than the viewport, when Rejected and Archive fold, th
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const app = useTincanban()
     await app.whenReady()
     const columns = Object.values(app.getActiveDoc()!.entities).filter(entity => entity.kind === "column")

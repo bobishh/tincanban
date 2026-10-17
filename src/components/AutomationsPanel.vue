@@ -1,31 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue"
-import { automationTypes } from "../domain/automationContract"
+import { computed, ref } from "vue"
 import type { AutomationManagement } from "../app/useAutomations"
 const props = defineProps<{ management: AutomationManagement; owner: boolean }>()
 const adding = ref(false)
-const name = ref("Job intake")
+const selectedType = ref("")
+const template = computed(() => props.management.types.value.find(type => `${type.type}:${type.version}` === selectedType.value) ?? props.management.types.value.at(-1))
+const name = ref(template.value?.title ?? "")
 const address = ref("https://automation.meta-uber-engineer.dev")
 const consent = ref(false)
 const removing = ref("")
 const approving = ref("")
-const approvalMode = ref<"renew" | "adopt" | "email" | "evidence">("renew")
+const approvalMode = ref<"renew" | "adopt">("renew")
 const approvalConsent = ref(false)
 const stateLabel = { active: "Active", paused: "Paused", deleted: "Removed" }
 async function connect() {
   try {
-    await props.management.add(address.value, { name: name.value, type: "job-intake", typeVersion: 2, parameters: { sources: ["website"] } }, consent.value)
+    if (!template.value) throw new Error("Configure an automation on this board")
+    await props.management.add(address.value, { name: name.value || template.value.title, type: template.value.type, typeVersion: template.value.version, parameters: template.value.defaults }, consent.value)
     adding.value = false; consent.value = false
   } catch { /* Application boundary exposes the failure without losing the form. */ }
 }
 async function setState(record: AutomationManagement["records"]["value"][number], state: "active" | "paused" | "deleted") {
   try { await props.management.setState(record, state); removing.value = "" } catch { /* Keep failed action visible. */ }
-}
-async function enableEmail(record: AutomationManagement["records"]["value"][number]) {
-  requestApproval(record, "email")
-}
-async function enableEvidence(record: AutomationManagement["records"]["value"][number]) {
-  requestApproval(record, "evidence")
 }
 function requestApproval(record: AutomationManagement["records"]["value"][number], mode: typeof approvalMode.value) {
   approving.value = record.entity.id; approvalMode.value = mode; approvalConsent.value = false
@@ -42,9 +38,9 @@ function approvalStatus(record: AutomationManagement["records"]["value"][number]
 async function confirmApproval(record: AutomationManagement["records"]["value"][number]) {
   if (!approvalConsent.value) return
   try {
-    await props.management.retry(record, { name: record.definition.name, type: "job-intake",
-      typeVersion: approvalMode.value === "evidence" ? 2 : record.definition.typeVersion,
-      parameters: approvalMode.value === "email" ? { sources: ["website", "email"] } : record.definition.parameters })
+    await props.management.retry(record, { name: record.definition.name, type: record.definition.type,
+      typeVersion: record.definition.typeVersion,
+      parameters: record.definition.parameters })
     approving.value = ""; approvalConsent.value = false
   } catch { /* Keep the consent and failed approval visible. */ }
 }
@@ -59,10 +55,10 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
     <p v-if="!owner" class="dialog-copy">The workspace owner manages automations.</p>
     <form v-if="adding && owner" class="automation-form" @submit.prevent="connect">
       <label>Automation name<input v-model="name" aria-label="Automation name" required maxlength="100" /></label>
-      <p>Type: {{ automationTypes[0].title }}</p>
+      <label><span>Type</span><select v-model="selectedType"><option v-for="type in management.types.value" :key="`${type.type}:${type.version}`" :value="`${type.type}:${type.version}`">{{ type.title }} · {{ type.version }}</option></select></label>
       <label>Worker address<input v-model="address" aria-label="Worker address" required placeholder="https://automation.example" /></label>
-      <p class="dialog-copy">Job intake creates Leads from website submissions. Email forwarding requires a configured receiving route.</p>
-      <p class="dialog-copy">Worker receives reading access to this entire workspace and permission to create Leads, retain vacancy evidence and advance matched applications. Access expires after 30 days.</p>
+      <p class="dialog-copy">Available workflows and their settings come from this board configuration.</p>
+      <p class="dialog-copy">Worker can read this workspace and perform the listed configured actions. Access expires after 30 days.</p>
       <label class="automation-consent"><input v-model="consent" type="checkbox" aria-label="Allow Worker to read this workspace" />Allow Worker to read this workspace</label>
       <p v-if="!management.storage.value.length" role="status">Connect Rusty storage first.</p>
       <div class="automation-actions"><button class="button" type="submit" :disabled="management.busy.value || !consent || !management.storage.value.length">Connect automation</button><button class="button button-quiet" type="button" :disabled="management.busy.value" @click="adding = false">Cancel</button></div>
@@ -70,17 +66,12 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
     <article v-for="record in management.records.value" :key="record.entity.id" :aria-label="record.definition.name" class="automation-record">
       <h4>{{ record.definition.name }}</h4>
       <p class="automation-state" :class="{ confirmed: management.confirmation(record) }">{{ approvalStatus(record) || `${stateLabel[record.control.state]} · ${management.confirmation(record) ? 'confirmed by Worker' : 'waiting for Worker'}` }}</p>
-      <p class="dialog-copy">{{ automationTypes.find(value => value.type === record.definition.type)?.title }} · {{ record.entity.executor.origin }}</p>
+      <p class="dialog-copy">{{ management.types.value.find(value => value.type === record.definition.type)?.title }} · {{ record.entity.executor.origin }}</p>
       <p v-if="management.observationErrors.value[record.entity.id]" class="dialog-copy">{{ management.observationErrors.value[record.entity.id] }}</p>
-      <template v-if="owner && record.control.state !== 'deleted' && record.definition.typeVersion === 1">
-        <p class="dialog-copy">Allow this automation to keep original vacancy evidence with new cards.</p>
-        <button class="button button-small" type="button" :disabled="management.busy.value" @click="enableEvidence(record)">Enable vacancy evidence</button>
-      </template>
       <section v-if="owner && management.email.value[record.entity.id]?.route" aria-label="Email forwarding" class="automation-record">
         <h4>Email forwarding</h4>
-        <p v-if="management.email.value[record.entity.id]?.route" class="dialog-copy">Forward copies of job emails from {{ management.email.value[record.entity.id]?.route?.mailbox }} to this private address. Keep originals in your inbox.</p>
+        <p v-if="management.email.value[record.entity.id]?.route" class="dialog-copy">Forward copies of emails from {{ management.email.value[record.entity.id]?.route?.mailbox }} to this private address. Keep originals in your inbox.</p>
         <input v-if="management.email.value[record.entity.id]?.route" aria-label="Forwarding address" readonly :value="management.email.value[record.entity.id]?.route?.address" />
-        <button v-if="!record.definition.parameters.sources.includes('email')" class="button button-small" type="button" :disabled="management.busy.value" @click="enableEmail(record)">Enable email and Applied</button>
         <p v-else-if="!management.confirmation(record)" role="status">Email activation pending</p>
         <p v-else role="status">Email enabled</p>
         <a v-if="management.email.value[record.entity.id]?.receipt.confirmation" :href="management.email.value[record.entity.id]?.receipt.confirmation?.url" target="_blank" rel="noopener noreferrer">Confirm Gmail forwarding</a>
@@ -93,7 +84,7 @@ async function retry(record: AutomationManagement["records"]["value"][number]) {
         <button class="button button-small button-quiet" type="button" :disabled="management.busy.value" @click="removing = record.entity.id">Remove</button>
       </div>
       <form v-if="approving === record.entity.id" aria-label="Confirm automation approval" class="automation-form" @submit.prevent="confirmApproval(record)">
-        <p class="dialog-copy">This Worker receives reading access to this entire workspace and permission to create Leads{{ approvalMode === 'email' || record.definition.parameters.sources.includes('email') ? ' and advance matched applications' : '' }}{{ approvalMode === 'evidence' || record.definition.typeVersion === 2 ? ', retaining original vacancy evidence' : '' }}. Access expires after 30 days.</p>
+        <p class="dialog-copy">Worker can read this workspace and perform the listed configured actions. Access expires after 30 days.</p>
         <p v-if="approvalMode === 'adopt'" class="dialog-copy">Keep this existing Worker and its saved events. Confirm its new automation approval.</p>
         <label class="automation-consent"><input v-model="approvalConsent" type="checkbox" aria-label="Allow Worker to read this workspace" />Allow Worker to read this workspace</label>
         <div class="automation-actions"><button class="button button-small" type="submit" :disabled="management.busy.value || !approvalConsent">Confirm approval</button><button class="button button-small button-quiet" type="button" :disabled="management.busy.value" @click="approving = ''; approvalConsent = false">Cancel</button></div>

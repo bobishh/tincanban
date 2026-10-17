@@ -5,8 +5,8 @@ test("Given a saved admitted board, When a fresh tab reloads unchanged state, Th
   await page.goto("/")
   await createJobSearchWorkspace(page, "Saved admission")
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
-    await app.createLeadAsync({ company: "Already admitted", role: "Engineer", status: "lead" })
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+    await app.createItemAsync({ title: "Already admitted — Engineer", parentId: app.genericColumns.value[0].id, values: Object.fromEntries(["company", "role"].map((key, index) => [app.activeBoard.value!.preset!.bindings[`field.${key}`], ["Already admitted", "Engineer"][index]])) })
   })
   await page.addInitScript(() => {
     const OriginalWorker = Worker
@@ -82,7 +82,7 @@ for (const width of [390, 1440]) for (const fail of [false, true]) test(`Given a
   await page.goto("/")
   await createJobSearchWorkspace(page, "Saved board")
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const A = await import("/@id/@automerge/automerge/slim")
     const storage = (await import("/src/storage.ts")).defaultStorage
     const { executeCommand } = await import("/src/domain/commands.ts")

@@ -1,3 +1,4 @@
+import type { Preset } from "./seeds"
 import type * as Automerge from "@automerge/automerge/slim";
 import type {
   ChangeProof,
@@ -20,10 +21,10 @@ export type NarrativeFoldSources = { expectedBody: string; notesFieldId?: string
 
 export type Command =
   | { kind: "migrateWorkspaceFormat" }
-  | { kind: "createWorkspace"; title: string; preset: "job-search" | "blank" }
+  | { kind: "createWorkspace"; title: string; preset: Preset }
   | { kind: "renameWorkspace"; title: string }
   | { kind: "setWorkspaceArchived"; archived: boolean }
-  | { kind: "createBoard"; title: string; preset: "job-search" | "blank" }
+  | { kind: "createBoard"; title: string; preset: Preset }
   | { kind: "createColumn"; boardId: string; title: string; archive?: true; collapsible?: boolean; beforeId?: string | null }
   | { kind: "createItem"; id?: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null }
   | { kind: "createItemWithApplicationSource"; id: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null; data: ApplicationSourceData }
@@ -39,19 +40,20 @@ export type Command =
       boardId: string;
       title: string;
       valueType: string;
+      format?: "plain" | "markdown" | "json" | "code";
       required: boolean;
       min?: number | null;
       max?: number | null;
       options?: Record<string, { title: string }>;
     }
-  | { kind: "patchField"; fieldId: string; title?: string; required?: boolean; min?: number | null; max?: number | null; valueType?: string }
+  | { kind: "patchField"; fieldId: string; title?: string; required?: boolean; min?: number | null; max?: number | null; valueType?: string; format?: "plain" | "markdown" | "json" | "code" | null }
   | { kind: "createFieldOption"; fieldId: string; title: string; beforeId?: string | null }
   | { kind: "patchFieldOption"; fieldId: string; optionId: string; title?: string; archived?: boolean }
   | {
       kind: "addDocument";
       id?: string;
       itemId: string;
-      documentKind: "cv" | "cover_letter" | "note" | "attachment";
+      documentKind: string;
       title: string;
       format: "markdown" | "html" | "pdf" | "file" | "path";
       content?: string | null;
@@ -67,7 +69,7 @@ export type Command =
       itemId: string;
       templateId: string;
       title: string;
-      artifactKind: "cv" | "cover_letter";
+      artifactKind: string;
       pdf: FileReference;
       sourceMarkdown?: FileReference | null;
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { parseAutomationDefinition, automationTypes, type AutomationDefinition } from "../domain/automationContract"
 import type { ApplicationReviewOption, ApplicationReviewResponse } from "../domain/applicationReviewData"

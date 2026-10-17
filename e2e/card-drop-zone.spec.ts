@@ -9,7 +9,7 @@ for (const targetHasCard of [false, true]) {
     test.setTimeout(120_000)
     await populatedBoard(page, true)
     if (targetHasCard) await page.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const destination = state.genericColumns.value.find(column => column.title === "Applied")!
       await state.executeCommandAsync({ kind: "moveEntity", entityId: "performance-card-1", parentId: destination.id, beforeId: null })
     })

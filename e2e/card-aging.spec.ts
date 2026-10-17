@@ -4,7 +4,7 @@ test("idle cards age while the page stays open and editing restores freshness", 
   await page.clock.install({ time: new Date("2026-09-01T12:00:00Z") })
   await page.goto("/")
   const id = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const tincanban = useTincanban()
     await tincanban.whenReady()
     await tincanban.createWorkspaceAsync("Aging demo", "blank")
@@ -30,7 +30,7 @@ test("idle cards age while the page stays open and editing restores freshness", 
 test("aging threshold changes are explained before applying", async ({ page }) => {
   await page.goto("/")
   await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const tincanban = useTincanban()
     await tincanban.whenReady()
     await tincanban.createWorkspaceAsync("Aging settings", "blank")

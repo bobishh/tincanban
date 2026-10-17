@@ -286,7 +286,7 @@ test("Given signed workspace authority, when transport state disappears, then ow
       } catch (error) { return error instanceof Error ? error.message : String(error) }
     })
     expect(profileWriteError).toContain("Workspace authority could not be verified")
-    const rawReviewCount = await guest.evaluate(async () => (await import("/src/state.ts")).useTincanban().causalReview.value.length)
+    const rawReviewCount = await guest.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().causalReview.value.length)
     expect(rawReviewCount).toBe(0)
   } finally { await context.close() }
 })
@@ -703,7 +703,7 @@ test("Given a mobile peer with 32 leads and 9 applied cards, when desktop moves 
     await Promise.all([host.goto("/"), guest.goto("/")])
     await ensureJobSearchWorkspace(host)
     const fixture = await host.evaluate(async () => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       await app.whenReady()
       const doc = app.getActiveDoc()!
       const columns = Object.values(doc.entities).filter(entity => entity.kind === "column")
@@ -724,7 +724,7 @@ test("Given a mobile peer with 32 leads and 9 applied cards, when desktop moves 
     await guestContext.setOffline(true)
     await expect(guest.getByLabel("Mesh offline")).toBeVisible({ timeout: 20_000 })
     await host.evaluate(async ({ appliedId }) => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       for (let index = 0; index < 9; index++) {
         await app.executeCommandAsync(index < 3
           ? { kind: "moveEntity", entityId: `sync-lead-${index}`, parentId: appliedId }
@@ -777,7 +777,7 @@ test("Given a paired editor goes offline, when both sides edit and it comes onli
       current.__TINCANBAN_RECONNECT_SENTINEL__ = sentinel
       const { readLocal } = await import("/src/localDb.ts")
       const profile = JSON.parse((await readLocal("tincanban.local_profile.v1"))!) as { identity: { personId: string } }
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const workspaceId = useTincanban().getActiveDoc()!.id
       const { meshTraceSnapshot, clearMeshTrace } = await import("/src/sync/meshTrace.ts")
       const session = meshTraceSnapshot().findLast(event => event.event === "session.started")
@@ -1194,7 +1194,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await pairWorkspace(page, guest)
     reviewStage = "seed unsigned branch"
     await guest.evaluate(async () => {
-      const state = await import("/src/state.ts")
+      const state = await import("/src/test/stateFixture.ts")
       const storage = await import("/src/storage.ts")
       const A = await import("/@id/@automerge/automerge/slim")
       const doc = state.useTincanban().getActiveDoc()!
@@ -1249,14 +1249,14 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await reviewHistory.getByRole("button", { name: "Retry save dismissal" }).click()
     await expect(reviewHistory.getByRole("button", { name: "Retry save dismissal" })).toHaveCount(0)
     const dismissalBeforeReload = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return (await new (await import("/src/storage.ts")).WorkspaceStorage().loadCausalEvidence(state.getActiveDoc()!.id))?.dismissedHashes ?? []
     })
     expect(dismissalBeforeReload).toContain(dismissedHash)
     await guest.reload()
     await expect(guest.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
     const dismissalAfterReload = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return (await new (await import("/src/storage.ts")).WorkspaceStorage().loadCausalEvidence(state.getActiveDoc()!.id))?.dismissedHashes ?? []
     })
     expect(dismissalAfterReload).toContain(dismissedHash)
@@ -1267,7 +1267,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await expect(guest.getByRole("region", { name: "Workspace change review" })).toBeVisible()
     await expect(guest.getByRole("region", { name: "Workspace change review" }).getByText("1 workspace changes need review")).toBeVisible()
     const persistedTitles = async (peer: Page) => peer.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const doc = (await new (await import("/src/storage.ts")).WorkspaceStorage().loadWorkspaceDoc(state.getActiveDoc()!.id))?.doc
       return { title: doc?.title, untrustedItem: Object.values(doc?.entities ?? {}).some(entity =>
         (entity as { title?: string }).title === "Untrusted title") }
@@ -1290,7 +1290,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     const sourceHash = await activeReview.locator("code").textContent()
     if (!sourceHash) throw new Error("Quarantined review hash missing")
     const changesBeforeReview = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return (await new (await import("/src/storage.ts")).WorkspaceStorage().listChanges(state.getActiveDoc()!.id)).length
     })
     reviewStage = "authorize quarantined change"
@@ -1301,7 +1301,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await expect(guest.getByRole("region", { name: "Workspace change review" })).toHaveCount(0, { timeout: 15_000 })
     await expect.poll(() => persistedTitles(guest)).toEqual({title:"Untrusted title", untrustedItem:false})
     const reviewOutcome = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const evidence = await new (await import("/src/storage.ts")).WorkspaceStorage().loadCausalEvidence(state.getActiveDoc()!.id)
       const changes = await new (await import("/src/storage.ts")).WorkspaceStorage().listChanges(state.getActiveDoc()!.id)
       return { decisions: evidence?.decisions, resolvedReviews: evidence?.resolvedReviews ?? [], changeCount: changes.length }
@@ -1310,7 +1310,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     expect(reviewOutcome.resolvedReviews).toEqual([{ sourceHash, authorizedChangeHash: expect.any(String) }])
     expect(reviewOutcome.changeCount).toBe(changesBeforeReview + 1)
     await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const storage = new (await import("/src/storage.ts")).WorkspaceStorage()
       const workspaceId = state.getActiveDoc()!.id
       const evidence = await storage.loadCausalEvidence(workspaceId)
@@ -1323,7 +1323,7 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await guest.reload()
     await expect(guest.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
     const legacyLinkEvidence = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return state.causalReview.value.map(change => ({ hash: change.hash, dismissed: change.dismissed, resolved: change.resolved }))
     })
     expect(legacyLinkEvidence).toContainEqual({ hash: sourceHash, dismissed: true, resolved: true })
@@ -1333,13 +1333,13 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
     await expect(resolvedHistory.getByText("Authorized change saved", { exact: true })).toBeVisible()
     await expect(resolvedHistory.getByRole("button", { name: "Create authorized change from this review" })).toHaveCount(0)
     const duplicateReviewResult = await guest.evaluate(async hash => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       try { await state.reviewCausalChange(hash); return "unexpected success" }
       catch (error) { return error instanceof Error ? error.message : String(error) }
     }, sourceHash)
     expect(duplicateReviewResult).toContain("already has an authorized change")
     const changesAfterDuplicateAttempt = await guest.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       return (await new (await import("/src/storage.ts")).WorkspaceStorage().listChanges(state.getActiveDoc()!.id)).length
     })
     expect(changesAfterDuplicateAttempt).toBe(reviewOutcome.changeCount)
@@ -1361,7 +1361,7 @@ test("Given chat history exceeds one control frame, when paired peers reconnect,
     await page.goto("/")
     await ensureJobSearchWorkspace(page)
     const before = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { sendChatMessage, exportChat, loadChat } = await import("/src/chat/service.ts")
       const id = useTincanban().getActiveDoc()!.id
       for (let i = 0; i < 40; i++) await sendChatMessage(id, `${i}: ${"x".repeat(7500)}`)
@@ -1373,9 +1373,9 @@ test("Given chat history exceeds one control frame, when paired peers reconnect,
     expect(before.count).toBe(40)
     await guest.goto("/")
     await pairWorkspace(page, guest)
-    expect(await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().getActiveDoc()!.id)).toBe(before.id)
+    expect(await page.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().getActiveDoc()!.id)).toBe(before.id)
     const chatCount = () => guest.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { loadChat } = await import("/src/chat/service.ts")
       return (await loadChat(useTincanban().getActiveDoc()!.id)).messages.length
     })

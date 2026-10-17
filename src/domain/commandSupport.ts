@@ -1,3 +1,4 @@
+import { cloneJsonData } from "./jsonData"
 import { hasEntityKind } from "./model"
 import type { WorkspaceDocumentV2, WorkspaceEntity, Column, FieldDefinition, Board, DocumentTemplate, LegacyWritingTemplate } from "./model"
 import { isItem } from "./model"
@@ -47,10 +48,14 @@ export function applyBoardSchemaSettings(draft: WorkspaceDocumentV2, boardId: st
   board.title = schema.boardTitle.trim()
   board.entityName = schema.entityName.trim()
   if (schema.cardStageButtons) board.cardStageButtons = schema.cardStageButtons.map(button => ({ columnId: button.columnId, ...(button.label ? { label: button.label.trim() } : {}) }))
-  if (schema.employee_profile) board.employee_profile = { ...schema.employee_profile }
-  if (schema.priorityPolicy) board.priorityPolicy = JSON.parse(JSON.stringify(schema.priorityPolicy))
+  if (schema.automation) board.automation = cloneJsonData(schema.automation)
+  else delete board.automation
+  if (schema.cardPresentation) board.cardPresentation = cloneJsonData(schema.cardPresentation)
+  else delete board.cardPresentation
+  if (schema.settings) board.settings = { ...schema.settings }
+  if (schema.priorityPolicy) board.priorityPolicy = cloneJsonData(schema.priorityPolicy)
   else delete board.priorityPolicy
-  board.cardAgingPolicy = JSON.parse(JSON.stringify(schema.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } }))
+  board.cardAgingPolicy = cloneJsonData(schema.cardAgingPolicy ?? { version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } })
   board.updatedAt = nowIso
   changedIds.push(boardId)
   applyColumns(draft, boardId, schema, nowIso, changedIds)
@@ -151,6 +156,10 @@ function createFieldDefinition(
 }
 
 function applyFieldConstraints(target: FieldDefinition, field: BoardSchemaDraft["fields"][number], nowIso: string) {
+  if (target.valueType === "text") {
+    if (field.format) target.format = field.format
+    else delete target.format
+  }
   if (target.valueType === "number" && field.valueType === "number") {
     target.min = field.min ?? null
     target.max = field.max ?? null

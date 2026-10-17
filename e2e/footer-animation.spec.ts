@@ -6,7 +6,7 @@ for (const unavailable of [false, true]) test(`Given workspace permissions ${una
   await page.goto("/")
   if (unavailable) {
     await createJobSearchWorkspace(page, "Unavailable permissions")
-    const workspaceId = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    const workspaceId = await page.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
     await page.evaluate(async id => {
       const { STORE_AUTHORITY } = await import("/src/sync/peerStore.ts")
       const database = await new Promise<IDBDatabase>((resolve, reject) => {

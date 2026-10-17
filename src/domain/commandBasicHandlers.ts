@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { workspaceEntitiesAtHeads } from "../crdtHistory"
-import type { Board, CommandErrorCode, FieldDefinition, FieldValue, Item, WorkspaceDocumentV2, WorkspaceEntity } from "./model"
+import type { CommandErrorCode, FieldDefinition, FieldValue, Item, WorkspaceDocumentV2, WorkspaceEntity } from "./model"
 import { entityKind, hasEntityKind, isItem, validatePlacementParent } from "./model"
 import { getAncestryPath } from "./ancestry"
 import { isArchiveColumnInWorkspace, isItemArchived, itemWorkflow, setItemLifecycle, setItemWorkflow, workflowColumnId } from "./archive"
@@ -47,31 +47,23 @@ type CommandFailure = { ok: false; error: { code: CommandErrorCode; message: str
 function itemValuesForCreate(doc: Automerge.Doc<WorkspaceDocumentV2>, command: CommandByKind<"createItem">): { ok: true; value: Record<string, FieldValue> } | CommandFailure {
   const boardId = findRootBoardId(doc.entities, command.parentId)
   if (!boardId) return { ok: true, value: command.values ?? {} }
-  const values = addPresetValues(doc, boardId, command.title, command.values ?? {})
+  const values = { ...command.values ?? {} }
+  const board = doc.entities[boardId]
+  const fields = hasEntityKind(board, "board") ? board.cardPresentation?.titleFieldIds ?? [] : []
+  const parts = command.title.split(" — ")
+  fields.forEach((fieldId, index) => {
+    if (values[fieldId] !== undefined) return
+    values[fieldId] = index === fields.length - 1 ? parts.slice(index).join(" — ") || command.title : parts[index] ?? command.title
+  })
   const validation = validateValues(doc, boardId, values, command.body)
   if (!validation.ok) return validation
   return { ok: true, value: values }
 }
 
-function addPresetValues(doc: Automerge.Doc<WorkspaceDocumentV2>, boardId: string, title: string, source: Record<string, FieldValue>): Record<string, FieldValue> {
-  const board = doc.entities[boardId] as Board | undefined
-  const values = { ...source }
-  const bindings = board?.preset?.bindings ?? {}
-  addBoundValue(values, bindings["field.company"], title, 0)
-  addBoundValue(values, bindings["field.role"], title, 1)
-  return values
-}
-
-function addBoundValue(values: Record<string, FieldValue>, fieldId: string | undefined, title: string, segment: number) {
-  if (!fieldId || values[fieldId]) return
-  const parts = title.split(" — ")
-  values[fieldId] = segment ? (parts.slice(segment).join(" — ").trim() || title.trim()) : parts[0].trim()
-}
-
 function validateValues(doc: Automerge.Doc<WorkspaceDocumentV2>, boardId: string, values: Record<string, FieldValue>, body?: string): { ok: true } | CommandFailure {
   const fields = Object.values(doc.entities).filter((entity): entity is FieldDefinition => hasEntityKind(entity, "field") && entity.placement.parentId === boardId)
   const board = doc.entities[boardId]
-  const notesFieldId = hasEntityKind(board, "board") ? board.preset?.bindings["field.notes"] : undefined
+  const notesFieldId = hasEntityKind(board, "board") ? board.cardPresentation?.narrativeFieldId : undefined
   const valuesForValidation = { ...values }
   if (notesFieldId && fields.find(field => field.id === notesFieldId)?.valueType === "text" && fields.find(field => field.id === notesFieldId)?.required) {
     const legacyNote = values[notesFieldId]

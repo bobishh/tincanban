@@ -14,7 +14,7 @@ for (const width of [390, 1440]) {
     await form.getByLabel("Role *").fill("Engineer")
     await form.getByLabel("Description", { exact: true }).fill(`Intake: ${intakeHash}`)
     await form.getByRole("button", { name: "Create item", exact: true }).click()
-    const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
+    const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
     await expect(detail.locator(".item-history-entry")).toHaveCount(0)
 
     await page.evaluate(() => {

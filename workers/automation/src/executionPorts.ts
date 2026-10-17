@@ -5,7 +5,7 @@ import type { ReplicaTransport } from "./replica";
 import type { AutomationTelemetryBindings } from "./telemetry";
 import type { AutomationEvent, AutomationPipelineResult } from "./pipeline";
 import type { AutomationDefinition } from "../../../src/domain/automationContract";
-import type { EmployeeProfile } from "../../../src/domain/jobPriority";
+import type { EmployeeProfile } from "./jobPriority";
 
 export type ExecutionSqlValue = ArrayBuffer | string | number | null;
 export interface ExecutionSqlCursor<T> extends Iterable<T> {

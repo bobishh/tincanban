@@ -1,3 +1,4 @@
+import type { AutomationGrantScope } from "../domain/model"
 import { canonicalizeJson, publicKeyId, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import { automationTypes, parseAutomationDefinition, type AutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2 } from "../domain/model"
@@ -59,10 +60,7 @@ export async function prepareAutomationActivation<
     if (!input.configuration) return { version: 2 as const, workspaceId: doc.id, blind, ...approval, bindings: legacyBindings, initial }
 
   }
-  if (input.configuration && !input.configuration.parameters.sources.includes("email")) delete bindings.columns.applied
-  const typeVersion = input.configuration?.typeVersion ?? 1
-  const type = automationTypes.find(value => value.type === (input.configuration?.type ?? "job-intake") && value.version === typeVersion)
-  if (!type) throw new Error("Automation type version is unsupported")
+  const { configured, type, parameters, typeVersion } = configuredActivation(input, bindings)
   const contextFor = input.signingContext ?? ((purpose: string, binding: Record<string, string | number>) =>
     resolveSigningContext({ profile, purpose, binding, certificates: authorization.authority.currentOwner.certificates ?? [profile.certificate],
       authorityRevision: canonicalizeJson(authorization.authority), current: async () => ({ personId: live.profile.identity.personId,
@@ -75,14 +73,41 @@ export async function prepareAutomationActivation<
   }, authorization.authority.currentEpoch, grantContext)
   const definition: AutomationDefinition = parseAutomationDefinition({
     kind: "automation-definition", version: 1, id: definitionId,
-    name: "Job intake", type: "job-intake", typeVersion,
-    parameters: { sources: ["website", "email"] }, ...input.configuration, permissions: type.permissions,
+    name: configured?.title ?? type.title, type: type.type, typeVersion: type.version,
+    parameters, ...input.configuration, permissions: type.permissions,
     scope: { workspaceId: doc.id, boardId: bindings.boardId, grantId: grant.payload.grantId },
   })
   const definitionContext = await contextFor("automation-definition", { id: definitionId })
   assertActivationSigner(profile, definitionContext)
   return { version: 2 as const, workspaceId: doc.id, blind, grant, bindings, initial,
     definition: await signWithContext(definitionContext, definition) }
+}
+
+function configuredActivation<A extends AutomationAuthorization, B extends { workspaceId: string }>(
+  input: AutomationActivationInput<A, B>, bindings: ReturnType<typeof selectAutomationBindings>,
+) {
+  const { doc } = input
+  const board = doc.entities[bindings.boardId]
+  const configured = hasEntityKind(board, "board") ? board.automation?.types.at(-1) : undefined
+  const typeVersion = supportedGrantVersion(input.configuration?.typeVersion ?? configured?.version)
+  const type = automationTypes.find(value => value.type === (input.configuration?.type ?? configured?.type) && value.version === typeVersion)
+  if (!type) throw new Error("Automation type version is unsupported")
+  const parameters = input.configuration?.parameters ?? configured?.defaults ?? type.defaults
+  applyBindingConditions(hasEntityKind(board, "board") ? board.automation?.conditions ?? [] : [], bindings, parameters)
+  return { configured, type, parameters, typeVersion }
+}
+
+function supportedGrantVersion(value: number | undefined): 1 | 2 {
+  if (value !== 1 && value !== 2) throw new Error("Unsupported automation grant version")
+  return value
+}
+
+function applyBindingConditions(conditions: Array<{ group: "columns" | "fieldIds"; key: string; parameter: string; includes: string | number | boolean }>,
+  bindings: ReturnType<typeof selectAutomationBindings>, parameters: Record<string, unknown>) {
+  for (const condition of conditions) {
+    const value = parameters[condition.parameter]
+    if (!Array.isArray(value) || !value.includes(condition.includes)) delete (bindings[condition.group] as Record<string, string | undefined>)[condition.key]
+  }
 }
 
 async function validateWorkerIdentity(profile: LocalProfile, worker: AutomationWorkerIdentity): Promise<void> {
@@ -98,22 +123,18 @@ async function validateWorkerIdentity(profile: LocalProfile, worker: AutomationW
 }
 
 function selectAutomationBindings(doc: WorkspaceDocumentV2) {
-  const boards = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "board") && !entity.archivedAt && entity.preset?.key === "job-search")
-  if (boards.length !== 1) throw new Error("Select a workspace with one active job-search board")
+  const boards = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "board") && !entity.archivedAt)
+  if (boards.length !== 1 || !hasEntityKind(boards[0], "board")) throw new Error("Select a workspace with one active board")
   const board = boards[0]
-  if (!hasEntityKind(board, "board") || !board.preset) throw new Error("Job-search bindings are missing")
-  const id = (key: string, kind: "column" | "field") => {
-    const entityId = board.preset!.bindings[key]
-    const entity = doc.entities[entityId]
-    if (!entity || !hasEntityKind(entity, kind) || entity.archivedAt || entity.placement.parentId !== board.id) {
-      throw new Error(`Required automation binding is missing: ${key}`)
-    }
-    return entityId
-  }
-  return { boardId: board.id,
-    columns: { lead: id("status.lead", "column"), applied: id("status.applied", "column") as string | undefined, interview: id("status.interview", "column"), rejected: id("status.rejected", "column") },
-    fieldIds: { company: id("field.company", "field"), role: id("field.role", "field"), jobUrl: id("field.url", "field"),
-      notes: id("field.notes", "field"), sourceText: id("field.sourceText", "field") } }
+  if (!board.automation) throw new Error("Configure automation bindings on this board")
+  const resolve = (refs: Record<string, string>, kind: "column" | "field") => Object.fromEntries(Object.entries(refs).map(([key, id]) => {
+    const entity = doc.entities[id]
+    if (!entity || !hasEntityKind(entity, kind) || entity.archivedAt || entity.placement.parentId !== board.id) throw new Error(`Required automation binding is missing: ${key}`)
+    return [key, id]
+  }))
+  return { boardId: board.id, columns: resolve(board.automation.bindings.columns, "column") as AutomationGrantScope["columns"],
+    fieldIds: resolve(board.automation.bindings.fieldIds, "field") }
+
 }
 
 async function existingAutomationApproval(existing: WorkspaceDocumentV2["entities"][string], profile: LocalProfile,

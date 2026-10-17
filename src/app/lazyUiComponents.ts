@@ -27,13 +27,7 @@ export const ItemDetailDialog = defineAsyncComponent<Component>({
   delay: 0,
   loadingComponent: pendingStatus("Opening item…"),
 })
-export const LeadDetailWindow = defineAsyncComponent<Component>({
-  loader: () => import("../components/LeadDetailWindow.vue"),
-  delay: 0,
-  loadingComponent: pendingStatus("Opening details…"),
-})
-export const QuickNoteForm = defineAsyncComponent<Component>(() => import("../components/QuickNoteForm.vue"))
-export const AutosaveTextarea = defineAsyncComponent<Component>(() => import("../components/AutosaveTextarea.vue"))
+
 export const WorkspacesDialog = defineAsyncComponent<Component>(() => import("../components/WorkspacesDialog.vue"))
 export const ColumnDialog = defineAsyncComponent<Component>(() => import("../components/ColumnDialog.vue"))
 export const SchemaEditorDialog = defineAsyncComponent<Component>(() => import("../components/SchemaEditorDialog.vue"))

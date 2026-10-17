@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest"
-import { createWorkspaceDoc } from "./domain/seeds"
+import { createWorkspaceDoc } from "./test/boardFixture"
 import type { WorkspaceStorage } from "./storage"
 import type { WorkspaceMeta } from "./storageCatalog"
 import { stateRuntime } from "./stateContext"

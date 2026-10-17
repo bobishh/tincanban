@@ -1,6 +1,6 @@
 import type { DocumentInput } from "../types"
 
-type AttachmentDraft = Omit<DocumentInput, "leadId">
+type AttachmentDraft = Omit<DocumentInput, "itemId">
 type AttachmentSaveAuthority = { workspaceId: string; personId: string | undefined; itemExists: boolean }
 
 export function createAttachmentSaveForItem(input: {

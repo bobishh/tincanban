@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { reactive } from "vue"
 import * as Automerge from "@automerge/automerge/slim"
 import { readFile } from "node:fs/promises"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { initializeAutomerge } from "../crdt"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"

@@ -31,15 +31,13 @@ import { useAppViewState } from "./app/useAppViewState"
 import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
-import { AutosaveTextarea, CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, LeadDetailWindow, MoveItemDialog, QuickNoteForm, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const boardAddress = useBoardAddress(app.workspace)
 const routeContent = ref<HTMLElement | null>(null)
 type IdentityNameSaver = typeof identityNameSaverType
 const saveIdentityName: IdentityNameSaver = async (...args) => (await import("./app/identityName")).saveIdentityName(...args)
-const LeadArtifactsSection = defineAsyncComponent(() => import("./components/LeadArtifactsSection.vue") as Promise<{ default: Component }>)
-const LeadOriginalPostingEvidence = defineAsyncComponent(() => import("./components/LeadOriginalPostingEvidence.vue") as Promise<{ default: Component }>)
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
 const { historyNames, stopSyncForIdentityRestore, restoredIdentity, SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible: workspaceBoardVisible, startupMessage, startupCoverVisible } = useAppViewState(app, routeContent)
 const boardAddressResolved = computed(() => boardAddress.status.value !== "resolving" && boardAddress.status.value !== "unavailable")
@@ -53,26 +51,26 @@ function openConnections(tab: "Participants" | "Rusty" | "Backups") {
   sync.open()
 }
 const editingFoldSnapshot = ref<NarrativeFoldSources | undefined>()
-const { workspace, ready, saveState, availableWorkspaces, archivedWorkspaces, causalReview, causalReviewError, activeWorkspace, activeBoard, docVersion, isBlankBoard, genericColumns, boardFields, getActiveDoc, documentsFor } = app.workspace
+const { workspace, ready, saveState, availableWorkspaces, archivedWorkspaces, causalReview, causalReviewError, activeWorkspace, activeBoard, genericColumns, boardFields, getActiveDoc, documentsFor } = app.workspace
 onBeforeUnmount(startOfflineDetailPreload(() => ready.value))
 const { state: ui, controls: uiControls } = app.ui
 const { isCollapsed: isColumnCollapsed, toggle: toggleColumnCollapse } = useColumnCollapse(() => activeWorkspace.id, () => hasFilters.value)
 const {
-  detailDialog, importInput, showArtifactForm, search, filters,
+  importInput, search, filters,
   notice, archiveUndo, undoSaving, archiveError, historyRestoreSaving,
-  historyRestoreError, historyRestoreNotice, artifactError,
+  historyRestoreError, historyRestoreNotice,
   showWorkspaces, showEntitySettings, isEditingBoard,
   newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
   showItemForm, itemFormError, savingItem, editingColumn,
   selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError,
   quickNoteDraft, quickNoteSaving, quickNoteError, hasExperimentalMcp,
-  showMobileMenu, menuButtonRef, startupError, artifactDraft,
+  showMobileMenu, menuButtonRef, startupError,
 } = ui
 const { toggleMobileMenu, closeMobileMenu } = uiControls
 const {
   workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue,
-  computedItemFieldIds, itemFormOptionValues, visibleItems, hasFilters, workspacePresenceSummary,
-  visibleColumns, clearFilters, leadForItem, cardNotes, cardFields, cardNoteSearchMatch, expandFilteredCards, columnColor, columnStatus, itemsForColumn,
+  computedItemFieldIds, visibleItems, hasFilters, workspacePresenceSummary,
+  visibleColumns, clearFilters, cardNotes, cardFields, cardSummaryFields, cardNoteSearchMatch, expandFilteredCards, columnColor, columnStatus, itemsForColumn,
   trackBoardScroll, selectedItem, subitemsForSelectedItem,
   selectedItemHistory, editingItem, candidateParentsForMove, archivedHistoryLoading, archivedHistoryError,
   archivedHistoryNotice, archivedHistoryHasMore, loadEarlierItemHistory,
@@ -87,28 +85,25 @@ const { devicePresence, meshPresence, meshPresenceLabel,
   claimWorkspaceSuccession, revokeWorkspacePeer, promoteWorkspacePeer,
 } = app.collaboration.mesh
 const {
-  selectedLead, selectedLeadItem, selectedDocuments, selectedArtifacts, availableArtifactTemplates, openBoardItem,
+  openBoardItem,
   restoreSelectedItemVersion, saveQuickNote, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
-  openArtifactForm, submitArtifact, moveCardToColumn, handleUpdateRejectionReason,
+  moveCardToColumn,
   exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
-  openImport, importWorkspace, workspaceImportState, closeDetail: closeDetailNow, handleCreateWorkspace,
+  openImport, importWorkspace, workspaceImportState, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
   handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, settingsSaving,
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
 const { publicAccess, publicDelivery, backgroundPublicDeliveryError } = useAppPublicBoards(app, uiReady)
-const rejectionEditor = ref<{ flush: () => Promise<boolean> }>()
-async function closeDetail() { if (!rejectionEditor.value || await rejectionEditor.value.flush()) closeDetailNow() }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
 
-const { saveSelectedLeadDocument, saveSelectedItemDocument } = useAppItemDocumentSave(app)
+const { saveSelectedItemDocument } = useAppItemDocumentSave(app)
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
-  if (rejectionEditor.value && !(await rejectionEditor.value.flush())) return
   const { createNarrativeEditHandler } = await import("./app/narrativeEditor")
-  createNarrativeEditHandler(editingFoldSnapshot, activeBoard, leadForItem, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)(item)
+  createNarrativeEditHandler(editingFoldSnapshot, activeBoard, () => getActiveDoc()?.entities ?? {}, handleOpenItemEdit)(item)
 }
 async function applyWorkspaceSettings(payload: Parameters<typeof handleApplyWorkspaceSettings>[0]) { if (await handleApplyWorkspaceSettings(payload)) showSettings.value = false }
 const cardAgeFor = useCardAges(() => activeBoard.value?.cardAgingPolicy)
@@ -116,7 +111,7 @@ function setBoardElement(element: HTMLElement | null) { boardRef.value = element
 function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Parameters<typeof cardAgeFor>[1]) {
   const match = cardNoteSearchMatch(item)
   const age = cardAgeFor(item, column)
-  return { lead: leadForItem(item), notes: cardNotes(item), fields: cardFields(item),
+  return { notes: cardNotes(item), fields: cardFields(item), summaryFields: cardSummaryFields(item),
     hasFilters: expandFilteredCards.value || Boolean(match), showFields: hasFilters.value,
     searchQuery: match?.query, searchMatchIndex: match?.index,
     discussion: conversations.cardDiscussions.value.get(item.id), moved: movedItemId.value === item.id,
@@ -181,7 +176,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :dismiss-change="dismissCausalChange" :restore-change="restoreCausalChange" />
 
     <BoardToolbar v-if="boardVisible" v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
-      :placeholder="isBlankBoard ? 'Search cards' : 'Search company, role, notes'" :inert="!boardVisible || undefined">
+      :placeholder="'Search cards'" :inert="!boardVisible || undefined">
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
     </BoardToolbar>
 
@@ -347,10 +342,10 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :attachment-coverage="app.collaboration.device.blindReplication.attachmentCoverage.value"
       :move-to-column="moveCardToColumn" :archived="Boolean(selectedItem && isItemArchived(selectedItem))"
       :narrative="selectedItem ? cardNotes(selectedItem) : ''"
-      :narrative-field-id="activeBoard?.preset?.bindings['field.notes']"
+      :narrative-field-id="activeBoard?.cardPresentation?.narrativeFieldId"
       :read-only="!canEditItems"
       :subitems="subitemsForSelectedItem"
-      :fields="boardFields.filter(field => field.id !== activeBoard?.preset?.bindings['field.notes'] || field.valueType !== 'text')"
+      :fields="boardFields.filter(field => field.id !== activeBoard?.cardPresentation?.narrativeFieldId)"
       :documents="documentsFor(selectedItem.id)"
       :save-document="saveSelectedItemDocument"
       :update-document="updateDocumentMarkdown"
@@ -388,13 +383,12 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :fields="boardFields"
       :columns="itemFormColumns"
       :item="editingItem"
-      :show-core-fields="isBlankBoard"
-      :hidden-field-ids="[...computedItemFieldIds, ...(boardFields.some(field => field.id === activeBoard?.preset?.bindings['field.notes'] && field.valueType === 'text') && activeBoard?.preset?.bindings['field.notes'] ? [activeBoard.preset.bindings['field.notes']] : [])]"
+      :show-core-fields="!activeBoard?.cardPresentation?.titleFieldIds?.length"
+      :hidden-field-ids="[...computedItemFieldIds, ...(boardFields.some(field => field.id === activeBoard?.cardPresentation?.narrativeFieldId && field.valueType === 'text') && activeBoard?.cardPresentation?.narrativeFieldId ? [activeBoard.cardPresentation.narrativeFieldId] : [])]"
       :initial-body="editingItem ? cardNotes(editingItem) : undefined"
       :fold-snapshot="editingFoldSnapshot"
-      :required-narrative="Boolean(boardFields.find(field => field.id === activeBoard?.preset?.bindings['field.notes'] && field.valueType === 'text')?.required)"
-      :computed-fields-message="computedItemFieldIds.length ? 'Priority and fit are calculated from workspace preferences.' : undefined"
-      :option-values="itemFormOptionValues"
+      :required-narrative="Boolean(boardFields.find(field => field.id === activeBoard?.cardPresentation?.narrativeFieldId && field.valueType === 'text')?.required)"
+      :computed-fields-message="computedItemFieldIds.length ? 'Values are calculated from configured rules.' : undefined"
       :error-message="itemFormError"
       :saving="savingItem"
       @cancel="showItemForm = false; editingItemId = null; itemFormError = ''; editingFoldSnapshot = undefined"
@@ -408,46 +402,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       @close="showMoveDialog = false; itemToMove = null"
       @confirm="handleConfirmMove"
     />
-    <LeadDetailWindow v-if="selectedLead" :lead="selectedLead" :item="selectedLeadItem" :board="activeBoard" :columns="genericColumns"
-      :workspace-id="activeWorkspace.id" :read-only="!canEditItems" :narrative="selectedLeadItem ? cardNotes(selectedLeadItem) : ''" :move="moveCardToColumn"
-      :history="selectedItemHistory" :history-names="historyNames" :history-loading="archivedHistoryLoading" :history-error="archivedHistoryError"
-      :history-notice="archivedHistoryNotice" :history-has-more="archivedHistoryHasMore"
-      :restore-saving="historyRestoreSaving" :restore-error="historyRestoreError" :restore-notice="historyRestoreNotice"
-      @close="closeDetail" @edit="editItem" @update-markdown="selectedLeadItem && updateItemMarkdown(selectedLeadItem, $event)" @content="detailDialog = $event"
-      @restore-version="restoreSelectedItemVersion" @load-earlier-history="loadEarlierItemHistory">
-      <template #sourceEvidence>
-        <LeadOriginalPostingEvidence :lead-id="selectedLead.id" :lead-url="selectedLead.url"
-          :workspace-id="activeWorkspace.id" :document="getActiveDoc()" :document-version="docVersion" />
-      </template>
-      <template #toolbar>
-        <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
-        <button v-if="archiveUndo && archiveUndo.workspaceId === activeWorkspace.id" class="button button-small" type="button" :disabled="undoSaving" @click="undoArchive">{{ undoSaving ? 'Restoring…' : 'Undo archive' }}</button>
-      </template>
-      <template #primary>
-          <LeadArtifactsSection v-model="artifactDraft" :artifacts="selectedArtifacts" :templates="availableArtifactTemplates"
-            :read-only="!canEditItems" :show-form="showArtifactForm" :error="artifactError"
-            @toggle="showArtifactForm ? showArtifactForm = false : openArtifactForm()" @submit="submitArtifact" />
-          <ItemDocuments v-if="selectedLeadItem" :documents="selectedDocuments" :workspace-id="activeWorkspace.id" :attachment-coverage="app.collaboration.device.blindReplication.attachmentCoverage.value" :read-only="!canEditItems" :save="saveSelectedLeadDocument" :update="updateDocumentMarkdown" />
-      </template>
-      <template #inspector>
-        <QuickNoteForm
-          v-if="selectedLeadItem"
-          v-model="quickNoteDraft"
-          :saving="quickNoteSaving"
-          :error="quickNoteError"
-          :read-only="!canEditItems"
-          @save="saveQuickNote(selectedLeadItem)"
-        />
-        <section v-if="selectedLead.status === 'rejected' || selectedLead.rejectionReason" class="detail-section">
-          <span class="detail-label">Rejection notes / retrospective</span>
-          <AutosaveTextarea
-            :key="selectedLead.id" ref="rejectionEditor" :read-only="!canEditItems" :value="selectedLead.rejectionReason ?? ''"
-            :save="(reason: string) => handleUpdateRejectionReason(activeWorkspace.id, selectedLead!.id, reason)"
-            placeholder="Optional rejection reason or retrospective note (what went wrong)…" label="Rejection notes" />
-        </section>
 
-      </template>
-    </LeadDetailWindow>
     </template>
     <SyncDialog v-if="sync.isOpen.value" :initial-tab="syncInitialTab" :member-avatars="memberAvatars" :revoking-person-id="revokingPeer" @revoke-person="revokeWorkspacePeer" :blind-replication="app.collaboration.device.blindReplication"
       :pending-joins="sync.pendingJoins.value"

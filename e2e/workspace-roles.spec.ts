@@ -34,11 +34,11 @@ for (const role of ["visitor", "editor"] as const) {
       await host.getByRole("button", { name: "Close", exact: true }).first().click()
       await expect(guest.getByLabel(`Workspace role: ${role}`)).toBeVisible()
       await expect(guest.locator(`.can-role-stamp[data-role-stamp="${role}"]`)).toBeVisible()
-      const sharedWorkspaceId = await guest.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+      const sharedWorkspaceId = await guest.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
       await expect.poll(() => faviconRole(guest)).toEqual({ role, body: role === "editor" ? "#80b9d8" : "#c8c9cb" })
       if (role === "editor") {
         const structuralMove = await guest.evaluate(async () => {
-          const state = (await import("/src/state.ts")).useTincanban()
+          const state = (await import("/src/test/stateFixture.ts")).useTincanban()
           const column = state.genericColumns.value[0]!
           try { await state.executeCommandAsync({ kind: "moveEntity", entityId: column.id, parentId: column.placement.parentId, beforeId: null }); return "allowed" }
           catch (error) { return String(error) }

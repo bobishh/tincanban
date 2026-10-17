@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { workspaceBlobDescriptor, workspaceChatRoomId } from "./workspaceMetadata"
 
 describe("workspace metadata", () => {

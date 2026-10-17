@@ -37,7 +37,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
   await expect(discussion.getByText("Public release discussion", { exact: true })).toBeVisible()
   await expect(discussion.getByText("Saving locally…", { exact: true })).toHaveCount(0)
   const storedDiscussion = await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const chat = await (await import("/src/chat/service.ts")).loadChat(state.activeWorkspace.id)
     return { workspaceId: state.activeWorkspace.id, chat: chat.messages.map(message => ({ body: message.body, context: message.context })) }
   })
@@ -46,7 +46,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
   if (await cardDetail.count()) await cardDetail.getByRole("button", { name: "Close detail" }).click()
 
   const fixture = await page.evaluate(async () => {
-    const state = (await import("/src/state.ts")).useTincanban()
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
     return { boardId: state.activeBoard.value!.id, identity: profile.identity, deviceId: profile.device.deviceId }
   })
@@ -163,7 +163,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     panel = await openPublication()
     await expect(panel).toHaveAttribute("data-public-revision", "2", { timeout: 30_000 })
     const missingAttachment = await page.evaluate(async () => {
-      const state = (await import("/src/state.ts")).useTincanban()
+      const state = (await import("/src/test/stateFixture.ts")).useTincanban()
       const document = state.getActiveDoc()!
       const entity = Object.values(document.entities).find(item => item.title === "Release handout") as { file: import("/src/domain/model.ts").FileReference }
       const attachments = await import("/src/attachments.ts")
@@ -193,7 +193,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     expect(missingAttachment.missingLocally).toBe(true)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.evaluate(async () => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       const item = Object.values(app.getActiveDoc()!.entities).find(entity => entity.title === "Public release card") as { id: string }
       await app.executeCommandAsync({ kind: "patchItem", entityId: item.id, body: "Attachment recovery pending" })
     })
@@ -212,7 +212,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     }, missingAttachment)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.evaluate(async () => {
-      const app = (await import("/src/state.ts")).useTincanban()
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
       const item = Object.values(app.getActiveDoc()!.entities).find(entity => entity.title === "Public release card") as { id: string }
       await app.executeCommandAsync({ kind: "patchItem", entityId: item.id, body: "Third published description" })
     })

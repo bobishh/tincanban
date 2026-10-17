@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest"
-import { createWorkspaceDoc } from "../domain/seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { canonicalizeJson } from "../domain/identity"
 import { parseAutomationDefinition, automationTypes, type AutomationDefinition } from "../domain/automationContract"
 import { automationEntityId } from "../domain/automationLifecycle"

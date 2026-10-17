@@ -7,9 +7,7 @@ function preloadOfflineDetailChunks() {
   if (!detailChunksPromise) {
     detailChunksPromise = Promise.all([
       import("../components/SpatialWindow.vue"),
-      import("../components/LeadDetailWindow.vue"),
       import("../components/QuickNoteForm.vue"),
-      import("../components/LeadArtifactsSection.vue"),
       import("../components/ItemDetailDialog.vue"),
       import("../components/ItemFormDialog.vue"),
       import("../components/ItemDocuments.vue"),

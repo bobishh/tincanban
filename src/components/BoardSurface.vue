@@ -2,13 +2,12 @@
 import { computed, ref } from "vue"
 import BoardColumns from "./BoardColumns.vue"
 import BoardItemCard from "./BoardItemCard.vue"
-import type { Lead } from "../types"
 
 type CardPresentation = {
-  lead?: Lead
   notes: string
   searchQuery?: string
   searchMatchIndex?: number
+  summaryFields?: Array<{ id: string; title: string; value: string }>
   fields: Array<{ id: string; title: string; value: string }>
   hasFilters?: boolean
   showFields?: boolean

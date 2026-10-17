@@ -12,7 +12,7 @@ async function board(page: import("@playwright/test").Page) {
   await form.getByLabel("Location", { exact: true }).fill("Remote Europe")
   await form.getByRole("button", { name: "Create item" }).click()
   await expect(form).toBeHidden()
-  return page.getByRole("dialog", { name: "Lead details" })
+  return page.getByRole("dialog", { name: "Item overview" })
 }
 
 test("Given board card, when Discuss sends then source link opens card and workspace Reply opens a thread", async ({ page }) => {

@@ -19,7 +19,7 @@ test("Given a new lead, when its detail module is still loading then a pending s
   await form.getByRole("button", { name: "Create item" }).click()
   await expect(page.getByRole("status").filter({ hasText: "Opening details" })).toBeVisible()
   releaseModule()
-  const details = page.getByRole("dialog", { name: "Lead details" })
+  const details = page.getByRole("dialog", { name: "Item overview" })
   await expect(details).toBeVisible()
   await expect(details).toBeFocused()
 })

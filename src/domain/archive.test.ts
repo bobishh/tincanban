@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { archivedItemsForBoard, effectiveColumnStatus, isArchiveColumn, isArchiveColumnInWorkspace, isItemArchived, itemLifecycle, itemWorkflow, setItemLifecycle, setItemWorkflow, workflowColumnId } from "./archive"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateWorkspaceDoc } from "./validation"
 import { hasEntityKind, type Item, type WorkspaceDocumentV2, type WorkspaceEntity } from "./model"
 import { planWorkspaceMigration } from "./workspaceMigration"

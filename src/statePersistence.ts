@@ -505,7 +505,7 @@ async function reconcileWorkspace(storage: WorkspaceStorage, workspaceChanged = 
 
 function clearWorkspaceProjection(): void {
   const workspace = stateRuntime.workspace;
-  workspace.leads.splice(0, workspace.leads.length);
+  workspace.items.splice(0, workspace.items.length);
   workspace.documents.splice(0, workspace.documents.length);
   workspace.templates.splice(0, workspace.templates.length);
   workspace.artifacts.splice(0, workspace.artifacts.length);
@@ -515,7 +515,7 @@ function replaceWorkspaceProjection(
   projected: typeof stateRuntime.workspace,
 ): void {
   const workspace = stateRuntime.workspace;
-  workspace.leads.splice(0, workspace.leads.length, ...projected.leads);
+  workspace.items.splice(0, workspace.items.length, ...projected.items);
   workspace.documents.splice(0, workspace.documents.length, ...projected.documents);
   workspace.templates.splice(0, workspace.templates.length, ...projected.templates);
   workspace.artifacts.splice(0, workspace.artifacts.length, ...projected.artifacts);

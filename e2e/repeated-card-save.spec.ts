@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test"
 
 async function savedJournal(page: Page) {
   return page.evaluate(async () => {
-    const id = (await import("/src/state.ts")).useTincanban().activeWorkspace.id
+    const id = (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open("tincanban-workspace-state")
       request.onsuccess = () => resolve(request.result)
@@ -31,7 +31,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const identity = await import("/src/domain/identity.ts")
     const proofs = await import("/src/domain/proofs.ts")
     const profile = app.getCurrentProfile()!
@@ -46,7 +46,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
     ;(await import("/src/sync/meshTrace.ts")).clearMeshTrace()
   })
   const idleAccess = await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const { workspaceRole } = await import("/src/sync/changeAuthorization.ts")
     const now = Date.now, send = Worker.prototype.postMessage
     let requests = 0
@@ -61,7 +61,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
   expect(idleAccess).toEqual({ role: "owner", requests: 0 })
   const before = await savedJournal(page)
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
-  const detail = page.getByRole("dialog", { name: "Lead details", exact: true })
+  const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   const timings: Array<{ stage: string; elapsedMs: number }> = []
   for (const stage of ["Archive", "Applied", "Archive", "Applied", "Archive", "Applied"]) {
     const start = performance.now()

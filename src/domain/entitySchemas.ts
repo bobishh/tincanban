@@ -29,26 +29,38 @@ export const cardAgingPolicySchema = z.strictObject({
     "Aging thresholds must increase from watch to aged to overdue",
   ),
 })
-export const employeeProfileSchema = z.strictObject({ stack: z.string().max(4000), work_profile: z.string().max(8000) })
-export const priorityPolicySchema = z.strictObject({
+export const priorityPolicySchema = z.object({
   version: z.literal(1),
-  evaluator: z.enum(["weighted-rules-v1", "job-fit-v1"]),
-  assessmentFieldId: id.optional(),
+  evaluator: z.string().min(1),
   sort: z.enum(["fit_desc", "fit_asc", "manual"]).optional(),
   priorityFieldId: id,
   fitFieldId: id.nullable(),
   rules: z.array(priorityRuleSchema),
   bands: z.array(priorityBandSchema),
+}).passthrough()
+export const cardPresentationSchema = z.strictObject({
+  openAfterSave: z.boolean().optional(),
+  titleFieldIds: z.array(id).optional(),
+  summaryFieldIds: z.array(id).optional(),
+  narrativeFieldId: id.optional(),
 })
-const boardSchema = z.strictObject({
+export const textFormatSchema = z.enum(["plain", "markdown", "json", "code"])
+export const boardAutomationSchema = z.strictObject({
+  conditions: z.array(z.strictObject({ group: z.enum(["columns", "fieldIds"]), key: id, parameter: id, includes: z.union([z.string(), z.number(), z.boolean()]) })).optional(),
+  bindings: z.strictObject({ columns: z.record(z.string(), id), fieldIds: z.record(z.string(), id) }),
+  types: z.array(z.strictObject({ type: id, version: z.number().int().positive(), title: z.string(), description: z.string(), permissions: z.array(z.string()), defaults: z.record(z.string(), z.unknown()), parameterFields: z.record(z.string(), z.strictObject({ valueType: z.enum(["text", "number", "boolean", "select"]), options: z.array(z.string()).optional(), multiple: z.boolean().optional(), required: z.boolean().optional(), min: z.number().optional(), max: z.number().optional() })) })),
+})
+const boardSchema = z.object({
   ...common, kind: z.literal("board"), entityName: z.string().refine(value => Boolean(value.trim())).optional(),
-  preset: z.strictObject({ key: z.enum(["job-search", "blank"]), version: z.literal(1), bindings: z.record(z.string(), z.string()) }).nullable(),
+  preset: z.strictObject({ key: z.string().min(1), version: z.literal(1), bindings: z.record(z.string(), z.string()) }).nullable(),
+  cardPresentation: cardPresentationSchema.optional(),
+  automation: boardAutomationSchema.optional(),
   cardStageButtons: z.array(z.strictObject({ columnId: id, label: z.string().min(1).optional() })).optional(),
   priorityPolicy: priorityPolicySchema.nullable().optional(),
-  employee_profile: employeeProfileSchema.optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
   cardAgingPolicy: cardAgingPolicySchema.optional(),
   archiveColumnId: id.nullable().optional(),
-})
+}).catchall(z.json())
 const columnSchema = z.strictObject({
   ...common,
   kind: z.literal("column"),
@@ -62,7 +74,8 @@ const itemSchema = z.strictObject({ ...common, archivedAt: z.string().nullable()
 const fieldOptionSchema = z.strictObject({ id: z.string(), title: z.string(), rank, archivedAt: z.string().nullable() })
 const fieldBase = { ...common, kind: z.literal("field"), required: z.boolean() }
 const fieldSchema = z.discriminatedUnion("valueType", [
-  z.strictObject({ ...fieldBase, valueType: z.enum(["text", "url", "date", "datetime", "boolean"]) }),
+  z.strictObject({ ...fieldBase, valueType: z.literal("text"), format: textFormatSchema.optional() }),
+  z.strictObject({ ...fieldBase, valueType: z.enum(["url", "date", "datetime", "boolean"]) }),
   z.strictObject({ ...fieldBase, valueType: z.literal("number"), min: z.number().nullable(), max: z.number().nullable() }),
   z.strictObject({ ...fieldBase, valueType: z.literal("select"), options: z.record(z.string(), fieldOptionSchema) }),
 ])
@@ -79,13 +92,13 @@ export const fileReferenceSchema = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("local-file"), fileId: z.string(), fileName: z.string() }),
 ])
 const documentSchema = z.strictObject({
-  ...common, kind: z.literal("document"), documentKind: z.enum(["cv", "cover_letter", "note", "attachment"]),
+  ...common, kind: z.literal("document"), documentKind: z.string().min(1),
   format: z.enum(["markdown", "html", "pdf", "file", "path"]), content: z.string().nullable(), file: fileReferenceSchema.nullable(),
 })
 const templateSchema = z.strictObject({ ...common, kind: z.literal("document_template"), markdown: z.string() })
 const legacyTemplateSchema = z.strictObject({ ...common, kind: z.literal("template"), markdown: z.string(), templateKind: z.string().optional() })
 const artifactSchema = z.strictObject({
-  ...common, kind: z.literal("artifact"), artifactKind: z.enum(["cv", "cover_letter"]), templateId: z.string(),
+  ...common, kind: z.literal("artifact"), artifactKind: z.string().min(1), templateId: z.string(),
   pdf: fileReferenceSchema, sourceMarkdown: fileReferenceSchema.nullable(),
 })
 const memberProfileSchema = z.strictObject({

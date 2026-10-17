@@ -30,36 +30,36 @@ function boardContext(core: ReturnType<typeof useAppCore>): AppBoardContext {
     tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
-    selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
+    detailDialog, quickNoteDraft, quickNoteError,
   } = core
   return {
     tincanban, sync, search, filters, isEditingBoard, itemFormParentId,
     boardRef, movedItemId, movedColumnId, onlineWorkspaceDevices, canEditItems, canEditBoard,
     notice, archiveUndo, boardRenderKey, selectedItemId, editingItemId, itemToMove,
-    selectedLeadId, detailDialog, quickNoteDraft, quickNoteError,
+    detailDialog, quickNoteDraft, quickNoteError,
   }
 }
 
 function appUi(core: ReturnType<typeof useAppCore>) {
   const {
-    detailDialog, importInput, showArtifactForm, search, filters, notice, archiveUndo, undoSaving,
+    detailDialog, importInput, search, filters, notice, archiveUndo, undoSaving,
     archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice, isArchiveOpen,
-    artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
+    showWorkspaces, showEntitySettings, isEditingBoard,
     newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
     showItemForm, itemFormError, savingItem, editingColumn,
     selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError, quickNoteDraft,
     quickNoteSaving, quickNoteError, hasExperimentalMcp, showMobileMenu, menuButtonRef,
-    startupError, artifactDraft,
+    startupError,
   } = core
   return { state: {
-    detailDialog, importInput, showArtifactForm, search, filters, notice, archiveUndo, undoSaving,
+    detailDialog, importInput, search, filters, notice, archiveUndo, undoSaving,
     archiveError, historyRestoreSaving, historyRestoreError, historyRestoreNotice, isArchiveOpen,
-    artifactError, showWorkspaces, showEntitySettings, isEditingBoard,
+    showWorkspaces, showEntitySettings, isEditingBoard,
     newBoardColumnTitle, boardRef, boardRenderKey, movedItemId, movedColumnId,
     showItemForm, itemFormError, savingItem, editingColumn,
     selectedItemId, editingItemId, itemToMove, showMoveDialog, storageError, quickNoteDraft,
     quickNoteSaving, quickNoteError, hasExperimentalMcp, showMobileMenu, menuButtonRef,
-    startupError, artifactDraft,
+    startupError,
   }, controls: { toggleMobileMenu: core.toggleMobileMenu, closeMobileMenu: core.closeMobileMenu } }
 }
 

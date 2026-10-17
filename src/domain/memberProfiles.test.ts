@@ -5,7 +5,7 @@ import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, type LocalProfile } from "./identity"
 import { executeCommand } from "./commands"
 import { memberProfileEntityId } from "./avatarData"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { hasEntityKind, type WorkspaceDocumentV2 } from "./model"
 import { validateWorkspaceDoc } from "./validation"
 

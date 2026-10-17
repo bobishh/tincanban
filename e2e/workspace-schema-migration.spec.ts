@@ -3,8 +3,8 @@ import { expect, test, type Page } from "./support/coverage"
 async function seedFormatTwoWorkspace(page: Page, malformed = false) {
   await page.goto("/")
   return page.evaluate(async broken => {
-    const { useTincanban } = await import("/src/state.ts")
-    const { createWorkspaceDoc } = await import("/src/domain/seeds.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { recordGenesisAuthority } = await import("/src/sync/changeAuthorization.ts")
     const { defaultStorage } = await import("/src/storage.ts")
     const { writeLocal } = await import("/src/localDb.ts")
@@ -53,7 +53,7 @@ test("Given an older signed board, when owner reloads and invites a visitor, the
   await page.reload()
   await expect(page.getByRole("button", { name: "Open Old card" })).toBeVisible()
   const format = await page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     return useTincanban().getActiveDoc()?.formatVersion
   })
   expect(format).toBe(3)
@@ -74,7 +74,7 @@ test("Given an older signed board, when owner reloads and invites a visitor, the
     await dialog.getByRole("button", { name: "Close", exact: true }).first().click()
     await expect(guest.getByRole("button", { name: "Open Old card" })).toBeVisible()
     expect(await guest.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       return useTincanban().getActiveDoc()?.id
     })).toBe(id)
   } finally { await context.close() }

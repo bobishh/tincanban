@@ -72,7 +72,7 @@ test("Given a Job search lead, when Archive status is selected, then Undo stays 
   await form.getByLabel(/Company/).fill("Undo Corp")
   await form.getByLabel(/Role/).fill("Undo role")
   await form.getByRole("button", { name: "Create item" }).click()
-  const detail = page.getByRole("dialog", { name: "Lead details" })
+  const detail = page.getByRole("dialog", { name: "Item overview" })
   await detail.getByRole("button", { name: "Archive" }).click()
   await expect(detail.getByRole("button", { name: "Undo archive" })).toBeVisible()
   await detail.getByRole("button", { name: "Undo archive" }).click()

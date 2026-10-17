@@ -35,7 +35,7 @@
 }
 
 /* Fira Sans has a larger x-height than Caveat; keep long reading copy on a quieter scale. */
-.detail-layout .detail-copy, .detail-layout .source-snapshot,
+.detail-layout .detail-copy, .detail-layout .configured-card-text,
 .detail-layout .detail-copy.markdown-content, .chat-dialog .chat-message-body,
 .chat-dialog .chat-message-body.markdown-content,
 .reading-prose, .dialog-copy.reading-explanation, .form-error.reading-explanation, .reading-explanation {

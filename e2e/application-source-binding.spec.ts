@@ -158,7 +158,7 @@ test("Given two same-company postings and an ambiguous retained rejection, when 
     // Replaying the same signed retry is an idempotent read of the completed event.
     const replay = await page.evaluate(async ({ origin, workspaceId, eventId }) => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { discoverApplicationReview, readApplicationReview, retryApplicationBinding } =
         await import("/src/app/applicationReviewClient.ts")
       const profile = await bootstrapIdentity()
@@ -248,7 +248,7 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
     expect(workerIdentityResponse.status).toBe(200)
     const workerIdentity = await workerIdentityResponse.json() as Record<string, unknown>
     const activation = await page.evaluate(async identity => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
       const { readRustyScopePolicyRevision } = await import("/src/sync/rustyEnrollment.ts")
       const { exportApprovedAutomation } = await import("/src/app/automationActivation.ts")
@@ -351,7 +351,7 @@ async function configureWorker(origin: string, workspace: WorkspaceBindings, own
 
 async function inspectWorkspace(page: Page): Promise<WorkspaceBindings> {
   return page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const app = useTincanban()
     await app.whenReady()
     const doc = app.getActiveDoc()
@@ -399,7 +399,7 @@ async function submitApplication(fixture: ApplicationFixture, input: { company: 
 async function createLegacyApplication(page: Page, fixture: ApplicationFixture, role: string): Promise<string> {
   const cardId = `legacy-application-${crypto.randomUUID()}`
   await page.evaluate(async ({ cardId, companyName, roleName, parentId, fieldIds, postingUrl }) => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     await useTincanban().executeCommandAsync({ kind: "createItem", id: cardId, parentId,
       title: `${companyName} — ${roleName}`, values: { [fieldIds.company]: companyName, [fieldIds.role]: roleName, [fieldIds.jobUrl]: postingUrl } })
   }, { cardId, companyName: company, roleName: role, parentId: fixture.columns.applied, fieldIds: fixture.fieldIds, postingUrl: jobUrl })
@@ -408,7 +408,7 @@ async function createLegacyApplication(page: Page, fixture: ApplicationFixture, 
 
 async function patchCard(page: Page, fixture: ApplicationFixture, cardId: string, title: string, role: string, parentId?: string): Promise<void> {
   await page.evaluate(async ({ cardId, title, role, parentId, roleField }) => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const workspace = useTincanban()
     await workspace.executeCommandAsync({ kind: "patchItem", entityId: cardId, title, values: { [roleField]: role } })
     if (parentId) {
@@ -419,7 +419,7 @@ async function patchCard(page: Page, fixture: ApplicationFixture, cardId: string
 
 async function openApplicationDetail(page: Page, cardName: string) {
   await page.getByRole("button", { name: `Open ${cardName}`, exact: true }).click()
-  const detail = page.getByRole("dialog", { name: "Lead details" })
+  const detail = page.getByRole("dialog", { name: "Item overview" })
   await expect(detail).toBeVisible()
   return detail
 }
@@ -464,7 +464,7 @@ async function readEvent(origin: string, eventId: string): Promise<Record<string
 
 async function readApplicationSources(page: Page, cardIds: string[]): Promise<Array<{ id: string; data: string }>> {
   return page.evaluate(async cardIds => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const doc = useTincanban().getActiveDoc()
     if (!doc) throw new Error("Job-search board is missing")
     return Object.values(doc.entities).filter(entity => entity.kind === "application_source" &&

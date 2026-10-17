@@ -1,0 +1,248 @@
+{
+  "blank": {
+    "label": "Blank board",
+    "entityName": "item",
+    "columns": [
+      {
+        "key": "column.todo",
+        "title": "To do"
+      },
+      {
+        "key": "column.doing",
+        "title": "Doing"
+      },
+      {
+        "key": "column.done",
+        "title": "Done"
+      }
+    ],
+    "fields": []
+  },
+  "job-search": {
+    "label": "Job search",
+    "entityName": "lead",
+    "columns": [
+      {
+        "key": "status.lead",
+        "title": "Lead"
+      },
+      {
+        "key": "status.applied",
+        "title": "Applied"
+      },
+      {
+        "key": "status.interview",
+        "title": "Interview"
+      },
+      {
+        "key": "status.rejected",
+        "title": "Rejected",
+        "collapsible": true
+      },
+      {
+        "key": "status.offer",
+        "title": "Offer"
+      },
+      {
+        "key": "status.archived",
+        "title": "Archive",
+        "collapsible": true,
+        "archive": true
+      }
+    ],
+    "fields": [
+      {
+        "key": "field.company",
+        "title": "Company",
+        "valueType": "text",
+        "required": true
+      },
+      {
+        "key": "field.role",
+        "title": "Role",
+        "valueType": "text",
+        "required": true
+      },
+      {
+        "key": "field.url",
+        "title": "URL",
+        "valueType": "url"
+      },
+      {
+        "key": "field.location",
+        "title": "Location",
+        "valueType": "text"
+      },
+      {
+        "key": "field.workMode",
+        "title": "Work mode",
+        "valueType": "select",
+        "options": [
+          [
+            "option.workMode.remote",
+            "Remote"
+          ],
+          [
+            "option.workMode.hybrid",
+            "Hybrid"
+          ],
+          [
+            "option.workMode.onsite",
+            "Onsite"
+          ],
+          [
+            "option.workMode.unknown",
+            "Unknown"
+          ]
+        ]
+      },
+      {
+        "key": "field.priority",
+        "title": "Priority",
+        "valueType": "select",
+        "options": [
+          [
+            "option.priority.p0",
+            "P0"
+          ],
+          [
+            "option.priority.p1",
+            "P1"
+          ],
+          [
+            "option.priority.p2",
+            "P2"
+          ],
+          [
+            "option.priority.p3",
+            "P3"
+          ]
+        ]
+      },
+      {
+        "key": "field.fitScore",
+        "title": "Fit score",
+        "valueType": "number",
+        "min": 0,
+        "max": 10
+      },
+      {
+        "key": "field.notes",
+        "title": "Notes",
+        "valueType": "text"
+      },
+      {
+        "key": "field.sourceText",
+        "title": "Source text",
+        "valueType": "text"
+      },
+      {
+        "key": "field.rejectionReason",
+        "title": "Rejection notes / retrospective",
+        "valueType": "text"
+      }
+    ],
+    "cardPresentation": {
+      "titleFieldIds": [
+        "field.company",
+        "field.role"
+      ],
+      "summaryFieldIds": [
+        "field.priority",
+        "field.fitScore",
+        "field.location"
+      ],
+      "narrativeFieldId": "field.notes",
+      "openAfterSave": true
+    },
+    "automation": {
+      "bindings": {
+        "columns": {
+          "lead": "status.lead",
+          "applied": "status.applied",
+          "interview": "status.interview",
+          "rejected": "status.rejected"
+        },
+        "fieldIds": {
+          "company": "field.company",
+          "role": "field.role",
+          "jobUrl": "field.url",
+          "notes": "field.notes",
+          "sourceText": "field.sourceText"
+        }
+      },
+      "types": [
+        {
+          "type": "job-intake",
+          "version": 1,
+          "title": "Job intake",
+          "description": "Process configured submission and email events with an approved workflow.",
+          "permissions": [
+            "workspace.read",
+            "board.lead.create",
+            "board.application.advance"
+          ],
+          "defaults": {
+            "sources": [
+              "website"
+            ]
+          },
+          "parameterFields": {
+            "sources": {
+              "valueType": "select",
+              "options": [
+                "website",
+                "email"
+              ],
+              "multiple": true,
+              "required": true,
+              "min": 1,
+              "max": 2
+            }
+          }
+        },
+        {
+          "type": "job-intake",
+          "version": 2,
+          "title": "Job intake",
+          "description": "Process configured submission and email events with an approved workflow.",
+          "permissions": [
+            "workspace.read",
+            "board.lead.create",
+            "board.application.advance",
+            "board.application.source.append"
+          ],
+          "defaults": {
+            "sources": [
+              "website"
+            ]
+          },
+          "parameterFields": {
+            "sources": {
+              "valueType": "select",
+              "options": [
+                "website",
+                "email"
+              ],
+              "multiple": true,
+              "required": true,
+              "min": 1,
+              "max": 2
+            }
+          }
+        }
+      ],
+      "conditions": [
+        {
+          "group": "columns",
+          "key": "applied",
+          "parameter": "sources",
+          "includes": "email"
+        }
+      ]
+    },
+    "metadataFields": [
+      "employee_profile"
+    ]
+  }
+}

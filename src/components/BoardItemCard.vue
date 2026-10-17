@@ -3,7 +3,6 @@ import { computed } from "vue"
 import { MarkdownContent } from "../ui/markdownContent"
 import { previewCardNote } from "../ui/cardNotePreview"
 import type { Item } from "../domain/entitySchemas"
-import type { Lead } from "../types"
 
 type CardField = { id: string; title: string; value: string }
 type ItemDiscussion = { count: number; messageId?: string }
@@ -11,10 +10,10 @@ type CardItem = Item
 
 const props = defineProps<{
   item: CardItem
-  lead?: Lead
   notes: string
   searchQuery?: string
   searchMatchIndex?: number
+  summaryFields?: CardField[]
   fields: CardField[]
   hasFilters: boolean
   showFields?: boolean
@@ -50,21 +49,9 @@ const emit = defineEmits<{
     <button class="card-open-button" type="button" :aria-label="`Open ${item.title}${ageLevel && ageLevel !== 'fresh' ? `. ${ageLabel}` : ''}`" @click="selectCard"></button>
     <div class="card-layout">
       <div class="card-main">
-        <template v-if="lead">
-          <div class="card-head">
-            <span class="company">{{ lead.company }}</span>
-            <span v-if="lead.priority" class="priority" :class="lead.priority">{{ lead.priority.toUpperCase() }}</span>
-          </div>
-          <strong>{{ lead.role }}</strong>
-          <div class="card-meta">
-            <span v-if="lead.location">{{ lead.location }}</span>
-            <span v-if="lead.fitScore !== undefined" class="fit"><span>{{ lead.fitScore }}</span>/10 fit</span>
-          </div>
-        </template>
-        <template v-else>
           <strong>{{ item.title }}</strong>
           <MarkdownContent v-if="item.body" v-show="!hasFilters" class="item-card-body" :source="item.body" compact :editable-tasks="canEditItems" @task-toggle="emit('taskToggle', item, $event)" />
-        </template>
+        <dl v-if="summaryFields?.length" class="card-fields card-summary"><div v-for="field in summaryFields" :key="field.id"><dt>{{ field.title }}</dt><dd>{{ field.value }}</dd></div></dl>
       </div>
       <div v-if="(hasFilters && notes) || (showFields && fields.length)" class="card-context">
         <MarkdownContent v-if="hasFilters && notes" class="card-notes" :source="notePreview" compact :editable-tasks="canEditItems" @task-toggle="emit('taskToggle', item, $event)" />

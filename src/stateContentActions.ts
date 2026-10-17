@@ -36,7 +36,7 @@ async function createDocumentAsync(
   await commitAndPersist({
     kind: "addDocument",
     id,
-    itemId: input.leadId,
+    itemId: input.itemId,
     documentKind: input.kind,
     title: input.title,
     format: input.format,
@@ -101,7 +101,7 @@ async function createArtifactAsync(
   await commitAndPersist({
     kind: "recordArtifact",
     id,
-    itemId: input.leadId,
+    itemId: input.itemId,
     templateId: input.templateId,
     title: input.title,
     artifactKind: input.kind,
@@ -116,15 +116,15 @@ async function createArtifactAsync(
   );
 }
 
-function documentsFor(leadId: string): Document[] {
+function documentsFor(itemId: string): Document[] {
   return stateRuntime.workspace.documents.filter(
-    (document) => document.leadId === leadId,
+    (document) => document.itemId === itemId,
   );
 }
 
-function artifactsFor(leadId: string): Artifact[] {
+function artifactsFor(itemId: string): Artifact[] {
   return stateRuntime.workspace.artifacts.filter(
-    (artifact) => artifact.leadId === leadId,
+    (artifact) => artifact.itemId === itemId,
   );
 }
 

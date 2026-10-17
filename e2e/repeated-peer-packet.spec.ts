@@ -5,7 +5,7 @@ test("Given a detailed board and a committed peer packet, When duplicates repeat
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   const result = await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     await app.reclassifyWorkspace(app.activeWorkspace.id)
     const { exportDocumentAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
     const { defaultStorage } = await import("/src/storage.ts")

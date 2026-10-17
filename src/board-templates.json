@@ -1,0 +1,21 @@
+{
+  "blank": {
+    "label": "Blank board",
+    "entityName": "item",
+    "columns": [
+      {
+        "key": "column.todo",
+        "title": "To do"
+      },
+      {
+        "key": "column.doing",
+        "title": "Doing"
+      },
+      {
+        "key": "column.done",
+        "title": "Done"
+      }
+    ],
+    "fields": []
+  }
+}

@@ -1,3 +1,5 @@
+import templateData from "../board-templates.json" with { type: "json" }
+import type { Preset } from "../domain/seeds"
 import { entityKind, hasEntityKind } from "../domain/model"
 import { registerUtilityTools } from "./webmcpUtilityTools"
 import * as Automerge from "@automerge/automerge/slim"
@@ -118,12 +120,12 @@ async function registerWorkspaceTools(store: ToolStore, register: RegisterTool):
   await register({
     name: "create_workspace",
     title: "Create workspace",
-    description: "Create a new board workspace with either job-search or blank preset.",
+    description: "Create a workspace from a configured board template.",
     inputSchema: {
       type: "object",
       properties: {
         title: { type: "string" },
-        preset: { type: "string", enum: ["job-search", "blank"] },
+        preset: { type: "string", enum: Object.keys(templateData) },
       },
       required: ["title"],
       additionalProperties: false,
@@ -133,7 +135,7 @@ async function registerWorkspaceTools(store: ToolStore, register: RegisterTool):
       const value = objectInput(input)
       noUnknown(value, ["title", "preset"])
       const title = requiredString(value, "title")
-      const preset = (value.preset as "job-search" | "blank") ?? "job-search"
+      const preset = (value.preset as Preset) ?? "blank"
       if (store.createWorkspaceAsync) {
         const ws = await store.createWorkspaceAsync(title, preset)
         return { created: true, id: ws.id, title: ws.title }
@@ -262,7 +264,7 @@ async function registerReadTools(store: ToolStore, register: RegisterTool): Prom
       return Object.values(doc.entities)
         .filter((e): e is Item => isItem(e) && isEntityVisible(doc.entities, e.id))
         .map(item => {
-          const notesId = board?.preset?.bindings["field.notes"]
+          const notesId = board?.cardPresentation?.narrativeFieldId
           const textNotesId = notesId && doc.entities[notesId]?.kind === "field" && doc.entities[notesId].valueType === "text" ? notesId : undefined
           return projectItemPriority(board, item, textNotesId)
         })

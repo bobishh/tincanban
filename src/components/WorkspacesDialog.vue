@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { Preset } from "../domain/seeds"
+
 import ModalLayer from "./ModalLayer.vue"
 import { computed, defineAsyncComponent, ref, watch } from "vue"
 import type { WorkspaceCreationDraft } from "../domain/seeds"
@@ -15,7 +17,7 @@ const props = defineProps<{
   archiveWorkspace: (id: string) => Promise<void>
   restoreWorkspace: (id: string) => Promise<void>
   canRenameWorkspace: (id: string) => boolean
-  createWorkspace: (payload: { title: string; preset: "blank" | "job-search"; config?: WorkspaceCreationDraft }) => Promise<void>
+  createWorkspace: (payload: { title: string; preset: Preset; config?: WorkspaceCreationDraft }) => Promise<void>
   readOwner: (id: string) => Promise<string>
   currentPersonId: string
   currentIdentityName: string
@@ -170,7 +172,7 @@ async function restoreArchived(id: string) {
 }
 
 function displayTitle(title: string) {
-  return title.toLowerCase() === "job search" ? "jobs" : title
+  return title
 }
 </script>
 

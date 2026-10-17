@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { evaluateJobAssessment, readJobAssessment } from "./jobPriority"
+import { evaluateJobAssessment } from "../../workers/automation/src/jobPriority"
 
 const profile = { stack: "Rust, TypeScript, Postgres", work_profile: "Principal backend, distributed systems" }
 const assessment = { version: 1 as const, employee_profile: profile, scores: {
@@ -18,10 +18,4 @@ it("Given missing evidence or profile, when evaluated, then awards no unsupporte
 
 it("Given changed employee profile, when reading an older assessment, then drops stale comparison points", () => {
   expect(evaluateJobAssessment(assessment, { ...profile, stack: "Java" })).toBe(3)
-})
-
-it("Given persisted intake evidence, when reading, then accepts complete assessments and rejects truncated or invalid data", () => {
-  expect(readJobAssessment(JSON.stringify({ decision: { assessment } }))).toEqual(assessment)
-  expect(readJobAssessment('{"decision":')).toBeNull()
-  expect(readJobAssessment(JSON.stringify({ decision: { assessment: { ...assessment, scores: { ...assessment.scores, stackFit: 100 } } } }))).toBeNull()
 })

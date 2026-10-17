@@ -1,3 +1,4 @@
+import type { Preset } from "./domain/seeds"
 import type { Command } from "./domain/commands";
 import type { WorkspaceDocumentV2 } from "./domain/model";
 
@@ -23,7 +24,7 @@ export type ToolStore = {
   executeCommandAsync?: (command: Command) => Promise<unknown>;
   createWorkspaceAsync?: (
     title: string,
-    presetKey: "job-search" | "blank",
+    presetKey: Preset,
   ) => Promise<WorkspaceDocumentV2>;
   switchWorkspaceAsync?: (workspaceId: string) => Promise<void>;
   availableWorkspaces?: { value: WorkspaceSummary[] } | WorkspaceSummary[];
@@ -156,21 +157,14 @@ export const workspaceSettingsSchema = {
             additionalProperties: false,
           },
         },
-        employee_profile: {
-          type: "object",
-          description: "Shared job-search profile with stack and work preferences.",
-          properties: { stack: { type: "string", maxLength: 4000 }, work_profile: { type: "string", maxLength: 8000 } },
-          required: ["stack", "work_profile"],
-          additionalProperties: false,
-        },
+        settings: { type: "object", description: "Board-defined extension settings.", additionalProperties: true },
         priorityPolicy: {
           type: ["object", "null"],
           description:
-            "Declarative automatic priority policy. job-fit-v1 reads a saved assessment from assessmentFieldId; weighted-rules-v1 evaluates custom rules.",
+            "Declarative weighted rules over configured card fields.",
           properties: {
             version: { type: "number", const: 1 },
-            evaluator: { type: "string", enum: ["weighted-rules-v1", "job-fit-v1"] },
-            assessmentFieldId: { type: "string" },
+            evaluator: { type: "string", enum: ["weighted-rules-v1"] },
             sort: {
               type: "string",
               enum: ["fit_desc", "fit_asc", "manual"],

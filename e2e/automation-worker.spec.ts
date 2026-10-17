@@ -52,7 +52,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     const activation = await approveAutomationFromUi(page, workerIdentity)
     expect(activation).toMatchObject({ version: 2, definition: { payload: { type: "job-intake", typeVersion: 2 } } })
     const sharedAutomation = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")
       const doc = useTincanban().getActiveDoc()
       const entity = doc?.entities["automation:e2e"]
@@ -221,7 +221,7 @@ type WorkspaceSeed = {
 
 async function inspectWorkspace(page: Page): Promise<WorkspaceSeed> {
   return page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const tincanban = useTincanban()
     await tincanban.whenReady()
     const profile = tincanban.getCurrentProfile()
@@ -240,7 +240,7 @@ async function inspectWorkspace(page: Page): Promise<WorkspaceSeed> {
 async function approveAutomationFromUi(page: Page, workerIdentity: Record<string, unknown>): Promise<Record<string, unknown>> {
   // Management UI is covered by the independent lifecycle scenario below. This scenario covers intake and mail semantics.
   return page.evaluate(async identity => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
     const { exportApprovedAutomation } = await import("/src/app/automationActivation.ts")
     const workspace = useTincanban()
@@ -479,7 +479,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     await connectBlindRusty(page, rustySetup.origin)
     const workspace = await inspectWorkspace(page)
     await page.evaluate(async bindings => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       await useTincanban().executeCommandAsync({ kind: "createItem", id: "upvest-review-card", parentId: bindings.columns.applied,
         title: "Upvest — Senior Software Engineer (f/m/d)", values: {
           [bindings.fieldBindings.company]: "Upvest", [bindings.fieldBindings.role]: "Senior Software Engineer (f/m/d)",
@@ -504,7 +504,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     const automation = panel.getByRole("article", { name: "My job intake" })
     await expect(automation.getByText("Active · confirmed by Worker", { exact: true })).toBeVisible({ timeout: 30_000 })
     const instanceId = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const instance = Object.values(useTincanban().getActiveDoc()!.entities).find(entity => entity.kind === "automation")
       if (!instance || instance.kind !== "automation") throw new Error("Missing instance")
       return JSON.parse(instance.definition).id as string
@@ -519,7 +519,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     await page.getByRole("button", { name: "Settings", exact: true }).click()
     await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Workspace", exact: true }).click()
     const mailboxProbe = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       const { readAutomationMailbox } = await import("/src/app/automationMailbox.ts")
       const { parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
       const app = useTincanban(), profile = app.getCurrentProfile()!, workspaceId = app.getActiveDoc()!.id
@@ -551,7 +551,7 @@ test("Given an owner and connected Rusty, when an automation is added, paused, r
     })
     await expect(automation.getByRole("list", { name: "Recent email processing" })).toHaveCount(0)
     await page.evaluate(async urlFieldId => {
-      const { useTincanban } = await import("/src/state.ts")
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
       await useTincanban().executeCommandAsync({ kind: "patchItem", entityId: "upvest-review-card",
         values: { [urlFieldId]: "https://jobs.example.test/upvest/product" } })
     }, workspace.fieldBindings.jobUrl)

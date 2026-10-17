@@ -1,3 +1,4 @@
+import type { Preset } from "./domain/seeds"
 import type * as Automerge from "@automerge/automerge/slim";
 import { reactive, ref, type Ref } from "vue";
 import type { LocalProfile } from "./domain/identity";
@@ -8,7 +9,7 @@ type WorkspaceSummary = { id: string; title: string; updatedAt: string };
 type ActiveWorkspaceMeta = {
   id: string;
   title: string;
-  presetKey: "job-search" | "blank";
+  presetKey: Preset;
 };
 
 export type StateRuntime = {
@@ -38,7 +39,7 @@ export type StateRuntime = {
 
 export const stateRuntime: StateRuntime = {
   workspace: reactive<Workspace>({
-    leads: [],
+    items: [],
     documents: [],
     templates: [],
     artifacts: [],

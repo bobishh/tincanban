@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { createWorkspaceDoc } from "./domain/seeds"
+import { createWorkspaceDoc } from "./test/boardFixture"
 import { isItemArchived } from "./domain/archive"
 import type { Item } from "./domain/model"
 import { beginPendingItemMove, projectPendingItemMoves } from "./pendingItemMoves"

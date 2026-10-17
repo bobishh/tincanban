@@ -48,7 +48,7 @@ for (const policyChanged of [false, true]) test(`Given startup debug and ${polic
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await expect.poll(() => entries.some(item => event(item) === "startup.phase.completed" && attr(item, "startup.stage") === "start-sync")).toBe(true)
   if (policyChanged) await page.evaluate(async () => {
-    const app = (await import("/src/state.ts")).useTincanban()
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const storage = (await import("/src/storage.ts")).defaultStorage
     const A = await import("/@id/@automerge/automerge/slim")
     const doc = app.getActiveDoc()!

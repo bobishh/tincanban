@@ -53,7 +53,7 @@ test("Given a local journal created before the catalog index, when tincanban ope
   const workspaceId = await page.evaluate(async () => {
     const { initializePolicyBrowserRuntime } = await import("/src/iroh.ts")
     const { initializeAutomerge } = await import("/src/crdt.ts")
-    const { createWorkspaceDoc } = await import("/src/domain/seeds.ts")
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { bootstrapIdentity } = await import("/src/domain/identity.ts")
     const { recordGenesisAuthority } = await import("/src/sync/changeAuthorization.ts")
     const Automerge = await import("/@id/@automerge/automerge/slim")
@@ -91,7 +91,7 @@ test("Given a local journal created before the catalog index, when tincanban ope
   await expect(page.getByRole("alert")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeEnabled({ timeout: 15_000 })
   await expect.poll(() => page.evaluate(async () => {
-    const { useTincanban } = await import("/src/state.ts")
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
     return useTincanban().getActiveDoc()?.id
   }), { timeout: 15_000 }).toBe(workspaceId)
   expect(await page.evaluate(async id => {

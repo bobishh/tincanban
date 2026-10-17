@@ -1,7 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { readFile } from "node:fs/promises"
 import { beforeAll, describe, expect, it, vi } from "vitest"
-import { createWorkspaceDoc } from "./seeds"
+import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateWorkspaceDoc } from "./validation"
 import { needsWorkspaceStateMigration, planWorkspaceMigration } from "./workspaceMigration"
 import { hasEntityKind, isItem, type WorkspaceDocumentV2 } from "./model"
