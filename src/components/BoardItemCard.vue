@@ -25,6 +25,7 @@ const props = defineProps<{
 }>()
 
 const notePreview = computed(() => previewCardNote(props.notes, props.searchQuery ?? "", props.searchMatchIndex ?? -1))
+const bodyPreview = computed(() => previewCardNote(props.item.body))
 
 function selectCard(event: MouseEvent) {
   (event.currentTarget as HTMLButtonElement).focus()
@@ -50,7 +51,7 @@ const emit = defineEmits<{
     <div class="card-layout">
       <div class="card-main">
           <strong>{{ item.title }}</strong>
-          <MarkdownContent v-if="item.body" v-show="!hasFilters" class="item-card-body" :source="item.body" compact :editable-tasks="canEditItems" @task-toggle="emit('taskToggle', item, $event)" />
+          <MarkdownContent v-if="item.body && !hasFilters" class="item-card-body" :source="bodyPreview" compact :editable-tasks="canEditItems && bodyPreview === item.body" @task-toggle="emit('taskToggle', item, $event)" />
         <dl v-if="summaryFields?.length" class="card-fields card-summary"><div v-for="field in summaryFields" :key="field.id"><dt>{{ field.title }}</dt><dd>{{ field.value }}</dd></div></dl>
       </div>
       <div v-if="(hasFilters && notes) || (showFields && fields.length)" class="card-context">

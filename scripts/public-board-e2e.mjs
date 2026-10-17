@@ -36,7 +36,7 @@ const child = spawn("npx", ["playwright", "test", "--config", "playwright.public
     TINCANBAN_PUBLIC_E2E_KEEPER_ORIGIN: keeperOrigin,
     TINCANBAN_PUBLIC_E2E_PREVIEW: previewBuild ? "1" : "",
     TINCANBAN_PUBLIC_E2E_KEEPER_PORT: String(keeperPort),
-    TINCANBAN_PUBLIC_E2E_OUTPUT_DIR: `/tmp/tincanban-public-board-${keeperPort}`,
+    TINCANBAN_PUBLIC_E2E_OUTPUT_DIR: `test-results/public-board-${keeperPort}`,
     TINCANBAN_RUSTY_BINARY: rustyBinary,
     VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_BROWSER_KEY: "",
   },

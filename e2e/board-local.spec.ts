@@ -44,7 +44,7 @@ test("Given an archived card, when Archive opens, then it expands into a filtere
   await page.goto("/")
   await addLead(page, { company: "Cleo", role: "Ruby Engineer", priority: "p1", workMode: "remote", fit: "8" })
   await page.getByRole("button", { name: "Open Cleo — Ruby Engineer" }).click()
-  await page.getByRole("button", { name: "Archive", exact: true }).click()
+  await page.getByRole("button", { name: "Archive item", exact: true }).click()
   await page.getByRole("button", { name: "Close detail" }).click()
 
   await expect(page.getByRole("button", { name: "Open archive with 1 cards" })).toBeVisible()

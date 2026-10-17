@@ -63,7 +63,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   const timings: Array<{ stage: string; elapsedMs: number }> = []
-  for (const stage of ["Lead", "Applied", "Lead", "Applied", "Lead", "Applied"]) {
+  for (const stage of ["Applied", "Lead", "Applied", "Lead", "Applied", "Lead"]) {
     const start = performance.now()
     await detail.getByRole("button", { name: stage, exact: true }).click()
     await expect(detail.getByRole("button", { name: stage, exact: true })).toHaveAttribute("aria-pressed", "true")
@@ -81,7 +81,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
   expect(after.revision).toBe(before.revision + 6)
   await info.attach("repeated-save-timings", { body: JSON.stringify(timings), contentType: "application/json" })
   await page.reload()
-  await expect(page.getByRole("region", { name: "Applied", exact: true }).getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible({ timeout: 30_000 })
   const coldReplays = await page.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()
     .filter(event => event.event === "workspace.admission.started"))
   expect(coldReplays).toEqual([])

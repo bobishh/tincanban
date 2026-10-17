@@ -48,8 +48,8 @@ test("Given storage failure, when dropping near an empty column bottom, then car
 test("Given 55 detailed leads, when a card drops into blank column space, then pointer response and main-thread work stay below 200ms", async ({ page }, testInfo) => {
   await populatedBoard(page, true)
   const destinationId = await page.getByRole("region", { name: "Applied", exact: true }).getAttribute("data-column-id")
-  const source = page.locator('[data-item-id="performance-card-54"] .card-main > strong')
-  await source.scrollIntoViewIfNeeded()
+  const source = page.getByRole("button", { name: "Open Performance card 54", exact: true })
+  await source.hover()
   const sourceBounds = (await source.boundingBox())!
   const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
   const x = sourceBounds.x + sourceBounds.width / 2
@@ -57,6 +57,7 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
   const destinationY = Math.min(y, columnBounds.y + columnBounds.height - 80)
   expect(destinationY - columnBounds.y).toBeGreaterThan(500)
   await page.mouse.move(x, y)
+  await expect.poll(() => page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-item-id]")?.getAttribute("data-item-id"), { x, y })).toBe("performance-card-54")
 
   const session = await page.context().newCDPSession(page)
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
@@ -111,8 +112,8 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
 })
 
 async function dropNearBottom(page: import("@playwright/test").Page) {
-  const source = page.locator('[data-item-id="performance-card-54"] .card-main > strong')
-  await source.scrollIntoViewIfNeeded()
+  const source = page.getByRole("button", { name: "Open Performance card 54", exact: true })
+  await source.hover()
   const sourceBounds = (await source.boundingBox())!
   const sourceContent = await page.locator('[data-item-id="performance-card-54"] .card-layout').textContent()
   const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
@@ -122,6 +123,7 @@ async function dropNearBottom(page: import("@playwright/test").Page) {
   // This position is far below the destination's cards/header, inside blank column space.
   expect(destinationY - columnBounds.y).toBeGreaterThan(500)
   await page.mouse.move(x, y)
+  await expect.poll(() => page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("[data-item-id]")?.getAttribute("data-item-id"), { x, y })).toBe("performance-card-54")
   await page.mouse.down()
   await page.mouse.move(x + 12, y, { steps: 3 })
   const preview = page.locator(".board-drag-preview")

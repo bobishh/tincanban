@@ -226,6 +226,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await stop()
     await start()
     await reader.reload()
+    await expect(reader.getByRole("button", { name: "Open Public release card" })).toBeVisible({ timeout: 30_000 })
     await expect(reader.getByText("Third published description")).toBeVisible()
     await reader.getByRole("button", { name: "Open Public release card" }).click()
     const updatedCard = reader.getByRole("dialog", { name: "Item overview", exact: true })
