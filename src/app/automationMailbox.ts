@@ -12,7 +12,7 @@ export type AutomationMailboxInput = {
   personId: string
   grantId: string
 }
-export type AutomationMailboxSetup = Omit<AutomationEmailSetup, "receipt"> & {
+type AutomationMailboxSetup = Omit<AutomationEmailSetup, "receipt"> & {
   receipt: Omit<AutomationEmailSetup["receipt"], "events"> & {
     events: Array<AutomationEmailSetup["receipt"]["events"][number] & { bindingId?: string }>
   }

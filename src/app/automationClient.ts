@@ -2,16 +2,10 @@ import { requestWorkerJson } from "./workerJsonResponse"
 import { automationBodyHash, createAutomationOwnerRequest as createVerifiedOwnerRequest, verifyAutomationObservation,
   type AutomationOwnerRequestInput } from "../domain/automationProtocol"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
-import { isAutomationOrigin } from "../domain/automationLifecycle"
 import { automationTypes, type AutomationDefinition } from "../domain/automationContract"
 import type { LocalProfile } from "../domain/identity"
 import type { AutomationWorkerIdentity } from "./automation"
 
-export function automationOrigin(address: string): string {
-  const origin = address.trim().replace(/\/$/, "")
-  if (!isAutomationOrigin(origin)) throw new Error("Worker address must be an HTTPS origin")
-  return origin
-}
 
 async function createOwnerRequest(profile: LocalProfile, input: AutomationOwnerRequestInput) {
   const payload = structuredClone(input)
@@ -42,15 +36,6 @@ export async function enrollAutomation(profile: LocalProfile, origin: string, wo
   return identity
 }
 
-export async function activateAutomation(profile: LocalProfile, identity: AutomationWorkerIdentity, workspaceId: string, packet: unknown): Promise<void> {
-  profile = structuredClone(profile)
-  identity = structuredClone(identity)
-  packet = structuredClone(packet)
-  if (!identity.integrationId) throw new Error("Worker instance is missing")
-  const ownerRequest = await createOwnerRequest(profile, { action: "activate", origin: identity.origin, workspaceId,
-    integrationId: identity.integrationId, bodyHash: await automationBodyHash(packet) })
-  await requestJson(identity.origin, `/v2/integrations/${identity.integrationId}/activation`, { ownerRequest, packet }, "PUT")
-}
 
 export async function observeAutomation(profile: LocalProfile, input: { origin: string; integrationId: string; workspaceId: string; personId: string; grantId: string }) {
   input = { ...input }
