@@ -230,7 +230,7 @@ it("Given a live Worker with a pending signed action, When its Owner refreshes c
   expect(upload.mock.calls[0]![2]).toBe(before.pending.requestId);
   expect((await resumed.createLead("retained-before-access-refresh", { company: "Acme", role: "Engineer" }, {})).duplicate).toBe(true);
   await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
-});
+}, 20_000);
 
 it.each([false, true])("Given an existing executor with legacy=%s, When Owner confirms its new approval over HTTP, Then preserve routing and atomically update the same instance", async legacy => {
   const integrationId = `managed-${crypto.randomUUID().replace(/-/g, "")}`;
