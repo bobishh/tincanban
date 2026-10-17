@@ -64,7 +64,7 @@ test("Given a mobile board, when navigating columns, then the next column peeks 
   await expect(page.getByRole("region", { name: "Lead" }).getByRole("button", { name: "Add lead to Lead" })).toBeVisible()
 })
 
-test("Given a Job search lead, when Archive status is selected, then Undo stays available inside Lead details", async ({ page }) => {
+test("Given a configured card, when archived, then restore stays available inside its details", async ({ page }) => {
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await page.getByRole("region", { name: "Lead" }).getByRole("button", { name: "Add lead to Lead" }).click()
@@ -73,10 +73,10 @@ test("Given a Job search lead, when Archive status is selected, then Undo stays 
   await form.getByLabel(/Role/).fill("Undo role")
   await form.getByRole("button", { name: "Create item" }).click()
   const detail = page.getByRole("dialog", { name: "Item overview" })
-  await detail.getByRole("button", { name: "Archive" }).click()
-  await expect(detail.getByRole("button", { name: "Undo archive" })).toBeVisible()
-  await detail.getByRole("button", { name: "Undo archive" }).click()
-  await expect(detail.getByRole("button", { name: "Undo archive" })).toHaveCount(0)
+  await detail.getByRole("button", { name: "Archive item", exact: true }).click()
+  await expect(detail.getByRole("button", { name: "Restore item", exact: true })).toBeVisible()
+  await detail.getByRole("button", { name: "Restore item", exact: true }).click()
+  await expect(detail.getByRole("button", { name: "Restore item", exact: true })).toHaveCount(0)
   await expect(detail.getByRole("button", { name: "Lead" })).toHaveClass(/active/)
 })
 

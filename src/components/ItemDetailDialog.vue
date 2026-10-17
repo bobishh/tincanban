@@ -58,7 +58,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="props.workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" @close="emit('close')">
+  <SpatialWindow :window-id="`item:${item.id}`" :workspace-id="props.workspaceId ?? 'local'" :title="item.title" aria-label="Item overview" close-label="Dismiss" framed @close="emit('close')">
       <template #header>
       <div class="detail-head" :data-discussion-item="item.id">
         <div>
@@ -76,7 +76,7 @@ const emit = defineEmits<{
 
       </template>
     <section class="detail-dialog" :data-discussion-item="item.id">
-      <div class="detail-scroll detail-layout" data-detail-layout>
+      <div class="detail-layout" data-detail-layout>
         <aside class="detail-inspector" data-detail-inspector aria-label="Item actions and properties">
           <CardStageStrip :item="item" :columns="columns" :buttons="cardStageButtons" :read-only="readOnly" :move="moveToColumn" />
           <QuickNoteForm
@@ -152,8 +152,7 @@ const emit = defineEmits<{
 .detail-head { margin: 0; align-items: center; gap: var(--space-3); }
 .detail-head h2 { font-size: var(--site-font-detail-heading-size, 1.5rem); margin: var(--space-1) 0 0; }
 .detail-head-actions { flex-wrap: wrap; }
-.detail-dialog { width: 100%; height: 100%; max-height: none; padding: var(--space-4); border: 0; box-shadow: none; }
-.detail-scroll { flex: 1; }
+.detail-dialog { width: 100%; max-height: none; overflow: visible; border: 0; box-shadow: none; }
 .dialog-actions { padding-right: var(--space-6); flex-shrink: 0; }
 @media (max-width: 600px) {
   .detail-head h2 { font-size: var(--site-font-detail-heading-mobile-size, 1.35rem); }

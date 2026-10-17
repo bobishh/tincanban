@@ -424,7 +424,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     // 7. Switch back to Job search board
     await page.getByRole("button", { name: "Workspaces" }).click()
     const wsDialog = page.getByRole("dialog", { name: "Workspaces" })
-    await wsDialog.getByRole("button", { name: "Job search" }).click()
+    await wsDialog.locator(".workspace-switch").filter({ hasText: "Job search" }).click()
     await expect(page.getByRole("region", { name: "Job search" })).toBeVisible()
     await expect(page.getByRole("button", { name: "Open Stripe — Platform Engineer" })).toBeVisible()
 

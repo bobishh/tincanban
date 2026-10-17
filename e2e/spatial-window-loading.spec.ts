@@ -17,7 +17,7 @@ test("Given a new lead, when its detail module is still loading then a pending s
   await form.getByLabel("Role *").fill("Engineer")
 
   await form.getByRole("button", { name: "Create item" }).click()
-  await expect(page.getByRole("status").filter({ hasText: "Opening details" })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Opening item…" })).toBeVisible()
   releaseModule()
   const details = page.getByRole("dialog", { name: "Item overview" })
   await expect(details).toBeVisible()

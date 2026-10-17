@@ -32,28 +32,31 @@ test("Given an extracted posting, when display labels change and its URL later r
   test.setTimeout(180_000)
   const fixture = await createApplicationFixture(page, baseURL!)
   try {
+    const sourceText = `${company} is hiring a ${originalRole}. Build and operate distributed systems.`
     const cardId = await submitApplication(fixture, {
       company,
       role: "Display Platform Architect",
       jobUrl,
-      message: `${company} is hiring a ${originalRole}. Build and operate distributed systems.`,
+      message: sourceText,
       idempotencyKey: "source-original-posting",
     })
     await syncFromRusty(page)
+    const originalSources = await readApplicationSources(page, [cardId])
+    expect(originalSources).toHaveLength(1)
+    expect(originalSources[0]!.data).toContain(originalRole)
     await patchCard(page, fixture, cardId, "Edited display title", "Edited display role")
     const detail = await openApplicationDetail(page, "Edited display title")
-    const source = detail.getByRole("region", { name: "Original posting evidence" })
-    await expect(source.getByText("Original posting title", { exact: true })).toBeVisible()
-    await expect(source).toContainText(originalRole)
-    await expect(source).toContainText(company)
+    const source = detail.locator(`[data-field-id="${fixture.fieldIds.sourceText}"] dd`)
+    await expect(source).toHaveText(sourceText)
 
     // The remote page may change or disappear later; the stored source stays the original observation.
     await setJobPage(fixture.workerOrigin, { url: jobUrl, status: 200,
       html: '<script type="application/ld+json">{"@type":"JobPosting","title":"Generic Infrastructure Role","description":"Changed posting text.","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>' })
-    await expect(source.getByText(originalRole, { exact: true })).toBeVisible()
+    await expect(source).toHaveText(sourceText)
 
     await setJobPage(fixture.workerOrigin, { url: jobUrl, status: 404 })
-    await expect(source.getByText(originalRole, { exact: true })).toBeVisible()
+    await expect(source).toHaveText(sourceText)
+    expect(await readApplicationSources(page, [cardId])).toEqual(originalSources)
     await expect(detail.getByText("Edited display role", { exact: true })).toBeVisible()
   } finally { await fixture.close() }
 })
@@ -65,10 +68,8 @@ test("Given a legacy application with no source record, when a generic rejection
     await createLegacyApplication(page, fixture, "Legacy Platform Role")
     await syncFromRusty(page)
     const detail = await openApplicationDetail(page, `${company} — Legacy Platform Role`)
-    const source = detail.getByRole("region", { name: "Original posting evidence" })
-    await expect(source).toContainText("Original posting evidence pending")
-    await expect(source).toContainText("Original posting evidence pending · no original title is available")
-    await expect(source.getByText("Legacy Platform Role", { exact: true })).toHaveCount(0)
+    await expect(detail.locator(`[data-field-id="${fixture.fieldIds.sourceText}"]`)).toHaveCount(0)
+    await expect(detail.getByRole("region", { name: "Original posting evidence" })).toHaveCount(0)
     await page.getByRole("button", { name: "Close detail" }).click()
 
     const messageId = "<legacy-source-review@example.test>"
@@ -198,7 +199,9 @@ test("Given a saved owner binding, when its automation grant is revoked before r
     await waitForStatus(fixture.workerOrigin, eventId, "review")
     await syncFromRusty(page)
 
-    expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
+    const selection = await reviewRetainedEmail(page, eventId, firstCard)
+    expect(selection).toMatchObject({ saved: true })
+    if (!selection.binding) throw new Error("Saved owner binding unavailable")
 
     await page.evaluate(async () => {
       const { useTincanban } = await import("/src/test/stateFixture.ts")
@@ -210,20 +213,21 @@ test("Given a saved owner binding, when its automation grant is revoked before r
     await syncFromRusty(page)
     await expect.poll(() => page.evaluate(async origin => {
       const { useTincanban } = await import("/src/test/stateFixture.ts")
-      const { observeAutomation } = await import("/src/app/automationClient.ts")
+      const { readApplicationReviewMailbox } = await import("/src/app/applicationReviewClient.ts")
       const { parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
       const app = useTincanban()
       const entity = Object.values(app.getActiveDoc()!.entities).find(value => value.kind === "automation")
       if (entity?.kind !== "automation") throw new Error("Automation unavailable")
       const definition = parseAutomationDefinition(JSON.parse(entity.definition))
-      return observeAutomation(app.getCurrentProfile()!, { origin, integrationId: "e2e", workspaceId: app.getActiveDoc()!.id,
+      return readApplicationReviewMailbox(app.getCurrentProfile()!, { origin, integrationId: "e2e", definitionId: definition.id, workspaceId: app.getActiveDoc()!.id,
         personId: entity.executor.personId, grantId: definition.scope.grantId })
-    }, fixture.workerOrigin), { timeout: 30_000 }).toMatchObject({ state: "deleted" })
-    await expect(page.evaluate(async ({ origin, workspaceId, eventId }) => {
+    }, fixture.workerOrigin), { timeout: 30_000 }).toMatchObject({ verifiedObservation: { state: "deleted" } })
+    await expect(page.evaluate(async ({ origin, workspaceId, proof }) => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { retryAutomationEmail } = await import("/src/app/automationClient.ts")
-      return retryAutomationEmail(await bootstrapIdentity(), { origin, integrationId: "e2e", workspaceId }, eventId)
-    }, { origin: fixture.workerOrigin, workspaceId: fixture.workspaceId, eventId })).rejects.toThrow()
+      const { retryApplicationBinding } = await import("/src/app/applicationReviewClient.ts")
+      return retryApplicationBinding(await bootstrapIdentity(), { origin, integrationId: proof.signed.payload.integrationId,
+        definitionId: proof.signed.payload.definitionId, workspaceId, proof })
+    }, { origin: fixture.workerOrigin, workspaceId: fixture.workspaceId, proof: selection.binding })).rejects.toThrow()
     const afterRetry = await waitForStatus(fixture.workerOrigin, eventId, "review")
     expect(afterRetry).toMatchObject({ status: "review" })
     await syncFromRusty(page)

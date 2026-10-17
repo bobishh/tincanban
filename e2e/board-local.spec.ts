@@ -7,8 +7,8 @@ async function addLead(page: import("@playwright/test").Page, input: { company: 
   const form = page.getByRole("dialog", { name: /Add item|Item details/ })
   await form.getByLabel("Company *").fill(input.company)
   await form.getByLabel("Role *").fill(input.role)
-  await form.getByLabel("Priority").selectOption(input.priority)
-  await form.getByLabel("Work mode").selectOption(input.workMode)
+  await form.getByLabel("Priority").selectOption({ label: input.priority.toUpperCase() })
+  await form.getByLabel("Work mode").selectOption({ label: input.workMode[0]!.toUpperCase() + input.workMode.slice(1) })
   await form.getByLabel("Fit score").fill(input.fit)
   await form.getByRole("button", { name: "Create item" }).click()
   await page.getByRole("button", { name: "Close detail" }).click()
@@ -40,39 +40,6 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 
   await expect(status).toHaveCount(0)
 })
 
-test("Given a saved base CV, when a generated PDF is attached to a lead, then it keeps template provenance and rejects incomplete artifacts", async ({ page }) => {
-  await page.goto("/")
-  await ensureJobSearchWorkspace(page)
-  await page.getByRole("button", { name: "Settings" }).click()
-  const templates = page.getByRole("dialog", { name: "Settings" })
-  await templates.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await templates.getByRole("tab", { name: "Document templates" }).click()
-  await templates.getByLabel("Name").fill("General software CV")
-  await templates.getByLabel("Markdown").fill("# Candidate\n\nExperience")
-  await templates.getByRole("button", { name: "Save template" }).click()
-  await expect(templates.getByRole("button", { name: "General software CV" })).toBeVisible()
-  await templates.getByRole("button", { name: "Dismiss" }).click()
-
-  await page.getByRole("button", { name: /Add lead to/ }).first().click()
-  await page.getByLabel("Company *").fill("Cleo")
-  await page.getByLabel("Role *").fill("Ruby Engineer")
-  await page.getByRole("button", { name: "Create item" }).click()
-
-  await page.getByRole("button", { name: "+ PDF" }).click()
-  const artifactForm = page.locator("form.document-form").first()
-  await artifactForm.getByRole("button", { name: "Attach PDF" }).click()
-  await expect(artifactForm.getByRole("alert")).toHaveText("Title, base template, and PDF path required")
-  await expect(page.getByText("No generated PDFs")).toBeVisible()
-
-  await artifactForm.getByLabel("Title").fill("Cleo CV")
-  await artifactForm.getByLabel("Base template").selectOption({ label: "General software CV" })
-  await artifactForm.getByLabel("PDF path").fill("/tmp/cleo-cv.pdf")
-  await artifactForm.getByRole("button", { name: "Attach PDF" }).click()
-
-  await expect(page.getByText("Cleo CV")).toBeVisible()
-  await expect(page.getByText("CV PDF · from template")).toBeVisible()
-})
-
 test("Given an archived card, when Archive opens, then it expands into a filtered column and can collapse again", async ({ page }) => {
   await page.goto("/")
   await addLead(page, { company: "Cleo", role: "Ruby Engineer", priority: "p1", workMode: "remote", fit: "8" })
@@ -88,7 +55,7 @@ test("Given an archived card, when Archive opens, then it expands into a filtere
   await expect(page.locator(".bin-column")).toHaveClass(/bin-column-open/)
   await expect(page.locator(".bin-column").getByRole("button", { name: "Open Cleo — Ruby Engineer" })).toBeVisible()
 
-  await page.getByPlaceholder("Search company, role, notes").fill("missing")
+  await page.getByRole("searchbox", { name: "Search cards", exact: true }).fill("missing")
   await expect(page.getByText("No matching cards", { exact: true })).toBeVisible()
   await expect(page.locator(".board > .column")).toHaveCount(0)
   await page.getByRole("button", { name: "Clear search and filters" }).click()

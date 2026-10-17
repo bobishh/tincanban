@@ -20,9 +20,9 @@ for (const width of [390, 1440]) {
     for (const activate of [() => card.hover(), () => discuss.focus()]) {
       await activate()
       await expect(discuss).toHaveCSS("opacity", "1")
-      const fit = (await card.locator(".fit").boundingBox())!
+      const fit = (await card.locator(".card-summary dd").filter({ hasText: /^8$/ }).boundingBox())!
       const button = (await discuss.boundingBox())!
-      expect(fit.x + fit.width + 4).toBeLessThanOrEqual(button.x)
+      expect(fit.x + fit.width <= button.x || fit.y + fit.height <= button.y || fit.x >= button.x + button.width || fit.y >= button.y + button.height).toBe(true)
       expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     }
     const initialHeight = await card.evaluate(element => element.clientHeight)

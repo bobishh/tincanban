@@ -23,7 +23,7 @@ export async function reviewRetainedEmail(page: Page, eventId: string, cardId?: 
         await review.save()
       } else await review.retry()
       if (review.failure.value) throw new Error(review.failure.value)
-      return { saved: review.saved.value, status: review.review.value?.status }
+      return { saved: review.saved.value, status: review.review.value?.status, binding: review.review.value?.binding }
     } finally { review.close() }
   }, { eventId, cardId })
 }

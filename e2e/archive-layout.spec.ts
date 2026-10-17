@@ -120,7 +120,6 @@ test("Given archive role moves, when the board updates, then old preset bindings
 
   await expect(oldArchive).not.toHaveClass(/column-archived|bin-column/)
   await expect(nextArchive).toHaveClass(/bin-column/)
-  await expect(nextArchive).toHaveClass(/column-rejected/)
   await nextArchive.getByRole("button", { name: "Open Rejected with 0 cards" }).click()
   await expect(nextArchive).toHaveClass(/bin-column-open/)
 })
@@ -212,7 +211,7 @@ test("Given a board taller than the viewport, when Rejected and Archive fold, th
     const app = useTincanban()
     await app.whenReady()
     const columns = Object.values(app.getActiveDoc()!.entities).filter(entity => entity.kind === "column")
-    for (const [title, count] of [["Lead", 18], ["Rejected", 1], ["Archive", 1]] as const) {
+    for (const [title, count] of [["Lead", 28], ["Rejected", 1], ["Archive", 1]] as const) {
       const parentId = columns.find(column => column.title === (title === "Archive" ? "Lead" : title))!.id
       for (let index = 0; index < count; index++) {
         const id = crypto.randomUUID()

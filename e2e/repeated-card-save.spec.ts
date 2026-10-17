@@ -27,7 +27,7 @@ async function savedJournal(page: Page) {
   })
 }
 
-test("Given a detailed board, two enrolled certificates and ten idle minutes, when Archive and Applied alternate repeatedly, then every transition persists without history replay or renewed access serialization", async ({ page }, info) => {
+test("Given a detailed board, two enrolled certificates and ten idle minutes, when Lead and Applied alternate repeatedly, then every transition persists without history replay or renewed access serialization", async ({ page }, info) => {
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.evaluate(async () => {
@@ -63,7 +63,7 @@ test("Given a detailed board, two enrolled certificates and ten idle minutes, wh
   await page.getByRole("button", { name: "Open Performance card 0", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   const timings: Array<{ stage: string; elapsedMs: number }> = []
-  for (const stage of ["Archive", "Applied", "Archive", "Applied", "Archive", "Applied"]) {
+  for (const stage of ["Lead", "Applied", "Lead", "Applied", "Lead", "Applied"]) {
     const start = performance.now()
     await detail.getByRole("button", { name: stage, exact: true }).click()
     await expect(detail.getByRole("button", { name: stage, exact: true })).toHaveAttribute("aria-pressed", "true")

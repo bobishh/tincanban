@@ -48,7 +48,7 @@ test("Given storage failure, when dropping near an empty column bottom, then car
 test("Given 55 detailed leads, when a card drops into blank column space, then pointer response and main-thread work stay below 200ms", async ({ page }, testInfo) => {
   await populatedBoard(page, true)
   const destinationId = await page.getByRole("region", { name: "Applied", exact: true }).getAttribute("data-column-id")
-  const source = page.getByRole("button", { name: "Open Performance card 54", exact: true })
+  const source = page.locator('[data-item-id="performance-card-54"] .card-main > strong')
   await source.scrollIntoViewIfNeeded()
   const sourceBounds = (await source.boundingBox())!
   const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
@@ -87,8 +87,7 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
   await page.waitForFunction(() => {
     const preview = document.querySelector(".board-drag-preview")
     const sourceCard = document.querySelector('[data-item-id="performance-card-54"]')
-    return preview?.querySelector(".card-head")?.textContent === sourceCard?.querySelector(".card-head")?.textContent &&
-      preview?.querySelector(".card-meta")?.textContent === sourceCard?.querySelector(".card-meta")?.textContent
+    return preview?.querySelector(".card-layout")?.textContent === sourceCard?.querySelector(".card-layout")?.textContent
   })
   await page.mouse.up()
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
@@ -112,13 +111,10 @@ test("Given 55 detailed leads, when a card drops into blank column space, then p
 })
 
 async function dropNearBottom(page: import("@playwright/test").Page) {
-  const source = page.getByRole("button", { name: "Open Performance card 54", exact: true })
+  const source = page.locator('[data-item-id="performance-card-54"] .card-main > strong')
   await source.scrollIntoViewIfNeeded()
   const sourceBounds = (await source.boundingBox())!
-  const sourceContent = await source.locator("..").evaluate(card => ({
-    head: card.querySelector(".card-head")!.textContent!,
-    meta: card.querySelector(".card-meta")!.textContent!,
-  }))
+  const sourceContent = await page.locator('[data-item-id="performance-card-54"] .card-layout').textContent()
   const columnBounds = (await page.getByRole("region", { name: "Applied", exact: true }).boundingBox())!
   const x = sourceBounds.x + sourceBounds.width / 2
   const y = sourceBounds.y + Math.min(30, sourceBounds.height / 2)
@@ -130,8 +126,7 @@ async function dropNearBottom(page: import("@playwright/test").Page) {
   await page.mouse.move(x + 12, y, { steps: 3 })
   const preview = page.locator(".board-drag-preview")
   await expect(preview).toBeVisible()
-  await expect(preview.locator(".card-head")).toHaveText(sourceContent.head)
-  await expect(preview.locator(".card-meta")).toHaveText(sourceContent.meta)
+  await expect(preview.locator(".card-layout")).toHaveText(sourceContent!)
   await page.mouse.move(columnBounds.x + columnBounds.width / 2, destinationY, { steps: 18 })
   const target = page.getByRole("region", { name: "Applied", exact: true })
   await expect(page.locator(".board-drop-gap")).toHaveAttribute("data-target-id", await target.getAttribute("data-column-id"))

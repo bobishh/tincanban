@@ -12,7 +12,7 @@ test.describe("Column add actions and overlay notices", () => {
     const applied = page.getByRole("region", { name: "Applied" })
     await applied.getByRole("button", { name: "Add lead to Applied" }).click()
     const form = page.getByRole("dialog", { name: "Add item" })
-    await expect(form.getByLabel("Status")).toHaveValue("applied")
+    await expect(form.getByLabel("Status")).toHaveValue((await applied.getAttribute("data-column-id"))!)
   })
 
   test("Given a successful action, when its notice appears, then it overlays content and disappears", async ({ page }) => {

@@ -133,7 +133,7 @@
 .card-layout { min-width: 0; }
 .card-main, .card-context { min-width: 0; }
 .card-context { display: grid; gap: var(--space-4); margin-top: var(--space-4); padding-top: var(--space-3); }
-.card-notes { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--muted); font-size: 1rem; line-height: 1.5; }
+.card-notes, .item-card-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0; white-space: pre-line; overflow-wrap: anywhere; color: var(--muted); font-size: 1rem; line-height: 1.5; }
 .card-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(140px, 100%), 1fr)); align-content: start; gap: var(--space-3) var(--space-4); margin: 0; }
 .card-fields > div { min-width: 0; }
 .card-fields dt { margin-bottom: var(--space-1); color: var(--muted); font: 700 .8rem/1.3 var(--site-font-sans); letter-spacing: .04em; text-transform: uppercase; }
