@@ -22,6 +22,7 @@ export interface ExecutionSqlTransactionPort {
   transactionSync<T>(callback: () => T): T;
 }
 export interface ExecutionStoragePort extends ExecutionSqlTransactionPort {
+  readonly schemaManaged?: boolean;
   getAlarm(): Promise<number | null>;
   setAlarm(scheduledTime: number): Promise<void>;
   deleteAlarm(): Promise<void>;

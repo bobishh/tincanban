@@ -7,7 +7,6 @@ import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/pack
 import { createAutomationOwnerRequest as createVerifiedOwnerRequest, type AutomationOwnerRequestInput } from "../../../src/domain/automationProtocol";
 import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { AutomationCoordinator, writeReplicaChunksAtomically } from "../src/coordinator";
-import { reserveCloudflareFreshRoute } from "../src/executorFresh";
 
 const testEnv = {
   ...env,
@@ -367,57 +366,6 @@ describe("automation Worker", () => {
     expect(event).toMatchObject({ eventId, source: "email" });
   });
 
-  it("Given cached owner-approved routing and an unavailable executor, When HTTP and private-email intake arrive, Then Cloudflare durably accepts both without Node RPC", async () => {
-    const integrationId = crypto.randomUUID();
-    const address = `jobs-${"b".repeat(32)}@example.test`;
-    const integration = { id: integrationId, workspaceId: "workspace-1", scope: {
-      version: 1 as const, boardId: "board-1", columns: { lead: "lead", interview: "interview", rejected: "rejected" },
-      fieldIds: { company: "company", role: "role", jobUrl: "job-url" }, expiresAt: "2099-01-01T00:00:00.000Z",
-    }, allowedForwarders: [] as string[] };
-    const unavailableEnv = { ...testEnv, EXECUTOR_ORIGIN: "https://executor.example", EXECUTOR_SERVICE_TOKEN: "executor-test-token-with-at-least-thirty-two-bytes",
-      INTEGRATIONS_JSON: "[]", EMAIL_ROUTES_JSON: JSON.stringify([{ id: integrationId, address, mailbox: "owner@example.test" }]) } as WorkerEnv;
-    const stub = unavailableEnv.AUTOMATION.getByName(integrationId);
-    await runInDurableObject(stub, async (_instance, ctx) => {
-      const coordinator = new AutomationCoordinator(ctx, unavailableEnv);
-      await coordinator.cacheIntakeIntegrationRouting(integration);
-      await reserveCloudflareFreshRoute(ctx.storage, { integrationId, ownerPersonId: "owner-1", workspaceId: integration.workspaceId,
-        origin: unavailableEnv.EXECUTOR_ORIGIN!, epoch: 1 });
-    });
-
-    const originalFetch = globalThis.fetch;
-    const rpcAttempts: string[] = [];
-    globalThis.fetch = async input => { rpcAttempts.push(String(input)); throw new Error("executor is unavailable"); };
-    try {
-      const challengeResponse = await fetchWorker(new Request("https://automation.test/v1/challenge", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ integrationId }),
-      }), unavailableEnv);
-      expect(challengeResponse.status).toBe(200);
-      const challenge = await challengeResponse.json() as { token: string; prompt: string };
-      const [left, right] = challenge.prompt.match(/\d+/g)!.map(Number);
-      const intakeResponse = await fetchWorker(new Request(`https://automation.test/v1/intake/${integrationId}`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
-          message: "Engineer opening", contact: "owner@example.test", company: "Example", role: "Engineer",
-          humanCheckToken: challenge.token, humanCheckAnswer: String(left + right),
-        }),
-      }), unavailableEnv);
-      expect(intakeResponse.status).toBe(202);
-      expect(await intakeResponse.json()).toMatchObject({ status: "pending", durable: true });
-
-      const raw = new TextEncoder().encode("From: recruiter@example.test\r\nMessage-ID: <cached-route@example.test>\r\nSubject: Engineer\r\n\r\nApplication update");
-      const rejection: string[] = [];
-      await worker.email!({ from: "recruiter@example.test", to: address, rawSize: raw.length,
-        raw: new ReadableStream({ start(controller) { controller.enqueue(raw); controller.close(); } }), headers: new Headers(),
-        setReject(reason: string) { rejection.push(reason); }, async forward() { throw new Error("not expected"); },
-        async reply() { throw new Error("not expected"); },
-      } as ForwardableEmailMessage, unavailableEnv);
-      expect(rejection).toEqual([]);
-      expect(rpcAttempts).toEqual([]);
-      await runInDurableObject(stub, async (_instance, ctx) => {
-        expect(ctx.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM executor_intake_outbox").one().count).toBe(2);
-        await ctx.storage.deleteAlarm();
-      });
-    } finally { globalThis.fetch = originalFetch; }
-  });
 
   it("Given a sender outside the integration allowlist, When email arrives, Then it is rejected before parsing", async () => {
     const rejection: string[] = [];

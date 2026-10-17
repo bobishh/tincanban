@@ -35,10 +35,9 @@ import { verifyAutomationObservation } from "../../../src/domain/automationProto
 import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
 import type { ExecutionCoordinator } from "../src/executionCoordinator";
 
-/** Test seams follow the shared executor; the real Durable Object still owns the public RPC surface. */
+/** Domain test seams use the local adapter; production requests execute in Reflux. */
 function executionFixture(instance: object): ExecutionCoordinator {
-  const legacyExecution = Reflect.get(instance, "legacyExecution");
-  const execution = typeof legacyExecution === "function" ? Reflect.apply(legacyExecution, instance, []) : undefined;
+  const execution = Reflect.get(instance, "instance");
   if (!execution || typeof execution !== "object") throw new Error("Durable Object has no shared execution coordinator");
   return execution as ExecutionCoordinator;
 }

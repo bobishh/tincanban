@@ -1,3 +1,4 @@
+import { forwardRefluxRequest } from "./refluxClient";
 import { normalizeEmail, parseIntegrations, requiredString, type AutomationIntegration } from "./configuration";
 export { parseIntegrations } from "./configuration";
 export type { AutomationScope, AutomationIntegration } from "./configuration";
@@ -15,15 +16,13 @@ import { corsHeaders, json, readJson } from "./http";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { workerReleaseIdentity, type WorkerReleaseBindings } from "./buildIdentity";
 import { configureAutomationTelemetry, normalizedWorkerRoute, withAutomationSpan } from "./telemetry";
-import { callActiveExecutor, ExecutorRpcError } from "./executorClient";
-import { handleClassificationRequest } from "./classificationEndpoint";
 import { encryptEventPayload, encodeBase64Url } from "./eventPayload";
-import { ExecutorMigrationFencedError } from "./executorIntakeOutbox";
-import { handleExecutorMigrationApi } from "./executorMigrationApi";
 
 export { AutomationCoordinator } from "./coordinator";
 
 export interface WorkerEnv {
+  REFLUX_ORIGIN?: string;
+  REFLUX_SERVICE_TOKEN?: string;
   AUTOMATION: DurableObjectNamespace<AutomationCoordinator>;
   AI: Ai;
   AUTOMATION_OWNER_IDS?: string;
@@ -36,14 +35,6 @@ export interface WorkerEnv {
   PROVISIONING_TOKEN?: string;
   IDENTITY_STORAGE_SECRET?: string;
   EVENT_STORAGE_SECRET?: string;
-  /** Private origin of the standalone executor. */
-  EXECUTOR_ORIGIN?: string;
-  /** Shared service credential used only for Worker-to-executor calls. */
-  EXECUTOR_SERVICE_TOKEN?: string;
-  /** Separate credential used only by the executor-to-Worker classification bridge. */
-  CLASSIFICATION_SERVICE_TOKEN?: string;
-  /** Encrypts migration pages exported to the private executor service. */
-  EXECUTOR_MIGRATION_SECRET?: string;
   /** Commit SHA embedded into this immutable Worker version; unset in local development. */
   RELEASE_SHA?: string;
   /** OTLP Collector base URL. Set as a Worker variable, never a public browser value. */
@@ -76,9 +67,7 @@ const defaultHandler = {
     } catch (error) {
       let cors = new Headers();
       try { cors = corsHeaders(request, env); } catch { /* Disallowed origins receive no CORS access. */ }
-      if (error instanceof ExecutorRpcError) response = json({ error: error.message }, error.status, cors);
-      else if (error instanceof ExecutorMigrationFencedError) response = json({ error: error.message }, error.status, cors);
-      else if (error instanceof TypeError || error instanceof SyntaxError) response = json({ error: error.message || "Invalid request" }, 400, cors);
+      if (error instanceof TypeError || error instanceof SyntaxError) response = json({ error: error.message || "Invalid request" }, 400, cors);
       else if (error instanceof Error && /Integration is not configured/.test(error.message)) response = json({ error: error.message }, 404, cors);
       else if (error instanceof Error && /Provisioning authorization/.test(error.message)) response = json({ error: "Unauthorized" }, 401, cors);
       else if (error instanceof Error && /Integration authorization has expired/.test(error.message)) response = json({ error: error.message }, 403, cors);
@@ -144,11 +133,10 @@ export default defaultHandler;
 
 async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname.startsWith("/internal/executor-migrations/")) return handleExecutorMigrationApi(request, env);
-  if (url.pathname === "/internal/classify") return handleClassificationRequest(request, env);
   const cors = corsHeaders(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method === "GET" && url.pathname === "/health") return json({ status: "ready", ...workerReleaseIdentity(env) }, 200, cors);
+  if (env.REFLUX_ORIGIN) return forwardRefluxRequest(request, env, cors);
   if (url.pathname.startsWith("/v2/application-review/")) return handleApplicationReviewApi(request, env, cors);
   if (url.pathname.startsWith("/v2/automation-instances/")) return handleAutomationInstanceApi(request, env, cors);
   if (url.pathname.startsWith("/v2/")) return handleOwnerApi(request, env, cors);
@@ -171,7 +159,7 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     const integrationId = identityMatch[1]!;
     const secret = env.IDENTITY_STORAGE_SECRET;
     if (!secret || new TextEncoder().encode(secret).byteLength < 32) return json({ error: "Automation identity storage is not configured" }, 503, cors);
-    const profile = await callActiveExecutor(env, integrationId, "provisionIdentity", [integrationId, secret], local => local.provisionIdentity(integrationId, secret));
+    const profile = await env.AUTOMATION.getByName(integrationId).provisionIdentity(integrationId, secret);
     return json({ integrationId, origin: url.origin, personId: profile.identity.personId, identityPublicKey: profile.identity.publicKey,
       deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
       deviceCertificate: profile.deviceCertificate }, 200, cors);
@@ -192,13 +180,12 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     }
     const input = await readJson(request, maxActivationJsonBytes) as unknown as AutomationActivationPacket;
     assertActivationMatchesIntegration(input, integration);
-    const result = await callActiveExecutor(env, integrationId, "activateReplica", [integrationId, identitySecret, encryptionSecret, input],
-      local => local.activateReplica(integrationId, identitySecret, encryptionSecret, input));
+    const result = await env.AUTOMATION.getByName(integrationId).activateReplica(integrationId, identitySecret, encryptionSecret, input);
     return result.ok ? json({ status: result.status, workspaceId: result.workspaceId, synced: result.synced }, 200, cors)
       : json({ error: result.error, ...(result.detail ? { detail: result.detail } : {}) }, result.status, cors);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Automation activation failed";
-      return json({ error: message }, error instanceof ExecutorMigrationFencedError ? error.status : error instanceof TypeError || error instanceof SyntaxError ? 400 : 500, cors);
+      return json({ error: message }, error instanceof TypeError || error instanceof SyntaxError ? 400 : 500, cors);
     }
   }
 
@@ -235,7 +222,7 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     await getIntegration(env, emailSetupMatch[1]!);
     const route = privateEmailRoutes(env).find(value => value.id === emailSetupMatch[1]);
     const integrationId = emailSetupMatch[1]!;
-    const receipt = await callActiveExecutor(env, integrationId, "emailSetup", [], local => local.emailSetup());
+    const receipt = await env.AUTOMATION.getByName(integrationId).emailSetup();
     return json({ route: route ?? null, receipt }, 200, cors);
   }
 
@@ -244,7 +231,7 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
     authorizeProvisioning(request, env);
     await getIntegration(env, eventMatch[1]!);
     const integrationId = eventMatch[1]!;
-    const event = await callActiveExecutor(env, integrationId, "getEvent", [eventMatch[2]!], local => local.getEvent(eventMatch[2]!));
+    const event = await env.AUTOMATION.getByName(integrationId).getEvent(eventMatch[2]!);
     return event ? json(event, 200, cors) : json({ error: "Event not found" }, 404, cors);
   }
 
@@ -305,9 +292,7 @@ function assertActivationMatchesIntegration(packet: AutomationActivationPacket, 
 async function getIntegration(env: WorkerEnv, integrationId: string): Promise<AutomationIntegration> {
   let integration: AutomationIntegration | null | undefined = parseIntegrations(env).find((candidate) => candidate.id === integrationId);
   if (!integration && /^[0-9a-f-]{36}$/.test(integrationId)) {
-    integration = env.EXECUTOR_ORIGIN
-      ? await coordinator(env, integrationId).intakeIntegrationRouting()
-      : await callActiveExecutor(env, integrationId, "getRegisteredIntegration", [], local => local.getRegisteredIntegration());
+    integration = await env.AUTOMATION.getByName(integrationId).getRegisteredIntegration();
   }
   if (!integration) throw new Error("Integration is not configured");
   return integration;

@@ -109,95 +109,97 @@ export class ExecutionCoordinator {
   constructor(protected readonly ctx: ExecutionContextPort, protected readonly env: ExecutionEnvironment,
     private readonly adapters: ExecutionAdapters = {}) {
     configureAutomationTelemetry(env);
-    ctx.storage.sql.exec(`
-      CREATE TABLE IF NOT EXISTS automation_registration (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1), owner_id TEXT NOT NULL, workspace_id TEXT NOT NULL, integration_id TEXT NOT NULL, routing TEXT
-      );
-      CREATE TABLE IF NOT EXISTS consumed_challenges (
-        nonce TEXT PRIMARY KEY,
-        expires_at INTEGER NOT NULL,
-        event_id TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_identities (
-        integration_id TEXT PRIMARY KEY,
-        encrypted_seed TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_replica (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        encrypted_packet TEXT,
-        encrypted_state TEXT,
-        state_generation TEXT,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_replica_chunks (
-        kind TEXT NOT NULL CHECK (kind = 'state'),
-        generation TEXT NOT NULL,
-        chunk_index INTEGER NOT NULL,
-        total_chunks INTEGER NOT NULL,
-        data TEXT NOT NULL,
-        PRIMARY KEY (kind, generation, chunk_index)
-      );
-      CREATE TABLE IF NOT EXISTS automation_storage_transition (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_storage_transition_completed (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, target_hash TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_history_transition (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, source_heads TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS automation_history_transition_completed (
-        singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-        transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, baseline_id TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS events (
-        event_id TEXT PRIMARY KEY,
-        source TEXT NOT NULL CHECK (source IN ('website', 'email')),
-        source_id TEXT NOT NULL,
-        body_hash TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'review', 'failed', 'applied')),
-        attempt INTEGER NOT NULL DEFAULT 0,
-        claimed_at INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        result TEXT,
-        command_hash TEXT,
-        classification_payload TEXT,
-        UNIQUE (source, source_id)
-      );
-      CREATE INDEX IF NOT EXISTS events_queue ON events(status, created_at);
-    `);
-    const eventSchema = ctx.storage.sql.exec<{ sql: string }>(
-      "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'",
-    ).toArray()[0]?.sql ?? "";
-    if (eventSchema && !eventSchema.includes("'applied'")) {
-      ctx.storage.sql.exec("DROP INDEX IF EXISTS events_queue; ALTER TABLE events RENAME TO events_legacy;");
-      ctx.storage.sql.exec(`CREATE TABLE events (
-        event_id TEXT PRIMARY KEY, source TEXT NOT NULL CHECK (source IN ('website', 'email')), source_id TEXT NOT NULL,
-        body_hash TEXT NOT NULL, payload TEXT NOT NULL,
-        status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'review', 'failed', 'applied')),
-        attempt INTEGER NOT NULL DEFAULT 0, claimed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-        result TEXT, UNIQUE (source, source_id)
-      );
-      INSERT INTO events (event_id, source, source_id, body_hash, payload, status, attempt, claimed_at, created_at, updated_at, result)
-      SELECT event_id, source, source_id, body_hash, payload, status, attempt, claimed_at, created_at, updated_at, result FROM events_legacy;
-      DROP TABLE events_legacy;
-      CREATE INDEX events_queue ON events(status, created_at);`);
+    if (!ctx.storage.schemaManaged) {
+      ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS automation_registration (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1), owner_id TEXT NOT NULL, workspace_id TEXT NOT NULL, integration_id TEXT NOT NULL, routing TEXT
+        );
+        CREATE TABLE IF NOT EXISTS consumed_challenges (
+          nonce TEXT PRIMARY KEY,
+          expires_at INTEGER NOT NULL,
+          event_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_identities (
+          integration_id TEXT PRIMARY KEY,
+          encrypted_seed TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_replica (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          encrypted_packet TEXT,
+          encrypted_state TEXT,
+          state_generation TEXT,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_replica_chunks (
+          kind TEXT NOT NULL CHECK (kind = 'state'),
+          generation TEXT NOT NULL,
+          chunk_index INTEGER NOT NULL,
+          total_chunks INTEGER NOT NULL,
+          data TEXT NOT NULL,
+          PRIMARY KEY (kind, generation, chunk_index)
+        );
+        CREATE TABLE IF NOT EXISTS automation_storage_transition (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_storage_transition_completed (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, target_hash TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_history_transition (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, source_heads TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS automation_history_transition_completed (
+          singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+          transition_id TEXT NOT NULL, storage_binding TEXT NOT NULL, baseline_id TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS events (
+          event_id TEXT PRIMARY KEY,
+          source TEXT NOT NULL CHECK (source IN ('website', 'email')),
+          source_id TEXT NOT NULL,
+          body_hash TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'review', 'failed', 'applied')),
+          attempt INTEGER NOT NULL DEFAULT 0,
+          claimed_at INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          result TEXT,
+          command_hash TEXT,
+          classification_payload TEXT,
+          UNIQUE (source, source_id)
+        );
+        CREATE INDEX IF NOT EXISTS events_queue ON events(status, created_at);
+      `);
+      const eventSchema = ctx.storage.sql.exec<{ sql: string }>(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'",
+      ).toArray()[0]?.sql ?? "";
+      if (eventSchema && !eventSchema.includes("'applied'")) {
+        ctx.storage.sql.exec("DROP INDEX IF EXISTS events_queue; ALTER TABLE events RENAME TO events_legacy;");
+        ctx.storage.sql.exec(`CREATE TABLE events (
+          event_id TEXT PRIMARY KEY, source TEXT NOT NULL CHECK (source IN ('website', 'email')), source_id TEXT NOT NULL,
+          body_hash TEXT NOT NULL, payload TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'review', 'failed', 'applied')),
+          attempt INTEGER NOT NULL DEFAULT 0, claimed_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+          result TEXT, UNIQUE (source, source_id)
+        );
+        INSERT INTO events (event_id, source, source_id, body_hash, payload, status, attempt, claimed_at, created_at, updated_at, result)
+        SELECT event_id, source, source_id, body_hash, payload, status, attempt, claimed_at, created_at, updated_at, result FROM events_legacy;
+        DROP TABLE events_legacy;
+        CREATE INDEX events_queue ON events(status, created_at);`);
+      }
+      const replicaColumns = new Set(ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(automation_replica)").toArray().map(column => column.name));
+      if (!replicaColumns.has("state_generation")) ctx.storage.sql.exec("ALTER TABLE automation_replica ADD COLUMN state_generation TEXT");
+      const eventColumns = new Set(ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(events)").toArray().map(column => column.name));
+      if (!eventColumns.has("next_attempt_at")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0");
+      if (!eventColumns.has("command_hash")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN command_hash TEXT");
+      if (!eventColumns.has("classification_payload")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN classification_payload TEXT");
+      initializeApplicationBindingStorage(ctx.storage);
+      new FreshRequestLedger(ctx.storage, "application_review_requests").initialize();
+      new FreshRequestLedger(ctx.storage, "automation_instance_requests").initialize();
     }
-    const replicaColumns = new Set(ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(automation_replica)").toArray().map(column => column.name));
-    if (!replicaColumns.has("state_generation")) ctx.storage.sql.exec("ALTER TABLE automation_replica ADD COLUMN state_generation TEXT");
-    const eventColumns = new Set(ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(events)").toArray().map(column => column.name));
-    if (!eventColumns.has("next_attempt_at")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0");
-    if (!eventColumns.has("command_hash")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN command_hash TEXT");
-    if (!eventColumns.has("classification_payload")) ctx.storage.sql.exec("ALTER TABLE events ADD COLUMN classification_payload TEXT");
-    initializeApplicationBindingStorage(ctx.storage);
-    new FreshRequestLedger(ctx.storage, "application_review_requests").initialize();
-    new FreshRequestLedger(ctx.storage, "automation_instance_requests").initialize();
   }
 
   enrollOwner(registration: OwnerRegistration, secret: string) {
@@ -293,7 +295,7 @@ export class ExecutionCoordinator {
       const seeds = { identitySeed: crypto.getRandomValues(new Uint8Array(32)), deviceEntropy: crypto.getRandomValues(new Uint8Array(32)) };
       const encrypted = await encryptIdentitySeeds(encryptionSecret, integrationId, seeds);
       this.ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO automation_identities (integration_id, encrypted_seed, created_at) VALUES (?, ?, ?)",
+        "INSERT INTO automation_identities (integration_id, encrypted_seed, created_at) VALUES (?, ?, ?) ON CONFLICT(integration_id) DO NOTHING",
         integrationId, encrypted, Date.now(),
       );
     }

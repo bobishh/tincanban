@@ -5,17 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { automationSecrets, writeAutomationSecrets } from './automation-secrets.mjs';
 
-test('Given all executor credentials, When staging an intake release, Then exact Worker names receive structured secret values', () => {
+test('Given Reflux ingress credentials, When staging an automation release, Then use only current Worker secret bindings', () => {
   assert.deepEqual(automationSecrets({
-    AUTOMATION_TELEMETRY_TOKEN: 'telemetry', AUTOMATION_EXECUTOR_SERVICE_TOKEN: 'service',
-    AUTOMATION_EXECUTOR_MIGRATION_SECRET: 'migration', AUTOMATION_CLASSIFICATION_SERVICE_TOKEN: 'classification',
-  }), { TELEMETRY_TOKEN: 'telemetry', EXECUTOR_SERVICE_TOKEN: 'service', EXECUTOR_MIGRATION_SECRET: 'migration', CLASSIFICATION_SERVICE_TOKEN: 'classification' });
+    AUTOMATION_TELEMETRY_TOKEN: 'telemetry', AUTOMATION_REFLUX_SERVICE_TOKEN: 'reflux',
+  }), { TELEMETRY_TOKEN: 'telemetry', REFLUX_SERVICE_TOKEN: 'reflux' });
 });
 
-test('Given an older rollback without executor secrets, When staging its release, Then existing unrelated secrets remain untouched', () => {
+test('Given absent optional credentials, When staging a release, Then preserve unrelated secret bindings', () => {
   assert.deepEqual(automationSecrets({}), {});
   assert.deepEqual(automationSecrets({ AUTOMATION_TELEMETRY_TOKEN: 'telemetry' }), { TELEMETRY_TOKEN: 'telemetry' });
-  assert.throws(() => automationSecrets({ AUTOMATION_EXECUTOR_SERVICE_TOKEN: 'partial' }), /configured together/);
 });
 
 test('Given shell-sensitive credential text, When staging secrets, Then a private JSON file preserves bytes without evaluation', () => {

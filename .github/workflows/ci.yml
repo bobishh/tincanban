@@ -297,7 +297,7 @@ jobs:
         run: npm run test:rusty-management
 
   automation-worker:
-    name: Automation (intake, executor and owner lifecycle)
+    name: Automation (intake, participant and owner lifecycle)
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -336,11 +336,10 @@ jobs:
           npm run check
           npm test
           npm run build -- --outdir .artifact
-      - name: Verify current Node executor runtime
+      - name: Verify headless participant runtime
         run: |
-          node --test services/executor/deploy.test.mjs services/executor/migrate.test.mjs
-          node services/executor/build.mjs
-          node services/executor/dist/run-tests.mjs
+          node services/reaction-runtime/build.mjs
+          node services/reaction-runtime/dist/run-tests.mjs
       - name: Capture the checked immutable Worker bundle
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}

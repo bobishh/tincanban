@@ -6,8 +6,6 @@ on:
     branches: [main]
     paths:
       - 'services/reaction-runtime/**'
-      - 'services/executor/src/reaction*.ts'
-      - 'services/executor/src/participantWorker.ts'
       - 'workers/automation/src/**'
       - '.github/workflows/reaction-runtime.yml'
 
@@ -57,7 +55,7 @@ jobs:
           load: true
       - name: Verify packaged reaction engine
         run: |
-          docker run --rm --entrypoint /bin/sh ghcr.io/bobishh/tincanban-reaction:${{ github.sha }} -ec 'command -v flock; test -f /reaction/runner.mjs; test -f /app/participantWorker.mjs'
+          docker run --rm --entrypoint /bin/sh ghcr.io/bobishh/tincanban-reaction:${{ github.sha }} -ec 'test -f /reaction/engine.mjs; test ! -e /state; test ! -e /app/participantWorker.mjs'
       - name: Build and publish enforcing proxy
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:

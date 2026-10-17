@@ -1,8 +1,21 @@
 # Cloudflare automation worker
 
-This Worker accepts bounded job submissions and forwarded email, stores each event in a per-integration SQLite Durable Object, and classifies events with Cloudflare Clef-flash. It keeps challenge nonces, idempotency keys, event state, retry count, and classification results durable across Worker restarts.
+Production Worker preserves the signed public HTTP API and forwards requests to
+Reflux. Reflux reactions own classification, participant identity, state and
+retryable writes. The Worker has no production execution fallback. Its Durable
+Object adapter remains for isolated domain tests and local development; with
+`REFLUX_ORIGIN` configured, it neither opens participant state nor processes alarms.
 
-The public event response means **durably queued**. After a signed owner automation grant and fully admitted encrypted snapshot are activated, clear Clef decisions can create a Lead or move a uniquely matched application to Applied, Interview or Rejected. Each action is authored as an Automerge change, admitted against the current signed causal authority, persisted before Rusty upload, and reported as applied only after the signed upload receipt succeeds. Email matching uses a pre-classification snapshot; moves require a valid original `Date` header at least as new as the card workflow and reject concurrent workflow changes. Rejected applications never move backward. Ambiguous matches, uncertain classifications, expired grants, stale workflows, and unavailable proof stay in review or retry. Clef cannot authorize writes. The Worker never falls back to an Editor grant.
+`REFLUX_SERVICE_TOKEN` authenticates this HTTP bridge. Owner signatures and the
+configured public origin remain required by the existing domain handlers. Gateway
+failures retain their HTTP status and return bounded JSON errors. Legacy website
+challenge/intake requests go to the existing public Reflux intake route. See
+[reaction engine](../../services/reaction-runtime/README.md).
+
+The contracts below describe the shared participant domain. Reflux persists its
+nonce, idempotency, replica and upload receipt state. Completion still requires a
+signed Rusty upload receipt; uncertain classification and unavailable authority
+retain review or retry state.
 
 Unchanged snapshots reuse the last confirmed upload. Wire JSON uses canonical key
 ordering and omits absent optional grants on owner proof wrappers; signed payloads

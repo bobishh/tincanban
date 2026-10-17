@@ -1,13 +1,9 @@
 # tincanban
 
-Automation executor migration is specified in
-[OpenSpec](openspec/changes/separate-automation-executor/design.md): shared
-participant/domain code in a separate service with scoped items commands;
-Cloudflare keeps intake/CLEF, Rusty stays blind. Source implementation and CI are
-under `services/executor/`. The existing participant cutover is complete. Intake
-forwarded a new event and the executor retained its model-driven review result;
-positive item-write acceptance remains pending. Older Worker descriptions below
-describe the prior runtime.
+Automation runs as a headless participant inside Reflux reactions. Shared runtime
+and isolated image live under `services/reaction-runtime/`. Reflux owns scheduling
+and access to the participant's persistent state; no separate executor HTTP
+service or deployment is used.
 
 A board for keeping track of work, with cards, documents, and chat. Your data lives
 in your browser. You can share a board with someone else or connect your own

@@ -2,20 +2,11 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const executorSecrets = {
-  AUTOMATION_EXECUTOR_SERVICE_TOKEN: 'EXECUTOR_SERVICE_TOKEN',
-  AUTOMATION_EXECUTOR_MIGRATION_SECRET: 'EXECUTOR_MIGRATION_SECRET',
-  AUTOMATION_CLASSIFICATION_SERVICE_TOKEN: 'CLASSIFICATION_SERVICE_TOKEN',
-};
-
 export function automationSecrets(environment) {
-  const configured = Object.keys(executorSecrets).filter(key => environment[key]);
-  if (configured.length && configured.length !== Object.keys(executorSecrets).length) {
-    throw new Error('Automation executor credentials must be configured together');
-  }
-  return Object.fromEntries(Object.entries({ AUTOMATION_TELEMETRY_TOKEN: 'TELEMETRY_TOKEN', ...executorSecrets })
-    .filter(([source]) => environment[source])
-    .map(([source, target]) => [target, environment[source]]));
+  return Object.fromEntries(Object.entries({
+    AUTOMATION_TELEMETRY_TOKEN: 'TELEMETRY_TOKEN',
+    AUTOMATION_REFLUX_SERVICE_TOKEN: 'REFLUX_SERVICE_TOKEN',
+  }).filter(([source]) => environment[source]).map(([source, target]) => [target, environment[source]]));
 }
 
 /** A missing credential set preserves the current bindings during an older rollback. */
