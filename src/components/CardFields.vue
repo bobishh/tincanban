@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FieldDefinition, Item } from "../domain/model"
+import type { FieldDefinition, Item } from "../domain/entitySchemas"
 import { displayFieldValue } from "../domain/cardPresentation"
 import { MarkdownContent } from "../ui/markdownContent"
 defineProps<{ fields: FieldDefinition[]; item: Item }>()

@@ -1,4 +1,4 @@
-import type { Board, FieldDefinition, FieldValue, Item } from "./model"
+import type { Board, FieldDefinition, FieldValue, Item } from "./entitySchemas"
 
 export function cardTitle(board: Board | null | undefined, values: Record<string, FieldValue>, fallback: string): string {
   const parts = (board?.cardPresentation?.titleFieldIds ?? []).flatMap(id => {

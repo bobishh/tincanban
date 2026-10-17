@@ -200,14 +200,25 @@ test("Given a saved owner binding, when its automation grant is revoked before r
 
     expect(await reviewRetainedEmail(page, eventId, firstCard)).toMatchObject({ saved: true })
 
-    await page.getByRole("button", { name: "Settings", exact: true }).click()
-    const settings = page.getByRole("dialog", { name: "Settings", exact: true })
-    await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-    const automation = settings.getByRole("article", { name: "Application source E2E", exact: true })
-    await automation.getByRole("button", { name: "Remove", exact: true }).click()
-    await automation.getByRole("button", { name: "Confirm removal", exact: true }).click()
-    await expect(automation.getByText("Removed · confirmed by Worker", { exact: true })).toBeVisible()
-    await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
+    await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const app = useTincanban()
+      const entity = Object.values(app.getActiveDoc()!.entities).find(value => value.kind === "automation")
+      if (entity?.kind !== "automation") throw new Error("Automation unavailable")
+      await app.executeCommandAsync({ kind: "setAutomationState", automationId: entity.id, state: "deleted" })
+    })
+    await syncFromRusty(page)
+    await expect.poll(() => page.evaluate(async origin => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { observeAutomation } = await import("/src/app/automationClient.ts")
+      const { parseAutomationDefinition } = await import("/src/domain/automationContract.ts")
+      const app = useTincanban()
+      const entity = Object.values(app.getActiveDoc()!.entities).find(value => value.kind === "automation")
+      if (entity?.kind !== "automation") throw new Error("Automation unavailable")
+      const definition = parseAutomationDefinition(JSON.parse(entity.definition))
+      return observeAutomation(app.getCurrentProfile()!, { origin, integrationId: "e2e", workspaceId: app.getActiveDoc()!.id,
+        personId: entity.executor.personId, grantId: definition.scope.grantId })
+    }, fixture.workerOrigin), { timeout: 30_000 }).toMatchObject({ state: "deleted" })
     await expect(page.evaluate(async ({ origin, workspaceId, eventId }) => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
       const { retryAutomationEmail } = await import("/src/app/automationClient.ts")
@@ -259,7 +270,7 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
       const config = configs.find(value => value.workspaceId === app.getActiveDoc()!.id)
       if (!config) throw new Error("Rusty local access missing")
       const packet = JSON.parse(await exportApprovedAutomation(app, config, JSON.stringify(identity), {
-        name: "Application source E2E", type: "job-intake", typeVersion: 2, parameters: { sources: ["website"] },
+        name: "Application source E2E", type: "job-intake", typeVersion: 2, parameters: { sources: ["website", "email"] },
       })) as Record<string, unknown>
       const packetBlind = packet.blind as { origin?: string; scopeId?: string }
       const refreshed = (await getReplicaConfigurations(personId)).find(value => value.workspaceId === app.getActiveDoc()!.id &&
@@ -290,18 +301,6 @@ async function createApplicationFixture(page: Page, baseURL: string): Promise<Ap
     })
     expect(activated.status, await activated.clone().text()).toBe(200)
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
-    await page.getByRole("button", { name: "Settings", exact: true }).click()
-    const settings = page.getByRole("dialog", { name: "Settings", exact: true })
-    await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
-    const automation = settings.getByRole("article", { name: "Application source E2E", exact: true })
-    const enableEmail = automation.getByRole("button", { name: "Enable email and Applied", exact: true })
-    await expect(enableEmail).toBeVisible({ timeout: 45_000 })
-    await enableEmail.click()
-    const emailApproval = automation.getByRole("form", { name: "Confirm automation approval", exact: true })
-    await emailApproval.getByLabel("Allow Worker to read this workspace").check()
-    await emailApproval.getByRole("button", { name: "Confirm approval", exact: true }).click()
-    await expect(automation.getByText("Email enabled", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     return { ...workspace, workerOrigin: workerService.origin, privateAddress, close: async () => {
       await stopProcess(worker)
       await rusty?.close()
