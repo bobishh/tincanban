@@ -9,18 +9,18 @@ use std::{
 
 use iroh::{EndpointAddr, EndpointId};
 use meta_mesh_core::{
-    sign_json_envelope, verify_workspace_member_bundle, MeshHandshake, MeshRuntimeState,
-    VerifyWorkspaceMemberOptions, DEFAULT_SIGNATURE_DOMAIN,
+    DEFAULT_SIGNATURE_DOMAIN, MeshHandshake, MeshRuntimeState, VerifyWorkspaceMemberOptions,
+    sign_json_envelope, verify_workspace_member_bundle,
 };
 use meta_mesh_native::{
-    publish_scope_to, serve_scope_connection, serve_scope_request, FileScopeStore,
-    NativeBrowserConnection, NativeNode, NativeNodeOptions, NativeScopeService,
+    FileScopeStore, NativeBrowserConnection, NativeNode, NativeNodeOptions, NativeScopeService,
+    publish_scope_to, serve_scope_connection, serve_scope_request,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use time::{macros::format_description, OffsetDateTime};
+use time::{OffsetDateTime, macros::format_description};
 use tincanban_lighthouse::{
-    now_ms, TincanbanLighthouseHost, TincanbanLighthouseState, TincanbanScopeStore,
+    TincanbanLighthouseHost, TincanbanLighthouseState, TincanbanScopeStore, now_ms,
 };
 use tokio::sync::Mutex;
 

@@ -6,21 +6,21 @@ use std::{
 };
 
 use automerge::{
+    ActorId, AutoCommit, AutoSerde, ObjId, ObjType, ROOT, ReadDoc,
     transaction::{CommitOptions, Transactable},
-    ActorId, AutoCommit, AutoSerde, ObjId, ObjType, ReadDoc, ROOT,
 };
 use meta_mesh_core::{
-    merge_verified_peer_catalog, sign_json_envelope, validate_mesh_catalog,
-    verify_workspace_member_bundle, MeshHandshake, MeshPeerAdmission, VerifyWorkspaceMemberOptions,
+    DEFAULT_SIGNATURE_DOMAIN, MeshHandshake, MeshPeerAdmission, VerifyWorkspaceMemberOptions,
     WorkspaceChangeAuthorizationPayload, WorkspaceWriteAuthorizationSnapshot,
-    DEFAULT_SIGNATURE_DOMAIN,
+    merge_verified_peer_catalog, sign_json_envelope, validate_mesh_catalog,
+    verify_workspace_member_bundle,
 };
 use meta_mesh_native::{
     FileScopeStore, NativeScopeCredential, NativeScopeHost, NativeScopeServiceHost,
     NativeScopeSnapshot,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tincanban_authority::{admit_tincanban_candidate, prepare_tincanban_write_authority};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -661,11 +661,11 @@ pub fn now_ms() -> Result<i128, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use automerge::{transaction::Transactable, ROOT};
+    use automerge::{ROOT, transaction::Transactable};
     use meta_mesh_core::{
-        public_key_from_seed, public_key_id, sign_device_certificate, sign_json_envelope,
-        DeviceCertificatePayload, WorkspaceAuthority, WorkspaceChangeAuthorizationPayload,
-        DEFAULT_SIGNATURE_DOMAIN,
+        DEFAULT_SIGNATURE_DOMAIN, DeviceCertificatePayload, WorkspaceAuthority,
+        WorkspaceChangeAuthorizationPayload, public_key_from_seed, public_key_id,
+        sign_device_certificate, sign_json_envelope,
     };
 
     #[test]
@@ -755,15 +755,17 @@ mod tests {
         document.put(ROOT, "title", "Updated").unwrap();
         let candidate = document.save();
         let new_hash = document.get_heads()[0].to_string();
-        assert!(store
-            .persist_document(
-                &candidate,
-                Some(&json!({
-                    "version": 1, "records": [], "authority": evidence,
-                })),
-                &[new_hash.clone()]
-            )
-            .is_err());
+        assert!(
+            store
+                .persist_document(
+                    &candidate,
+                    Some(&json!({
+                        "version": 1, "records": [], "authority": evidence,
+                    })),
+                    &[new_hash.clone()]
+                )
+                .is_err()
+        );
         assert_eq!(store.snapshot().unwrap().document, baseline);
         store
             .persist_document(
@@ -772,9 +774,11 @@ mod tests {
                 &[document.get_heads()[0].to_string()],
             )
             .unwrap();
-        assert!(store
-            .persist_document(&baseline, Some(&initial.authorization), &[])
-            .is_err());
+        assert!(
+            store
+                .persist_document(&baseline, Some(&initial.authorization), &[])
+                .is_err()
+        );
         assert_eq!(store.snapshot().unwrap().document, candidate);
         let issued_at = time::OffsetDateTime::now_utc()
             .format(&time::format_description::well_known::Rfc3339)
@@ -796,9 +800,11 @@ mod tests {
             store.authorized_peer_endpoints().unwrap(),
             vec!["signed-route"]
         );
-        assert!(store
-            .merge_mesh(&json!({"version":1,"peers":[],"revocations":[{}]}))
-            .is_err());
+        assert!(
+            store
+                .merge_mesh(&json!({"version":1,"peers":[],"revocations":[{}]}))
+                .is_err()
+        );
         let mut reopened =
             TincanbanScopeStore::open("board".into(), person_id, path.clone(), initial).unwrap();
         assert_eq!(reopened.snapshot().unwrap().document, candidate);
