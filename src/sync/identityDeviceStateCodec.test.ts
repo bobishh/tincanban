@@ -136,7 +136,7 @@ it("Given state or any required component bound to another person, when decoding
 it("Given a portable connection carrying another device's cursor or acknowledgment, when decoding, then reject it", () => {
   const input = state()
   input.components.privateConnections!.value = {
-    version: 2,
+    version: 3,
     personId,
     clock: {},
     entries: [{ origin: "https://rusty.example", scopeId: "scope-1", operations: [{

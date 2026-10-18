@@ -116,7 +116,8 @@ function applyFields(draft: WorkspaceDocumentV2, boardId: string, schema: BoardS
 function fieldTarget(draft: WorkspaceDocumentV2, id: string, boardId: string, field: BoardSchemaDraft["fields"][number], index: number, nowIso: string): FieldDefinition {
   const existing = draft.entities[id]
   if (hasEntityKind(existing, "field")) {
-    if (existing.valueType !== field.valueType) throw new Error("Field type cannot change")
+    if (existing.valueType !== field.valueType) throw new Error(
+      `Field type cannot change: ${field.title} (${String(existing.valueType)} [${typeof existing.valueType}] → ${String(field.valueType)} [${typeof field.valueType}])`)
     existing.title = field.title.trim()
     existing.required = field.required
     existing.placement = { parentId: boardId, rank: `${index}/1` }

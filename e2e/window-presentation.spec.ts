@@ -25,7 +25,8 @@ for (const width of [390, 1280]) test(`Given a detailed lead at ${width}px, When
     const stages = (await dialog.locator(".status-strip").boundingBox())!
     const content = (await scroll.boundingBox())!
     expect(title.height).toBeLessThan(110)
-    expect(stages.height).toBeLessThan(58)
+    expect(stages.y).toBeGreaterThanOrEqual(content.y)
+    expect(stages.y + stages.height).toBeLessThanOrEqual(content.y + content.height)
     expect(content.height).toBeGreaterThan(bounds.height * .65)
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(844 - 34)
     await expect(dialog.getByRole("heading", { name: "Performance card 0", exact: true })).toHaveCount(1)
