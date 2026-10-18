@@ -83,6 +83,6 @@ it('Given same-epoch historical variants, when exporting private state, then use
   expect(portableReplicaState(state).version).toBe(5)
   expect(effectivePrivateReplicaConfigs(state)[0]?.historicalContentKeyVariants).toEqual(resolved.historicalContentKeyVariants)
   for (const version of [3, 4]) expect(() => parsePrivateReplicaWire({ ...portableReplicaState(state), version })).toThrow(/version 5|upgrade/i)
-  expect(() => parsePrivateReplicaWire({ ...portableReplicaState(state), version: 2 })).toThrow(/purpose|version 5|upgrade/i)
+  expect(() => parsePrivateReplicaWire({ ...portableReplicaState(state), version: 2 })).toThrow(/private replica/i)
   expect(() => changeReplicaPreference(state, { ...resolved, historicalContentKeyVariants: { '1': [key(1), key(9)] } })).toThrow(/retain/i)
 })

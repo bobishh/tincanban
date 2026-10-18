@@ -5,7 +5,6 @@ import type { BlindObject } from "./blindEnvelope"
 import { exportPrivateReplicaState, getReplicaConfigurations, getPrivateReplicaProgress,
   persistPrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
 import type { BlindReplicaConfig } from "./blindReplication"
-import { canonicalizeJson } from "../domain/identity"
 import { emptyReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -42,35 +41,6 @@ it("Given an encrypted object pending for upload, when local replica progress is
   const exported = JSON.stringify(await exportPrivateReplicaState(owner))
   expect(exported).not.toContain('"pending"')
   expect(exported).not.toContain('"uploadedRevision"')
-})
-
-it("Given a real v2 workspace repository with a pending exact ciphertext, when read after upgrade, then migrate only its verified legacy binding atomically", async () => {
-  const owner = crypto.randomUUID()
-  const selected = await selectedConfig(owner)
-  const oldBinding = canonicalizeJson([owner, selected.origin, selected.scopeId, selected.workspaceId, selected.keyEpoch,
-    selected.policyRevision, selected.servicePublicKey, selected.readToken, selected.writeToken, selected.contentKey,
-    selected.preferenceRevision])
-  const binding = canonicalizeJson([owner, "workspace", selected.workspaceId, selected.origin, selected.scopeId,
-    selected.keyEpoch, selected.policyRevision, selected.servicePublicKey, selected.readToken, selected.writeToken,
-    selected.contentKey, selected.preferenceRevision])
-  const before = { ...emptyReplicaState<BlindObject>(oldBinding), generation: 4, pending: pending("legacy-content") }
-  const key = `tincanban.private-replica-state.v2.${owner}`
-  const raw = JSON.parse((await local.readLocal(key))!) as LegacyStateFixture
-  raw.version = 2
-  delete raw.entries[0].operations[0].purpose
-  delete raw.entries[0].operations[0].config.purpose
-  raw.progress[`${selected.origin}/${selected.scopeId}`] = {
-    revision: selected.preferenceRevision, cursor: 0, lastUploaded: "", replication: before,
-  }
-  await local.writeLocal(key, JSON.stringify(raw))
-
-  const migrated = await getPrivateReplicaProgress(owner, selected)
-
-  expect(migrated).toEqual({ ...before, binding })
-  const saved = JSON.parse((await local.readLocal(key))!)
-  expect(saved.version).toBe(3)
-  expect(saved.progress[`${selected.origin}/${selected.scopeId}`].replication).toEqual({ ...before, binding })
-  expect(migrated.pending).toEqual(before.pending)
 })
 
 it("Given v2 progress with a binding that matches no verified workspace credentials, when read, then reject without rewriting the stored outbox", async () => {

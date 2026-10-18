@@ -7,7 +7,7 @@ const schemas = {
   identityCatalog: "identity-catalog@1",
   profileObservations: "profile-observations@1",
   workspaceReferences: "entitled-workspaces@1",
-  privateConnections: "private-rusty-connections@2",
+  privateConnections: "private-rusty-connections@3",
   ownerCapabilities: "owner-capabilities@2",
   recoveryEvidence: "identity-recovery-evidence@1",
 } as const
@@ -25,7 +25,7 @@ function state(): IdentityDeviceStateInput {
       identityCatalog: component(schemas.identityCatalog, { personId, rootId: "root-1", devices: [] }),
       profileObservations: component(schemas.profileObservations, { personId, observations: [{ displayName: "Ada", photo: { avatarData: "data:image/png;base64,opaque", changedAt: "2026-01-01T00:00:00Z" } }] }),
       workspaceReferences: component(schemas.workspaceReferences, { personId, workspaces: [{ workspaceId: "board-1", grantHash: "opaque-grant", role: "owner" }] }),
-      privateConnections: component(schemas.privateConnections, { version: 2, personId, clock: {}, entries: [] }),
+      privateConnections: component(schemas.privateConnections, { version: 3, personId, clock: {}, entries: [] }),
       ownerCapabilities: component(schemas.ownerCapabilities, { personId, capabilities: [{ service: "opaque-service", scope: "board-1", operations: ["manage"] }] }),
       recoveryEvidence: component(schemas.recoveryEvidence, { personId, envelopes: [{ kind: "identity-recovery-envelope", version: 1, ciphertext: "opaque-envelope", salt: "opaque-salt" }] }),
     },
@@ -75,16 +75,20 @@ it("Given legacy scope capabilities and new person capabilities, when decoding, 
   expect(() => decodeIdentityDeviceState(legacyDiscriminator, personId)).toThrow(IdentityDeviceStateUpgradeRequiredError)
 })
 
-it("Given tagged private connections, when transferring the new required schema, then preserve v3 while legacy v2 remains readable", () => {
+it("Given tagged private connections, when transferring the new required schema, then preserve v3 and reject the retired v2 component", () => {
   const tagged = state()
   tagged.components.privateConnections.schema = "private-rusty-connections@3"
   tagged.components.privateConnections.value.version = 3
   expect(decodeIdentityDeviceState(tagged, personId)).toEqual(tagged)
-  expect(decodeIdentityDeviceState(state(), personId)).toEqual(state())
+  const retired = state()
+  retired.components.privateConnections.schema = "private-rusty-connections@2"
+  retired.components.privateConnections.value.version = 2
+  expect(() => decodeIdentityDeviceState(retired, personId)).toThrow(IdentityDeviceStateUpgradeRequiredError)
 })
 
 it("Given v3 connections disguised as the legacy schema, when decoding, then require the correctly versioned component", () => {
   const disguised = state()
+  disguised.components.privateConnections.schema = "private-rusty-connections@2"
   disguised.components.privateConnections.value.version = 3
   expect(() => decodeIdentityDeviceState(disguised, personId)).toThrow(/schema|version|upgrade/i)
 })
@@ -125,7 +129,7 @@ it("Given an unknown required component or unsupported known schema, when decodi
 it("Given state or any required component bound to another person, when decoding, then reject before returning private data", () => {
   expect(() => decodeIdentityDeviceState({ ...state(), personId: "person_B" }, personId)).toThrow(/identity|person/i)
   const nested = state()
-  nested.components.privateConnections!.value = { version: 2, personId: "person_B", clock: {}, entries: [] }
+  nested.components.privateConnections!.value = { version: 3, personId: "person_B", clock: {}, entries: [] }
   expect(() => decodeIdentityDeviceState(nested, personId)).toThrow(/identity|person/i)
 })
 

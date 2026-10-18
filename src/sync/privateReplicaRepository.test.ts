@@ -263,7 +263,7 @@ it("Given existing replica progress, when planning a same-person import, then re
 it("Given an incoming private replica state for another person, when planning import, then reject before reading local records", async () => {
   const owner = crypto.randomUUID()
   const other = crypto.randomUUID()
-  const incoming = { version: 2 as const, personId: other, clock: {}, entries: [] }
+  const incoming = { version: 3 as const, personId: other, clock: {}, entries: [] }
   const read = vi.spyOn(local, "readLocal")
   await expect((await import("./privateReplicaRepository") as unknown as {
     planPrivateReplicaImport(owner: string, incoming: unknown): Promise<LocalStatePlan>

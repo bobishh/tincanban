@@ -21,7 +21,7 @@ const supportedSchemas: Record<IdentityDeviceComponentName, string> = {
 }
 const componentNames = Object.keys(supportedSchemas) as IdentityDeviceComponentName[]
 const legacySchemas: Partial<Record<IdentityDeviceComponentName, readonly string[]>> = {
-  privateConnections: ["private-rusty-connections@2", "private-rusty-connections@3", "private-rusty-connections@4"], ownerCapabilities: ["owner-capabilities@1"], profileObservations: ["profile-observations@1", "profile-observations@2"],
+  privateConnections: ["private-rusty-connections@3", "private-rusty-connections@4"], ownerCapabilities: ["owner-capabilities@1"], profileObservations: ["profile-observations@1", "profile-observations@2"],
 }
 const rawPrivateFieldNames = new Set(["privatekey", "privatekeys", "identityprivatekey", "deviceprivatekey", "recoverykey", "identityseed", "deviceseed",
   "privatekeypkcs", "identityprivatekeypkcs", "deviceprivatekeypkcs", "privatekeyjwk", "identityprivatekeyjwk", "deviceprivatekeyjwk"])
@@ -104,7 +104,7 @@ function validateRequiredList(name: IdentityDeviceComponentName, value: Record<s
   if (field && !Array.isArray(value[field])) throw new Error(`Invalid ${name} component`)
 }
 
-const privateWireVersions: Record<string, number> = { "private-rusty-connections@2": 2, "private-rusty-connections@3": 3, "private-rusty-connections@4": 4 }
+const privateWireVersions: Record<string, number> = { "private-rusty-connections@3": 3, "private-rusty-connections@4": 4 }
 function validateComponent(name: string, component: IdentityDeviceComponent, personId: string): IdentityDeviceComponent {
   validateComponentShape(name, component)
   const expected = Object.hasOwn(supportedSchemas, name) ? supportedSchemas[name as IdentityDeviceComponentName] : undefined
