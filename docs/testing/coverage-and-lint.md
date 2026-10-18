@@ -16,15 +16,13 @@ Keeper pairing has a separate 95% floor for statements, branches, functions, and
 
 Production rules now reject explicit `any` and unsafe assignment, arguments, calls, member access, and returns. Existing rules also catch floating promises, invalid `await`, misused promises, non-exhaustive switches, excessive complexity/depth/function size, dead code/dependencies, import cycles, architecture violations, duplication, and forbidden AST patterns. TypeScript already uses `strict`.
 
-Unit tests now also reject explicit `any`. Unsafe-value rules remain disabled in negative test fixtures; runtime-invalid inputs are intentional there. Existing explicit-any violations are tracked rather than silently exempting every future test.
+Unit tests also reject explicit `any`. Unsafe-value and size/complexity rules remain disabled for test files, where malformed runtime fixtures and long acceptance stories are intentional. These test-only exclusions live in `eslint.config.js`; they do not apply to production files.
 
-The initial `eslint-suppressions.json` baseline recorded 95 production unsafe-value findings and 125 explicit-any findings in tests. The reduction pass replaced two test casts with narrow typed fixture seams and pruned those suppressions; 123 test findings remain. Some production findings involve unresolved Vue/WASM boundary types; others involve `JSON.parse`, IndexedDB requests, and Promise catch callbacks. They need separate review, not replacement with unchecked casts to hide the warning.
+`npm run quality:lint` runs without a bulk suppression baseline. Fix unsafe values at their source: give JSON and IndexedDB reads an `unknown` boundary, validate external shapes before use, and type internal callbacks and mocks accurately. Do not generate a new `eslint-suppressions.json` or replace findings with unchecked cast chains.
 
-Normal `npm run quality:lint` applies this baseline and rejects increased counts. ESLint also rejects obsolete suppressions; after fixing debt, run `npx eslint src --prune-suppressions` and review the smaller baseline. Never run suppression-generation commands in CI. Native bulk suppressions track counts per file/rule, not exact source locations: a same-count replacement can evade this guard and still needs review.
+The Markdown component retains a local `vue/no-v-html` exception at its shared parser output. That renderer disables raw HTML; the directive documents the rendering sink rather than permitting unvalidated application HTML. Unused disable directives are errors.
 
-Existing complexity exemptions and test-fixture unsafe-rule exceptions remain visible. A clean baseline-backed lint run does not mean the historical debt was repaired.
-
-References: [Vitest coverage](https://vitest.dev/guide/coverage.html), [typescript-eslint unsafe values](https://typescript-eslint.io/blog/avoiding-anys/), [ESLint bulk suppressions](https://eslint.org/docs/latest/use/suppressions).
+References: [Vitest coverage](https://vitest.dev/guide/coverage.html), [typescript-eslint unsafe values](https://typescript-eslint.io/blog/avoiding-anys/).
 
 ## Browser coverage for redundancy review
 

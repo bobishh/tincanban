@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, ref } from "vue"
+import { computed, defineAsyncComponent, ref, type Component } from "vue"
 import templateData from "../board-templates.json"
 import type { Preset, WorkspaceCreationDraft } from "../domain/seeds"
 
-const BoardCreationEditor = defineAsyncComponent(() => import("./BoardCreationEditor.vue"))
+const BoardCreationEditor = defineAsyncComponent(() => import("./BoardCreationEditor.vue") as Promise<{ default: Component }>)
 const props = defineProps<{
   createWorkspace: (payload: { title: string; preset: Preset; config?: WorkspaceCreationDraft }) => Promise<void>
 }>()

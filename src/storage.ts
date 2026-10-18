@@ -14,8 +14,12 @@ import { toBase64Url, fromBase64Url } from "./domain/identity"
 import { validateRekeyAuthorizations } from "./storageRekey"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
 import { StorageHistoryAccess } from "./storageHistoryAccess"
-import { activeHistoryDifference, appendLocalWorkspaceCommand, appendWorkspaceCommand, type WorkspaceCommitCommand } from "./storageCommitSupport"
-import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
+import {
+  activeHistoryDifference,
+  persistWorkspaceInIndexedDb,
+  persistWorkspaceLocally,
+  type WorkspaceCommitCommand,
+} from "./storageCommitSupport"
 import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, type WorkspaceMeta } from "./storageCatalog"
 import {
   deleteWorkspaceJournal,
@@ -29,12 +33,7 @@ import {
   transactionDone,
   withLocalJournalLock,
   writeLocalJournal,
-  advanceHistoryProgress,
-  advanceLocalHistoryProgress,
-  HISTORY_ACTIVE_CHANGE_LIMIT,
-  HISTORY_ACTIVE_BYTE_LIMIT,
   type StoredChange,
-  type StoredHistoryProgress,
   type StoredProofRecord,
   type StoredReceiptRecord,
   type StoredCausalEvidence,
@@ -267,7 +266,6 @@ export class WorkspaceStorage extends StorageHistoryAccess {
    * durable unit. Callers hold the shared workspace mutation lock while reading
    * the latest document, validating it and committing the candidate. */
   // Atomic snapshot, proof and receipt commit shares one transaction.
-  // eslint-disable-next-line complexity
   async commitWorkspace(
     workspaceId: string,
     doc: Automerge.Doc<WorkspaceDocumentV2>,
@@ -300,72 +298,18 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     // updates cannot be overwritten.
     onPhase?.("proof-read")
     const previousProofs = await records(workspaceId)
-    let proofChanged = false
     const causalChanged = causalEvidenceChanged(previous?.causalEvidence, snapshot.causalEvidence)
     const checkpointChanged = canonicalizeJson(previous?.causalEvidence?.admissionCheckpoint) !== canonicalizeJson(snapshot.causalEvidence?.admissionCheckpoint)
     const incomingProofChanged = canonicalizeJson(previousProofs) !== canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
     if (committed && !command && !causalChanged && !checkpointChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
       return this.reuseCommittedWorkspace(workspaceId, committed, doc)
     }
-    if (typeof indexedDB === "undefined") {
-      await withLocalJournalLock(workspaceId, async () => {
-        const journal = readLocalJournal(workspaceId)
-        const existing = mergeAuthorizationRecords(previousProofs, (journal.authorizations ?? []) as WorkspaceChangeAuthorization[])
-        const next = mergeAuthorizationRecords(existing, authorizations)
-        proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
-        journal.snapshot = snapshot
-        journal.frontier = undefined
-        journal.deltas = []
-        journal.authorizations = next
-        appendLocalWorkspaceCommand(journal, workspaceId, snapshot.savedAt, command)
-        const progressBaselineId = previous?.receivedHistory?.baselineId ?? journal.historyProgress?.baselineId
-        if (progressBaselineId !== undefined && !journal.frontier) {
-          advanceLocalHistoryProgress(journal, workspaceId, progressBaselineId,
-            activeTailChanges, activeTailBytes)
-        }
-        writeLocalJournal(workspaceId, journal)
-      })
-    } else {
-      onPhase?.("journal-open")
-      const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas", "revisions", "historyProgress"], "readwrite")
-      const completion = transactionDone(transaction)
-      try {
-        const snapshotStore = transaction.objectStore("snapshots")
-        onPhase?.("transaction-read")
-        const existingSnapshot = await requestResult(snapshotStore.get(workspaceId)) as StoredWorkspaceSnapshot | undefined
-        const [existingFrontier, progress] = await Promise.all([
-          requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
-          requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as Promise<StoredHistoryProgress | undefined>,
-        ])
-        const proofStore = transaction.objectStore("authorizations")
-        const stored = await requestResult(proofStore.get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
-        const existing = mergeAuthorizationRecords(previousProofs, stored?.records ?? [])
-        const next = mergeAuthorizationRecords(existing, authorizations)
-        proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
-        onPhase?.("transaction-write")
-        if (!existingSnapshot || existingSnapshot.heads.join() !== snapshot.heads.join() || causalChanged || checkpointChanged)
-          snapshotStore.put(snapshot)
-        const progressBaselineId = existingSnapshot?.receivedHistory?.baselineId ?? progress?.baselineId
-        if (progressBaselineId !== undefined && !existingFrontier) {
-          const concurrentSnapshot = previous && existingSnapshot &&
-            existingSnapshot.heads.slice().sort().join() !== previous.heads.slice().sort().join()
-          advanceHistoryProgress(transaction, workspaceId, progressBaselineId,
-            concurrentSnapshot ? HISTORY_ACTIVE_CHANGE_LIMIT : activeTailChanges,
-            concurrentSnapshot ? HISTORY_ACTIVE_BYTE_LIMIT : activeTailBytes)
-        }
-        if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
-        await this.clearDeltaRows(transaction, workspaceId)
-        advanceWorkspaceRevision(transaction, workspaceId)
-        await appendWorkspaceCommand(transaction, workspaceId, snapshot.savedAt, command)
-      } catch (error) {
-        transaction.abort()
-        await completion.catch(() => undefined)
-        throw error
-      }
-      onPhase?.("transaction-complete")
-      await completion
-    }
+    const proofChanged = typeof indexedDB === "undefined"
+      ? await persistWorkspaceLocally(workspaceId, snapshot, previous, previousProofs, authorizations,
+        command, activeTailChanges, activeTailBytes)
+      : await persistWorkspaceInIndexedDb(workspaceId, snapshot, previous, previousProofs, authorizations,
+        command, causalChanged, checkpointChanged, activeTailChanges, activeTailBytes,
+        (transaction, id) => this.clearDeltaRows(transaction, id), onPhase)
     // Memory projections advance only after the durable transaction completes.
     this.rememberCommittedSnapshot(workspaceId, snapshot, doc)
     onPhase?.("completed")

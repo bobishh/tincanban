@@ -31,7 +31,7 @@ describe("Field validation and lifecycle (Requirement 1.5)", () => {
     expect(validateFieldValue(dateField, "09-09-2026").valid).toBe(false)
     expect(validateFieldValue(dateField, null).valid).toBe(true) // optional
 
-    const dateTimeField: FieldDefinition = { ...baseField, id: "f_datetime", required: false, valueType: "datetime" as any }
+    const dateTimeField: FieldDefinition = { ...baseField, id: "f_datetime", required: false, valueType: "datetime" }
     expect(validateFieldValue(dateTimeField, "2026-09-09T14:30").valid).toBe(true)
     expect(validateFieldValue(dateTimeField, "2026-09-09T14:30:00").valid).toBe(true)
     expect(validateFieldValue(dateTimeField, "2026-09-09T14:30:00Z").valid).toBe(true)
@@ -43,7 +43,7 @@ describe("Field validation and lifecycle (Requirement 1.5)", () => {
     expect(validateFieldValue(dateTimeField, "2026-13-45T99:99").valid).toBe(false) // invalid values
     expect(validateFieldValue(dateTimeField, null).valid).toBe(true) // optional
 
-    const reqDateTimeField: FieldDefinition = { ...baseField, id: "f_req_datetime", required: true, valueType: "datetime" as any }
+    const reqDateTimeField: FieldDefinition = { ...baseField, id: "f_req_datetime", required: true, valueType: "datetime" }
     expect(validateFieldValue(reqDateTimeField, null).valid).toBe(false) // required
     expect(validateFieldValue(reqDateTimeField, "").valid).toBe(false) // required
     expect(validateFieldValue(reqDateTimeField, "2026-09-09T14:30").valid).toBe(true)
@@ -127,7 +127,7 @@ describe("Field validation and lifecycle (Requirement 1.5)", () => {
     }
 
     // Attempting to change valueType to number
-    const result = patchFieldDefinition(field, { valueType: "number" as any })
+    const result = patchFieldDefinition(field, { valueType: "number" })
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.error.code).toBe("field_type_change")

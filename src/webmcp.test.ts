@@ -20,7 +20,7 @@ beforeAll(async () => {
 })
 
 describe("generic WebMCP tools", () => {
-  let registeredTools: Map<string, any>
+  let registeredTools: Map<string, Parameters<ModelContext["registerTool"]>[0]>
   let mockContext: ModelContext
   let tincanban: ReturnType<typeof useTincanban>
 
@@ -253,7 +253,7 @@ describe("generic WebMCP tools", () => {
     expect(isItem(archivedItem) && itemLifecycle(archivedItem)).toEqual(expect.objectContaining({ state: "archived", changedAt: expect.any(String) }))
 
     const archived = await listArchived.execute({})
-    expect(archived.some((item: any) => item.id === itemId)).toBe(true)
+    expect(archived.some(item => item.id === itemId)).toBe(true)
   })
 
 })

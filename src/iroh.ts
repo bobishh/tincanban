@@ -2,6 +2,7 @@ import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
 import type { MeshStream } from "@meta-uber/mesh-transport"
+import { z } from "zod"
 import policyInit, {
   WasmAutomergeSyncEngine,
   WasmAutomergeDeviceSyncFlow,
@@ -25,6 +26,17 @@ export { WasmPairingCodec, WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff 
 let pairingCodecInstalled = false
 let rustRuntimeInstalled = false
 let browserRuntimeInitialization: Promise<void> | undefined
+
+const automergeDeviceSyncRequestSchema = z.object({
+  frame: z.unknown(),
+  batch: z.object({
+    protocolVersion: z.literal(1),
+    scopeId: z.string(),
+    documentId: z.string(),
+    batchId: z.string(),
+    changes: z.array(z.object({ hash: z.string(), bytes: z.union([z.instanceof(Uint8Array), z.array(z.number().int().min(0).max(255))]) })),
+  }),
+})
 
 export type IrohNode = {
   endpointId: string
@@ -65,7 +77,9 @@ async function installPolicyBrowserRuntime(): Promise<void> {
       createAutomergeDeviceSyncFlow: (targetDeviceId, documentId, maximumRounds) =>
         new WasmAutomergeDeviceSyncFlow(targetDeviceId, documentId, maximumRounds),
       decodeAutomergeDeviceSyncRequest: (request, expectedRemoteDeviceId) =>
-        WasmAutomergeDeviceSyncFlow.decodeIncomingRequest(request, expectedRemoteDeviceId),
+        automergeDeviceSyncRequestSchema.parse(
+          WasmAutomergeDeviceSyncFlow.decodeIncomingRequest(request, expectedRemoteDeviceId),
+        ),
       encodeAutomergeDeviceSyncResponse: (batchId, ack, frame) =>
         WasmAutomergeDeviceSyncFlow.encodeResponse(batchId, ack, frame),
       createBatchDeliveryFlow: (targetDeviceId, routeInstanceIds, fallbackDelayMs, retryDelaysMs) =>

@@ -312,11 +312,26 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
 
   it("Given a format 2 owner board, when tincanban starts, then migration is signed and durable", async () => {
     const profile = useTincanban().getCurrentProfile()!
-    const old = createWorkspaceDoc(crypto.randomUUID(), "Earlier board", profile.identity.personId, "blank") as unknown as Record<string, any>
+    type LegacyEntityFixture = {
+      id: string
+      kind: string
+      title?: string
+      deleted?: boolean
+      archivedAt?: string | null
+      displayHint?: string
+    }
+    type LegacyWorkspaceFixture = {
+      id: string
+      formatVersion: number
+      deleted: boolean
+      archivedAt?: string | null
+      entities: Record<string, LegacyEntityFixture>
+    }
+    const old = createWorkspaceDoc(crypto.randomUUID(), "Earlier board", profile.identity.personId, "blank") as unknown as LegacyWorkspaceFixture
     old.formatVersion = 2
     old.deleted = false
     delete old.archivedAt
-    for (const entity of Object.values(old.entities) as Array<Record<string, any>>) {
+    for (const entity of Object.values(old.entities)) {
       entity.deleted = entity.kind === "column" && entity.title === "Done"
       delete entity.archivedAt
       if (entity.kind === "column") entity.displayHint = "normal"

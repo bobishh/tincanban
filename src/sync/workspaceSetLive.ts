@@ -224,31 +224,64 @@ async function applyWorkspaceSetReceivePlan(
   }
 }
 
-// eslint-disable-next-line max-lines-per-function
-export function createLiveAutomergeWorkspaceSync(
-  connection: SyncConnection,
-  secret: string,
-  store: WorkspaceSetStore,
-  workspaceId: string,
-  localDeviceId: string,
-  remoteDeviceId: string,
-  createReplica: (store: WorkspaceSetStore, entries: WorkspaceSetWorkspace[]) => ReturnType<WorkspaceSetFactory>,
-  onDocumentRejected?: (error: WorkspaceChangeRejected | null) => void,
-  options: LiveWorkspaceOptions = {},
-): LiveWorkspaceSync {
-  let stopped = false
-  const restartProofTransfer = createProofTransferRestarter(connection, { workspaceId, peerId: remoteDeviceId })
-  let lastRejection: string | undefined
-  let heartbeatQueue = Promise.resolve()
-  const liveness = createLiveWorkspaceSession(workspaceId, secret)
-  const frameHandlers = new Set<Promise<void>>()
-  const peerHistoryGuard = async () => {
-    if (stopped) throw new Error("Direct peer session is no longer current")
-    await options.ensureCurrent?.()
-    if (stopped) throw new Error("Direct peer session is no longer current")
+type AutomergeScopeContext = {
+  connection: SyncConnection
+  secret: string
+  store: WorkspaceSetStore
+  workspaceId: string
+  localDeviceId: string
+  remoteDeviceId: string
+  historyReplica: ReturnType<WorkspaceSetFactory>
+  peerHistory: ReturnType<typeof createPeerHistoryObjectReader>
+  peerHistoryGuard: () => Promise<void>
+  options: LiveWorkspaceOptions
+  onDocumentRejected?: (error: WorkspaceChangeRejected | null) => void
+  rejectionState: { last: string | undefined }
+}
+
+async function persistBackgroundScopeDocument(context: AutomergeScopeContext, candidate: Uint8Array, proof: unknown): Promise<void> {
+  const { workspaceId, remoteDeviceId, store, peerHistory, peerHistoryGuard } = context
+  await validateBackgroundScopeDocument(workspaceId, candidate)
+  try {
+    if (store.validate && store.receiveHistoryBaseline && store.activateHistoryBaseline) {
+      try {
+        await store.validate(workspaceId, candidate, proof)
+        await peerHistoryGuard()
+      } catch (validationError) {
+        await peerHistoryGuard()
+        const descriptor = await peerHistory.readBaseline(workspaceId)
+        await peerHistoryGuard()
+        if (!descriptor) throw validationError
+        const baselineDocument = await peerHistory.readDocument(descriptor, workspaceId)
+        await peerHistoryGuard()
+        const basis = await store.receiveHistoryBaseline(workspaceId, candidate, proof, descriptor, peerHistory, baselineDocument)
+        let activated = false
+        try {
+          await peerHistoryGuard()
+          await store.validate(workspaceId, candidate, proof, basis)
+          await peerHistoryGuard()
+          await store.activateHistoryBaseline(workspaceId, basis)
+          activated = true
+        } catch (error) {
+          freeUnactivatedBasis(basis, activated)
+          throw error
+        }
+        await peerHistoryGuard()
+        await store.merge(workspaceId, candidate, proof, basis)
+        return
+      }
+    }
+    await measureScopePhase("store.persist-document", workspaceId, remoteDeviceId,
+      () => store.merge(workspaceId, candidate, proof), candidate.byteLength)
+  } catch (error) {
+    await clearProofPages(workspaceId).catch(() => {})
+    throw error
   }
-  const peerHistory = createPeerHistoryObjectReader(connection, peerHistoryGuard)
-  const historyReplica = createReplica(store, [workspaceId])
+}
+
+function createLiveAutomergeScope(context: AutomergeScopeContext) {
+  const { connection, secret, store, workspaceId, localDeviceId, remoteDeviceId,
+    historyReplica, peerHistory, options, onDocumentRejected, rejectionState } = context
   const scope = new BrowserMeshScopeSync(createBackgroundMeshScope(workspaceId, secret), {
     readDocument: () => measureScopePhase("store.read-document", workspaceId, remoteDeviceId,
       () => store.read(workspaceId)),
@@ -258,46 +291,9 @@ export function createLiveAutomergeWorkspaceSync(
       () => store.readChat!(workspaceId, known, remoteDeviceId)) : undefined,
     readMesh: store.readMesh ? () => measureScopePhase("store.read-mesh", workspaceId, remoteDeviceId,
       () => store.readMesh!(workspaceId)) : undefined,
-    persistDocument: async (candidate, proof) => {
-      await validateBackgroundScopeDocument(workspaceId, candidate)
-      try {
-        if (store.validate && store.receiveHistoryBaseline && store.activateHistoryBaseline) {
-          try {
-            await store.validate(workspaceId, candidate, proof)
-            await peerHistoryGuard()
-          } catch (validationError) {
-            await peerHistoryGuard()
-            const descriptor = await peerHistory.readBaseline(workspaceId)
-            await peerHistoryGuard()
-            if (!descriptor) throw validationError
-            const baselineDocument = await peerHistory.readDocument(descriptor, workspaceId)
-            await peerHistoryGuard()
-            const basis = await store.receiveHistoryBaseline(workspaceId, candidate, proof, descriptor, peerHistory, baselineDocument)
-            let activated = false
-            try {
-              await peerHistoryGuard()
-              await store.validate(workspaceId, candidate, proof, basis)
-              await peerHistoryGuard()
-              await store.activateHistoryBaseline(workspaceId, basis)
-              activated = true
-            } catch (error) {
-              freeUnactivatedBasis(basis, activated)
-              throw error
-            }
-            await peerHistoryGuard()
-            await store.merge(workspaceId, candidate, proof, basis)
-            return
-          }
-        }
-        await measureScopePhase("store.persist-document", workspaceId, remoteDeviceId,
-          () => store.merge(workspaceId, candidate, proof), candidate.byteLength)
-      } catch (error) {
-        await clearProofPages(workspaceId).catch(() => {})
-        throw error
-      }
-    },
+    persistDocument: (candidate, proof) => persistBackgroundScopeDocument(context, candidate, proof),
     onDocumentAccepted: count => {
-      if (count > 0 && lastRejection) { lastRejection = undefined; onDocumentRejected?.(null) }
+      if (count > 0 && rejectionState.last) { rejectionState.last = undefined; onDocumentRejected?.(null) }
     },
     mergeDurableBatch: bytes => measureScopePhase("store.merge-durable-batch", workspaceId, remoteDeviceId,
       async () => {
@@ -316,7 +312,7 @@ export function createLiveAutomergeWorkspaceSync(
       const elapsedMs = Math.round(timing.elapsedMs)
       if (elapsedMs >= 250) meshTrace("workspace.scope.queue", {
         operation: timing.operation, operationId: timing.operationId, phase: timing.phase,
-        workspaceId: workspaceId, peerId: remoteDeviceId, elapsedMs,
+        workspaceId, peerId: remoteDeviceId, elapsedMs,
         ...(timing.frameBytes === undefined ? {} : { frameBytes: timing.frameBytes }),
       }, "warn")
     },
@@ -336,6 +332,35 @@ export function createLiveAutomergeWorkspaceSync(
         () => options.onHandoffRequest!(stream, frame, connection.acceptStream), frame.byteLength) : undefined,
   })
   scope.startDocumentSync(localDeviceId, remoteDeviceId)
+  return scope
+}
+
+export function createLiveAutomergeWorkspaceSync(
+  connection: SyncConnection,
+  secret: string,
+  store: WorkspaceSetStore,
+  workspaceId: string,
+  localDeviceId: string,
+  remoteDeviceId: string,
+  createReplica: (store: WorkspaceSetStore, entries: WorkspaceSetWorkspace[]) => ReturnType<WorkspaceSetFactory>,
+  onDocumentRejected?: (error: WorkspaceChangeRejected | null) => void,
+  options: LiveWorkspaceOptions = {},
+): LiveWorkspaceSync {
+  let stopped = false
+  const restartProofTransfer = createProofTransferRestarter(connection, { workspaceId, peerId: remoteDeviceId })
+  const rejectionState = { last: undefined as string | undefined }
+  let heartbeatQueue = Promise.resolve()
+  const liveness = createLiveWorkspaceSession(workspaceId, secret)
+  const frameHandlers = new Set<Promise<void>>()
+  const peerHistoryGuard = async () => {
+    if (stopped) throw new Error("Direct peer session is no longer current")
+    await options.ensureCurrent?.()
+    if (stopped) throw new Error("Direct peer session is no longer current")
+  }
+  const peerHistory = createPeerHistoryObjectReader(connection, peerHistoryGuard)
+  const historyReplica = createReplica(store, [workspaceId])
+  const scope = createLiveAutomergeScope({ connection, secret, store, workspaceId, localDeviceId, remoteDeviceId,
+    historyReplica, peerHistory, peerHistoryGuard, options, onDocumentRejected, rejectionState })
   const responseStream: DuplexStream = {
     async send(frame) {
       if (stopped) return
@@ -382,8 +407,8 @@ export function createLiveAutomergeWorkspaceSync(
     catch (error) {
       await restartProofTransfer(error)
       if (!(error instanceof WorkspaceChangeRejected)) throw error
-      if (lastRejection !== error.message) onDocumentRejected?.(error)
-      lastRejection = error.message
+      if (rejectionState.last !== error.message) onDocumentRejected?.(error)
+      rejectionState.last = error.message
     }
   }
   const incomingContext = { isStopped: () => stopped, liveness, receive, workspaceId, remoteDeviceId }

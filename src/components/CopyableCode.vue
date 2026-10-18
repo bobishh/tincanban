@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed } from "vue"
-import { copyableCodeHtml, copyCodeBlock } from "../ui/copyableCode"
-const props = defineProps<{ value: string; label: string }>()
-const html = computed(() => copyableCodeHtml(props.value, props.label))
+import { copyCodeBlock } from "../ui/copyableCode"
+defineProps<{ value: string; label: string }>()
 </script>
 
 <template>
-  <!-- Application values are escaped by copyableCodeHtml. -->
-  <!-- eslint-disable-next-line vue/no-v-html -->
-  <div @click="copyCodeBlock" v-html="html"></div>
+  <div @click="copyCodeBlock">
+    <span class="copyable-code" data-code-block role="group" :aria-label="label">
+      <code>{{ value }}</code>
+      <button class="button button-small button-quiet" type="button" data-copy-code :aria-label="`Copy ${label}`">Copy</button>
+      <span class="reading-explanation" role="status" aria-live="polite"></span>
+    </span>
+  </div>
 </template>

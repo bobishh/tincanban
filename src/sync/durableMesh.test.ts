@@ -4,7 +4,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { encodePairingFrame, inspectPairingFrame } from "@meta-uber/mesh-pairing"
-import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope } from "../domain/identity"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
@@ -12,7 +12,107 @@ import { isNativeKeeperRoute } from "./durableMeshSessions"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
-import type { SyncNode } from "./transport"
+import type { SyncConnection, SyncNode } from "./transport"
+import type { WorkspacePeerRecord } from "./peerStore"
+import type { LocalProfile } from "../domain/identity"
+import type { SessionEntry } from "./durableMeshBase"
+import type { LiveWorkspaceSync } from "./workspaceSet"
+import type { WorkspaceOwnershipTransfer } from "./meshRecords"
+
+type TestCredential = {
+  workspaceId: string
+  ownerPersonId?: string
+  ownerPublicKey?: string
+  ownerCertificates?: unknown[]
+  transportSecret?: string
+  epoch?: number
+  updatedAt?: string
+  catalog?: {
+    revocations?: unknown[]
+    ownershipTransfers?: WorkspaceOwnershipTransfer[]
+    successionClaims?: unknown[]
+    [key: string]: unknown
+  }
+}
+type TestPeer = Pick<WorkspacePeerRecord, "workspaceId" | "deviceId"> & {
+  personId?: string
+  instanceId?: string
+  endpoint?: string
+  transportSecret?: string | Uint8Array
+  role?: "owner" | "editor" | "visitor"
+  lastSeen?: string
+  advertisement?: unknown
+}
+type TestSession = Omit<Partial<SessionEntry>, "connection" | "session"> & {
+  connection?: Partial<SyncConnection>
+  session?: Partial<LiveWorkspaceSync>
+}
+type MeshTestHooks = {
+  node?: unknown
+  acceptor?: unknown
+  adoptedNode?: { endpointId: string; accept: () => Promise<unknown>; close: () => Promise<void> }
+  sessions: Map<string, TestSession>
+  lastDiagnostic: string
+  activeWorkspaceIds?: Set<string>
+  instanceId: string
+  lifecycle?: { stopped: boolean }
+  runtimeState?: { stop: () => void }
+  gossip: { closeAll: () => unknown }
+  browserSessions: { host: {
+    currentRemoved: (entry: { workspaceId: string; deviceId: string; endpoint: string }) => Promise<void>
+    create: (...args: unknown[]) => { session: Partial<LiveWorkspaceSync> }
+  } }
+  dialScheduler: { host: { peers: () => Promise<WorkspacePeerRecord[]> } }
+  runtime: () => {
+    routeAttemptActive: (key: string) => boolean
+    reconnectState: (key: string) => unknown
+    beginRouteAttempt: (key: string, at: number) => void
+    scheduleReconnect: (key: string, at: number, delay: number, maximum: number) => void
+    admitSession: (session: unknown, connectionId: string) => void
+  }
+  peerKey: (workspaceId: string, deviceId: string, instanceId: string) => string
+  routeFailures: (key: string) => number
+  removeAuthenticatedPeer: (...args: string[]) => void
+  refreshWorkspaceGossip: (...args: string[]) => Promise<void>
+  notify: () => Promise<void>
+  reclassifyWorkspaceAuthority: (workspaceId: string) => Promise<void>
+  mergeRevocations: (credential: TestCredential, records: unknown[]) => Promise<void>
+  activeCredentialsForProfile: (credentials: TestCredential[], profile: unknown) => Promise<TestCredential[]>
+  peerInstances: (workspaceId?: string) => Promise<TestPeer[]>
+  ensureOwnerCredential: (workspaceId: string) => Promise<TestCredential>
+  start: (...args: unknown[]) => Promise<void>
+  encodeOwnerWorkspaceOffer: (...args: unknown[]) => Promise<Uint8Array>
+  addOwnerWorkspace: (workspaceId: string) => Promise<void>
+  offerMissingOwnerWorkspaces: (...args: unknown[]) => Promise<void>
+  dropSessions: () => Promise<void>
+  prepareCredentials: () => Promise<void>
+  connectPeer: (peer: TestPeer, route: object, signal: AbortSignal, routeSignal: AbortSignal) => Promise<void>
+  dialDevice: (peers: TestPeer[], signal: AbortSignal) => Promise<void>
+  hasDeviceSession: (workspaceId: string, deviceId: string) => boolean
+  acceptConnection: (connection: object) => Promise<void>
+  acceptOnInvitationNode: (connection: object, stream: object, frame: Uint8Array) => Promise<void>
+  publishAll: () => Promise<void>
+  publishWorkspace: (workspaceId: string) => Promise<void>
+  broadcastWorkspaceGossip: (workspaceId: string) => Promise<void>
+  installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>]) => Promise<boolean>
+  dialLoop: (signal: AbortSignal) => Promise<void>
+  mergeOwnershipTransfers: (credential: TestCredential, transfers: WorkspaceOwnershipTransfer[]) => Promise<TestCredential>
+  pruneInvalidStoredPeers: (credential: TestCredential, localDeviceId: string) => Promise<void>
+  refreshOwnBundle: (credential: TestCredential, profile: LocalProfile, endpoint: string, certificates: unknown[]) => Promise<void>
+  putVerifiedBundle: (credential: TestCredential, bundle: unknown) => Promise<void>
+  mergeSuccessionState: (...args: unknown[]) => Promise<TestCredential>
+  mergeDeviceRevocations: (...args: unknown[]) => Promise<void>
+  mergeDepartures: (...args: unknown[]) => Promise<void>
+  mergePeerBundles: (...args: unknown[]) => Promise<void>
+  report: (stage: string, error: unknown) => void
+  trace: (...args: unknown[]) => void
+  shutdown: () => Promise<void>
+  runMeshOnce: (signal: AbortSignal) => Promise<void>
+}
+
+function meshHooks(mesh: DurableMesh): MeshTestHooks {
+  return mesh as unknown as MeshTestHooks
+}
 
 beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")) })
 
@@ -103,7 +203,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const onDiagnostic = vi.fn()
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never), store: { listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never, onDiagnostic })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.removeAuthenticatedPeer = vi.fn()
     internal.refreshWorkspaceGossip = vi.fn(async () => {})
     internal.notify = vi.fn(async () => {})
@@ -124,7 +224,7 @@ describe("DurableMesh peer catalog gossip", () => {
   })
 
   it("skips empty revocation planning only when no stored revocations exist", async () => {
-    const plan = vi.spyOn(meshRustRuntime().state as any, "planAuthorityMerge")
+    const plan = vi.spyOn(meshRustRuntime().state, "planAuthorityMerge")
     const getProfile = vi.fn(async () => ({ identity: { personId: "owner" }, device: { deviceId: "owner-device" } } as never))
     const putWorkspaceCredential = vi.fn()
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
@@ -132,7 +232,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const credential = { workspaceId: "workspace-1", catalog: { revocations: [] } }
 
     try {
-      await (mesh as any).mergeRevocations(credential, [])
+      await meshHooks(mesh).mergeRevocations(credential, [])
       expect(plan).not.toHaveBeenCalled()
       expect(getProfile).not.toHaveBeenCalled()
       expect(putWorkspaceCredential).not.toHaveBeenCalled()
@@ -145,7 +245,7 @@ describe("DurableMesh peer catalog gossip", () => {
   it("still enforces stored revocations when the incoming list is empty", async () => {
     const credential = { workspaceId: "workspace-1", catalog: { revocations: [{ payload: { personId: "local" } }] } }
     const peer = { workspaceId: "workspace-1", personId: "remote", deviceId: "remote-device" }
-    const state = meshRustRuntime().state as any
+    const state = meshRustRuntime().state
     const plan = vi.spyOn(state, "planAuthorityMerge").mockReturnValue({
       credential, peers: [peer], evictDeviceIds: [peer.deviceId], localAccessRevoked: true,
     })
@@ -154,7 +254,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "local" }, device: { deviceId: "local-device" } } as never),
       store: { listPeers: async () => [peer], putWorkspaceCredential: vi.fn(), upsertPeer } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.sessions.set("workspace-1:remote-device:slot", { workspaceId: "workspace-1", deviceId: peer.deviceId, evict })
 
     try {
@@ -174,7 +274,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const nextCredential = { ...credential, catalog: { revocations: [{ payload: { personId: "remote" } }] } }
     const record = { payload: { personId: "remote" } }
     const peer = { workspaceId: "workspace-1", personId: "remote", deviceId: "remote-device" }
-    const state = meshRustRuntime().state as any
+    const state = meshRustRuntime().state
     const plan = vi.spyOn(state, "planAuthorityMerge").mockReturnValue({
       credential: nextCredential, peers: [peer], evictDeviceIds: [peer.deviceId], localAccessRevoked: false,
     })
@@ -184,10 +284,10 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "owner" }, device: { deviceId: "owner-device" } } as never),
       store: { listPeers: async () => [peer], putWorkspaceCredential, upsertPeer } as never })
-    ;(mesh as any).sessions.set("workspace-1:remote-device:slot", { workspaceId: "workspace-1", deviceId: peer.deviceId, evict })
+    ;meshHooks(mesh).sessions.set("workspace-1:remote-device:slot", { workspaceId: "workspace-1", deviceId: peer.deviceId, evict })
 
     try {
-      await (mesh as any).mergeRevocations(credential, [record])
+      await meshHooks(mesh).mergeRevocations(credential, [record])
       expect(plan).toHaveBeenCalledWith(expect.objectContaining({ records: { kind: "revocations", records: [record] } }))
       expect(putWorkspaceCredential).toHaveBeenCalledWith(nextCredential)
       expect(upsertPeer).toHaveBeenCalledWith(peer)
@@ -199,7 +299,7 @@ describe("DurableMesh peer catalog gossip", () => {
   })
 
   it("rejects a removed person's stale grant but accepts their newly approved generation", () => {
-    const credential = { catalog: { revocations: [{ payload: { personId: "returning", epoch: 2 } }] } } as any
+    const credential = { catalog: { revocations: [{ payload: { personId: "returning", epoch: 2 } }] } }
     expect(isGrantRevoked(credential, "returning", { payload: { accessEpoch: 2 } })).toBe(true)
     expect(isGrantRevoked(credential, "returning", { payload: { accessEpoch: 3 } })).toBe(false)
     expect(isGrantRevoked(credential, "returning", { payload: {} })).toBe(true)
@@ -242,7 +342,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "current-person", publicKey: "current-key" }, device: { deviceId: "current-device" } } as never),
       store: { removeWorkspaceMeshData, listWorkspaceCredentials: async () => [credential], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
 
-    await expect((mesh as any).activeCredentialsForProfile([credential],
+    await expect(meshHooks(mesh).activeCredentialsForProfile([credential],
       { identity: { personId: "current-person", publicKey: "current-key" }, device: { deviceId: "current-device" } })).resolves.toEqual([])
     expect(removeWorkspaceMeshData).not.toHaveBeenCalled()
     await mesh.dispose()
@@ -256,7 +356,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "current-person", publicKey: "current-key" }, device: { deviceId: "current-device" } } as never),
       store: { listWorkspaceCredentials: async () => [credential], listWorkspaceAuthorities: async () => [], listPeers: async () => [{ workspaceId: "stale-workspace", deviceId: "old-device" }] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
 
     await internal.activeCredentialsForProfile([credential], { identity: { personId: "current-person", publicKey: "current-key" }, device: { deviceId: "current-device" } })
 
@@ -279,10 +379,10 @@ describe("DurableMesh peer catalog gossip", () => {
       store: { getWorkspaceCredential: async () => ({ ownerPersonId: "owner" }), putWorkspaceCredential: put,
         getPendingOwnershipTransfer: async () => null,
         listPeers: async () => [{ personId: "target", deviceId: "target-device" }] } as never })
-    ;(mesh as any).sessions.set("test", { workspaceId: "workspace", deviceId: "target-device" })
+    ;meshHooks(mesh).sessions.set("test", { workspaceId: "workspace", deviceId: "target-device" })
     await expect(mesh.transferOwnership("workspace", "target")).rejects.toThrow(/online/i)
     expect(put).not.toHaveBeenCalled()
-    ;(mesh as any).sessions.clear()
+    ;meshHooks(mesh).sessions.clear()
     await mesh.dispose()
   })
 
@@ -293,7 +393,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       store: { getWorkspaceCredential: async () => credential, getPeer: async () => ({ personId: "owner" }),
         listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.ensureOwnerCredential = vi.fn(async () => credential)
     internal.start = vi.fn(async () => {})
     internal.notify = vi.fn(async () => {})
@@ -318,7 +418,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       store: { listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.activeWorkspaceIds = new Set(["existing-workspace"])
     internal.ensureOwnerCredential = vi.fn(async () => credential)
     internal.start = vi.fn(async () => {})
@@ -341,7 +441,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       getOwnedWorkspaceIds: async () => ["new-workspace"],
       store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.ensureOwnerCredential = vi.fn(async () => credential)
     internal.start = vi.fn(async () => {})
     internal.notify = vi.fn(async () => {})
@@ -370,7 +470,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       getOwnedWorkspaceIds: async () => ["new-workspace"],
       store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.encodeOwnerWorkspaceOffer = vi.fn(async () => offer)
     const connection = { openStream: vi.fn(async () => stream) }
 
@@ -392,7 +492,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       store: { getWorkspaceCredential: async () => credential, getPeer: async () => ({ personId: "owner" }),
         listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.ensureOwnerCredential = vi.fn(async () => credential)
     internal.start = vi.fn(async () => {})
     internal.notify = vi.fn(async () => {})
@@ -415,11 +515,11 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never), store: { listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never, onDiagnostic })
     const controller = new AbortController(); controller.abort()
-    ;(mesh as any).node = {}
-    await expect((mesh as any).connectPeer({ workspaceId: "workspace", deviceId: "remote" }, {}, new AbortController().signal, controller.signal)).rejects.toThrow(/cancelled/)
+    ;meshHooks(mesh).node = {}
+    await expect(meshHooks(mesh).connectPeer({ workspaceId: "workspace", deviceId: "remote" }, {}, new AbortController().signal, controller.signal)).rejects.toThrow(/cancelled/)
     expect(onDiagnostic).not.toHaveBeenCalled()
-    expect((mesh as any).routeFailures("workspace:remote")).toBe(0)
-    ;(mesh as any).node = undefined
+    expect(meshHooks(mesh).routeFailures("workspace:remote")).toBe(0)
+    ;meshHooks(mesh).node = undefined
     await mesh.dispose()
   })
 
@@ -428,7 +528,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never, onDiagnostic })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const peer = {
       workspaceId: "workspace", personId: "remote-person", deviceId: "remote-device", instanceId: "legacy:remote",
       endpoint: "remote-endpoint", transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString(),
@@ -466,7 +566,7 @@ describe("DurableMesh peer catalog gossip", () => {
       return unsubscribe
     } } as never, workspaceStore: {} as never,
     getProfile: async () => ({} as never), store: { listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.acceptConnection = vi.fn(async () => {
       internal.sessions.set("invited", { connection, session: { done } })
     })
@@ -488,7 +588,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never, onDiagnostic })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const peer = {
       workspaceId: "workspace", personId: "remote-person", deviceId: "remote-device", instanceId: "legacy:remote",
       endpoint: "remote-endpoint", transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString(),
@@ -516,7 +616,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { listPeerInstances: async () => [keeper, browser], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const schedulerPeers = await (mesh as any).dialScheduler.host.peers()
+    const schedulerPeers = await meshHooks(mesh).dialScheduler.host.peers()
 
     expect(isNativeKeeperRoute(keeper as never)).toBe(true)
     expect(isNativeKeeperRoute(browser as never)).toBe(false)
@@ -529,7 +629,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never, onDiagnostic })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const evict = vi.fn(async () => {})
     internal.sessions.set("workspace:remote:slot", { workspaceId: "workspace", deviceId: "remote-device", evict,
       session: { publish: async () => { throw new MeshNetworkError("closed by peer: browser connection closed (code 0)") } } })
@@ -545,7 +645,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     let release!: () => void
     const firstPublish = new Promise<void>(resolve => { release = resolve })
     const scoped = { publish: vi.fn().mockImplementationOnce(() => firstPublish).mockResolvedValue(undefined) }
@@ -576,7 +676,7 @@ describe("DurableMesh peer catalog gossip", () => {
       store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
     const connection = () => ({ acceptStream: vi.fn(() => new Promise<never>(() => {})), openStream: vi.fn(), close: vi.fn(async () => {}) })
     const first = connection(), second = connection()
-    await Promise.all([first, second].map(value => (mesh as any).installSession("workspace", "remote", "slot-0", "2026-09-17", 1, "incoming", value)))
+    await Promise.all([first, second].map(value => meshHooks(mesh).installSession("workspace", "remote", "slot-0", "2026-09-17", 1, "incoming", value)))
     expect(first.acceptStream.mock.calls.length + second.acceptStream.mock.calls.length).toBe(1)
     expect(first.close.mock.calls.length + second.close.mock.calls.length).toBe(1)
     await mesh.dispose()
@@ -587,7 +687,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ device: { deviceId: "local" } } as never),
       store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const publish = vi.fn(async () => {})
     internal.lifecycle = { stopped: false }
     internal.browserSessions.host.create = vi.fn(() => ({
@@ -611,16 +711,16 @@ describe("DurableMesh peer catalog gossip", () => {
       store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
     const connection = () => ({ acceptStream: vi.fn(() => new Promise<never>(() => {})), openStream: vi.fn(), close: vi.fn(async () => {}) })
     const first = connection(), sibling = connection()
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     await internal.installSession("workspace", "remote", "slot-0", "2026-09-17", 1, "incoming", first)
     expect(await internal.installSession("workspace", "remote", "slot-1", "2026-09-17", 99, "outgoing", sibling)).toBe(true)
     expect(first.close).not.toHaveBeenCalled()
     expect(sibling.close).not.toHaveBeenCalled()
     expect(internal.sessions.size).toBe(2)
-    expect(internal.sessions.get("workspace:remote:slot-0").session)
-      .not.toBe(internal.sessions.get("workspace:remote:slot-1").session)
-    await internal.sessions.get("workspace:remote:slot-0").evict("remote closed")
-    expect(internal.sessions.get("workspace:remote:slot-1").connection).toBe(sibling)
+    expect(internal.sessions.get("workspace:remote:slot-0")?.session)
+      .not.toBe(internal.sessions.get("workspace:remote:slot-1")?.session)
+    await internal.sessions.get("workspace:remote:slot-0")?.evict?.("remote closed")
+    expect(internal.sessions.get("workspace:remote:slot-1")?.connection).toBe(sibling)
     expect(sibling.close).not.toHaveBeenCalled()
     await mesh.dispose()
   })
@@ -661,7 +761,7 @@ describe("DurableMesh peer catalog gossip", () => {
       close: vi.fn(async () => {}),
     }
 
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     await internal.installSession("workspace-1", "remote-device", "instance-1",
       "2026-09-16T09:00:00.000Z", 1, "incoming", oldConnection,
       false, "incoming-test", false, "", false, "remote-endpoint")
@@ -676,12 +776,12 @@ describe("DurableMesh peer catalog gossip", () => {
     await internal.installSession("workspace-1", "remote-device", "instance-1",
       "2026-09-16T09:00:00.000Z", 1, "incoming", replacementConnection,
       false, "incoming-replacement", false, "", false, "remote-endpoint")
-    const replacement = internal.sessions.get("workspace-1:remote-device:instance-1").session
+    const replacement = internal.sessions.get("workspace-1:remote-device:instance-1")?.session
     resolveOldAccept(undefined as never)
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(internal.sessions.get("workspace-1:remote-device:instance-1").session).toBe(replacement)
+    expect(internal.sessions.get("workspace-1:remote-device:instance-1")?.session).toBe(replacement)
     await expect(mesh.views("workspace-1")).resolves.toMatchObject([{ online: true }])
     expect(changes.length).toBeGreaterThan(0)
     await mesh.dispose()
@@ -701,7 +801,7 @@ describe("DurableMesh peer catalog gossip", () => {
         listPeers: async () => [],
       } as never,
     })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.browserSessions.host.create = vi.fn(() => ({
       session: { publish: async () => {}, close: async () => {}, done },
     }))
@@ -723,7 +823,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ device: { deviceId: "local" } } as never),
       store: { getWorkspaceCredential: async () => ({ workspaceId: "workspace", transportSecret: "secret" }),
         listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const publish = vi.fn(async () => {})
     internal.lifecycle = { stopped: false }
     internal.browserSessions.host.create = vi.fn(() => ({
@@ -758,7 +858,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ device: { deviceId: "local-device" } } as never),
       store: {} as never,
     })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.node = {}
     internal.instanceId = "slot-0"
     internal.peerInstances = vi.fn(async (workspaceId?: string) => workspaceId ? [own, peer] : [peer])
@@ -785,7 +885,7 @@ describe("DurableMesh peer catalog gossip", () => {
       transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
       getProfile: async () => ({ device: { deviceId: "local-device" } } as never), store: {} as never,
     })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.node = {}
     internal.peerInstances = vi.fn(async () => [peer])
     internal.dialDevice = vi.fn(async () => controller.abort())
@@ -844,11 +944,11 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
       getProfile: async () => owner, store: store as never })
 
-    const result = await (mesh as any).mergeOwnershipTransfers(credential, transfers)
+    const result = await meshHooks(mesh).mergeOwnershipTransfers(credential, transfers)
 
     expect(result.ownerPersonId).toBe(owner.identity.personId)
     expect(result.epoch).toBe(1)
-    expect((result.catalog as any).ownershipTransfers).toHaveLength(2)
+    expect(result.catalog?.ownershipTransfers).toHaveLength(2)
     await expect(mesh.successionViews()).resolves.toMatchObject([{ workspaceId: "workspace-1", conflicted: true }])
     await mesh.dispose()
   })
@@ -869,10 +969,10 @@ describe("DurableMesh peer catalog gossip", () => {
       epoch: 1, updatedAt: new Date(0).toISOString(), catalog: {},
     }
     const replica = (profile: LocalProfile) => {
-      let credential: any = structuredClone(initial)
+      let credential: TestCredential = structuredClone(initial)
       const store = {
-        putWorkspaceCredential: async (next: any) => { credential = structuredClone(next) },
-        transferWorkspaceCredential: async (_previous: string, next: any) => { credential = structuredClone(next) },
+        putWorkspaceCredential: async (next: TestCredential) => { credential = structuredClone(next) },
+        transferWorkspaceCredential: async (_previous: string, next: TestCredential) => { credential = structuredClone(next) },
         getPendingOwnershipTransfer: async () => null,
         listPeers: async () => [], listWorkspaceCredentials: async () => [credential], listWorkspaceAuthorities: async () => [],
       }
@@ -883,18 +983,18 @@ describe("DurableMesh peer catalog gossip", () => {
     const a = replica(first)
     const b = replica(second)
 
-    await (a.mesh as any).mergeOwnershipTransfers(a.credential(), [toFirst])
-    await (b.mesh as any).mergeOwnershipTransfers(b.credential(), [toSecond])
+    await meshHooks(a.mesh).mergeOwnershipTransfers(a.credential(), [toFirst])
+    await meshHooks(b.mesh).mergeOwnershipTransfers(b.credential(), [toSecond])
     expect(a.credential().ownerPersonId).toBe(first.identity.personId)
     expect(b.credential().ownerPersonId).toBe(second.identity.personId)
 
-    await (a.mesh as any).mergeOwnershipTransfers(a.credential(), [toSecond])
-    await (b.mesh as any).mergeOwnershipTransfers(b.credential(), [toFirst])
+    await meshHooks(a.mesh).mergeOwnershipTransfers(a.credential(), [toSecond])
+    await meshHooks(b.mesh).mergeOwnershipTransfers(b.credential(), [toFirst])
 
     expect(a.credential().ownerPersonId).toBe(first.identity.personId)
     expect(b.credential().ownerPersonId).toBe(second.identity.personId)
-    expect(a.credential().catalog.ownershipTransfers).toHaveLength(2)
-    expect(b.credential().catalog.ownershipTransfers).toHaveLength(2)
+    expect(a.credential().catalog?.ownershipTransfers).toHaveLength(2)
+    expect(b.credential().catalog?.ownershipTransfers).toHaveLength(2)
     await expect(a.mesh.successionViews()).resolves.toMatchObject([{ conflicted: true }])
     await expect(b.mesh.successionViews()).resolves.toMatchObject([{ conflicted: true }])
     await Promise.all([a.mesh.dispose(), b.mesh.dispose()])
@@ -928,7 +1028,7 @@ describe("DurableMesh peer catalog gossip", () => {
       store: store as never,
     })
 
-    await (mesh as any).pruneInvalidStoredPeers(credential, "local-device")
+    await meshHooks(mesh).pruneInvalidStoredPeers(credential, "local-device")
 
     expect(removed).toEqual(["workspace-1:stale-device"])
     await mesh.dispose()
@@ -938,7 +1038,7 @@ describe("DurableMesh peer catalog gossip", () => {
     resetIdentityStorageForTest()
     const owner = await bootstrapIdentity("Owner")
     const removed: string[] = []
-    const saved: any[] = []
+    const saved: TestPeer[] = []
     const credential = {
       version: 1 as const,
       workspaceId: "workspace-1",
@@ -959,7 +1059,7 @@ describe("DurableMesh peer catalog gossip", () => {
         lastSeen: new Date(Date.now() + 60_000).toISOString(), advertisement: { stale: true },
       }),
       removePeer: async (workspaceId: string, deviceId: string) => { removed.push(`${workspaceId}:${deviceId}`); return true },
-      upsertPeer: async (peer: any) => { saved.push(peer); return peer },
+      upsertPeer: async (peer: TestPeer) => { saved.push(peer); return peer },
       putWorkspaceCredential: async () => {},
     }
     const mesh = new DurableMesh({
@@ -970,7 +1070,7 @@ describe("DurableMesh peer catalog gossip", () => {
       store: store as never,
     })
 
-    await (mesh as any).refreshOwnBundle(credential, owner, "new-endpoint", [owner.certificate])
+    await meshHooks(mesh).refreshOwnBundle(credential, owner, "new-endpoint", [owner.certificate])
 
     expect(removed).toEqual([`workspace-1:${owner.device.deviceId}`])
     expect(saved.at(-1)?.personId).toBe(owner.identity.personId)
@@ -993,7 +1093,7 @@ describe("DurableMesh peer catalog gossip", () => {
         },
       } as never,
     })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const sessionKey = "workspace-1:guest-device"
     internal.sessions.set(sessionKey, {
       workspaceId: "workspace-1",
@@ -1028,11 +1128,14 @@ describe("DurableMesh peer catalog gossip", () => {
       store: { getWorkspaceCredential: async () => credential } as never,
     })
     const imported: string[] = []
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.mergeOwnershipTransfers = async () => credential
     internal.mergeSuccessionState = async () => credential
     internal.mergeRevocations = async () => {}
-    internal.putVerifiedBundle = vi.fn(async (_credential: unknown, bundle: { id: string }) => {
+    internal.putVerifiedBundle = vi.fn(async (_credential: TestCredential, bundle: unknown) => {
+      if (!bundle || typeof bundle !== "object" || !("id" in bundle) || typeof bundle.id !== "string") {
+        throw new Error("Invalid workspace grant fixture")
+      }
       if (bundle.id === "poisoned") throw new Error("Invalid workspace grant signature")
       imported.push(bundle.id)
     })
@@ -1053,10 +1156,10 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),
       store: { getWorkspaceCredential: async () => credential } as never })
-    const state = meshRustRuntime().state as any
+    const state = meshRustRuntime().state
     const validate = vi.spyOn(state, "validateMeshCatalog").mockReturnValue({ version: 1, peers: [], revocations: [] })
     const plan = vi.spyOn(state, "planCatalogMerge").mockReturnValue(["notify"])
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.notify = vi.fn(async () => { await new Promise(resolve => setTimeout(resolve, 270)) })
     clearMeshTrace()
 
@@ -1084,7 +1187,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => ({ identity: { personId: "local" } } as never),
       store: { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => ({ scopeAuthoritySnapshot: snapshot }),
         listPeers: async () => [], transferWorkspaceCredential } as never })
-    const state = meshRustRuntime().state as any
+    const state = meshRustRuntime().state
     const spies = [
       vi.spyOn(state, "validateMeshCatalog").mockReturnValue(catalog),
       vi.spyOn(state, "mergeScopeAuthoritySnapshots").mockReturnValue(snapshot),
@@ -1123,7 +1226,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => profile,
       store: { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => authority,
         listPeers: async () => [] } as never })
-    ;(sender as any).peerInstances = async () => []
+    ;meshHooks(sender).peerInstances = async () => []
     const exported = await sender.exportWorkspace(workspaceId)
     const catalog = meshRustRuntime().state.validateMeshCatalog(exported, Date.now()) as typeof exported
     expect(catalog.scopeAuthoritySnapshot).toEqual({ ...scopeAuthoritySnapshot, successionTransfers: [] })
@@ -1135,7 +1238,7 @@ describe("DurableMesh peer catalog gossip", () => {
       store: { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => authority,
         listPeers: async () => [],
         putWorkspaceAuthority } as never })
-    const internal = receiver as any
+    const internal = meshHooks(receiver)
     internal.mergeOwnershipTransfers = async () => credential
     internal.mergeDeviceRevocations = async () => {}
     internal.mergeDepartures = async () => {}
@@ -1238,7 +1341,7 @@ describe("DurableMesh peer catalog gossip", () => {
       getProfile: async () => enrolledOwner,
       store: store as never,
     })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.putVerifiedBundle = vi.fn(async () => {})
     internal.notify = vi.fn(async () => {})
 
@@ -1262,7 +1365,7 @@ describe("durable runtime cleanup", () => {
   it("reports a failed diagnostic notification without an unhandled rejection", async () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
       workspaceStore: {} as never, getProfile: async () => null as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     internal.notify = vi.fn(async () => { throw new Error("storage unavailable") })
     internal.trace = vi.fn()
     const failure = new Error("node closed")
@@ -1276,7 +1379,7 @@ describe("durable runtime cleanup", () => {
   it.each(["sessions", "gossip", "runtime"])("closes detached resources even when %s cleanup fails", async stage => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
       workspaceStore: {} as never, getProfile: async () => null as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const node = { close: vi.fn(async () => {}) }
     const acceptor = { close: vi.fn(async () => {}) }
     internal.node = node
@@ -1299,10 +1402,10 @@ describe("durable node supervision", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
       workspaceStore: {} as never, getProfile: async () => ({}) as never,
       store: { listWorkspaceCredentials: async () => [{}], listWorkspaceAuthorities: async () => [] } as never })
-    const internal = mesh as any
+    const internal = meshHooks(mesh)
     const acceptor = { accept: async () => { if (rejects) throw new Error("node closed"); return undefined }, close: vi.fn(async () => {}) }
     internal.adoptedNode = { endpointId: "endpoint", accept: async () => acceptor, close: vi.fn(async () => {}) }
-    internal.activeCredentialsForProfile = async () => [{}]
+    internal.activeCredentialsForProfile = async () => [{ workspaceId: "workspace" }]
     internal.prepareCredentials = async () => {}
     let cancelled = false
     internal.dialLoop = (signal: AbortSignal) => new Promise<void>(resolve => {

@@ -17,6 +17,7 @@ function publish(event: ChatChange) {
   for (const listener of listeners) listener(event)
   channel?.postMessage(event)
 }
+
 channel?.addEventListener("message", event => {
   const change = event.data as ChatChange
   if (typeof change?.workspaceId === "string" && Array.isArray(change.added)) {
@@ -155,23 +156,34 @@ export async function exportChat(workspaceId: string, known?: Set<string>, remot
 
 type ChatWire = { version: 1 | 2; capabilities?: string[]; messages: unknown[]; profiles: unknown[]; typing: unknown[] }
 
+function isChatWireObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function isUnknownArray(value: unknown): value is unknown[] {
+  return Array.isArray(value)
+}
+
 function parseChatWire(value: unknown): ChatWire {
-  const wire = value as Partial<ChatWire>
-  if (![1, 2].includes(wire.version!) || !Array.isArray(wire.messages) || !Array.isArray(wire.profiles)) {
+  if (!isChatWireObject(value)) throw new Error("Invalid chat batch")
+  const wire = value
+  const { version, messages, profiles, typing, capabilities } = wire
+  if ((version !== 1 && version !== 2) || !isUnknownArray(messages) || !isUnknownArray(profiles)) {
     throw new Error("Invalid chat batch")
   }
-  if (wire.typing !== undefined && !Array.isArray(wire.typing)) throw new Error("Invalid chat batch")
-  if (wire.capabilities !== undefined && (!Array.isArray(wire.capabilities) || wire.capabilities.length > 16 || wire.capabilities.some(value => typeof value !== "string" || value.length > 64))) throw new Error("Invalid chat capabilities")
-  const messages = wire.messages
-  const profiles = wire.profiles
-  const typing = wire.typing ?? []
-  if (messages.length > 2000 || profiles.length > 512 || typing.length > 512) {
+  if (typing !== undefined && !isUnknownArray(typing)) throw new Error("Invalid chat batch")
+  if (capabilities !== undefined && (!isUnknownArray(capabilities) || capabilities.length > 16 || capabilities.some(item => typeof item !== "string" || item.length > 64))) throw new Error("Invalid chat capabilities")
+  const activeTyping: unknown[] = typing === undefined ? [] : typing
+  if (messages.length > 2000 || profiles.length > 512 || activeTyping.length > 512) {
     throw new Error("Invalid chat batch")
   }
   if (new TextEncoder().encode(JSON.stringify(wire)).byteLength > 8 * 1024 * 1024) {
     throw new Error("Invalid chat batch")
   }
-  return { version: wire.version as 1 | 2, capabilities: wire.capabilities, messages, profiles, typing }
+  const validCapabilities = isUnknownArray(capabilities)
+    ? capabilities.filter((item): item is string => typeof item === "string")
+    : undefined
+  return { version, capabilities: validCapabilities, messages, profiles, typing: activeTyping }
 }
 
 function rejectRecord(workspaceId: string, section: string, error: unknown): void {

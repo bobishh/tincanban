@@ -83,9 +83,10 @@ let ownerLoad = 0
 watch(() => props.workspaces.map(ws => ws.id).join("|"), async () => {
   const load = ++ownerLoad
   try {
-    const saved = JSON.parse(localStorage.getItem(preferenceKey.value) || "{}") as { pinned?: string[]; recent?: string[] }
-    pinnedIds.value = Array.isArray(saved.pinned) ? saved.pinned.filter(id => typeof id === "string") : []
-    recentIds.value = Array.isArray(saved.recent) ? saved.recent.filter(id => typeof id === "string").slice(0, 5) : []
+    const saved: unknown = JSON.parse(localStorage.getItem(preferenceKey.value) || "{}")
+    const preferences = readDirectoryPreferences(saved)
+    pinnedIds.value = preferences.pinned
+    recentIds.value = preferences.recent
   } catch { pinnedIds.value = []; recentIds.value = [] }
   const owners = await Promise.all(props.workspaces.map(async ws => [ws.id, await props.readOwner(ws.id).catch(() => "")] as const))
   if (load === ownerLoad) ownerIds.value = { ...ownerIds.value, ...Object.fromEntries(owners) }
@@ -173,6 +174,18 @@ async function restoreArchived(id: string) {
 
 function displayTitle(title: string) {
   return title
+}
+
+function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: string[] } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return { pinned: [], recent: [] }
+  const preferences = value as Record<string, unknown>
+  const pinned = Array.isArray(preferences.pinned)
+    ? preferences.pinned.filter((id): id is string => typeof id === "string")
+    : []
+  const recent = Array.isArray(preferences.recent)
+    ? preferences.recent.filter((id): id is string => typeof id === "string").slice(0, 5)
+    : []
+  return { pinned, recent }
 }
 </script>
 

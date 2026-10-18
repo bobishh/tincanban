@@ -25,6 +25,7 @@ import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from ".
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
+import { z } from "zod"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
@@ -125,6 +126,13 @@ type HostInput = {
 }
 
 type WorkspaceGuest = { personId: string; displayName?: unknown; meshPeers?: unknown; followOwner?: unknown }
+const workspaceRequestSchema = z.object({
+  personId: z.string().min(1),
+  invitationId: z.string().min(1),
+  displayName: z.unknown().optional(),
+  meshPeers: z.unknown().optional(),
+  followOwner: z.unknown().optional(),
+}).passthrough()
 type OwnerConnection = { controllerPersonId: string }
 type HostRuntime = HostInput & {
   acceptor: SyncAcceptor
@@ -332,12 +340,13 @@ async function receiveMeshPeer(runtime: HostRuntime, connection: SyncConnection,
 }
 
 function readWorkspaceRequest(runtime: HostRuntime, payload: Uint8Array) {
-  const guest = JSON.parse(new TextDecoder().decode(payload))
-  if (typeof guest.personId !== "string" || !guest.personId || guest.invitationId !== runtime.invite.invitationId) throw new Error("Invalid workspace join request.")
+  const parsed = workspaceRequestSchema.safeParse(JSON.parse(new TextDecoder().decode(payload)))
+  if (!parsed.success || parsed.data.invitationId !== runtime.invite.invitationId) throw new Error("Invalid workspace join request.")
+  const guest = parsed.data
   if (runtime.keeperAdmission && (guest.followOwner === true) !== runtime.keeperAdmission.followOwner) {
     throw new Error("Keeper future-board policy does not match the approved pairing.")
   }
-  return guest as { personId: string; displayName?: unknown; meshPeers?: unknown; followOwner?: unknown }
+  return guest
 }
 
 async function approveWorkspaceAccess(runtime: HostRuntime, guest: WorkspaceGuest) {

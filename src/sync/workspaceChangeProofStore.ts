@@ -2,7 +2,18 @@ import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuth
   withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
 import { canonicalizeJson } from "../domain/identityCrypto"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
+import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
 export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
+
+type WorkspaceAuthorizationRow = {
+  id: string
+  workspaceId: string
+  records: WorkspaceChangeAuthorization[]
+}
+
+function authorizationRowRequest(store: IDBObjectStore, workspaceId: string): IDBRequest<WorkspaceAuthorizationRow | undefined> {
+  return store.get(workspaceId) as IDBRequest<WorkspaceAuthorizationRow | undefined>
+}
 
 export async function records(workspaceId: string): Promise<WorkspaceChangeAuthorization[]> {
   return mergeAuthorizationRecords(await basisRecords(workspaceId), await readWorkspaceDeltaAuthorizations(workspaceId) as WorkspaceChangeAuthorization[])
@@ -13,7 +24,7 @@ export async function basisRecords(workspaceId: string): Promise<WorkspaceChange
   const db = await openWorkspaceJournal()
   const transaction = db.transaction("authorizations", "readonly")
   const completion = transactionDone(transaction)
-  const stored = await requestResult(transaction.objectStore("authorizations").get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
+  const stored = await requestResult(authorizationRowRequest(transaction.objectStore("authorizations"), workspaceId))
   await completion
   return stored?.records ?? []
 }
@@ -35,7 +46,7 @@ export async function putRecords(workspaceId: string, incoming: WorkspaceChangeA
     let changed = false
     const transaction = db.transaction(["authorizations", "frontiers", "revisions"], "readwrite")
     const store = transaction.objectStore("authorizations")
-    const get = store.get(workspaceId)
+    const get = authorizationRowRequest(store, workspaceId)
     get.onsuccess = () => {
       try {
         const existing = mergeAuthorizationRecords(previous, get.result?.records ?? [])
@@ -45,7 +56,7 @@ export async function putRecords(workspaceId: string, incoming: WorkspaceChangeA
         if (changed) {
           advanceWorkspaceRevision(transaction, workspaceId)
           const frontiers = transaction.objectStore("frontiers")
-          const frontier = frontiers.get(workspaceId)
+          const frontier = frontiers.get(workspaceId) as IDBRequest<WorkspaceDeltaFrontier | undefined>
           frontier.onsuccess = () => { if (frontier.result) frontiers.put({ ...frontier.result, invalidated: true }) }
         }
       } catch (error) { transaction.abort(); reject(error) }

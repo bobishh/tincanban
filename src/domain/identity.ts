@@ -60,9 +60,9 @@ export function resetIdentityStorageForTest(): void {
 
 export async function bootstrapIdentity(displayName?: string): Promise<LocalProfile> {
   const bootstrap = async () => {
-    const profile = await identityStore.bootstrap(normalizeDisplayName(displayName ?? "") || randomDisplayName()) as LocalProfile
+    const profile = await identityStore.bootstrap(normalizeDisplayName(displayName ?? "") || randomDisplayName())
     return !normalizeDisplayName(profile.identity.displayName) || ["Match User", "tincanban User"].includes(profile.identity.displayName)
-      ? await identityStore.rename(randomDisplayName()) as LocalProfile
+      ? await identityStore.rename(randomDisplayName())
       : profile
   }
   // Cross-tab exclusion protects creation/restoration. Cached reads must not
@@ -82,15 +82,15 @@ export async function renameIdentity(displayName: string, commit?: IdentityAdopt
   const normalized = normalizeDisplayName(displayName)
   const error = validateDisplayName(normalized)
   if (error) throw new Error(error)
-  return await identityStore.rename(normalized, commit) as LocalProfile
+  return await identityStore.rename(normalized, commit)
 }
 
 export async function refreshIdentityPresentation(expectedRaw?: string): Promise<LocalProfile> {
-  return await identityStore.refreshPresentation(expectedRaw) as LocalProfile
+  return await identityStore.refreshPresentation(expectedRaw)
 }
 
 export async function renewDeviceIdentity(): Promise<LocalProfile> {
-  const renew = () => identityStore.renewDevice() as Promise<LocalProfile>
+  const renew = () => identityStore.renewDevice()
   return typeof navigator !== "undefined" && navigator.locks
     ? await navigator.locks.request("tincanban-identity-bootstrap", renew) : await renew()
 }
@@ -127,7 +127,7 @@ export async function restoreIdentityRecovery(
     throw new Error("Confirm identity replacement before restoring a different identity")
   await beforeRestore?.()
   if (!isCurrentIdentityProfile(current)) throw new Error("Identity changed during recovery")
-  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName, commit) as LocalProfile
+  return await identityStore.restoreEnvelope(envelope, recoveryKey, displayName, commit)
 }
 
 export async function adoptEnrolledIdentity(
@@ -135,7 +135,7 @@ export async function adoptEnrolledIdentity(
   certificate: DeviceCertificate,
   commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
-  return await identityStore.adopt(identity, certificate, commit) as LocalProfile
+  return await identityStore.adopt(identity, certificate, commit)
 }
 
 export function isCurrentIdentityProfile(profile: LocalProfile): boolean { return identityStore.isCurrentProfile(profile) }

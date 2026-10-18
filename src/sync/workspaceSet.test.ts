@@ -592,9 +592,12 @@ describe("paged initial snapshot transport", () => {
     const source = workspaceSet({ read: async () => document, readAuthorization,
       merge: vi.fn(), activate: vi.fn() }, [doc.id])
     const merge = vi.fn()
-    const validate = vi.fn(async (_id: string, _bytes: Uint8Array, proof: any) => {
+    const validate = vi.fn(async (_id: string, _bytes: Uint8Array, proof: unknown) => {
+      if (typeof proof !== "object" || proof === null || !("version" in proof) || !("pages" in proof)) {
+        throw new Error("Expected paged authorization proof")
+      }
       expect(proof.version).toBe(2)
-      expect(proof.pages.flat()).toHaveLength(20_001)
+      expect(Array.isArray(proof.pages) && proof.pages.flat()).toHaveLength(20_001)
     })
     const target = workspaceSet({ read: async () => { throw new Error("Absent snapshot") }, merge, validate, activate: vi.fn() }, [doc.id])
     const frames: Uint8Array[] = []
@@ -627,7 +630,12 @@ describe("paged initial snapshot transport", () => {
     await f.target.receive(resolved)
     expect(f.merge).toHaveBeenCalledTimes(1)
     const decoded = meshRustRuntime().state.decodeWorkspaceSet(resolved, [f.id])
-    expect((decoded[0]!.authorization as any).pages.flat()).toHaveLength(20_001)
+    expect(decoded[0]!.authorization).toMatchObject({ version: 2 })
+    const authorization = decoded[0]!.authorization
+    if (!authorization || typeof authorization !== "object" || !("pages" in authorization)) {
+      throw new Error("Expected paged authorization")
+    }
+    expect(Array.isArray(authorization.pages) && authorization.pages.flat()).toHaveLength(20_001)
     await clearProofPages(f.id)
   }, 20_000)
   it("Given paged authorization, when all responses arrive, then bound raw reads and release each stream without closing its connection", async () => {

@@ -6,10 +6,39 @@ import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, renewDeviceIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createWorkspaceGrant } from "../domain/proofs"
-import { createWorkspaceDeparture, verifyWorkspaceDeparture, createPeerAdvertisement, createWorkspaceDeviceRevocation, verifyWorkspaceDeviceRevocation } from "./meshRecords"
+import { createWorkspaceDeparture, verifyWorkspaceDeparture, createPeerAdvertisement, createWorkspaceDeviceRevocation, verifyWorkspaceDeviceRevocation,
+  type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { DurableMesh } from "./durableMesh"
 import { hasLeftWorkspace, isDeviceRevoked } from "./durableMeshBase"
 import { mergePeerRecords } from "@meta-uber/mesh-peer-store"
+import type { PeerStore, WorkspaceMeshCredential } from "./peerStore"
+import type { WorkspacePeerRecord } from "@meta-uber/mesh-peer-store"
+import type { WorkspaceMemberBundle } from "./meshRecords"
+
+type MemberAccessMeshHooks = {
+  putVerifiedBundle: (credential: WorkspaceMeshCredential, bundle: WorkspaceMemberBundle) => Promise<void>
+  mergeDepartures: (credential: WorkspaceMeshCredential, records: WorkspaceDeparture[]) => Promise<void>
+  mergeIncomingAuthority: (credential: WorkspaceMeshCredential, request: { capabilities?: string[] }) => Promise<WorkspaceMeshCredential>
+  mergeDeviceRevocations: (credential: WorkspaceMeshCredential, records: WorkspaceDeviceRevocation[]) => Promise<void>
+}
+
+function meshHooks(mesh: DurableMesh): MemberAccessMeshHooks {
+  return mesh as unknown as MemberAccessMeshHooks
+}
+
+function peerGrantRole(peer: WorkspacePeerRecord): string {
+  const advertisement = peer.advertisement
+  if (!advertisement || typeof advertisement !== "object" || !("grant" in advertisement)) {
+    throw new Error("Expected the peer's signed member bundle")
+  }
+  const grant = advertisement.grant
+  if (!grant || typeof grant !== "object" || !("payload" in grant)) throw new Error("Expected peer grant payload")
+  const payload = grant.payload
+  if (!payload || typeof payload !== "object" || !("role" in payload) || typeof payload.role !== "string") {
+    throw new Error("Expected peer grant role")
+  }
+  return payload.role
+}
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -23,26 +52,27 @@ async function fixture() {
   const ownerRaw = (await readLocal("tincanban.local_profile.v1"))!
   const visitor = await identity("Visitor")
   const visitorRaw = (await readLocal("tincanban.local_profile.v1"))!
-  const doc = Automerge.change(Automerge.init(), draft => { (draft as any).value = "workspace" })
+  const doc = Automerge.change(Automerge.init<{ value: string }>(), draft => { draft.value = "workspace" })
   const bytes = Automerge.save(doc)
   const grant = await createWorkspaceGrant(owner, "board", visitor.identity.personId, "visitor")
   const bundle = await createPeerAdvertisement(visitor, { workspaceId: "board", endpoint: "endpoint", grant,
     ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
-  let credential: any = { version: 1, workspaceId: "board", ownerPersonId: owner.identity.personId,
+  let credential: WorkspaceMeshCredential = { version: 1, workspaceId: "board", ownerPersonId: owner.identity.personId,
     ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "secret", epoch: 1,
     updatedAt: new Date().toISOString() }
-  let peer: any = { workspaceId: "board", personId: visitor.identity.personId, deviceId: visitor.device.deviceId,
+  let peer: WorkspacePeerRecord = { workspaceId: "board", personId: visitor.identity.personId, deviceId: visitor.device.deviceId,
     role: "visitor", endpoint: "endpoint", transportSecret: "secret", lastSeen: bundle.advertisement.payload.issuedAt, advertisement: bundle }
-  const store: any = { getPeer: async () => peer, listPeers: async () => [peer],
+  const store: Pick<PeerStore, "getPeer" | "listPeers" | "getWorkspaceCredential" | "listWorkspaceCredentials" | "getWorkspaceAuthority" | "putWorkspaceCredential" | "upsertPeer"> = { getPeer: async () => peer, listPeers: async () => [peer],
     getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [credential], getWorkspaceAuthority: async () => null,
-    putWorkspaceCredential: async (value: any) => { credential = value },
-    upsertPeer: async (value: any) => { peer = mergePeerRecords(peer, value); return peer } }
+    putWorkspaceCredential: async (value) => { credential = value },
+    upsertPeer: async (value) => { peer = mergePeerRecords(peer, value); return peer } }
   const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {
     read: async () => bytes, readAuthorityHeads: async () => Automerge.getHeads(doc),
   } as never,
-    store, getProfile: async () => owner })
-  vi.spyOn(mesh as any, "notify").mockResolvedValue(undefined)
-  vi.spyOn(mesh as any, "publishAll").mockResolvedValue(undefined)
+    store: store as unknown as PeerStore, getProfile: async () => owner })
+  const hooks = mesh as unknown as { notify: () => Promise<void>; publishAll: () => Promise<void> }
+  vi.spyOn(hooks, "notify").mockResolvedValue(undefined)
+  vi.spyOn(hooks, "publishAll").mockResolvedValue(undefined)
   await writeLocal("tincanban.local_profile.v1", ownerRaw)
   clearInMemoryProfileForReloadTest()
   return { mesh, owner, visitor, bundle, store, credential: () => credential, peer: () => peer,
@@ -54,8 +84,8 @@ describe("member access", () => {
     const f = await fixture()
     await f.mesh.promotePerson("board", f.visitor.identity.personId)
     expect(f.peer().role).toBe("editor")
-    expect(f.peer().advertisement.grant.payload.role).toBe("editor")
-    await (f.mesh as any).putVerifiedBundle(f.credential(), f.bundle)
+    expect(peerGrantRole(f.peer())).toBe("editor")
+    await meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)
     expect(f.peer().role).toBe("editor")
     await f.mesh.dispose()
   })
@@ -63,7 +93,7 @@ describe("member access", () => {
     const f = await fixture()
     const published = vi.mocked((f.mesh as unknown as { publishAll: () => Promise<void> }).publishAll).mockImplementation(() =>
       withWorkspaceMutation("board", async () => {
-        expect(f.peer().advertisement.grant.payload.role).toBe("editor")
+        expect(peerGrantRole(f.peer())).toBe("editor")
       }))
     await f.mesh.promotePerson("board", f.visitor.identity.personId)
     expect(published).toHaveBeenCalledOnce()
@@ -74,7 +104,7 @@ describe("member access", () => {
     await f.mesh.removeDevice(f.visitor.identity.personId, f.visitor.device.deviceId, ["board"])
     expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(true)
     expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, "another-device")).toBe(false)
-    await expect((f.mesh as any).putVerifiedBundle(f.credential(), f.bundle)).rejects.toThrow("Device access revoked")
+    await expect(meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)).rejects.toThrow("Device access revoked")
     await f.mesh.dispose()
   })
   it("Given a removed device, when a join is checked before owner approval, then its signed key is rejected without writes", async () => {
@@ -98,7 +128,7 @@ describe("member access", () => {
   })
   it("rechecks an approved signed workspace grant and stops a live reader after person access is revoked", async () => {
     const f = await fixture()
-    const grant = structuredClone(f.peer().advertisement.grant)
+    const grant = structuredClone(f.bundle.grant)
     await f.mesh.revokePerson("board", f.visitor.identity.personId)
 
     await expect(f.mesh.checkGuestDevices(["board"], f.visitor.identity.personId, [f.bundle], [grant]))
@@ -138,11 +168,11 @@ describe("leaving membership", () => {
     const f = await fixture()
     const departure = await createWorkspaceDeparture(f.visitor, "board", 1, ["head"], [f.visitor.certificate])
     expect(verifyWorkspaceDeparture(departure, "board")).toEqual(departure)
-    await (f.mesh as any).mergeDepartures(f.credential(), [departure])
+    await meshHooks(f.mesh).mergeDepartures(f.credential(), [departure])
     expect(hasLeftWorkspace(f.credential(), f.visitor.identity.personId, f.bundle.grant)).toBe(true)
-    await expect((f.mesh as any).putVerifiedBundle(f.credential(), f.bundle)).rejects.toThrow("Workspace member is revoked")
+    await expect(meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)).rejects.toThrow("Workspace member is revoked")
     const renewed = await createWorkspaceGrant(f.owner, "board", f.visitor.identity.personId, "editor", 2)
-    await (f.mesh as any).putVerifiedBundle(f.credential(), { ...f.bundle, grant: renewed })
+    await meshHooks(f.mesh).putVerifiedBundle(f.credential(), { ...f.bundle, grant: renewed })
     expect(hasLeftWorkspace(f.credential(), f.visitor.identity.personId, renewed)).toBe(false)
     const forged = structuredClone(departure)
     forged.record.payload.personId = f.owner.identity.personId
@@ -152,7 +182,7 @@ describe("leaving membership", () => {
 
   it("requires removal-aware peers before accepting a session, even before the first removal", async () => {
     const f = await fixture()
-    await expect((f.mesh as any).mergeIncomingAuthority(f.credential(), { capabilities: ["iroh-gossip-v1", "automerge-sync-v1"] }))
+    await expect(meshHooks(f.mesh).mergeIncomingAuthority(f.credential(), { capabilities: ["iroh-gossip-v1", "automerge-sync-v1"] }))
       .rejects.toThrow("Peer does not support device revocations; update the app")
     expect(f.credential().catalog).toBeUndefined()
     await f.mesh.dispose()
@@ -178,7 +208,7 @@ it("retains removals for both identities when the same device key was enrolled i
   const f = await fixture()
   const first = await createWorkspaceDeviceRevocation(f.owner, "board", f.visitor.identity.personId, f.visitor.device.deviceId, ["head"], [f.owner.certificate])
   const second = await createWorkspaceDeviceRevocation(f.owner, "board", "another-person", f.visitor.device.deviceId, ["head"], [f.owner.certificate])
-  await (f.mesh as any).mergeDeviceRevocations(f.credential(), [first, second])
+  await meshHooks(f.mesh).mergeDeviceRevocations(f.credential(), [first, second])
   expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(true)
   expect(isDeviceRevoked(f.credential(), "another-person", f.visitor.device.deviceId)).toBe(true)
   await f.mesh.dispose()

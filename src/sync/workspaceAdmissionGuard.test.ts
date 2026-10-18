@@ -9,7 +9,7 @@ import type { WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import { evaluateIncomingWorkspaceAdmission } from "./changeAuthorization"
 
-const state = vi.hoisted(() => ({ authority: null as any, admit: vi.fn() }))
+const state = vi.hoisted(() => ({ authority: null as unknown, admit: vi.fn() }))
 vi.mock("./workspaceAdmissionClient", () => ({ runWorkspaceAdmission: (...args: unknown[]) => state.admit(...args) }))
 vi.mock("./peerStore", () => ({ peerStore: {
   getWorkspaceAuthority: async () => state.authority,

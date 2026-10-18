@@ -24,7 +24,7 @@ const approvalSchema = z.object({
     deviceState: z.unknown(),
     snapshot: z.string().min(1),
   }).strict(), signerKeyId: text, signature: text,
-})
+}).passthrough()
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 
 export async function createEnrollmentRequest(invite: DeviceEnrollmentInvitation, profile: LocalProfile) {
@@ -116,13 +116,15 @@ export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollm
 
 /** Checks enrollment data without replacing the local identity or root. */
 export async function preflightEnrollment(bytes: Uint8Array, invite: DeviceEnrollmentInvitation, profile: LocalProfile) {
-  const raw = JSON.parse(new TextDecoder().decode(bytes))
-  if (typeof raw?.error === "string") throw new Error(raw.error)
+  const rawResult = z.record(z.string(), z.unknown()).safeParse(JSON.parse(new TextDecoder().decode(bytes)))
+  if (!rawResult.success) throw new Error("The other device needs an update. Reload both devices and create a new link.")
+  const raw = rawResult.data
+  if (typeof raw.error === "string") throw new Error(raw.error)
   const parsed = approvalSchema.safeParse(raw)
   if (!parsed.success) throw new Error("The other device needs an update. Reload both devices and create a new link.")
   const approval = parsed.data
-  // Verify the original envelope, before schema parsing can strip unknown fields.
-  if (approval.signerKeyId !== invite.issuerDeviceId || !await verifyEnvelope(raw, invite.issuerPublicKey)) {
+  // The passthrough schema keeps outer signed fields intact during validation.
+  if (approval.signerKeyId !== invite.issuerDeviceId || !await verifyEnvelope(approval, invite.issuerPublicKey)) {
     throw new Error("Invalid device enrollment approval signature.")
   }
   const transfer = await readIdentityDeviceTransfer(approval.payload.deviceState, invite.issuerPersonId)

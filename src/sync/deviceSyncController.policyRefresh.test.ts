@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerStore"
 import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import { DeviceSyncController } from "./deviceSyncController"
+import type { DurableMeshOptions } from "./durableMesh"
 
 describe("mesh policy refresh", () => {
   it("does not reload all nine boards for repeated status notifications, while heartbeat work stays responsive", async () => {
@@ -14,7 +15,7 @@ describe("mesh policy refresh", () => {
       availableWorkspaces: workspaces,
     })
     const sync = controller.api()
-    const meshOptions = (controller as unknown as { meshOptions: (store: unknown) => { onChange: (...args: any[]) => void } })
+    const meshOptions = (controller as unknown as { meshOptions: (store: unknown) => { onChange: NonNullable<DurableMeshOptions["onChange"]> } })
       .meshOptions({})
     const onChange = meshOptions.onChange
     const credential: WorkspaceMeshCredential = {

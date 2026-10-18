@@ -178,8 +178,8 @@ export class ChatStore {
       const profsReq = profIndex.getAll(IDBKeyRange.only(workspaceId))
 
       const [storedMsgs, storedProfs] = await Promise.all([
-        promisifyRequest<StoredMessageInternal[]>(typedRequest<StoredMessageInternal[]>(msgsReq)),
-        promisifyRequest<StoredChatProfile[]>(typedRequest<StoredChatProfile[]>(profsReq)),
+        promisifyRequest<StoredMessageInternal[]>(msgsReq),
+        promisifyRequest<StoredChatProfile[]>(profsReq),
       ])
 
       const messages: StoredChatMessage[] = (storedMsgs || []).map((m) => ({
@@ -207,9 +207,9 @@ export class ChatStore {
   async loadProfiles(workspaceId: string): Promise<StoredChatProfile[]> {
     validateWorkspaceId(workspaceId)
     return this.runTx([STORE_PROFILES], "readonly", async tx => {
-      const profiles = await promisifyRequest<StoredChatProfile[]>(typedRequest<StoredChatProfile[]>(
+      const profiles = await promisifyRequest<StoredChatProfile[]>(
         tx.objectStore(STORE_PROFILES).index(INDEX_PROF_WORKSPACE).getAll(IDBKeyRange.only(workspaceId)),
-      ))
+      )
       return (profiles ?? []).map(profile => ({
         workspaceId: profile.workspaceId,
         personId: profile.personId,
@@ -240,9 +240,9 @@ export class ChatStore {
       const metaReq = metaStore.get(profile.workspaceId)
 
       const [existing, allProfiles, storedMeta] = await Promise.all([
-        promisifyRequest<StoredChatProfile | undefined>(typedRequest<StoredChatProfile | undefined>(getReq)),
-        promisifyRequest<StoredChatProfile[]>(typedRequest<StoredChatProfile[]>(allReq)),
-        promisifyRequest<WorkspaceMetaInternal | undefined>(typedRequest<WorkspaceMetaInternal | undefined>(metaReq)),
+        promisifyRequest<StoredChatProfile | undefined>(getReq),
+        promisifyRequest<StoredChatProfile[]>(allReq),
+        promisifyRequest<WorkspaceMetaInternal | undefined>(metaReq),
       ])
       const { meta, needsWrite } = contentRevisionMeta(profile.workspaceId, storedMeta)
 
@@ -285,7 +285,7 @@ export class ChatStore {
 
     return this.runTx([STORE_META], "readonly", async (tx) => {
       const metaStore = tx.objectStore(STORE_META)
-      const meta = await promisifyRequest<WorkspaceMetaInternal | undefined>(typedRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId)))
+      const meta = await promisifyRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId))
       return meta?.cursor ?? null
     })
   }
@@ -294,7 +294,7 @@ export class ChatStore {
     validateWorkspaceId(workspaceId)
     return this.runTx([STORE_META], "readwrite", async (tx) => {
       const metaStore = tx.objectStore(STORE_META)
-      const stored = await promisifyRequest<WorkspaceMetaInternal | undefined>(typedRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId)))
+      const stored = await promisifyRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId))
       const { meta, needsWrite } = contentRevisionMeta(workspaceId, stored)
       persistContentRevision(metaStore, meta, false, needsWrite)
       return contentRevisionToken(meta)
@@ -309,7 +309,7 @@ export class ChatStore {
 
     return this.runTx([STORE_META], "readwrite", async (tx) => {
       const metaStore = tx.objectStore(STORE_META)
-      const meta = await promisifyRequest<WorkspaceMetaInternal | undefined>(typedRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId)))
+      const meta = await promisifyRequest<WorkspaceMetaInternal | undefined>(metaStore.get(workspaceId))
       const currentMeta: WorkspaceMetaInternal = meta || {
         workspaceId,
         cursor: null,
@@ -325,10 +325,6 @@ export class ChatStore {
       metaStore.put(currentMeta)
     })
   }
-}
-
-function typedRequest<T>(request: IDBRequest): IDBRequest<T> {
-  return request as IDBRequest<T>
 }
 
 export const chatStore = new ChatStore()

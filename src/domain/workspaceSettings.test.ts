@@ -33,7 +33,7 @@ describe("workspace settings transaction", () => {
     settings.board.columns[0].title = "Unread"
     settings.board.fields = [
       { title: "Author", valueType: "text", required: true },
-      { title: "Published At", valueType: "datetime" as any, required: false },
+      { title: "Published At", valueType: "datetime", required: false },
     ]
     settings.documentTemplates = [{ title: "Review", markdown: "# {{title}}" }]
 

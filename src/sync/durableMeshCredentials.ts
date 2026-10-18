@@ -18,8 +18,16 @@ import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked, isGra
 import { DurableMeshBase } from "./durableMeshBase"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { workspaceRecordSigning } from "./meshRecordSigning"
+import { z } from "zod"
 
 export type KeeperGrantScopeProof = { workspaceId: string; document: string; authorizationBundle: unknown; grant: WorkspaceGrant }
+
+const ownerWorkspaceOfferSchema = z.object({
+  version: z.literal(1),
+  workspaceId: z.string().min(1),
+  envelope: z.unknown(),
+  workspace: z.unknown(),
+}).passthrough()
 
 function selectOwnerKeeperOfferReference(references: KeeperIntegrationReference[]) {
   const live = references.filter(item => item.state !== "removed")
@@ -281,16 +289,18 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
 
   protected async encodeOwnerWorkspaceOffer(workspaceId: string) {
     const [envelope] = await this.invitationPayload([workspaceId])
-    const [workspace] = JSON.parse(new TextDecoder().decode(
+    const workspaces = z.array(z.unknown()).length(1).parse(JSON.parse(new TextDecoder().decode(
       await workspaceSet(this.options.workspaceStore, [workspaceId]).snapshot(),
-    ))
+    )))
+    const [workspace] = workspaces
     return new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId, envelope, workspace }))
   }
 
   protected async receiveOwnerWorkspaceOffer(bytes: Uint8Array, remotePersonId: string,
     connection: SyncConnection, secret: string) {
     const profile = await this.options.getProfile()
-    const value = JSON.parse(new TextDecoder().decode(bytes)) as { envelope: MeshWorkspaceEnvelope; workspace: unknown }
+    const value = ownerWorkspaceOfferSchema.parse(JSON.parse(new TextDecoder().decode(bytes)))
+    if (!isEnvelope(value.envelope)) throw new Error("Invalid owner workspace offer")
     const workspaceId = meshRustRuntime().state.validateOwnerWorkspaceOffer(value, remotePersonId, profile.identity.personId)
     await this.validateInvitation([value.envelope], [workspaceId], profile, [])
     // Persist the signed document before activating its credential. Otherwise
@@ -346,7 +356,7 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
             grant = await createWorkspaceGrant(profile, workspaceId, remotePersonId, keeper.role, accessEpoch, context)
             await defaultProofStore.putGrant(grant.payload.grantId, grant)
           }
-          const value = JSON.parse(new TextDecoder().decode(offer))
+          const value = z.record(z.string(), z.unknown()).parse(JSON.parse(new TextDecoder().decode(offer)))
           offer = new TextEncoder().encode(JSON.stringify({ ...value, grant, controllerPersonId: profile.identity.personId }))
         }
         const release = await registerOwnerOfferProofs(connection, secret, offer, this.options.workspaceStore)
@@ -411,8 +421,8 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       const credential = credentials[workspaceIds.indexOf(entry.workspaceId)]!
       const raw = (rawBundles as WorkspaceMemberBundle[])[entry.bundleIndex]!
       const grant = grants[entry.grantIndex]!
-      await this.putVerifiedBundle(credential, { ...raw, grant, ownerPublicKey: credential.ownerPublicKey,
-        ownerCertificates: credential.ownerCertificates } as WorkspaceMemberBundle)
+      await this.putVerifiedBundle(credential, { ...raw, grant,
+        ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates })
       await this.refreshSuccessionPolicy(entry.workspaceId)
     }
     await this.notify()

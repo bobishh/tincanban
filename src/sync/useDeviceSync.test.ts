@@ -3,6 +3,8 @@ import { userMessage, useDeviceSync } from "./useDeviceSync"
 import { formatSyncError } from "./deviceSyncState"
 import { DeviceSyncController } from "./deviceSyncController"
 import { WorkspaceAdmissionFailure } from "./deviceSyncHost"
+import { ref } from "vue"
+import type { SyncTransport } from "./transport"
 
 const waitFor = async (predicate: () => boolean) => {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -174,7 +176,7 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
         transportStarted = true
         throw new Error("Should not start node on open")
       },
-    }
+    } satisfies SyncTransport
     const availableWorkspaces = [
       { id: "ws_1", title: "Job search" },
       { id: "ws_2", title: "Reading list" },
@@ -182,8 +184,8 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     const sync = useDeviceSync({
       workspace: {},
       origin: () => "http://localhost:3000",
-      transport: mockTransport as any,
-      availableWorkspaces: { value: availableWorkspaces } as any,
+      transport: mockTransport,
+      availableWorkspaces: ref(availableWorkspaces),
       activeWorkspaceId: () => "ws_1",
     })
 
@@ -198,7 +200,7 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     const sync = useDeviceSync({
       workspace: {},
       origin: () => "http://localhost:3000",
-      availableWorkspaces: { value: [{ id: "ws_1", title: "Job search" }] } as any,
+      availableWorkspaces: ref([{ id: "ws_1", title: "Job search" }]),
       activeWorkspaceId: () => "ws_1",
     })
 
@@ -216,8 +218,8 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     const sync = useDeviceSync({
       workspace: {},
       origin: () => "http://localhost:3000",
-      transport: { start: async () => { transportStarted = true; throw new Error("must not start") } } as any,
-      availableWorkspaces: { value: [{ id: "ws_1", title: "Shared" }] } as any,
+      transport: { start: async () => { transportStarted = true; throw new Error("must not start") } } satisfies SyncTransport,
+      availableWorkspaces: ref([{ id: "ws_1", title: "Shared" }]),
       activeWorkspaceId: () => "ws_1",
       workspaceOwner: async () => "another-person",
     })

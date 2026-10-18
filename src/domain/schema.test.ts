@@ -42,13 +42,13 @@ describe("Board Schema Projection, Validation and Atomic Diff (Gate E)", () => {
     expect(draft.cardAgingPolicy).toEqual({ version: 1, thresholds: { watch: 7, aged: 14, overdue: 30 } })
 
     // Verify no private identity, devices, certificates, or items are in draft
-    expect((draft as any).ownerPersonId).toBeUndefined()
-    expect((draft as any).entities).toBeUndefined()
-    expect((draft as any).leads).toBeUndefined()
+    expect(draft).not.toHaveProperty("ownerPersonId")
+    expect(draft).not.toHaveProperty("entities")
+    expect(draft).not.toHaveProperty("leads")
   })
 
   it("validates draft with precise JSON paths for invalid column and field definitions", () => {
-    const invalidDraft: BoardSchemaDraft = {
+    const invalidDraft = {
       boardId: "board-1",
       boardTitle: "",
       entityName: "",
@@ -60,7 +60,7 @@ describe("Board Schema Projection, Validation and Atomic Diff (Gate E)", () => {
         {
           id: "f1",
           title: "Status Field",
-          valueType: "unknown_type" as any,
+          valueType: "unknown_type",
           required: false,
         },
         {
@@ -90,7 +90,7 @@ describe("Board Schema Projection, Validation and Atomic Diff (Gate E)", () => {
       fields: [
         {
           title: "Created At",
-          valueType: "datetime" as any,
+          valueType: "datetime",
           required: false,
         },
       ],

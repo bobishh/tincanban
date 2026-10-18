@@ -173,13 +173,14 @@ describe("Iroh gossip and blobs support in match", () => {
     expect(joined1.topicId).toBe(joined2.topicId)
     const engines = new Map([[peer1, engine1], [peer2, engine2]])
     const deliveries: Uint8Array[] = []
-    const drive = (initial: Array<{ sender: string; step: any }>) => {
+    type GossipStep = ReturnType<typeof engine1.joinTopic>
+    const drive = (initial: Array<{ sender: string; step: GossipStep }>) => {
       const queue = [...initial]
       let iterations = 0
       while (queue.length) {
         expect(++iterations).toBeLessThan(1_000)
         const { sender, step } = queue.shift()!
-        deliveries.push(...step.deliveries.map((delivery: { content: Uint8Array }) => delivery.content))
+        deliveries.push(...step.deliveries.map(delivery => delivery.content))
         for (const send of step.sends) {
           const target = engines.get(send.peer)
           expect(target).toBeDefined()
