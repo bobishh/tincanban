@@ -23,6 +23,7 @@ export type BlindReplicaStore = {
   replicaBinding?: string
   readReplicaProgress?: () => Promise<ReplicaState<BlindObject>>
   persistReplicaProgress?: (expected: number, next: ReplicaState<BlindObject>) => Promise<void>
+  runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
   ensureCurrent?: () => void | Promise<void>
   ensureIdentity?: () => void
   documentRevision?: (bytes: Uint8Array) => Promise<string>
@@ -121,7 +122,8 @@ export class BlindReplica {
   }
 
   private schedule<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.operations.then(run, run)
+    const exclusive = () => this.store.runExclusive ? this.store.runExclusive(run) : run()
+    const next = this.operations.then(exclusive, exclusive)
     this.operations = next.then(() => undefined, () => undefined)
     return next
   }

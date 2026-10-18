@@ -52,6 +52,33 @@ function repositoryPorts(store: Record<string, unknown>) {
   }
 }
 
+it("Given separate application clients for one scope, when a client is replaced or its identity changes while queued, then share the operation lock and recheck identity before work", async () => {
+  const owner = crypto.randomUUID()
+  const config = makeConfig()
+  let current = true
+  const guard = () => { if (!current) throw new Error("Identity changed") }
+  createBlindReplica(config, makeTincanban(owner), guard, async () => {})
+  createBlindReplica({ ...config, policyRevision: 2 }, makeTincanban(owner), guard, async () => {})
+  type Exclusive = <T>(run: () => Promise<T>) => Promise<T>
+  const first = captured.stores[0]!.store.runExclusive as Exclusive
+  const second = captured.stores[1]!.store.runExclusive as Exclusive
+  expect(first).toEqual(expect.any(Function))
+  expect(second).toEqual(expect.any(Function))
+  let release!: () => void
+  let enter!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const running = first(async () => { enter(); await new Promise<void>(resolve => { release = resolve }) })
+  await entered
+  const work = vi.fn(async () => {})
+  const waiting = second(work)
+  const rejected = expect(waiting).rejects.toThrow("Identity changed")
+  current = false
+  release()
+  await running
+  await rejected
+  expect(work).not.toHaveBeenCalled()
+})
+
 beforeEach(() => { captured.stores.length = 0; background.run.mockReset() })
 
 it("Given a slow attachment upload, when snapshot preparation schedules it, then metadata remains independent and repeated ticks share the same background work", async () => {

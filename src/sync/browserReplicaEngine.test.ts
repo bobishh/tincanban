@@ -3,6 +3,7 @@ import { emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replicatio
 import { blindHash, canonicalBlindJson, type BlindAccess, type BlindReceipt } from "./blindClient"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 
 async function createReceiptAuthority() {
   const pair = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
@@ -33,7 +34,7 @@ async function signedReceipt(authority: Awaited<ReturnType<typeof createReceiptA
   return { payload, signerKeyId: authority.serviceId, signature: encodeBlindBytes(signature) }
 }
 
-test("Given a lost upload response, when a new browser replica retries, then saved progress reuses exact ciphertext and request ID without rereading or resealing", async () => {
+test("Given a lost upload response, when separate browser clients retry concurrently, then serialize passes and reuse exact ciphertext and request ID without rereading or resealing", async () => {
   const authority = await createReceiptAuthority()
   const config: BlindReplicaConfig = {
     origin: "https://rusty.example",
@@ -60,6 +61,7 @@ test("Given a lost upload response, when a new browser replica retries, then sav
 
   const store = {
     replicaBinding,
+    runExclusive: <T>(operation: () => Promise<T>) => withPrivateReplicaOperation("owner", config, operation),
     readReplicaProgress: async () => structuredClone(progress),
     persistReplicaProgress: async (expectedGeneration: number, next: ReplicaState<BlindObject>) => {
       if (currentBinding !== replicaBinding || progress.binding !== currentBinding) throw new Error("Replica binding changed")
@@ -99,7 +101,7 @@ test("Given a lost upload response, when a new browser replica retries, then sav
   const encryptCallsAfterFirst = encryption.mock.calls.length
 
   let encryptCallsAfterRetry: number
-  try { await makeReplica().push() } finally {
+  try { await Promise.all([makeReplica().push(), makeReplica().push()]) } finally {
     encryptCallsAfterRetry = encryption.mock.calls.length
     encryption.mockRestore()
   }

@@ -2,6 +2,21 @@ import { expect, test } from "./support/coverage"
 
 test.use({ viewport: { width: 390, height: 844 } })
 
+test("Given a confirmed board with no direct device connection, when an ordinary Rusty poll starts and then fails, then keep the icon steady during the poll and show failure afterward", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => (await import("/e2e/support/replicaPolling.ts")).mountReplicaPolling())
+  const fixture = page.getByRole("region", { name: "Replica polling fixture" })
+  const icon = fixture.locator(".brand-mark")
+  await expect(icon).toHaveClass(/is-connected/)
+  await fixture.getByRole("button", { name: "Poll board" }).click()
+  await expect(fixture.getByRole("status")).toHaveText("Syncing")
+  await expect(icon).toHaveClass(/is-connected/)
+  await expect(icon).not.toHaveClass(/is-reconnecting/)
+  await fixture.getByRole("button", { name: "Fail request" }).click()
+  await expect(fixture.getByRole("status")).toHaveText("Unavailable")
+  await expect(icon).toHaveClass(/is-offline/)
+})
+
 test("Given local replica persistence fails, when Device sync opens, then explain the device problem outside Rusty and allow a successful retry", async ({ page }) => {
   await page.goto("/")
   await page.evaluate(async () => (await import("/e2e/support/replicaFailure.ts")).mountReplicaFailure("local"))

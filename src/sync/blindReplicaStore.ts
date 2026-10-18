@@ -13,6 +13,7 @@ import { assertWorkspaceReplicaPurpose } from "./replicaPurpose"
 import type { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { WorkspaceAttachmentReplication } from "./workspaceAttachmentReplication"
+import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 
 export function createBlindReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig, configurations?: BlindReplicaConfig[]) => Promise<void>,
@@ -45,6 +46,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
   let attachmentWork: Promise<void> | undefined
   const replica: BlindReplica = new BlindReplica({ ...config }, {
     replicaBinding: privateReplicaBinding(owner, config),
+    runExclusive: operation => withPrivateReplicaOperation(owner, config, async () => { guardIdentity(); return operation() }),
     ensureIdentity: guardIdentity,
     readReplicaProgress,
     ensureCurrent: async () => { await readReplicaProgress() },

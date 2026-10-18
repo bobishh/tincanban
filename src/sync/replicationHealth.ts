@@ -17,10 +17,14 @@ export function replicaStatus(config: Pick<BlindReplicaConfig, "removalPending">
 
 export function replicationPresence(device: ConnectionPresence, configs: BlindReplicaConfig[], health: Record<string, ReplicaHealth>, workspaceId: string, now: number): ConnectionPresence {
   if (device === "connected") return device
-  const states = configs.filter(config => config.workspaceId === workspaceId && !config.removalPending)
-    .map(config => replicaStatus(config, health[replicaKey(config)], now))
+  const active = configs.filter(config => config.workspaceId === workspaceId && !config.removalPending)
+  const confirmedPoll = active.some(config => {
+    const state = health[replicaKey(config)]
+    return state?.phase === "syncing" && !!state.lastSyncedAt && now - state.lastSyncedAt <= replicaConfirmationLifetime
+  })
+  const states = active.map(config => replicaStatus(config, health[replicaKey(config)], now))
   if (!states.length) return device
-  if (states.includes("Synced")) return "connected"
+  if (confirmedPoll || states.includes("Synced")) return "connected"
   if (device === "reconnecting" || states.some(state => state === "Syncing" || state === "Catching up" || state === "Not checked")) return "reconnecting"
   return "offline"
 }

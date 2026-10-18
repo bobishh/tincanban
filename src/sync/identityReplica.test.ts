@@ -10,6 +10,7 @@ import { encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from ".
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"
 import { IdentityReplica } from "./identityReplica"
 import type { IdentityReplicaConfig } from "./blindReplication"
+import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 
 async function fixture() {
   resetIdentityStorageForTest()
@@ -113,15 +114,16 @@ it.each(["missing-history", "future-epoch", "wrong-history-key"] as const)(
   }
 )
 
-it("Given an upload reply is lost, when the replica reopens, then retry exact persisted ciphertext before reading current content", async () => {
+it("Given an upload reply is lost, when separate identity clients retry concurrently, then acknowledge the exact saved ciphertext once before reading current content", async () => {
   const f = await fixture()
-  const store = f.store("sender")
+  const store = { ...f.store("sender"), runExclusive: <T>(operation: () => Promise<T>) =>
+    withPrivateReplicaOperation(f.config.personId, f.config, operation) }
   f.loseReply()
   await expect(new IdentityReplica(f.config, "sender", store, f.transport).push()).rejects.toThrow("reply lost")
   expect(store.progress().pending).toBeDefined()
   store.capture.mockRejectedValue(new Error("must reuse outbox"))
   const reopened = new IdentityReplica(f.config, "sender", store, f.transport)
-  await reopened.push()
+  await Promise.all([reopened.push(), new IdentityReplica(f.config, "sender", store, f.transport).push()])
   expect(f.attempts[1]).toEqual(f.attempts[0])
   expect(store.progress().pending).toBeUndefined()
   await reopened.push()

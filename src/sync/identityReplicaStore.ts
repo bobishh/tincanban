@@ -15,6 +15,7 @@ import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { discoverBlindKeeper } from "./blindClient"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
+import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
 export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void) {
@@ -58,6 +59,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     ensureCurrent()
   }
   const replica = new IdentityReplica(config, privateReplicaBinding(personId, config), {
+    runExclusive: operation => withPrivateReplicaOperation(personId, config, async () => { ensureCurrent(); return operation() }),
     repository: { read: () => getPrivateReplicaProgress(personId, config), commit: async (expected, next) => {
       await persistPrivateReplicaState(personId, config, expected, next, ensureCurrent)
     } },

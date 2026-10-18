@@ -21,6 +21,14 @@ Desktop and phone keep their own documents and device keys. Iroh exchanges devic
 changes, proofs and files directly. Browser and automation HTTPS adapters use the
 shared `ReplicaEngine` against Rusty. Identity state has a separate encrypted
 Rusty scope from board state. Each device keeps its own cursor and pending outbox.
+Browser clients sharing an origin and identity serialize complete replica operations
+with a scope-specific Web Lock, including background attachment snapshot flushes.
+The lock spans reading progress, network work and committing progress; individual
+storage transactions retain their independent generation/CAS checks. Different
+scopes remain independent. Hosts without Web Locks serialize within their JS realm;
+durable CAS still rejects competing writers. A recent confirmed board connection
+stays steady during an ordinary poll; failed, paused or overdue sync does not count
+as a connected board. Profile delivery and direct device links remain separate.
 Public visitor access uses the existing board ID and source state. Rusty serves a
 board-scoped readable representation from a namespace separate from encrypted
 workspace records. It cannot inspect private history to prove a writer's

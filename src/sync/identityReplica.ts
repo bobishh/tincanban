@@ -14,6 +14,7 @@ export type IdentityReplicaStore = {
   merge: (transfer: Transfer) => Promise<void>
   authorize: (deviceId: string, managementRevision: number) => Promise<void>
   guard: () => Promise<void>
+  runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
 }
 type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject;
   upload: (access: BlindAccess, object: BlindObject, requestId: string) => Promise<BlindReceipt> }
@@ -23,7 +24,7 @@ const encoder = new TextEncoder()
 export class IdentityReplica {
   private readonly engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
 
-  constructor(config: IdentityReplicaConfig, binding: string, store: IdentityReplicaStore,
+  constructor(config: IdentityReplicaConfig, binding: string, private readonly store: IdentityReplicaStore,
     transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject }) {
     config = structuredClone(config)
     const cryptoBinding = { purpose: "identity-state" as const, subjectId: config.personId, scopeId: config.scopeId, keyEpoch: config.keyEpoch }
@@ -56,8 +57,9 @@ export class IdentityReplica {
     })
   }
 
-  pull(): Promise<boolean> { return this.engine.pull() }
-  push(): Promise<boolean> { return this.engine.push() }
-  drainPending(): Promise<boolean> { return this.engine.drainPending() }
-  sync(): Promise<boolean> { return this.engine.sync() }
+  private run<T>(operation: () => Promise<T>): Promise<T> { return this.store.runExclusive ? this.store.runExclusive(operation) : operation() }
+  pull(): Promise<boolean> { return this.run(() => this.engine.pull()) }
+  push(): Promise<boolean> { return this.run(() => this.engine.push()) }
+  drainPending(): Promise<boolean> { return this.run(() => this.engine.drainPending()) }
+  sync(): Promise<boolean> { return this.run(() => this.engine.sync()) }
 }

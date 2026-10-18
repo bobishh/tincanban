@@ -15,6 +15,15 @@ test("Given saved Rusty settings, when no pass was confirmed, then no connected 
  expect(replicaStatus(board, undefined, now)).toBe("Not checked")
  expect(replicationPresence("offline", [board], {}, "board", now)).toBe("reconnecting")
 })
+test("Given a recent board confirmation, when an ordinary poll runs, then presence stays connected without hiding pending, failed or overdue sync", () => {
+ const polling: ReplicaHealth = { ...healthy, phase: "syncing" }
+ expect(replicaStatus(board, polling, now)).toBe("Syncing")
+ expect(replicationPresence("offline", [board], { [replicaKey(board)]: polling }, "board", now)).toBe("connected")
+ expect(replicationPresence("offline", [board], { [replicaKey(board)]: polling }, "board", now + 60_000)).toBe("reconnecting")
+ for (const phase of ["paused", "error", "catching-up"] as const) {
+  expect(replicationPresence("offline", [board], { [replicaKey(board)]: { ...healthy, phase } }, "board", now)).not.toBe("connected")
+ }
+})
 test("Given two boards, when only the other board fails, then active board retains its confirmed status", () => {
  const states = { [replicaKey(board)]: healthy, [replicaKey(other)]: { phase: "error", error: "Server unavailable" } as ReplicaHealth }
  expect(replicationPresence("offline", [board, other], states, "board", now)).toBe("connected")
