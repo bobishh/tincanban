@@ -295,7 +295,7 @@ export class WorkspaceStorage extends StorageHistoryAccess {
       causalEvidence: snapshotCausalEvidence(causalEvidence, previous?.causalEvidence),
       receivedHistory: previous?.receivedHistory ? structuredClone(previous.receivedHistory) : undefined,
     }
-    const { activeTailChanges, activeTailBytes } = activeHistoryDifference(previous, doc, snapshot.heads)
+    const { activeTailChanges, activeTailBytes } = activeHistoryDifference(previous ?? null, doc, snapshot.heads)
     // Reread current authorizations inside the transaction so standalone proof
     // updates cannot be overwritten.
     onPhase?.("proof-read")
