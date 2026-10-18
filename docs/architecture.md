@@ -29,6 +29,14 @@ scopes remain independent. Hosts without Web Locks serialize within their JS rea
 durable CAS still rejects competing writers. A recent confirmed board connection
 stays steady during an ordinary poll; failed, paused or overdue sync does not count
 as a connected board. Profile delivery and direct device links remain separate.
+Private Rusty connections and device-local cursor/outbox state use one authoritative
+record per identity, `tincanban.private-replica-state.v2.<personId>`. Retired connection
+arrays, preference registries and their fingerprint are deleted after validating
+the current record; they are never read, merged or included in transaction conditions.
+An older causal settings revision cannot reset the physical progress generation.
+Unchanged access retains its cursor and exact outbox; changed access requires fresh
+confirmation and cannot silently replace a pending upload. The retired untagged v2
+private-preferences wire format is rejected.
 Public visitor access uses the existing board ID and source state. Rusty serves a
 board-scoped readable representation from a namespace separate from encrypted
 workspace records. It cannot inspect private history to prove a writer's

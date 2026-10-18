@@ -254,7 +254,7 @@ test("Given locally active policy, a newer own-device revision and pending ciphe
     const preferences = await import("./privateReplicaPreferences")
     const wire = await runtime.exportPrivateReplicaState(f.owner)
     const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
-      { ...wire, actorId: "peer-newer-active-policy", progress: {}, migrated: true }, { ...active, policyRevision: 5 }))
+      { ...wire, actorId: "peer-newer-active-policy", progress: {} }, { ...active, policyRevision: 5 }))
     await runtime.receivePrivateReplicaState(f.owner, incoming)
     const [current] = await runtime.getReplicaConfigurations(f.owner)
     const before = await runtime.getPrivateReplicaProgress(f.owner, current!)
@@ -325,7 +325,7 @@ test("Given a lost reply followed by another own device's policy update, when th
     const preferences = await import("./privateReplicaPreferences")
     const wire = await runtime.exportPrivateReplicaState(f.owner)
     const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
-      { ...wire, actorId: "peer-confirmed-writer", progress: {}, migrated: true }, { ...f.config, policyRevision: 4, minimumWriterVersion: 2 }))
+      { ...wire, actorId: "peer-confirmed-writer", progress: {} }, { ...f.config, policyRevision: 4, minimumWriterVersion: 2 }))
     await runtime.receivePrivateReplicaState(f.owner, incoming)
     const [current] = await runtime.getReplicaConfigurations(f.owner)
     f.approval.mockImplementation(async (_access, _profile, _revoked, options) => f.confirmScope(5, options))

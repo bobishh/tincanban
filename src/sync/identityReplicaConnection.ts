@@ -70,7 +70,7 @@ async function confirmPolicy(service: Service, profile: LocalProfile, config: Id
 
 async function activateSetup(key: string, raw: string, setup: Setup, profileRaw: string | null, guard: () => void) {
   const wire = await exportPrivateReplicaState(setup.personId)
-  const changed = changeReplicaPreference({ ...wire, actorId: crypto.randomUUID(), progress: {}, migrated: true }, setup.config)
+  const changed = changeReplicaPreference({ ...wire, actorId: crypto.randomUUID(), progress: {} }, setup.config)
   const plan = await planPrivateReplicaImport(setup.personId, portableReplicaState(changed))
   guard()
   const freeze = await replicaCredentialOriginCondition(setup.personId, setup.config.origin)

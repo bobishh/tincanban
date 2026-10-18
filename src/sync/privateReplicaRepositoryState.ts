@@ -1,4 +1,3 @@
-import { canonicalizeJson } from "../domain/identity"
 import { compareAndSwapLocal,readLocal,type LocalStatePlan } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { parsePrivateReplicaConfig,parseReplicaConfig } from "./blindReplicaConfig"
@@ -10,18 +9,23 @@ import { parseRustyScopePolicyReceipt } from "./rustyScopePolicy"
 import { parseReplicaWriterWorkers } from "./replicaWriterWorkersState"
 import { replicaCredentialOriginCondition } from "./replicaCredentialFreezeState"
 import {
-effectivePrivateReplicaConfigs,effectiveReplicaConfigs,emptyPrivateReplicaState,mergePrivateReplicaState,
-parsePrivateReplicaWire,portableReplicaState,updateReplicaProgress,
+effectivePrivateReplicaConfigs,emptyPrivateReplicaState,
+parsePrivateReplicaWire,
 type PrivateReplicaState,type PrivateReplicaWire,type ReplicaWriterUpgrade
 } from "./privateReplicaPreferences"
 
 export const stateKey = (owner: string) => `tincanban.private-replica-state.v2.${owner}`
-export const legacySnapshotKey = (owner: string) => `tincanban.private-replica-legacy-snapshot.v1.${owner}`
-export const settingsKey = (owner: string) => `tincanban.blind-replicas.v1.${owner}`
-export const preferenceKey = (owner: string) => `tincanban.device-replica-preferences.v1.${owner}`
 export const scopeKey = (value: { origin: string; scopeId: string }) => `${value.origin}/${value.scopeId}`
-type LegacyPreference = { origin: string; scopeId: string; changedAt: number; config: BlindReplicaConfig | null }
-const legacyFingerprintCache = new Map<string, { settings: string | null; preferences: string | null; fingerprint: string }>()
+const retiredReplicaPrefixes = ["tincanban.blind-replicas.v1.", "tincanban.device-replica-preferences.v1.",
+  "tincanban.private-replica-legacy-snapshot.v1."]
+const cleanedOwners = new Set<string>()
+
+/** Retired records are deletion targets only, never input or transaction dependencies. */
+async function discardRetiredRecords(owner: string, raw: string): Promise<void> {
+  if (cleanedOwners.has(owner)) return
+  if (await compareAndSwapLocal({ conditions: [{ key: stateKey(owner), value: raw }],
+    writes: retiredReplicaPrefixes.map(prefix => ({ key: prefix + owner, value: null })) })) cleanedOwners.add(owner)
+}
 
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
@@ -33,12 +37,12 @@ export function parseState(raw: string, owner: string): PrivateReplicaState {
   const value = JSON.parse(raw) as PrivateReplicaState
   const wire = parsePrivateReplicaWire(value)
   if (wire.personId !== owner || typeof value.actorId !== "string" || !value.progress || typeof value.progress !== "object" ||
-    Array.isArray(value.progress) || value.migrated !== true) throw new Error("Invalid private replica repository")
+    Array.isArray(value.progress)) throw new Error("Invalid private replica repository")
   const progress = validateProgress(value.progress, wire.entries)
-  const state = { ...emptyPrivateReplicaState(owner, value.actorId), ...wire, progress, migrated: true }
+  const state = { ...emptyPrivateReplicaState(owner, value.actorId), ...wire, progress }
   if (value.writerUpgrades !== undefined) state.writerUpgrades = parseWriterUpgrades(value.writerUpgrades, wire.entries)
   for (const config of effectivePrivateReplicaConfigs(state)) parsePrivateReplicaConfig(JSON.stringify(config), owner)
-  migrateLegacyReplicaBindings(state, owner)
+  validateReplicaBindings(state, owner)
   return state
 }
 
@@ -74,23 +78,12 @@ function parseWriterUpgradeConfirmation(value: unknown, config: BlindReplicaConf
   return receipt
 }
 
-function migrateLegacyReplicaBindings(state: PrivateReplicaState, owner: string): void {
+function validateReplicaBindings(state: PrivateReplicaState, owner: string): void {
   for (const config of effectivePrivateReplicaConfigs(state)) {
-    const key = scopeKey(config)
-    const progress = state.progress[key]
-    if (!progress?.replication || progress.revision !== config.preferenceRevision) continue
-    const binding = privateReplicaBinding(owner, config)
-    let replica = progress.replication
-    if (replica.binding !== binding) {
-      const matchesLegacyWorkspaceBinding = config.purpose !== "identity" && replica.binding === canonicalizeJson([
-        owner, config.origin, config.scopeId, config.workspaceId, config.keyEpoch, config.policyRevision,
-        config.servicePublicKey, config.readToken, config.writeToken, config.contentKey, config.preferenceRevision,
-      ])
-      if (!matchesLegacyWorkspaceBinding) throw new Error("Invalid or changed replica binding")
-      replica = { ...replica, binding }
-      progress.replication = replica
+    const progress = state.progress[scopeKey(config)]
+    if (progress?.replication && progress.revision === config.preferenceRevision) {
+      parseReplicaState<BlindObject>(progress.replication, privateReplicaBinding(owner, config))
     }
-    progress.replication = parseReplicaState<BlindObject>(replica, binding)
   }
 }
 
@@ -160,102 +153,6 @@ function isProgressRevision(value: unknown): value is string {
     value.split("|").every(part => /^[A-Za-z0-9:_-]{1,128}:[1-9]\d*$/.test(part))
 }
 
-export function legacyRecordsFromRaw(owner: string, saved: string | null, preferences: string | null): PrivateReplicaState {
-  const configs = parseLegacyConfigs(JSON.parse(saved ?? "[]"))
-  const records = parseLegacyPreferences(JSON.parse(preferences ?? "[]"))
-  return migrateLegacyRecords(owner, configs, records)
-}
-
-function parseLegacyConfigs(value: unknown): BlindReplicaConfig[] {
-  if (!Array.isArray(value) || value.length > 128) throw new Error("Invalid older-format private replica state")
-  return (value as unknown[]).map(item => parseReplicaConfig(serialize(item)))
-}
-
-function parseLegacyPreferences(value: unknown): LegacyPreference[] {
-  if (!Array.isArray(value) || value.length > 128) throw new Error("Invalid older-format private replica state")
-  return (value as unknown[]).map(parseLegacyPreference)
-}
-
-function parseLegacyPreference(value: unknown): LegacyPreference {
-  if (!isPlainRecord(value) || typeof value.origin !== "string" || typeof value.scopeId !== "string" ||
-    typeof value.changedAt !== "number" || !Number.isSafeInteger(value.changedAt) || value.changedAt < 1) {
-    throw new Error("Invalid older-format replica preference")
-  }
-  const config = value.config === null ? null : parseReplicaConfig(serialize(value.config))
-  const record = { origin: value.origin, scopeId: value.scopeId, changedAt: value.changedAt, config }
-  if (config && scopeKey(config) !== scopeKey(record)) throw new Error("Older-format replica scope mismatch")
-  return record
-}
-
-function migrateLegacyRecords(owner: string, configs: BlindReplicaConfig[], records: LegacyPreference[]): PrivateReplicaState {
-  let state = emptyPrivateReplicaState(owner, crypto.randomUUID())
-  const settings = configs.map(config => ({ origin: config.origin, scopeId: config.scopeId, changedAt: 1, config }))
-  // Neither older store proves causality over the other. Preserve candidates without inventing timestamp precedence.
-  for (const source of [settings, records]) state = mergePrivateReplicaState(state, legacyReplicaWire(owner, source))
-  for (const effective of effectiveReplicaConfigs(state)) {
-    const originals = configs.filter(config => scopeKey(config) === scopeKey(effective) &&
-      canonicalizeJson(legacyPortableConfig(config)) === canonicalizeJson(legacyPortableConfig(effective)))
-    if (!originals.length) continue
-    const cursor = Math.min(...originals.map(config => config.cursor))
-    const acknowledgments = new Set(originals.map(config => config.lastUploaded))
-    state = updateReplicaProgress(state, { ...effective, cursor, lastUploaded: acknowledgments.size === 1 ? originals[0]!.lastUploaded : "" })
-  }
-  return { ...state, migrated: true }
-}
-
-export async function legacySourcesFingerprint(owner: string, settings: string | null, preferences: string | null): Promise<string> {
-  const cached = legacyFingerprintCache.get(owner)
-  if (cached?.settings === settings && cached.preferences === preferences) return cached.fingerprint
-  const bytes = new TextEncoder().encode(JSON.stringify([settings, preferences]))
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))
-  const fingerprint = `v1:${Array.from(digest, value => value.toString(16).padStart(2, "0")).join("")}`
-  if (legacyFingerprintCache.size >= 64 && !legacyFingerprintCache.has(owner)) {
-    const oldest = legacyFingerprintCache.keys().next().value
-    if (oldest !== undefined) legacyFingerprintCache.delete(oldest)
-  }
-  legacyFingerprintCache.delete(owner)
-  legacyFingerprintCache.set(owner, { settings, preferences, fingerprint })
-  return fingerprint
-}
-
-export function mergeNovelLegacyRecords(state: PrivateReplicaState, owner: string, settings: string | null,
-  preferences: string | null): PrivateReplicaState {
-  const observed = portableReplicaState(legacyRecordsFromRaw(owner, settings, preferences))
-  const known = new Map(state.entries.map(entry => [scopeKey(entry), new Set(entry.operations.map(operation =>
-    canonicalizeJson([operation.purpose, operation.config])))]))
-  const entries = observed.entries.flatMap(entry => {
-    const existing = known.get(scopeKey(entry)) ?? new Set<string>()
-    const operations = entry.operations.filter(operation => !existing.has(canonicalizeJson([operation.purpose, operation.config])))
-    return operations.length ? [{ ...entry, operations }] : []
-  })
-  return entries.length ? mergePrivateReplicaState(state, { ...observed, entries }) : state
-}
-
-function legacyPortableConfig(config: BlindReplicaConfig): BlindReplicaConfig {
-  const next = { ...config, cursor: 0, lastUploaded: "" }
-  delete next.preferenceRevision
-  return next
-}
-
-function legacyReplicaWire(owner: string, records: LegacyPreference[]): PrivateReplicaWire {
-  const actorId = crypto.randomUUID()
-  const entries = new Map<string, PrivateReplicaWire["entries"][number]>()
-  let counter = 0
-  let version: 3 | 4 | 5 = 3
-  for (const record of records) {
-    const key = scopeKey(record)
-    const entry = entries.get(key) ?? { origin: record.origin, scopeId: record.scopeId, operations: [] }
-    const config = record.config ? legacyPortableConfig(record.config) : null
-    if (entry.operations.some(operation => canonicalizeJson(operation.config) === canonicalizeJson(config))) continue
-    counter++
-    entry.operations.push({ dot: { actorId, counter }, context: {}, purpose: "workspace", config })
-    if (config?.historicalContentKeyVariants) version = 5
-    else if (config?.historicalContentKeys && version !== 5) version = 4
-    entries.set(key, entry)
-  }
-  return { version, personId: owner, clock: counter ? { [actorId]: counter } : {}, entries: [...entries.values()] }
-}
-
 export function serialize(value: unknown): string {
   const text = JSON.stringify(value)
   if (text === undefined) throw new Error("Invalid private replica value")
@@ -275,33 +172,20 @@ export async function mutate(owner: string, change: (current: PrivateReplicaStat
   return withLocalStateWriteLock(stateKey(owner), async () => {
     for (let attempt = 0; attempt < 8; attempt++) {
       ensureIdentity()
-      const key = stateKey(owner)
-      const raw = await readLocal(key)
-      const previousEntries = raw === null ? [] : parsePrivateReplicaWire(JSON.parse(raw)).entries
-      const conditions: LocalStatePlan["conditions"] = [{ key, value: raw }, ...preconditions]
-      const settingsId = settingsKey(owner), preferencesId = preferenceKey(owner), snapshotId = legacySnapshotKey(owner)
-      const [settings, preferences, previousSnapshot] = await Promise.all([readLocal(settingsId), readLocal(preferencesId), readLocal(snapshotId)])
-      const snapshot = await legacySourcesFingerprint(owner, settings, preferences)
-      conditions.push({ key: settingsId, value: settings }, { key: preferencesId, value: preferences },
-        { key: snapshotId, value: previousSnapshot })
-      let current: PrivateReplicaState
-      if (raw === null) {
-        current = legacyRecordsFromRaw(owner, settings, preferences)
-      } else {
-        current = parseState(raw, owner)
-        if (snapshot !== previousSnapshot) current = mergeNovelLegacyRecords(current, owner, settings, preferences)
-      }
-      ensureIdentity()
+      const key = stateKey(owner), raw = await readLocal(key)
+      const current = raw === null ? emptyPrivateReplicaState(owner, crypto.randomUUID()) : parseState(raw, owner)
+      const previousEntries = structuredClone(current.entries)
       const next = change(current)
       const encoded = JSON.stringify(next)
       parseState(encoded, owner)
       const freezes = await Promise.all(changedCredentialOrigins(previousEntries, next.entries)
         .map(origin => replicaCredentialOriginCondition(owner, origin)))
-      conditions.push(...freezes)
       ensureIdentity()
-      const writes: LocalStatePlan["writes"] = encoded === raw ? [] : [{ key, value: encoded }]
-      if (snapshot !== previousSnapshot) writes.push({ key: snapshotId, value: snapshot })
-      if (await compareAndSwapLocal({ conditions, writes }, ensureIdentity)) return parseState(encoded, owner)
+      if (await compareAndSwapLocal({ conditions: [{ key, value: raw }, ...preconditions, ...freezes],
+        writes: encoded === raw ? [] : [{ key, value: encoded }] }, ensureIdentity)) {
+        await discardRetiredRecords(owner, encoded)
+        return parseState(encoded, owner)
+      }
     }
     throw new Error("Private replica state changed repeatedly; retry required")
   })
@@ -310,10 +194,7 @@ export async function mutate(owner: string, change: (current: PrivateReplicaStat
 export async function read(owner: string): Promise<PrivateReplicaState> {
   const raw = await readLocal(stateKey(owner))
   if (!raw) return mutate(owner, state => state)
-  const [settings, preferences, previousSnapshot] = await Promise.all([
-    readLocal(settingsKey(owner)), readLocal(preferenceKey(owner)), readLocal(legacySnapshotKey(owner)),
-  ])
-  if (await legacySourcesFingerprint(owner, settings, preferences) !== previousSnapshot) return mutate(owner, state => state)
   const parsed = parseState(raw, owner)
-  return JSON.stringify(parsed) === raw ? parsed : mutate(owner, state => state)
+  await discardRetiredRecords(owner, raw)
+  return parsed
 }

@@ -4,7 +4,7 @@ import type { LocalStatePlan } from "../localDb"
 import { encodeBlindBytes } from "./blindEnvelope"
 import { changeReplicaPreference, emptyPrivateReplicaState, mergePrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
-import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations, getReplicaPreferenceConflicts, getPrivateReplicaConflictSummaries, persistPrivateReplicaProgress, persistPrivateReplicaState,
+import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations, getReplicaPreferenceConflicts, persistPrivateReplicaProgress, persistPrivateReplicaState,
   receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
 
 const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -14,7 +14,6 @@ const config: BlindReplicaConfig = { origin: "https://rusty.example", workspaceI
 const identityConfig = (personId: string): IdentityReplicaConfig => ({ purpose: "identity", personId,
   origin: "https://rusty.example", scopeId: "B".repeat(43), readToken: token, writeToken: token, contentKey: token,
   servicePublicKey: token, policyRevision: 1, keyEpoch: 1, cursor: 0, lastUploaded: "" })
-const legacyKey = (owner: string) => `tincanban.blind-replicas.v1.${owner}`
 const testKey = (fill: number) => encodeBlindBytes(new Uint8Array(32).fill(fill))
 
 async function seedRotatedReplica() {
@@ -83,18 +82,6 @@ it("Given an uncertain encrypted upload, when only scope policy advances, then r
   await setReplicaPreference(owner, { ...selected, policyRevision: 2 })
   const updated = (await getReplicaConfigurations(owner))[0]!
   expect((await getPrivateReplicaProgress(owner, updated)).pending).toEqual(pending)
-})
-
-it("Given legacy credentials and progress, when migrating and restarting the repository, then preserve local progress and export only portable state", async () => {
-  const owner = crypto.randomUUID()
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config]))
-  const migrated = await getReplicaConfigurations(owner)
-  expect(migrated[0]).toMatchObject({ cursor: 19, lastUploaded: token })
-  expect(await getReplicaConfigurations(owner)).toEqual(migrated)
-  expect(await local.readLocal(legacyKey(owner))).toBe(JSON.stringify([config]))
-  const wire = await exportPrivateReplicaState(owner)
-  expect(wire.version).toBe(3)
-  expect(JSON.stringify(wire)).not.toContain('"cursor":19')
 })
 
 it("Given unchanged keys with concurrent policy observations and an uncertain upload, when importing and reopening, then keep ciphertext, request identity and cursor without recovery", async () => {
@@ -197,99 +184,6 @@ it.each(unsafeKeyChanges)("Given saved progress and an imported config that %s, 
   expect(await getPrivateReplicaProgress(owner, (await getReplicaConfigurations(owner))[0]!)).toEqual(beforeProgress)
 })
 
-it("Given a tombstone in the old registry but a stale effective config, when migrating, then do not resurrect the removed connection", async () => {
-  const owner = crypto.randomUUID()
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config]))
-  await local.writeLocal(`tincanban.device-replica-preferences.v1.${owner}`,
-    JSON.stringify([{ origin: config.origin, scopeId: config.scopeId, changedAt: 9999999999999, config: null }]))
-  expect(await getReplicaConfigurations(owner)).toEqual([])
-})
-
-it("Given a v2 migration and an older live tab writing a late tombstone beside a newer registry credential, when local state is read, then retain the removal without timestamp precedence", async () => {
-  const owner = crypto.randomUUID()
-  const newerLegacy = { ...config, contentKey: testKey(37) }
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config]))
-  expect((await getReplicaConfigurations(owner))[0]?.contentKey).toBe(config.contentKey)
-
-  const registry = `tincanban.device-replica-preferences.v1.${owner}`
-  await local.writeLocal(registry, JSON.stringify([
-    { origin: config.origin, scopeId: config.scopeId, changedAt: 9999999999999, config: newerLegacy },
-    { origin: config.origin, scopeId: config.scopeId, changedAt: 1, config: null },
-  ]))
-
-  expect(await getReplicaConfigurations(owner)).toEqual([])
-  const migrated = await exportPrivateReplicaState(owner)
-  expect(migrated.entries[0]?.operations.map(operation => operation.config?.contentKey ?? null).sort())
-    .toEqual([null, config.contentKey, newerLegacy.contentKey].sort())
-  expect(await exportPrivateReplicaState(owner)).toEqual(migrated)
-})
-
-it("Given unchanged legacy bytes after migration, when the repository is read repeatedly, then reuse the exact-pair fingerprint", async () => {
-  const owner = crypto.randomUUID()
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config]))
-  await getReplicaConfigurations(owner)
-  const digest = vi.spyOn(crypto.subtle, "digest")
-  try {
-    await getReplicaConfigurations(owner)
-    await exportPrivateReplicaState(owner)
-    expect(digest).not.toHaveBeenCalled()
-  } finally {
-    digest.mockRestore()
-  }
-})
-
-it("Given legacy effective credentials disagree with the registry, when migrating, then preserve both variants as a restart-stable conflict without trusting wall-clock timestamps", async () => {
-  const owner = crypto.randomUUID()
-  const other = { ...config, contentKey: testKey(31) }
-  const settings = JSON.stringify([config])
-  const preferences = JSON.stringify([{ origin: config.origin, scopeId: config.scopeId, changedAt: 9999999999999, config: other }])
-  await local.writeLocal(legacyKey(owner), settings)
-  await local.writeLocal(`tincanban.device-replica-preferences.v1.${owner}`, preferences)
-  expect(await getReplicaConfigurations(owner)).toEqual([])
-  expect(await getReplicaPreferenceConflicts(owner)).toEqual([{ origin: config.origin, scopeId: config.scopeId }])
-  expect(await getPrivateReplicaConflictSummaries(owner)).toEqual([{ origin: config.origin, scopeId: config.scopeId,
-    workspaceIds: [config.workspaceId], identityState: false }])
-  const wire = await exportPrivateReplicaState(owner)
-  const variants = wire.entries[0]!.operations.map(operation => operation.config?.contentKey).sort()
-  expect(variants).toEqual([config.contentKey, other.contentKey].sort())
-  expect(await exportPrivateReplicaState(owner)).toEqual(wire)
-  expect(await local.readLocal(legacyKey(owner))).toBe(settings)
-  expect(await local.readLocal(`tincanban.device-replica-preferences.v1.${owner}`)).toBe(preferences)
-})
-
-it("Given repeated incompatible entries in one legacy source, when migrating, then retain all credential variants instead of last-entry precedence", async () => {
-  const owner = crypto.randomUUID()
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config, { ...config, writeToken: testKey(32) }]))
-  expect(await getReplicaConfigurations(owner)).toEqual([])
-  expect((await exportPrivateReplicaState(owner)).entries[0]!.operations).toHaveLength(2)
-  expect(await getReplicaPreferenceConflicts(owner)).toHaveLength(1)
-})
-
-it("Given identical legacy credentials have divergent local progress, when migrating, then use the earliest cursor and require a fresh acknowledgment", async () => {
-  const owner = crypto.randomUUID()
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config, { ...config, cursor: 3, lastUploaded: testKey(33) }]))
-  expect(await getReplicaPreferenceConflicts(owner)).toEqual([])
-  expect((await getReplicaConfigurations(owner))[0]).toMatchObject({ cursor: 3, lastUploaded: "" })
-})
-
-it("Given a legacy store changes before migration commits, when reopening the repository, then retry against both current raw stores instead of publishing a stale snapshot", async () => {
-  const owner = crypto.randomUUID()
-  const replacement = { ...config, contentKey: testKey(34) }
-  await local.writeLocal(legacyKey(owner), JSON.stringify([config]))
-  const commit = local.compareAndSwapLocal
-  const race = vi.spyOn(local, "compareAndSwapLocal").mockImplementationOnce(async (plan, guard) => {
-    expect(plan.conditions).toEqual(expect.arrayContaining([
-      { key: legacyKey(owner), value: JSON.stringify([config]) },
-      { key: `tincanban.device-replica-preferences.v1.${owner}`, value: null },
-    ]))
-    await local.writeLocal(legacyKey(owner), JSON.stringify([replacement]))
-    return commit(plan, guard)
-  })
-  try { expect((await getReplicaConfigurations(owner))[0]).toMatchObject({ contentKey: replacement.contentKey }) }
-  finally { race.mockRestore() }
-  expect((await exportPrivateReplicaState(owner)).entries[0]!.operations[0]!.config?.contentKey).toBe(replacement.contentKey)
-})
-
 it("Given a failed atomic preference transaction, when reconnecting the repository, then retain the previous complete state", async () => {
   const owner = crypto.randomUUID()
   await setReplicaPreference(owner, config)
@@ -341,41 +235,7 @@ it("Given malformed local progress, when exporting state, then reject it instead
   }
 })
 
-it("Given legacy config and preference records, when planning import, then capture all migration inputs and return a write plan without writing", async () => {
-  const owner = crypto.randomUUID()
-  const stateKey = `tincanban.private-replica-state.v2.${owner}`
-  const settings = legacyKey(owner)
-  const preferences = `tincanban.device-replica-preferences.v1.${owner}`
-  const snapshot = `tincanban.private-replica-legacy-snapshot.v1.${owner}`
-  const legacyPreference = [{ origin: config.origin, scopeId: config.scopeId, changedAt: 10, config }]
-  await local.writeLocal(settings, JSON.stringify([config]))
-  await local.writeLocal(preferences, JSON.stringify(legacyPreference))
-  const savedSettings = await local.readLocal(settings)
-  const savedPreferences = await local.readLocal(preferences)
-  const incoming = { version: 2 as const, personId: owner, clock: {}, entries: [] }
-
-  const plan = await (await import("./privateReplicaRepository") as unknown as {
-    planPrivateReplicaImport(owner: string, incoming: unknown): Promise<LocalStatePlan>
-  }).planPrivateReplicaImport(owner, incoming)
-
-  expect(plan.conditions).toEqual([
-    { key: stateKey, value: null },
-    { key: settings, value: savedSettings },
-    { key: preferences, value: savedPreferences },
-    { key: snapshot, value: null },
-    { key: await (await import("./replicaCredentialFreezeState")).replicaCredentialFreezeKey(owner, config.origin), value: null },
-  ])
-  expect(plan.writes).toHaveLength(2)
-  const migrated = JSON.parse(plan.writes[0].value!)
-  expect(migrated.migrated).toBe(true)
-  expect(migrated.progress[`${config.origin}/${config.scopeId}`]).toMatchObject({ cursor: 19, lastUploaded: token })
-  expect(await local.readLocal(stateKey)).toBeNull()
-  expect(await local.readLocal(settings)).toBe(savedSettings)
-  expect(await local.readLocal(preferences)).toBe(savedPreferences)
-  expect(await local.readLocal(snapshot)).toBeNull()
-})
-
-it("Given existing replica progress, when planning a same-person import, then retain its durable cursor and reject a stale legacy CAS", async () => {
+it("Given existing replica progress, when planning a same-person import, then retain its durable cursor and reject a stale current-state CAS", async () => {
   const owner = crypto.randomUUID()
   await setReplicaPreference(owner, config)
   const selected = (await getReplicaConfigurations(owner))[0]
@@ -389,14 +249,13 @@ it("Given existing replica progress, when planning a same-person import, then re
   const plan = await (await import("./privateReplicaRepository") as unknown as {
     planPrivateReplicaImport(owner: string, incoming: unknown): Promise<LocalStatePlan>
   }).planPrivateReplicaImport(owner, incoming)
-  expect(plan.conditions).toHaveLength(5)
+  expect(plan.conditions).toHaveLength(2)
   expect(plan.conditions.find(value => value.key === stateKey)?.value).not.toBeNull()
   const next = JSON.parse(plan.writes[0].value!)
   expect(next.progress[`${config.origin}/${config.scopeId}`]).toMatchObject({ cursor: 31, lastUploaded: token })
   expect(before.entries).toHaveLength(1)
 
-  const legacy = plan.conditions.find(value => value.key === legacyKey(owner))!
-  await local.writeLocal(legacy.key, "changed-by-old-tab")
+  await persistPrivateReplicaProgress(owner, { ...(await getReplicaConfigurations(owner))[0]!, cursor: 32, lastUploaded: token })
   expect(await local.compareAndSwapLocal(plan)).toBe(false)
   expect(await local.readLocal(stateKey)).not.toBe(plan.writes[0].value)
 })

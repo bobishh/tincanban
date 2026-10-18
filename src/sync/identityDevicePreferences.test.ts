@@ -23,17 +23,15 @@ const token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 const config: BlindReplicaConfig = { origin: "https://rusty.example", workspaceId: "board", scopeId: token,
   readToken: token, writeToken: token, contentKey: token, servicePublicKey: token, policyRevision: 1,
   keyEpoch: 1, cursor: 19, lastUploaded: token }
-const settingsKey = (personId: string) => `tincanban.blind-replicas.v1.${personId}`
 const stateKey = (personId: string) => `tincanban.private-replica-state.v2.${personId}`
 
 it("Given Rusty settings, when another enrolled device receives them, then it starts its own cursor without resetting an existing cursor", async () => {
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
-  await writeLocal(settingsKey(profile.identity.personId), JSON.stringify([config]))
+  await recordReplicaPreference(profile.identity.personId, config)
   const preferences = await readReplicaPreferences(profile.identity.personId)
   expect(preferences).toMatchObject({ version: 3, personId: profile.identity.personId })
-  // A fresh enrolled device has no repository or legacy cursor.
-  await writeLocal(settingsKey(profile.identity.personId), "[]")
+  // A fresh enrolled device has no local replica progress.
   await deleteLocal(stateKey(profile.identity.personId))
   await receiveReplicaPreferences(profile.identity.personId, preferences)
   const selected = (await loadReplicaConfigs(profile.identity.personId))[0]
@@ -41,22 +39,20 @@ it("Given Rusty settings, when another enrolled device receives them, then it st
   await persistReplicaCursor(profile.identity.personId, { ...selected, cursor: 19, lastUploaded: token }, () => {})
   await receiveReplicaPreferences(profile.identity.personId, preferences)
   expect((await loadReplicaConfigs(profile.identity.personId))[0].cursor).toBe(19)
-  expect(await readLocal(settingsKey(profile.identity.personId))).toBe("[]")
 })
 
 it("Given a removed Rusty, when an old device replays its settings, then a durable tombstone prevents resurrection", async () => {
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
-  await writeLocal(settingsKey(profile.identity.personId), JSON.stringify([config]))
+  await recordReplicaPreference(profile.identity.personId, config)
   const old = await readReplicaPreferences(profile.identity.personId)
   await recordReplicaPreference(profile.identity.personId, { ...config, removalPending: true })
   await recordReplicaPreference(profile.identity.personId, config, true)
   await receiveReplicaPreferences(profile.identity.personId, old)
   expect(await loadReplicaConfigs(profile.identity.personId)).toEqual([])
-  expect(await readLocal(settingsKey(profile.identity.personId))).toBe(JSON.stringify([config]))
 })
 
-it("Given a migrated repository, when an old device sends a wall-clock preference array, then require an update without mutating credentials", async () => {
+it("Given the current repository, when an old device sends a wall-clock preference array, then require an update without mutating credentials", async () => {
   const owner = crypto.randomUUID()
   await recordReplicaPreference(owner, config)
   const before = await readReplicaPreferences(owner)

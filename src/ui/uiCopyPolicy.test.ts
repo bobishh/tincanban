@@ -49,9 +49,9 @@ function sourceObservationWireLiteral(node: ts.Node): boolean {
 
 // Persisted storage keys are compatibility identifiers, never rendered copy.
 function storageKeyLiteral(node: ts.Node): boolean {
-  return ts.isTemplateExpression(node) && node.head.text === "tincanban.private-replica-legacy-snapshot.v1." &&
-    ts.isArrowFunction(node.parent) && ts.isVariableDeclaration(node.parent.parent) &&
-    node.parent.parent.name.getText() === "legacySnapshotKey"
+  return ts.isStringLiteral(node) && node.text === "tincanban.private-replica-legacy-snapshot.v1." &&
+    ts.isArrayLiteralExpression(node.parent) && ts.isVariableDeclaration(node.parent.parent) &&
+    node.parent.parent.name.getText() === "retiredReplicaPrefixes"
 }
 
 function constantText(node: ts.Node): string | undefined {

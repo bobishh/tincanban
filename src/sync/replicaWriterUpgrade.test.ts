@@ -150,7 +150,7 @@ test("Given a same-person device confirms a policy-only upgrade, when its prefer
   const { owner, selected, progress } = await fixture(true)
   const preferences = await import("./privateReplicaPreferences")
   const wire = await repository.exportPrivateReplicaState(owner)
-  const peerState = { ...wire, actorId: "peer-writer", progress: {}, migrated: true }
+  const peerState = { ...wire, actorId: "peer-writer", progress: {} }
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(peerState,
     { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
 
@@ -166,7 +166,7 @@ test("Given pending ciphertext under a content key, when a portable update chang
   const { owner, selected } = await fixture(true)
   const preferences = await import("./privateReplicaPreferences")
   const wire = await repository.exportPrivateReplicaState(owner)
-  const peerState = { ...wire, actorId: "peer-key-rotation", progress: {}, migrated: true }
+  const peerState = { ...wire, actorId: "peer-key-rotation", progress: {} }
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(peerState,
     { ...selected, contentKey: "B".repeat(42) + "A", keyEpoch: 2, historicalContentKeys: { "1": selected.contentKey }, policyRevision: 4 }))
   const raw = await local.readLocal(stateKey(owner))
@@ -188,7 +188,7 @@ test("Given an old device index and a peer policy update, when planning admissio
   await oldIndex.merge([locator])
   const wire = await repository.exportPrivateReplicaState(owner)
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
-    { ...wire, actorId: "peer-policy-index", progress: {}, migrated: true }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
+    { ...wire, actorId: "peer-policy-index", progress: {} }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
   const oldKey = `tincanban.attachment-index.v1.${await blindHash(new TextEncoder().encode(legacy))}`
   const targetKey = `tincanban.attachment-index.v1.${await blindHash(new TextEncoder().encode(attachmentIndexBinding(owner, selected)))}`
   const raw = await local.readLocal(stateKey(owner))
@@ -214,7 +214,7 @@ test("Given a legacy index changes during peer policy planning, when publishing 
   await oldIndex.merge([locator])
   const wire = await repository.exportPrivateReplicaState(owner)
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
-    { ...wire, actorId: "peer-policy-race", progress: {}, migrated: true }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
+    { ...wire, actorId: "peer-policy-race", progress: {} }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
   const raw = await local.readLocal(stateKey(owner))
   const plan = await repository.planPrivateReplicaImport(owner, incoming)
   await oldIndex.merge([{ ...locator, transferId: "after-plan" }])
@@ -232,7 +232,7 @@ test("Given a local upgrade reply was lost, when another own device publishes th
   const preferences = await import("./privateReplicaPreferences")
   const wire = await repository.exportPrivateReplicaState(owner)
   const incoming = preferences.portableReplicaState(preferences.changeReplicaPreference(
-    { ...wire, actorId: "peer-confirmed-floor", progress: {}, migrated: true }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
+    { ...wire, actorId: "peer-confirmed-floor", progress: {} }, { ...selected, policyRevision: 4, minimumWriterVersion: 2 }))
   await repository.receivePrivateReplicaState(owner, incoming)
   const [peerConfirmed] = await repository.getReplicaConfigurations(owner)
   await expect(repository.getPrivateReplicaProgress(owner, peerConfirmed!)).rejects.toThrow(/upgrade.*pending/i)

@@ -140,7 +140,7 @@ async function activateConnection(context: ConnectionContext, setup: Setup, raw:
   if (current && !sameCredentials(current, setup.config)) throw new Error("Another board connection was activated; original setup retained for review")
   const wire = await exportPrivateReplicaState(context.personId)
   if (hasRemovedOrigin(wire, context.service.origin, setup.config.scopeId)) throw new Error("Pending board connection was removed before activation")
-  const changed = current ? wire : portableReplicaState(changeReplicaPreference({ ...wire, actorId: crypto.randomUUID(), progress: {}, migrated: true }, setup.config))
+  const changed = current ? wire : portableReplicaState(changeReplicaPreference({ ...wire, actorId: crypto.randomUUID(), progress: {} }, setup.config))
   const plan = await planPrivateReplicaImport(context.personId, changed)
   context.guard()
   const currentFreeze = await replicaCredentialOriginCondition(context.personId, context.service.origin)

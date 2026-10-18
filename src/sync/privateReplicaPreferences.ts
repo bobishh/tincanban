@@ -17,7 +17,7 @@ type Progress = { revision: string; cursor: number; lastUploaded: string; replic
 export type PrivateReplicaWire = { version: 3 | 4 | 5; personId: string; clock: Clock; entries: Entry[] }
 export type ReplicaWriterUpgrade = { id: string; config: BlindReplicaConfig; confirmed?: RustyScopePolicyReceipt; workers?: ReplicaWriterWorker[];
   localActivated?: true }
-export type PrivateReplicaState = PrivateReplicaWire & { actorId: string; progress: Record<string, Progress>; migrated: boolean;
+export type PrivateReplicaState = PrivateReplicaWire & { actorId: string; progress: Record<string, Progress>;
   writerUpgrades?: Record<string, ReplicaWriterUpgrade> }
 const entryKey = (entry: Pick<Entry, "origin" | "scopeId">) => `${entry.origin}/${entry.scopeId}`
 const dotKey = (dot: Dot) => `${dot.actorId}:${dot.counter}`
@@ -58,20 +58,19 @@ function validateClock(value: unknown): Clock {
 export function emptyPrivateReplicaState(personId: string, actorId: string): PrivateReplicaState {
   validateActor(actorId)
   validatePerson(personId)
-  return { version: 3, personId, actorId, clock: {}, entries: [], progress: {}, migrated: false }
+  return { version: 3, personId, actorId, clock: {}, entries: [], progress: {} }
 }
 
 export function parsePrivateReplicaWire(value: unknown): PrivateReplicaWire {
   const wire = isPlainRecord(value) ? value : undefined
-  if (!wire || (wire.version !== 2 && wire.version !== 3 && wire.version !== 4 && wire.version !== 5) || !Array.isArray(wire.entries) || wire.entries.length > 128) {
+  if (!wire || (wire.version !== 3 && wire.version !== 4 && wire.version !== 5) || !Array.isArray(wire.entries) || wire.entries.length > 128) {
     throw new Error("Invalid private replica state")
   }
   validatePerson(wire.personId)
   const version = wire.version
-  const legacy = version === 2
   const clock = validateClock(wire.clock)
   const dotEntries = new Map<string, string>()
-  const rawEntries = (wire.entries as unknown[]).map(value => parseWireEntry(value, clock, dotEntries, wire.personId as string, legacy, version >= 4, version >= 5))
+  const rawEntries = (wire.entries as unknown[]).map(value => parseWireEntry(value, clock, dotEntries, wire.personId as string, version >= 4, version >= 5))
   validateCausalOperations(rawEntries.flatMap(entry => entry.operations))
   for (const entry of rawEntries) validateCausalContentKeys(entry.operations)
   const entries = rawEntries.map(entry => ({ ...entry, operations: maximalOperations(entry.operations) }))
@@ -79,7 +78,7 @@ export function parsePrivateReplicaWire(value: unknown): PrivateReplicaWire {
   return { version: wire.version === 5 ? 5 : wire.version === 4 ? 4 : 3, personId: wire.personId, clock, entries: entries.sort((a, b) => entryKey(a).localeCompare(entryKey(b))) }
 }
 
-function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, string>, personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): Entry {
+function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, string>, personId: string, keyHistory: boolean, keyVariants: boolean): Entry {
   if (!isPlainRecord(value) || typeof value.origin !== "string" || typeof value.scopeId !== "string" ||
     !Array.isArray(value.operations) || value.operations.length < 1 || value.operations.length > 32) {
     throw new Error("Invalid private replica entry")
@@ -88,17 +87,17 @@ function parseWireEntry(value: unknown, clock: Clock, dotEntries: Map<string, st
   if (blindOrigin(entry.origin) !== entry.origin || !/^[A-Za-z0-9_-]{1,128}$/.test(entry.scopeId)) {
     throw new Error("Invalid private replica scope")
   }
-  return { ...entry, operations: (value.operations as unknown[]).map(operation => parseWireOperation(operation, entry, clock, dotEntries, personId, legacy, keyHistory, keyVariants)) }
+  return { ...entry, operations: (value.operations as unknown[]).map(operation => parseWireOperation(operation, entry, clock, dotEntries, personId, keyHistory, keyVariants)) }
 }
 
 function parseWireOperation(value: unknown, entry: Pick<Entry, "origin" | "scopeId">, clock: Clock,
-  dotEntries: Map<string, string>, personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): Operation {
+  dotEntries: Map<string, string>, personId: string, keyHistory: boolean, keyVariants: boolean): Operation {
   const operation = wireOperationRecord(value)
-  const purpose = parseOperationPurpose(operation, legacy)
+  const purpose = parseOperationPurpose(operation)
   const dot = parseOperationDot(operation.dot)
   const context = validateClock(operation.context)
   validateCausalRevision(dot, context, clock)
-  const config = parseOperationConfig(operation.config, purpose, entry, personId, legacy, keyHistory, keyVariants)
+  const config = parseOperationConfig(operation.config, purpose, entry, personId, keyHistory, keyVariants)
   const revisionKey = dotKey(dot)
   const owner = dotEntries.get(revisionKey)
   if (owner && owner !== entryKey(entry)) throw new Error("Duplicate private-state dot across scopes")
@@ -106,26 +105,20 @@ function parseWireOperation(value: unknown, entry: Pick<Entry, "origin" | "scope
   return { dot, context, purpose, config }
 }
 
-function parseOperationPurpose(operation: Record<string, unknown>, legacy: boolean): ReplicaPurpose {
-  if ((legacy && Object.hasOwn(operation, "purpose")) || (!legacy && !Object.hasOwn(operation, "purpose"))) {
-    throw new Error("Invalid private replica purpose discriminator")
-  }
-  const purpose = legacy ? "workspace" : operation.purpose
+function parseOperationPurpose(operation: Record<string, unknown>): ReplicaPurpose {
+  const purpose = operation.purpose
   if (purpose !== "workspace" && purpose !== "identity") throw new Error("Invalid private replica purpose")
   return purpose
 }
 
 function parseOperationConfig(value: unknown, purpose: ReplicaPurpose, entry: Pick<Entry, "origin" | "scopeId">,
-  personId: string, legacy: boolean, keyHistory: boolean, keyVariants: boolean): PrivateReplicaConfig | null {
+  personId: string, keyHistory: boolean, keyVariants: boolean): PrivateReplicaConfig | null {
   if (value === null) return null
   if (!keyVariants && isPlainRecord(value) && Object.hasOwn(value, "historicalContentKeyVariants")) {
     throw new Error("Ambiguous private key history requires wire version 5; upgrade the required schema")
   }
   if (!keyHistory && isPlainRecord(value) && Object.hasOwn(value, "historicalContentKeys")) {
     throw new Error("Private key history requires wire version 4; upgrade the required schema")
-  }
-  if (legacy && isPlainRecord(value) && Object.hasOwn(value, "purpose")) {
-    throw new Error("Identity or tagged credentials cannot appear in older-format private replica state")
   }
   const config = portableConfig(parsePrivateReplicaConfig(serialize(value), personId), personId)
   if (config.purpose !== purpose) throw new Error("Private replica purpose does not match its operation")

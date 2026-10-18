@@ -215,7 +215,7 @@ it("Given malformed person, actor, clock or operation bounds, when parsing, then
   expect(() => parsePrivateReplicaWire(excessiveOperations)).toThrow(/entry|operation/i)
 })
 
-it("Given legacy and tagged private credentials, when reading or writing preferences, then only v3 writes carry explicit purpose", () => {
+it("Given private credentials, when reading or writing preferences, then require tagged current state and reject the retired v2 format", () => {
   const state = changeReplicaPreference(emptyPrivateReplicaState("owner", "device-a"), config)
   const wire = portableReplicaState(state)
   expect(wire.version).toBe(3)
@@ -225,9 +225,7 @@ it("Given legacy and tagged private credentials, when reading or writing prefere
   legacy.version = 2
   delete (legacy.entries[0].operations[0] as { purpose?: string }).purpose
   delete legacy.entries[0].operations[0].config!.purpose
-  const readLegacy = parsePrivateReplicaWire(legacy)
-  expect(readLegacy.version).toBe(3)
-  expect(readLegacy.entries[0].operations[0].config?.purpose).toBe("workspace")
+  expect(() => parsePrivateReplicaWire(legacy)).toThrow(/private replica/i)
   expect(parseReplicaConfig(JSON.stringify({ ...config, purpose: "workspace" }))).toMatchObject({ purpose: "workspace" })
   expect(parsePrivateReplicaConfig(JSON.stringify(identityConfig))).toEqual(identityConfig)
 

@@ -13,5 +13,10 @@ export function isRustyRequestFailure(cause: unknown): cause is Error {
 
 /** A competing local writer committed first; restart from its durable state. */
 export class ReplicaProgressConflictError extends Error {
-  constructor() { super("Replica progress generation changed during persistence"); this.name = "ReplicaProgressConflictError" }
+  readonly code = "replica_progress_conflict"
+  constructor(detail?: { expectedGeneration: number; actualGeneration: number; attemptedCursor: number; currentCursor: number }) {
+    super("Replica progress generation changed during persistence" + (detail
+      ? ` (generation ${detail.expectedGeneration}/${detail.actualGeneration}, cursor ${detail.attemptedCursor}/${detail.currentCursor})` : ""))
+    this.name = "ReplicaProgressConflictError"
+  }
 }

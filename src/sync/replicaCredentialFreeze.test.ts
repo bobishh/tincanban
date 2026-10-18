@@ -105,7 +105,7 @@ it("Given a frozen origin, When a peer changes its credentials or removes its sc
   const f = await fixture(), owner = f.profile.identity.personId
   const preferences = await import("./privateReplicaPreferences")
   const wire = await f.repository.exportPrivateReplicaState(owner)
-  const peer = { ...wire, actorId: "peer", progress: {}, migrated: true }
+  const peer = { ...wire, actorId: "peer", progress: {} }
   const changed = preferences.portableReplicaState(preferences.changeReplicaPreference(peer, { ...f.config, readToken: "B".repeat(42) + "A" }))
   const removed = preferences.portableReplicaState(preferences.changeReplicaPreference(peer, f.config, true))
   await f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey, "removed-device", () => {})
@@ -120,14 +120,14 @@ it("Given an import planned before freeze, When its transaction runs after freez
   const f = await fixture(), owner = f.profile.identity.personId
   const preferences = await import("./privateReplicaPreferences")
   const wire = await f.repository.exportPrivateReplicaState(owner)
-  const changed = preferences.portableReplicaState(preferences.changeReplicaPreference({ ...wire, actorId: "peer", progress: {}, migrated: true }, f.config, true))
+  const changed = preferences.portableReplicaState(preferences.changeReplicaPreference({ ...wire, actorId: "peer", progress: {} }, f.config, true))
   const plan = await f.repository.planPrivateReplicaImport(owner, changed)
   await f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey, "removed-device", () => {})
   expect(await f.local.compareAndSwapLocal(plan)).toBe(false)
   expect(await f.repository.exportPrivateReplicaState(owner)).toEqual(wire)
 })
 
-it("Given a live legacy writer changes a frozen scope, When new readers reconcile, Then keep both the exact older bytes and the frozen authoritative source", async () => {
+it("Given an obsolete writer changes retired storage during a freeze, When reading the current scope, Then ignore those bytes and retain the frozen authoritative source", async () => {
   const f = await fixture(), owner = f.profile.identity.personId
   const stateKey = f.repository.privateReplicaStateStorageKey(owner)
   await f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey, "removed-device", () => {})
@@ -135,7 +135,7 @@ it("Given a live legacy writer changes a frozen scope, When new readers reconcil
   const legacyKey = `tincanban.device-replica-preferences.v1.${owner}`
   const legacy = JSON.stringify([{ origin: f.config.origin, scopeId: f.config.scopeId, changedAt: 1, config: null }])
   await f.local.writeLocal(legacyKey, legacy)
-  await expect(f.repository.getPrivateReplicaConfigurations(owner)).rejects.toThrow(/frozen/)
+  expect(await f.repository.getPrivateReplicaConfigurations(owner)).toEqual([f.config])
   expect(await f.local.readLocal(legacyKey)).toBe(legacy)
   expect(await f.local.readLocal(stateKey)).toBe(before)
 })
