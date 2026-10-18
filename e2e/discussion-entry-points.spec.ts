@@ -62,9 +62,9 @@ test("Given board card, when Discuss sends then source link opens card and works
   await expect(thread.locator(".chat-message-item .reply-quote")).toHaveCount(0)
 })
 
-test("Given lead metadata selection spanning fields, when Discuss then captured quote attaches and returns to source", async ({ page }) => {
+test("Given configured metadata selection spanning fields, when Discuss then captured quote attaches and returns to source", async ({ page }) => {
   const item = await board(page)
-  await item.locator(".detail-grid").evaluate(el => {
+  await item.locator(".configured-card-fields").evaluate(el => {
     const range = document.createRange()
     range.selectNodeContents(el)
     const selection = window.getSelection()!
@@ -85,9 +85,9 @@ test("Given lead metadata selection spanning fields, when Discuss then captured 
 test("Given board text, when clicking opens details then selecting company opens a quoted discussion", async ({ page }) => {
   const item = await board(page)
   await item.getByRole("button", { name: "Close detail", exact: true }).click()
-  await page.locator(".item-card .company").filter({ hasText: "Reedsy" }).click()
+  await page.locator(".item-card .card-main > strong").filter({ hasText: "Reedsy" }).click()
   await expect(item).toBeVisible()
-  const company = item.getByRole("heading", { name: "Reedsy", exact: true })
+  const company = item.getByText("Reedsy", { exact: true })
   const bounds = (await company.boundingBox())!
   await page.mouse.move(bounds.x + 1, bounds.y + bounds.height / 2)
   await page.mouse.down()
@@ -99,7 +99,7 @@ test("Given board text, when clicking opens details then selecting company opens
   await expect(discussion.locator(".draft-reference")).toContainText("Reedsy")
   await discussion.locator(".draft-reference button").first().click()
   await expect(item).toBeVisible()
-  await expect(item.locator("h2 mark")).toHaveText("Reedsy")
+  await expect(item.locator(".configured-card-fields mark")).toHaveText("Reedsy")
   await expect(item.getByRole("button", { name: "Discuss", exact: true })).toHaveCount(0)
 })
 
@@ -114,15 +114,15 @@ test("Given board and open card details, when right clicking then discussion act
   await expect(page.locator("body")).toHaveAttribute("data-native-menu-suppressed", "false")
   await expect(page.getByRole("menu", { name: "Discussion actions" })).toHaveCount(0)
   await page.keyboard.press("Escape")
-  await card.locator(".company").click()
-  await item.locator(".detail-grid").click({ button: "right" })
+  await card.locator(".card-main > strong").click()
+  await item.locator(".configured-card-fields").click({ button: "right" })
   await expect(page.locator("body")).toHaveAttribute("data-native-menu-suppressed", "true")
   const menu = page.getByRole("menu", { name: "Discussion actions" })
   await expect(menu).toBeVisible()
   await page.keyboard.press("Escape")
   await expect(menu).toHaveCount(0)
   await expect(page.getByRole("dialog", { name: /^Discussion/ })).toHaveCount(0)
-  await item.locator(".detail-grid").click({ button: "right" })
+  await item.locator(".configured-card-fields").click({ button: "right" })
   await page.getByRole("menuitem", { name: "Discuss", exact: true }).click()
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).locator(".draft-reference")).toContainText("Reedsy")
 })

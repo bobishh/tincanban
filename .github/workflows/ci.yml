@@ -194,7 +194,8 @@ jobs:
 
   browser-policy:
     name: Browser (production policy/transport packaging)
-    runs-on: ubuntu-24.04
+    # Private WebKit startup requires native Ed25519; Linux WebKit intermittently rejects it.
+    runs-on: macos-latest
     # The full mobile WebKit matrix reaches this job only after browser setup and
     # three policy scenarios; retain all 80 cases instead of timing out mid-shard.
     timeout-minutes: 20
@@ -209,6 +210,7 @@ jobs:
       - run: npm ci
       - run: npm run verify:meta-mesh
       - name: Use Ubuntu primary archive mirror for browser dependencies
+        if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:e2e:policy

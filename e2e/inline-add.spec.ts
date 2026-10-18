@@ -57,9 +57,9 @@ for (const width of [1280, 390]) {
     await form.getByRole("button", { name: "Retry save" }).click()
     await expect(form).toBeHidden()
     await page.getByRole("button", { name: "Close detail" }).click()
-    await expect(cards.locator(".company")).toHaveText(["First", "Middle", "Second"])
+    await expect(cards.locator(".card-main > strong")).toHaveText(["First — Engineer", "Middle — Engineer", "Second — Engineer"])
     await page.reload()
-    await expect(column.locator(".lead-card .company")).toHaveText(["First", "Middle", "Second"])
+    await expect(column.locator(".lead-card .card-main > strong")).toHaveText(["First — Engineer", "Middle — Engineer", "Second — Engineer"])
   })
 }
 

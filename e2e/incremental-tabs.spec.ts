@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { populatedBoard } from "./support/detailedBoard"
 
-test("Given two warm tabs on a detailed board, When Archive and Applied alternate between tabs, Then both catch up without rereading the history and reload keeps the final stage", async ({ page, context }, info) => {
+test("Given two warm tabs on a detailed board, When Applied and Lead alternate between tabs, Then both catch up without rereading the history and reload keeps the final stage", async ({ page, context }, info) => {
   test.setTimeout(120_000)
   await populatedBoard(page, true)
   await page.evaluate(async () => {
@@ -51,7 +51,7 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
     })
   }
   await context.setOffline(true)
-  for (const [index, stage] of ["Archive", "Applied", "Archive", "Applied", "Archive", "Applied"].entries()) {
+  for (const [index, stage] of ["Applied", "Lead", "Applied", "Lead", "Applied", "Lead"].entries()) {
     const writer = pages[index % 2]!
     await writer.getByRole("dialog", { name: "Item overview", exact: true }).getByRole("button", { name: stage, exact: true }).click()
     for (const tab of pages) {
@@ -76,6 +76,6 @@ test("Given two warm tabs on a detailed board, When Archive and Applied alternat
   }
   await context.setOffline(false)
   await page.reload()
-  await expect(page.getByRole("region", { name: "Applied", exact: true }).getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Open Performance card 0", exact: true })).toBeVisible()
   await other.close()
 })
