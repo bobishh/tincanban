@@ -9,7 +9,7 @@ export type { PublicBoardAccessInput } from "./publicBoardAccessOperations"
 export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   const checked = ref(false), published = ref(false), busy = ref(false), error = ref(""), revision = ref(0), withdrawn = ref(false)
   const state: PublicBoardAccessOperations["state"] = { generation: 0, syncQueued: false, operationRunning: false,
-    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, retryCount: 0, lastHash: "" }
+    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "" }
   const timers: PublicBoardAccessOperations["timers"] = {}
   const currentBoardId = () => input.boardId() ?? ""
   const link = computed(() => published.value && currentBoardId() ? boardRouteUrl(currentBoardId(), input.boardTitle()) : "")
@@ -83,6 +83,7 @@ function resetAccess(ctx: PublicBoardAccessOperations) {
   ctx.state.generation++
   ctx.checked.value = false; ctx.published.value = false; ctx.busy.value = false; ctx.error.value = ""; ctx.revision.value = 0
   ctx.state.deliveryGeneration = null; ctx.state.deliveryPolicyHash = null; ctx.withdrawn.value = false
+  ctx.state.deliveryPolicyContentHash = null
   ctx.state.syncQueued = false; ctx.state.lastHash = ""
   clearTimer(ctx.timers.debounce); clearTimer(ctx.timers.retry)
   ctx.timers.debounce = undefined; ctx.timers.retry = undefined

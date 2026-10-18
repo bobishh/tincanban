@@ -23,7 +23,7 @@ export type PublicBoardAccessOperations = {
   input: PublicBoardAccessInput
   checked: Ref<boolean>; published: Ref<boolean>; busy: Ref<boolean>; error: Ref<string>; revision: Ref<number>; withdrawn: Ref<boolean>
   state: { generation: number; syncQueued: boolean; operationRunning: boolean; refreshQueued: boolean; disposed: boolean;
-    deliveryGeneration: number | null; deliveryPolicyHash: string | null; retryCount: number; lastHash: string }
+    deliveryGeneration: number | null; deliveryPolicyHash: string | null; deliveryPolicyContentHash: string | null; retryCount: number; lastHash: string }
   timers: { debounce?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>; status?: ReturnType<typeof setInterval> }
   capture: (options?: { requireUnchangedSource?: boolean }) => CapturedAccessSource
   scheduleSync: (delay?: number) => void
@@ -77,6 +77,7 @@ function applyOwnerStatus(ctx: PublicBoardAccessOperations, captured: Awaited<Re
   ctx.revision.value = status.revision
   ctx.state.deliveryGeneration = status.deliveryGeneration ?? null
   ctx.state.deliveryPolicyHash = status.deliveryPolicyHash ?? null
+  ctx.state.deliveryPolicyContentHash = status.deliveryPolicyContentHash ?? null
   ctx.state.lastHash = status.hash ?? ""
   ctx.withdrawn.value = !status.published && status.revision > 0
   ctx.state.syncQueued = status.published
@@ -116,7 +117,7 @@ export async function changePublicAccess(ctx: PublicBoardAccessOperations, enabl
 async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource, generation: number, expectedRevision: number) {
   captured.ensureCurrent()
   if (ctx.published.value) return
-  const [{ buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash }, { publishBoardSnapshot }] = await Promise.all([
+  const [{ buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash, publicBoardDeliveryPolicyContentHash }, { publishBoardSnapshot }] = await Promise.all([
     import("../public/publicDeliveryPolicy"), import("../public/publicationClient")])
   captured.ensureCurrent()
   const deliveryPolicy = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
@@ -128,6 +129,7 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
   ctx.revision.value = result.revision
   ctx.state.deliveryGeneration = deliveryPolicy.policy.payload.generation
   ctx.state.deliveryPolicyHash = await publicBoardDeliveryPolicyHash(deliveryPolicy)
+  ctx.state.deliveryPolicyContentHash = await publicBoardDeliveryPolicyContentHash(deliveryPolicy)
   ctx.published.value = true
   ctx.withdrawn.value = false
   ctx.state.lastHash = result.hash
@@ -194,13 +196,16 @@ async function hasProjectionChanged(ctx: PublicBoardAccessOperations, captured: 
     boardId: captured.boardId, hash: ctx.state.lastHash })
 }
 async function policyIfChanged(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource) {
-  const { buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash } = await import("../public/publicDeliveryPolicy")
+  const { buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash, publicBoardDeliveryPolicyContentHash } = await import("../public/publicDeliveryPolicy")
   if (ctx.state.deliveryGeneration === null) {
     return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId, 1, captured.ensureCurrent, captured.document)
   }
   const current = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
     ctx.state.deliveryGeneration, captured.ensureCurrent, captured.document)
-  if (await publicBoardDeliveryPolicyHash(current) === ctx.state.deliveryPolicyHash) return undefined
+  const unchanged = ctx.state.deliveryPolicyContentHash !== null
+    ? await publicBoardDeliveryPolicyContentHash(current) === ctx.state.deliveryPolicyContentHash
+    : await publicBoardDeliveryPolicyHash(current) === ctx.state.deliveryPolicyHash
+  if (unchanged) return undefined
   return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
     ctx.state.deliveryGeneration + 1, captured.ensureCurrent, captured.document)
 }
@@ -213,9 +218,10 @@ async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured
   if (generation !== ctx.state.generation || ctx.withdrawn.value) return
   ctx.revision.value = result.revision
   if (deliveryPolicy) {
-    const { publicBoardDeliveryPolicyHash } = await import("../public/publicDeliveryPolicy")
+    const { publicBoardDeliveryPolicyHash, publicBoardDeliveryPolicyContentHash } = await import("../public/publicDeliveryPolicy")
     ctx.state.deliveryGeneration = deliveryPolicy.policy.payload.generation
     ctx.state.deliveryPolicyHash = await publicBoardDeliveryPolicyHash(deliveryPolicy)
+    ctx.state.deliveryPolicyContentHash = await publicBoardDeliveryPolicyContentHash(deliveryPolicy)
   }
   ctx.state.retryCount = 0
   ctx.state.lastHash = result.hash

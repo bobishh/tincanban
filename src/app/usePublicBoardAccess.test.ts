@@ -4,7 +4,7 @@ import { usePublicBoardAccess } from "./usePublicBoardAccess"
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(), compare: vi.fn(), publish: vi.fn(), withdraw: vi.fn(),
-  buildPolicy: vi.fn(), policyHash: vi.fn(),
+  buildPolicy: vi.fn(), policyHash: vi.fn(), policyContentHash: vi.fn(),
 }))
 vi.mock("../public/publicationClient", () => ({
   readPublicBoardManagementState: mocks.read,
@@ -15,6 +15,7 @@ vi.mock("../public/publicationClient", () => ({
 vi.mock("../public/publicDeliveryPolicy", () => ({
   buildPublicBoardDeliveryPolicy: mocks.buildPolicy,
   publicBoardDeliveryPolicyHash: mocks.policyHash,
+  publicBoardDeliveryPolicyContentHash: mocks.policyContentHash,
 }))
 
 describe("public board owner access", () => {
@@ -43,6 +44,7 @@ describe("public board owner access", () => {
       policy: { payload: { workspaceId, boardId, generation } }, ownerCertificates: [],
     }))
     mocks.policyHash.mockReset().mockResolvedValue("policy-hash")
+    mocks.policyContentHash.mockReset().mockResolvedValue("policy-content-hash")
   })
   afterEach(() => { scope.stop(); vi.useRealTimers() })
 
@@ -86,6 +88,32 @@ describe("public board owner access", () => {
     expect(mocks.buildPolicy.mock.calls.map(call => call[3])).toEqual([2, 3])
     expect(mocks.buildPolicy.mock.calls.every(call => call[5] === document.value)).toBe(true)
     expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy.policy.payload.generation).toBe(3)
+  })
+
+  it("Given unchanged policy content with a randomized signature, when periodic owner status refreshes, then create no new publication or policy generation", async () => {
+    mocks.read.mockResolvedValue({ revision: 3, published: true, hash: "projection-hash", deliveryGeneration: 1,
+      deliveryPolicyHash: "server-signature-hash", deliveryPolicyContentHash: "policy-content-hash" })
+    mocks.policyHash.mockResolvedValue("another-signature-hash")
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.buildPolicy).toHaveBeenCalledOnce())
+    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2))
+    await vi.advanceTimersByTimeAsync(20)
+    expect(mocks.buildPolicy).toHaveBeenCalledTimes(2)
+    expect(mocks.publish).not.toHaveBeenCalled()
+    expect(access.revision.value).toBe(3)
+  })
+
+  it("Given changed signed policy content, when syncing, then advance its generation even if the projected board is unchanged", async () => {
+    mocks.read.mockResolvedValue({ revision: 3, published: true, hash: "projection-hash", deliveryGeneration: 1,
+      deliveryPolicyHash: "server-signature-hash", deliveryPolicyContentHash: "previous-content-hash" })
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy.policy.payload.generation).toBe(2)
   })
 
   it("Given an existing public board without delivery policy, when its owner refreshes the same source, then adopt policy in place without rebuilding the visitor board", async () => {

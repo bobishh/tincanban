@@ -20,6 +20,13 @@ const encoder = new TextEncoder()
 export function publicBoardDeliveryPolicyHash(evidence: PublicBoardDeliveryPolicyEvidence) {
   return sha256Base64Url(encoder.encode(canonicalizeJson(evidence)))
 }
+/** Compare policy meaning; CryptoKit can produce different Ed25519 signatures for identical input. */
+export function publicBoardDeliveryPolicyContentHash(evidence: PublicBoardDeliveryPolicyEvidence) {
+  return sha256Base64Url(encoder.encode(canonicalizeJson({
+    policy: { payload: evidence.policy.payload, signerKeyId: evidence.policy.signerKeyId },
+    ownerCertificates: evidence.ownerCertificates,
+  })))
+}
 
 function assertOwnerAuthority(credential: Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>,
   authority: Awaited<ReturnType<typeof peerStore.getWorkspaceAuthority>>, profile: LocalProfile, workspaceId: string, generation: number) {

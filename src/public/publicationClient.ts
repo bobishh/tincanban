@@ -12,7 +12,7 @@ import { createBrowserBoardPublication as createPublicBoardPublication } from ".
 import type { PublicBoardDeliveryPolicyEvidence } from "./publicDeliveryPolicy"
 import { includesWorkspaceHeads } from "../storageCatalog"
 
-type Challenge = { kind: "rusty-publication-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string; publicOrigin: string; boardId: string; personId: string; deviceId: string; deviceKeyId: string; expectedRevision: number; issuedAt: number; expiresAt: number; withdrawn: boolean; projectionHash: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryGrantId?: string | null; sourceHeadsHash?: string | null; currentSourceHeads?: string[] }
+type Challenge = { kind: "rusty-publication-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string; publicOrigin: string; boardId: string; personId: string; deviceId: string; deviceKeyId: string; expectedRevision: number; issuedAt: number; expiresAt: number; withdrawn: boolean; projectionHash: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryPolicyContentHash?: string | null; deliveryGrantId?: string | null; sourceHeadsHash?: string | null; currentSourceHeads?: string[] }
 type Receipt = SignedEnvelope<{ kind: "rusty-publication-receipt"; version: 1; serviceId: string; boardId: string; controllerPersonId: string; revision: number; action: string; projectionHash: string; challengeId: string; authorizationHash: string; withdrawn: boolean }>
 const encoder = new TextEncoder()
 type PublicationService = { origin: string; serviceId: string; serviceKey: string; scopeManagement: boolean; presentation: boolean; fieldConfiguration: boolean }
@@ -65,6 +65,10 @@ async function validateChallenge(signed: SignedEnvelope<Challenge>, input: { ori
   const payload = signed.payload
   if (!challengeIdentityMatches(payload, input.origin, input.boardId, input.profile, input.serviceId) || !validChallengeTiming(payload, Date.now())) {
     throw new Error("Keeper publication challenge binding is invalid")
+  }
+  if (payload.deliveryPolicyContentHash != null &&
+      (typeof payload.deliveryPolicyContentHash !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(payload.deliveryPolicyContentHash))) {
+    throw new Error("Keeper publication policy content hash is invalid")
   }
   const expectedHeadsHash = input.sourceHeads?.length
     ? await sha256Base64Url(encoder.encode(canonicalizeJson([...input.sourceHeads].sort()))) : null
@@ -170,7 +174,7 @@ export async function withdrawPublicBoard(input: { origin: string; boardId: stri
   const certificates = await controllerCertificates(profile)
   return commit(server, snapshot.boardId, profile, certificates, "unpublish", null, snapshot.expectedRevision, capability, ensureCurrent)
 }
-export async function readPublicBoardManagementState(input: { origin: string; boardId: string; profile: LocalProfile; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; published: boolean; projection?: PublicBoardProjection; hash?: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null }> {
+export async function readPublicBoardManagementState(input: { origin: string; boardId: string; profile: LocalProfile; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; published: boolean; projection?: PublicBoardProjection; hash?: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryPolicyContentHash?: string | null }> {
   const ensureCurrent = input.ensureCurrent
   const snapshot = structuredClone({ ...input, ensureCurrent: undefined })
   await ensureCurrent?.()
@@ -189,13 +193,13 @@ export async function readPublicBoardManagementState(input: { origin: string; bo
   if (response.status === 404) {
     if (challengePayload.expectedRevision > 0 && !challengePayload.withdrawn || challengePayload.expectedRevision === 0 && challengePayload.withdrawn) throw new Error("Keeper publication status does not match its public snapshot")
     return { revision: challengePayload.expectedRevision, published: false, hash: challengePayload.projectionHash,
-      deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash }
+      deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash, deliveryPolicyContentHash: challengePayload.deliveryPolicyContentHash }
   }
   const envelope = await readBlindJson<{ boardId: string; revision: number; projection: unknown; hash: string }>(response, 3 * 1024 * 1024)
   const projection = (await import("./publicSchema")).validatePublicBoardProjection(envelope.projection)
   if (!await validManagementSnapshot(envelope, snapshot.boardId, challengePayload, projection)) throw new Error("Keeper publication integrity check failed")
   return { revision: envelope.revision, published: true, projection, hash: envelope.hash,
-    deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash }
+    deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash, deliveryPolicyContentHash: challengePayload.deliveryPolicyContentHash }
 }
 async function validManagementSnapshot(envelope: { boardId: string; revision: number; hash: string }, boardId: string,
   challengePayload: Challenge, projection: PublicBoardProjection): Promise<boolean> {

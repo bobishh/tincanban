@@ -128,7 +128,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const publicResponse = await publicRead
     const publicResponseBody = await publicResponse.text()
     expect(publicResponse.status()).toBe(200)
-    expect(publicResponseBody).not.toMatch(/currentSourceHeads|sourceHeadsHash|deliveryPolicyHash|deliveryGeneration/u)
+    expect(publicResponseBody).not.toMatch(/currentSourceHeads|sourceHeadsHash|deliveryPolicyHash|deliveryPolicyContentHash|deliveryGeneration/u)
     await expect(reader.getByRole("heading", { name: "Public release fixture" })).toBeVisible()
     await expect(reader.getByRole("button", { name: "Open Public release card" })).toBeVisible()
     await reader.getByRole("button", { name: "Open Public release card" }).click()
