@@ -13,6 +13,7 @@ import { itemLifecycle } from "./domain/archive"
 import type { WorkspaceSettingsDraft } from "./domain/workspaceSettings"
 
 type RegisteredTool = Parameters<ModelContext["registerTool"]>[0]
+let registeredTools: Map<string, RegisteredTool>
 type TestTool<TResult> = Omit<RegisteredTool, "execute"> & {
   execute(input: unknown): TResult | Promise<TResult>
 }
@@ -56,7 +57,6 @@ beforeAll(async () => {
 })
 
 describe("generic WebMCP tools", () => {
-  let registeredTools: Map<string, RegisteredTool>
   let mockContext: ModelContext
   let tincanban: ReturnType<typeof useTincanban>
 
