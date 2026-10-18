@@ -96,7 +96,7 @@ describe("workspace settings transaction", () => {
     settings.board.fields[0].valueType = "text"
     expect(validateWorkspaceSettingsDraft(settings, created.value.newDoc).errors).toContainEqual({
       path: "/board/fields/0/valueType",
-      message: "Field type cannot change",
+      message: "Field type cannot change: Estimate (number [string] → text [string])",
     })
   })
 

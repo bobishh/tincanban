@@ -62,7 +62,8 @@ function validateBoardReferences(value: Record<string, unknown>, boardId: string
   value.fields.forEach((field, index) => {
     if (!isRecord(field) || typeof field.id !== "string") return
     const entity = doc.entities[field.id]
-    if (hasEntityKind(entity, "field") && field.valueType !== entity.valueType) errors.push({ path: `/board/fields/${index}/valueType`, message: "Field type cannot change" })
+    if (hasEntityKind(entity, "field") && field.valueType !== entity.valueType) errors.push({ path: `/board/fields/${index}/valueType`,
+      message: `Field type cannot change: ${String(field.title)} (${String(entity.valueType)} [${typeof entity.valueType}] → ${String(field.valueType)} [${typeof field.valueType}])` })
   })
 }
 
