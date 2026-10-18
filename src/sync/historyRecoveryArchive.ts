@@ -154,7 +154,7 @@ class PrivateHistoryExport {
         let complete = true
         for await (const entry of iterateArchiveLocatorEntries(scope, root, {
           ensureCurrent: () => this.guard(), download: async id => { const object = await this.download(source, scope, id); if (!object) throw new MissingObject(id); return object },
-        })) if (!await this.download(source, scope, entry.ciphertextId)) complete = false
+        })) complete = await this.download(source, scope, entry.ciphertextId) !== undefined && complete
         // A later source may supply bytes missing from this source's local or remote copy.
         if (complete) this.completedRoots.add(rootIdentity)
       } catch (error) {
