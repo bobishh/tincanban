@@ -25,7 +25,7 @@ export type PublicBoardAccessOperations = {
   state: { generation: number; syncQueued: boolean; operationRunning: boolean; refreshQueued: boolean; disposed: boolean;
     deliveryGeneration: number | null; deliveryPolicyHash: string | null; retryCount: number; lastHash: string }
   timers: { debounce?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>; status?: ReturnType<typeof setInterval> }
-  capture: () => CapturedAccessSource
+  capture: (options?: { requireUnchangedSource?: boolean }) => CapturedAccessSource
   scheduleSync: (delay?: number) => void
   scheduleRetry: () => void
   refresh: () => Promise<void>
@@ -62,7 +62,8 @@ export async function refreshPublicAccess(ctx: PublicBoardAccessOperations) {
 }
 async function readOwnerStatus(ctx: PublicBoardAccessOperations) {
   if (!ctx.input.origin) throw new Error("Public board access is not configured on this deployment")
-  const captured = ctx.capture()
+  // Reading management status is bound to board/owner, not a visitor snapshot.
+  const captured = ctx.capture({ requireUnchangedSource: false })
   const { readPublicBoardManagementState } = await import("../public/publicationClient")
   captured.ensureCurrent()
   const status = await readPublicBoardManagementState({ origin: ctx.input.origin, boardId: captured.boardId,

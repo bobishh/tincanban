@@ -6,7 +6,7 @@ defineProps<{ fields: FieldDefinition[]; item: Item }>()
 </script>
 
 <template>
-  <dl class="configured-card-fields">
+  <dl class="configured-card-fields" data-discussion-text data-discussion-field="fields">
     <template v-for="field in fields" :key="field.id">
       <div v-if="displayFieldValue(field, item.values[field.id])" class="configured-card-field" :data-field-id="field.id">
         <dt class="detail-label">{{ field.title }}</dt>

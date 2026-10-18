@@ -132,6 +132,35 @@ describe("public board owner access", () => {
     expect(mocks.publish).not.toHaveBeenCalled()
   })
 
+  it("Given an owner status request in flight, when board content changes, then accept the signed status for the same board and owner", async () => {
+    let finishRead!: (value: { revision: number; published: boolean }) => void
+    mocks.read.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledOnce())
+    sourceVersion.value++
+    await nextTick()
+    finishRead({ revision: 0, published: false })
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    expect(access.error.value).toBe("")
+    expect(access.published.value).toBe(false)
+    expect(mocks.read).toHaveBeenCalledOnce()
+  })
+
+  it("Given publication in flight, when board content changes, then reject its stale snapshot instead of marking it published", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementationOnce(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    sourceVersion.value++
+    await nextTick()
+    finishPublish({ revision: 1, hash: "stale", url: "https://app.test/boards/board-a" })
+    await expect(operation).rejects.toThrow(/changed/)
+    expect(access.published.value).toBe(false)
+  })
+
   it("rejects management actions after owner, board or profile changes", async () => {
     mocks.read.mockResolvedValue({ revision: 4, published: false, hash: "" })
     let finishPublish!: (value: { revision: number; hash: string; url: string }) => void

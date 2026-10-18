@@ -13,7 +13,7 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   const timers: PublicBoardAccessOperations["timers"] = {}
   const currentBoardId = () => input.boardId() ?? ""
   const link = computed(() => published.value && currentBoardId() ? boardRouteUrl(currentBoardId(), input.boardTitle()) : "")
-  const capture: PublicBoardAccessOperations["capture"] = () => {
+  const capture: PublicBoardAccessOperations["capture"] = (options = {}) => {
     const boardId = currentBoardId(), workspaceId = input.workspaceId(), profile = input.profile(), document = input.document()
     if (!input.owner() || !boardId || !workspaceId || !profile || !document) throw new Error("Current owner, board, or workspace data is unavailable")
     const generation = state.generation
@@ -21,7 +21,8 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
     return { boardId, workspaceId, profile, document, sourceVersion, sourceHeads,
       ensureCurrent: () => {
         if (state.disposed || state.generation !== generation) throw new Error("Owner board operation is no longer current")
-        assertCurrent(input, boardId, workspaceId, profile, sourceVersion, sourceHeads)
+        assertCurrent(input, boardId, workspaceId, profile,
+          options.requireUnchangedSource === false ? undefined : { version: sourceVersion, heads: sourceHeads })
       } }
   }
   const scheduleSync = (delay = input.debounceMs ?? 350) => {
@@ -66,11 +67,11 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
 }
 
 function assertCurrent(input: PublicBoardAccessInput, boardId: string, workspaceId: string, profile: LocalProfile,
-  sourceVersion: number, sourceHeads: string[]) {
+  source?: { version: number; heads: string[] }) {
   const currentProfile = input.profile()
   if (!input.owner() || input.workspaceId() !== workspaceId || (input.boardId() ?? "") !== boardId ||
       currentProfile?.identity.personId !== profile.identity.personId || currentProfile.device.deviceId !== profile.device.deviceId ||
-      input.sourceVersion() !== sourceVersion || canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(sourceHeads)) {
+      source && (input.sourceVersion() !== source.version || canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(source.heads))) {
     throw new Error("Board access or owner identity changed; retry the action")
   }
 }
