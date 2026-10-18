@@ -278,7 +278,7 @@ export async function getPrivateReplicaProgress(owner: string, config: PrivateRe
 function selectedReplicaProgress(owner: string, selected: PrivateReplicaConfig,
   saved: PrivateReplicaState["progress"][string] | undefined): ReplicaState<BlindObject> {
   const binding = privateReplicaBinding(owner, selected)
-  if (saved?.revision === selected.preferenceRevision) return saved.replication
+  if (saved && saved.revision === selected.preferenceRevision) return saved.replication
     ? parseReplicaState<BlindObject>(saved.replication, binding) : emptyReplicaState(binding, selected.cursor, selected.lastUploaded)
   return resumeSelectedReplicaProgress(owner, selected, saved)
 }

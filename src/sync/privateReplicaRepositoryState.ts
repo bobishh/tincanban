@@ -1,3 +1,4 @@
+import { canonicalizeJson } from "../domain/identity"
 import { compareAndSwapLocal,readLocal,type LocalStatePlan } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { parsePrivateReplicaConfig,parseReplicaConfig } from "./blindReplicaConfig"
