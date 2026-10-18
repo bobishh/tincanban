@@ -61,11 +61,12 @@ it("Given unchanged workspace rights, When a timestamp refresh overlaps admissio
   const owner = { personId: profile.identity.personId, publicKey: profile.identity.publicKey, certificates: [profile.certificate] }
   const authority = { genesisOwner: owner, currentOwner: owner, genesisEpoch: 1, currentEpoch: 1,
     ownershipTransfers: [], successionClaims: [], revocations: [], deviceRevocations: [], departures: [] }
-  state.authority = { version: 1, workspaceId: doc.id, ownerPersonId: owner.personId,
+  const storedAuthority = { version: 1, workspaceId: doc.id, ownerPersonId: owner.personId,
     ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates, epoch: 1,
     updatedAt: "2026-10-09T11:00:00.000Z", catalog: {} }
+  state.authority = storedAuthority
   state.admit.mockImplementation(async () => {
-    state.authority = { ...state.authority, updatedAt: "2026-10-09T11:00:01.000Z" }
+    state.authority = { ...storedAuthority, updatedAt: "2026-10-09T11:00:01.000Z" }
     return { verifiedAuthorizations: [] }
   })
   await expect(validateIncomingChangeAuthorizations(doc, doc, { version: 1, records: [], authority })).resolves.toEqual([])

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { describe, expect, it, vi } from "vitest"
+import type { GossipStep } from "@meta-uber/mesh-replication"
 import { BrowserNode, WasmBlobEngine, WasmGossipEngine, browserTransportDebugLoggingEnabled, initSync } from "@meta-uber/mesh-transport/transport-wasm"
 import { startIrohBrowserNode, WasmPairingCodec } from "./iroh"
 import { fileReferenceSchema } from "./domain/entitySchemas"
@@ -173,7 +174,6 @@ describe("Iroh gossip and blobs support in match", () => {
     expect(joined1.topicId).toBe(joined2.topicId)
     const engines = new Map([[peer1, engine1], [peer2, engine2]])
     const deliveries: Uint8Array[] = []
-    type GossipStep = ReturnType<typeof engine1.joinTopic>
     const drive = (initial: Array<{ sender: string; step: GossipStep }>) => {
       const queue = [...initial]
       let iterations = 0

@@ -267,7 +267,7 @@ async function persistNewLocalChange(
   const bundle = await exportDocumentAuthorizationBundle(base, profile)
   const receivedBasis = await storage.getVerifiedReceivedHistoryBaseline(base.id)
   const previousEvidence = await storage.loadCausalEvidence(base.id)
-  bundle.records = mergeAuthorizationRecords(bundle.records, authorizations)
+  bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
   // An all-admitted evidence snapshot is already represented by the authorized
   // base document. Reuse it instead of synchronously loading the full raw
   // history on every local write. Keep loading raw bytes when quarantined or

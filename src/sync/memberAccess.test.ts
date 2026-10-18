@@ -129,6 +129,7 @@ describe("member access", () => {
   it("rechecks an approved signed workspace grant and stops a live reader after person access is revoked", async () => {
     const f = await fixture()
     const grant = structuredClone(f.bundle.grant)
+    if (!grant) throw new Error("Fixture did not create a signed workspace grant")
     await f.mesh.revokePerson("board", f.visitor.identity.personId)
 
     await expect(f.mesh.checkGuestDevices(["board"], f.visitor.identity.personId, [f.bundle], [grant]))

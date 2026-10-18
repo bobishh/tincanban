@@ -422,7 +422,7 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       const raw = (rawBundles as WorkspaceMemberBundle[])[entry.bundleIndex]!
       const grant = grants[entry.grantIndex]!
       await this.putVerifiedBundle(credential, { ...raw, grant,
-        ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates })
+        ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates as DeviceCertificate[] })
       await this.refreshSuccessionPolicy(entry.workspaceId)
     }
     await this.notify()

@@ -10,6 +10,42 @@ import { useTincanban, hydrate, resetStateForTest } from "./state"
 import { isItem } from "./domain/model"
 import { clearMeshTrace, meshTrace } from "./sync/meshTrace"
 import { itemLifecycle } from "./domain/archive"
+import type { WorkspaceSettingsDraft } from "./domain/workspaceSettings"
+
+type RegisteredTool = Parameters<ModelContext["registerTool"]>[0]
+type TestTool<TResult> = Omit<RegisteredTool, "execute"> & {
+  execute(input: unknown): TResult | Promise<TResult>
+}
+
+function requiredTool<TResult>(name: string): TestTool<TResult> {
+  const tool = registeredTools.get(name)
+  if (!tool) throw new Error(`WebMCP tool ${name} was not registered`)
+  return { ...tool, execute: (input) => tool.execute(input) as TResult | Promise<TResult> }
+}
+
+function requiredSyncTool<TResult>(name: string): Omit<TestTool<TResult>, "execute"> & {
+  execute(input: unknown): TResult
+} {
+  const tool = requiredTool<TResult>(name)
+  return {
+    ...tool,
+    execute(input: unknown) {
+      const result = tool.execute(input)
+      if (result instanceof Promise) throw new Error(`WebMCP tool ${name} returned a promise`)
+      return result
+    },
+  }
+}
+
+function nestedRecord(root: Record<string, unknown>, path: string[]): Record<string, unknown> {
+  let value: unknown = root
+  for (const key of path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Missing schema path: ${key}`)
+    value = (value as Record<string, unknown>)[key]
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected schema object")
+  return value as Record<string, unknown>
+}
 
 beforeAll(async () => {
   vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
@@ -20,7 +56,7 @@ beforeAll(async () => {
 })
 
 describe("generic WebMCP tools", () => {
-  let registeredTools: Map<string, Parameters<ModelContext["registerTool"]>[0]>
+  let registeredTools: Map<string, RegisteredTool>
   let mockContext: ModelContext
   let tincanban: ReturnType<typeof useTincanban>
 
@@ -79,7 +115,7 @@ describe("generic WebMCP tools", () => {
     ]) expect(registeredTools.has(alias)).toBe(false)
     expect(registeredTools.has("send_chat_message")).toBe(true)
 
-    await expect(registeredTools.get("send_chat_message").execute({ body: "Vacancy audit complete" }))
+    await expect(requiredTool<{ sent: boolean }>("send_chat_message").execute({ body: "Vacancy audit complete" }))
       .resolves.toEqual({ sent: true })
     expect(sendChatMessage).toHaveBeenCalledWith("Vacancy audit complete")
   })
@@ -87,11 +123,11 @@ describe("generic WebMCP tools", () => {
   it("Given workspace entities, when their summary is requested, then stable IDs and kinds are discoverable without entity contents", async () => {
     await registerWebMcp({ getActiveDoc: tincanban.getActiveDoc }, mockContext)
     const doc = tincanban.getActiveDoc()!
-    const result = registeredTools.get("get_workspace").execute({})
+    const result = requiredSyncTool<{ entities: { id: string; kind: string; title: string }[] }>("get_workspace").execute({})
     expect(result.entities).toHaveLength(Object.keys(doc.entities).length)
     const board = tincanban.activeBoard.value!
     expect(result.entities).toContainEqual({ id: board.id, kind: "board", title: board.title })
-    expect(result.entities.every((entity: object) => Object.keys(entity).sort().join() === "id,kind,title")).toBe(true)
+    expect(result.entities.every(entity => Object.keys(entity).sort().join() === "id,kind,title")).toBe(true)
     expect(tincanban.getActiveDoc()).toBe(doc)
   })
 
@@ -99,9 +135,9 @@ describe("generic WebMCP tools", () => {
     clearMeshTrace()
     meshTrace("session.closed", { connectionId: "in-7", cause: "heartbeat failed" })
     await registerWebMcp({ getActiveDoc: tincanban.getActiveDoc }, mockContext)
-    const trace = registeredTools.get("get_sync_trace")
+    const trace = requiredSyncTool<{ events: { event: string; connectionId?: string; cause?: string }[] }>("get_sync_trace")
     const before = tincanban.getActiveDoc()
-    expect(trace.annotations.readOnlyHint).toBe(true)
+    expect(trace.annotations?.readOnlyHint).toBe(true)
     const result = trace.execute({})
     expect(result.events).toEqual([expect.objectContaining({
       event: "session.closed", connectionId: "in-7", cause: "heartbeat failed",
@@ -124,17 +160,17 @@ describe("generic WebMCP tools", () => {
       activeWorkspace: tincanban.activeWorkspace,
     }, mockContext)
 
-    const workspaces = await registeredTools.get("list_workspaces").execute({})
+    const workspaces = await requiredTool<{ id: string; title: string; active: boolean }[]>("list_workspaces").execute({})
     expect(() => structuredClone(workspaces)).not.toThrow()
     expect(workspaces).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: originalId, active: false }),
       expect.objectContaining({ id: second.id, title: "Second workspace", active: true }),
     ]))
 
-    await expect(registeredTools.get("switch_workspace").execute({ workspaceId: originalId }))
+    await expect(requiredTool<{ switched: boolean; id: string }>("switch_workspace").execute({ workspaceId: originalId }))
       .resolves.toEqual(expect.objectContaining({ switched: true, id: originalId }))
     expect(tincanban.activeWorkspace.id).toBe(originalId)
-    await expect(registeredTools.get("switch_workspace").execute({ workspaceId: "missing" }))
+    await expect(requiredTool<{ switched: boolean; id: string }>("switch_workspace").execute({ workspaceId: "missing" }))
       .rejects.toThrow("Workspace not found")
   })
 
@@ -147,17 +183,18 @@ describe("generic WebMCP tools", () => {
       activeWorkspace: tincanban.activeWorkspace,
     }, mockContext)
 
-    const columnsSchema = registeredTools.get("apply_workspace_settings").inputSchema.properties.settings.properties.board.properties.columns.items.properties
+    const columnsSchema = nestedRecord(requiredTool<{ applied: boolean; settings: WorkspaceSettingsDraft }>("apply_workspace_settings").inputSchema,
+      ["properties", "settings", "properties", "board", "properties", "columns", "items", "properties"])
     expect(columnsSchema).toHaveProperty("collapsible")
     expect(columnsSchema).toHaveProperty("color")
-    const read = await registeredTools.get("get_workspace_settings").execute({})
+    const read = await requiredTool<{ settings: WorkspaceSettingsDraft; heads: string[] }>("get_workspace_settings").execute({})
     read.settings.workspace.title = "Agent workspace"
     read.settings.board.entityName = "record"
     read.settings.board.fields = [
       { title: "Due Date", valueType: "datetime", required: false },
     ]
     read.settings.documentTemplates = [{ title: "Agent template", markdown: "# Record" }]
-    const result = await registeredTools.get("apply_workspace_settings").execute({ settings: read.settings, expectedHeads: read.heads })
+    const result = await requiredTool<{ applied: boolean; settings: WorkspaceSettingsDraft }>("apply_workspace_settings").execute({ settings: read.settings, expectedHeads: read.heads })
 
     expect(result.applied).toBe(true)
     expect(result.settings.workspace.title).toBe("Agent workspace")
@@ -176,7 +213,7 @@ describe("generic WebMCP tools", () => {
       activeWorkspace: tincanban.activeWorkspace,
     }, mockContext)
 
-    const createItem = registeredTools.get("create_item")
+    const createItem = requiredTool<{ id: string }>("create_item")
     const doc = tincanban.getActiveDoc()!
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column"))!
     expect(col).toBeDefined()
@@ -213,9 +250,9 @@ describe("generic WebMCP tools", () => {
     const col1 = cols[0]
     const col2 = cols[1]
 
-    const createItem = registeredTools.get("create_item")
-    const moveEntity = registeredTools.get("move_entity")
-    const renameEntity = registeredTools.get("rename_entity")
+    const createItem = requiredTool<{ id: string }>("create_item")
+    const moveEntity = requiredTool<unknown>("move_entity")
+    const renameEntity = requiredTool<unknown>("rename_entity")
 
     const res = await createItem.execute({ parentId: col1.id, title: "Original Item" })
     const itemId = res.id
@@ -241,9 +278,9 @@ describe("generic WebMCP tools", () => {
 
     const doc = tincanban.getActiveDoc()!
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column"))!
-    const createItem = registeredTools.get("create_item")
-    const setArchived = registeredTools.get("set_item_archived")
-    const listArchived = registeredTools.get("list_archived_items")
+    const createItem = requiredTool<{ id: string }>("create_item")
+    const setArchived = requiredTool<unknown>("set_item_archived")
+    const listArchived = requiredTool<{ id: string }[]>("list_archived_items")
 
     const res = await createItem.execute({ parentId: col.id, title: "To Archive" })
     const itemId = res.id

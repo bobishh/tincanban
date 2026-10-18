@@ -17,7 +17,7 @@ import {
   type WorkspaceMetaInternal,
 } from "./storePolicy"
 
-export function promisifyRequest<T>(request: IDBRequest<unknown>): Promise<T> {
+export function promisifyRequest<T>(request: IDBRequest<unknown> | IDBRequest<unknown[]>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result as T)
     request.onerror = () => reject(request.error || new Error("IDBRequest error"))

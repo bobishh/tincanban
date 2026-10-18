@@ -51,9 +51,9 @@ describe("Native history projection and attribution (Requirement 2.4)", () => {
   })
 
   it("labels changes without metadata as Imported", async () => {
-    let doc = Automerge.init<Record<string, unknown>>()
-    doc = Automerge.change(doc, { message: "Old legacy commit without JSON metadata" }, (draft) => {
-      draft.something = 123
+    const initial = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("ws_legacy", "Legacy", "author", "blank"))
+    const doc = Automerge.change(initial, { message: "Old legacy commit without JSON metadata" }, (draft) => {
+      draft.title = "Legacy update"
     })
 
     const history = projectDocumentHistory(doc)

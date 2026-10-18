@@ -13,7 +13,7 @@ import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import type { SyncConnection, SyncNode } from "./transport"
-import type { WorkspacePeerRecord } from "./peerStore"
+import type { WorkspaceMeshCredential, WorkspacePeerRecord } from "./peerStore"
 import type { LocalProfile } from "../domain/identity"
 import type { SessionEntry } from "./durableMeshBase"
 import type { LiveWorkspaceSync } from "./workspaceSet"
@@ -65,7 +65,7 @@ type MeshTestHooks = {
   dialScheduler: { host: { peers: () => Promise<WorkspacePeerRecord[]> } }
   runtime: () => {
     routeAttemptActive: (key: string) => boolean
-    reconnectState: (key: string) => unknown
+    reconnectState: (key: string) => { failures: number; retryAtMs: number } | null
     beginRouteAttempt: (key: string, at: number) => void
     scheduleReconnect: (key: string, at: number, delay: number, maximum: number) => void
     admitSession: (session: unknown, connectionId: string) => void
@@ -94,7 +94,8 @@ type MeshTestHooks = {
   publishAll: () => Promise<void>
   publishWorkspace: (workspaceId: string) => Promise<void>
   broadcastWorkspaceGossip: (workspaceId: string) => Promise<void>
-  installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>]) => Promise<boolean>
+  installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>,
+    boolean?, string?, boolean?, string?, boolean?, "mesh-owner-workspace-offer"?, boolean?, string?]) => Promise<boolean>
   dialLoop: (signal: AbortSignal) => Promise<void>
   mergeOwnershipTransfers: (credential: TestCredential, transfers: WorkspaceOwnershipTransfer[]) => Promise<TestCredential>
   pruneInvalidStoredPeers: (credential: TestCredential, localDeviceId: string) => Promise<void>
@@ -247,7 +248,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const peer = { workspaceId: "workspace-1", personId: "remote", deviceId: "remote-device" }
     const state = meshRustRuntime().state
     const plan = vi.spyOn(state, "planAuthorityMerge").mockReturnValue({
-      credential, peers: [peer], evictDeviceIds: [peer.deviceId], localAccessRevoked: true,
+      credential, peers: [peer], evictDeviceIds: [peer.deviceId], evictPersonIds: [], localAccessRevoked: true,
     })
     const upsertPeer = vi.fn()
     const evict = vi.fn(async () => {})
@@ -276,7 +277,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const peer = { workspaceId: "workspace-1", personId: "remote", deviceId: "remote-device" }
     const state = meshRustRuntime().state
     const plan = vi.spyOn(state, "planAuthorityMerge").mockReturnValue({
-      credential: nextCredential, peers: [peer], evictDeviceIds: [peer.deviceId], localAccessRevoked: false,
+      credential: nextCredential, peers: [peer], evictDeviceIds: [peer.deviceId], evictPersonIds: [], localAccessRevoked: false,
     })
     const putWorkspaceCredential = vi.fn()
     const upsertPeer = vi.fn()
@@ -299,7 +300,9 @@ describe("DurableMesh peer catalog gossip", () => {
   })
 
   it("rejects a removed person's stale grant but accepts their newly approved generation", () => {
-    const credential = { catalog: { revocations: [{ payload: { personId: "returning", epoch: 2 } }] } }
+    const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace-1", ownerPersonId: "owner",
+      ownerPublicKey: "owner-key", ownerCertificates: [], transportSecret: "secret", epoch: 1,
+      updatedAt: new Date().toISOString(), catalog: { revocations: [{ payload: { personId: "returning", epoch: 2 } }] } }
     expect(isGrantRevoked(credential, "returning", { payload: { accessEpoch: 2 } })).toBe(true)
     expect(isGrantRevoked(credential, "returning", { payload: { accessEpoch: 3 } })).toBe(false)
     expect(isGrantRevoked(credential, "returning", { payload: {} })).toBe(true)
@@ -531,7 +534,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const internal = meshHooks(mesh)
     const peer = {
       workspaceId: "workspace", personId: "remote-person", deviceId: "remote-device", instanceId: "legacy:remote",
-      endpoint: "remote-endpoint", transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString(),
+      endpoint: "remote-endpoint", transportSecret: "secret", role: "editor" as const, lastSeen: new Date().toISOString(),
       advertisement: { advertisement: { signerKeyId: "remote-device", signature: "signature", payload: {
         kind: "peer-advertisement", version: 1, workspaceId: "workspace", personId: "remote-person",
         deviceId: "remote-device", endpoint: "remote-endpoint", issuedAt: new Date().toISOString(),
@@ -591,7 +594,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const internal = meshHooks(mesh)
     const peer = {
       workspaceId: "workspace", personId: "remote-person", deviceId: "remote-device", instanceId: "legacy:remote",
-      endpoint: "remote-endpoint", transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString(),
+      endpoint: "remote-endpoint", transportSecret: "secret", role: "editor" as const, lastSeen: new Date().toISOString(),
       advertisement: { advertisement: { signerKeyId: "remote-device", signature: "signature", payload: {
         kind: "peer-advertisement", version: 1, workspaceId: "workspace", personId: "remote-person",
         deviceId: "remote-device", endpoint: "remote-endpoint", issuedAt: new Date().toISOString(),
@@ -764,7 +767,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const internal = meshHooks(mesh)
     await internal.installSession("workspace-1", "remote-device", "instance-1",
       "2026-09-16T09:00:00.000Z", 1, "incoming", oldConnection,
-      false, "incoming-test", false, "", false, "remote-endpoint")
+      false, "incoming-test", false, "", false, undefined, false, "remote-endpoint")
     expect(internal.sessions.size).toBe(1)
     const publish = internal.publishAll()
     rejectSnapshot(new Error("publish failed"))
@@ -775,7 +778,7 @@ describe("DurableMesh peer catalog gossip", () => {
     snapshot = Promise.resolve(new Uint8Array([1]))
     await internal.installSession("workspace-1", "remote-device", "instance-1",
       "2026-09-16T09:00:00.000Z", 1, "incoming", replacementConnection,
-      false, "incoming-replacement", false, "", false, "remote-endpoint")
+      false, "incoming-replacement", false, "", false, undefined, false, "remote-endpoint")
     const replacement = internal.sessions.get("workspace-1:remote-device:instance-1")?.session
     resolveOldAccept(undefined as never)
     await Promise.resolve()
@@ -814,6 +817,7 @@ describe("DurableMesh peer catalog gossip", () => {
     await vi.waitFor(() => expect(internal.sessions.size).toBe(0))
     const reconnect = internal.runtime().reconnectState("workspace:remote-device:slot-0")
     expect(reconnect).not.toBeNull()
+    if (!reconnect) throw new Error("Reconnect state was not scheduled")
     expect(reconnect.retryAtMs).toBeGreaterThan(Date.now())
     await mesh.dispose()
   })
@@ -1195,7 +1199,7 @@ describe("DurableMesh peer catalog gossip", () => {
         controller: { personId: "wrong-owner", publicKey: "wrong-key" } }),
       vi.spyOn(state, "planOwnershipMerge").mockReturnValue({ accepted: [], persistCatalog: false, steps: [{
         record: { payload: { toOwnerPersonId: "next-owner", toOwnerPublicKey: "next-key" } }, accepted: [], previousOwnerEpoch: 1,
-      }] }),
+      }], conflicted: false }),
       vi.spyOn(state, "planOwnershipAdoption").mockReturnValue({ previousOwnerPersonId: "owner",
         credential: { ...credential, ownerPersonId: "next-owner", ownerPublicKey: "next-key" }, peers: [] }),
     ]
@@ -1245,7 +1249,8 @@ describe("DurableMesh peer catalog gossip", () => {
     internal.mergeRevocations = async () => {}
     internal.mergeSuccessionState = async () => credential
     internal.mergePeerBundles = async () => {}
-    internal.notify = vi.fn(async () => { order.push("notify") })
+    const notify = vi.fn(async () => { order.push("notify") })
+    internal.notify = notify
     try {
       await receiver.mergeWorkspace(workspaceId, catalog)
       expect(putWorkspaceAuthority).toHaveBeenCalledWith(expect.objectContaining({
@@ -1253,7 +1258,7 @@ describe("DurableMesh peer catalog gossip", () => {
       }))
       expect(order).toEqual(["persist", "notify"])
       order.length = 0
-      internal.notify.mockClear()
+      notify.mockClear()
       putWorkspaceAuthority.mockRejectedValueOnce(new Error("Ledger commit failed"))
       await expect(receiver.mergeWorkspace(workspaceId, catalog)).rejects.toThrow("Ledger commit failed")
       expect(internal.notify).not.toHaveBeenCalled()

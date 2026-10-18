@@ -2,7 +2,7 @@ import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuth
   withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
 import { canonicalizeJson } from "../domain/identityCrypto"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
-import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
+import type { WorkspaceDeltaFrontier } from "../workspaceDeltaJournal"
 export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 
 type WorkspaceAuthorizationRow = {
