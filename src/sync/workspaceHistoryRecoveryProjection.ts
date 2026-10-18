@@ -155,7 +155,6 @@ async function project(intent: ProjectionIntent, ensureCurrent: () => void): Pro
     await peerStore.putWorkspaceAuthority(intent.authority)
     await assertCurrent(intent.personId, ensureCurrent)
   }
-  await defaultStorage.registerWorkspace(intent.workspaceId, intent.title, null, true)
   await assertCurrent(intent.personId, ensureCurrent)
   await registerWorkspaceInCurrentRoot(defaultStorage, profile, intent.workspaceId, reference.grantHash)
   await assertCurrent(intent.personId, ensureCurrent)

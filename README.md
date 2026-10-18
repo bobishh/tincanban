@@ -9,7 +9,9 @@ A board for keeping track of work, with cards, documents, and chat. Your data li
 in your browser. You can share a board with someone else or connect your own
 second device and keep working across both.
 
-[Try tincanban](https://match.meta-uber-engineer.dev/) · [Five-minute demo](docs/demo.md) · [Architecture](docs/architecture.md)
+Workspace snapshots, changes, proofs and catalog metadata live in the
+`tincanban-workspace-state` journal. The workspace catalog is derived from its
+committed snapshots and frontiers.
 
 ## What you can do
 

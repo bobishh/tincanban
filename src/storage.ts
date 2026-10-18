@@ -9,11 +9,9 @@ import type {
 import { records, mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { canonicalizeJson } from "./domain/identity"
 import { causalEvidenceChanged, snapshotCausalEvidence, replayAdmittedJournal } from "./causalEvidence"
-import { parseStoredSnapshot, type StoredSnapshot } from "./storageSnapshot"
 import type { StoredProofsV1 } from "./domain/proofs"
 import { toBase64Url, fromBase64Url } from "./domain/identity"
 import { validateRekeyAuthorizations } from "./storageRekey"
-import { getStorageRaw, removeStorageRaw, setStorageRaw } from "./storageRaw"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
 import { StorageHistoryAccess } from "./storageHistoryAccess"
 import { activeHistoryDifference, appendLocalWorkspaceCommand, appendWorkspaceCommand, type WorkspaceCommitCommand } from "./storageCommitSupport"
@@ -23,7 +21,6 @@ import {
   deleteWorkspaceJournal,
   advanceWorkspaceRevision,
   readWorkspaceSnapshot,
-  readWorkspaceBasisSnapshot,
   type StoredWorkspaceSnapshot,
   openWorkspaceJournal,
   readLocalJournal,
@@ -44,9 +41,7 @@ import {
 } from "./storageJournal"
 
 export type { StoredChange } from "./storageJournal"
-export * from "./storageLegacy"
 
-const workspaceMetaPrefix = "tincanban.workspace-meta."
 
 function canReuseDocument(doc: Automerge.Doc<WorkspaceDocumentV2> | undefined, workspaceId: string, heads: Heads) {
   return doc?.id === workspaceId && Automerge.getHeads(doc).sort().join() === heads.slice().sort().join()
@@ -75,7 +70,7 @@ type InMemoryStore = {
   changes: Map<string, StoredChange> // key: `${workspaceId}:${changeHash}`
   proofs: Map<string, ChangeProof> // key: `${workspaceId}:${changeHash}`
   receipts: Map<string, TransactionReceipt> // key: `${workspaceId}:${transactionId}`
-  snapshots: Map<string, StoredSnapshot> // key: workspaceId
+  snapshots: Map<string, StoredWorkspaceSnapshot> // key: workspaceId
   workspaces: Map<string, { id: string; title: string; updatedAt: string }>
   personalRoots: Map<string, PersonalRootDocumentV1>
 }
@@ -122,7 +117,7 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     this.inMemory.snapshots.delete(workspaceId)
   }
 
-  private decodeSnapshot(snapshot: StoredSnapshot, reusable?: Automerge.Doc<WorkspaceDocumentV2>) {
+  private decodeSnapshot(snapshot: StoredWorkspaceSnapshot, reusable?: Automerge.Doc<WorkspaceDocumentV2>) {
     // Recheck durable heads on every read so other tabs cannot leave a stale cache.
     const cached = canReuseDocument(reusable, snapshot.workspaceId, snapshot.heads)
       ? reusable : this.loadedDocuments.get(snapshot.workspaceId)
@@ -148,17 +143,6 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     return records
   }
 
-  async registerWorkspace(id: string, title: string, archivedAt: string | null = null, allowRestore = false): Promise<void> {
-    const committed = await this.delta.frontier(id) ?? await readWorkspaceBasisSnapshot(id)
-    const legacy = committed?.archivedAt === undefined ? await getStorageRaw(`tincanban.workspace-meta.${id}`) : null
-    const previousArchive = committed?.archivedAt === undefined ? (legacy ? (JSON.parse(legacy) as WorkspaceMeta).archivedAt : null) : committed.archivedAt
-    if (!archivedAt && !allowRestore && previousArchive)
-      throw new Error("Workspace was archived in another tab")
-    const meta = { id, title, updatedAt: new Date().toISOString(), archivedAt }
-    await setStorageRaw(`tincanban.workspace-meta.${id}`, JSON.stringify(meta))
-    this.inMemory.workspaces.set(id, meta)
-  }
-
   async rekeyWorkspace(
     oldId: string,
     newId: string,
@@ -182,7 +166,6 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     await validateRekeyAuthorizations(moved, authorizations)
     await this.commitWorkspace(newId, moved, Automerge.save(moved), authorizations)
 
-    await removeStorageRaw(`${workspaceMetaPrefix}${oldId}`)
     this.inMemory.snapshots.delete(oldId)
     this.rememberDocument(oldId)
     this.inMemory.workspaces.delete(oldId)
@@ -192,15 +175,11 @@ export class WorkspaceStorage extends StorageHistoryAccess {
       }
     }
     await deleteWorkspaceJournal(oldId)
-    for (const prefix of ["tincanban.snapshot.", "tincanban.v1.changes.", "tincanban.v1.proofs.", "tincanban.v1.receipts."]) {
-      await removeStorageRaw(`${prefix}${oldId}`)
-    }
     return moved
   }
 
   async purgeWorkspaceForTest(workspaceId: string): Promise<void> {
     this.delta.forget(workspaceId)
-    await removeStorageRaw(`${workspaceMetaPrefix}${workspaceId}`)
     this.inMemory.snapshots.delete(workspaceId)
     this.rememberDocument(workspaceId)
     this.inMemory.workspaces.delete(workspaceId)
@@ -210,9 +189,6 @@ export class WorkspaceStorage extends StorageHistoryAccess {
       }
     }
     await deleteWorkspaceJournal(workspaceId)
-    for (const prefix of ["tincanban.snapshot.", "tincanban.v1.changes.", "tincanban.v1.proofs.", "tincanban.v1.receipts."]) {
-      await removeStorageRaw(`${prefix}${workspaceId}`)
-    }
   }
 
   async commitTransaction(
@@ -305,9 +281,8 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     if (doc.id !== workspaceId) throw new Error("Workspace commit ID mismatch")
     onPhase?.("snapshot-read")
     const committed = await readWorkspaceSnapshot(workspaceId)
-    const legacyRaw = committed ? null : await getStorageRaw(`tincanban.snapshot.${workspaceId}`)
-    const previous = committed ?? (legacyRaw ? parseStoredSnapshot(legacyRaw, workspaceId) : null)
-    if (previous && !doc.archivedAt && (!committed || committed.archivedAt !== null)) {
+    const previous = committed
+    if (previous && !doc.archivedAt && previous.archivedAt !== null) {
       const previousDoc = Automerge.load<WorkspaceDocumentV2>(previous.bytes)
       try {
         if (previousDoc.archivedAt && !includesWorkspaceHeads(doc, Automerge.getHeads(previousDoc)))
@@ -321,8 +296,8 @@ export class WorkspaceStorage extends StorageHistoryAccess {
       receivedHistory: previous?.receivedHistory ? structuredClone(previous.receivedHistory) : undefined,
     }
     const { activeTailChanges, activeTailBytes } = activeHistoryDifference(previous, doc, snapshot.heads)
-    // Legacy proof storage is read-only during migration. The transaction also
-    // rereads current proofs, so standalone proof updates cannot be overwritten.
+    // Reread current authorizations inside the transaction so standalone proof
+    // updates cannot be overwritten.
     onPhase?.("proof-read")
     const previousProofs = await records(workspaceId)
     let proofChanged = false
@@ -415,11 +390,8 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     await this.ensureReceivedHistory(workspaceId)
     const incremental = await this.delta.loadDocument(workspaceId, reusable)
     if (incremental) return incremental
-    const committedSnapshot = await readWorkspaceSnapshot(workspaceId)
-    const rawSnapshot = committedSnapshot ? null : await getStorageRaw(`tincanban.snapshot.${workspaceId}`)
-    const parsedSnapshot = committedSnapshot ?? (rawSnapshot ? parseStoredSnapshot(rawSnapshot, workspaceId) : null)
-    if (parsedSnapshot) this.inMemory.snapshots.set(workspaceId, parsedSnapshot)
-    const snapshot = parsedSnapshot ?? this.inMemory.snapshots.get(workspaceId) ?? null
+    const snapshot = await readWorkspaceSnapshot(workspaceId)
+    if (snapshot) this.inMemory.snapshots.set(workspaceId, snapshot)
 
     let doc: Automerge.Doc<WorkspaceDocumentV2>
 

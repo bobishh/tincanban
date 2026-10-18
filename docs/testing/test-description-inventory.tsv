@@ -309,15 +309,10 @@ browser	e2e/storage-atomicity.spec.ts	75	no		Given two open tabs, when both edit
 browser	e2e/storage-atomicity.spec.ts	110	no		Given independent tabs receive peer branches together, when both admissions finish, then reopened workspace keeps both
 browser	e2e/storage-atomicity.spec.ts	156	no		Given authorization write fails during admission, when transaction aborts, then document, UI and notifications remain unchanged
 browser	e2e/storage-atomicity.spec.ts	196	no		Given legacy snapshot and proof databases, when a command commits, then migration preserves history and reopened catalog
-browser	e2e/storage-failure.spec.ts	4	no		Given newer local databases, when tincanban saves workspace and chat data, then it opens without downgrade errors
 browser	e2e/storage-failure.spec.ts	52	no		Given storage failure, when an item is saved, then failure stays visible and no card publishes
-browser	e2e/storage-journal-migration.spec.ts	3	no		Given a held legacy journal with committed board and receipts, when tincanban opens and edits, then migration preserves data and does not replay compacted changes
-browser	e2e/storage-offline-shape.spec.ts	3	no		Given snapshots in local kv and changes in legacy journal, when default storage loads workspace, then it restores both
 browser	e2e/storage-upgrade-block.spec.ts	4	yes		Given a held version ${version} journal with existing deltas, When the storage upgrade is blocked, Then startup explains recovery and preserves ordered records with revision storage after the old tab closes
 browser	e2e/storage-upgrade-block.spec.ts	50	no		Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads
 browser	e2e/storage-upgrade-block.spec.ts	103	no		Given normal browser storage, when tincanban starts, then workspace controls load
-browser	e2e/storage-upgrade-block.spec.ts	112	no		Given a legacy version upgrade is pending, when tincanban opens it unversioned, then timeout is distinguishable and recovers
-browser	e2e/storage-upgrade-block.spec.ts	159	no		Given legacy records conflict with current receipt, when migration aborts and conflict is fixed, then retry copies all records atomically
 browser	e2e/succession.spec.ts	38	no		Given an owner names an editor successor, when the editor claims succession, then every peer accepts the new owner
 browser	e2e/succession.spec.ts	73	no		Given editor quorum recovery, when a majority votes, then one vote stays pending and quorum elects the candidate
 browser	e2e/sync-layout.spec.ts	4	yes		Given sync management at ${width}px, when offline and then paused, then status and actions remain readable
@@ -349,7 +344,6 @@ browser	e2e/window-presentation.spec.ts	4	yes		Given a detailed lead at ${width}
 browser	e2e/window-presentation.spec.ts	53	no		Given sync settings, When tabs change, Then panels fade in and reduced motion remains available
 browser	e2e/window-presentation.spec.ts	66	yes		Given a ${width}px lead window with a long role, When stages overflow, Then Edit stays on one line and arrows reveal hidden stages
 browser	e2e/workspace-access-isolation.spec.ts	5	no		Given an unreadable authority on one board, when creating and importing another board, then its owner access survives
-browser	e2e/workspace-catalog.spec.ts	3	no		a legacy orphaned workspace reappears and survives another tab saving
 browser	e2e/workspace-configure-create.spec.ts	4	yes		Given a ${width}px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form
 browser	e2e/workspace-configure-create.spec.ts	74	no		Given edited configuration, when preset changes, then draft stays intact; invalid and failed saves keep draft for retry
 browser	e2e/workspace-configure-create.spec.ts	103	no		Given clean defaults or edited configuration, when presets change or reset is chosen, then changes happen only as requested

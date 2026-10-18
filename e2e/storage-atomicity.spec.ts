@@ -193,18 +193,16 @@ test("Given authorization write fails during admission, when transaction aborts,
   expect(result.afterProofs).toEqual(result.beforeProofs)
 })
 
-test("Given legacy snapshot and proof databases, when a command commits, then migration preserves history and reopened catalog", async ({ page }) => {
+test("Given current snapshot and proof records, when a command commits, then reopening preserves original proofs and catalog", async ({ page }) => {
   await page.goto("/")
   const result = await page.evaluate(async () => {
     const { useTincanban } = await import("/src/test/stateFixture.ts")
     const { WorkspaceStorage } = await import("/src/storage.ts")
-    const { writeLocal } = await import("/src/localDb.ts")
-    const { toBase64Url } = await import("/src/domain/identity.ts")
     const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
     const { prepareLocalChangeAuthorizations, exportAuthorizations } = await import("/src/sync/changeAuthorization.ts")
     const { persistAuthorizedCommand } = await import("/src/statePersistence.ts")
     const { recordGenesisAuthority } = await import("/src/sync/changeAuthorization.ts")
-    const { openWorkspaceJournal, transactionDone } = await import("/src/storageJournal.ts")
+    const { putRecords } = await import("/src/sync/workspaceChangeProofStore.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const tincanban = useTincanban()
     await tincanban.whenReady()
@@ -212,38 +210,22 @@ test("Given legacy snapshot and proof databases, when a command commits, then mi
     const { initializeWasm } = A
     const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
     await initializeWasm(wasmUrl)
-    const doc = A.from(createWorkspaceDoc(crypto.randomUUID(), "Legacy migration", profile.identity.personId, "blank"))
+    const doc = A.from(createWorkspaceDoc(crypto.randomUUID(), "Current journal", profile.identity.personId, "blank"))
     await recordGenesisAuthority(doc, profile)
     const hashes = A.getAllChanges(doc).map(change => A.decodeChange(change).hash)
     const proofs = await prepareLocalChangeAuthorizations(doc, profile, hashes)
-    // Seed the pre-migration databases, not the new snapshot/proof stores.
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("tincanban-write-authorizations-v1")
-      request.onupgradeneeded = () => request.result.createObjectStore("records")
-      request.onsuccess = () => resolve(request.result)
-      request.onerror = () => reject(request.error)
-    })
-    const seed = db.transaction("records", "readwrite")
-    const seeded = transactionDone(seed)
-    seed.objectStore("records").put(proofs, doc.id)
-    await seeded
-    db.close()
-    const journal = await openWorkspaceJournal()
-    const clear = journal.transaction("authorizations", "readwrite")
-    const cleared = transactionDone(clear)
-    clear.objectStore("authorizations").delete(doc.id)
-    await cleared
-    await writeLocal(`tincanban.snapshot.${doc.id}`, JSON.stringify({ heads: A.getHeads(doc), bytesBase64: toBase64Url(A.save(doc)), savedAt: new Date().toISOString() }))
     const storage = new WorkspaceStorage()
+    await storage.saveSnapshot(doc.id, doc, A.save(doc))
+    await putRecords(doc.id, proofs)
     const column = Object.values(doc.entities).find(entity => entity.kind === "column")!
-    await persistAuthorizedCommand((await storage.loadWorkspaceDoc(doc.id))!.doc, { kind: "createItem", parentId: column.id, title: "Migrated edit" }, profile, storage)
+    await persistAuthorizedCommand((await storage.loadWorkspaceDoc(doc.id))!.doc, { kind: "createItem", parentId: column.id, title: "Saved edit" }, profile, storage)
     const reopened = new WorkspaceStorage()
     const loaded = (await reopened.loadWorkspaceDoc(doc.id))!.doc
     const authorization = await exportAuthorizations(A.save(loaded))
-    return { titles: Object.values(loaded.entities).map(entity => "title" in entity ? entity.title : ""), catalog: (await reopened.listWorkspaces()).find(workspace => workspace.id === doc.id)?.title, legacyProofPreserved: proofs.every(proof => authorization.some(record => record.signed.signature === proof.signed.signature)), coveredHashes: authorization.flatMap(record => record.signed.payload.hashes), allHashes: A.getAllChanges(loaded).map(change => A.decodeChange(change).hash) }
+    return { titles: Object.values(loaded.entities).map(entity => "title" in entity ? entity.title : ""), catalog: (await reopened.listWorkspaces()).find(workspace => workspace.id === doc.id)?.title, originalProofsPreserved: proofs.every(proof => authorization.some(record => record.signed.signature === proof.signed.signature)), coveredHashes: authorization.flatMap(record => record.signed.payload.hashes), allHashes: A.getAllChanges(loaded).map(change => A.decodeChange(change).hash) }
   })
-  expect(result.titles).toContain("Migrated edit")
-  expect(result.catalog).toBe("Legacy migration")
-  expect(result.legacyProofPreserved).toBe(true)
+  expect(result.titles).toContain("Saved edit")
+  expect(result.catalog).toBe("Current journal")
+  expect(result.originalProofsPreserved).toBe(true)
   expect(result.coveredHashes).toEqual(expect.arrayContaining(result.allHashes))
 })

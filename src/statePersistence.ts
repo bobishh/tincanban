@@ -427,7 +427,6 @@ async function initializeFirstWorkspace(
     );
     await recordGenesisAuthority(doc, profile);
     await storage.saveSnapshot(workspaceId, doc, Automerge.save(doc));
-    await storage.registerWorkspace(workspaceId, "Untitled");
     await registerWorkspaceInCurrentRoot(storage, profile, workspaceId, "genesis");
     await writeLocal("tincanban.active_workspace_id", workspaceId);
     return doc;

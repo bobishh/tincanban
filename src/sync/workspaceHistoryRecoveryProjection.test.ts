@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const ports = vi.hoisted(() => ({
   prepare: vi.fn(), activate: vi.fn(), current: vi.fn(), revision: vi.fn(),
   authority: vi.fn(), credential: vi.fn(), putAuthority: vi.fn(), putCredential: vi.fn(), transferCredential: vi.fn(),
-  register: vi.fn(), invalidate: vi.fn(), currentRoot: vi.fn(), catalog: vi.fn(),
+  invalidate: vi.fn(), currentRoot: vi.fn(), catalog: vi.fn(),
   records: new Map<string, unknown>(),
 }))
 vi.mock("@meta-uber/mesh-browser-store", () => ({ BrowserMeshStore: class {
@@ -47,7 +47,7 @@ vi.mock("./peerStore", () => ({ peerStore: {
   putWorkspaceAuthority: ports.putAuthority, putWorkspaceCredential: ports.putCredential,
   transferWorkspaceCredential: ports.transferCredential,
 } }))
-vi.mock("../storage", () => ({ defaultStorage: { registerWorkspace: ports.register, invalidateWorkspaceCache: ports.invalidate } }))
+vi.mock("../storage", () => ({ defaultStorage: { invalidateWorkspaceCache: ports.invalidate } }))
 vi.mock("../statePersonalRoot", () => ({ registerWorkspaceInCurrentRoot: ports.currentRoot }))
 vi.mock("../storageCatalog", () => ({ readWorkspaceCatalogRecords: ports.catalog }))
 
@@ -73,7 +73,6 @@ describe("workspace private recovery projection", () => {
       manifest: { personId: "person" } as never, authority: null, credential: null, title: "Recovered board" }, guard)
     await resumeWorkspaceHistoryRecoveryProjection("person", guard)
     expect(ports.activate).toHaveBeenCalledOnce()
-    expect(ports.register).toHaveBeenCalledWith("board", "Recovered board", null, true)
     expect(ports.currentRoot).toHaveBeenCalledWith(expect.anything(), expect.anything(), "board", "authenticated-grant")
     expect(ports.catalog).toHaveBeenCalledOnce()
     expect(ports.invalidate).toHaveBeenCalledWith("board")
@@ -87,7 +86,6 @@ describe("workspace private recovery projection", () => {
     vi.clearAllMocks()
     await resumeWorkspaceHistoryRecoveryProjection("person", guard)
     expect(ports.activate).not.toHaveBeenCalled()
-    expect(ports.register).not.toHaveBeenCalled()
     expect(ports.currentRoot).not.toHaveBeenCalled()
   })
 
@@ -100,7 +98,6 @@ describe("workspace private recovery projection", () => {
     await expect(resumeWorkspaceHistoryRecoveryProjection("person", guard)).rejects.toThrow()
     expect(ports.activate).not.toHaveBeenCalled()
     expect(ports.putCredential).not.toHaveBeenCalled()
-    expect(ports.register).not.toHaveBeenCalled()
   })
 
   it("Given a secondary-store interruption, when startup resumes again, then retain and complete the same projection intent", async () => {

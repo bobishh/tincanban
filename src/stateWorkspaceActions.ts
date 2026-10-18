@@ -48,7 +48,6 @@ async function createWorkspaceAsync(
   const doc = Automerge.from<WorkspaceDocumentV2>(initialDocument)
   await recordGenesisAuthority(doc, profile);
   await storage.saveSnapshot(id, doc, Automerge.save(doc));
-  await storage.registerWorkspace(id, cleanTitle);
   await addWorkspaceToPersonalRoot(id, "genesis", storage);
   await saveActiveWorkspaceId(id);
   updateReactiveState(doc);
@@ -72,7 +71,6 @@ async function importWorkspaceAsNew(
   const doc = copied.value;
   await recordGenesisAuthority(doc, profile);
   await storage.saveSnapshot(doc.id, doc, Automerge.save(doc));
-  await storage.registerWorkspace(doc.id, doc.title);
   await addWorkspaceToPersonalRoot(doc.id, "genesis", storage);
   await saveActiveWorkspaceId(doc.id);
   updateReactiveState(doc);

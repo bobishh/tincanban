@@ -301,16 +301,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       fields: [{ title: "  ", valueType: "text" as const, required: false }],
     }
     const saveSnapshot = vi.spyOn(defaultStorage, "saveSnapshot")
-    const registerWorkspace = vi.spyOn(defaultStorage, "registerWorkspace")
 
     await expect(tincanban.createWorkspaceAsync("Invalid config", "job-search", defaultStorage, draft)).rejects.toThrow(/field title|Presentation must reference/i)
 
     expect(saveSnapshot).not.toHaveBeenCalled()
-    expect(registerWorkspace).not.toHaveBeenCalled()
     expect(tincanban.activeWorkspace.id).toBe(activeId)
     expect(tincanban.availableWorkspaces.value.map(workspace => workspace.id)).toEqual(beforeWorkspaceIds)
     saveSnapshot.mockRestore()
-    registerWorkspace.mockRestore()
   })
 
   it("Given a format 2 owner board, when tincanban starts, then migration is signed and durable", async () => {
@@ -327,7 +324,6 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const source = Automerge.from(old)
     await recordGenesisAuthority(source as never, profile)
     await defaultStorage.saveSnapshot(old.id, source as never, Automerge.save(source))
-    await defaultStorage.registerWorkspace(old.id, old.title)
     resetStateForTest()
     await hydrate()
     const stored = (await defaultStorage.loadWorkspaceDoc(old.id))!.doc

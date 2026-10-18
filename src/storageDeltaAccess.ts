@@ -35,7 +35,6 @@ async function localHistoryProgress(workspaceId: string): Promise<StoredHistoryP
 
 export abstract class StorageDeltaAccess {
   protected abstract checkDeltaWrites(): void
-  abstract registerWorkspace(id: string, title: string, archivedAt?: string | null, allowRestore?: boolean): Promise<void>
   abstract listChanges(workspaceId: string): Promise<StoredChange[]>
   protected delta = new StorageDeltaRepository()
 

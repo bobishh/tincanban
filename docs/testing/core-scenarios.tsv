@@ -143,21 +143,15 @@ storage-atomicity.spec.ts	75	Given two open tabs, when both edit one workspace t
 storage-atomicity.spec.ts	110	Given independent tabs receive peer branches together, when both admissions finish, then reopened workspace keeps both
 storage-atomicity.spec.ts	156	Given authorization write fails during admission, when transaction aborts, then document, UI and notifications remain unchanged
 storage-atomicity.spec.ts	196	Given legacy snapshot and proof databases, when a command commits, then migration preserves history and reopened catalog
-storage-failure.spec.ts	4	Given newer local databases, when tincanban saves workspace and chat data, then it opens without downgrade errors
 storage-failure.spec.ts	52	Given storage failure, when an item is saved, then failure stays visible and no card publishes
-storage-journal-migration.spec.ts	3	Given a held legacy journal with committed board and receipts, when tincanban opens and edits, then migration preserves data and does not replay compacted changes
-storage-offline-shape.spec.ts	3	Given snapshots in local kv and changes in legacy journal, when default storage loads workspace, then it restores both
 storage-upgrade-block.spec.ts	3	Given a local journal created before the catalog index, when tincanban opens, then it keeps the board and loads
 storage-upgrade-block.spec.ts	50	Given normal browser storage, when tincanban starts, then workspace controls load
-storage-upgrade-block.spec.ts	59	Given a legacy version upgrade is pending, when tincanban opens it unversioned, then timeout is distinguishable and recovers
-storage-upgrade-block.spec.ts	106	Given legacy records conflict with current receipt, when migration aborts and conflict is fixed, then retry copies all records atomically
 telemetry.spec.ts	4	Given diagnostics return 202, when chat saves, then text persists and telemetry excludes content
 telemetry.spec.ts	4	Given diagnostics return 503, when chat saves, then text persists and telemetry excludes content
 unified-settings.spec.ts	3	Given Settings is open, when Recovery backup opens, then recovery stays above Settings and closes back to it
 unified-settings.spec.ts	28	Settings keeps identity available while workspace controls stay role-gated
 unified-settings.spec.ts	67	Given two workspaces, when identity name changes, then both show that name even with older chat announcements
 workspace-access-isolation.spec.ts	4	Given an unreadable authority on one board, when creating and importing another board, then its owner access survives
-workspace-catalog.spec.ts	3	a legacy orphaned workspace reappears and survives another tab saving
 workspace-configure-create.spec.ts	4	Given a 1440px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form
 workspace-configure-create.spec.ts	4	Given a 390px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form
 workspace-configure-create.spec.ts	74	Given edited configuration, when preset changes, then draft stays intact; invalid and failed saves keep draft for retry

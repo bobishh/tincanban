@@ -13,13 +13,10 @@ import {
 } from "./sync/changeAuthorization";
 import {
   defaultStorage,
-  saveWorkspaceRecord,
-  type WorkspaceRecord,
   type WorkspaceStorage,
 } from "./storage";
 import {
   notifyLocalChanges,
-  reconcile,
   refreshCausalReview,
   refreshAvailableWorkspaces,
   updateReactiveState,
@@ -47,7 +44,6 @@ export function createSyncActions() {
     validateAuthorizedWorkspace,
     mergeAuthorizedWorkspace,
     importWorkspaceDocument,
-    mergeWorkspaceRecord,
     subscribeLocalChanges,
   };
 }
@@ -270,7 +266,6 @@ async function importWorkspaceDocument(
       await storage.saveSnapshot(doc.id, doc, Automerge.save(doc));
     });
   }
-  await storage.registerWorkspace(doc.id, doc.title);
   await addWorkspaceToPersonalRoot(doc.id, "import", storage);
   await switchWorkspace(doc.id, storage);
   await refreshCausalReview(storage, doc.id);
@@ -303,21 +298,6 @@ async function assertImportAllowed(
       throw new Error("Workspace ownership cannot change through import.");
   } else if (doc.ownerPersonId !== profile.identity.personId)
     throw new Error("Only the workspace owner can import a new workspace");
-}
-
-async function mergeWorkspaceRecord(
-  record: WorkspaceRecord,
-  storage = defaultStorage,
-): Promise<void> {
-  const doc = stateRuntime.activeDoc;
-  const profile = stateRuntime.currentProfile;
-  if (!doc || !profile) throw new Error("Workspace not hydrated");
-  assertWorkspaceCapability(
-    await workspaceRole(doc, profile),
-    "workspace.import",
-  );
-  await saveWorkspaceRecord(record);
-  await reconcile(storage);
 }
 
 function subscribeLocalChanges(listener: (workspaceId?: string) => void): () => void {

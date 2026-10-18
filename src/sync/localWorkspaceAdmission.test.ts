@@ -70,15 +70,11 @@ it("Given an unchanged validated frontier, when the next command checks admissio
   } finally { basis.mockRestore() }
 })
 
-it("Given an unavailable legacy catalog writer, When a local delta commits, Then success and catalog recovery use the atomic frontier", async () => {
+it("Given a local delta commit, When a fresh instance loads, Then document and catalog use the atomic frontier", async () => {
   const f = await fixture()
-  const register = vi.spyOn(f.storage, "registerWorkspace").mockRejectedValue(new Error("Legacy catalog unavailable"))
-  try {
-    expect((await f.extend())?.title).toBe("Local edit")
-    expect(register).not.toHaveBeenCalled()
-    expect((await new WorkspaceStorage().loadWorkspaceDoc(f.base.id))?.doc.title).toBe("Local edit")
-    expect((await new WorkspaceStorage().listWorkspaces()).find(record => record.id === f.base.id)?.title).toBe("Local edit")
-  } finally { register.mockRestore() }
+  expect((await f.extend())?.title).toBe("Local edit")
+  expect((await new WorkspaceStorage().loadWorkspaceDoc(f.base.id))?.doc.title).toBe("Local edit")
+  expect((await new WorkspaceStorage().listWorkspaces()).find(record => record.id === f.base.id)?.title).toBe("Local edit")
 })
 
 it("Given an authority change during local validation, When extending the checkpoint, Then no admitted result is returned", async () => {

@@ -13,10 +13,9 @@ import { isItem } from "./domain/model"
 import {
   WorkspaceStorage,
   setStorageFailureHookForTest,
-  createWorkspaceBundleV2,
-  readWorkspaceBundleV2,
 } from "./storage"
 import type { WorkspaceDocumentV2 } from "./domain/model"
+import { exportWorkspaceBundleV2, readWorkspaceBundleV2 } from "./domain/workspaceBundle"
 import * as journal from "./storageJournal"
 import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 
@@ -113,23 +112,31 @@ describe("Workspace catalog across browser tabs", () => {
   const tab = () => new WorkspaceStorage({ changes: new Map(), proofs: new Map(), receipts: new Map(),
     snapshots: new Map(), workspaces: new Map(), personalRoots: new Map() })
 
+  async function saveCatalogWorkspace(storage: WorkspaceStorage, id: string, title: string, archivedAt: string | null = null) {
+    const loaded = await storage.loadWorkspaceDoc(id)
+    const base = loaded?.doc ?? Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(id, title, "owner", "blank"))
+    const doc = Automerge.change(Automerge.clone(base), draft => { draft.title = title; draft.archivedAt = archivedAt })
+    try { await storage.saveSnapshot(id, doc, Automerge.save(doc)) }
+    finally { Automerge.free(doc); Automerge.free(base) }
+  }
+
   it("keeps a received workspace when a stale tab saves another workspace", async () => {
     const existingId = crypto.randomUUID()
     const newId = crypto.randomUUID()
     const old = tab()
-    await old.registerWorkspace(existingId, "Existing")
+    await saveCatalogWorkspace(old, existingId, "Existing")
     const receiving = tab()
     await receiving.listWorkspaces()
-    await receiving.registerWorkspace(newId, "Twang issues")
-    await old.registerWorkspace(existingId, "Edited")
+    await saveCatalogWorkspace(receiving, newId, "Twang issues")
+    await saveCatalogWorkspace(old, existingId, "Edited")
     expect((await tab().listWorkspaces()).map(w => w.id)).toEqual(expect.arrayContaining([existingId, newId]))
   })
 
   it("reads available and archived entries from one catalog snapshot", async () => {
     const id = crypto.randomUUID()
     const storage = tab()
-    await storage.registerWorkspace(id, "Available")
-    await storage.registerWorkspace(`${id}-archived`, "Archived", new Date().toISOString())
+    await saveCatalogWorkspace(storage, id, "Available")
+    await saveCatalogWorkspace(storage, `${id}-archived`, "Archived", new Date().toISOString())
     const readRecords = vi.spyOn(storage as never, "workspaceRecords")
 
     const catalog = await storage.listWorkspaceCatalog()
@@ -148,7 +155,6 @@ describe("Workspace catalog across browser tabs", () => {
     expect(doc.archivedAt).toBeNull()
     await tab().saveSnapshot(id, archived, Automerge.save(archived))
     expect((await stale.listWorkspaces()).some(workspace => workspace.id === id)).toBe(false)
-    await expect(stale.registerWorkspace(id, "Stale edit")).rejects.toThrow(/archived/i)
     await expect(stale.saveSnapshot(id, doc, Automerge.save(doc))).rejects.toThrow(/archived/i)
     const loaded = (await tab().loadWorkspaceDoc(id))!.doc
     const restored = Automerge.change(Automerge.clone(loaded), draft => { draft.archivedAt = null })
@@ -168,14 +174,12 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     storage = new WorkspaceStorage()
   })
 
-  it("Given an unavailable legacy catalog writer, When a snapshot commits, Then success and catalog recovery depend only on the atomic journal", async () => {
+  it("Given a committed snapshot, When another instance reads the catalog, Then metadata comes only from the atomic journal", async () => {
     const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Atomic catalog", profile.identity.personId, "blank"))
-    const register = vi.spyOn(storage, "registerWorkspace").mockRejectedValue(new Error("Legacy catalog unavailable"))
     try {
       await expect(storage.saveSnapshot(doc.id, doc, Automerge.save(doc))).resolves.toBeUndefined()
-      expect(register).not.toHaveBeenCalled()
       expect((await new WorkspaceStorage().listWorkspaces()).find(record => record.id === doc.id)?.title).toBe(doc.title)
-    } finally { register.mockRestore(); Automerge.free(doc) }
+    } finally { Automerge.free(doc) }
   })
 
   it("loads stored documents without creating unsigned CRDT changes", async () => {
@@ -390,12 +394,10 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const evidence = { bytes, decisions: [], authorizationEvidence: [], dismissedHashes: [], resolvedReviews: [] }
     await storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)
     const write = vi.spyOn(journal, "writeLocalJournal")
-    const register = vi.spyOn(storage, "registerWorkspace")
     try {
       await expect(storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)).resolves.toEqual({ proofChanged: false, causalChanged: false })
       expect(write).not.toHaveBeenCalled()
-      expect(register).not.toHaveBeenCalled()
-    } finally { write.mockRestore(); register.mockRestore(); Automerge.free(doc) }
+    } finally { write.mockRestore(); Automerge.free(doc) }
   })
 
   it("handles same-ID retry idempotently returning existing receipt without duplicating change", async () => {
@@ -551,11 +553,9 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(loaded?.workspaces["ws_test"].documentId).toBe("doc_test")
   })
 
-  it("exports v2 bundle with public proofs but without private keys, personal root, or invitation secrets (Requirement 2.5)", async () => {
+  it("exports the current bundle without private keys, personal root, or invitation secrets", async () => {
     const rawWs = createWorkspaceDoc("ws_export", "Export Test", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
-    const heads = Automerge.getHeads(doc).sort()
-    const automergeBytes = Automerge.save(doc)
 
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
     const res = await executeCommand(doc, { kind: "createItem", parentId: col.id, title: "Exported Item" }, profile)
@@ -577,12 +577,14 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
       workspaces: {},
     })
 
-    const bundleBytes = createWorkspaceBundleV2("ws_export", heads, automergeBytes, proofs, { title: "Export Test" })
-    const unzipped = readWorkspaceBundleV2(bundleBytes)
+    const bundleBytes = await exportWorkspaceBundleV2(res.value.newDoc)
+    const result = await readWorkspaceBundleV2(bundleBytes)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const unzipped = result.value
 
     expect(unzipped.manifest.version).toBe(2)
     expect(unzipped.manifest.workspaceId).toBe("ws_export")
-    expect(unzipped.proofs.changeProofs).toHaveLength(1)
 
     const strRepr = JSON.stringify(unzipped)
     expect(strRepr).not.toContain("privateKey")

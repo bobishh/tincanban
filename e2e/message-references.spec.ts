@@ -192,7 +192,6 @@ test("Given a copied link before local workspace rekeying, when its preserved sc
     const moved = await defaultStorage.rekeyWorkspace(id, newId, "Rekeyed workspace", async document => {
       return recordGenesisAuthority(document, profile)
     })
-    await defaultStorage.registerWorkspace(newId, moved.title)
     const root = await defaultStorage.loadPersonalRoot()
     if (!root) throw new Error("Personal root unavailable during rekey fixture")
     delete root.workspaces[id]

@@ -4,29 +4,6 @@ import { canonicalizeJson } from "../domain/identityCrypto"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 
-let dbPromise: Promise<IDBDatabase> | undefined
-
-function database() {
-  return dbPromise ??= new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("tincanban-write-authorizations-v1")
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains("records")) request.result.createObjectStore("records")
-    }
-    request.onsuccess = () => resolve(request.result)
-    request.onerror = () => reject(request.error)
-  })
-}
-
-async function legacyRecords(workspaceId: string): Promise<WorkspaceChangeAuthorization[]> {
-  if (typeof indexedDB === "undefined") return []
-  const db = await database()
-  return new Promise((resolve, reject) => {
-    const request = db.transaction("records").objectStore("records").get(workspaceId)
-    request.onsuccess = () => resolve(request.result ?? [])
-    request.onerror = () => reject(request.error)
-  })
-}
-
 export async function records(workspaceId: string): Promise<WorkspaceChangeAuthorization[]> {
   return mergeAuthorizationRecords(await basisRecords(workspaceId), await readWorkspaceDeltaAuthorizations(workspaceId) as WorkspaceChangeAuthorization[])
 }
@@ -38,7 +15,7 @@ export async function basisRecords(workspaceId: string): Promise<WorkspaceChange
   const completion = transactionDone(transaction)
   const stored = await requestResult(transaction.objectStore("authorizations").get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
   await completion
-  return stored?.records ?? legacyRecords(workspaceId)
+  return stored?.records ?? []
 }
 
 export async function putRecords(workspaceId: string, incoming: WorkspaceChangeAuthorization[]): Promise<boolean> {
