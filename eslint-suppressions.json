@@ -75,11 +75,6 @@
       "count": 2
     }
   },
-  "src/storageJournal.ts": {
-    "@typescript-eslint/no-unsafe-assignment": {
-      "count": 1
-    }
-  },
   "src/sync/deviceSyncController.policyRefresh.test.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -131,7 +126,7 @@
   },
   "src/sync/workspaceChangeProofStore.ts": {
     "@typescript-eslint/no-unsafe-argument": {
-      "count": 2
+      "count": 1
     },
     "@typescript-eslint/no-unsafe-member-access": {
       "count": 1
