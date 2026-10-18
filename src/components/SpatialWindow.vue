@@ -168,12 +168,9 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-heading .detail-head-actions .button { white-space: nowrap; min-width: 44px; }
 .spatial-heading .detail-head h2 { margin: 0; font-size: var(--site-font-detail-heading-size, 1.5rem); }
 .spatial-heading .detail-head p { margin: var(--space-1) 0 0; font-size: .85rem; line-height: 1.2; }
-.spatial-window .status-strip-shell { position: relative; min-width: 0; flex: none; margin-bottom: var(--space-2); }
-.spatial-window .stage-scroll { position: absolute; top: 0; bottom: 3px; z-index: 1; width: 32px; min-height: var(--control-size-compact); padding: 0; border: 0; font-size: 1.4rem; color: var(--ink); cursor: pointer; }
-.spatial-window .stage-scroll-earlier { left: 0; background: linear-gradient(to right, var(--panel) 60%, transparent); }
-.spatial-window .stage-scroll-later { right: 0; background: linear-gradient(to left, var(--panel) 60%, transparent); }
-.spatial-window .status-strip { flex: none; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
-.spatial-window .status-strip button { flex-shrink: 0; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+.spatial-window .status-strip-shell { min-width: 0; flex: none; margin-bottom: var(--space-2); }
+.spatial-window .status-strip { flex: none; flex-wrap: wrap; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
+.spatial-window .status-strip button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
 .scroll-frame .detail-section:first-child { margin-top: 0; }
 @media (max-width: 600px) {
   .spatial-titlebar { padding: var(--space-1) var(--space-2); gap: var(--space-1); }

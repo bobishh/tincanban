@@ -64,7 +64,7 @@ test("Given sync settings, When tabs change, Then panels fade in and reduced mot
   expect(await panel.evaluate(element => Number.parseFloat(getComputedStyle(element).animationDuration))).toBeLessThan(.01)
 })
 
-for (const width of [320, 390]) test(`Given a ${width}px lead window with a long role, When stages overflow, Then Edit stays on one line and arrows reveal hidden stages`, async ({ page }, info) => {
+for (const width of [320, 390, 1280]) test(`Given a ${width}px card window with a long role, When stages exceed one row, Then Edit stays on one line and all stage buttons wrap without horizontal scrolling`, async ({ page }, info) => {
   await populatedBoard(page, true)
   await page.evaluate(async () => {
     const app = (await import("/src/test/stateFixture.ts")).useTincanban()
@@ -77,20 +77,20 @@ for (const width of [320, 390]) test(`Given a ${width}px lead window with a long
   const edit = dialog.getByRole("button", { name: "Edit", exact: true })
   await expect(edit).toHaveCSS("white-space", "nowrap")
   expect((await edit.boundingBox())!.width).toBeGreaterThanOrEqual(44)
-  const next = dialog.getByRole("button", { name: "Show later stages", exact: true })
-  const previous = dialog.getByRole("button", { name: "Show earlier stages", exact: true })
-  await expect(next).toBeVisible()
-  await expect(previous).toHaveCount(0)
-  await next.click()
-  await expect(previous).toBeVisible()
   const row = dialog.locator(".status-strip")
-  await row.evaluate(element => { element.scrollLeft = element.scrollWidth })
-  await expect(next).toHaveCount(0)
-  await expect(previous).toBeVisible()
-  await page.emulateMedia({ reducedMotion: "reduce" })
-  await previous.click()
-  await expect(next).toBeVisible()
-  await page.screenshot({ path: info.outputPath(`stage-hints-${width}.png`) })
+  expect(await row.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+  expect(await row.locator("button").evaluateAll(buttons => {
+    const strip = buttons[0]!.parentElement!.getBoundingClientRect()
+    return buttons.every(button => {
+      const bounds = button.getBoundingClientRect()
+      return bounds.left >= strip.left && bounds.right <= strip.right + 1
+    })
+  })).toBe(true)
+  await expect(dialog.getByRole("button", { name: /Show (earlier|later) stages/ })).toHaveCount(0)
+  await row.getByRole("button", { name: "Applied", exact: true }).click()
+  await expect(row.getByRole("button", { name: "Applied", exact: true })).toHaveAttribute("aria-pressed", "true")
+  await expect(dialog.getByRole("status")).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath(`wrapped-stages-${width}.png`) })
   await edit.click()
   await expect(page.getByRole("dialog", { name: "Edit item", exact: true })).toBeVisible()
 })

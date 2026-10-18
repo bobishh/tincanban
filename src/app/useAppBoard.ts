@@ -8,7 +8,7 @@ import { projectEntityHistory } from "../domain/history"
 import { isItem, type AttachedDocument, type Item } from "../domain/model"
 import { configuredCardFields, narrativeFieldId } from "../domain/cardPresentation"
 import type { WorkspaceDocumentV2 } from "../domain/entitySchemas"
-import { orderItemsByPriority } from "../domain/priority"
+import { orderItemsByPriority, projectItemPriority } from "../domain/priority"
 import { itemNarrative } from "../domain/narrative"
 import type { PeerHistoryRemoteRead } from "../sync/workspacePeerHistoryRecoverySources"
 import type { PeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
@@ -230,7 +230,8 @@ function readSelectedItem(core: AppBoardContext) {
 
 function readItem(core: AppBoardContext, id: string) {
   const entity = core.tincanban.getPresentedWorkspaceDoc()?.entities[id]
-  return isItem(entity) ? entity : null
+  return isItem(entity) ? projectItemPriority(core.tincanban.activeBoard.value, entity,
+    narrativeFieldId(core.tincanban.activeBoard.value, core.tincanban.boardFields.value)) : null
 }
 
 function readSubitems(core: AppBoardContext, parentId: string) {
