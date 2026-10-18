@@ -1,6 +1,62 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkRelease, retainedAsset, retentionCandidates } from './release.mjs';
+import { checkRelease, retainedAsset, retentionCandidates, retainPreviousAssets } from './release.mjs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('Given many previous chunks, when retaining a release, then download concurrently within a fixed budget and preserve verified bytes and expiry', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'frontend-retention-'));
+  try {
+    mkdirSync(join(directory, 'assets'));
+    const bytes = Buffer.from('verified previous chunk');
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    const now = Date.parse('2026-10-18T18:00:00Z');
+    const paths = Array.from({ length: 40 }, (_, index) => `assets/chunk-${String(index).padStart(8, '0')}.js`);
+    const existing = 'assets/current-Abc12345.js';
+    writeFileSync(join(directory, existing), bytes);
+    const previous = { files: { [existing]: hash }, retained: Object.fromEntries(paths.map(path => [path, hash])),
+      retainedUntil: Object.fromEntries(paths.map(path => [path, now + 1000])) };
+    let active = 0;
+    let peak = 0;
+    const requested = [];
+    const result = await retainPreviousAssets(previous, directory, async path => {
+      requested.push(path);
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise(resolve => setImmediate(resolve));
+      active--;
+      return new Response(bytes);
+    }, { now });
+    assert.equal(peak, 16);
+    assert.deepEqual(requested.slice().sort(), paths.slice().sort());
+    assert.deepEqual(result.retained, previous.retained);
+    assert.deepEqual(result.retainedUntil, previous.retainedUntil);
+    for (const path of paths) assert.deepEqual(readFileSync(join(directory, path)), bytes);
+    assert.deepEqual(readFileSync(join(directory, existing)), bytes);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Given a corrupted previous chunk, when concurrent retention fails, then stop scheduling downloads and leave the sealed manifest unchanged', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'frontend-retention-'));
+  try {
+    mkdirSync(join(directory, 'assets'));
+    const bytes = Buffer.from('expected chunk');
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    const manifest = JSON.stringify({ sha: 'current', files: {} });
+    writeFileSync(join(directory, 'release.json'), manifest);
+    const paths = Array.from({ length: 40 }, (_, index) => `assets/chunk-${String(index).padStart(8, '0')}.js`);
+    let calls = 0;
+    await assert.rejects(retainPreviousAssets({ files: Object.fromEntries(paths.map(path => [path, hash])) }, directory, async () => {
+      calls++;
+      await new Promise(resolve => setImmediate(resolve));
+      return new Response('corrupted chunk');
+    }), /Previous chunk checksum mismatch/);
+    assert.ok(calls < paths.length);
+    assert.equal(readFileSync(join(directory, 'release.json'), 'utf8'), manifest);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('Given several deployments while a tab stays open, when retaining assets, then keep its chunks for seven days without renewing their expiry', () => {
   const now = Date.parse('2026-10-11T18:00:00Z');

@@ -20,6 +20,35 @@ export function retentionCandidates(previous, now = Date.now()) {
   if (candidates.length > maximumRetainedChunks) throw new Error('Previous live chunks exceed the retention capacity');
   return candidates;
 }
+export async function retainPreviousAssets(previous, directory, request, { now = Date.now(), onProgress = () => {} } = {}) {
+  const pending = retentionCandidates(previous, now).filter(([path]) => !existsSync(join(directory, path)));
+  const retained = {};
+  const retainedUntil = {};
+  let next = 0;
+  let completed = 0;
+  let failure;
+  onProgress(0, pending.length);
+  const download = async ([path, hash, until]) => {
+    const asset = await request(path);
+    if (!asset.ok) throw new Error(`Previous chunk unavailable: ${path}`);
+    const bytes = Buffer.from(await asset.arrayBuffer());
+    if (digest(bytes) !== hash) throw new Error(`Previous chunk checksum mismatch: ${path}`);
+    writeFileSync(join(directory, path), bytes);
+    retained[path] = hash;
+    retainedUntil[path] = until;
+    completed++;
+    if (completed % 100 === 0 || completed === pending.length) onProgress(completed, pending.length);
+  };
+  await Promise.all(Array.from({ length: Math.min(16, pending.length) }, async () => {
+    while (!failure && next < pending.length) {
+      const candidate = pending[next++];
+      try { await download(candidate); }
+      catch (error) { failure ??= error instanceof Error ? error : new Error(String(error)); }
+    }
+  }));
+  if (failure) throw failure;
+  return { retained, retainedUntil };
+}
 export function uploadedVersion(output) {
   const uploads = output.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
     .filter((entry) => entry.type === 'version-upload');
@@ -65,18 +94,9 @@ async function main() {
     const response = await get(`${origin}/release.json`);
     const previous = response.status === 404 ? JSON.parse(readFileSync(new URL('./bootstrap-assets.json', import.meta.url))) : await response.json();
     if (!response.ok && response.status !== 404) throw new Error('Cannot read previous release');
-    const retained = {};
-    const retainedUntil = {};
-    for (const [path, hash, until] of retentionCandidates(previous)) {
-      if (existsSync(join(directory, path))) continue;
-      const asset = await get(`${origin}/${path}`);
-      if (!asset.ok) throw new Error(`Previous chunk unavailable: ${path}`);
-      const bytes = Buffer.from(await asset.arrayBuffer());
-      if (digest(bytes) !== hash) throw new Error(`Previous chunk checksum mismatch: ${path}`);
-      writeFileSync(join(directory, path), bytes);
-      retained[path] = hash;
-      retainedUntil[path] = until;
-    }
+    const { retained, retainedUntil } = await retainPreviousAssets(previous, directory, path => get(`${origin}/${path}`), {
+      onProgress: (completed, total) => console.log(`Retaining previous chunks: ${completed}/${total}`),
+    });
     writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained, retainedUntil, previousSha: previous.sha ?? null, previousManifestSha256: digest(canonical(previous)) }));
     console.log(`Retained ${Object.keys(retained).length} previous chunks`);
   } else if (command === 'smoke') {
