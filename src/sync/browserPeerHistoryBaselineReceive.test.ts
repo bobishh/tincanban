@@ -1,10 +1,12 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
+import { WorkspaceUnavailableError } from "../workspaceAvailability"
 
 const mocks = vi.hoisted(() => ({
   getWorkspaceAuthority: vi.fn(), getWorkspaceCredential: vi.fn(), getVerifiedReceivedHistoryBaseline: vi.fn(),
-  ensureHistoryProgress: vi.fn(), readWorkspaceRevision: vi.fn(), readActive: vi.fn(), verify: vi.fn(), revision: "snapshot-revision",
+  ensureHistoryProgress: vi.fn(), readWorkspaceRevision: vi.fn(), readWorkspaceSnapshot: vi.fn(),
+  readActive: vi.fn(), verify: vi.fn(), revision: "snapshot-revision",
 }))
 
 vi.mock("./peerStore", () => ({ peerStore: { getWorkspaceAuthority: mocks.getWorkspaceAuthority,
@@ -14,6 +16,7 @@ vi.mock("../storage", () => ({ defaultStorage: {
   ensureHistoryProgress: mocks.ensureHistoryProgress,
   readWorkspaceRevision: mocks.readWorkspaceRevision,
 } }))
+vi.mock("../storageJournal", () => ({ readWorkspaceBasisSnapshot: vi.fn(), readWorkspaceSnapshot: mocks.readWorkspaceSnapshot }))
 vi.mock("./receivedHistoryBaselineRepository", () => ({ createReceivedHistoryBaselineRepository: () => ({ readActive: mocks.readActive }) }))
 vi.mock("./peerHistoryBaselineReceiver", () => ({ verifyPeerReceivedHistoryBaseline: mocks.verify }))
 vi.mock("./blindSnapshotRevision", () => ({ createBlindSnapshotRevision: () => async () => mocks.revision }))
@@ -55,6 +58,7 @@ async function setup(input: { activeId: string; incomingId: string; sourceHeads:
   mocks.getVerifiedReceivedHistoryBaseline.mockResolvedValue(previous)
   mocks.ensureHistoryProgress.mockResolvedValue(progress)
   mocks.readWorkspaceRevision.mockResolvedValue("revision")
+  mocks.readWorkspaceSnapshot.mockResolvedValue(undefined)
   mocks.readActive.mockResolvedValue({ baselineId: input.activeId })
   mocks.verify.mockResolvedValue(candidate)
   const tincanban = { readWorkspaceBytes: vi.fn(async () => workspaceBytes), getCurrentProfile: vi.fn() }
@@ -80,4 +84,11 @@ it("Given a new peer baseline that omits a current local head, When received, Th
   await expect(f.receive()).rejects.toThrow(/does not cover a local workspace head/i)
   expect(mocks.verify).toHaveBeenCalledWith(expect.objectContaining({ previous: f.previous }))
   expect(f.candidate.free).toHaveBeenCalledOnce()
+})
+
+it("Given authority revision metadata without a local workspace snapshot, When receiving a peer baseline, Then treat the unavailable document as an empty local basis", async () => {
+  const f = await setup({ activeId: "A".repeat(43), incomingId: "B".repeat(43), sourceHeads: [] })
+  f.tincanban.readWorkspaceBytes.mockRejectedValue(new WorkspaceUnavailableError())
+  await expect(f.receive()).resolves.toBe(f.candidate)
+  expect(mocks.readWorkspaceSnapshot).toHaveBeenCalledWith("board")
 })

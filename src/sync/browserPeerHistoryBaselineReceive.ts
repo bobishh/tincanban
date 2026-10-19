@@ -1,7 +1,8 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { StoredWorkspaceSnapshot } from "../storageJournal"
-import { readWorkspaceBasisSnapshot } from "../storageJournal"
+import { readWorkspaceBasisSnapshot, readWorkspaceSnapshot } from "../storageJournal"
+import { WorkspaceUnavailableError } from "../workspaceAvailability"
 import { defaultStorage } from "../storage"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { PeerHistoryBaselineDescriptor, PeerHistoryObjectReader } from "./workspaceSet"
@@ -36,7 +37,12 @@ function readPeerBaselinePayload(basis: WasmVerifiedReceivedHistoryBaseline): Pe
 async function readLocalSnapshot(workspaceId: string, tincanban: ReturnType<typeof useTincanban>) {
   const revision = await defaultStorage.readWorkspaceRevision(workspaceId)
   if (!revision) return { bytes: new Uint8Array(), heads: [], revision: undefined as string | undefined }
-  const bytes = await tincanban.readWorkspaceBytes(workspaceId)
+  let bytes: Uint8Array
+  try { bytes = await tincanban.readWorkspaceBytes(workspaceId) }
+  catch (error) {
+    if (!(error instanceof WorkspaceUnavailableError) || await readWorkspaceSnapshot(workspaceId)) throw error
+    return { bytes: new Uint8Array(), heads: [], revision }
+  }
   const doc = Automerge.load(bytes)
   try { return { bytes: bytes.slice(), heads: Automerge.getHeads(doc).sort(), revision: await createBlindSnapshotRevision(tincanban)(workspaceId) } }
   finally { Automerge.free(doc) }

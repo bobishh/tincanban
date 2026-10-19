@@ -1,11 +1,6 @@
 import {
-  createDeviceEnrollmentInvite,
-  createPairingSecret,
-  decodePairingFrame,
-  encodePairingFrame,
-  inspectPairingFrame,
-  invitationUrl,
-  type DeviceEnrollmentInvitation,
+  createDeviceEnrollmentInvite, createPairingSecret, decodePairingFrame, encodePairingFrame,
+  inspectPairingFrame, invitationUrl, type DeviceEnrollmentInvitation,
 } from "@meta-uber/mesh-pairing"
 import { MeshReconnectPolicy } from "@meta-uber/mesh-runtime"
 import { meshNetworkConnection } from "@meta-uber/mesh-transport"

@@ -313,15 +313,63 @@ test("Given original signed archive evidence and an uncertain upload, when Rusty
   }
 }, 30_000)
 
-function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number; key: Uint8Array }, transitionId: string) {
-  const controlJson = decodeBlindBytes(capturedHistory.originals.control)
+async function appShapedNativeHistory(signer: CryptoKey) {
+  const workspaceId = capturedHistory.catalogue.context.workspaceId
+  const templateProof = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.authorizations[0])))
+  const deviceId = templateProof.signed.signerKeyId
+  const createProof = async (hashes: string[]) => ({
+    signed: await signEnvelope(signer, { kind: "workspace-changes", version: 1, workspaceId, hashes,
+      personId: capturedHistory.expected.personId, deviceId }, deviceId),
+    publicKey: templateProof.publicKey, certificates: templateProof.certificates, grant: null,
+  })
+  const seed = createWorkspaceDoc(workspaceId, "Native admitted original", capturedHistory.expected.personId, "blank")
+  const base = Automerge.from(seed)
+  let fork: Automerge.Doc<WorkspaceDocumentV2> | undefined
+  try {
+    const baseHashes = Automerge.getAllChanges(base).map(change => Automerge.decodeChange(change).hash)
+    const admittedProof = await createProof(baseHashes)
+    const quarantined = Automerge.change(base, draft => { draft.title = "Unsigned overwrite remains quarantined" })
+    fork = Automerge.clone(quarantined)
+    const missing = Automerge.change(fork, draft => { Object.assign(draft, { missing: "This dependency is deliberately absent" }) })
+    const pending = Automerge.change(missing, draft => { Object.assign(draft, { pending: "Keep compressed original unchanged. ".repeat(500) }) })
+    const pendingBytes = Automerge.getLastLocalChange(pending)!
+    const pendingHash = Automerge.decodeChange(pendingBytes).hash
+    const pendingProof = await createProof([pendingHash])
+    return {
+      ...capturedHistory,
+      originals: {
+        ...capturedHistory.originals,
+        document: encodeBlindBytes(Automerge.save(quarantined)),
+        authorizations: [encodeBlindBytes(new TextEncoder().encode(canonicalizeJson(admittedProof))),
+          encodeBlindBytes(new TextEncoder().encode(canonicalizeJson(pendingProof)))],
+        pending: [encodeBlindBytes(pendingBytes)],
+      },
+      expected: { ...capturedHistory.expected, admittedHash: baseHashes.at(-1)!, pendingHash,
+        nodeCount: fixtureStateNodeCount(seed) },
+    }
+  } finally {
+    if (fork) Automerge.free(fork)
+    Automerge.free(base)
+  }
+}
+
+function fixtureStateNodeCount(value: unknown): number {
+  if (Array.isArray(value)) return 1 + value.reduce<number>((total, child) => total + fixtureStateNodeCount(child), 0)
+  if (value !== null && typeof value === "object")
+    return 1 + Object.values(value).reduce<number>((total, child) => total + fixtureStateNodeCount(child), 0)
+  return 1
+}
+
+function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number; key: Uint8Array }, transitionId: string,
+  fixture: Awaited<ReturnType<typeof appShapedNativeHistory>>) {
+  const controlJson = decodeBlindBytes(fixture.originals.control)
   const control = JSON.parse(new TextDecoder().decode(controlJson))
-  const authorizationJson = capturedHistory.originals.authorizations.map(decodeBlindBytes)
+  const authorizationJson = fixture.originals.authorizations.map(decodeBlindBytes)
   const records = authorizationJson.map(bytes => JSON.parse(new TextDecoder().decode(bytes)))
-  const signer = { personId: capturedHistory.expected.personId, deviceId: records[0].signed.signerKeyId,
+  const signer = { personId: fixture.expected.personId, deviceId: records[0].signed.signerKeyId,
     certificates: records[0].certificates }
-  const source = { snapshot: { ...control, document: decodeBlindBytes(capturedHistory.originals.document) }, records,
-    pendingChangeBytes: capturedHistory.originals.pending.map(decodeBlindBytes), nowMs: 0 }
+  const source = { snapshot: { ...control, document: decodeBlindBytes(fixture.originals.document) }, records,
+    pendingChangeBytes: fixture.originals.pending.map(decodeBlindBytes), nowMs: 0 }
   expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, claimedOwner: true }, signer)).toThrow(/unknown field/i)
   expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, claimedOwner: true } }, signer)).toThrow(/unknown field/i)
   expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, document: [256] } }, signer)).toThrow()
@@ -330,13 +378,13 @@ function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number
   let capture: Capture | undefined
   let rebase: ReturnType<Capture["rebase"]> | undefined
   try {
-    capture = preparation.captureOriginals(capturedHistory.catalogue.context.historyEpoch, controlJson, authorizationJson)
+    capture = preparation.captureOriginals(fixture.catalogue.context.historyEpoch, controlJson, authorizationJson)
     const objects: Array<{ ciphertextId: string; binding: ArchiveEncryptionBinding; object: EncryptedArchiveObject }> = []
     const catalogue = capture.writeEncryptedCatalogue(scope.scopeId, scope.keyEpoch, scope.key,
       () => crypto.getRandomValues(new Uint8Array(12)),
       (ciphertextId: string, binding: ArchiveEncryptionBinding, object: EncryptedArchiveObject) => {
         objects.push({ ciphertextId, binding: structuredClone(binding), object: structuredClone(object) })
-      }, () => {}) as typeof capturedHistory.catalogue
+      }, () => {}) as typeof fixture.catalogue
     // Exercise the production Native-to-browser sink ABI, including its plaintext content address.
     expect(objects.length).toBeGreaterThan(0)
     expect(objects.every(entry => /^[A-Za-z0-9_-]{43}$/.test(entry.binding.objectId))).toBe(true)
@@ -370,7 +418,13 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
     const scope = { scopeId: access.scopeId, keyEpoch: 1, key: crypto.getRandomValues(new Uint8Array(32)) }
     const transitionId = crypto.randomUUID()
-    const current = deriveCurrentNativeCatalogue(scope, transitionId)
+    await initializeNativeAutomerge()
+    const fixtureKey = new Uint8Array(48)
+    fixtureKey.set([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32])
+    fixtureKey.fill(152, 16)
+    const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
+    const historyFixture = await appShapedNativeHistory(signer)
+    const current = deriveCurrentNativeCatalogue(scope, transitionId, historyFixture)
     releaseCurrent = current.dispose
     const context = current.catalogue.context
     const identity = { transitionId, personId: profile.identity.personId, workspaceId: context.workspaceId, historyEpoch: context.historyEpoch,
@@ -378,7 +432,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       privateBinding: await blindHash(new TextEncoder().encode(canonicalBlindJson({ ...access, key: toBase64Url(scope.key) }))), previousBaselineId: null,
       storage: { origin: access.origin, scopeId: access.scopeId, policyRevision: access.policyRevision, servicePublicKey: access.servicePublicKey, keyEpoch: 1, keyDigest: await blindHash(scope.key) } }
     const journal = createWorkspaceHistoryPreparation(identity, () => {})
-    await journal.capture([new TextEncoder().encode(canonicalBlindJson(capturedHistory.originals))])
+    await journal.capture([new TextEncoder().encode(canonicalBlindJson(historyFixture.originals))])
     for (const entry of current.objects) await journal.stageSealed(scope, entry.binding, { ciphertextId: entry.ciphertextId, object: entry.object })
     const rootBinding = { ...context, objectId: current.catalogue.root.objectId, objectKind: "page" as const, partIndex: 0, partCount: 1 }
     await journal.archive(rootBinding)
@@ -400,9 +454,9 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const recipient = createArchiveRemote({ ...access, writeToken: "recipient-cannot-upload" }, { fetch, ensureCurrent: () => {} })
     const objects = []
     for (const ciphertextId of archiveIds) objects.push({ ciphertextId, object: await recipient.download(ciphertextId) })
-    const originalSigner = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.authorizations[0])))
-    const nativeInput = { originals: capturedHistory.originals, historyEpoch: context.historyEpoch, proposeInitialBaseline: true,
-      signer: { personId: capturedHistory.expected.personId, deviceId: originalSigner.signed.signerKeyId, certificates: originalSigner.certificates },
+    const originalSigner = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.authorizations[0])))
+    const nativeInput = { originals: historyFixture.originals, historyEpoch: context.historyEpoch, proposeInitialBaseline: true,
+      signer: { personId: historyFixture.expected.personId, deviceId: originalSigner.signed.signerKeyId, certificates: originalSigner.certificates },
       scope: { ...scope, key: toBase64Url(scope.key) }, locatorRoot: prepared.root,
       authority: { servicePublicKey: access.servicePublicKey, scopeId: access.scopeId, policyRevision: access.policyRevision },
       dataTransitionId: identity.transitionId, directoryTransitionId: directoryIdentity.transitionId,
@@ -411,19 +465,15 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     expect(verified).toEqual({ kind: "verified-history-archive-coverage", version: 1,
       catalogueRoot: current.catalogue.root, locatorRoot: prepared.root, captureRevision: current.catalogue.captureRevision,
       authorityRevision: current.catalogue.authorityRevision, dataObjectCount: covered.objectCount, directoryObjectCount: prepared.directory.objectCount,
-      basis: { historyEpoch: context.historyEpoch, transitionId: identity.transitionId, nodeCount: 2, changeCount: 1,
-        stateDigest: "_QpBD1OaSEhZVINBNeCj9Cui5FftSHLRzj39Uw7jjzE", documentDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+      basis: { historyEpoch: context.historyEpoch, transitionId: identity.transitionId, nodeCount: historyFixture.expected.nodeCount, changeCount: 1,
+        stateDigest: current.rebase.stateDigest(), documentDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         genesisHash: expect.stringMatching(/^[0-9a-f]{64}$/), byteLength: expect.any(Number) },
       ownerProposal: expect.objectContaining({ kind: "workspace-history-baseline", version: 1,
         historyEpoch: 1, previousBaselineId: null, authorityRevision: current.catalogue.authorityRevision,
         archive: current.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
     expect(verified.basis.byteLength).toBeLessThan(2048)
     // Generated public fixture seed; never send a signing key to the Native adapter.
-    const fixtureKey = new Uint8Array(48)
-    fixtureKey.set([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32])
-    fixtureKey.fill(152, 16)
-    const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
-    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.control)))
+    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.control)))
     const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
       scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
         publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
@@ -499,7 +549,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
           if (error) reject(new Error(`Prior released reader probe failed: ${stderr || error.message}`))
           else resolveProbe(stdout)
         })
-        child.stdin?.end(JSON.stringify({ originals: capturedHistory.originals, admittedHash: capturedHistory.expected.admittedHash,
+        child.stdin?.end(JSON.stringify({ originals: historyFixture.originals, admittedHash: historyFixture.expected.admittedHash,
           compactDocument: toBase64Url(current.document), signedBaseline: JSON.stringify(signedBaseline) }))
       })
       expect(JSON.parse(probe)).toMatchObject({ nativeHistoryAPI: "absent", originalHistory: "admitted-and-retained",
@@ -511,7 +561,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const received = WasmStateCore.verifyOwnerAttestedHistoryBaseline(new TextEncoder().encode(JSON.stringify(signedBaseline)),
       current.document, scope.scopeId, scope.keyEpoch, scope.key, nativeInput.authority, trustedScopeAuthority, retainedObjects, () => {})
     try {
-      const originalBytes = decodeBlindBytes(capturedHistory.originals.document)
+      const originalBytes = decodeBlindBytes(historyFixture.originals.document)
       expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
         originalBytes, retainedObjects, () => {})).not.toThrow()
       expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,
@@ -540,7 +590,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       // The browser adapter receives the same published wire through the production Native verifier and durable repository.
       vi.stubGlobal("indexedDB", new IDBFactory())
       const browserRepository = createReceivedHistoryBaselineRepository(context.workspaceId, () => {})
-      const browserOriginalBytes = decodeBlindBytes(capturedHistory.originals.document)
+      const browserOriginalBytes = decodeBlindBytes(historyFixture.originals.document)
       const originalDoc = Automerge.load<WorkspaceDocumentV2>(browserOriginalBytes)
       const browserHeads = Automerge.getHeads(originalDoc).sort()
       const browserRoute = { ensureCurrent: async () => {}, download: recipient.download }
@@ -560,13 +610,13 @@ test("Given a Native-derived original-history catalogue, when data and locator c
           candidate.originalJson(), wire),
         merge: async (document: Uint8Array, authorization: unknown, candidate: typeof received) => {
           expect(document).toEqual(current.document)
-          expect(authorization).toEqual(capturedHistory.originals.authorizations)
+          expect(authorization).toEqual(historyFixture.originals.authorizations)
           expect(candidate.document()).toEqual(current.document)
         },
       }
       try {
         await receiveBrowserHistoryBaseline({ workspaceId: context.workspaceId, config: receiveConfig, wire,
-          document: current.document, authorization: capturedHistory.originals.authorizations,
+        document: current.document, authorization: historyFixture.originals.authorizations,
           trustedScopeAuthority, fetch: browserRoute, ports: browserPorts })
         expect((await browserRepository.readActive())?.baselineId).toBe(ownerProposal.baselineId)
         expect((await browserRepository.readArchiveRecord())?.wire).toEqual(wire)
@@ -584,16 +634,15 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       return new Uint8Array(Buffer.concat(parts))
     }
     const original = await readOriginal("pending/0000000000000000", "source-pending/0000000000000000")
-    expect(original).toEqual(decodeBlindBytes(capturedHistory.originals.pending[0]))
-    await initializeNativeAutomerge()
+    expect(original).toEqual(decodeBlindBytes(historyFixture.originals.pending[0]))
     const decoded = Automerge.decodeChange(original)
-    expect(decoded.hash).toBe(capturedHistory.expected.pendingHash)
+    expect(decoded.hash).toBe(historyFixture.expected.pendingHash)
     expect(decoded.deps).toHaveLength(1)
     const originalProof = await readOriginal("proof/0000000000000001", "source-proof/0000000000000001")
-    expect(originalProof).toEqual(decodeBlindBytes(capturedHistory.originals.authorizations[1]))
+    expect(originalProof).toEqual(decodeBlindBytes(historyFixture.originals.authorizations[1]))
     const proof = JSON.parse(new TextDecoder().decode(originalProof))
     const archivedControl = JSON.parse(new TextDecoder().decode(await readOriginal("control", "source-control")))
-    expect(archivedControl.genesisOwner.publicKey).toBe(capturedHistory.expected.publicKey)
+    expect(archivedControl.genesisOwner.publicKey).toBe(historyFixture.expected.publicKey)
     const authorKey = await verifyDeviceCertificateChain({ ...archivedControl.genesisOwner, displayName: "" }, proof.signed.signerKeyId, proof.certificates)
     expect(await verifyEnvelope(proof.signed, authorKey)).toBe(true)
     expect(proof.signed.payload.hashes).toEqual([decoded.hash])
