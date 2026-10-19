@@ -12,7 +12,7 @@ import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
 import { executeCommand as executeCommandWithoutSigningContext } from "../../../src/domain/commands";
 import { rustyHash as blindHash, rustyObjectId as blindObjectId, canonicalRustyJson as canonicalBlindJson,
   type RustyStorageReceipt as BlindReceipt, decodeBlindBytes, decryptBlindObject, encodeBlindBytes,
-  encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica";
+  encryptBlindObject, uploadRustyObject as uploadBlindObject } from "@meta-uber/mesh-replication/rusty-replica";
 import { AutomationReplica, type AutomationActivationPacket, type ReplicaTransport } from "../src/replica";
 import { automationTypes, parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { automationEntityId } from "../../../src/domain/automationLifecycle";
@@ -35,6 +35,8 @@ import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from ".
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
 import type { AttachmentLocator } from "../../../src/product-replica";
 import type { ExecutionCoordinator } from "../src/executionCoordinator";
+import { runReplicaHostContractVectors, type ReplicaHostContractVector, type ReplicaHostPending,
+  type ReplicaHostVectorObservation } from "../../../src/sync/replicaHostContractVectors.testSupport";
 
 /** Domain test seams use the local adapter; production requests execute in Reflux. */
 function executionFixture(instance: object): ExecutionCoordinator {
@@ -2275,6 +2277,80 @@ async function createReceiptSigner() {
 }
 
 describe("AutomationReplica in workerd with the compiled Rust policy", () => {
+  async function runWorkerReplicaHostVector(vector: ReplicaHostContractVector): Promise<ReplicaHostVectorObservation> {
+    const { automation, packet, persisted } = await fixture();
+    const originalPersist = packet.persist!;
+    let durableGeneration = 0;
+    let adapterGeneration = 0;
+    let racedHostWrite = false;
+    packet.persist = async serialized => {
+      if (adapterGeneration !== durableGeneration) throw new Error("Durable host persistence CAS conflict");
+      await originalPersist(serialized);
+      durableGeneration += 1;
+      adapterGeneration = durableGeneration;
+    };
+    let loseFirstResponse = vector === "response-loss-restart";
+    const uploads: ReplicaHostPending[] = [];
+    let pendingAtUpload: ReplicaHostPending | undefined;
+    const transport: ReplicaTransport = {
+      inventory: async (_access, after) => ({ objects: [], cursor: after, hasMore: false }),
+      download: async () => { throw new Error("Unexpected download"); },
+      upload: async (access, object, requestId) => {
+        const sent = { object: structuredClone(object), requestId: requestId ?? "" };
+        const pending = JSON.parse(persisted.at(-1) ?? "null").pending as { object: BlindObject; requestId: string } | undefined;
+        pendingAtUpload ??= pending && { object: structuredClone(pending.object), requestId: pending.requestId };
+        uploads.push(sent);
+        if (loseFirstResponse) { loseFirstResponse = false; throw new Error("Response lost after durable save"); }
+        if (vector === "revoked-credential") return uploadBlindObject(access, object, sent.requestId, 0,
+          async () => Response.json({ message: "Scope credential revoked" }, { status: 403 }));
+        if (vector === "wrong-signed-receipt") return signedReceipt(access, object, `${sent.requestId}-wrong`);
+        const receipt = await signedReceipt(access, object, sent.requestId);
+        if (vector === "failed-ack-cas" && !racedHostWrite) {
+          const current = persisted.at(-1)!;
+          if (!JSON.parse(current).pending) throw new Error("Expected durable pending request during host race");
+          racedHostWrite = true;
+          persisted.push(current);
+          durableGeneration += 1;
+        }
+        return receipt;
+      },
+    };
+    packet.transport = transport;
+    const replica = await AutomationReplica.activate(packet, automation);
+    await replica.createLead(`replica-contract-${vector}`, { company: "Contract vector", role: "Engineer" }, {});
+    const savedBefore = JSON.parse(persisted.at(-1)!) as { blind: { cursor: number; lastUploaded: string } };
+    const acknowledgementBefore = { cursor: savedBefore.blind.cursor, lastUploaded: savedBefore.blind.lastUploaded };
+    let failure: unknown;
+    let retryUpload: ReplicaHostPending | undefined;
+    if (vector === "response-loss-restart") {
+      try { await replica.sync(); } catch (error) { failure = error; }
+      const afterLoss = persisted.at(-1)!;
+      const restored = await AutomationReplica.restore(afterLoss, automation, packet.persist, transport);
+      await restored.sync();
+      const retry = uploads[1];
+      if (retry) retryUpload = retry;
+    } else {
+      try { await replica.sync(); } catch (error) { failure = error; }
+    }
+    const after = JSON.parse(persisted.at(-1)!) as {
+      blind: { cursor: number; lastUploaded: string }; pending?: { object: BlindObject; requestId?: string };
+    };
+    return {
+      pendingAtUpload,
+      upload: uploads[0]!,
+      pendingAfter: after.pending?.requestId ? { object: structuredClone(after.pending.object), requestId: after.pending.requestId } : undefined,
+      acknowledgementBefore,
+      acknowledgementAfter: { cursor: after.blind.cursor, lastUploaded: after.blind.lastUploaded },
+      uploadCount: uploads.length,
+      ...(retryUpload ? { retryUpload } : {}),
+      ...(failure === undefined ? {} : { failure }),
+    };
+  }
+
+  it("Given the shared replica contract vectors, when the Worker host adapter runs, then preserve exact pending and acknowledgement invariants", async () => {
+    await runReplicaHostContractVectors(runWorkerReplicaHostVector);
+  });
+
   it("Given an active Worker, when a real change is admitted and its event is replayed, then history usage advances once", async () => {
     const { automation, packet, persisted } = await fixture();
     const replica = await AutomationReplica.activate(packet, automation);

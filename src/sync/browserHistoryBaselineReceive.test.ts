@@ -9,7 +9,9 @@ function fixture() {
   } } }), free: vi.fn() }
   const active = { baselineId: "prior" }
   const repository = { readActive: vi.fn(async () => active), readStaged: vi.fn(async () => undefined),
-    stage: vi.fn(async () => "stage-a"), activate: vi.fn(async () => {}) }
+    stage: vi.fn(async () => "stage-a"), activate: vi.fn(async () => {
+      active.baselineId = candidate.envelope().payload.baselineId
+    }) }
   const storage = new WorkspaceStorage()
   const ports = { repository, workspaceTransaction: <T>(operation: (context: WorkspaceTransactionContext) => Promise<T>) =>
     storage.withWorkspaceTransaction("board-a", operation),
@@ -19,7 +21,7 @@ function fixture() {
     verify: vi.fn(async () => candidate as unknown as WasmVerifiedReceivedHistoryBaseline), coversHeads: vi.fn(async () => {}), readExpectedSnapshot: vi.fn(async () => null),
     accept: vi.fn(async () => {}),
     merge: vi.fn(async () => {}) }
-  return { candidate, repository, ports }
+  return { candidate, active, repository, ports }
 }
 const config = { workspaceId: "board-a", scopeId: "scope-a", servicePublicKey: "S".repeat(43), policyRevision: 2,
   keyEpoch: 2, contentKey: "K".repeat(43), origin: "https://rusty.example" } as never
@@ -79,6 +81,23 @@ describe("browser received history baseline", () => {
       wire: {}, document: new Uint8Array([2]), authorization: {}, trustedScopeAuthority: {},
       fetch: { download: vi.fn(), ensureCurrent: vi.fn() } as never, ports: failedAdmission.ports })).rejects.toThrow(/admission/i)
     expect(failedAdmission.repository.activate).toHaveBeenCalledOnce()
+    expect(failedAdmission.ports.accept).toHaveBeenCalledOnce()
     expect(failedAdmission.candidate.free).not.toHaveBeenCalled()
+  })
+
+  it("Given a changed durable workspace basis, when final activation loses its transaction CAS, then preserve the old baseline and skip cache publication and merge", async () => {
+    const failedActivation = fixture()
+    failedActivation.repository.activate.mockRejectedValueOnce(new Error("Workspace revision conflict"))
+    await expect(receiveBrowserHistoryBaseline({ workspaceId: "board-a", config,
+      wire: {}, document: new Uint8Array([2]), authorization: {}, trustedScopeAuthority: {},
+      fetch: { download: vi.fn(), ensureCurrent: vi.fn() } as never, ports: failedActivation.ports })).rejects.toThrow(/revision conflict/i)
+
+    expect(failedActivation.active.baselineId).toBe("prior")
+    await expect(failedActivation.repository.readActive()).resolves.toMatchObject({ baselineId: "prior" })
+    await expect(failedActivation.ports.readLocal()).resolves.toMatchObject({ revision: "local-1", catalogRevision: "catalog-1", pending: false,
+      bytes: new Uint8Array([1]), heads: ["a".repeat(64)] })
+    expect(failedActivation.ports.accept).not.toHaveBeenCalled()
+    expect(failedActivation.ports.merge).not.toHaveBeenCalled()
+    expect(failedActivation.candidate.free).toHaveBeenCalledOnce()
   })
 })
