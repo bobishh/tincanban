@@ -16,11 +16,12 @@ async function fixture() {
   const binding: ManagementBinding = { origin: "https://rusty.example", servicePublicKey: toBase64Url(serviceKey), resourceKind: "scope", resourceId: "scope-1" }
   const owner = profile.identity.personId
   const repository = new RustyManagementRepository(owner)
+  const issuedAt = Date.now()
   const authorization = await signEnvelope(profile.privateKeys.devicePrivateKey, {
     kind: "rusty-management-policy-update" as const, version: 1 as const, serviceId, origin: binding.origin,
     personId: owner, deviceId: profile.device.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId,
     expectedRevision: 0, operations: ["management.update", "scope.policy"], revokedDeviceIds: [],
-    requestId: "policy-request", issuedAt: Date.now(), expiresAt: Date.now() + 120_000,
+    requestId: "policy-request", issuedAt, expiresAt: issuedAt + 120_000,
   }, profile.device.deviceId)
   const request: ManagementUpdateRequest = { version: 1, identity: profile.identity, deviceId: profile.device.deviceId,
     certificates: [profile.certificate], authorization }
