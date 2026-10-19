@@ -6,7 +6,7 @@ button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
 button:disabled:hover { transform: none; }
 .button, .icon-button, .drawer-item-btn, .column-add-button { transition: transform var(--motion-fast) var(--motion-ease), background-color var(--motion-fast) ease; }
-.button { display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-size); border: 2px solid var(--line); border-radius: 0; padding: var(--space-2) var(--space-4); color: inherit; font-weight: var(--site-ui-weight); text-decoration: none; }
+.button { display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-size); border: 2px solid var(--line); border-radius: 0; padding: var(--space-3) var(--space-5); color: inherit; font-weight: var(--site-ui-weight); text-decoration: none; }
 .button-primary { color: white; }
 .button-danger { color: white; text-decoration: underline; text-underline-offset: 3px; }
 .button-small { min-height: var(--control-size-compact); padding: var(--space-2) var(--space-3); font-size: .8rem; }
