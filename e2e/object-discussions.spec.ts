@@ -26,6 +26,21 @@ async function send(page: Page, body: string) {
   return discussion
 }
 
+test("Given an idle board, when workspace chat opens, then conversation UI loads on demand", async ({ page }) => {
+  const conversationLayerRequests: string[] = []
+  page.on("request", request => {
+    if (request.url().includes("ObjectConversationLayer.vue")) conversationLayerRequests.push(request.url())
+  })
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Lazy conversation board")
+  await expect(page.getByRole("button", { name: "Add lead to Lead", exact: true })).toBeVisible()
+  expect(conversationLayerRequests).toHaveLength(0)
+
+  await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).click()
+  await expect(page.getByRole("dialog", { name: "Workspace chat", exact: true })).toBeVisible()
+  expect(conversationLayerRequests.filter(url => !url.includes("?vue&type=style"))).toHaveLength(1)
+})
+
 test("Given an offline discussion with an incompatible known peer, when sending, then signed context saves locally and survives reload", async ({ page, context }) => {
   const item = await createItem(page)
   await discussObject(page, item)

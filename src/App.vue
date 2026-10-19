@@ -15,8 +15,6 @@ import BoardDragOverlay from "./components/BoardDragOverlay.vue"
 import BoardSurface from "./components/BoardSurface.vue"
 import BoardToolbar from "./components/BoardToolbar.vue"
 import { useObjectConversations } from "./app/useObjectConversations"
-import ObjectConversationLayer from "./components/ObjectConversationLayer.vue"
-import MobileDrawer from "./components/MobileDrawer.vue"
 import SaveState from "./components/SaveState.vue"
 import StartupStatus from "./components/StartupStatus.vue"
 import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
@@ -24,14 +22,14 @@ import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
 import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
-import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component } from "vue"
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component, watch } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
 import { useColumnCollapse } from "./ui/useColumnCollapse"
 import { useAppViewState } from "./app/useAppViewState"
 import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
-import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MoveItemDialog, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const boardAddress = useBoardAddress(app.workspace)
@@ -66,6 +64,8 @@ const {
   quickNoteDraft, quickNoteSaving, quickNoteError, hasExperimentalMcp,
   showMobileMenu, menuButtonRef, startupError,
 } = ui
+const mobileDrawerRequested = ref(false)
+watch(showMobileMenu, open => { if (open) mobileDrawerRequested.value = true })
 const { toggleMobileMenu, closeMobileMenu } = uiControls
 const {
   workspaceLabel, entityName, addItemLabel, itemFormColumns, itemFormParentValue,
@@ -76,6 +76,9 @@ const {
   archivedHistoryNotice, archivedHistoryHasMore, loadEarlierItemHistory,
 } = app.board
 const { sync, chat } = app.collaboration.device
+const showConversationLayer = computed(() => chat.open.value || conversations.currentDiscussions.value.length > 0 || Boolean(
+  conversations.selection.value || conversations.contextMenu.value || conversations.sourceState.value || conversations.navigationState.value,
+))
 const { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, canEditItems, canEditBoard, canManageAccess, canRenameWorkspace } = app.collaboration.permissions
 const { devicePresence, meshPresence, meshPresenceLabel,
   activeMeshRetryAt, meshMembers, activeSuccession,
@@ -185,6 +188,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
     </Transition>
 
     <MobileDrawer
+      v-if="mobileDrawerRequested"
       :is-open="showMobileMenu"
       :active-workspace-title="workspaceLabel"
       :is-editing-board="isEditingBoard && boardAddressResolved"
@@ -312,7 +316,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
     />
 
 
-    <ObjectConversationLayer :workspace-id="activeWorkspace.id" :workspace-title="activeWorkspace.title" :chat="chat" :conversations="conversations"
+    <ObjectConversationLayer v-if="showConversationLayer" :workspace-id="activeWorkspace.id" :workspace-title="activeWorkspace.title" :chat="chat" :conversations="conversations"
       :can-view="chatCanView" :read-only="!canEditItems" :connected="sync.isWorkspaceLive(activeWorkspace.id)" :member-avatars="memberAvatars" @workspaces="showWorkspaces = true" @chat-close="chat.open.value = false" @source-dismiss="conversations.sourceState.value = ''" />
     <aside v-if="chat.toast.value" class="chat-toast" role="status">
       <button class="button button-quiet" type="button" @click="chat.open.value = true">{{ chat.toast.value.text }}</button>

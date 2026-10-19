@@ -33,6 +33,8 @@ export const ColumnDialog = defineAsyncComponent<Component>(() => import("../com
 export const SchemaEditorDialog = defineAsyncComponent<Component>(() => import("../components/SchemaEditorDialog.vue"))
 export const MoveItemDialog = defineAsyncComponent<Component>(() => import("../components/MoveItemDialog.vue"))
 export const WorkspaceSettingsPanel = defineAsyncComponent<Component>(() => import("../components/WorkspaceSettingsPanel.vue"))
+export const ObjectConversationLayer = defineAsyncComponent<Component>(() => import("../components/ObjectConversationLayer.vue"))
+export const MobileDrawer = defineAsyncComponent<Component>(() => import("../components/MobileDrawer.vue"))
 
 /** Background preloading does not belong to the synchronous application graph. */
 export function startOfflineDetailPreload(isReady: () => boolean) {
