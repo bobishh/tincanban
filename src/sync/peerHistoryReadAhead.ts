@@ -4,7 +4,8 @@ import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/histo
 export type PeerHistoryReadRequest = { objectId: string; maximumBytes: number; binding: ArchiveObjectReadBinding }
 export type PeerHistoryReadResult = { failed: boolean; error?: unknown; bytes?: Uint8Array }
 type Result = PeerHistoryReadResult & { maximumBytes: number }
-const MAX_READS = 4, MAX_RESERVED_BYTES = 2 * 1024 * 1024
+// Bound history bursts so heartbeat/control reads can share SDK peer slots and queue.
+const MAX_READS = 2, MAX_RESERVED_BYTES = 2 * 1024 * 1024
 
 /** Bounded independent leaf reads; callers consume and retain results in canonical order. */
 export class PeerHistoryReadAhead {
