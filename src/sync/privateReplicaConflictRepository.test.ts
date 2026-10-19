@@ -143,7 +143,10 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
     policyRevision: 8, requestId: pending.requestId }, serviceId, "RUSTY/2")
   const drained = { ...capture.progress!, generation: capture.progress!.generation + 1, lastUploaded: pending.hash }
   delete drained.pending
-  const activation = await planPrivateReplicaConflictActivation(owner, capture, proposal.next, { progress: drained, receipt }, freeze)
+  const retained = { ...capture, sourceConditions: [...capture.sourceConditions,
+    { key: `tincanban.blind-replicas.v1.${owner}`, value: "obsolete dependency is not an outbox source" }] }
+  await expect(planPrivateReplicaConflictActivation(owner, retained, proposal.next, {}, freeze)).rejects.toThrow(/receipt|confirmation/i)
+  const activation = await planPrivateReplicaConflictActivation(owner, retained, proposal.next, { progress: drained, receipt }, freeze)
   expect(await compareAndSwapLocal(activation.plan)).toBe(true)
   await deleteLocal(await replicaCredentialFreezeKey(owner, config.origin))
   const activated = (await getReplicaConfigurations(owner))[0]!
@@ -151,6 +154,29 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
   expect(contentKeysForEpoch(activated, 1)).toEqual([key(1), key(2), key(3)].sort())
   expect((await getPrivateReplicaProgress(owner, activated)).lastUploaded).toBe("")
   expect((await getPrivateReplicaProgress(owner, activated)).contentIdentity).toBeUndefined()
+})
+
+it("Given a retained recovery capture with retired storage dependencies, when resuming its exact authoritative source, then activate without reading retired stores", async () => {
+  const { owner, config, capture, freeze, next } = await fixture()
+  const retiredKeys = ["tincanban.blind-replicas.v1.", "tincanban.device-replica-preferences.v1.",
+    "tincanban.private-replica-legacy-snapshot.v1."].map(prefix => prefix + owner)
+  const retained = { ...capture, sourceConditions: [...capture.sourceConditions,
+    ...retiredKeys.map(key => ({ key, value: "retired evidence is not a credential input" }))] }
+  expect(privateReplicaConflictSourceDifference(await capturePrivateReplicaConflict(owner, config.origin, config.scopeId, freeze), retained)).toBeUndefined()
+  const activation = await planPrivateReplicaConflictActivation(owner, retained, next, { progress: capture.progress }, freeze)
+  expect(activation.plan.conditions.map(condition => condition.key)).toEqual([privateReplicaStateStorageKey(owner),
+    await replicaCredentialFreezeKey(owner, config.origin)])
+  expect(await compareAndSwapLocal(activation.plan)).toBe(true)
+  for (const key of retiredKeys) expect(await readLocal(key)).toBeNull()
+})
+
+it("Given a saved recovery capture, when an unknown or duplicate dependency appears, then reject without relaxing source validation", async () => {
+  const { owner, capture, freeze, next } = await fixture()
+  for (const extra of [{ key: "unexpected-store", value: null },
+    { key: "tincanban.blind-replicas.v1.different-owner", value: null }, capture.sourceConditions[0]!]) {
+    const invalid = { ...capture, sourceConditions: [...capture.sourceConditions, extra] }
+    await expect(planPrivateReplicaConflictActivation(owner, invalid, next, {}, freeze)).rejects.toThrow(/source|condition|dependency/i)
+  }
 })
 
 it("Given frozen recovery and another connection, when its durable outbox advances, then resume recovery preserving that outbox under a fresh final CAS", async () => {
@@ -171,12 +197,14 @@ it("Given frozen recovery and another connection, when its durable outbox advanc
   expect((await readLocal(await replicaCredentialFreezeKey(owner, config.origin)))).not.toBeNull()
 })
 
-it("Given frozen recovery, when its own progress changes, then reject activation and retain changed source without overwriting it", async () => {
+it("Given frozen recovery with a retired dependency, when its own progress changes, then reject activation and retain changed source without overwriting it", async () => {
   const { owner, config, capture, freeze, next } = await fixture()
   const storageKey = privateReplicaStateStorageKey(owner), raw = JSON.parse((await readLocal(storageKey))!)
   raw.progress[`${config.origin}/${config.scopeId}`] = { revision: capture.previousVariants[0]!.preferenceRevision, cursor: 1, lastUploaded: "" }
   const changed = JSON.stringify(raw)
   await writeLocal(storageKey, changed)
-  await expect(planPrivateReplicaConflictActivation(owner, capture, next, { progress: capture.progress }, freeze)).rejects.toThrow(/source|changed/i)
+  const retained = { ...capture, sourceConditions: [...capture.sourceConditions,
+    { key: `tincanban.blind-replicas.v1.${owner}`, value: null }] }
+  await expect(planPrivateReplicaConflictActivation(owner, retained, next, { progress: capture.progress }, freeze)).rejects.toThrow(/source|changed/i)
   expect(await readLocal(storageKey)).toBe(changed)
 })

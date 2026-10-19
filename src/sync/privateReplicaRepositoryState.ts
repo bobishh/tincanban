@@ -21,11 +21,16 @@ const retiredReplicaPrefixes = ["tincanban.blind-replicas.v1.", "tincanban.devic
   "tincanban.private-replica-legacy-snapshot.v1."]
 const cleanedOwners = new Set<string>()
 
+/** Names only: retired stores must never supply credentials or transaction dependencies. */
+export function retiredReplicaStateKeys(owner: string): string[] {
+  return retiredReplicaPrefixes.map(prefix => prefix + owner)
+}
+
 /** Retired records are deletion targets only, never input or transaction dependencies. */
 async function discardRetiredRecords(owner: string, raw: string): Promise<void> {
   if (cleanedOwners.has(owner)) return
   if (await compareAndSwapLocal({ conditions: [{ key: stateKey(owner), value: raw }],
-    writes: retiredReplicaPrefixes.map(prefix => ({ key: prefix + owner, value: null })) })) cleanedOwners.add(owner)
+    writes: retiredReplicaStateKeys(owner).map(key => ({ key, value: null })) })) cleanedOwners.add(owner)
 }
 
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {

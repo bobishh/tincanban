@@ -326,6 +326,7 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
     }
     if (journal.freeze.proposal.next.servicePublicKey !== service.servicePublicKey) throw new Error('Rusty service pin changed during saved recovery')
     const freeze = journal.freeze, frozenRaw = JSON.stringify(freeze)
+    let reportedRetiredDependencies = false
     const live = async () => {
       await guard()
       if (await readLocal(freezeKey) !== (journal!.activated ? null : frozenRaw)) throw new Error('Recovery freeze changed')
@@ -333,6 +334,11 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
         const difference = privateReplicaConflictSourceDifference(
           await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture)
         if (difference) throw new Error(`Exact conflict source or original outbox changed during recovery (${difference})`)
+        if (!reportedRetiredDependencies && journal!.capture.sourceConditions.length > 1) {
+          reportedRetiredDependencies = true
+          recordRecoveryPhase("completed", { phase: "reconcileRetiredDependencies", "workspace.id": trace.workspaceId,
+            "server.address": trace.serverHost, "recovery.transition_id": trace.transitionId })
+        }
       }
       await guard()
     }
