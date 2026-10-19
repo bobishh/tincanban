@@ -167,22 +167,33 @@ function shouldActivateRecovery(current: WorkspaceRecoveryJournal, revision: Rec
   return true
 }
 
-function assertCapturedWorkspaceBasis(current: WorkspaceRecoveryJournal, revision: unknown, workspaceId: string,
-  basis: WorkspaceRevisionBasis): void {
-  const revisionValue = revision && typeof revision === "object" && !Array.isArray(revision)
-    ? (revision as Record<string, unknown>).revision : undefined
-  const frontier = current.frontiers.find(row => row.id === workspaceId)?.value ?? null
-  const snapshot = current.snapshots.find(row => row.id === workspaceId)?.value
+function capturedBaselineId(snapshot: unknown): string | null {
   const snapshotRecord = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
     ? snapshot as Record<string, unknown> : undefined
   const receivedHistory = snapshotRecord?.receivedHistory
   const historyRecord = receivedHistory && typeof receivedHistory === "object" && !Array.isArray(receivedHistory)
     ? receivedHistory as Record<string, unknown> : undefined
   const baselineId = historyRecord?.baselineId ?? null
-  if (receivedHistory !== undefined && (!historyRecord || baselineId !== null && typeof baselineId !== "string")) {
+  if (receivedHistory !== undefined && !historyRecord) {
     throw new Error("Workspace recovery snapshot has malformed received history state")
   }
-  if ((revisionValue ?? null) !== basis.revision || canonicalizeJson(frontier) !== canonicalizeJson(basis.frontier) ||
+  if (baselineId !== null && typeof baselineId !== "string") {
+    throw new Error("Workspace recovery snapshot has malformed received history state")
+  }
+  return baselineId
+}
+
+function revisionValue(revision: unknown): unknown {
+  return revision && typeof revision === "object" && !Array.isArray(revision)
+    ? (revision as Record<string, unknown>).revision : undefined
+}
+
+function assertCapturedWorkspaceBasis(current: WorkspaceRecoveryJournal, revision: unknown, workspaceId: string,
+  basis: WorkspaceRevisionBasis): void {
+  const frontier = current.frontiers.find(row => row.id === workspaceId)?.value ?? null
+  const snapshot = current.snapshots.find(row => row.id === workspaceId)?.value
+  const baselineId = capturedBaselineId(snapshot)
+  if ((revisionValue(revision) ?? null) !== basis.revision || canonicalizeJson(frontier) !== canonicalizeJson(basis.frontier) ||
       baselineId !== basis.baselineId) throw new Error("Workspace changed during recovery activation")
 }
 

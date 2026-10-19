@@ -54,7 +54,7 @@ for (const policyChanged of [false, true]) test(`Given startup debug and ${polic
     const doc = app.getActiveDoc()!
     const evidence = (await storage.loadCausalEvidence(doc.id))!
     evidence.admissionCheckpoint!.policy = "previous-policy"
-    await storage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, evidence)
+    await storage.withWorkspaceTransaction(doc.id, transaction => transaction.commitWorkspace(doc, A.save(doc), [], undefined, evidence))
   })
   const before = entries.length
   await page.reload()

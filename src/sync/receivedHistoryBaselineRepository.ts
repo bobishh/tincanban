@@ -76,15 +76,25 @@ function assertVerifiedParent(baselineId: string | undefined, parent: StoredRece
   if (baselineId && parent?.state !== "active") throw new Error("Verified history parent is missing")
 }
 
+function stagedRevisionMatchesCaptured(revision: { revision?: string } | undefined, frontier: unknown,
+  staged: StoredReceivedHistoryBaseline): boolean {
+  return (revision?.revision ?? undefined) === staged.expectedWorkspaceRevision &&
+    canonicalizeJson(frontier ?? null) === canonicalizeJson(staged.expectedFrontier ?? null)
+}
+
+function stagedRevisionMatchesExpected(revision: { revision?: string } | undefined, frontier: unknown,
+  snapshot: StoredWorkspaceSnapshot | undefined, staged: StoredReceivedHistoryBaseline, expected: WorkspaceRevisionBasis): boolean {
+  return (revision?.revision ?? null) === expected.revision && canonicalizeJson(frontier ?? null) === canonicalizeJson(expected.frontier) &&
+    (snapshot?.receivedHistory?.baselineId ?? null) === expected.baselineId &&
+    (staged.expectedWorkspaceRevision ?? null) === expected.revision &&
+    canonicalizeJson(staged.expectedFrontier ?? null) === canonicalizeJson(expected.frontier) &&
+    (staged.previousBaselineId ?? null) === expected.baselineId
+}
+
 function assertStagedRevision(revision: { revision?: string } | undefined, frontier: unknown,
   snapshot: StoredWorkspaceSnapshot | undefined, staged: StoredReceivedHistoryBaseline, expected: WorkspaceRevisionBasis) {
-  if ((revision?.revision ?? undefined) !== staged.expectedWorkspaceRevision ||
-      canonicalizeJson(frontier ?? null) !== canonicalizeJson(staged.expectedFrontier ?? null) ||
-      (revision?.revision ?? null) !== expected.revision || canonicalizeJson(frontier ?? null) !== canonicalizeJson(expected.frontier) ||
-      (snapshot?.receivedHistory?.baselineId ?? null) !== expected.baselineId ||
-      (staged.expectedWorkspaceRevision ?? null) !== expected.revision ||
-      canonicalizeJson(staged.expectedFrontier ?? null) !== canonicalizeJson(expected.frontier) ||
-      (staged.previousBaselineId ?? null) !== expected.baselineId) {
+  if (!stagedRevisionMatchesCaptured(revision, frontier, staged) ||
+      !stagedRevisionMatchesExpected(revision, frontier, snapshot, staged, expected)) {
     throw new Error("Workspace history changed after received history was staged")
   }
 }

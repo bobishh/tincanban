@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
+import type { WorkspaceTransactionContext } from "../src/storageTransactionAccess"
 
 async function blankBoard(page: Page) {
   await page.goto("/")
@@ -148,11 +149,14 @@ test("Given a pending save, when the user tries to edit or submit again, then th
   await page.evaluate(async () => {
     const path = "/src/storage.ts"
     const { defaultStorage } = await import(path)
-    const commit = defaultStorage.commitWorkspace.bind(defaultStorage)
-    defaultStorage.commitWorkspace = async (...args: Parameters<typeof defaultStorage.commitWorkspace>) => {
-      await new Promise<void>(resolve => { (window as any).__TINCANBAN_RELEASE_SAVE__ = resolve })
-      defaultStorage.commitWorkspace = commit
-      return commit(...args)
+    const withWorkspaceTransaction = defaultStorage.withWorkspaceTransaction.bind(defaultStorage)
+    defaultStorage.withWorkspaceTransaction = function <T>(workspaceId: string,
+      operation: (transaction: WorkspaceTransactionContext) => Promise<T>) {
+      return withWorkspaceTransaction(workspaceId, async transaction => {
+        await new Promise<void>(resolve => { (window as any).__TINCANBAN_RELEASE_SAVE__ = resolve })
+        defaultStorage.withWorkspaceTransaction = withWorkspaceTransaction
+        return operation(transaction)
+      })
     }
   })
   await form.getByRole("button", { name: "Save item", exact: true }).click()

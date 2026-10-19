@@ -19,7 +19,7 @@ function setup(scope: string) {
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { locks: { request: async (_: unknown, fn: () => unknown) => fn() } } })
   mocks.load.mockResolvedValue({ messages: [], profiles: [{ personId: "person", name: "Person" }] })
   mocks.append.mockResolvedValue(true)
-  mocks.merge.mockResolvedValue({ changed: false, added: [] })
+  mocks.merge.mockResolvedValue({ changed: false, profilesChanged: false, added: [] })
   mocks.peers.mockResolvedValue([])
   mocks.create.mockImplementation(async (_profile, _authority, workspaceId, kind, text, revision, context) => ({ signed: { signature: "signature", payload: { kind, workspaceId, id: "device:message", personId: "person", createdAt: "2026-10-05T00:00:00.000Z", text, revision, version: context ? 2 : 1, ...(context ? { context } : {}) } } }))
 }

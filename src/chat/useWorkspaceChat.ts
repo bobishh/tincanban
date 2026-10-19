@@ -117,7 +117,7 @@ function subscribeWorkspaceChat(options: SubscriptionOptions): () => void {
   const unsubscribe = subscribeChat((event) => {
     if (event.workspaceId !== options.workspaceId.value) return
     appendMessages(options.snapshot, event.added)
-    if (event.history) void options.refresh()
+    if (event.history || event.profilesChanged) void options.refresh()
     if (event.typing?.length) options.refreshTyping()
     if (event.remote && !options.snapshot.value.profiles.some((profile) => profile.personId === options.personId.value)) {
       void ensureChatProfile(event.workspaceId)

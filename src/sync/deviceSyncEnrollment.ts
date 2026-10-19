@@ -8,6 +8,7 @@ import {
   type DeviceEnrollmentInvitation,
 } from "@meta-uber/mesh-pairing"
 import { MeshReconnectPolicy } from "@meta-uber/mesh-runtime"
+import { meshNetworkConnection } from "@meta-uber/mesh-transport"
 import { defaultInvitationService, deriveTranscriptAuthCode } from "./invitations"
 import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest } from "./enrollment"
 import { defaultProofStore, certHashDefault } from "../domain/proofs"
@@ -29,6 +30,7 @@ import { showInviteQr } from "./deviceSyncInviteView"
 import type { PairingContext } from "./deviceSyncContext"
 import { meshTrace, type MeshTraceLevel } from "./meshTrace"
 import { offlineRetryDelay } from "./offlineRetry"
+import { meshIngressBudgetProfile } from "../iroh"
 
 type EnrollmentContext = PairingContext & {
   activeWorkspaceId?: () => string
@@ -426,7 +428,7 @@ export async function requestDeviceEnrollment(context: EnrollmentContext, invite
     if (!isCurrent(context, run)) return void node.close("Replaced")
     context.setNode(node)
     traceEnrollment("guest", "node.started", run, { endpoint: node.endpointId.slice(0, 8) })
-    connection = await dialEnrollmentPeer(context, run, node, invite)
+    connection = meshNetworkConnection(await dialEnrollmentPeer(context, run, node, invite), meshIngressBudgetProfile())
     if (!connection || !isCurrent(context, run)) return
     traceEnrollment("guest", "connected", run)
     await receiveEnrollmentApproval(context, run, node, connection, invite, profile)

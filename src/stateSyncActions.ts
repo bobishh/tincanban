@@ -165,11 +165,16 @@ async function mergeAuthorizedWorkspace(
       // Optional cache maintenance follows durable success and cannot reject that success.
       await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint, profile).catch(() => undefined)
     } finally {
-      Automerge.free(remote)
-      if (local) Automerge.free(local)
-      if (merged && !transferred) Automerge.free(merged)
+      releaseReceivedDocuments(remote, local, merged, transferred)
     }
   });
+}
+
+function releaseReceivedDocuments(remote: Automerge.Doc<WorkspaceDocumentV2>, local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
+  merged: Automerge.Doc<WorkspaceDocumentV2> | undefined, transferred: boolean) {
+  Automerge.free(remote)
+  if (local) Automerge.free(local)
+  if (merged && !transferred) Automerge.free(merged)
 }
 
 async function assertReceivedBasisCurrent(storage: WorkspaceStorage, id: string, admitted?: WasmVerifiedReceivedHistoryBaseline,

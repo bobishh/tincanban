@@ -119,11 +119,11 @@ async function storeUnadmittedRawTitle(page: Page, workspaceId: string, title: s
     if (!saved?.causalEvidence) throw new Error("Expected saved admission evidence")
     const projection = A.load(saved.bytes)
     try {
-      await defaultStorage.commitWorkspace(id, projection as never, saved.bytes, [], undefined, {
+      await defaultStorage.withWorkspaceTransaction(id, transaction => transaction.commitWorkspace(projection as never, saved.bytes, [], undefined, {
         ...saved.causalEvidence, bytes: new Uint8Array(bytes),
         decisions: [...saved.causalEvidence.decisions,
           { hash, status: { type: "pending", reason: "Untrusted raw candidate" } }],
-      })
+      }))
     } finally { A.free(projection) }
   }, { id: workspaceId, bytes: rawBytes, hash: changeHash })
   return rawHeads
@@ -1202,10 +1202,10 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
       const change = A.getLastLocalChange(unsigned)
       if (!change) throw new Error("Expected unsigned local change")
       const existing = await storage.defaultStorage.loadCausalEvidence(doc.id)
-      await storage.defaultStorage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, {
+      await storage.defaultStorage.withWorkspaceTransaction(doc.id, transaction => transaction.commitWorkspace(doc, A.save(doc), [], undefined, {
         bytes: A.save(unsigned), decisions: existing?.decisions ?? [],
         authorizationEvidence: existing?.authorizationEvidence ?? [],
-      })
+      }))
     })
     let failReviewModule!: () => void
     const reviewModuleGate = new Promise<void>(resolve => { failReviewModule = resolve })
@@ -1317,8 +1317,8 @@ test("Given an editor has an unsigned raw branch, when it is reloaded, then it s
       const doc = (await storage.loadWorkspaceDoc(workspaceId))?.doc
       if (!evidence || !doc) throw new Error("Review history missing before legacy-link check")
       const A = await import("/@id/@automerge/automerge/slim")
-      await storage.commitWorkspace(workspaceId, doc, A.save(doc), [], undefined,
-        { ...evidence, dismissedHashes: [], resolvedReviews: [] })
+      await storage.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(doc, A.save(doc), [], undefined,
+        { ...evidence, dismissedHashes: [], resolvedReviews: [] }))
     })
     await guest.reload()
     await expect(guest.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })

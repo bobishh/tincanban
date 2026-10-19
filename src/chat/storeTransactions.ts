@@ -203,7 +203,7 @@ export async function mergeChatTransaction(
   workspaceId: string,
   messageBatch: Map<string, StoredChatMessage>,
   profileBatch: Map<string, StoredChatProfile>
-): Promise<{ added: StoredChatMessage[]; changed: boolean }> {
+): Promise<{ added: StoredChatMessage[]; changed: boolean; profilesChanged: boolean }> {
   const messageStore = tx.objectStore(STORE_MESSAGES)
   const profileStore = tx.objectStore(STORE_PROFILES)
   const metaStore = tx.objectStore(STORE_META)
@@ -225,5 +225,5 @@ export async function mergeChatTransaction(
   const cutoffChanged = updatePruneCutoff(meta, pruned)
   const added = persistCandidates(messageStore, candidates, retainedIds)
   persistContentRevision(metaStore, meta, profilesChanged || added.length > 0 || deletedExisting, needsWrite || cutoffChanged)
-  return { added, changed: profilesChanged || added.length > 0 || deletedExisting }
+  return { added, changed: profilesChanged || added.length > 0 || deletedExisting, profilesChanged }
 }

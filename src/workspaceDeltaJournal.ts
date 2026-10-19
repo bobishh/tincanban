@@ -164,7 +164,12 @@ export class WorkspaceDeltaJournal {
     ensureCurrent()
     const next = nextFrontier(expected, delta)
     if (!this.database) return this.appendMemory(expected, delta, next, expectedRevision, ensureCurrent)
-    const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions", "snapshots", "historyProgress"], "readwrite")
+    return this.appendIndexedDb(this.database, expected, delta, next, expectedRevision, ensureCurrent)
+  }
+
+  private async appendIndexedDb(database: IDBDatabase, expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, next: WorkspaceDeltaFrontier,
+    expectedRevision: string | null, ensureCurrent: () => void): Promise<WorkspaceDeltaFrontier> {
+    const transaction = database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions", "snapshots", "historyProgress"], "readwrite")
     const done = transactionDone(transaction)
     try {
       const frontiers = transaction.objectStore("frontiers")
@@ -177,16 +182,8 @@ export class WorkspaceDeltaJournal {
       const { receipt, changeBytes, proof } = delta.command
       const receiptKey = `${expected.workspaceId}:${receipt.transactionId}`
       const existing = await requestResult(receipts.get(receiptKey)) as StoredReceiptRecord | undefined
-      if (existing) {
-        const committed = await requestResult(deltas.get(delta.id)) as StoredWorkspaceDelta | undefined
-        if (!current || existing.receipt.changeHash !== receipt.changeHash || committed?.hash !== delta.hash)
-          throw new Error("Delta transaction conflicts with a committed receipt")
-        await done
-        return current
-      }
-      if (canonicalizeJson(current) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
-      if ((revision?.revision ?? null) !== expectedRevision)
-        throw new Error("Workspace revision changed in another tab")
+      if (existing) return await returnExistingAppend(transaction, done, deltas, delta, current, existing, receipt.changeHash)
+      assertAppendBasis(current, revision, expected, expectedRevision)
       ensureCurrent()
       const changeKey = `${expected.workspaceId}:${receipt.changeHash}`
       deltas.add(delta)
@@ -214,26 +211,9 @@ export class WorkspaceDeltaJournal {
     expectedRevision: string | null, ensureCurrent: () => void) {
     let result = next
     updateLocalJournal(expected.workspaceId, current => {
-      const { receipt, proof, changeBytes } = delta.command
-      const existing = current.receipts[receipt.transactionId]
-      if (existing) {
-        if (!current.frontier || existing.changeHash !== receipt.changeHash ||
-          current.deltas?.find(item => item.id === delta.id)?.hash !== delta.hash) throw new Error("Delta transaction conflicts with a committed receipt")
-        result = current.frontier
-        return { ...current }
-      }
-      if (canonicalizeJson(current.frontier) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
-      if ((current.revision ?? null) !== expectedRevision)
-        throw new Error("Workspace revision changed in another tab")
-      ensureCurrent()
-      const nextJournal = { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
-        changes: [...current.changes, { workspaceId: expected.workspaceId, changeHash: receipt.changeHash,
-          bytesBase64: toBase64Url(changeBytes), addedAt: delta.savedAt }],
-        receipts: { ...current.receipts, [receipt.transactionId]: receipt }, proofs: { ...current.proofs, [receipt.changeHash]: proof } }
-      const progressBaselineId = current.snapshot?.receivedHistory?.baselineId ?? current.historyProgress?.baselineId
-      if (progressBaselineId !== undefined) advanceLocalHistoryProgress(nextJournal, expected.workspaceId,
-        progressBaselineId, 1, changeBytes.byteLength)
-      return nextJournal
+      const applied = appendMemoryJournal(current, expected, delta, next, expectedRevision, ensureCurrent)
+      result = applied.frontier
+      return applied.journal
     })
     return structuredClone(result)
   }
@@ -311,6 +291,63 @@ export class WorkspaceDeltaJournal {
     await done
     return { basis, frontier, saved }
   }
+}
+
+async function returnExistingAppend(
+  transaction: IDBTransaction, done: Promise<void>, deltas: IDBObjectStore, delta: StoredWorkspaceDelta,
+  current: WorkspaceDeltaFrontier | undefined, existing: StoredReceiptRecord, changeHash: string,
+): Promise<WorkspaceDeltaFrontier> {
+  const committed = await requestResult(deltas.get(delta.id)) as StoredWorkspaceDelta | undefined
+  if (!current || existing.receipt.changeHash !== changeHash || committed?.hash !== delta.hash) {
+    throw new Error("Delta transaction conflicts with a committed receipt")
+  }
+  await done
+  return current
+}
+
+function assertAppendBasis(
+  current: WorkspaceDeltaFrontier | undefined, revision: { revision: string } | undefined,
+  expected: WorkspaceDeltaFrontier, expectedRevision: string | null,
+): void {
+  if (canonicalizeJson(current) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
+  if ((revision?.revision ?? null) !== expectedRevision) throw new Error("Workspace revision changed in another tab")
+}
+
+function appendMemoryJournal(
+  current: ReturnType<typeof readLocalJournalReference>, expected: WorkspaceDeltaFrontier,
+  delta: StoredWorkspaceDelta, next: WorkspaceDeltaFrontier, expectedRevision: string | null,
+  ensureCurrent: () => void,
+): { journal: ReturnType<typeof readLocalJournalReference>; frontier: WorkspaceDeltaFrontier } {
+  const { receipt, proof, changeBytes } = delta.command
+  const existing = current.receipts[receipt.transactionId]
+  if (existing) return existingMemoryAppend(current, existing, delta)
+  assertMemoryAppendBasis(current, expected, expectedRevision)
+  ensureCurrent()
+  const nextJournal = { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
+    changes: [...current.changes, { workspaceId: expected.workspaceId, changeHash: receipt.changeHash,
+      bytesBase64: toBase64Url(changeBytes), addedAt: delta.savedAt }],
+    receipts: { ...current.receipts, [receipt.transactionId]: receipt }, proofs: { ...current.proofs, [receipt.changeHash]: proof } }
+  const progressBaselineId = current.snapshot?.receivedHistory?.baselineId ?? current.historyProgress?.baselineId
+  if (progressBaselineId !== undefined) advanceLocalHistoryProgress(nextJournal, expected.workspaceId, progressBaselineId, 1, changeBytes.byteLength)
+  return { journal: nextJournal, frontier: next }
+}
+
+function existingMemoryAppend(
+  current: ReturnType<typeof readLocalJournalReference>, existing: StoredReceiptRecord,
+  delta: StoredWorkspaceDelta,
+): { journal: ReturnType<typeof readLocalJournalReference>; frontier: WorkspaceDeltaFrontier } {
+  const committed = current.deltas?.find(item => item.id === delta.id)
+  if (!current.frontier || existing.changeHash !== delta.command.receipt.changeHash || committed?.hash !== delta.hash) {
+    throw new Error("Delta transaction conflicts with a committed receipt")
+  }
+  return { journal: { ...current }, frontier: current.frontier }
+}
+
+function assertMemoryAppendBasis(
+  current: ReturnType<typeof readLocalJournalReference>, expected: WorkspaceDeltaFrontier, expectedRevision: string | null,
+): void {
+  if (canonicalizeJson(current.frontier) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
+  if ((current.revision ?? null) !== expectedRevision) throw new Error("Workspace revision changed in another tab")
 }
 
 

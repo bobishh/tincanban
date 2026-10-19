@@ -72,7 +72,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await page.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
       const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
-      const { decryptBlindObject, decodeBlindBytes, encryptBlindObject } = await import("/src/sync/blindEnvelope.ts")
+      const { decryptBlindObject, decodeBlindBytes, encryptBlindObject } = await import("/@id/@meta-uber/mesh-replication/rusty-replica")
       const { inventoryBlindObjects, downloadBlindObject, uploadBlindObject } = await import("/src/sync/blindClient.ts")
       const profile = await bootstrapIdentity()
       const configs = await getReplicaConfigurations(profile.identity.personId)

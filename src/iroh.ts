@@ -1,7 +1,7 @@
 import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
-import type { IrohStream as RawIrohStream, MeshStream } from "@meta-uber/mesh-transport"
+import type { IrohStream as RawIrohStream } from "@meta-uber/mesh-transport"
 import { z } from "zod"
 import policyInit, {
   WasmAutomergeSyncEngine,

@@ -12,7 +12,7 @@ test("Given a detailed board already uploaded to Rusty, When unchanged polls rep
     const { exportAuthorizationBundle } = await import("/src/sync/changeAuthorization.ts")
     const { exportChat, sendChatMessage } = await import("/src/chat/service.ts")
     await exportChat(app.activeWorkspace.id)
-    const { encodeBlindBytes } = await import("/src/sync/blindEnvelope.ts")
+    const { encodeBlindBytes } = await import("/@id/@meta-uber/mesh-replication/rusty-replica")
     const { blindHash, blindObjectId, canonicalBlindJson } = await import("/src/sync/blindClient.ts")
     const signer = await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
     const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", signer.publicKey))

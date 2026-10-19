@@ -4,7 +4,7 @@ import { mkdtemp, rm, readdir, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { afterEach, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
@@ -64,13 +64,20 @@ import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHis
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
 
+beforeEach(() => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    callback ? callback() : (options as () => Promise<unknown>)() } })
+})
+
 let automergeReady: Promise<void> | undefined
 function initializeNativeAutomerge(): Promise<void> {
   return automergeReady ??= readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
     .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
 }
 
-afterEach(() => { resetIdentityStorageForTest() })
+afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
 
 async function unusedLoopbackPort(): Promise<number> {
   const listener = createServer()
@@ -470,8 +477,8 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     }
     // Cold cursors retain pre-compaction snapshots; acknowledge only exact archived originals.
     const retainedObjects = new Map(objects.map(entry => [entry.ciphertextId, entry.object]))
-    const received = WasmStateCore.verifyReceivedHistoryBaseline(new TextEncoder().encode(JSON.stringify(signedBaseline)),
-      current.document, scope.scopeId, scope.keyEpoch, scope.key, nativeInput.authority, retainedObjects, () => {})
+    const received = WasmStateCore.verifyOwnerAttestedHistoryBaseline(new TextEncoder().encode(JSON.stringify(signedBaseline)),
+      current.document, scope.scopeId, scope.keyEpoch, scope.key, nativeInput.authority, trustedScopeAuthority, retainedObjects, () => {})
     try {
       const originalBytes = decodeBlindBytes(capturedHistory.originals.document)
       expect(() => received.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch, scope.key,

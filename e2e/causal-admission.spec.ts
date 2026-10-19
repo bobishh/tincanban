@@ -151,7 +151,7 @@ test("Given an offline editor change accepted before revocation, when the signed
     const doc = app.getActiveDoc()!
     const evidence = (await storage.loadCausalEvidence(doc.id))!
     evidence.admissionCheckpoint!.policy = "previous-policy"
-    await storage.commitWorkspace(doc.id, doc, A.save(doc), [], undefined, evidence)
+    await storage.withWorkspaceTransaction(doc.id, transaction => transaction.commitWorkspace(doc, A.save(doc), [], undefined, evidence))
     ;(window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true
   })
   const retryError = await page.evaluate(async id => {

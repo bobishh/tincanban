@@ -1,4 +1,4 @@
-import { hasEntityKind } from "./domain/model"
+import { hasEntityKind, type ChangeProof, type TransactionReceipt } from "./domain/model"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
@@ -23,6 +23,7 @@ import {
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { exportWorkspaceBundleV2, readWorkspaceBundleV2 } from "./domain/workspaceBundle"
 import * as journal from "./storageJournal"
+import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
 import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
 import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 
@@ -37,8 +38,8 @@ async function persistWorkspaceForTest(storage: WorkspaceStorage, workspaceId: s
 }
 
 async function persistCommandForTest(storage: WorkspaceStorage, workspaceId: string,
-  receipt: import("./domain/model").TransactionReceipt, changeBytes: Uint8Array,
-  proof: import("./domain/model").ChangeProof) {
+  receipt: TransactionReceipt, changeBytes: Uint8Array,
+  proof: ChangeProof) {
   await storage.withWorkspaceTransaction(workspaceId, async transaction => {
     const loaded = await transaction.loadWorkspaceDoc()
     if (!loaded) throw new Error("Workspace not found")
@@ -266,7 +267,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
       authorizationStore.put({ id: base.id, workspaceId: base.id,
         records: mergeAuthorizationRecords(stored?.records ?? [], authorization) })
       const frontierStore = authorityWrite.objectStore("frontiers")
-      const frontier = await journal.requestResult(frontierStore.get(base.id)) as import("./workspaceDeltaJournal").WorkspaceDeltaFrontier | undefined
+      const frontier = await journal.requestResult(frontierStore.get(base.id)) as WorkspaceDeltaFrontier | undefined
       if (frontier) frontierStore.put({ ...frontier, invalidated: true })
       journal.advanceWorkspaceRevision(authorityWrite, base.id)
       await authorityDone

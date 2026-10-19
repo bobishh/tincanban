@@ -177,27 +177,19 @@ test("Given a copied link before local workspace rekeying, when its preserved sc
   await page.evaluate(async () => {
     const storagePath = "/src/storage.ts"
     const statePath = "/src/state.ts"
-    const authorizationPath = "/src/sync/changeAuthorization.ts"
-    const personalRootPath = "/src/domain/personalRoot.ts"
-    const localDbPath = "/src/localDb.ts"
     const { defaultStorage } = await import(/* @vite-ignore */ storagePath)
     const state = await import(/* @vite-ignore */ statePath)
-    const { recordGenesisAuthority } = await import(/* @vite-ignore */ authorizationPath)
-    const { registerWorkspaceInRoot } = await import(/* @vite-ignore */ personalRootPath)
-    const localDb = await import(/* @vite-ignore */ localDbPath)
     const tincanban = state.useTincanban()
     const id = tincanban.activeWorkspace.id
-    const newId = crypto.randomUUID()
-    const profile = tincanban.getCurrentProfile()!
-    const moved = await defaultStorage.rekeyWorkspace(id, newId, "Rekeyed workspace", async document => {
-      return recordGenesisAuthority(document, profile)
-    })
+    const source = tincanban.getActiveDoc()
+    if (!source) throw new Error("Active workspace unavailable during rekey fixture")
+    const moved = await tincanban.importWorkspaceAsNew(source)
+    if (moved.id === id) throw new Error("Workspace rekey fixture did not change the document ID")
+    await tincanban.renameWorkspaceAsync(moved.id, "Rekeyed workspace")
     const root = await defaultStorage.loadPersonalRoot()
     if (!root) throw new Error("Personal root unavailable during rekey fixture")
     delete root.workspaces[id]
-    registerWorkspaceInRoot(root, newId, newId, "genesis")
     await defaultStorage.savePersonalRoot(root)
-    await localDb.writeLocal("tincanban.active_workspace_id", newId)
   })
   await page.goto(url)
   await page.reload()

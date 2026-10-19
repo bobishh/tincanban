@@ -1,7 +1,7 @@
 import { emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { BlindReplica, type BlindReplicaConfig } from "../../src/sync/blindReplication"
 import { blindHash, canonicalBlindJson, type BlindReceipt } from "../../src/sync/blindClient"
-import { encodeBlindBytes, type BlindObject } from "../../src/sync/blindEnvelope"
+import { encodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { withPrivateReplicaOperation } from "../../src/sync/privateReplicaOperation"
 
 type Fixture = { owner: string; config: BlindReplicaConfig; signer: JsonWebKey; serviceId: string; key: string }

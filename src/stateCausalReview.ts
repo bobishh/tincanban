@@ -166,11 +166,16 @@ export async function reviewCausalChange(changeHash: string, storage: WorkspaceS
       // The callback above has two exact ownership outcomes documented on its
       // contract: shared object or separately loaded projection. Deduplicate
       // only those callback-owned roots; never infer sharing from equal heads.
-      for (const doc of new Set([base, createdDocument, next])) {
-        if (doc && doc !== borrowed && doc !== transferred) Automerge.free(doc)
-      }
+      releaseReviewDocuments([base, createdDocument, next], borrowed, transferred)
     }
   })
+}
+
+function releaseReviewDocuments(documents: Array<Automerge.Doc<WorkspaceDocumentV2> | undefined>,
+  borrowed: Automerge.Doc<WorkspaceDocumentV2> | null, transferred: Automerge.Doc<WorkspaceDocumentV2> | undefined) {
+  for (const doc of new Set(documents)) {
+    if (doc && doc !== borrowed && doc !== transferred) Automerge.free(doc)
+  }
 }
 
 type ReviewPatch = Parameters<typeof executeReviewedWorkspaceChange>[2]

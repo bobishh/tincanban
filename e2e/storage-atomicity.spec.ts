@@ -5,19 +5,31 @@ test("Given two tabs persist different changes concurrently, when storage reopen
   await openStorageHarness(page)
   const result = await page.evaluate(async () => {
     const { WorkspaceStorage } = await import("/src/storage.ts")
-    const workspaceId = `concurrent-${crypto.randomUUID()}`
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
+    await A.initializeWasm(wasmUrl)
+    const doc = A.from(createWorkspaceDoc(crypto.randomUUID(), "Concurrent journal", "test-owner", "blank"))
+    const workspaceId = doc.id
     const isolated = () => new WorkspaceStorage({ changes: new Map(), proofs: new Map(), receipts: new Map(),
       snapshots: new Map(), workspaces: new Map(), personalRoots: new Map() })
     const first = isolated()
     const second = isolated()
-    const receiptA = { transactionId: "tx-a", changeHash: "change-a", saved: true }
-    const receiptB = { transactionId: "tx-b", changeHash: "change-b", saved: true }
+    const heads = A.getHeads(doc)
+    const receiptA = { transactionId: "tx-a", beforeHeads: heads, afterHeads: heads,
+      changeHash: "change-a", changedEntityIds: [], saved: true as const }
+    const receiptB = { transactionId: "tx-b", beforeHeads: heads, afterHeads: heads,
+      changeHash: "change-b", changedEntityIds: [], saved: true as const }
     const proofA = { payload: { changeHash: "change-a" } }
     const proofB = { payload: { changeHash: "change-b" } }
 
     await Promise.all([
-      first.commitTransaction(workspaceId, receiptA as never, new Uint8Array([1]), proofA as never),
-      second.commitTransaction(workspaceId, receiptB as never, new Uint8Array([2]), proofB as never),
+      first.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(doc, A.save(doc), [], {
+        receipt: receiptA, changeBytes: new Uint8Array([1]), proof: proofA as never,
+      })),
+      second.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(doc, A.save(doc), [], {
+        receipt: receiptB, changeBytes: new Uint8Array([2]), proof: proofB as never,
+      })),
     ])
 
     const reopened = isolated()
@@ -37,7 +49,12 @@ test("Given proof persistence fails, when a transaction aborts, then no change o
   await openStorageHarness(page)
   const result = await page.evaluate(async () => {
     const { WorkspaceStorage } = await import("/src/storage.ts")
-    const workspaceId = `abort-${crypto.randomUUID()}`
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const { default: wasmUrl } = await import("/@id/@automerge/automerge/automerge.wasm?url")
+    await A.initializeWasm(wasmUrl)
+    const doc = A.from(createWorkspaceDoc(crypto.randomUUID(), "Abort journal", "test-owner", "blank"))
+    const workspaceId = doc.id
     const isolated = () => new WorkspaceStorage({ changes: new Map(), proofs: new Map(), receipts: new Map(),
       snapshots: new Map(), workspaces: new Map(), personalRoots: new Map() })
     const storage = isolated()
@@ -48,9 +65,12 @@ test("Given proof persistence fails, when a transaction aborts, then no change o
     }
     let error = ""
     try {
-      await storage.commitTransaction(workspaceId,
-        { transactionId: "tx-abort", changeHash: "change-abort", saved: true } as never,
-        new Uint8Array([9]), { payload: { changeHash: "change-abort" } } as never)
+      const heads = A.getHeads(doc)
+      await storage.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(doc, A.save(doc), [], {
+        receipt: { transactionId: "tx-abort", beforeHeads: heads, afterHeads: heads,
+          changeHash: "change-abort", changedEntityIds: [], saved: true as const },
+        changeBytes: new Uint8Array([9]), proof: { payload: { changeHash: "change-abort" } } as never,
+      }))
     } catch (caught) {
       error = caught instanceof Error ? caught.message : String(caught)
     } finally {
@@ -202,7 +222,6 @@ test("Given current snapshot and proof records, when a command commits, then reo
     const { prepareLocalChangeAuthorizations, exportAuthorizations } = await import("/src/sync/changeAuthorization.ts")
     const { persistAuthorizedCommand } = await import("/src/statePersistence.ts")
     const { recordGenesisAuthority } = await import("/src/sync/changeAuthorization.ts")
-    const { putRecords } = await import("/src/sync/workspaceChangeProofStore.ts")
     const A = await import("/@id/@automerge/automerge/slim")
     const tincanban = useTincanban()
     await tincanban.whenReady()
@@ -215,8 +234,7 @@ test("Given current snapshot and proof records, when a command commits, then reo
     const hashes = A.getAllChanges(doc).map(change => A.decodeChange(change).hash)
     const proofs = await prepareLocalChangeAuthorizations(doc, profile, hashes)
     const storage = new WorkspaceStorage()
-    await storage.saveSnapshot(doc.id, doc, A.save(doc))
-    await putRecords(doc.id, proofs)
+    await storage.withWorkspaceTransaction(doc.id, transaction => transaction.commitWorkspace(doc, A.save(doc), proofs))
     const column = Object.values(doc.entities).find(entity => entity.kind === "column")!
     await persistAuthorizedCommand((await storage.loadWorkspaceDoc(doc.id))!.doc, { kind: "createItem", parentId: column.id, title: "Saved edit" }, profile, storage)
     const reopened = new WorkspaceStorage()

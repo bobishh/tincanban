@@ -1,7 +1,7 @@
 import { type LocalProfile, toBase64Url } from "../domain/identity"
-import type { DeviceCertificate, KeeperIntegrationReference, WorkspaceGrant } from "../domain/model"
+import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
-import { keeperIntegrationReferences, mayOfferFutureKeeperWorkspace, ownerKeepers, saveOwnerKeeper, type OwnerKeeper } from "./ownerKeeper"
+import { mayOfferFutureKeeperWorkspace, saveOwnerKeeper } from "./ownerKeeper"
 import { createPairingSecret} from "@meta-uber/mesh-pairing"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { createPeerAdvertisement, verifyWorkspaceMemberBundle,
@@ -19,51 +19,11 @@ import { DurableMeshBase } from "./durableMeshBase"
 import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { workspaceRecordSigning } from "./meshRecordSigning"
+import { ownerKeeperOfferPolicy, ownerWorkspaceOfferSchema } from "./durableMeshOwnerOfferPolicy"
+export { ownerKeeperOfferPolicy } from "./durableMeshOwnerOfferPolicy"
 import { z } from "zod"
 
 export type KeeperGrantScopeProof = { workspaceId: string; document: string; authorizationBundle: unknown; grant: WorkspaceGrant }
-
-const ownerWorkspaceOfferSchema = z.object({
-  version: z.literal(1),
-  workspaceId: z.string().min(1),
-  envelope: z.unknown(),
-  workspace: z.unknown(),
-}).passthrough()
-
-function selectOwnerKeeperOfferReference(references: KeeperIntegrationReference[]) {
-  const live = references.filter(item => item.state !== "removed")
-  if (live.length === 1) return live[0]
-  return live.length === 0 && references.length === 0 ? undefined : null
-}
-
-export async function ownerKeeperOfferPolicy(profile: LocalProfile, remotePersonId: string): Promise<{ allowed: boolean; keeper?: OwnerKeeper }> {
-  if (remotePersonId === profile.identity.personId) return { allowed: true }
-  let keeper = (await ownerKeepers(profile.identity.personId)).find(item => item.personId === remotePersonId)
-  let references
-  try {
-    const { integrations } = await keeperIntegrationReferences()
-    references = Object.values(integrations).filter(item => item.servicePersonId === remotePersonId)
-  } catch {
-    return { allowed: false }
-  }
-  // Integration revisions are scoped to integrationId. Never use one service's
-  // revision values to choose between distinct legacy/canonical records.
-  const reference = selectOwnerKeeperOfferReference(references)
-  if (reference === null) return { allowed: false }
-  // A durable ref with no live integration still outranks the legacy cache.
-  if (reference && reference.state !== "active") return { allowed: false }
-  // Do not mint owner grants against committed policy while a settings CAS is unresolved.
-  if (reference?.pendingSettings || reference?.pendingRemoval) return { allowed: false }
-  if (reference) keeper = { personId: remotePersonId, role: "editor", details: {
-    boardIds: reference.workspaceIds,
-    futureBoards: reference.futureBoards,
-    futureBoardBaselineIds: reference.futureBoardBaselineIds,
-    integrationId: reference.integrationId,
-    removalPending: Boolean(reference.pendingRemoval),
-  } }
-  if (!keeper || keeper.details?.removalPending) return { allowed: false }
-  return { allowed: true, keeper }
-}
 
 function captureAcceptedGuestGrants(workspaceIds: string[], personId: string, acceptedGrants?: WorkspaceGrant[]): Map<string, WorkspaceGrant> | undefined {
   if (acceptedGrants === undefined) return undefined

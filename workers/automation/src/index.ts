@@ -115,11 +115,6 @@ const defaultHandler = {
             reject("Sender is not approved for this automation integration");
             return;
           }
-          if (!env.REFLUX_ORIGIN && (!env.EVENT_STORAGE_SECRET || new TextEncoder().encode(env.EVENT_STORAGE_SECRET).byteLength < 32)) {
-            reject("Automation event storage is not configured");
-            return;
-          }
-
           if (message.rawSize > MAX_RAW_EMAIL_BYTES) {
             reject("Email exceeds the automation message size limit");
             return;
@@ -150,11 +145,16 @@ const defaultHandler = {
           }
           const integration = route.integration;
           if (!integration) throw new Error("Local email route has no configured integration");
+          const eventStorageSecret = env.EVENT_STORAGE_SECRET;
+          if (!eventStorageSecret || new TextEncoder().encode(eventStorageSecret).byteLength < 32) {
+            reject("Automation event storage is not configured");
+            return;
+          }
           const result = await coordinator(env, route.integrationId).enqueueEmail({
             eventId,
             sourceId: stableSourceId,
             bodyHash: rawHash,
-            payload: await encryptEventPayload(env.EVENT_STORAGE_SECRET, eventId, payload),
+            payload: await encryptEventPayload(eventStorageSecret, eventId, payload),
           });
           if ("error" in result) reject("Email message ID conflicts with a stored intake event");
           else console.log(JSON.stringify({ event: "email.intake.accepted", integrationId: route.integrationId, eventId, duplicate: result.duplicate }));

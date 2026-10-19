@@ -22,6 +22,8 @@ import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
 import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
+import { isNativeKeeperRoute } from "./nativeKeeperRoute"
+export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -529,10 +531,4 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       : `authority-read-failed:${++this.authorityReadFailure}`
     this.options.onChange?.(workspaces, peers, revoked, succession, fingerprint)
   }
-}
-
-export function isNativeKeeperRoute(peer: WorkspacePeerRecord): boolean {
-  const advertisement = peer.advertisement as WorkspaceMemberBundle | undefined
-  const userAgent = advertisement?.advertisement?.payload?.userAgent
-  return typeof userAgent === "string" && userAgent.toLowerCase().startsWith("mesh-lighthouse/")
 }

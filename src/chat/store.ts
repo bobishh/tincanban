@@ -271,7 +271,7 @@ export class ChatStore {
     workspaceId: string,
     messages: StoredChatMessage[],
     profiles: StoredChatProfile[]
-  ): Promise<{ added: StoredChatMessage[]; changed: boolean }> {
+  ): Promise<{ added: StoredChatMessage[]; changed: boolean; profilesChanged: boolean }> {
     validateWorkspaceId(workspaceId)
     const messageBatch = prepareMessageBatch(workspaceId, messages)
     const profileBatch = prepareProfileBatch(workspaceId, profiles)

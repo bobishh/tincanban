@@ -1,5 +1,6 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
+import type { WorkspaceTransactionContext } from "../src/storageTransactionAccess"
 
 test("Given boards with identical names, when choosing an invitation scope, then the current board is distinct and an empty selection cannot generate a link", async ({ page }) => {
   await page.goto("/")
@@ -126,8 +127,7 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     await page.evaluate(async () => {
       type ArchiveGateWindow = Window & { __TINCANBAN_ARCHIVE_GATE__?: { started: boolean; reject: () => void; restore: () => void } }
       const storage = (await import("/src/storage.ts")).defaultStorage
-      const prototype = Object.getPrototypeOf(storage) as { commitWorkspace: typeof storage.commitWorkspace }
-      const original = prototype.commitWorkspace
+      const original = storage.withWorkspaceTransaction.bind(storage)
       let pending = true
       let rejectCommit: ((reason: Error) => void) | undefined
       const gateWindow = window as ArchiveGateWindow
@@ -137,14 +137,15 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
           pending = false
           rejectCommit?.(new Error("Storage failure injected"))
         },
-        restore: () => { prototype.commitWorkspace = original },
+        restore: () => { storage.withWorkspaceTransaction = original },
       }
-      prototype.commitWorkspace = function (this: typeof storage, ...args: Parameters<typeof original>) {
-        if (!pending) return original.apply(this, args)
-        return new Promise((resolve, reject) => {
+      storage.withWorkspaceTransaction = function <T>(workspaceId: string,
+        operation: (transaction: WorkspaceTransactionContext) => Promise<T>) {
+        if (!pending) return original(workspaceId, operation)
+        return new Promise<T>((_resolve, reject) => {
           rejectCommit = reject
           gateWindow.__TINCANBAN_ARCHIVE_GATE__!.started = true
-        }) as ReturnType<typeof original>
+        })
       }
     })
     await workspace.getByRole("button", { name: "Archive workspace" }).click()

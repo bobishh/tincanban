@@ -1,4 +1,5 @@
 import { expect, test } from "./support/coverage"
+import type { WorkspaceTransactionContext } from "../src/storageTransactionAccess"
 
 for (const width of [1440, 390]) {
   test(`Given a ${width}px viewport, when creating a configured board, then its name, columns, required fields, and select options appear in the item form`, async ({ page }, testInfo) => {
@@ -142,12 +143,15 @@ test("Given initial workspace persistence is pending, when Create is submitted a
     const gate: { reached: boolean; release?: () => void } = { reached: false }
     ;(window as any).__testStorageGate = gate
     const storage = await import("/src/storage.ts")
-    const prototype = storage.WorkspaceStorage.prototype as any
-    const save = prototype.commitWorkspace
-    prototype.commitWorkspace = async function (...args: any[]) {
-      gate.reached = true
-      await new Promise<void>(resolve => { gate.release = resolve })
-      return save.apply(this, args)
+    const withWorkspaceTransaction = storage.defaultStorage.withWorkspaceTransaction.bind(storage.defaultStorage)
+    storage.defaultStorage.withWorkspaceTransaction = function <T>(workspaceId: string,
+      operation: (transaction: WorkspaceTransactionContext) => Promise<T>) {
+      return withWorkspaceTransaction(workspaceId, async transaction => {
+        gate.reached = true
+        await new Promise<void>(resolve => { gate.release = resolve })
+        storage.defaultStorage.withWorkspaceTransaction = withWorkspaceTransaction
+        return operation(transaction)
+      })
     }
   })
   await dialog.locator("form").evaluate(form => {

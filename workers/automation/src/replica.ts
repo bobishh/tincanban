@@ -243,7 +243,7 @@ const defaultTransport: ReplicaTransport = {
     automationPublicDeliveryHttp.request),
   download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id,
     automationPublicDeliveryHttp.request),
-  upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence,
+  upload: (access, object, requestId = crypto.randomUUID(), observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence,
     automationPublicDeliveryHttp.request),
 };
 

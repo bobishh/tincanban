@@ -2,10 +2,11 @@ import { expect, it, vi } from "vitest"
 import { connectWorkspaceJoin, type WorkspaceJoinBrowserContext } from "./workspaceJoinBrowserFlow"
 import { createDeviceSyncState } from "./deviceSyncState"
 import type { SyncNode } from "./transport"
+import type * as Iroh from "../iroh"
 const scenario = vi.hoisted(() => ({ beforeResume: undefined as (() => Promise<void>) | undefined }))
 
 vi.mock("./workspaceSet", () => ({ workspaceSet: () => ({}), liveWorkspaceSetSync: () => ({ publish: async () => {}, close: async () => {} }) }))
-vi.mock("../iroh", async importOriginal => ({ ...await importOriginal<typeof import("../iroh")>(),
+vi.mock("../iroh", async importOriginal => ({ ...(await importOriginal() as typeof Iroh),
   WasmWorkspaceJoinHandshake: class {}, WasmWorkspaceJoinHandoff: class {} }))
 vi.mock("@meta-uber/mesh-runtime", () => ({
   BrowserWorkspaceJoinGuest: class { async handle() {} },

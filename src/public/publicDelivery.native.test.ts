@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
-import { afterEach, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
@@ -24,6 +24,13 @@ import type { PublicBoardProjection } from "./publicSchema"
 vi.mock("../sync/workspaceAdmissionClient", () => ({ runWorkspaceAccess: async () => "owner" }))
 
 type StagePublicAsset = (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>
+
+beforeEach(() => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    callback ? callback() : (options as () => Promise<unknown>)() } })
+})
 
 let automergeReady: Promise<void> | undefined
 function initializeNativeAutomerge(): Promise<void> {

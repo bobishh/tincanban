@@ -36,7 +36,8 @@ async function seedFormatTwoWorkspace(page: Page, malformed = false) {
     }
     const doc = Automerge.from(old)
     await recordGenesisAuthority(doc as never, profile)
-    await defaultStorage.saveSnapshot(old.id, doc as never, Automerge.save(doc))
+    await defaultStorage.withWorkspaceTransaction(old.id as string, transaction =>
+      transaction.commitWorkspace(doc as never, Automerge.save(doc), []))
     const { registerWorkspaceInCurrentRoot } = await import("/src/statePersonalRoot.ts")
     await registerWorkspaceInCurrentRoot(defaultStorage, profile, old.id, "genesis")
     await writeLocal("tincanban.active_workspace_id", old.id)

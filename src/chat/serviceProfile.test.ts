@@ -14,7 +14,8 @@ vi.mock("../domain/identity", async importOriginal => ({
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
 import { peerStore } from "../sync/peerStore"
 import { ChatStore, chatStore, doesProfileWin } from "./store"
-import { configureChat, ensureChatProfile, exportChat, receiveChat, sendChatMessage, sendChatTyping, subscribeChat } from "./service"
+import { configureChat, ensureChatProfile, exportChat, receiveChat, sendChatMessage, sendChatTyping, subscribeChat,
+  type ChatChange } from "./service"
 import { clearMeshTrace, meshTraceSnapshot } from "../sync/meshTrace"
 
 const originalNavigator = globalThis.navigator
@@ -132,7 +133,10 @@ describe("shared chat profile intent across certified devices", () => {
     expect(renamed).toMatchObject({ name: "Explicit new name", revision: 2 })
     const update = await exportChat(workspace)
     await useDevice(first, firstStore)
-    await receiveChat(workspace, update, true)
+    const changes: ChatChange[] = []
+    const unsubscribe = subscribeChat(change => changes.push(change))
+    try { await receiveChat(workspace, update, false) } finally { unsubscribe() }
+    expect(changes).toEqual([expect.objectContaining({ history: false, profilesChanged: true, added: [] })])
     expect((await exportChat(workspace)).profiles).toEqual(update.profiles)
     const repeated = await ensureChatProfile(workspace, { updateName: true })
     expect(repeated).toMatchObject({ name: "Current name", revision: 3 })

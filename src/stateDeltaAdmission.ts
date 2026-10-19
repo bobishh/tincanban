@@ -13,6 +13,7 @@ import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import type { WorkspaceRole } from "./domain/permissions"
 import { meshTrace } from "./sync/meshTrace"
+import { bindIncomingPacketDeltaBasis } from "./stateIncomingReuse"
 
 type Validated = { generation: string; basisHash: string; authority: string; descriptor: string }
 const validated = new Map<string, Validated>()
@@ -39,8 +40,7 @@ export async function reusableDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumen
   transaction: WorkspaceTransactionContext, profile?: LocalProfile, installIfMissing = true): Promise<WorkspaceDeltaFrontier | undefined> {
   const frontier = await transaction.readDeltaFrontier()
   if (!frontier) return installIfMissing ? installDeltaAdmission(doc, transaction, profile) : undefined
-  if (frontier.invalidated || frontier.policy !== admissionPolicy() ||
-    frontier.heads.join() !== Automerge.getHeads(doc).sort().join()) return
+  if (!frontierMatchesDocument(frontier, doc)) return
   const current = await localWorkspaceAdmissionAuthority(doc, profile)
   if (current.fingerprint !== frontier.authorityFingerprint) return
   const previous = validated.get(doc.id)
@@ -61,6 +61,11 @@ export async function reusableDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumen
   if ((await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== current.fingerprint) return
   rememberDeltaAdmission(frontier)
   return frontier
+}
+
+function frontierMatchesDocument(frontier: WorkspaceDeltaFrontier, doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
+  return !frontier.invalidated && frontier.policy === admissionPolicy() &&
+    frontier.heads.join() === Automerge.getHeads(doc).sort().join()
 }
 
 function matchesBasis(previous: Validated | undefined, frontier: WorkspaceDeltaFrontier) {
@@ -102,7 +107,6 @@ async function installDeltaAdmission(doc: Automerge.Doc<WorkspaceDocumentV2>,
   const frontier = await createDeltaBasis(snapshot, current.fingerprint)
   if ((await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== current.fingerprint) return
   if (!await transaction.installDeltaBasis(snapshot, frontier, proofs, doc)) throw new WorkspaceRevisionConflict()
-  const { bindIncomingPacketDeltaBasis } = await import("./stateIncomingReuse")
   bindIncomingPacketDeltaBasis(doc.id, transaction.capturedRevision, frontier)
   rememberDeltaAdmission(frontier)
   return frontier

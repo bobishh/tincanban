@@ -1,4 +1,4 @@
-import * as Automerge from "@automerge/automerge/slim"
+import type * as Automerge from "@automerge/automerge/slim"
 import type { Heads, WorkspaceDocumentV2 } from "./domain/model"
 import { canonicalizeJson } from "./domain/identity"
 import type { WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"

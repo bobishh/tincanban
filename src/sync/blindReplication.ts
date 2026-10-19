@@ -7,10 +7,10 @@ import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindCheckpointRequest as HistoryCheckpointRequest } from "./blindCheckpoint"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { AttachmentLocator } from "../product-replica"
-import { openWithReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
+import { openWithReplicaContentKeys } from "./replicaContentKeys"
 
-import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
-export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
+import type { BlindReplicaConfig } from "../product-replica/config"
+export type { BlindReplicaConfig } from "../product-replica/config"
 export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
 export type BlindReplicaStore = {
   read: (id: string) => Promise<Uint8Array>

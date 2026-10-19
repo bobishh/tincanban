@@ -177,41 +177,63 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     ensureContextCurrent: () => void,
   ): Promise<{ proofChanged: boolean; causalChanged: boolean }> {
     checkStorageFailureHook()
+    const prepared = await this.prepareWorkspaceCommit(workspaceId, doc, bytes, authorizations, command,
+      causalEvidence, onPhase, expectedBasis, ensureContextCurrent)
+    if (this.workspaceCommitUnchanged(prepared.committed, prepared.snapshot,
+      prepared.savedCommand ? undefined : command, compactChangeHashes, prepared.causalChanged,
+      prepared.checkpointChanged, prepared.incomingProofChanged)) {
+      return this.reuseCommittedWorkspace(workspaceId, prepared.committed, doc)
+    }
+    const proofChanged = await this.persistWorkspaceState(workspaceId, prepared.snapshot, prepared.committed,
+      prepared.previousProofs, authorizations, command, prepared.causalChanged, prepared.checkpointChanged,
+      prepared.activeTailChanges, prepared.activeTailBytes, expectedBasis, compactChangeHashes,
+      ensureContextCurrent, onPhase)
+    // Memory projections advance only after the durable transaction completes.
+    this.rememberCommittedSnapshot(workspaceId, prepared.snapshot, doc)
+    onPhase?.("completed")
+    return { proofChanged, causalChanged: prepared.causalChanged }
+  }
+
+  private async prepareWorkspaceCommit(
+    workspaceId: string, doc: Automerge.Doc<WorkspaceDocumentV2>, bytes: Uint8Array,
+    authorizations: WorkspaceChangeAuthorization[], command: WorkspaceCommitCommand | undefined,
+    causalEvidence: StoredCausalEvidence | undefined, onPhase: ((phase: string) => void) | undefined,
+    expectedBasis: WorkspaceRevisionBasis, ensureContextCurrent: () => void,
+  ) {
     await this.assertWorkspaceBasisCurrent(workspaceId, expectedBasis)
     if (doc.id !== workspaceId) throw new Error("Workspace commit ID mismatch")
     onPhase?.("snapshot-read")
     const committed = await readWorkspaceSnapshot(workspaceId)
-    const previous = committed
-    this.assertWorkspaceTransition(previous, doc)
-    const snapshot: StoredWorkspaceSnapshot = {
+    this.assertWorkspaceTransition(committed, doc)
+    const snapshot = this.createCommitSnapshot(workspaceId, doc, bytes, causalEvidence, committed)
+    const { activeTailChanges, activeTailBytes } = activeHistoryDifference(committed ?? null, doc, snapshot.heads)
+    // Reread authorizations before the transaction so standalone proof updates are preserved.
+    onPhase?.("proof-read")
+    const previousProofs = await records(workspaceId)
+    const causalChanged = causalEvidenceChanged(committed?.causalEvidence, snapshot.causalEvidence)
+    const checkpointChanged = canonicalizeJson(committed?.causalEvidence?.admissionCheckpoint) !==
+      canonicalizeJson(snapshot.causalEvidence?.admissionCheckpoint)
+    const incomingProofChanged = canonicalizeJson(previousProofs) !==
+      canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
+    const savedCommand = command ? await this.getReceipt(workspaceId, command.receipt.transactionId) : null
+    if (command && savedCommand && savedCommand.changeHash !== command.receipt.changeHash) {
+      throw new Error("Transaction ID conflicts with a committed change")
+    }
+    ensureContextCurrent()
+    return { committed, snapshot, activeTailChanges, activeTailBytes, previousProofs,
+      causalChanged, checkpointChanged, incomingProofChanged, savedCommand }
+  }
+
+  private createCommitSnapshot(
+    workspaceId: string, doc: Automerge.Doc<WorkspaceDocumentV2>, bytes: Uint8Array,
+    causalEvidence: StoredCausalEvidence | undefined, previous: StoredWorkspaceSnapshot | undefined,
+  ): StoredWorkspaceSnapshot {
+    return {
       id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null,
       heads: Automerge.getHeads(doc).sort(), bytes: new Uint8Array(bytes), savedAt: new Date().toISOString(),
       causalEvidence: snapshotCausalEvidence(causalEvidence, previous?.causalEvidence),
       receivedHistory: previous?.receivedHistory ? structuredClone(previous.receivedHistory) : undefined,
     }
-    const { activeTailChanges, activeTailBytes } = activeHistoryDifference(previous ?? null, doc, snapshot.heads)
-    // Reread current authorizations inside the transaction so standalone proof
-    // updates cannot be overwritten.
-    onPhase?.("proof-read")
-    const previousProofs = await records(workspaceId)
-    const causalChanged = causalEvidenceChanged(previous?.causalEvidence, snapshot.causalEvidence)
-    const checkpointChanged = canonicalizeJson(previous?.causalEvidence?.admissionCheckpoint) !== canonicalizeJson(snapshot.causalEvidence?.admissionCheckpoint)
-    const incomingProofChanged = canonicalizeJson(previousProofs) !== canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
-    const savedCommand = command ? await this.getReceipt(workspaceId, command.receipt.transactionId) : null
-    if (command && savedCommand && savedCommand.changeHash !== command.receipt.changeHash)
-      throw new Error("Transaction ID conflicts with a committed change")
-    ensureContextCurrent()
-    if (this.workspaceCommitUnchanged(committed, snapshot, savedCommand ? undefined : command, compactChangeHashes, causalChanged,
-      checkpointChanged, incomingProofChanged)) {
-      return this.reuseCommittedWorkspace(workspaceId, committed, doc)
-    }
-    const proofChanged = await this.persistWorkspaceState(workspaceId, snapshot, previous, previousProofs, authorizations,
-      command, causalChanged, checkpointChanged, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes,
-      ensureContextCurrent, onPhase)
-    // Memory projections advance only after the durable transaction completes.
-    this.rememberCommittedSnapshot(workspaceId, snapshot, doc)
-    onPhase?.("completed")
-    return { proofChanged, causalChanged }
   }
 
   private async assertWorkspaceBasisCurrent(workspaceId: string, expected: WorkspaceRevisionBasis): Promise<void> {
