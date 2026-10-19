@@ -14,7 +14,11 @@ vi.mock("./blobRequestSigning", () => ({ blobRequestSigning: vi.fn(async () => (
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-function session(connectionId: string, connection: SessionEntry["connection"] = {} as never): SessionEntry {
+function session(connectionId: string, connection: SessionEntry["connection"] = {
+  openStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
+  acceptStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
+  close: vi.fn(async () => {}),
+}): SessionEntry {
   return { connectionId, workspaceId: "workspace", deviceId: "peer-device", instanceId: "instance", endpoint: "",
     remoteIssuedAt: "2026-10-15T00:00:00Z", direction: "incoming", connection,
     session: {} as never, remotePersonId: "peer", blobTransferSupported: true, evict: async () => {} }
@@ -37,6 +41,8 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
       options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
     })
     return (async () => {
+      const stream = await _connection.openStream()
+      await stream.read()
       for (let chunk = 0; chunk < 4; chunk += 1) {
         await new Promise(resolve => setTimeout(resolve, 3_000))
         await options?.ensureCurrent?.()
@@ -54,9 +60,12 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   expect(request).toHaveBeenCalledOnce()
   await vi.advanceTimersByTimeAsync(9_000)
   currentSession = replacement
+  const replacementOpenStream = replacement.connection.openStream
   await vi.advanceTimersByTimeAsync(250)
   expect(request).toHaveBeenCalledTimes(2)
-  expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
+  expect(request.mock.calls[1]?.[0]).not.toBe(replacement.connection)
+  expect(replacement.connection.openStream).toBe(replacementOpenStream)
+  expect(replacement.connection.openStream).toHaveBeenCalledOnce()
   const deadline = request.mock.calls[1]?.[5]?.deadlineAt
   if (typeof deadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
   expect(deadline - Date.now()).toBe(16_000)

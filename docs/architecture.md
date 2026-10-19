@@ -208,7 +208,11 @@ Public `@meta-uber/mesh-replication/rusty-replica` exports own Rusty HTTP,
 envelope/AAD and pinned receipt verification. Product admission, history receive
 and attachment-index implementations live in `src/product-replica`; they do not
 import browser sync orchestration. Automation imports that explicit product layer
-and SDK exports. A transitive dependency rule enforces this separation in CI.
+and SDK exports. Startup storage and admission code imports narrow public
+subentries such as `src/product-replica/workspaceAuthorizationRecords.ts` and
+`src/product-replica/workspaceAdmission.ts` instead of the broad product barrel,
+keeping unrelated history receivers out of the startup graph. A transitive
+dependency rule enforces these boundaries in CI.
 Unchanged acknowledged revisions skip full historical export; uncertain writes
 retain the exact outbox and require signed receipt validation.
 

@@ -88,7 +88,10 @@ async function journal(h: Awaited<ReturnType<typeof harness>>) {
 }
 
 test("Given a signed current scope challenge, when reading its revision, then authenticate the pin without replacing tokens or storing an enrollment", async () => {
-  const h = await harness({ challenge: () => ({ expectedRevision: 9, issuedAt: Date.now(), expiresAt: Date.now() + 120_000 }) })
+  const h = await harness({ challenge: () => {
+    const issuedAt = Date.now()
+    return { expectedRevision: 9, issuedAt, expiresAt: issuedAt + 120_000 }
+  } })
   expect(await readRustyScopePolicyRevision(h.access, h.profile, () => {})).toBe(9)
   expect(h.putCount).toBe(0)
   expect(h.challengeCount).toBe(1)

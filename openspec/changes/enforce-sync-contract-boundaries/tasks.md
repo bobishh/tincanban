@@ -35,8 +35,8 @@
 
 ## 5. Verification and rollout
 
-- [ ] Run runtime/logic/browser/native checks through CI under the user's no-local-tests constraint; investigate concrete failures.
-- [ ] Publish matching SDK native/WASM artifacts and update the consumer pin only after SDK CI passes.
+- [ ] Complete the single full local runtime/logic/browser/native run authorized by the user, collect failures across independent groups, then run focused checks for fixes and final CI.
+- [x] Publish matching SDK native/WASM artifacts and update the consumer pin only after SDK CI passes.
 - [ ] Complete Tincanban CI, including existing sync/chat and performance scenarios without weakened thresholds.
 - [ ] Deploy affected components through their existing independent CI pipelines; verify actual build identities.
 - [ ] Verify a real board sync and chat retry after rollout, including repeated ordinary polls and a relevant failure/recovery state.

@@ -1,7 +1,7 @@
-export { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, indexAdmissionOperations,
-  indexOperationParents, touchedPathsForChange, type IncomingAuthorizationBundle, type WorkspaceAdmissionInput,
+export { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission,
+  type IncomingAuthorizationBundle, type WorkspaceAdmissionInput,
   type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "./workspaceAdmission"
-export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
+export type { WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 export { admitHistoricalAutomationAuthority } from "./historicalAutomationAuthority"
 export { parseRustyScopePolicyReceipt, verifyRustyWriterPolicyReceipt, type RustyScopePolicyReceipt } from "./rustyScopePolicy"
 export { parseAttachmentLocators, mergeAttachmentLocators } from "./attachmentIndex"

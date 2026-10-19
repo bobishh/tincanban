@@ -59,7 +59,7 @@ async function completeFixture(wrongEntityVersion = false) {
   const root = await buildArchiveIndex(context, entries, store)
   const signedJson = new TextEncoder().encode(canonicalizeJson({ payload: { workspaceId, baselineId, historyEpoch,
     admissionPolicy: "mesh-causal-admission@3", archive: { context, root, captureRevision: "capture", admissionRevision: "admission", authorityRevision: "authority" } } }))
-  return { baselineId, objects, bindings, source: { workspaceId, baselineId, signedJson,
+  return { baselineId, capturedRecordId: captured, objects, bindings, source: { workspaceId, baselineId, signedJson,
     read: async (id: string, binding: { indexId: string }) => { bindings.push(binding.indexId); return objects.get(id)?.slice() } } }
 }
 
@@ -84,6 +84,24 @@ it("Given every Native catalogue record kind, when exporting, then traverse cont
     `change/${"a".repeat(64)}/bytes`, `change/${"a".repeat(64)}/dependencies`, `change/${"a".repeat(64)}/authorizations`]) {
     expect(f.bindings).toContain(context)
   }
+})
+
+it("Given a retained record is reread after a transient miss, when exporting, then completeness matches the evidence already written", async () => {
+  const f = await completeFixture()
+  const retainedRecordId = f.capturedRecordId
+  let reads = 0
+  const intermittent = { ...f.source, read: async (id: string, binding: { indexId: string }) => {
+    if (id === retainedRecordId && ++reads === 2) return undefined
+    return f.source.read(id, binding)
+  } }
+  const archive = createPeerHistoryRecoveryEvidence([intermittent], () => {})
+  const records = []
+  for await (const part of archive.evidence) records.push(part)
+
+  expect(reads).toBeGreaterThan(1)
+  expect(records.some(part => part.category === "peer-history-object" &&
+    part.id === `${f.baselineId}:${retainedRecordId}`)).toBe(true)
+  expect(archive.missingObjects()).toEqual([])
 })
 
 it("Given independent signed catalogue leaves, when exporting over a delayed peer, then pipeline at most four reads while yielding the same canonical evidence", async () => {

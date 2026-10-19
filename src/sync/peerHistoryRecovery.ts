@@ -33,8 +33,10 @@ class ExportBudget {
   constructor(readonly ensureCurrent: () => void | Promise<void>) {}
   unavailable(baselineId: string, objectId: string): never {
     const key = `${baselineId}:${objectId}`
-    if (!this.missing.has(key) && this.missing.size >= 4096) throw new Error("Too many unavailable peer history objects")
-    this.missing.set(key, { baselineId, objectId })
+    if (!this.retained.has(key)) {
+      if (!this.missing.has(key) && this.missing.size >= 4096) throw new Error("Too many unavailable peer history objects")
+      this.missing.set(key, { baselineId, objectId })
+    }
     throw new MissingPeerObject("Peer history object is unavailable")
   }
   retain(key: string, bytes: Uint8Array, pending: HistoryRecoveryEvidencePart[]) {

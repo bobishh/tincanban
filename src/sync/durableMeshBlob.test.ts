@@ -26,6 +26,12 @@ afterAll(() => vi.unstubAllGlobals())
 
 const fileBytes = new Uint8Array([1, 2, 3, 4])
 
+async function requestThroughConnection(connection: Pick<SessionEntry["connection"], "openStream">): Promise<Uint8Array> {
+  const stream = await connection.openStream()
+  await stream.read()
+  return fileBytes
+}
+
 async function fixture() {
   const profile = await bootstrapIdentity("Mesh file owner")
   const workspaceId = crypto.randomUUID()
@@ -69,7 +75,11 @@ async function fixture() {
   await mesh.start()
   const makeSession = (connectionId: string): SessionEntry => ({
     connectionId, workspaceId, deviceId: "peer-device", instanceId: "slot", endpoint: "",
-    remoteIssuedAt: new Date().toISOString(), direction: "incoming", connection: {} as never,
+    remoteIssuedAt: new Date().toISOString(), direction: "incoming", connection: {
+      openStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
+      acceptStream: vi.fn(async () => ({ send: async () => {}, read: async () => Uint8Array.of(1), closeSend: async () => {} })),
+      close: vi.fn(async () => {}),
+    },
     session: {} as never, remotePersonId: "peer", blobTransferSupported: true, evict: vi.fn(async () => {}),
   })
   const original = makeSession("old")
@@ -129,16 +139,19 @@ it("Given a blob request on a closing peer session, when a replacement session b
   const f = await fixture()
   const oldRequest = deferred<Uint8Array>()
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementationOnce(() => oldRequest.promise)
-    .mockResolvedValueOnce(fileBytes)
+    .mockImplementationOnce(connection => requestThroughConnection(connection))
   try {
     const pending = f.mesh.fetchBlob(f.workspaceId, f.descriptor)
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
     const replacement = f.replaceSession()
+    const replacementOpenStream = replacement.connection.openStream
     oldRequest.reject(new Error("Session closed during blob request"))
 
     await expect(pending).resolves.toEqual(fileBytes)
     expect(request).toHaveBeenCalledTimes(2)
-    expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
+    expect(request.mock.calls[1]?.[0]).not.toBe(replacement.connection)
+    expect(replacement.connection.openStream).toBe(replacementOpenStream)
+    expect(replacement.connection.openStream).toHaveBeenCalledOnce()
     expect(f.blob.write).toHaveBeenCalledOnce()
   } finally { await f.close() }
 })
@@ -148,7 +161,7 @@ it("Given a replacement arrives near the recovery limit, when its blob transfer 
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementationOnce((_connection, _secret, _profile, _scope,
     _descriptor, options) => new Promise((_resolve, reject) => {
       options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
-    })).mockResolvedValueOnce(fileBytes)
+    })).mockImplementationOnce(connection => requestThroughConnection(connection))
   vi.useFakeTimers()
   try {
     const startedAt = Date.now()
@@ -156,9 +169,12 @@ it("Given a replacement arrives near the recovery limit, when its blob transfer 
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
     await vi.advanceTimersByTimeAsync(9_000)
     const replacement = f.replaceSession()
+    const replacementOpenStream = replacement.connection.openStream
     await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2))
 
-    expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
+    expect(request.mock.calls[1]?.[0]).not.toBe(replacement.connection)
+    expect(replacement.connection.openStream).toBe(replacementOpenStream)
+    expect(replacement.connection.openStream).toHaveBeenCalledOnce()
     const retryDeadline = request.mock.calls[1]?.[5]?.deadlineAt
     if (typeof retryDeadline !== "number") throw new Error("Replacement attempt did not receive a deadline")
     expect(retryDeadline - Date.now()).toBeGreaterThanOrEqual(9_000)
@@ -197,13 +213,20 @@ it("Given recovery time is exhausted, when a session appears later, then do not 
 it("Given a network failure arrives before session eviction, when a replacement is published later, then retry the attachment within the original deadline", async () => {
   const f = await fixture()
   const request = vi.spyOn(meshBlob, "requestBlob").mockRejectedValueOnce(new MeshNetworkError("connection lost"))
-    .mockResolvedValueOnce(fileBytes)
+    .mockImplementationOnce(connection => requestThroughConnection(connection))
   let replacement: SessionEntry | undefined
-  const replacementTimer = setTimeout(() => { replacement = f.replaceSession() }, 50)
+  let replacementOpenStream: SessionEntry["connection"]["openStream"] | undefined
+  const replacementTimer = setTimeout(() => {
+    replacement = f.replaceSession()
+    replacementOpenStream = replacement.connection.openStream
+  }, 50)
   try {
     await expect(f.mesh.fetchBlob(f.workspaceId, f.descriptor)).resolves.toEqual(fileBytes)
+    if (!replacement || !replacementOpenStream) throw new Error("Replacement session was not published")
     expect(request).toHaveBeenCalledTimes(2)
-    expect(request.mock.calls[1]?.[0]).toBe(replacement?.connection)
+    expect(request.mock.calls[1]?.[0]).not.toBe(replacement.connection)
+    expect(replacement.connection.openStream).toBe(replacementOpenStream)
+    expect(replacement.connection.openStream).toHaveBeenCalledOnce()
     expect(f.blob.write).toHaveBeenCalledExactlyOnceWith(f.descriptor, fileBytes)
   } finally { clearTimeout(replacementTimer); await f.close() }
 })
@@ -214,7 +237,7 @@ it("Given SDK request waits for a chunk, when the peer session is replaced, then
   const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation((_connection, _secret, _profile, _scope,
     _descriptor, options) => {
     callCount += 1
-    if (callCount > 1) return Promise.resolve(fileBytes)
+    if (callCount > 1) return requestThroughConnection(_connection)
     if (!options?.signal) return new Promise<Uint8Array>(() => {})
     return new Promise((_resolve, reject) => options.signal!.addEventListener("abort", () => reject(options.signal!.reason), { once: true }))
   })
@@ -222,6 +245,7 @@ it("Given SDK request waits for a chunk, when the peer session is replaced, then
     const pending = f.mesh.fetchBlob(f.workspaceId, f.descriptor)
     await vi.waitFor(() => expect(request).toHaveBeenCalledOnce())
     const replacement = f.replaceSession()
+    const replacementOpenStream = replacement.connection.openStream
 
     expect(await settlesWithin(pending, 1_500)).toBe(true)
     await expect(pending).resolves.toEqual(fileBytes)
@@ -229,7 +253,9 @@ it("Given SDK request waits for a chunk, when the peer session is replaced, then
     expect(request.mock.calls[0]?.[5]?.signal).toBeInstanceOf(AbortSignal)
     expect(request.mock.calls[0]?.[5]?.ensureCurrent).toEqual(expect.any(Function))
     expect(request.mock.calls[0]?.[5]?.deadlineAt).toEqual(expect.any(Number))
-    expect(request.mock.calls[1]?.[0]).toBe(replacement.connection)
+    expect(request.mock.calls[1]?.[0]).not.toBe(replacement.connection)
+    expect(replacement.connection.openStream).toBe(replacementOpenStream)
+    expect(replacement.connection.openStream).toHaveBeenCalledOnce()
   } finally { await f.close() }
 })
 

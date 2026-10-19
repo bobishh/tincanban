@@ -7,6 +7,7 @@ const pendingVisibility = ref<boolean | null>(null)
 const actionError = ref("")
 const disclosure = "Anyone with this link can read the board’s visitor-visible cards, descriptions, fields, discussions, and attached files. Other boards, workspace chat, and identity secrets stay private."
 function requestVisibility() {
+  if (!props.access.checked.value || pendingVisibility.value !== null) return
   pendingVisibility.value = !props.access.published.value
 }
 async function confirmVisibility() {
@@ -25,7 +26,7 @@ async function retry() {
 
 <template>
   <section v-if="access.owner.value" class="publication-panel" aria-label="Public board access" :data-public-revision="access.revision.value">
-    <label class="publication-toggle"><input type="checkbox" role="switch" :checked="access.published.value" :disabled="access.busy.value || !access.checked.value || pendingVisibility !== null" @click.prevent="requestVisibility" />Public board</label>
+    <label class="publication-toggle"><input type="checkbox" role="switch" :checked="access.published.value" :disabled="!access.checked.value || pendingVisibility !== null" @click.prevent="requestVisibility" />Public board</label>
     <p v-if="access.busy.value" role="status">{{ access.published.value ? 'Syncing public board…' : 'Checking public access…' }}</p>
     <template v-else-if="access.checked.value">
       <p v-if="access.published.value" role="status">Public · Changes sync automatically.</p>

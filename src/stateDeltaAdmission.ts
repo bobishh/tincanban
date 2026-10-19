@@ -13,7 +13,7 @@ import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import type { WorkspaceRole } from "./domain/permissions"
 import { meshTrace } from "./sync/meshTrace"
-import { bindIncomingPacketDeltaBasis } from "./stateIncomingReuse"
+import { bindIncomingPacketDeltaBasis } from "./stateIncomingPacketCache"
 
 type Validated = { generation: string; basisHash: string; authority: string; descriptor: string }
 const validated = new Map<string, Validated>()
