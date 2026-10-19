@@ -12,11 +12,12 @@ import { contentKeysForEpoch } from "./replicaContentKeys"
 import { blindObjectId } from "./blindClient"
 
 const key = (byte: number) => encodeBlindBytes(new Uint8Array(32).fill(byte))
-async function fixture() {
+async function fixture(withOther = false) {
   const owner = crypto.randomUUID(), config = { origin: "https://rusty.example", scopeId: "scope", workspaceId: "board",
     servicePublicKey: key(7), readToken: key(8), writeToken: key(9), contentKey: key(1), keyEpoch: 1,
     policyRevision: 2, cursor: 0, lastUploaded: "" }
   await setReplicaPreference(owner, config)
+  if (withOther) await setReplicaPreference(owner, { ...config, origin: "https://other-rusty.example", scopeId: "other-scope" })
   await receivePrivateReplicaState(owner, portableReplicaState(changeReplicaPreference(emptyPrivateReplicaState(owner, "remote"),
     { ...config, contentKey: key(2) })))
   const capture = await capturePrivateReplicaConflict(owner, config.origin, config.scopeId)
@@ -135,4 +136,32 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
   expect(contentKeysForEpoch(activated, 1)).toEqual([key(1), key(2), key(3)].sort())
   expect((await getPrivateReplicaProgress(owner, activated)).lastUploaded).toBe("")
   expect((await getPrivateReplicaProgress(owner, activated)).contentIdentity).toBeUndefined()
+})
+
+it("Given frozen recovery and another connection, when its durable outbox advances, then resume recovery preserving that outbox under a fresh final CAS", async () => {
+  const { owner, config, capture, freeze, next } = await fixture(true)
+  const other = (await getReplicaConfigurations(owner)).find(value => value.origin === "https://other-rusty.example")!
+  const initial = await getPrivateReplicaProgress(owner, other)
+  const pending = { requestId: crypto.randomUUID(), hash: key(19), bytes: 1, object: { version: 1 as const,
+    scopeId: other.scopeId, keyEpoch: 1, nonce: encodeBlindBytes(new Uint8Array(12)), ciphertext: encodeBlindBytes(new Uint8Array(17)) } }
+  await persistPrivateReplicaState(owner, other, initial.generation, { ...initial, cursor: 17, generation: initial.generation + 1, pending })
+  const activation = await planPrivateReplicaConflictActivation(owner, capture, next, { progress: capture.progress }, freeze)
+  const first = await getPrivateReplicaProgress(owner, other)
+  await persistPrivateReplicaState(owner, other, first.generation, { ...first, cursor: 18, generation: first.generation + 1 })
+  expect(await compareAndSwapLocal(activation.plan)).toBe(false)
+  const retried = await planPrivateReplicaConflictActivation(owner, capture, next, { progress: capture.progress }, freeze)
+  expect(await compareAndSwapLocal(retried.plan)).toBe(true)
+  expect(await getPrivateReplicaProgress(owner, other)).toEqual({ ...first, cursor: 18, generation: first.generation + 1 })
+  expect((await getPrivateReplicaProgress(owner, other)).pending).toEqual(pending)
+  expect((await readLocal(await replicaCredentialFreezeKey(owner, config.origin)))).not.toBeNull()
+})
+
+it("Given frozen recovery, when its own progress changes, then reject activation and retain changed source without overwriting it", async () => {
+  const { owner, config, capture, freeze, next } = await fixture()
+  const storageKey = privateReplicaStateStorageKey(owner), raw = JSON.parse((await readLocal(storageKey))!)
+  raw.progress[`${config.origin}/${config.scopeId}`] = { revision: capture.previousVariants[0]!.preferenceRevision, cursor: 1, lastUploaded: "" }
+  const changed = JSON.stringify(raw)
+  await writeLocal(storageKey, changed)
+  await expect(planPrivateReplicaConflictActivation(owner, capture, next, { progress: capture.progress }, freeze)).rejects.toThrow(/source|changed/i)
+  expect(await readLocal(storageKey)).toBe(changed)
 })

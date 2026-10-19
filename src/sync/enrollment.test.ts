@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
-import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
-import { certHashDefault, defaultProofStore } from "../domain/proofs"
+import { createPersonalRoot, registerDeviceInRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
+import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
 import { InvitationService, resetInvitationStorageForTest } from "./invitations"
 import { createDeviceEnrollmentInvite } from "@meta-uber/mesh-pairing"
 import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest } from "./enrollment"
+import { createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { defaultStorage } from "../storage"
 import { keyId, verifyDeviceChain } from "./meshRecords"
 import { resolveSigningContext } from "../domain/signingContext"
@@ -254,5 +255,74 @@ describe("device enrollment boundary", () => {
     expect(await verifyDeviceChain({ personId: owner.identity.personId, publicKey: owner.identity.publicKey,
       deviceId: third.device.deviceId, certificates: [result.certificate, enrolled.certificate, ...await defaultProofStore.listCertificates()] })).toBe(third.device.publicKey)
     expect((await service.approveEnrollment(thirdInvite.invitationId, third.device, enrolled.profile)).ok).toBe(false)
+  })
+
+  it("reuses a verified ancestor certificate when re-enrolling that exact device key", async () => {
+    const { owner, guest, invite, bytes, service } = await fixture()
+    const enrolled = await installEnrollment(bytes, invite, guest, guest.identity.personId)
+    const rejoin = createDeviceEnrollmentInvite("rejoin-endpoint", "rejoin-secret", enrolled.profile)
+    await service.saveIssuedInvitation(rejoin)
+    await service.claimInvitation(rejoin.invitationId, owner.device.deviceId)
+
+    const approval = await service.approveEnrollment(rejoin.invitationId, owner.device, enrolled.profile)
+    if (!approval.ok) throw new Error(approval.error)
+
+    await expect(createIdentityDeviceTransfer(enrolled.personalRoot,
+      [approval.certificate, enrolled.profile.certificate, owner.certificate])).resolves.toBeDefined()
+    expect(approval.certificate).toEqual(owner.certificate)
+  })
+
+  it("rejects a device-id match with a different key without consuming its invitation", async () => {
+    const { owner, guest, invite, bytes, service } = await fixture()
+    const enrolled = await installEnrollment(bytes, invite, guest, guest.identity.personId)
+    const rejoin = createDeviceEnrollmentInvite("rejoin-endpoint", "rejoin-secret", enrolled.profile)
+    await service.saveIssuedInvitation(rejoin)
+    await service.claimInvitation(rejoin.invitationId, owner.device.deviceId)
+
+    const mismatch = await service.approveEnrollment(rejoin.invitationId,
+      { ...owner.device, publicKey: "mismatched-key" }, enrolled.profile)
+    expect(mismatch).toMatchObject({ ok: false })
+    expect((await service.getInvitation(rejoin.invitationId))?.status).toBe("redeeming")
+
+    const valid = await service.approveEnrollment(rejoin.invitationId, owner.device, enrolled.profile)
+    expect(valid).toMatchObject({ ok: true, certificate: owner.certificate })
+  })
+
+  it("exports a reapproval with an older signed duplicate retained in proof storage", async () => {
+    const { owner, guest, invite, bytes, service } = await fixture()
+    const enrolled = await installEnrollment(bytes, invite, guest, guest.identity.personId)
+    const rejoin = createDeviceEnrollmentInvite("rejoin-endpoint", "rejoin-secret", enrolled.profile)
+    await service.saveIssuedInvitation(rejoin)
+    await service.claimInvitation(rejoin.invitationId, owner.device.deviceId)
+    const approval = await service.approveEnrollment(rejoin.invitationId, owner.device, enrolled.profile)
+    if (!approval.ok) throw new Error(approval.error)
+
+    const olderDuplicate = await createDelegatedCertificate(enrolled.profile.privateKeys.devicePrivateKey!,
+      enrolled.profile.device.deviceId, owner.identity.personId, owner.device.deviceId, owner.device.publicKey,
+      await certHashDefault(enrolled.profile.certificate))
+    const olderDuplicateHash = await certHashDefault(olderDuplicate)
+    await defaultProofStore.putCertificate(olderDuplicateHash, olderDuplicate)
+    const before = await defaultProofStore.getCertificate(olderDuplicateHash)
+
+    const root = structuredClone(enrolled.personalRoot)
+    const ownerCertificateHash = await certHashDefault(owner.certificate)
+    registerDeviceInRoot(root, { ...owner.device, certificateHash: ownerCertificateHash, addedAt: new Date().toISOString() })
+    const rootBeforeExport = structuredClone(root)
+    const approvalContext = await resolveSigningContext({ profile: enrolled.profile,
+      certificates: [enrolled.profile.certificate, owner.certificate], purpose: "device-enrollment-approval",
+      binding: { invitationId: rejoin.invitationId, recipientDeviceId: owner.device.deviceId }, authorityRevision: "rejoin-fixture",
+      current: async () => ({ personId: owner.identity.personId, deviceId: enrolled.profile.device.deviceId,
+        authorityRevision: "rejoin-fixture" }) })
+    const payload = await enrollmentPayload(rejoin, enrolled.profile, approval.certificate, root,
+      [{ id: "ws", title: "Board" }], "ws", [{ version: 1, workspaceId: "ws", ownerPersonId: owner.identity.personId,
+        ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "A".repeat(43),
+        epoch: 1, peers: [] }], [], new TextEncoder().encode("[]"), approvalContext)
+    const wire = JSON.parse(new TextDecoder().decode(payload))
+    const transfer = await readIdentityDeviceTransfer(wire.payload.deviceState, owner.identity.personId)
+
+    expect(transfer.certificates.map(certificate => certificate.signature)).not.toContain(olderDuplicate.signature)
+    expect(transfer.personalRoot.devices[owner.device.deviceId]?.certificateHash).toBe(ownerCertificateHash)
+    expect(await defaultProofStore.getCertificate(olderDuplicateHash)).toEqual(before)
+    expect(root).toEqual(rootBeforeExport)
   })
 })

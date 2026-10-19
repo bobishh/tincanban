@@ -6,7 +6,7 @@ import { blindHash } from "./blindClient"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { parsePrivateReplicaConfig } from "./blindReplicaConfig"
 import { assertRetainsReplicaContentKeys, rotateReplicaContentKeys } from "./replicaContentKeys"
-import { parseReplicaCredentialConflictFreeze } from "./replicaCredentialConflictFreeze"
+import { parseReplicaCredentialConflictFreeze, type ReplicaCredentialConflictFreeze } from "./replicaCredentialConflictFreeze"
 import { privateReplicaBinding } from "./privateReplicaBinding"
 
 export type ReplicaCredentialFreeze = {
@@ -78,10 +78,17 @@ function validateOrdinaryFreeze(raw: string, personId: string, origin: string): 
   else parseFreeze(raw, personId, origin)
 }
 
-export async function readReplicaCredentialFreeze(personId: string, origin: string): Promise<ReplicaCredentialFreeze | undefined> {
+export async function readReplicaCredentialFreeze(personId: string, origin: string): Promise<ReplicaCredentialFreeze | ReplicaCredentialConflictFreeze | undefined> {
   origin = blindOrigin(origin)
   const raw = await readLocal(await replicaCredentialFreezeKey(personId, origin))
-  return raw === null ? undefined : parseFreeze(raw, personId, origin)
+  if (raw === null) return undefined
+  if (encoder.encode(raw).length > 4 * 1024 * 1024) throw new Error("Credential transition exceeds storage bound")
+  const value: unknown = JSON.parse(raw)
+  if (typeof value === "object" && value !== null && "kind" in value &&
+      (value as { kind?: unknown }).kind === "rusty-credential-conflict-freeze") {
+    return parseReplicaCredentialConflictFreeze(raw, personId, origin)
+  }
+  return parseFreeze(raw, personId, origin)
 }
 
 /** All ordinary writers at this origin stop, including a newly discovered scope omitted by an older in-flight loop. */

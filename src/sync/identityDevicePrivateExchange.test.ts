@@ -2,8 +2,10 @@ import { afterEach, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
 import { writeLocal } from "../localDb"
 import { RustyManagementRepository } from "./rustyManagementRepository"
-import { prepareReplicaCredentialFreeze } from "./replicaCredentialFreeze"
-import { setReplicaPreference } from "./privateReplicaRepository"
+import { prepareReplicaCredentialFreeze, readReplicaCredentialFreeze, replicaCredentialFreezeKey } from "./replicaCredentialFreeze"
+import { changeReplicaPreference, emptyPrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
+import { capturePrivateReplicaConflict, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
+import { buildReplicaCredentialConflictRecovery } from "./replicaCredentialConflictRecovery"
 import { assertIdentityDevicePrivateExchangeAllowed } from "./identityDevicePrivateExchange"
 
 afterEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest() })
@@ -57,6 +59,32 @@ it("Given an active credential freeze targeting a peer before server confirmatio
   await setReplicaPreference(f.profile.identity.personId, config)
   await prepareReplicaCredentialFreeze(f.profile, f.origin, f.servicePublicKey, "revoked-peer", () => {})
   await expect(assertIdentityDevicePrivateExchangeAllowed(f.profile, "revoked-peer", () => {})).rejects.toThrow(/revok|transition|private.*exchange/i)
+})
+
+it("Given a strictly validated conflict freeze, When profile state is published to another device, Then allow exchange without unfreezing ordinary replication", async () => {
+  const f = await fixture(), owner = f.profile.identity.personId
+  await new RustyManagementRepository(owner).observe({ origin: f.origin, servicePublicKey: f.servicePublicKey,
+    resourceKind: "person", resourceId: owner }, await personCapability(f, "different-device"))
+  const key = (byte: number) => toBase64Url(new Uint8Array(32).fill(byte))
+  const config = { purpose: "workspace" as const, workspaceId: "board", scopeId: "scope-1", origin: f.origin,
+    servicePublicKey: f.servicePublicKey, contentKey: key(2), readToken: key(3), writeToken: key(4), keyEpoch: 1,
+    policyRevision: 2, cursor: 0, lastUploaded: "", minimumWriterVersion: 2 as const }
+  await setReplicaPreference(owner, config)
+  await receivePrivateReplicaState(owner, portableReplicaState(changeReplicaPreference(emptyPrivateReplicaState(owner, "remote"),
+    { ...config, contentKey: key(5) })))
+  const capture = await capturePrivateReplicaConflict(owner, f.origin, config.scopeId)
+  const proposal = buildReplicaCredentialConflictRecovery(capture.sourceWire, { origin: f.origin, scopeId: config.scopeId,
+    servicePublicKey: f.servicePublicKey, expectedPolicyRevision: 4, freshContentKey: key(6), freshReadToken: key(7), freshWriteToken: key(8) })
+  await writeLocal(await replicaCredentialFreezeKey(owner, f.origin), JSON.stringify({ kind: "rusty-credential-conflict-freeze",
+    version: 2, id: crypto.randomUUID(), personId: owner, signerDeviceId: f.profile.device.deviceId,
+    origin: f.origin, scopeId: config.scopeId, proposal }))
+
+  await expect(assertIdentityDevicePrivateExchangeAllowed(f.profile, "other-device")).resolves.toBeUndefined()
+  await expect(setReplicaPreference(owner, config)).rejects.toThrow(/frozen|pending/i)
+  const saved = await readReplicaCredentialFreeze(owner, f.origin)
+  expect(saved).toMatchObject({ kind: "rusty-credential-conflict-freeze", version: 2 })
+  await writeLocal(await replicaCredentialFreezeKey(owner, f.origin), JSON.stringify({ ...saved, version: 99 }))
+  await expect(assertIdentityDevicePrivateExchangeAllowed(f.profile, "other-device")).rejects.toThrow(/invalid/i)
 })
 
 it("Given a remote session ends during a policy read, When private exchange authorization resumes, Then refuse to publish", async () => {

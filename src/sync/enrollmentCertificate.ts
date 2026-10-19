@@ -1,9 +1,10 @@
+import { verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
 import { canonicalizeJson } from "../domain/identity"
 import { certHashDefault } from "../domain/proofs"
 import type { DeviceCertificate } from "../domain/model"
 import type { LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
-import { signingEvidence, signWithContext, type VerifiedSigningContext } from "../domain/signingContext"
+import { assertSigningContextCurrent, signingEvidence, signWithContext, type VerifiedSigningContext } from "../domain/signingContext"
 import type { StoredInvitation } from "./invitations"
 
 type ApprovalPort = {
@@ -36,6 +37,12 @@ function hasEnrollmentIssuerEvidence(context: VerifiedSigningContext, profile: L
     evidence.identity.personId === profile.identity.personId && evidence.identity.publicKey === profile.identity.publicKey &&
     evidence.publicKey === profile.device.publicKey && evidence.signerKeyId === profile.device.deviceId &&
     canonicalizeJson(evidence.certificates[0]) === canonicalizeJson(profile.certificate)
+}
+
+function matchingVerifiedAncestor(context: VerifiedSigningContext, profile: LocalProfile,
+  recipientDevice: { deviceId: string; publicKey: string }): DeviceCertificate | undefined {
+  return signingEvidence(context).certificates.find(certificate => certificate.payload.personId === profile.identity.personId &&
+    certificate.payload.deviceId === recipientDevice.deviceId && certificate.payload.devicePublicKey === recipientDevice.publicKey)
 }
 
 export async function approveEnrollmentCertificate(
@@ -82,7 +89,16 @@ export async function approveEnrollmentCertificate(
       } })
     if (!hasEnrollmentIssuerEvidence(context, profile)) throw new Error("Enrollment signing context does not contain the issuer certificate chain")
     await assertCurrentClaim()
-    const signedCert = await signWithContext(context, certPayload)
+    const existingAncestor = matchingVerifiedAncestor(context, profile, recipientDevice)
+    let signedCert: DeviceCertificate
+    if (existingAncestor) {
+      signedCert = existingAncestor
+    } else {
+      signedCert = await signWithContext(context, certPayload)
+      await verifyDeviceCertificateChain(profile.identity, recipientDevice.deviceId,
+        [signedCert, ...signingEvidence(context).certificates])
+    }
+    await assertSigningContextCurrent(context)
     const current = await assertCurrentClaim()
     const consumed = port.consume(current, new Date().toISOString(), (stored, now) => !!stored && stored === current &&
       enrollmentInvitationIdentity(stored) === invitationFingerprint && stored.status === "redeeming" &&

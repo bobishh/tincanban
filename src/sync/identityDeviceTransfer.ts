@@ -15,6 +15,7 @@ import { WorkspaceUnavailableError } from "../workspaceAvailability"
 import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { projectLegacyEnrollmentCatalog } from "./legacyEnrollmentCatalog"
 import { readIdentityStateRevision } from "../identityStateRevision"
+import { projectRedundantDeviceCertificates } from "./identityDeviceTransferCertificateProjection"
 export { readIdentityDeviceTransfer, requireEnrollmentTransfer, type DeviceWorkspaceTransfer } from "./identityDeviceTransferReader"
 
 async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ kind: "workspace-profile"; workspaceId: string; record: unknown }[]> {
@@ -36,8 +37,11 @@ async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ k
 export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDocumentV1, certificates: DeviceCertificate[],
   enrollment?: DeviceWorkspaceTransfer): Promise<IdentityDeviceState> {
   personalRoot = structuredClone(personalRoot)
-  personalRoot = projectIdentityProfileRoot(personalRoot, await rootIdentityProfileState(personalRoot))
   certificates = structuredClone(certificates)
+  const projected = await projectRedundantDeviceCertificates(personalRoot, certificates)
+  personalRoot = projected.root
+  certificates = projected.certificates
+  personalRoot = projectIdentityProfileRoot(personalRoot, await rootIdentityProfileState(personalRoot))
   enrollment = structuredClone(enrollment)
   certificates = await canonicalCertificates(certificates)
   personalRoot = await projectLegacyEnrollmentCatalog(personalRoot, certificates)

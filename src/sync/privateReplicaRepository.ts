@@ -1,3 +1,4 @@
+import { samePrivateReplicaConflictSource } from "./privateReplicaConflictSource"
 import { ReplicaProgressConflictError } from "./replicationErrors"
 import { canonicalizeJson } from "../domain/identity"
 import { compareAndSwapLocal,readLocal,type LocalStatePlan } from "../localDb"
@@ -168,7 +169,7 @@ export async function planPrivateReplicaConflictActivation(owner: string, captur
   capture = structuredClone(capture); replacement = structuredClone(replacement); drained = structuredClone(drained)
   freeze = parseReplicaCredentialConflictFreeze(freeze, owner, replacement.origin)
   const current = await capturePrivateReplicaConflict(owner, replacement.origin, replacement.scopeId, freeze)
-  if (canonicalizeJson(current) !== canonicalizeJson(capture) || canonicalizeJson(capture.sourceWire) !== canonicalizeJson(freeze.proposal.sourceWire) ||
+  if (!samePrivateReplicaConflictSource(current, capture) || canonicalizeJson(capture.sourceWire) !== canonicalizeJson(freeze.proposal.sourceWire) ||
     capture.sourceRevision !== freeze.proposal.sourceRevision || canonicalizeJson(replacement) !== canonicalizeJson(freeze.proposal.next)) {
     throw new Error("Credential recovery source or exact proposal changed")
   }
@@ -180,7 +181,7 @@ export async function planPrivateReplicaConflictActivation(owner: string, captur
     assertRetainsReplicaContentKeys(previous, replacement)
   }
   await assertConflictOutboxDrained(capture, replacement, drained)
-  const stateRaw = capture.sourceConditions.find(condition => condition.key === stateKey(owner))?.value
+  const stateRaw = current.sourceConditions.find(condition => condition.key === stateKey(owner))?.value
   if (!stateRaw) throw new Error("Exact private replica source is missing")
   const next = changeReplicaPreference(parseState(stateRaw, owner), replacement)
   const config = effectivePrivateReplicaConfigs(next).find(value => scopeKey(value) === scopeKey(replacement))
@@ -189,7 +190,7 @@ export async function planPrivateReplicaConflictActivation(owner: string, captur
   const encoded = JSON.stringify(next)
   parseState(encoded, owner)
   const activated = effectivePrivateReplicaConfigs(next).find(value => scopeKey(value) === scopeKey(config))!
-  return { config: activated, plan: { conditions: [...capture.sourceConditions, { key: freezeKey, value: frozenRaw }],
+  return { config: activated, plan: { conditions: [...current.sourceConditions, { key: freezeKey, value: frozenRaw }],
     writes: [{ key: stateKey(owner), value: encoded }] } }
 }
 

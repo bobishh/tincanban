@@ -36,7 +36,7 @@ export async function assertIdentityDevicePrivateExchangeAllowed(profile: LocalP
     ensureCurrent()
     const freeze = await readReplicaCredentialFreeze(profile.identity.personId, origin)
     ensureCurrent()
-    if (freeze?.revokedDeviceId === remoteDeviceId) {
+    if (freeze && "revokedDeviceId" in freeze && freeze.revokedDeviceId === remoteDeviceId) {
       throw new PrivateIdentityExchangeDeniedError("Rusty credential transition is revoking this device")
     }
   }
