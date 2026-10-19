@@ -51,6 +51,8 @@ jobs:
           retention-days: 14
       - name: Verify frontend deployment adapter
         run: node --test workers/frontend/*.test.mjs
+      - name: Install pinned frontend Wrangler for package regression
+        run: npm ci --prefix workers/frontend
       - name: Verify cohort artifact and deployment contracts
         run: node --test scripts/release-cohort.test.mjs scripts/component-release.test.mjs scripts/automation-secrets.test.mjs
       - name: Build checked production frontend

@@ -1,13 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFileSync, existsSync, readdirSync, cpSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { assertActiveCompatibility, composeFrontendRollback, frontendReleaseMetadata, prepareComponent, readVerifiedReleaseAsset } from './component-release.mjs';
-import { sealArtifact } from './release-cohort.mjs';
+import { readArtifactFiles, sealArtifact } from './release-cohort.mjs';
 
 const artifact = { component: 'frontend', sourceSha: 'a'.repeat(40), candidateId: '123-2', artifactSha256: 'b'.repeat(64),
   readers: { privateReplicas: 5 }, writerVersion: 2 };
+const listFiles = directory => readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+  const path = join(directory, entry.name);
+  return entry.isDirectory() ? listFiles(path) : [path];
+});
 
 test('frontend compatibility metadata stays on the legacy frontend-only contract', () => {
   const value = frontendReleaseMetadata(artifact);
@@ -73,6 +79,77 @@ test('Given separately sealed artifacts, when preparing deploy, then require exa
     assert.equal(config.vars.RELEASE_SDK_SHA, 'c'.repeat(40));
     assert.throws(() => prepareComponent('automation', artifacts, join(root, 'wrong'), 'a'.repeat(40), '123', '4'), /exact successful Verify run/);
     assert.throws(() => prepareComponent('frontend', artifacts, join(root, 'wrong-attempt'), 'a'.repeat(40), '123', '5'), /exact successful Verify run/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('frontend capture keeps retained WASM as static assets and out of Wrangler module discovery', () => {
+  const root = mkdtempSync(join(tmpdir(), 'tincanban-frontend-modules-'));
+  try {
+    const wrangler = resolve('workers/frontend/node_modules/.bin/wrangler');
+    assert.ok(existsSync(wrangler), 'Wrangler must be installed to verify frontend Worker module discovery');
+    const project = join(root, 'project'); const sdk = join(project, 'vendor', 'meta-mesh');
+    const dist = join(project, 'dist'); const artifact = join(project, '.release', 'frontend');
+    mkdirSync(join(project, 'release'), { recursive: true });
+    mkdirSync(join(project, 'workers', 'frontend'), { recursive: true });
+    mkdirSync(join(dist, 'assets'), { recursive: true });
+    mkdirSync(sdk, { recursive: true });
+    for (const repository of [project, sdk]) {
+      execFileSync('git', ['init', '-q'], { cwd: repository });
+      execFileSync('git', ['config', 'user.name', 'Release fixture'], { cwd: repository });
+      execFileSync('git', ['config', 'user.email', 'release-fixture@example.invalid'], { cwd: repository });
+      execFileSync('git', ['commit', '--allow-empty', '-qm', 'fixture'], { cwd: repository });
+    }
+    writeFileSync(join(project, 'release', 'readers.json'), JSON.stringify({ frontend: { privateReplicas: 5 }, writerVersions: { frontend: 2 } }));
+    writeFileSync(join(project, 'workers', 'frontend', 'frontend.mjs'), "export default { fetch() { return new Response('ok'); } };");
+    writeFileSync(join(project, 'workers', 'frontend', 'wrangler.jsonc'), readFileSync(new URL('../workers/frontend/wrangler.jsonc', import.meta.url)));
+    writeFileSync(join(dist, 'index.html'), '<!doctype html><title>current</title>');
+
+    const wasmBytes = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+    const oldWasmPaths = ['assets/meta_mesh_bg-old-retained.wasm', 'assets/meta_mesh_policy_bg-old-retained.wasm'];
+    const currentWasmPath = 'assets/meta_mesh_bg-current.wasm';
+    for (const path of [...oldWasmPaths, currentWasmPath]) writeFileSync(join(dist, path), wasmBytes);
+    const wasmDigest = createHash('sha256').update(wasmBytes).digest('hex');
+    writeFileSync(join(dist, 'release.json'), JSON.stringify({ retained: Object.fromEntries(oldWasmPaths.map(path => [path, wasmDigest])) }));
+
+    const captureScript = resolve('scripts/capture-release-artifact.mjs');
+    const capture = spawnSync(process.execPath, [captureScript, 'frontend', artifact], {
+      cwd: project, encoding: 'utf8', timeout: 60_000,
+      env: { ...process.env, RELEASE_CANDIDATE_ID: '123-4' },
+    });
+    assert.equal(capture.status, 0, capture.stderr || capture.stdout);
+    const capturedConfig = JSON.parse(readFileSync(join(artifact, 'wrangler.json'), 'utf8'));
+    assert.equal(capturedConfig.find_additional_modules, false);
+    for (const path of [...oldWasmPaths, currentWasmPath]) assert.deepEqual(readFileSync(join(artifact, 'assets', path)), wasmBytes);
+    const capturedManifest = JSON.parse(readFileSync(join(artifact, 'assets', 'release.json'), 'utf8'));
+    for (const path of oldWasmPaths) assert.equal(capturedManifest.retained[path], wasmDigest);
+
+    const runDryRun = (artifactDirectory, deployDirectory, workerOutput) => {
+      prepareComponent('frontend', artifactDirectory, deployDirectory,
+        JSON.parse(readFileSync(join(artifactDirectory, 'artifact.json'), 'utf8')).sourceSha, '123', '4');
+      return spawnSync(wrangler, ['versions', 'upload', '--config', join(deployDirectory, 'wrangler.json'), '--no-bundle', '--dry-run',
+        '--outdir', workerOutput], { cwd: project, encoding: 'utf8', timeout: 60_000 });
+    };
+    const baselineArtifact = join(project, '.release', 'frontend-with-default-discovery');
+    cpSync(artifact, baselineArtifact, { recursive: true });
+    const baselineConfigPath = join(baselineArtifact, 'wrangler.json');
+    const baselineConfig = JSON.parse(readFileSync(baselineConfigPath, 'utf8'));
+    delete baselineConfig.find_additional_modules;
+    writeFileSync(baselineConfigPath, JSON.stringify(baselineConfig));
+    const baselineIdentity = JSON.parse(readFileSync(join(baselineArtifact, 'artifact.json'), 'utf8'));
+    const { artifactSha256, files: ignoredFiles, kind, version, ...identity } = baselineIdentity;
+    writeFileSync(join(baselineArtifact, 'artifact.json'), JSON.stringify(sealArtifact(identity, readArtifactFiles(baselineArtifact))));
+    const baselineDeploy = join(project, '.release', 'deploy-default-discovery');
+    const baselineWorker = join(project, 'worker-default-discovery');
+    const baseline = runDryRun(baselineArtifact, baselineDeploy, baselineWorker);
+    assert.equal(baseline.status, 0, baseline.stderr || baseline.stdout);
+    const baselineWorkerFiles = listFiles(baselineWorker);
+    assert.ok(baselineWorkerFiles.some(path => path.endsWith('.wasm')), 'Default additional-module discovery reproduces WASM in Worker output');
+
+    const fixedDeploy = join(project, '.release', 'deploy-frontend');
+    const fixedWorker = join(project, 'worker-frontend');
+    const fixed = runDryRun(artifact, fixedDeploy, fixedWorker);
+    assert.equal(fixed.status, 0, fixed.stderr || fixed.stdout);
+    assert.ok(!listFiles(fixedWorker).some(path => path.endsWith('.wasm')), 'Captured WASM assets must stay out of Worker module output');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

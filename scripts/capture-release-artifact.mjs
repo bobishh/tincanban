@@ -18,6 +18,7 @@ if (component === 'frontend') {
   cpSync('workers/frontend/frontend.mjs', join(destination, 'frontend.mjs'));
   config = JSON.parse(readFileSync('workers/frontend/wrangler.jsonc', 'utf8'));
   config.main = 'frontend.mjs'; config.no_bundle = true;
+  config.find_additional_modules = false;
   config.assets.directory = './assets';
 } else {
   cpSync('workers/automation/.artifact', join(destination, 'bundle'), { recursive: true });
