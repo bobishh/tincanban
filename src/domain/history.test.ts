@@ -57,9 +57,9 @@ describe("Native history projection and attribution (Requirement 2.4)", () => {
     })
 
     const history = projectDocumentHistory(doc)
-    expect(history.length).toBe(1)
-    expect(history[0].isLegacy).toBe(true)
-    expect(history[0].authorLabel).toBe("Imported")
+    expect(history).toHaveLength(2)
+    expect(history.every(entry => entry.isLegacy && entry.authorLabel === "Imported")).toBe(true)
+    expect(history[1].message).toBe("Old legacy commit without JSON metadata")
   })
 
   it("filters history for a specific entity ID", async () => {

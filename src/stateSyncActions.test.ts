@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { createWorkspaceDoc } from "./test/boardFixture"
-import type { WorkspaceStorage } from "./storage"
+import * as Automerge from "@automerge/automerge/slim"
+import type { WorkspaceStorage, WorkspaceTransactionContext } from "./storage"
 import type { WorkspaceMeta } from "./storageCatalog"
 import { stateRuntime } from "./stateContext"
 import { createSyncActions } from "./stateSyncActions"
@@ -45,7 +46,10 @@ describe("readWorkspaceDoc", () => {
 
 it("Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause", async () => {
   clearMeshTrace()
-  const storage = { loadWorkspaceDoc: async () => { throw new Error("History read failed") } } as unknown as WorkspaceStorage
+  const storage = {
+    withWorkspaceTransaction: async (_id: string, operation: (transaction: Pick<WorkspaceTransactionContext, "loadWorkspaceDoc">) => Promise<unknown>) =>
+      operation({ loadWorkspaceDoc: async () => { throw new Error("History read failed") } }),
+  } as unknown as WorkspaceStorage
   await expect(createSyncActions().reclassifyWorkspace("trace-workspace", storage)).rejects.toThrow("History read failed")
   expect(meshTraceSnapshot()).toEqual(expect.arrayContaining([expect.objectContaining({
     event: "workspace.reclassify.failed", workspaceId: "trace-workspace", stage: "load-document", reason: "History read failed",
@@ -57,7 +61,7 @@ describe("recordVerifiedOwnerWorkspace", () => {
     const profile = await bootstrapIdentity("Local owner")
     const root = createPersonalRoot(profile, "certificate")
     const id = "received-owned-board"
-    const doc = createWorkspaceDoc(id, "Future plans", profile.identity.personId, "blank")
+    const doc = Automerge.from(createWorkspaceDoc(id, "Future plans", profile.identity.personId, "blank"))
     const catalog: WorkspaceMeta[] = [{ id, title: doc.title, updatedAt: "now" }]
     const storage = {
       loadWorkspaceDoc: async () => ({ doc }),
@@ -77,7 +81,7 @@ describe("recordVerifiedOwnerWorkspace", () => {
   it("rejects foreign-owned documents without changing personal-root entitlements", async () => {
     const profile = await bootstrapIdentity("Local visitor")
     const root = createPersonalRoot(profile, "certificate")
-    const doc = createWorkspaceDoc("foreign-board", "Foreign", "another-person", "blank")
+    const doc = Automerge.from(createWorkspaceDoc("foreign-board", "Foreign", "another-person", "blank"))
     const storage = {
       loadWorkspaceDoc: async () => ({ doc }),
       loadPersonalRoot: async () => root,

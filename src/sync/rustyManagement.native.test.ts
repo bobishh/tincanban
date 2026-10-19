@@ -322,7 +322,9 @@ async function appShapedNativeHistory(signer: CryptoKey) {
       personId: capturedHistory.expected.personId, deviceId }, deviceId),
     publicKey: templateProof.publicKey, certificates: templateProof.certificates, grant: null,
   })
-  const seed = createWorkspaceDoc(workspaceId, "Native admitted original", capturedHistory.expected.personId, "blank")
+  const seed: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId,
+    title: "Native history fixture", archivedAt: null, ownerPersonId: capturedHistory.expected.personId,
+    entities: {}, migration: null }
   const base = Automerge.from(seed)
   let fork: Automerge.Doc<WorkspaceDocumentV2> | undefined
   try {

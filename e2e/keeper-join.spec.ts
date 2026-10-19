@@ -58,6 +58,26 @@ async function stateContains(path: string, company: string) {
   } catch { return false }
 }
 
+async function nativeStateStatus(path: string): Promise<string> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, "utf8"))
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "state file present; JSON shape invalid"
+    const document: unknown = (parsed as Record<string, unknown>).document
+    if (!Array.isArray(document) || !document.every((value: unknown) => typeof value === "number")) {
+      return "state file present; document bytes invalid"
+    }
+    return `state file present; document bytes=${document.length}`
+  } catch { return "state file unavailable" }
+}
+
+function safeNativeErrors(errors: string): string {
+  const lines = errors.split(/\r?\n/).filter(Boolean).slice(-12).map(line => line
+    .replace(/Lighthouse (connect|publish) to \S+/g, "Lighthouse $1 to [peer]")
+    .replace(/Lighthouse handshake with \S+/g, "Lighthouse handshake with [peer]")
+    .slice(0, 300))
+  return lines.join("\n") || "(none)"
+}
+
 async function stop(process: ChildProcessWithoutNullStreams | undefined) {
   if (!process || process.exitCode !== null || process.signalCode !== null) return
   const exited = once(process, "exit")
@@ -172,6 +192,9 @@ test("Given owner and editor share a fresh board, when owner closes, then editor
     await addLead(page, "Owner online")
     const state = join(directory, "state.json")
     await expect.poll(() => stateContains(state, "Owner online"), { timeout: 25_000 }).toBe(true)
+      .catch(async error => {
+        throw new Error(`${error}\nNative state: ${await nativeStateStatus(state)}\nNative errors:\n${safeNativeErrors(serverErrors)}`)
+      })
 
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await ownerDialog.getByRole("button", { name: "Add someone" }).click()

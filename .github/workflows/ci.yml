@@ -257,6 +257,12 @@ jobs:
       - run: npx playwright test --reporter=list --project=browser-native
       - run: cargo build --locked --manifest-path crates/tincanban-lighthouse/Cargo.toml
       - run: npx playwright test --reporter=list --project=keeper-join
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: browser-native-failure
+          path: test-results/
+          retention-days: 3
 
   native-management:
     name: Native Rusty management and archive interoperability

@@ -2,6 +2,7 @@ import { canonicalizeJson, sha256Base64Url, toBase64Url } from "../domain/identi
 import { openWorkspaceJournal, requestResult, transactionDone } from "../storageJournal"
 import type { HistoryRecoveryEvidencePart } from "./historyRecoveryArchive"
 import { WORKSPACE_RECOVERY_STORES } from "../workspaceRecoveryStores"
+import { meshTrace } from "./meshTrace"
 
 const STORES = WORKSPACE_RECOVERY_STORES
 const PART_BYTES = 256 * 1024
@@ -53,8 +54,17 @@ export async function createWorkspaceHistoryRecoveryEvidence(workspaceId: string
     return canonicalizeJson(value ?? null)
   }
   const revision = await readRevision()
-  const assertUnchanged = async () => {
-    if (await readRevision() !== revision) throw new Error("Workspace changed during private recovery export; retry when changes settle")
+  const assertUnchanged = async (stage = "external-check", counts: { records?: number; bytes?: number } = {}) => {
+    const actualRevision = await readRevision()
+    if (actualRevision !== revision) {
+      meshTrace("workspace.recovery.evidence.changed", {
+        stage,
+        expectedRevisionDigest: await sha256Base64Url(encoder.encode(revision)),
+        actualRevisionDigest: await sha256Base64Url(encoder.encode(actualRevision)),
+        ...counts,
+      }, "warn")
+      throw new Error("Workspace changed during private recovery export; retry when changes settle")
+    }
     ensureCurrent()
   }
   const page = async (store: typeof STORES[number], after?: IDBValidKey) => {
@@ -98,7 +108,7 @@ export async function createWorkspaceHistoryRecoveryEvidence(workspaceId: string
     for (const store of STORES) {
       let after: IDBValidKey | undefined
       for (;;) {
-        await assertUnchanged()
+        await assertUnchanged(`before-${store}`, { records: recordCount, bytes: byteCount })
         const rows = await page(store, after)
         for (const row of rows) {
           if (++recordCount > 1_048_576) throw new Error("Too many local workspace recovery records")
@@ -114,7 +124,7 @@ export async function createWorkspaceHistoryRecoveryEvidence(workspaceId: string
         if (rows.length < 64) break
       }
     }
-    await assertUnchanged()
+    await assertUnchanged("complete", { records: recordCount, bytes: byteCount })
   }
   return { revision, evidence: evidence(), assertUnchanged }
 }

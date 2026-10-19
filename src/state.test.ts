@@ -487,7 +487,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const app = useTincanban()
     await createLeadFixture(app, { company: "Unknown hash guard", role: "Engineer", status: "lead" })
     const base = app.getActiveDoc()!, profile = app.getCurrentProfile()!
-    const candidate = await executeCommand(base, { kind: "renameWorkspace", title: "Newly present hash" }, profile)
+    // The orphan proof changes the incoming checkpoint context, so its first local commit refreshes a clean, verified snapshot basis.
+    const intermediate = mode === "delta"
+      ? await executeCommand(base, { kind: "renameWorkspace", title: "Admitted delta basis" }, profile)
+      : undefined
+    if (intermediate && !intermediate.ok) throw new Error(intermediate.error.message)
+    const candidateBase = intermediate?.ok ? intermediate.value.newDoc : base
+    const candidate = await executeCommand(candidateBase, { kind: "renameWorkspace", title: "Newly present hash" }, profile)
     if (!candidate.ok) throw new Error(candidate.error.message)
     const authorizations = await prepareLocalChangeAuthorizations(candidate.value.newDoc, profile, [candidate.value.receipt.changeHash])
     const bytes = Automerge.save(base), bundle = await exportAuthorizationBundle(bytes, profile)
@@ -501,8 +507,13 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
         authorizationEvidence: [...previous.authorizationEvidence ?? [], ...authorizations],
       })
     } else {
-      const command = vi.spyOn(domainCommands, "executeCommand").mockResolvedValueOnce(candidate)
-      try { await app.executeCommandAsync({ kind: "renameWorkspace", title: "Newly present hash" }) }
+      if (!intermediate?.ok) throw new Error("Delta fixture is missing its admitted basis change")
+      const command = vi.spyOn(domainCommands, "executeCommand")
+        .mockResolvedValueOnce(intermediate).mockResolvedValueOnce(candidate)
+      try {
+        await app.executeCommandAsync({ kind: "renameWorkspace", title: "Admitted delta basis" })
+        await app.executeCommandAsync({ kind: "renameWorkspace", title: "Newly present hash" })
+      }
       finally { command.mockRestore() }
       expect(await defaultStorage.readDeltaFrontier(base.id)).toMatchObject({ revision: 1,
         heads: [candidate.value.receipt.changeHash] })

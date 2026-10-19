@@ -28,6 +28,7 @@ import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
 import { z } from "zod"
+import { meshTrace } from "./meshTrace"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
@@ -267,37 +268,49 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
   let verifyKeeperCommit: KeeperCommitReceiptVerifier | undefined
   let remoteDeviceId: string | undefined
   let remoteMeshPeers: unknown
+  let stage = "accept-stream"
   const timeout = setTimeout(() => { void connection.close() }, 600_000)
   runtime.connections.add(connection)
   try {
     const stream = await connection.acceptStream()
+    stage = "pairing-frame-read"
     const rawRequest = await stream.read()
+    stage = "mesh-peer-dispatch"
     if (await receiveMeshPeer(runtime, connection, stream, rawRequest)) {
       transferredToMesh = true
       runtime.connections.delete(connection)
       return
     }
+    stage = "pairing-frame-inspect"
     const header = inspectPairingFrame(rawRequest)
     if (header.type !== "workspace-join-request" || header.secret !== runtime.invite.secret) return
     const handshake = new BrowserWorkspaceJoinHost(new WasmWorkspaceJoinHandshake(runtime.invite.secret, "host"))
     const result = await handshake.handle(rawRequest, stream, connection, {
       request: payload => {
+        stage = "request-validation"
         const guest = readWorkspaceRequest(runtime, payload)
         personId = guest.personId
         remoteMeshPeers = guest.meshPeers
         return guest
       },
       approve: async guest => {
+        stage = "access-approval"
         const approval = await approveWorkspaceAccess(runtime, guest)
         if (approval.ok) remoteDeviceId = approval.value.deviceId
         return approval
       },
-      prepare: result => prepareWorkspaceAccess(runtime, result, runtime.keeperAdmission ? async snapshot => {
-        verifyKeeperCommit = await keeperCommitReceiptVerifier(runtime.keeperAdmission!.workspaceIds, snapshot)
-      } : undefined),
-      beforeAckFrame: (frame, stream) => serveJoinAuxiliaryFrame(runtime, frame, stream,
-        personId, remoteDeviceId, remoteMeshPeers),
+      prepare: result => {
+        stage = "response-preparation"
+        return prepareWorkspaceAccess(runtime, result, runtime.keeperAdmission ? async snapshot => {
+          verifyKeeperCommit = await keeperCommitReceiptVerifier(runtime.keeperAdmission!.workspaceIds, snapshot)
+        } : undefined)
+      },
+      beforeAckFrame: (frame, stream) => {
+        stage = "auxiliary-frame"
+        return serveJoinAuxiliaryFrame(runtime, frame, stream, personId, remoteDeviceId, remoteMeshPeers)
+      },
       acknowledged: async payload => {
+        stage = "acknowledgement"
         if (runtime.keeperAdmission) {
           if (!verifyKeeperCommit) throw new Error("Keeper commit receipt was not negotiated")
           verifyKeeperCommit(payload)
@@ -310,6 +323,7 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
         }
       },
     })
+    stage = "session-start"
     if (result.kind !== "accepted" || !("value" in result)) return
     admitted = true
     personId = result.value.personId
@@ -320,6 +334,7 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
     await runtime.group.publish()
     await session.done
   } catch (error) {
+    traceJoinFailure(error, stage, admitted)
     if (!runtime.stopped() && runtime.run === runtime.context.currentRun() && !isMeshNetworkFailure(error)) {
       runtime.fail(admitted ? error : new WorkspaceAdmissionFailure(error))
     }
@@ -333,6 +348,12 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
       runtime.disconnect()
     }
   }
+}
+
+function traceJoinFailure(error: unknown, stage: string, admitted: boolean): void {
+  const errorName = error instanceof Error && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.name)
+    ? error.name : typeof error
+  meshTrace("workspace.join.host.failed", { stage, errorName, admitted, networkFailure: isMeshNetworkFailure(error) }, "warn")
 }
 
 async function receiveMeshPeer(runtime: HostRuntime, connection: SyncConnection, stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>, raw: Uint8Array) {
