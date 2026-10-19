@@ -36,6 +36,32 @@ test("Given live sync is enabled without a connected peer, when Sync opens, then
   await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
 })
 
+test("Given Rusty is current and no other browser is online, when Device sync opens, then show idle peer status and keep peer errors visible", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => {
+    const { mountRustyAvailableSyncDialog } = await import("/e2e/support/keeperDialog.ts")
+    await mountRustyAvailableSyncDialog()
+  })
+
+  const dialog = page.getByRole("dialog", { name: "Device sync" })
+  const summary = dialog.locator(".mesh-connection-summary")
+  await expect(summary).toHaveText("No other devices online · Rusty sync remains available.")
+  await expect(summary).not.toHaveClass(/is-warning/)
+  await expect(dialog.getByText("Reconnect: Workspace board unavailable: remote browser is unavailable")).toBeVisible()
+})
+
+test("Given Rusty was recently current but internet is offline, when Device sync opens, then keep the offline warning", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => {
+    const { mountRustyAvailableSyncDialog } = await import("/e2e/support/keeperDialog.ts")
+    await mountRustyAvailableSyncDialog({ networkOnline: false })
+  })
+
+  const summary = page.getByRole("dialog", { name: "Device sync" }).locator(".mesh-connection-summary")
+  await expect(summary).toHaveText("Devices offline · Waiting for internet. Changes stay saved on this device.")
+  await expect(summary).toHaveClass(/is-warning/)
+})
+
 test("Given Device sync shows an invalid-link failure, when it renders recovery actions, then Dismiss remains and Close is not duplicated", async ({ page }) => {
   await page.goto("/pair#invalid")
 

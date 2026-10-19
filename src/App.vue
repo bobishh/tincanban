@@ -428,6 +428,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :mesh-action-error="peerAccessError"
       :workspace-connected="devicePresence === 'connected'" :workspace-reconnecting="devicePresence === 'reconnecting'"
       :mesh-diagnostic="sync.meshDiagnostic.value"
+      :mesh-presence="meshPresence"
       :retry-at="activeMeshRetryAt"
       :network-online="sync.networkOnline.value"
       :live="sync.isEnabled.value"

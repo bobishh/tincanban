@@ -13,13 +13,20 @@ export function replayAdmittedJournal(
   const missing = changes.filter(change => !excluded.has(change.changeHash) && !Automerge.hasHeads(doc, [change.changeHash]))
   if (!missing.length) return doc
   try { return Automerge.applyChanges(doc, missing.map(change => change.bytes))[0] }
-  catch {
+  catch (error) {
+    assertAutomergeUsable(doc, error)
     // Preserve legacy recovery of independent changes when one dependency is unavailable.
     for (const change of missing) {
-      try { [doc] = Automerge.applyChanges(doc, [change.bytes]) } catch { /* Dependent change remains in raw recovery history. */ }
+      try { [doc] = Automerge.applyChanges(doc, [change.bytes]) }
+      catch (changeError) { assertAutomergeUsable(doc, changeError) }
     }
     return doc
   }
+}
+
+function assertAutomergeUsable(doc: Automerge.Doc<WorkspaceDocumentV2>, originalError: unknown): void {
+  try { Automerge.stats(doc) }
+  catch { throw originalError }
 }
 
 /** Legacy writes extend raw recovery history, never its prior admission checkpoint. */

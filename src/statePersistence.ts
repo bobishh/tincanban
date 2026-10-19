@@ -309,6 +309,11 @@ async function activeWorkspaceId(): Promise<string> {
   return await readLocal("tincanban.active_workspace_id") ?? "default";
 }
 
+function loadStartupWorkspace(storage: WorkspaceStorage, workspaceId: string) {
+  return storage.loadWorkspaceDoc(workspaceId, undefined, (stage, read, detail) =>
+    diagnoseStartupStep(`initial-workspace-${stage}`, read, { ...detail, workspaceId }));
+}
+
 async function loadPreferredWorkspace(
   storage: WorkspaceStorage,
   initialId: string,
@@ -318,11 +323,11 @@ async function loadPreferredWorkspace(
     ? new Set(Object.values(root.workspaces ?? {}).filter(reference => !reference.forgotten).map(reference => reference.workspaceId))
     : undefined;
   const preferred = !entitledIds || entitledIds.has(initialId)
-    ? await storage.loadWorkspaceDoc(initialId)
+    ? await loadStartupWorkspace(storage, initialId)
     : null;
   if (preferred && !preferred.doc.archivedAt) return preferred;
   const fallback = initialId === "default" || (entitledIds && !entitledIds.has("default"))
-    ? null : await storage.loadWorkspaceDoc("default");
+    ? null : await loadStartupWorkspace(storage, "default");
   return fallback && !fallback.doc.archivedAt ? fallback : null;
 }
 
@@ -337,7 +342,7 @@ async function initializeFirstWorkspace(
       : undefined;
     const existing = (await storage.listWorkspaces()).filter(workspace => !entitledIds || entitledIds.has(workspace.id));
     const first = existing[0];
-    if (first) return (await storage.loadWorkspaceDoc(first.id))?.doc ?? null;
+    if (first) return (await loadStartupWorkspace(storage, first.id))?.doc ?? null;
     const workspaceId = crypto.randomUUID();
     const doc = Automerge.from<WorkspaceDocumentV2>(
       createWorkspaceDoc(workspaceId, "Untitled", profile.identity.personId, "blank"),

@@ -27,6 +27,7 @@ import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from './replicaWr
 import { assertAutomationKeyHistorySupported, assertAutomationStorageRotationSupported, prepareAutomationStorageRotation, readAutomationInstance, rotateAutomationStorageCredentials } from '../app/automationInstanceClient'
 import type { RustyScopePolicyReceipt } from '../product-replica'
 import { identityDevicePreferencesChanged } from './identityDevicePreferenceEvents'
+import { record, traceDiagnosticOperation } from './telemetry'
 
 type ConflictCapture = Awaited<ReturnType<typeof capturePrivateReplicaConflict>>
 type Worker = { route: ReplicaWriterWorker; before: AutomationInstanceIdentityProof; frozen?: AutomationInstanceIdentityProof; rotated?: AutomationInstanceIdentityProof }
@@ -41,9 +42,33 @@ const unavailable = async (): Promise<never> => { throw new Error('Conflict reco
 export async function continueCredentialConflictRecovery(ports: {
   freezeWorkers: () => Promise<void>; confirmPolicy: () => Promise<void>; drainOriginal: () => Promise<void>;
   rotateWorkers: () => Promise<void>; activate: () => Promise<void>; confirmSnapshot: () => Promise<void>;
-}): Promise<void> {
-  await ports.freezeWorkers(); await ports.confirmPolicy(); await ports.drainOriginal()
-  await ports.rotateWorkers(); await ports.activate(); await ports.confirmSnapshot()
+}, trace?: CredentialRecoveryTrace): Promise<void> {
+  await traceRecoveryPhase(trace, "freezeWorkers", ports.freezeWorkers)
+  await traceRecoveryPhase(trace, "confirmPolicy", ports.confirmPolicy)
+  await traceRecoveryPhase(trace, "drainOriginal", ports.drainOriginal)
+  await traceRecoveryPhase(trace, "rotateWorkers", ports.rotateWorkers)
+  await traceRecoveryPhase(trace, "activate", ports.activate)
+  await traceRecoveryPhase(trace, "confirmSnapshot", ports.confirmSnapshot)
+}
+type CredentialRecoveryTrace = { workspaceId: string; serverHost: string; transitionId: string }
+async function traceRecoveryPhase<T>(trace: CredentialRecoveryTrace | undefined, phase: string,
+  operation: () => Promise<T>): Promise<T> {
+  if (!trace) return operation()
+  const detail = { phase, "workspace.id": trace.workspaceId, "server.address": trace.serverHost,
+    "recovery.transition_id": trace.transitionId }
+  recordRecoveryPhase("started", detail)
+  try {
+    const result = await traceDiagnosticOperation(`rusty.credential-recovery.${phase}`, detail, () => operation())
+    recordRecoveryPhase("completed", detail)
+    return result
+  } catch (error) {
+    recordRecoveryPhase("failed", { ...detail, error })
+    throw error
+  }
+}
+function recordRecoveryPhase(outcome: "started" | "completed" | "failed", detail: Record<string, unknown>) {
+  try { record(`rusty.credential-recovery.phase.${outcome}`, detail, outcome === "failed" ? "error" : "info") }
+  catch { /* Diagnostic failures must not change recovery ordering. */ }
 }
 async function enrollmentBinding(freeze: ReplicaCredentialConflictFreeze): Promise<ScopeEnrollmentBinding> {
   const next = freeze.proposal.next
@@ -263,10 +288,15 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
   const freezeKey = await replicaCredentialFreezeKey(personId, origin)
   const journalKey = freezeKey.replace('tincanban.replica-credential-freeze.v1.', 'tincanban.replica-credential-conflict.v1.')
   const guardIdentity = () => { ensureCurrent(); const current = app.getCurrentProfile(); if (!current || identityBinding(current) !== identityBinding(profile)) throw new Error('Identity changed during conflict recovery') }
+  const trace: CredentialRecoveryTrace = { workspaceId, serverHost: new URL(origin).host, transitionId: '' }
   await withLocalStateWriteLock(`credential-conflict-recovery:${personId}:${origin}`, async () => {
-    let { raw, journal } = await prepareConflictRecovery(profile, scopeId, journalKey, guardIdentity)
-    const capture = journal?.capture ?? await capturePrivateReplicaConflict(personId, origin, scopeId)
-    const prepared = await prepareConflictAuthority(app, profile, origin, scopeId, workspaceId, capture, guardIdentity)
+    let { raw, journal } = await traceRecoveryPhase(trace, 'readRecoveryJournal',
+      () => prepareConflictRecovery(profile, scopeId, journalKey, guardIdentity))
+    if (journal) trace.transitionId = journal.freeze.id
+    const capture = journal?.capture ?? await traceRecoveryPhase(trace, 'captureOriginal',
+      () => capturePrivateReplicaConflict(personId, origin, scopeId))
+    const prepared = await traceRecoveryPhase(trace, 'verifyOwnerAndService',
+      () => prepareConflictAuthority(app, profile, origin, scopeId, workspaceId, capture, guardIdentity))
     const { guard, service } = prepared
     const profileRaw = prepared.profileRaw
     if (!journal) {
@@ -275,19 +305,23 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
         if (config.purpose !== 'identity') await createWorkspaceAttachmentIndex(personId, config, guardIdentity).read()
       }
       await guard()
-      const expectedPolicyRevision = await readRustyScopePolicyRevision({ origin, scopeId, servicePublicKey: service.servicePublicKey }, profile, guard)
+      const expectedPolicyRevision = await traceRecoveryPhase(trace, 'readPolicyRevision',
+        () => readRustyScopePolicyRevision({ origin, scopeId, servicePublicKey: service.servicePublicKey }, profile, guard))
       const random = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
       const proposal = buildReplicaCredentialConflictRecovery(capture.sourceWire, { origin, scopeId, servicePublicKey: service.servicePublicKey,
         expectedPolicyRevision, freshContentKey: random(), freshReadToken: random(), freshWriteToken: random(),
         extraRetainedConfigs: capture.progressConfig ? [capture.progressConfig] : [] })
       const freeze: ReplicaCredentialConflictFreeze = { kind: 'rusty-credential-conflict-freeze', version: 2, id: crypto.randomUUID(), personId,
         signerDeviceId: profile.device.deviceId, origin, scopeId, proposal }
+      trace.transitionId = freeze.id
       journal = { kind: 'rusty-credential-conflict-recovery', version: 1, freeze, capture }
       parseReplicaCredentialConflictFreeze(freeze, personId, origin)
       const nextRaw = JSON.stringify(journal)
       await guard()
-      if (!await compareAndSwapLocal({ conditions: [...capture.sourceConditions, { key: journalKey, value: null }, { key: freezeKey, value: null }, { key: profileKey, value: profileRaw }],
-        writes: [{ key: freezeKey, value: JSON.stringify(freeze) }, { key: journalKey, value: nextRaw }] }, guardIdentity)) throw new Error('Conflict source or outbox changed before freeze; retry required')
+      await traceRecoveryPhase(trace, 'persistFreeze', async () => {
+        if (!await compareAndSwapLocal({ conditions: [...capture.sourceConditions, { key: journalKey, value: null }, { key: freezeKey, value: null }, { key: profileKey, value: profileRaw }],
+          writes: [{ key: freezeKey, value: JSON.stringify(freeze) }, { key: journalKey, value: nextRaw }] }, guardIdentity)) throw new Error('Conflict source or outbox changed before freeze; retry required')
+      })
       raw = nextRaw
     }
     if (journal.freeze.proposal.next.servicePublicKey !== service.servicePublicKey) throw new Error('Rusty service pin changed during saved recovery')
@@ -306,9 +340,10 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
         writes: [...(plan?.writes ?? []), { key: journalKey, value: nextRaw }, ...(changed.activated && !journal!.activated ? [{ key: freezeKey, value: null }] : [])] }, guardIdentity)) throw new Error('Recovery journal changed; original evidence retained for retry')
       raw = nextRaw; journal = changed
     }
-    if (journal.activated) return finishSnapshot()
+    trace.transitionId = freeze.id
+    if (journal.activated) return traceRecoveryPhase(trace, "confirmSnapshot", finishSnapshot)
     await continueCredentialConflictRecovery(conflictRecoverySteps({ app, profile, freeze, capture, live, save,
-      journal: () => journal!, finishSnapshot }))
+      journal: () => journal!, finishSnapshot }), trace)
     async function finishSnapshot() {
       const config = journal!.activated
       if (!config) return unavailable()

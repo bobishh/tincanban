@@ -83,3 +83,38 @@ test("Given conflicting profile credentials for a connected origin, when Rusty l
   expect(panelText).not.toContain("secret-identity-scope")
   expect(panelText).not.toContain("content-key")
 })
+
+test("Given an identity-only credential recovery, when Rusty opens on a workspace without a board connection, then keep recovery visible", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => (await import("/e2e/support/rustyDeviceAccess.ts")).mountRustyDeviceAccess("success", true, [
+    { origin: "https://rusty.example", scopeId: "secret-identity-scope", workspaceIds: [], identityState: true },
+  ], "identity"))
+
+  const alert = page.getByRole("alert", { name: "Rusty profile settings conflict" })
+  await expect(alert).toContainText("Profile delivery is paused")
+  await expect(alert.getByRole("button", { name: "Recover connection" })).toBeVisible()
+})
+
+test("Given identity recovery with no active connections, when Rusty opens, then keep recovery visible", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => (await import("/e2e/support/rustyDeviceAccess.ts")).mountRustyDeviceAccess("success", true, [
+    { origin: "https://rusty.example", scopeId: "secret-identity-scope", workspaceIds: [], identityState: true },
+  ], "none"))
+
+  const alert = page.getByRole("alert", { name: "Rusty profile settings conflict" })
+  await expect(alert).toContainText("Profile delivery is paused")
+  await expect(alert.getByRole("button", { name: "Recover connection" })).toBeVisible()
+})
+
+test("Given board and identity recoveries share an origin, when Rusty opens one workspace, then retain matching conflicts and hide another board's conflict", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => (await import("/e2e/support/rustyDeviceAccess.ts")).mountRustyDeviceAccess("success", true, [
+    { origin: "https://rusty.example", scopeId: "board-scope-id", workspaceIds: ["board"], identityState: false },
+    { origin: "https://rusty.example", scopeId: "identity-scope-id", workspaceIds: [], identityState: true },
+    { origin: "https://rusty.example", scopeId: "other-board-scope-id", workspaceIds: ["other-board"], identityState: false },
+  ], "board-and-identity"))
+
+  await expect(page.getByRole("alert", { name: "Rusty settings conflict" })).toBeVisible()
+  await expect(page.getByRole("alert", { name: "Rusty settings conflict" })).toHaveCount(1)
+  await expect(page.getByRole("alert", { name: "Rusty profile settings conflict" })).toBeVisible()
+})

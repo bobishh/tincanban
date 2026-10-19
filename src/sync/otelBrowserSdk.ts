@@ -68,6 +68,7 @@ function semanticAttributes(detail: Record<string, unknown>): SafeAttributes {
     ["sync.operation", "sync.operation", "label"], ["network.connection.id", "network.connection.id", "id"],
     ["network.peer.id", "network.peer.id", "id"], ["document.change.id", "document.change.id", "id"],
     ["startup.stage", "startup.stage", "label"], ["code.component", "code.component", "label"],
+    ["startup.source.version", "startup.source.version", "id"], ["recovery.transition_id", "recovery.transition.id", "id"],
     ["code.operation", "code.operation", "label"], ["error.code", "error.code", "label"],
     ["sync.scope.id", "sync.scope.id", "id"], ["sync.scope.kind", "sync.scope.kind", "label"],
     ["http.request.method", "http.request.method", "label"], ["server.address", "server.address", "label"],

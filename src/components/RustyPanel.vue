@@ -15,12 +15,8 @@ const records = computed(() => props.controller.configs.value.filter(config => c
 const boardConflicts = computed(() => props.controller.preferenceConflicts.value.filter(conflict =>
   conflict.workspaceIds.includes(props.workspaceId)))
 const profileConflicts = computed(() => {
-  const connectedOrigins = new Set([
-    ...records.value.map(config => config.origin),
-    ...boardConflicts.value.map(conflict => conflict.origin),
-  ])
   return [...new Map(props.controller.preferenceConflicts.value
-    .filter(conflict => conflict.identityState && connectedOrigins.has(conflict.origin))
+    .filter(conflict => conflict.identityState)
     .map(conflict => [conflict.origin, conflict] as const)).values()]
 })
 const profileRecords = computed(() => profileDeliveryStates(props.controller.configs.value, props.controller.identityConfigs.value,

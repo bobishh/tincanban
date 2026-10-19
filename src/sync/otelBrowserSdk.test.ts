@@ -22,7 +22,8 @@ describe("browser OTel SDK", () => {
     const traces = new InMemorySpanExporter()
     const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })
     const root = new Error("Failed with Bearer sensitive-token-value", { cause: new TypeError("inner cause") })
-    sdk.emit({ event: "workspace.replica.failed", detail: { workspaceId: "workspace-safe-id", error: root }, level: "error", timestamp: Date.now(), exception: root })
+    sdk.emit({ event: "workspace.replica.failed", detail: { workspaceId: "workspace-safe-id", error: root,
+      "startup.source.version": "previous-build", "recovery.transition_id": "recovery-safe-id" }, level: "error", timestamp: Date.now(), exception: root })
     const startedAt = performance.now()
     const active = sdk.startOperation("replica.admission", { "workspace.id": "workspace-safe-id" }, startedAt)
     if (!active) throw new Error("Diagnostic operation was unexpectedly dropped")
@@ -40,6 +41,8 @@ describe("browser OTel SDK", () => {
       "exception.message": "Failed with Bearer [REDACTED]",
       "exception.stacktrace": expect.stringContaining("Caused by TypeError: inner cause"),
       "workspace.id": "workspace-safe-id",
+      "startup.source.version": "previous-build",
+      "recovery.transition.id": "recovery-safe-id",
     })
     expect(JSON.stringify(record.attributes)).not.toContain("sensitive-token-value")
 

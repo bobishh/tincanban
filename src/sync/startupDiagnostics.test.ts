@@ -59,3 +59,38 @@ it.each(["disabled", "opted-out"]) ("Given %s diagnostics, when startup runs, th
   expect(record).not.toHaveBeenCalled()
   expect(traceDiagnosticOperation).not.toHaveBeenCalled()
 })
+
+it("Given a nested read completes, when its parent is still running, then the crash marker retains the unfinished parent", async () => {
+  const values = new Map<string, string>()
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) })
+  const { diagnoseStartupStep } = await import("./startupDiagnostics")
+  await diagnoseStartupStep("initial-workspace-load", async () => {
+    await diagnoseStartupStep("initial-workspace-snapshot-read", () => 42)
+    expect(JSON.parse(values.get("tincanban.startup.checkpoint.v1")!)).toMatchObject({
+      stage: "initial-workspace-load", event: "startup.phase.started",
+    })
+  })
+})
+
+it("Given a nested read fails before logs are delivered, when startup restarts, then TinSink receives the first failed phase and redacted exception", async () => {
+  const values = new Map<string, string>()
+  vi.stubGlobal("sessionStorage", { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) })
+  const { beginStartupDiagnostics, diagnoseStartupStep } = await import("./startupDiagnostics")
+  const failure = new Error("WASM failure contentKey=private-reading-key")
+  await expect(diagnoseStartupStep("initial-workspace-load", () =>
+    diagnoseStartupStep("initial-workspace-journal-replay", () => { throw failure },
+      { bytes: 120, changeCount: 3, body: "private-body" }))).rejects.toBe(failure)
+  const marker = values.get("tincanban.startup.checkpoint.v1")!
+  expect(JSON.parse(marker)).toMatchObject({ stage: "initial-workspace-journal-replay", event: "startup.phase.failed",
+    detail: { bytes: 120, changeCount: 3 } })
+  expect(marker).not.toContain("private-reading-key")
+  expect(marker).not.toContain("private-body")
+  record.mockClear()
+  await beginStartupDiagnostics()
+  expect(record).toHaveBeenCalledWith("startup.previous.failed", expect.objectContaining({
+    stage: "initial-workspace-journal-replay", bytes: 120, changeCount: 3,
+    error: expect.objectContaining({ message: "WASM failure contentKey=[REDACTED]" }),
+  }), "error")
+})

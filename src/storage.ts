@@ -36,6 +36,7 @@ import {
   type StoredCausalEvidence,
 } from "./storageJournal"
 import { withWorkspaceMutation } from "./workspaceMutation"
+import { traceStorageRead, type StorageReadTrace } from "./storageReadTrace"
 
 export type { StoredChange } from "./storageJournal"
 export { WorkspaceRevisionConflict } from "./storageCommitSupport"
@@ -288,24 +289,21 @@ export class WorkspaceStorage extends StorageTransactionAccess {
   }
 
   async loadWorkspaceDoc(
-    workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>
+    workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>, trace?: StorageReadTrace,
   ): Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null> {
-    await this.ensureReceivedHistory(workspaceId)
-    const incremental = await this.delta.loadDocument(workspaceId, reusable)
+    await traceStorageRead(trace, "received-history", () => this.ensureReceivedHistory(workspaceId, trace))
+    const incremental = await traceStorageRead(trace, "delta-document", () => this.delta.loadDocument(workspaceId, reusable))
     if (incremental) return incremental
-    const snapshot = await readWorkspaceSnapshot(workspaceId)
+    const snapshot = await traceStorageRead(trace, "snapshot-read", () => readWorkspaceSnapshot(workspaceId))
     if (snapshot) this.inMemory.snapshots.set(workspaceId, snapshot)
 
-    let doc: Automerge.Doc<WorkspaceDocumentV2>
+    let doc = await traceStorageRead(trace, "automerge-load", () => snapshot
+      ? this.decodeSnapshot(snapshot, reusable) : Automerge.init<WorkspaceDocumentV2>(), { bytes: snapshot?.bytes.byteLength ?? 0 })
 
-    if (snapshot) {
-      doc = this.decodeSnapshot(snapshot, reusable)
-    } else {
-      doc = Automerge.init<WorkspaceDocumentV2>()
-    }
-
-    const changes = await this.listChanges(workspaceId)
-    doc = replayAdmittedJournal(doc, changes, snapshot?.causalEvidence, snapshot?.receivedHistory?.excludedLocalChangeHashes)
+    const changes = await traceStorageRead(trace, "journal-read", () => this.listChanges(workspaceId))
+    doc = await traceStorageRead(trace, "journal-replay", () => replayAdmittedJournal(doc, changes,
+      snapshot?.causalEvidence, snapshot?.receivedHistory?.excludedLocalChangeHashes),
+    { changeCount: changes.length, bytes: changes.reduce((total, change) => total + change.bytes.byteLength, 0) })
 
     const heads = Automerge.getHeads(doc).sort()
     if (!snapshot && changes.length === 0) {

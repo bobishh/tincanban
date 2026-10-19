@@ -2,6 +2,7 @@ import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transp
 import { StorageDeltaAccess } from "./storageDeltaAccess"
 import { openWorkspaceJournal, readWorkspaceBasisSnapshot, requestResult, transactionDone,
   type StoredHistoryProgress, type StoredWorkspaceSnapshot } from "./storageJournal"
+import { traceStorageRead, type StorageReadTrace } from "./storageReadTrace"
 
 type VerifiedHistory = { baselineId: string; candidate: WasmVerifiedReceivedHistoryBaseline; personId?: string; deviceId?: string }
 type CapturedHistory = { candidate: WasmVerifiedReceivedHistoryBaseline; workspaceId: string; baselineId: string;
@@ -50,11 +51,11 @@ export abstract class StorageHistoryAccess extends StorageDeltaAccess {
   }
 
   /** Marker reads never assemble or serialize the active delta document. */
-  protected async ensureReceivedHistory(workspaceId: string): Promise<void> {
-    const snapshot = await readWorkspaceBasisSnapshot(workspaceId)
+  protected async ensureReceivedHistory(workspaceId: string, trace?: StorageReadTrace): Promise<void> {
+    const snapshot = await traceStorageRead(trace, "receivedmarker-read", () => readWorkspaceBasisSnapshot(workspaceId), { workspaceId })
     if (!snapshot?.receivedHistory) return
     const verified = await this.currentIdentityHistory(workspaceId)
-    if (verified?.baselineId !== snapshot.receivedHistory.baselineId) await this.reverifyReceivedHistory(workspaceId)
+    if (verified?.baselineId !== snapshot.receivedHistory.baselineId) await this.reverifyReceivedHistory(workspaceId, trace)
     if (this.verifiedReceivedHistory.get(workspaceId)?.baselineId !== snapshot.receivedHistory.baselineId)
       throw new Error("Received workspace history could not be reverified")
   }
@@ -71,20 +72,21 @@ export abstract class StorageHistoryAccess extends StorageDeltaAccess {
     return cached
   }
 
-  private async reverifyReceivedHistory(workspaceId: string) {
+  private async reverifyReceivedHistory(workspaceId: string, trace?: StorageReadTrace) {
     const [{ bootstrapIdentity }, { stateRuntime }, { reverifyActiveHistoryForWorkspace }] = await Promise.all([
       import("./domain/identity"), import("./stateContext"), import("./sync/historyBaselineStartup"),
     ])
-    const profile = await bootstrapIdentity()
+    const profile = await traceStorageRead(trace, "identity-binding", () => bootstrapIdentity(), { workspaceId })
     const ensureCurrent = () => {
       const current = stateRuntime.currentProfile
       if (current && (current.identity.personId !== profile.identity.personId || current.device.deviceId !== profile.device.deviceId ||
           current.identity.publicKey !== profile.identity.publicKey || current.device.publicKey !== profile.device.publicKey))
         throw new Error("Identity changed during received history verification")
     }
-    const candidate = await reverifyActiveHistoryForWorkspace(workspaceId, profile.identity.personId, ensureCurrent)
+    const candidate = await reverifyActiveHistoryForWorkspace(workspaceId, profile.identity.personId, ensureCurrent, trace)
     if (!candidate) throw new Error("Received workspace history basis is missing")
-    await this.acceptVerifiedReceivedHistoryBaseline(candidate, ensureCurrent)
+    await traceStorageRead(trace, "verified-baseline-cache-accept", () =>
+      this.acceptVerifiedReceivedHistoryBaseline(candidate, ensureCurrent), { workspaceId })
   }
 
   /** Cache only an opaque Native result after its exact durable source is reverified. */

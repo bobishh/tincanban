@@ -16,15 +16,18 @@ declare global {
 }
 
 export function mountRustyDeviceAccess(mode: "success" | "failure" | "pending" = "success", owner = true,
-  conflicts: PreferenceConflict[] = []) {
+  conflicts: PreferenceConflict[] = [], connections: "board" | "identity" | "board-and-identity" | "none" = "board") {
   const fixture: FixtureState = { calls: [], revocations: [] }
   window.rustyDeviceAccessFixture = fixture
   const profilePermissionUpdates = ref([origin])
   const controller = {
-    configs: ref([{ origin, workspaceId: "board", scopeId: "board-scope", servicePublicKey: "service-key",
+    configs: ref(connections === "identity" || connections === "none" ? [] : [{ origin, workspaceId: "board", scopeId: "board-scope", servicePublicKey: "service-key",
       readToken: "read-token", writeToken: "write-token", policyRevision: 1, keyEpoch: 1,
       contentKey: "content-key", cursor: 0, lastUploaded: "" }]),
-    identityConfigs: ref([]), profileSetupErrors: ref({}), statuses: ref({}), now: ref(Date.now()),
+    identityConfigs: ref(connections === "board" || connections === "none" ? [] : [{ purpose: "identity", personId: "person", origin, scopeId: "identity-scope",
+      servicePublicKey: "service-key", readToken: "read-token", writeToken: "write-token", keyEpoch: 1,
+      policyRevision: 1, contentKey: "identity-content-key", cursor: 0, lastUploaded: "" }]),
+    profileSetupErrors: ref({}), statuses: ref({}), now: ref(Date.now()),
     preferenceConflicts: ref(conflicts),
     registeredDevices: ref([{ deviceId: "local-device", displayName: "This device", addedAt: "2026-01-01T00:00:00.000Z" },
       { deviceId: "other-device", displayName: "Travel laptop", addedAt: "2026-02-01T00:00:00.000Z" }]),
@@ -46,7 +49,6 @@ export function mountRustyDeviceAccess(mode: "success" | "failure" | "pending" =
     remove: async () => {}, attach: async () => {}, exportAutomationAccess: async () => "", syncNow: async () => {},
     fetchAttachment: async () => new Uint8Array(),
   } as unknown as BlindReplicationController
-  const controllerValue = controller
   const root = document.createElement("div")
   document.body.appendChild(root)
   createApp({ render: () => h(RustyPanel, { controller, workspaceId: "board", owner }) }).mount(root)

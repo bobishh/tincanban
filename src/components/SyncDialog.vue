@@ -11,6 +11,7 @@ import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import ModalLayer from "./ModalLayer.vue"
 import WorkspaceFileActions from "./WorkspaceFileActions.vue"
 import WorkspaceHistoryMaintenance from "./WorkspaceHistoryMaintenance.vue"
+import { syncDialogConnectionStatus } from "./syncDialogConnectionStatus"
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import type { SyncStep, SuccessionView } from "../app/syncTypes"
 
@@ -52,6 +53,7 @@ const props = defineProps<{
   transferringOwnership?: string
   leavingMesh?: boolean
   meshActionError?: string
+  meshPresence?: "connected" | "reconnecting" | "offline" | "empty"
   workspaceConnected?: boolean
   workspaceReconnecting?: boolean
   meshDiagnostic?: string
@@ -150,14 +152,7 @@ const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 onMounted(() => { clock = setInterval(() => { now.value = Date.now() }, 500) })
 onBeforeUnmount(() => clearInterval(clock))
-const retrySeconds = computed(() => Math.max(1, Math.ceil(((props.retryAt ?? now.value) - now.value) / 1_000)))
-const connectionSummary = computed(() => {
-  if (props.workspaceConnected) return "Channel open on this device."
-  if (props.networkOnline === false) return "Waiting for internet. Changes stay saved on this device."
-  if (props.workspaceReconnecting) return "Checking live channel. Changes stay saved on this device."
-  if (props.retryAt) return `No live channel. Retrying in ${retrySeconds.value}s.`
-  return "No live channel. Reconnecting automatically."
-})
+const connectionStatus = computed(() => syncDialogConnectionStatus({ ...props, now: now.value }))
 
 function isWorkspaceSelected(id: string) {
   return selectedIds.value.includes(id)
@@ -230,9 +225,9 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <p v-if="meshActionError" class="sync-error" role="alert">{{ meshActionError }}</p>
         <p v-if="leavingMesh" class="dialog-copy" role="status">Leaving workspace mesh…</p>
         <div v-show="activeTab === 'Participants'" :id="`${tabId}-Participants-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Participants-tab`">
-        <p class="mesh-connection-summary" :class="{ 'is-warning': live !== false && !workspaceConnected }" role="status">
-          <strong>{{ workspaceConnected ? "Devices connected" : workspaceReconnecting ? "Devices reconnecting" : "Devices offline" }}</strong>
-          · {{ connectionSummary }}
+        <p class="mesh-connection-summary" :class="{ 'is-warning': connectionStatus.warning }" role="status">
+          <strong>{{ connectionStatus.title }}</strong>
+          · {{ connectionStatus.message }}
         </p>
         <section v-if="networkOnline !== false && rejectedSource" class="sync-error" role="status" aria-label="Changes rejected">
           <p><strong>Changes rejected by this board.</strong>
