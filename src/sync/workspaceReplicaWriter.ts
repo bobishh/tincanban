@@ -12,7 +12,7 @@ import { activateReplicaWriterUpgrade, captureReplicaWriterWorkers, completeRepl
   getPrivateReplicaProgress, getReplicaConfigurations, prepareReplicaWriterUpgrade,
   privateReplicaBinding, readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import { approveRustyScope } from "./rustyEnrollment"
-import { verifyRustyWriterPolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { verifyRustyWriterPolicyReceipt } from "../product-replica"
 import { workspaceSigningContext } from "./workspaceSigning"
 import { discoverWorkspaceReplicaWorkers, refreshWorkspaceReplicaWorkers } from "./workspaceReplicaWorkers"
 import { meshTrace } from "./meshTrace"

@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest"
+import { readFile } from "node:fs/promises"
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
+import { initializeAutomerge } from "./crdt"
 import { createWorkspaceDoc } from "./test/boardFixture"
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceStorage, WorkspaceTransactionContext } from "./storage"
@@ -11,6 +13,12 @@ import { clearMeshTrace, meshTraceSnapshot } from "./sync/meshTrace"
 
 const originalDoc = stateRuntime.activeDoc
 const originalProfile = stateRuntime.currentProfile
+
+beforeAll(async () => {
+  const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
+  await initializeAutomerge()
+})
 
 afterEach(() => {
   stateRuntime.activeDoc = originalDoc

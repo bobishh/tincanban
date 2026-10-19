@@ -7,7 +7,7 @@ import { decodeBlindBytes, encodeBlindBytes } from "@meta-uber/mesh-replication/
 import { parseReplicaConfig } from "./blindReplicaConfig"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { approveRustyScope } from "./rustyEnrollment"
-import { parseRustyScopePolicyReceipt, type RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { parseRustyScopePolicyReceipt, type RustyScopePolicyReceipt } from "../product-replica"
 import { exportPrivateReplicaState, getPrivateReplicaConflictSummaries, getReplicaConfigurations, planPrivateReplicaImport } from "./privateReplicaRepository"
 import { changeReplicaPreference, portableReplicaState } from "./privateReplicaPreferences"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"

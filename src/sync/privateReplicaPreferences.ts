@@ -4,7 +4,7 @@ import type { BlindReplicaConfig, PrivateReplicaConfig } from "./blindReplicatio
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import type { ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
-import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import type { RustyScopePolicyReceipt } from "../product-replica"
 import type { ReplicaWriterWorker } from "./replicaWriterWorkersState"
 import { assertRetainsReplicaContentKeys } from "./replicaContentKeys"
 

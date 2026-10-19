@@ -5,7 +5,7 @@ import type { DeviceCertificate, PublicIdentity, WorkspaceGrant } from "../domai
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { validatePublicBoardProjection, type PublicBoardProjection } from "./publicSchema"
 
-export type PublicDeliveryHttpPort = {
+type PublicDeliveryHttpPort = {
   request: (url: string, init: RequestInit, diagnosticContext?: Context) => Promise<Response>
   readJson: <T>(response: Response, maximumBytes: number) => Promise<T>
 }

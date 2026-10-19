@@ -6,7 +6,7 @@ import type { BlindReplicaConfig,PrivateReplicaConfig } from "./blindReplication
 import { parseReplicaState,type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { decodeBlindBytes,type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { privateReplicaBinding } from "./privateReplicaBinding"
-import { parseRustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { parseRustyScopePolicyReceipt } from "../product-replica"
 import { parseReplicaWriterWorkers } from "./replicaWriterWorkersState"
 import { replicaCredentialOriginCondition } from "./replicaCredentialFreezeState"
 import {

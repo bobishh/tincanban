@@ -1,4 +1,4 @@
-import type { WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
+import type { WorkspaceAdmissionResult } from "../product-replica"
 
 // Keep only the latest exact packet result in memory. Durable projection reuse
 // uses the separate atomic admission checkpoint, never this network-input cache.

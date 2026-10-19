@@ -2,7 +2,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import type { ChangeProof, TransactionReceipt, WorkspaceDocumentV2 } from "./domain/model"
 import { toBase64Url } from "./domain/identity"
 import { canonicalizeJson } from "./domain/identityCrypto"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica"
 import {
   advanceHistoryProgress,
   advanceLocalHistoryProgress,
@@ -47,7 +47,7 @@ export function activeHistoryDifference(previous: Pick<StoredWorkspaceSnapshot, 
   } finally { Automerge.free(priorDocument) }
 }
 
-export function appendLocalWorkspaceCommand(journal: ReturnType<typeof readLocalJournal>, workspaceId: string,
+function appendLocalWorkspaceCommand(journal: ReturnType<typeof readLocalJournal>, workspaceId: string,
   savedAt: string, command?: WorkspaceCommitCommand) {
   if (!command) return
   const { receipt, changeBytes, proof } = command
@@ -59,7 +59,7 @@ export function appendLocalWorkspaceCommand(journal: ReturnType<typeof readLocal
   journal.receipts[receipt.transactionId] = receipt
 }
 
-export async function appendWorkspaceCommand(transaction: IDBTransaction, workspaceId: string,
+async function appendWorkspaceCommand(transaction: IDBTransaction, workspaceId: string,
   savedAt: string, command?: WorkspaceCommitCommand) {
   if (!command) return
   const { receipt, changeBytes, proof } = command

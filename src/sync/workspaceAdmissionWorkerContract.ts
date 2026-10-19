@@ -1,4 +1,4 @@
-import type { WorkspaceAdmissionInput, WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
+import type { WorkspaceAdmissionInput, WorkspaceAdmissionResult } from "../product-replica"
 import type { AccessWorkerRequest } from "./workspaceAccessInput"
 import type { WorkspaceRole } from "../domain/permissions"
 

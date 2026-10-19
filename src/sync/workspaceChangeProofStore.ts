@@ -1,10 +1,10 @@
 import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuthorizations, writeLocalJournal, readLocalJournal,
   withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
 import { canonicalizeJson } from "../domain/identityCrypto"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica"
 import type { WorkspaceDeltaFrontier } from "../workspaceDeltaJournal"
 import { withWorkspaceMutation } from "../workspaceMutation"
-export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica/workspaceAuthorizationRecords"
+export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica"
 
 type WorkspaceAuthorizationRow = {
   id: string

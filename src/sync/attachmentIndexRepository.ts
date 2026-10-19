@@ -1,5 +1,5 @@
 import { blindHash, canonicalBlindJson } from "./blindClient"
-import { mergeAttachmentLocators, parseAttachmentLocators } from "../product-replica/attachmentIndex"
+import { mergeAttachmentLocators, parseAttachmentLocators } from "../product-replica"
 import type { AttachmentLocator } from "../product-replica"
 import { readLocal, updateLocal, type LocalStatePlan } from "../localDb"
 

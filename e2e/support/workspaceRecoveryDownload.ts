@@ -2,6 +2,8 @@ import type { Download, Locator, Page } from "@playwright/test"
 
 const SOURCE_CHANGED = "Workspace changed during private recovery export; retry when changes settle"
 const DEADLINE_ERROR = "Private workspace backup exceeded its 60-second deadline"
+const SOURCE_QUIET_MS = 2_000
+const REVISION_SAMPLE_MS = 100
 type Binding = { personId: string; deviceId: string; workspaceId: string }
 type Outcome = { kind: "download"; download: Download } | { kind: "message"; message: string } |
   { kind: "failed"; error: unknown } | { kind: "cancelled" }
@@ -48,8 +50,8 @@ async function withinDeadline<T>(operation: Promise<T>, deadline: number): Promi
   } finally { clearTimeout(timer) }
 }
 
-async function settleSourceWrites(page: Page, binding: Binding) {
-  await page.evaluate(async expected => {
+async function settleSourceWrites(page: Page, binding: Binding, deadline: number) {
+  await page.evaluate(async ({ expected, quietMs, sampleMs, deadline, deadlineError }) => {
     const state = (await import("/src/test/stateFixture.ts")).useTincanban()
     const current = () => {
       const profile = state.getCurrentProfile()
@@ -59,7 +61,21 @@ async function settleSourceWrites(page: Page, binding: Binding) {
     current()
     await (await import("/src/workspaceMutation.ts")).withWorkspaceMutation(expected.workspaceId, async () => {})
     current()
-  }, binding)
+    const storage = (await import("/src/storage.ts")).defaultStorage
+    let revision = await storage.readWorkspaceRevision(expected.workspaceId) ?? null
+    let unchangedSince = Date.now()
+    while (Date.now() - unchangedSince < quietMs) {
+      if (Date.now() >= deadline) throw new Error(deadlineError)
+      await new Promise(resolve => setTimeout(resolve, sampleMs))
+      current()
+      const nextRevision = await storage.readWorkspaceRevision(expected.workspaceId) ?? null
+      if (nextRevision !== revision) {
+        revision = nextRevision
+        unchangedSince = Date.now()
+      }
+    }
+    current()
+  }, { expected: binding, quietMs: SOURCE_QUIET_MS, sampleMs: REVISION_SAMPLE_MS, deadline, deadlineError: DEADLINE_ERROR })
 }
 
 /** A rejected concurrent capture is discarded; only its exact Retry action can start a fresh complete file. */
@@ -70,6 +86,7 @@ export async function downloadPrivateWorkspaceRecovery(page: Page, panel: Locato
     if (!profile) throw new Error("Backup identity or workspace changed")
     return { personId: profile.identity.personId, deviceId: profile.device.deviceId, workspaceId: state.activeWorkspace.id }
   }), deadline)
+  await withinDeadline(settleSourceWrites(page, binding, deadline), deadline)
   for (let attempt = 0; attempt < 3; attempt++) {
     if (Date.now() >= deadline) throw new Error(DEADLINE_ERROR)
     const observation = new BackupObservation(page, panel, deadline)
@@ -84,7 +101,7 @@ export async function downloadPrivateWorkspaceRecovery(page: Page, panel: Locato
     if (outcome.kind === "failed") throw outcome.error
     if (outcome.kind !== "message") throw new Error("Private workspace backup observation cancelled")
     if (outcome.message !== SOURCE_CHANGED || attempt === 2) throw new Error(`Private workspace backup failed: ${outcome.message}`)
-    await withinDeadline(settleSourceWrites(page, binding), deadline)
+    await withinDeadline(settleSourceWrites(page, binding, deadline), deadline)
   }
   throw new Error(DEADLINE_ERROR)
 }

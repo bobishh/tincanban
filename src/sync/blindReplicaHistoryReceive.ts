@@ -17,7 +17,7 @@ import type { BlindReplicaConfig } from "./blindReplication"
 import type { getPrivateReplicaProgress } from "./privateReplicaRepository"
 import type { createBlindSnapshotRevision } from "./blindSnapshotRevision"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
-import type { WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import type { WireHistoryBaseline } from "../product-replica"
 
 type ActiveRouteRepository = { recordActiveWireRoute(id: string, signedJson: Uint8Array, wire: WireHistoryBaseline): Promise<void> }
 
@@ -67,7 +67,7 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
       guardIdentity(); await readReplicaProgress(); guardIdentity()
       return object
     } }
-  const wire = (await import("../product-replica/historyBaselineReceiver")).parseWireHistoryBaseline(history)
+  const wire = (await import("../product-replica")).parseWireHistoryBaseline(history)
   try {
     if (await mergeCurrentBlindHistory({ previous, signedJson: wire.signedJson, document: bytes, authorization,
       ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() },
@@ -96,7 +96,7 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
           pending: Boolean(progress.pending) }
       },
       verify: async input => {
-        const parsed = (await import("../product-replica/historyBaselineReceiver")).parseWireHistoryBaseline(input.wire)
+        const parsed = (await import("../product-replica")).parseWireHistoryBaseline(input.wire)
         const envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decodeBlindBytes(parsed.signedJson))) as {
           payload?: { workspaceId?: unknown; storage?: { keyEpoch?: unknown; authority?: unknown } }
         }
@@ -116,7 +116,7 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
           guardIdentity(); await readReplicaProgress(); guardIdentity()
           const key = decodeBlindBytes(contentKey)
           try {
-            return await (await import("../product-replica/historyBaselineReceiver")).verifyReceivedWireHistoryBaseline({ wire: parsed,
+            return await (await import("../product-replica")).verifyReceivedWireHistoryBaseline({ wire: parsed,
               scope: { scopeId: config.scopeId, keyEpoch, key }, pinnedStorage,
               trustedScopeAuthority, previous, fetch: archiveFetch,
               ensureCurrent: () => { guardIdentity() } })

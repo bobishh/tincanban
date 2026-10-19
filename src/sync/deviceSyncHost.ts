@@ -25,10 +25,9 @@ import type { JoinDecision } from "./deviceSyncJoinApproval"
 import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from "./keeperCommitReceipt"
 import { meshIngressBudgetProfile } from "../iroh"
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
-import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
+import { traceWorkspaceJoinFailure, WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
 import { z } from "zod"
-import { meshTrace } from "./meshTrace"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
@@ -334,7 +333,7 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
     await runtime.group.publish()
     await session.done
   } catch (error) {
-    traceJoinFailure(error, stage, admitted)
+    traceWorkspaceJoinFailure(error, stage, admitted)
     if (!runtime.stopped() && runtime.run === runtime.context.currentRun() && !isMeshNetworkFailure(error)) {
       runtime.fail(admitted ? error : new WorkspaceAdmissionFailure(error))
     }
@@ -348,12 +347,6 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
       runtime.disconnect()
     }
   }
-}
-
-function traceJoinFailure(error: unknown, stage: string, admitted: boolean): void {
-  const errorName = error instanceof Error && /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(error.name)
-    ? error.name : typeof error
-  meshTrace("workspace.join.host.failed", { stage, errorName, admitted, networkFailure: isMeshNetworkFailure(error) }, "warn")
 }
 
 async function receiveMeshPeer(runtime: HostRuntime, connection: SyncConnection, stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>, raw: Uint8Array) {

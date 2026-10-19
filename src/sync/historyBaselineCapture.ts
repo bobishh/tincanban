@@ -14,7 +14,7 @@ import type { ArchiveCoverageAuthority as HistoryArchiveCoverageAuthority } from
 import type { BlindReplicaConfig } from "./blindReplication"
 import { signingEvidence, type VerifiedSigningContext } from "../domain/signingContext"
 import { finalizeWorkspaceHistoryBaseline } from "./historyBaselineFinalize"
-import { verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import type { useTincanban } from "../state"

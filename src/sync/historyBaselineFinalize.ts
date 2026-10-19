@@ -9,7 +9,7 @@ import type { ArchiveCoverageAggregateReceipt, ArchiveCoverageAuthority as Histo
 import type { HistoryPreparationIdentity } from "@meta-uber/mesh-replication/history-preparation-journal"
 import { verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import type { WireHistoryBaseline } from "../product-replica"
 import { publishWorkspaceHistoryRecord, retainPreparedHistoryPublication } from "./historyBaselinePublicationRepository"
 
 const encoder = new TextEncoder()

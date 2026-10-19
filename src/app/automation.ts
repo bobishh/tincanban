@@ -166,7 +166,7 @@ async function existingApprovalIssuer(profile: LocalProfile, authorization: Auto
     return { personId: profile.identity.personId, publicKey: authorization.authority.currentOwner.publicKey ?? profile.identity.publicKey,
       certificates: authorization.authority.currentOwner.certificates ?? [profile.certificate] }
   }
-  const { admitHistoricalAutomationAuthority } = await import("../product-replica/historicalAutomationAuthority")
+  const { admitHistoricalAutomationAuthority } = await import("../product-replica")
   const history = admitHistoricalAutomationAuthority({ workspaceId, epoch, bytes, authorization })
   history.requireCurrentOwner({ personId: profile.identity.personId, publicKey: profile.identity.publicKey,
     certificates: [profile.certificate, ...history.authority.currentOwner.certificates] }, profile.device.deviceId)

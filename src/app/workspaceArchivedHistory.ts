@@ -6,7 +6,7 @@ import { authorityValidationFingerprint, readWorkspaceSigningAuthority, workspac
 import { workspaceSigningContext } from "../sync/workspaceSigning"
 import { workspaceHistoryRecoverySources } from "../sync/workspaceHistoryRecoverySources"
 import { createReceivedHistoryBaselineRepository } from "../sync/receivedHistoryBaselineRepository"
-import { parseWireHistoryBaseline, verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { parseWireHistoryBaseline, verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica"
 import { workspacePeerHistoryRecoverySources, type PeerHistoryRemoteRead } from "../sync/workspacePeerHistoryRecoverySources"
 import type { PeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
 import { reverifyStoredPeerHistoryBaseline } from "../sync/peerHistoryBaselineReceiver"

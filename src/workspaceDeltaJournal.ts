@@ -2,7 +2,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson, sha256Base64Url, toBase64Url } from "./domain/identity"
 import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceRole } from "./domain/permissions"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { advanceWorkspaceRevision, advanceHistoryProgress, advanceLocalHistoryProgress, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
   type StoredHistoryProgress, type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"

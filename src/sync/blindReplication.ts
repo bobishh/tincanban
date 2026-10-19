@@ -9,8 +9,8 @@ import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transp
 import type { AttachmentLocator } from "../product-replica"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 
-import type { BlindReplicaConfig } from "../product-replica/config"
-export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
+import type { BlindReplicaConfig } from "../product-replica"
+export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica"
 export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
 export type BlindReplicaStore = {
   read: (id: string) => Promise<Uint8Array>
@@ -56,7 +56,7 @@ function changedParts(parts: ContentParts, previous?: ContentParts): string[] {
 function uploadPhase(retry: boolean, known: boolean): string { return retry ? "retry" : known ? "changed" : "initial" }
 async function readAttachmentLocators(value: unknown): Promise<AttachmentLocator[]> {
   if (value === undefined) return []
-  return (await import("../product-replica/attachmentIndex")).parseAttachmentLocators(value)
+  return (await import("../product-replica")).parseAttachmentLocators(value)
 }
 
 /** Rusty supplies opaque bytes. Only the existing signed causal admission may merge them. */
@@ -261,7 +261,7 @@ export class BlindReplica {
       authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
     const history = historyOverride ?? await this.store.readHistoryBaseline?.(this.config.workspaceId)
     if (history !== undefined) {
-      snapshot.history = (await import("../product-replica/historyBaselineReceiver")).parseWireHistoryBaseline(history)
+      snapshot.history = (await import("../product-replica")).parseWireHistoryBaseline(history)
       snapshot.version = 2
     }
     const attachments = await readAttachmentLocators(await this.store.readAttachments?.(this.config.workspaceId))

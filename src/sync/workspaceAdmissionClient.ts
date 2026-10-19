@@ -1,5 +1,5 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import type { WorkspaceAdmissionInput, WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
+import type { WorkspaceAdmissionInput, WorkspaceAdmissionResult } from "../product-replica"
 import type { WorkspaceAdmissionRequest, WorkspaceAdmissionResponse } from "./workspaceAdmissionWorkerContract"
 import type { WorkspaceAccessInput } from "./workspaceAccessInput"
 import type { WorkspaceRole } from "../domain/permissions"
@@ -89,12 +89,12 @@ export async function runWorkspaceAdmission(input: WorkspaceAdmissionInput): Pro
   // The opaque Native baseline handle cannot cross the browser Worker boundary.
   // Keep compact-history admission on the same Native policy implementation.
   if (input.receivedBasis) {
-    const { computeWorkspaceAdmission } = await import("../product-replica/workspaceAdmission")
+    const { computeWorkspaceAdmission } = await import("../product-replica")
     return computeWorkspaceAdmission(input, meshRustRuntime().state)
   }
   // Non-browser callers (CLI/unit fixtures) use the identical pure algorithm.
   if (typeof window === "undefined") {
-    const { computeWorkspaceAdmission } = await import("../product-replica/workspaceAdmission")
+    const { computeWorkspaceAdmission } = await import("../product-replica")
     return computeWorkspaceAdmission(input, meshRustRuntime().state)
   }
   const result = await runPolicyRequest(input, "admission")

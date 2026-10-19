@@ -24,7 +24,7 @@ import {
 } from "./statePersistence";
 import { reclassifyStoredWorkspace } from "./stateCausalAdmission";
 import { receivedHistoryBasisIdentity } from "./product-replica/receivedHistoryBasisIdentity";
-import type { WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords";
+import type { WorkspaceChangeAuthorization } from "./product-replica";
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { stateRuntime } from "./stateContext";
 import {

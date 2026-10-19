@@ -8,12 +8,12 @@ import { fetchBlind, readBlindJson } from "./rustyHttp"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { resolveRustyManagementAuthority, rustyManagementAuthorityRevision } from "./rustyManagementClient"
-import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import type { RustyScopePolicyReceipt } from "../product-replica"
 import type { RustyManagementCapability } from "./rustyManagementCapability"
 import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
 import { completeScopeEnrollmentIntent, prepareScopeEnrollmentIntent, readScopeEnrollmentIntent, replaceScopeEnrollmentIntent,
   type ScopeEnrollmentBinding, type ScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
-import { parseRustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { parseRustyScopePolicyReceipt } from "../product-replica"
 
 type Challenge = {
   kind: "rusty-enrollment-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string;

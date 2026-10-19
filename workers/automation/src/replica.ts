@@ -21,7 +21,7 @@ import { rustyHash as blindHash, downloadRustyObject as downloadBlindObject, inv
   uploadRustyObject as uploadBlindObject, verifyRustyStorageReceipt as verifyBlindReceipt,
   decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject,
   type RustyReplicaAccess as BlindAccess, type RustyStorageReceipt as BlindReceipt, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica";
-import type { BlindReplicaConfig } from "../../../src/product-replica/config";
+import type { BlindReplicaConfig } from "../../../src/product-replica";
 import { ReplicaEngine, emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine";
 import { captureApplicationSource } from "./applicationSourceCapture";
 import type { JobPageResult } from "./extraction";

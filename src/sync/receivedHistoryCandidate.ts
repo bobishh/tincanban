@@ -1,7 +1,7 @@
 import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import { canonicalizeJson } from "@meta-uber/mesh-identity"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
-import { parseWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { parseWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica"
 import type { StoredReceivedHistoryBaseline } from "../storageJournal"
 
 const MAX_BASELINE_DOCUMENT_BYTES = 256 * 1024 * 1024

@@ -7,7 +7,7 @@ import type { BlindReplicaConfig,IdentityReplicaConfig,PrivateReplicaConfig } fr
 import { emptyReplicaState,parseReplicaState,type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { privateReplicaBinding } from "./privateReplicaBinding"
-import { verifyRustyWriterPolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { verifyRustyWriterPolicyReceipt } from "../product-replica"
 import { parseReplicaWriterWorkers } from "./replicaWriterWorkersState"
 import { replicaCredentialFreezeCondition,replicaCredentialOriginCondition,type ReplicaCredentialFreeze } from "./replicaCredentialFreezeState"
 import { replicaCredentialFreezeKey } from "./replicaCredentialFreezeState"

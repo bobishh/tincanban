@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../product-replica"
 import type { StoredWorkspaceSnapshot } from "../storageJournal"
 import type { WorkspaceTransactionContext } from "../storage"
 

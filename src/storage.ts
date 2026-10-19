@@ -7,7 +7,7 @@ import type {
   Heads,
 } from "./domain/model"
 import { records } from "./sync/workspaceChangeProofStore"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica"
 import { canonicalizeJson } from "./domain/identity"
 import { causalEvidenceChanged, snapshotCausalEvidence, replayAdmittedJournal } from "./causalEvidence"
 import type { StoredProofsV1 } from "./domain/proofs"

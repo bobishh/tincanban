@@ -13,7 +13,7 @@ import type { HistoryRecoveryArchiveSource } from "./historyRecoveryArchive"
 import { fetchBlind } from "./rustyHttp"
 import { listRetainedWorkspaceRecoveryArchives } from "./workspaceHistoryRecoveryArchives"
 import { listWorkspaceRecoveryObjectIndexes, readWorkspaceRecoveryObject } from "./workspaceHistoryRecoveryObjects"
-import { parseWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { parseWireHistoryBaseline } from "../product-replica"
 import type { StoredReceivedHistoryBaseline } from "../storageJournalRecords"
 
 type Routing = { payload: { workspaceId: string; baselineId: string; locatorRoot: ArchiveLocatorRoot;

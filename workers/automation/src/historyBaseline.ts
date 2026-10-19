@@ -1,6 +1,6 @@
 import { WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from '@meta-uber/mesh-transport/wasm';
 import { decodeBlindBytes, encodeBlindBytes } from '@meta-uber/mesh-replication/rusty-replica';
-import type { BlindReplicaConfig } from '../../../src/product-replica/config';
+import type { BlindReplicaConfig } from '../../../src/product-replica';
 import { contentKeysForEpoch, openWithReplicaContentKeys } from '../../../src/domain/replicaContentKeys';
 import { parseWireHistoryBaseline, reverifyStoredHistoryBaseline, verifyReceivedWireHistoryBaseline,
   type HistoryBaselineFetchPort, type WireHistoryBaseline } from '../../../src/product-replica';

@@ -24,7 +24,7 @@ import { capturePrivateReplicaConflict, planPrivateReplicaConflictActivation, ge
 import { discoverWorkspaceReplicaWorkers } from './workspaceReplicaWorkers'
 import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from './replicaWriterWorkersState'
 import { assertAutomationKeyHistorySupported, assertAutomationStorageRotationSupported, prepareAutomationStorageRotation, readAutomationInstance, rotateAutomationStorageCredentials } from '../app/automationInstanceClient'
-import type { RustyScopePolicyReceipt } from '../product-replica/rustyScopePolicy'
+import type { RustyScopePolicyReceipt } from '../product-replica'
 import { identityDevicePreferencesChanged } from './identityDevicePreferenceEvents'
 
 type ConflictCapture = Awaited<ReturnType<typeof capturePrivateReplicaConflict>>

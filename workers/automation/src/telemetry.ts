@@ -9,9 +9,9 @@ import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trac
 import { capturedException } from "../../../src/domain/exceptionCapture";
 import { diagnosticHttpRequest, setHttpDiagnosticSpanFactory, type HttpDiagnosticSpanFactory } from "../../../src/domain/httpDiagnostics";
 import { fetchRusty, readRustyJson } from "@meta-uber/mesh-replication/rusty-replica";
-import type { PublicDeliveryHttpPort } from "../../../src/public/publicDelivery";
+import type { PublicDeliveryInput } from "../../../src/public/publicDelivery";
 
-export const automationPublicDeliveryHttp: PublicDeliveryHttpPort = {
+export const automationPublicDeliveryHttp: NonNullable<PublicDeliveryInput["http"]> = {
   request: (url, init, parent) => diagnosticHttpRequest(url, init, fetchRusty, parent),
   readJson: async <T>(response: Response, maximumBytes: number) => await readRustyJson(response, maximumBytes) as T,
 };

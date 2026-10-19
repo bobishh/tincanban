@@ -10,13 +10,13 @@ export type StoredChange = {
 }
 
 /** Exact source changes retained after their bytes leave the active journal. */
-export type StoredArchivedChange = StoredChange & {
+type StoredArchivedChange = StoredChange & {
   id: string
   archivedUnderBaselineId: string
 }
 
 /** Original signed authorization material retained outside the active proof set. */
-export type StoredArchivedAuthorizations = {
+type StoredArchivedAuthorizations = {
   id: string
   workspaceId: string
   baselineId: string

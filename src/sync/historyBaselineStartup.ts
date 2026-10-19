@@ -1,5 +1,5 @@
 import { peerStore } from "./peerStore"
-import { reverifyStoredHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { reverifyStoredHistoryBaseline } from "../product-replica"
 import { reverifyStoredPeerHistoryBaseline } from "./peerHistoryBaselineReceiver"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"

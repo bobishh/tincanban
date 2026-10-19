@@ -228,7 +228,9 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   const owner = await ownerContext.newPage()
   await captureHistoryNativeFailures(owner, test.info())
   owner.on("console", message => {
-    if (message.text().startsWith("Workspace history archiving failed:")) console.error(message.text())
+    const text = message.text()
+    if (text.startsWith("Workspace history archiving failed:") ||
+      text.startsWith('[tincanban.mesh] ') && text.includes('"event":"workspace.join.host.failed"')) console.error(text)
   })
   const editor = await editorContext.newPage()
   let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined

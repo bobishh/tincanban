@@ -8,7 +8,7 @@ import { prepareAttachmentStream } from "./attachmentPreparation"
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
 import { uploadBlindBlob, downloadBlindBlob, verifyBlindBlobReceipt, type BlindBlobReceipt } from "./blindBlobClient"
-import { parseAttachmentLocators } from "../product-replica/attachmentIndex"
+import { parseAttachmentLocators } from "../product-replica"
 
 export type AttachmentProgress = {
   version: 1
