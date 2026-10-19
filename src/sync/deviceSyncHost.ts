@@ -27,6 +27,7 @@ import { meshIngressBudgetProfile } from "../iroh"
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { traceWorkspaceJoinFailure, WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
+import { readPeerHistoryAwareAcceptStream } from "./peerHistoryTransport"
 import { z } from "zod"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
@@ -284,7 +285,7 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
     const header = inspectPairingFrame(rawRequest)
     if (header.type !== "workspace-join-request" || header.secret !== runtime.invite.secret) return
     const handshake = new BrowserWorkspaceJoinHost(new WasmWorkspaceJoinHandshake(runtime.invite.secret, "host"))
-    const result = await handshake.handle(rawRequest, stream, connection, {
+    const result = await handshake.handle(rawRequest, stream, readPeerHistoryAwareAcceptStream(connection), {
       request: payload => {
         stage = "request-validation"
         const guest = readWorkspaceRequest(runtime, payload)
@@ -298,11 +299,13 @@ async function receivePeer(runtime: HostRuntime, connection: SyncConnection, con
         if (approval.ok) remoteDeviceId = approval.value.deviceId
         return approval
       },
-      prepare: result => {
+      prepare: async result => {
         stage = "response-preparation"
-        return prepareWorkspaceAccess(runtime, result, runtime.keeperAdmission ? async snapshot => {
+        const payload = await prepareWorkspaceAccess(runtime, result, runtime.keeperAdmission ? async snapshot => {
           verifyKeeperCommit = await keeperCommitReceiptVerifier(runtime.keeperAdmission!.workspaceIds, snapshot)
         } : undefined)
+        stage = "acknowledgement"
+        return payload
       },
       beforeAckFrame: (frame, stream) => {
         stage = "auxiliary-frame"

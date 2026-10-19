@@ -119,7 +119,7 @@ async function attemptBlobSession(input: BlobFetchInput, entry: SessionEntry, de
       await ensureCurrent()
       return JSON.stringify([originalAuthority.identity, originalAuthority.credential, runId, entry.connectionId])
     })
-    const bytes = await requestBlob(entry.connection, profileAndSecret.transportSecret, profileAndSecret.profile,
+    const bytes = await requestBlob(retryableBlobConnection(entry.connection), profileAndSecret.transportSecret, profileAndSecret.profile,
       input.workspaceId, descriptor, {
         signing,
         signal: controller.signal,
@@ -152,6 +152,23 @@ async function attemptBlobSession(input: BlobFetchInput, entry: SessionEntry, de
     }
   } finally {
     stopMonitor()
+  }
+}
+
+function retryableBlobConnection(connection: SessionEntry["connection"]): SessionEntry["connection"] {
+  return {
+    ...connection,
+    openStream: async () => {
+      const stream = await connection.openStream()
+      return {
+        ...stream,
+        read: async (maximumBytes?: number) => {
+          const frame = await stream.read(maximumBytes)
+          if (frame.byteLength === 0) throw new MeshNetworkError("Blob peer closed the response stream")
+          return frame
+        },
+      }
+    },
   }
 }
 

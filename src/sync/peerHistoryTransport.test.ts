@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest"
 import { sha256Base64Url } from "../domain/identity"
 import { parsePeerHistoryBaselineRead, parsePeerHistoryDocumentRead, parsePeerHistoryObjectRead, readPeerHistoryBaseline,
   readPeerHistoryDocument, readPeerHistoryObject, respondToPeerHistoryBaselineRead, respondToPeerHistoryDocumentRead,
-  respondToPeerHistoryObjectRead, type PeerHistoryObjectBinding } from "./peerHistoryTransport"
+  respondToPeerHistoryObjectRead, readPeerHistoryAwareAcceptStream, type PeerHistoryObjectBinding } from "./peerHistoryTransport"
 
 import { createPeerHistoryHandlers } from "./workspaceSetHistory"
 
@@ -39,6 +39,28 @@ function streamPair() {
 }
 
 describe("direct peer history object transport", () => {
+  it("reads bounded history requests on workspace-join acknowledgement streams", async () => {
+    const request = new TextEncoder().encode("tincanban-peer-history-v1\n{}")
+    const rawStream = {
+      read: async () => { throw new Error("Pairing header missing or too large") },
+      readPairingOrRawPrefix: vi.fn(async (prefix: Uint8Array, maximum?: number) => {
+        expect(new TextDecoder().decode(prefix)).toBe("tincanban-peer-history-v1\n")
+        expect(maximum).toBe(4 * 1024)
+        return request
+      }),
+      send: async () => {}, closeSend: async () => {},
+    }
+    const connection = {
+      acceptStream: async () => rawStream,
+      openStream: async () => rawStream,
+      close: async () => {},
+    }
+
+    const stream = await readPeerHistoryAwareAcceptStream(connection).acceptStream()
+    await expect(stream.read()).resolves.toEqual(request)
+    expect(rawStream.readPairingOrRawPrefix).toHaveBeenCalledOnce()
+  })
+
   it("exchanges only the bounded public baseline descriptor before a direct-peer bootstrap", async () => {
     const streams = streamPair(), descriptor = { version: 1, sourceKind: "authenticated-peer-plaintext",
       signedJson: "e30", baselineId, documentDigest: objectId, documentLength: 4 }

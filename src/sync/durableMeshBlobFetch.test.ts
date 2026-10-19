@@ -14,9 +14,9 @@ vi.mock("./blobRequestSigning", () => ({ blobRequestSigning: vi.fn(async () => (
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
-function session(connectionId: string): SessionEntry {
+function session(connectionId: string, connection: SessionEntry["connection"] = {} as never): SessionEntry {
   return { connectionId, workspaceId: "workspace", deviceId: "peer-device", instanceId: "instance", endpoint: "",
-    remoteIssuedAt: "2026-10-15T00:00:00Z", direction: "incoming", connection: {} as never,
+    remoteIssuedAt: "2026-10-15T00:00:00Z", direction: "incoming", connection,
     session: {} as never, remotePersonId: "peer", blobTransferSupported: true, evict: async () => {} }
 }
 
@@ -69,4 +69,50 @@ it("Given a late replacement and a four-chunk attachment, when each chunk makes 
   const [cachedDescriptor, cachedBytes] = blob.write.mock.calls[0]!
   expect(cachedDescriptor).toEqual(descriptor)
   expect(Buffer.from(cachedBytes).equals(Buffer.from(bytes))).toBe(true)
+})
+
+it("Given the peer closes a blob response stream, when recovery retries, then only the empty response is treated as network failure", async () => {
+  const descriptor: meshBlob.BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"B".repeat(43)}`,
+    name: "private.bin", mediaType: "application/octet-stream", size: 1 }
+  const bytes = Uint8Array.of(7)
+  const authority = { profile: {} as LocalProfile, identity: "identity", credential: "credential", transportSecret: "secret" }
+  const responseFrames = [new Uint8Array(), bytes]
+  const connection = {
+    openStream: async () => ({
+      send: async () => {},
+      read: async () => responseFrames.shift() ?? bytes,
+      closeSend: async () => {},
+    }),
+  } as unknown as SessionEntry["connection"]
+  const peer = session("peer", connection)
+  const blob = { read: vi.fn(async () => undefined), write: vi.fn(async () => {}) }
+  const request = vi.spyOn(meshBlob, "requestBlob").mockImplementation(async candidate => {
+    const stream = await candidate.openStream()
+    return stream.read()
+  })
+
+  await expect(fetchBlobFromCurrentSessions({ workspaceId: "workspace", descriptor, blob,
+    readAuthority: async () => authority, sessions: () => [peer], isCurrent: () => true,
+    currentRunId: () => 1, isRunning: () => true })).resolves.toEqual(bytes)
+  expect(request).toHaveBeenCalledTimes(2)
+  expect(blob.write).toHaveBeenCalledOnce()
+
+  const malformedConnection = {
+    openStream: async () => ({
+      send: async () => {},
+      read: async () => Uint8Array.of(1),
+      closeSend: async () => {},
+    }),
+  } as unknown as SessionEntry["connection"]
+  const malformedPeer = session("malformed-peer", malformedConnection)
+  request.mockImplementation(async candidate => {
+    const stream = await candidate.openStream()
+    await stream.read()
+    throw new Error("Malformed non-empty pairing response")
+  })
+  await expect(fetchBlobFromCurrentSessions({ workspaceId: "workspace", descriptor, blob,
+    readAuthority: async () => authority, sessions: () => [malformedPeer], isCurrent: () => true,
+    currentRunId: () => 1, isRunning: () => true })).rejects.toThrow("Malformed non-empty pairing response")
+  expect(request).toHaveBeenCalledTimes(3)
+  expect(blob.write).toHaveBeenCalledOnce()
 })

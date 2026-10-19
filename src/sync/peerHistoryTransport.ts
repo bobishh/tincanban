@@ -1,4 +1,4 @@
-import type { DuplexStream } from "./transport"
+import type { DuplexStream, SyncConnection } from "./transport"
 import { PeerHistoryObjectUnavailableError } from "./peerHistoryErrors"
 export { PeerHistoryObjectUnavailableError } from "./peerHistoryErrors"
 import { captureArchiveTreeContext, type ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
@@ -17,6 +17,17 @@ const MAX_OBJECT_ID = /^[A-Za-z0-9_-]{43}$/
 export function readPeerHistoryRequestOrPairing(stream: DuplexStream): Promise<Uint8Array> {
   if (!stream.readPairingOrRawPrefix) throw new Error("Bounded pairing/raw ingress is unavailable")
   return stream.readPairingOrRawPrefix(MAGIC, MAX_REQUEST_BYTES)
+}
+
+/** The join acknowledgement channel also carries bounded peer-history requests. */
+export function readPeerHistoryAwareAcceptStream(connection: SyncConnection): SyncConnection {
+  return {
+    ...connection,
+    acceptStream: async () => {
+      const stream = await connection.acceptStream()
+      return { ...stream, read: () => readPeerHistoryRequestOrPairing(stream) }
+    },
+  }
 }
 
 async function readRaw(stream: DuplexStream, maximumBytes: number): Promise<Uint8Array> {

@@ -36,7 +36,7 @@ it("Given enrollment sync invalidates one full backup, when its exact error appe
   await vi.advanceTimersByTimeAsync(100)
   expect(f.clicks).toEqual(["Create private recovery backup", "Retry private backup"])
   expect(await result).toBe(file)
-  expect(f.evaluate).toHaveBeenCalledTimes(2)
+  expect(f.evaluate).toHaveBeenCalledTimes(3)
   clean(f)
 })
 it("Given another backup error, when visible, then fail immediately without a retry", async () => {
@@ -74,9 +74,11 @@ it("Given no outcome, when the original sixty-second budget expires, then fail w
 it("Given the workspace binding changes before retry, when queued writes are awaited, then refuse the next capture", async () => {
   const f = fixture([sourceChanged, "download"])
   f.evaluate.mockResolvedValueOnce({ personId: "person", deviceId: "device", workspaceId: "workspace" })
+    .mockResolvedValueOnce(undefined)
     .mockRejectedValueOnce(new Error("Backup identity or workspace changed"))
   await expect(downloadPrivateWorkspaceRecovery(f.page, f.panel)).rejects.toThrow("Backup identity or workspace changed")
   expect(f.clicks).toHaveLength(1)
+  expect(f.evaluate).toHaveBeenCalledTimes(3)
   clean(f)
 })
 
