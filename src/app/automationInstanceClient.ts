@@ -1,4 +1,6 @@
 import { z } from "zod"
+import { withRecoveryCheckpoint } from "../sync/recoveryDiagnostics"
+import { record, traceDiagnosticOperation } from "../sync/telemetry"
 import { requestWorkerJson } from "./workerJsonResponse"
 import { automationBodyHash } from "../domain/automationProtocol"
 import { canonicalizeJson } from "../domain/identity"
@@ -6,7 +8,7 @@ import { isAutomationOrigin } from "../domain/automationLifecycle"
 import { parseAutomationInstanceBody, parseAutomationInstanceDiscovery,
   type AutomationInstancePrepareHistoryBody, type AutomationInstanceActivateHistoryBody, type AutomationInstanceRefreshBody, type AutomationInstancePrepareRotationBody, type AutomationInstanceRotateStorageBody } from "../domain/automationInstanceData"
 import { verifyAutomationInstanceIdentity,
-  type AutomationInstanceIdentityPayload, type AutomationInstanceIdentityProof } from "../domain/automationInstanceIdentity"
+  type AutomationInstanceIdentityPayload, type AutomationInstanceIdentityProof, type AutomationInstanceIdentityExpected } from "../domain/automationInstanceIdentity"
 import { createAutomationInstanceRequest, type AutomationInstanceAction } from "../domain/automationInstanceProtocol"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import type { LocalProfile } from "../domain/identity"
@@ -65,7 +67,7 @@ export async function readAutomationInstance(profile: LocalProfile, inputValue: 
   const body = parseAutomationInstanceBody("identity", { ...scopeBody(input), integrationId: input.integrationId })
   const { value, request } = await send(profileSnapshot, input, "identity", body, options)
   const proof = value as AutomationInstanceIdentityProof
-  const identity = await verifyAutomationInstanceIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
+  const identity = await verifyManagementIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, integrationId: input.integrationId, executorPersonId: input.executorPersonId,
     requestNonce: request.signed.payload.nonce })
   await options?.ensureCurrent?.()
@@ -130,7 +132,7 @@ async function sendHistoryPhase(profile: LocalProfile, input: AutomationInstance
   guards?: AutomationInstanceClientGuards) {
   const { value, request } = await send(profile, input, action, body, guards)
   const proof = value as AutomationInstanceIdentityProof
-  const identity = await verifyAutomationInstanceIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
+  const identity = await verifyManagementIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, integrationId: input.integrationId, executorPersonId: input.executorPersonId,
     requestNonce: request.signed.payload.nonce })
   const storage = identity.description.storage
@@ -161,7 +163,7 @@ export async function prepareAutomationStorageRotation(profile: LocalProfile, in
     storage: input.storage, transitionId: input.transitionId })
   const { value, request } = await send(profileSnapshot, input, "prepare-storage-rotation", body, options)
   const proof = value as AutomationInstanceIdentityProof
-  const identity = await verifyAutomationInstanceIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
+  const identity = await verifyManagementIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, integrationId: input.integrationId, executorPersonId: input.executorPersonId,
     requestNonce: request.signed.payload.nonce })
   const storage = identity.description.storage
@@ -188,7 +190,7 @@ export async function rotateAutomationStorageCredentials(profile: LocalProfile, 
     storage: input.storage, transitionId: input.transitionId, credentials: input.credentials, receipt })
   const { value, request } = await send(profileSnapshot, input, "rotate-storage", body, options)
   const proof = value as AutomationInstanceIdentityProof
-  const identity = await verifyAutomationInstanceIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
+  const identity = await verifyManagementIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, integrationId: input.integrationId, executorPersonId: input.executorPersonId,
     requestNonce: request.signed.payload.nonce })
   const expected = { origin: input.credentials.origin, scopeId: input.credentials.scopeId, keyEpoch: input.credentials.keyEpoch,
@@ -215,7 +217,7 @@ export async function refreshAutomationStorageAccess(profile: LocalProfile, inpu
     storage: input.storage, receipt })
   const { value, request } = await send(profileSnapshot, input, "refresh-access", body, options)
   const proof = value as AutomationInstanceIdentityProof
-  const identity = await verifyAutomationInstanceIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
+  const identity = await verifyManagementIdentity(proof, { origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, integrationId: input.integrationId, executorPersonId: input.executorPersonId,
     requestNonce: request.signed.payload.nonce })
   if (receipt.payload.scopeId !== input.storage.scopeId || receipt.payload.personId !== profileSnapshot.identity.personId ||
@@ -272,15 +274,27 @@ async function assertSupported(origin: string, action: AutomationInstanceAction)
 async function signRequest(profile: LocalProfile, input: AutomationInstanceDiscoveryInput,
   action: AutomationInstanceAction, body: unknown, guards?: AutomationInstanceClientGuards) {
   const integrationId = isRecord(body) && typeof body.integrationId === "string" ? body.integrationId : null
-  const bodyHash = await automationBodyHash(body)
+  const bodyHash = await instanceStep(input.origin, "hashRequest", () => automationBodyHash(body))
   const binding: Record<string, string | number> = { action, origin: input.origin, workspaceId: input.workspaceId,
     definitionId: input.definitionId, executorPersonId: input.executorPersonId, bodyHash,
     ...(integrationId ? { integrationId } : {}) }
-  const context = await resolveLocalSigningContext(profile, "automation-instance-request", binding,
-    { ...(guards ?? {}), expiresAt: Date.now() + 60_000 })
-  return createAutomationInstanceRequest(context, { action, origin: binding.origin as string,
+  const context = await instanceStep(input.origin, "prepareSigningContext", () => resolveLocalSigningContext(profile, "automation-instance-request", binding,
+    { ...(guards ?? {}), expiresAt: Date.now() + 60_000 }))
+  return instanceStep(input.origin, "signRequest", () => createAutomationInstanceRequest(context, { action, origin: binding.origin as string,
     workspaceId: binding.workspaceId as string, definitionId: binding.definitionId as string,
-    integrationId, executorPersonId: binding.executorPersonId as string, bodyHash })
+    integrationId, executorPersonId: binding.executorPersonId as string, bodyHash }))
+}
+
+async function instanceStep<T>(origin: string, phase: string, operation: () => Promise<T> | T): Promise<T> {
+  const name = `automation.management.${phase}`, detail = { phase, "server.address": new URL(origin).host }
+  try { record(`${name}.started`, detail) } catch { /* Optional diagnostics. */ }
+  const result = await traceDiagnosticOperation(name, detail, () => withRecoveryCheckpoint(name, detail, operation))
+  try { record(`${name}.completed`, detail) } catch { /* Optional diagnostics. */ }
+  return result
+}
+
+async function verifyManagementIdentity(value: unknown, expected: AutomationInstanceIdentityExpected) {
+  return instanceStep(expected.origin, "verifyResponseSignature", () => verifyAutomationInstanceIdentity(value, expected))
 }
 
 async function requestJson(origin: string, path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {

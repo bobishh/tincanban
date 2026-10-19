@@ -1,4 +1,5 @@
 /* global __TINCANBAN_BUILD_COMMIT__ */
+import { reportPreviousRecoveryDiagnostic } from "./recoveryDiagnostics"
 import { telemetryConfig } from "./telemetryConfig"
 import { record, traceDiagnosticOperation } from "./telemetry"
 import { capturedException, type CapturedException } from "../domain/exceptionCapture"
@@ -72,6 +73,7 @@ export async function diagnoseStartupStep<T>(stage: string, step: () => T | Prom
 }
 
 export async function beginStartupDiagnostics(): Promise<void> {
+  reportPreviousRecoveryDiagnostic()
   if (!startupDiagnosticsEnabled()) return
   try {
     const raw = sessionStorage.getItem(markerKey)

@@ -28,6 +28,7 @@ import { assertAutomationKeyHistorySupported, assertAutomationStorageRotationSup
 import type { RustyScopePolicyReceipt } from '../product-replica'
 import { identityDevicePreferencesChanged } from './identityDevicePreferenceEvents'
 import { record, traceDiagnosticOperation } from './telemetry'
+import { withRecoveryCheckpoint } from './recoveryDiagnostics'
 
 type ConflictCapture = Awaited<ReturnType<typeof capturePrivateReplicaConflict>>
 type Worker = { route: ReplicaWriterWorker; before: AutomationInstanceIdentityProof; frozen?: AutomationInstanceIdentityProof; rotated?: AutomationInstanceIdentityProof }
@@ -52,13 +53,14 @@ export async function continueCredentialConflictRecovery(ports: {
 }
 type CredentialRecoveryTrace = { workspaceId: string; serverHost: string; transitionId: string }
 async function traceRecoveryPhase<T>(trace: CredentialRecoveryTrace | undefined, phase: string,
-  operation: () => Promise<T>): Promise<T> {
+  operation: () => Promise<T> | T): Promise<T> {
   if (!trace) return operation()
   const detail = { phase, "workspace.id": trace.workspaceId, "server.address": trace.serverHost,
     "recovery.transition_id": trace.transitionId }
   recordRecoveryPhase("started", detail)
   try {
-    const result = await traceDiagnosticOperation(`rusty.credential-recovery.${phase}`, detail, () => operation())
+    const name = `rusty.credential-recovery.${phase}`
+    const result = await traceDiagnosticOperation(name, detail, () => withRecoveryCheckpoint(name, detail, () => operation()))
     recordRecoveryPhase("completed", detail)
     return result
   } catch (error) {
@@ -181,12 +183,13 @@ export async function readPendingRustyCredentialConflict(profile: LocalProfile, 
 
 type ConflictExecution = {
   app: ReturnType<typeof useTincanban>; profile: LocalProfile; freeze: ReplicaCredentialConflictFreeze; capture: ConflictCapture;
+  trace: CredentialRecoveryTrace;
   journal: () => Journal; live: () => Promise<void>; save: (changed: Journal, plan?: LocalStatePlan) => Promise<void>;
   finishSnapshot: () => Promise<void>;
 }
 
 function conflictRecoverySteps(state: ConflictExecution) {
-  const { app, profile, freeze, capture, live, save, finishSnapshot } = state
+  const { app, profile, freeze, capture, trace, live, save, finishSnapshot } = state
   const next = freeze.proposal.next, origin = freeze.origin, scopeId = freeze.scopeId, personId = freeze.personId
   return {
       freezeWorkers: async () => {
@@ -194,36 +197,47 @@ function conflictRecoverySteps(state: ConflictExecution) {
           const workers: Worker[] = []
           if (next.purpose !== 'identity') {
             const candidates = freeze.proposal.previousVariants.filter((config): config is BlindReplicaConfig => config.purpose !== 'identity')
-            const routes = await discoverWorkspaceReplicaWorkers(app, candidates[0]!, live, candidates)
-            for (const route of routes) { await assertAutomationStorageRotationSupported(route.origin); if (next.historicalContentKeyVariants) await assertAutomationKeyHistorySupported(route.origin); const before = await readAutomationInstance(profile, route, { ensureCurrent: live }); workers.push({ route, before: before.proof }) }
+            const routes = await traceRecoveryPhase(trace, 'discoverWorkers', () => discoverWorkspaceReplicaWorkers(app, candidates[0]!, live, candidates))
+            for (const route of routes) {
+              await traceRecoveryPhase(trace, 'checkWorkerStorageRotation', () => assertAutomationStorageRotationSupported(route.origin))
+              if (next.historicalContentKeyVariants) await traceRecoveryPhase(trace, 'checkWorkerKeyHistory', () => assertAutomationKeyHistorySupported(route.origin))
+              const before = await traceRecoveryPhase(trace, 'readWorkerIdentity', () => readAutomationInstance(profile, route, { ensureCurrent: live }))
+              workers.push({ route, before: before.proof })
+            }
           }
           await save({ ...state.journal(), workers })
         }
         for (const worker of state.journal().workers!) {
           if (worker.frozen) continue
-          const before = await workerDescription(worker, worker.before)
-          const frozen = await prepareAutomationStorageRotation(profile, { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id }, { ensureCurrent: live })
+          const before = await traceRecoveryPhase(trace, 'verifyWorkerIdentity', () => workerDescription(worker, worker.before))
+          const frozen = await traceRecoveryPhase(trace, 'prepareWorkerRotation', () => prepareAutomationStorageRotation(profile,
+            { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id }, { ensureCurrent: live }))
           await save({ ...state.journal(), workers: state.journal().workers!.map(value => same(value.route, worker.route) ? { ...value, frozen: frozen.proof } : value) })
         }
       },
       confirmPolicy: async () => {
         const policy = state.journal().policy
-        if (policy) { await completeScopeEnrollmentIntent(policy.request.binding, policy.request.body, live); return }
-        await approveRustyScope(next, profile, false, { expectedPolicyRevision: freeze.proposal.expectedPolicyRevision, requireExactRetry: true,
+        if (policy) {
+          await traceRecoveryPhase(trace, 'confirmSavedPolicy', () => completeScopeEnrollmentIntent(policy.request.binding, policy.request.body, live))
+          return
+        }
+        await traceRecoveryPhase(trace, 'approveReplacementPolicy', () => approveRustyScope(next, profile, false, { expectedPolicyRevision: freeze.proposal.expectedPolicyRevision, requireExactRetry: true,
           ...(next.purpose === 'identity' ? {} : { minimumWriterVersion: 2 }), ensureCurrent: live, confirmed: async receipt => {
-            const request = await readScopeEnrollmentIntent(await enrollmentBinding(freeze))
+            const binding = await traceRecoveryPhase(trace, 'readPolicyIntentBinding', () => enrollmentBinding(freeze))
+            const request = await traceRecoveryPhase(trace, 'readPolicyIntent', () => readScopeEnrollmentIntent(binding))
             if (!request) throw new Error('Original replacement policy request is unavailable')
             await save({ ...state.journal(), policy: { request, receipt } })
-          } })
+          } }))
       },
       drainOriginal: async () => {
         if (state.journal().drained) return
         const pending = capture.progress?.pending
         if (!pending) { await save({ ...state.journal(), drained: { progress: capture.progress } }); return }
         await live()
-        const objectId = await blindObjectId(pending.object)
-        const receipt = await readBlindJson<BlindReceipt>(await fetchBlind(`${origin}/v2/scopes/${scopeId}/objects/${objectId}?writerVersion=2&observedSequence=${pending.observedSequence ?? 0}`, {
-          method: 'PUT', signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(next), Authorization: `Bearer ${next.writeToken}`, 'Content-Type': 'application/json', 'X-Rusty-Request-Id': pending.requestId }, body: JSON.stringify(pending.object) }), 16384)
+        const objectId = await traceRecoveryPhase(trace, 'identifyOriginalOutboxObject', () => blindObjectId(pending.object))
+        const response = await traceRecoveryPhase(trace, 'uploadOriginalOutbox', () => fetchBlind(`${origin}/v2/scopes/${scopeId}/objects/${objectId}?writerVersion=2&observedSequence=${pending.observedSequence ?? 0}`, {
+          method: 'PUT', signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(next), Authorization: `Bearer ${next.writeToken}`, 'Content-Type': 'application/json', 'X-Rusty-Request-Id': pending.requestId }, body: JSON.stringify(pending.object) }))
+        const receipt = await traceRecoveryPhase(trace, 'verifyOriginalOutboxReceipt', () => readBlindJson<BlindReceipt>(response, 16384))
         const progress = { ...capture.progress!, generation: capture.progress!.generation + 1, lastUploaded: pending.hash, ...(pending.revision === undefined ? {} : { uploadedRevision: pending.revision }), ...(pending.identity === undefined ? {} : { contentIdentity: pending.identity }) }
         delete progress.pending
         await save({ ...state.journal(), drained: { progress, receipt } })
@@ -232,14 +246,15 @@ function conflictRecoverySteps(state: ConflictExecution) {
         if (next.purpose === 'identity') return
         for (const worker of state.journal().workers!) {
           if (worker.rotated) continue
-          const before = await workerDescription(worker, worker.before)
-          const rotated = await rotateAutomationStorageCredentials(profile, { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id, credentials: next, receipt: state.journal().policy!.receipt }, { ensureCurrent: live })
+          const before = await traceRecoveryPhase(trace, 'verifyWorkerIdentity', () => workerDescription(worker, worker.before))
+          const rotated = await traceRecoveryPhase(trace, 'rotateWorkerCredentials', () => rotateAutomationStorageCredentials(profile,
+            { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id, credentials: next, receipt: state.journal().policy!.receipt }, { ensureCurrent: live }))
           await save({ ...state.journal(), workers: state.journal().workers!.map(value => same(value.route, worker.route) ? { ...value, rotated: rotated.proof } : value) })
         }
       },
       activate: async () => {
         await live()
-        const activation = await planPrivateReplicaConflictActivation(personId, capture, next, state.journal().drained!, freeze)
+        const activation = await traceRecoveryPhase(trace, 'planCredentialActivation', () => planPrivateReplicaConflictActivation(personId, capture, next, state.journal().drained!, freeze))
         await save({ ...state.journal(), activated: activation.config }, activation.plan)
         identityDevicePreferencesChanged(personId)
       },
@@ -328,11 +343,12 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
     const freeze = journal.freeze, frozenRaw = JSON.stringify(freeze)
     let reportedRetiredDependencies = false
     const live = async () => {
-      await guard()
-      if (await readLocal(freezeKey) !== (journal!.activated ? null : frozenRaw)) throw new Error('Recovery freeze changed')
+      await traceRecoveryPhase(trace, 'checkLiveOwnerAuthority', guard)
+      const currentFreeze = await traceRecoveryPhase(trace, 'readLiveFreeze', () => readLocal(freezeKey))
+      if (currentFreeze !== (journal!.activated ? null : frozenRaw)) throw new Error('Recovery freeze changed')
       if (!journal!.activated) {
-        const difference = privateReplicaConflictSourceDifference(
-          await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture)
+        const difference = await traceRecoveryPhase(trace, 'compareLiveSourceAndOutbox', async () =>
+          privateReplicaConflictSourceDifference(await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture))
         if (difference) throw new Error(`Exact conflict source or original outbox changed during recovery (${difference})`)
         if (!reportedRetiredDependencies && journal!.capture.sourceConditions.length > 1) {
           reportedRetiredDependencies = true
@@ -340,39 +356,45 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
             "server.address": trace.serverHost, "recovery.transition_id": trace.transitionId })
         }
       }
-      await guard()
+      await traceRecoveryPhase(trace, 'recheckLiveOwnerAuthority', guard)
     }
     const save = async (changed: Journal, plan?: LocalStatePlan) => {
-      await live(); await validateJournal(changed, profile)
-      const nextRaw = JSON.stringify(changed)
+      await live()
+      await traceRecoveryPhase(trace, 'validateJournalBeforeSave', () => validateJournal(changed, profile))
+      const nextRaw = await traceRecoveryPhase(trace, 'serializeJournal', () => JSON.stringify(changed))
       if (new TextEncoder().encode(nextRaw).byteLength > 32 * 1024 * 1024) throw new Error('Conflict recovery journal exceeds storage bound')
-      if (!await compareAndSwapLocal({ conditions: [...(plan?.conditions ?? []), { key: journalKey, value: raw }, { key: profileKey, value: profileRaw }, { key: freezeKey, value: journal!.activated ? null : frozenRaw }],
-        writes: [...(plan?.writes ?? []), { key: journalKey, value: nextRaw }, ...(changed.activated && !journal!.activated ? [{ key: freezeKey, value: null }] : [])] }, guardIdentity)) throw new Error('Recovery journal changed; original evidence retained for retry')
+      await traceRecoveryPhase(trace, 'commitJournalCAS', async () => {
+        if (!await compareAndSwapLocal({ conditions: [...(plan?.conditions ?? []), { key: journalKey, value: raw }, { key: profileKey, value: profileRaw }, { key: freezeKey, value: journal!.activated ? null : frozenRaw }],
+          writes: [...(plan?.writes ?? []), { key: journalKey, value: nextRaw }, ...(changed.activated && !journal!.activated ? [{ key: freezeKey, value: null }] : [])] }, guardIdentity)) throw new Error('Recovery journal changed; original evidence retained for retry')
+      })
       raw = nextRaw; journal = changed
     }
     trace.transitionId = freeze.id
     if (journal.activated) return traceRecoveryPhase(trace, "confirmSnapshot", finishSnapshot)
-    await continueCredentialConflictRecovery(conflictRecoverySteps({ app, profile, freeze, capture, live, save,
+    await continueCredentialConflictRecovery(conflictRecoverySteps({ app, profile, freeze, capture, trace, live, save,
       journal: () => journal!, finishSnapshot }), trace)
     async function finishSnapshot() {
       const config = journal!.activated
       if (!config) return unavailable()
       await live()
       if (config.purpose === 'identity') {
-        const { createIdentityReplica } = await import('./identityReplicaStore')
-        if (!await createIdentityReplica(config, profile, guardIdentity).push()) throw new Error('Profile still changing; resume fresh-key confirmation')
+        const { createIdentityReplica } = await traceRecoveryPhase(trace, 'loadIdentityReplicaStore', () => import('./identityReplicaStore'))
+        const pushed = await traceRecoveryPhase(trace, 'publishFreshIdentitySnapshot', () => createIdentityReplica(config, profile, guardIdentity).push())
+        if (!pushed) throw new Error('Profile still changing; resume fresh-key confirmation')
       } else {
-        const { createBlindReplica } = await import('./blindReplicaStore')
-        await createBlindReplica(config, app, guardIdentity, async () => {}).flushCurrentSnapshot()
+        const { createBlindReplica } = await traceRecoveryPhase(trace, 'loadBlindReplicaStore', () => import('./blindReplicaStore'))
+        await traceRecoveryPhase(trace, 'publishFreshWorkspaceSnapshot', () => createBlindReplica(config, app, guardIdentity, async () => {}).flushCurrentSnapshot())
       }
       await live()
-      const stateKey = privateReplicaStateStorageKey(personId), stateRaw = await readLocal(stateKey)
-      const progress = await getPrivateReplicaProgress(personId, config)
+      const stateKey = privateReplicaStateStorageKey(personId), stateRaw = await traceRecoveryPhase(trace, 'readSnapshotStateForCompletion', () => readLocal(stateKey))
+      const progress = await traceRecoveryPhase(trace, 'verifyFreshSnapshotReceipt', () => getPrivateReplicaProgress(personId, config))
       if (progress.pending || !progress.lastUploaded) throw new Error('Fresh-key snapshot receipt is still pending')
-      const archiveKey = `${journalKey}.completed.${freeze.id}`, archived = await readLocal(archiveKey)
+      const archiveKey = `${journalKey}.completed.${freeze.id}`, archived = await traceRecoveryPhase(trace, 'readRecoveryArchive', () => readLocal(archiveKey))
       if (archived !== null && archived !== raw) throw new Error('Recovery audit archive differs')
-      if (!await compareAndSwapLocal({ conditions: [{ key: journalKey, value: raw }, { key: freezeKey, value: null }, { key: profileKey, value: profileRaw }, { key: archiveKey, value: archived }, { key: stateKey, value: stateRaw }],
-        writes: [{ key: journalKey, value: null }, { key: archiveKey, value: raw }] }, guardIdentity)) throw new Error('Recovery completion changed; retained audit available for retry')
+      await traceRecoveryPhase(trace, 'completeRecoveryCAS', async () => {
+        if (!await compareAndSwapLocal({ conditions: [{ key: journalKey, value: raw }, { key: freezeKey, value: null }, { key: profileKey, value: profileRaw }, { key: archiveKey, value: archived }, { key: stateKey, value: stateRaw }],
+          writes: [{ key: journalKey, value: null }, { key: archiveKey, value: raw }] }, guardIdentity)) throw new Error('Recovery completion changed; retained audit available for retry')
+      })
     }
   })
 }
