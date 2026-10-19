@@ -7,8 +7,8 @@ import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
-import { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
-import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { WasmStateCore, type WasmVerifiedHistoryArchiveCoverage } from "@meta-uber/mesh-transport/wasm"
+import { adoptEnrolledIdentity, bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -326,28 +326,43 @@ function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number
   expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, claimedOwner: true } }, signer)).toThrow(/unknown field/i)
   expect(() => WasmStateCore.prepareWorkspaceHistory({ ...source, snapshot: { ...source.snapshot, document: [256] } }, signer)).toThrow()
   const preparation = WasmStateCore.prepareWorkspaceHistory(source, signer)
+  type Capture = ReturnType<typeof preparation.captureOriginals>
+  let capture: Capture | undefined
+  let rebase: ReturnType<Capture["rebase"]> | undefined
   try {
-    const capture = preparation.captureOriginals(capturedHistory.catalogue.context.historyEpoch, controlJson, authorizationJson)
-    try {
-      const objects: Array<{ ciphertextId: string; binding: ArchiveEncryptionBinding; object: EncryptedArchiveObject }> = []
-      const catalogue = capture.writeEncryptedCatalogue(scope.scopeId, scope.keyEpoch, scope.key,
-        () => crypto.getRandomValues(new Uint8Array(12)),
-        (ciphertextId: string, binding: ArchiveEncryptionBinding, object: EncryptedArchiveObject) => {
-          objects.push({ ciphertextId, binding: structuredClone(binding), object: structuredClone(object) })
-        }, () => {}) as typeof capturedHistory.catalogue
-      // Exercise the production Native-to-browser sink ABI, including its plaintext content address.
-      expect(objects.length).toBeGreaterThan(0)
-      expect(objects.every(entry => /^[A-Za-z0-9_-]{43}$/.test(entry.binding.objectId))).toBe(true)
-      const rebase = capture.rebase(catalogue.context.historyEpoch, transitionId)
-      try { return { catalogue, objects, document: rebase.document() } } finally { rebase.free() }
-    } finally { capture.free() }
-  } finally { preparation.free() }
+    capture = preparation.captureOriginals(capturedHistory.catalogue.context.historyEpoch, controlJson, authorizationJson)
+    const objects: Array<{ ciphertextId: string; binding: ArchiveEncryptionBinding; object: EncryptedArchiveObject }> = []
+    const catalogue = capture.writeEncryptedCatalogue(scope.scopeId, scope.keyEpoch, scope.key,
+      () => crypto.getRandomValues(new Uint8Array(12)),
+      (ciphertextId: string, binding: ArchiveEncryptionBinding, object: EncryptedArchiveObject) => {
+        objects.push({ ciphertextId, binding: structuredClone(binding), object: structuredClone(object) })
+      }, () => {}) as typeof capturedHistory.catalogue
+    // Exercise the production Native-to-browser sink ABI, including its plaintext content address.
+    expect(objects.length).toBeGreaterThan(0)
+    expect(objects.every(entry => /^[A-Za-z0-9_-]{43}$/.test(entry.binding.objectId))).toBe(true)
+    rebase = capture.rebase(catalogue.context.historyEpoch, transitionId)
+    let released = false
+    return { catalogue, objects, document: rebase.document(), capture, rebase,
+      dispose() {
+        if (released) return
+        released = true
+        rebase!.free()
+        capture!.free()
+        preparation.free()
+      } }
+  } catch (error) {
+    rebase?.free()
+    capture?.free()
+    preparation.free()
+    throw error
+  }
 }
 
 test("Given a Native-derived original-history catalogue, when data and locator coverage survive Rusty restart, then Native binds the admitted basis to real receipts and a cold HTTP reader recovers originals without the sender journal", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   const profile = await bootstrapIdentity("Native catalogue storage owner")
   let service = await startRusty(profile)
+  let releaseCurrent = () => {}
   try {
     const discovery = await discoverBlindKeeper(service.origin)
     const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `capture-${crypto.randomUUID()}`,
@@ -356,6 +371,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const scope = { scopeId: access.scopeId, keyEpoch: 1, key: crypto.getRandomValues(new Uint8Array(32)) }
     const transitionId = crypto.randomUUID()
     const current = deriveCurrentNativeCatalogue(scope, transitionId)
+    releaseCurrent = current.dispose
     const context = current.catalogue.context
     const identity = { transitionId, personId: profile.identity.personId, workspaceId: context.workspaceId, historyEpoch: context.historyEpoch,
       sourceRevision: current.catalogue.captureRevision, authorityRevision: current.catalogue.authorityRevision,
@@ -407,8 +423,12 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     fixtureKey.set([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32])
     fixtureKey.fill(152, 16)
     const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
-    const signedBaseline = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
-    const signedBaselineBytes = new TextEncoder().encode(canonicalBlindJson(signedBaseline))
+    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.control)))
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
+      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
+        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
+    const trustedScopeAuthority = validateWorkerHistoryAuthority(scopeAuthoritySnapshot, context.workspaceId)
     const basisContext: ArchiveTreeContext = { workspaceId: context.workspaceId, historyEpoch: context.historyEpoch, indexId: "basis-document" }
     const basisIdentity = { ...identity, transitionId: `${transitionId}-basis-data`,
       sourceRevision: await blindHash(current.document) }
@@ -450,17 +470,28 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const basisCoverage = await confirmArchiveCoverageSet(nativeInput.authority, basisLocators.root.root.ciphertextId,
       `${transitionId}-basis-set`, basisCoverageObjects, { coverage: preparationRemote.coverage,
         aggregate: preparationRemote.aggregate, ensureCurrent: () => {} })
+    const encryptedObjects = new Map(objects.map(entry => [entry.ciphertextId, entry.object]))
+    const verifiedStorage = current.capture.verifyStorageDirectory(scope.scopeId, scope.keyEpoch, scope.key,
+      prepared.root, encryptedObjects, () => {})
+    let proposalCoverage: WasmVerifiedHistoryArchiveCoverage | undefined
+    let ownerProposal: { kind: string; baselineId: string; [key: string]: unknown }
+    try {
+      proposalCoverage = verifiedStorage.verifyCoverage(nativeInput.authority, identity.transitionId,
+        directoryIdentity.transitionId, new TextEncoder().encode(canonicalizeJson(covered.coverage)),
+        new TextEncoder().encode(canonicalizeJson(prepared.directory.coverage)))
+      ownerProposal = current.capture.ownerAttestedProposal(current.rebase, proposalCoverage, trustedScopeAuthority)
+    } finally {
+      proposalCoverage?.free()
+      verifiedStorage.free()
+    }
+    const signedBaseline = await signEnvelope(signer, ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
+    const signedBaselineBytes = new TextEncoder().encode(canonicalBlindJson(signedBaseline))
     const wire = { version: 1 as const, signedJson: encodeBlindBytes(signedBaselineBytes),
       basis: { context: basisContext, reference: basisReference, locatorRoot: basisLocators.root, coverage: basisCoverage } }
-    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.control)))
-    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
-      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
-        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
-      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
-    const trustedScopeAuthority = validateWorkerHistoryAuthority(scopeAuthoritySnapshot, context.workspaceId)
     const receiveConfig = { ...access, workspaceId: context.workspaceId, keyEpoch: scope.keyEpoch,
       contentKey: toBase64Url(scope.key), cursor: 0, lastUploaded: "", minimumWriterVersion: 2 as const }
-    expect(await verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(signedBaseline) })).toEqual({ ...verified,
+    const signedNativeBaseline = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
+    expect(await verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(signedNativeBaseline) })).toEqual({ ...verified,
       ownerAttestation: { baselineId: verified.ownerProposal.baselineId, historyEpoch: 1, deviceId: nativeInput.signer.deviceId } })
     if (process.env.TINCANBAN_PRIOR_READER_PROBE === "1") {
       const probe = await new Promise<string>((resolveProbe, reject) => {
@@ -525,7 +556,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
         coversHeads: async (candidate: typeof received) => candidate.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch,
           scope.key, browserOriginalBytes, retainedObjects, () => {}),
         readExpectedSnapshot: async () => (await readWorkspaceBasisSnapshot(context.workspaceId)) ?? null,
-        accept: async (candidate: typeof received) => browserRepository.recordActiveWireRoute(verified.ownerProposal.baselineId,
+        accept: async (candidate: typeof received) => browserRepository.recordActiveWireRoute(ownerProposal.baselineId,
           candidate.originalJson(), wire),
         merge: async (document: Uint8Array, authorization: unknown, candidate: typeof received) => {
           expect(document).toEqual(current.document)
@@ -537,7 +568,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
         await receiveBrowserHistoryBaseline({ workspaceId: context.workspaceId, config: receiveConfig, wire,
           document: current.document, authorization: capturedHistory.originals.authorizations,
           trustedScopeAuthority, fetch: browserRoute, ports: browserPorts })
-        expect((await browserRepository.readActive())?.baselineId).toBe(verified.ownerProposal.baselineId)
+        expect((await browserRepository.readActive())?.baselineId).toBe(ownerProposal.baselineId)
         expect((await browserRepository.readArchiveRecord())?.wire).toEqual(wire)
       } finally { Automerge.free(originalDoc) }
     } finally { received.free() }
@@ -568,6 +599,7 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     expect(proof.signed.payload.hashes).toEqual([decoded.hash])
     for (const source of [journal, directory]) for (const method of ["read", "readSource", "objects", "locators"] as const) expect(source[method]).not.toHaveBeenCalled()
   } finally {
+    releaseCurrent()
     await stopRusty(service.child); await rm(service.stateDirectory, { recursive: true, force: true }); vi.unstubAllGlobals()
   }
 }, 30_000)

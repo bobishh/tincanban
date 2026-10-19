@@ -428,9 +428,10 @@ export async function requestDeviceEnrollment(context: EnrollmentContext, invite
     if (!isCurrent(context, run)) return void node.close("Replaced")
     context.setNode(node)
     traceEnrollment("guest", "node.started", run, { endpoint: node.endpointId.slice(0, 8) })
-    connection = await dialEnrollmentPeer(context, run, node, invite)
-    if (!connection || !isCurrent(context, run)) return
-    connection = meshNetworkConnection(connection, meshIngressBudgetProfile())
+    const rawConnection = await dialEnrollmentPeer(context, run, node, invite)
+    connection = rawConnection
+    if (!rawConnection || !isCurrent(context, run)) return
+    connection = meshNetworkConnection(rawConnection, meshIngressBudgetProfile())
     traceEnrollment("guest", "connected", run)
     await receiveEnrollmentApproval(context, run, node, connection, invite, profile)
     connection = undefined
