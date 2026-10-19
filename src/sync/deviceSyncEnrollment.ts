@@ -23,7 +23,7 @@ import type { SyncConnection, SyncNode } from "./transport"
 import { userMessage } from "./deviceSyncState"
 import { showInviteQr } from "./deviceSyncInviteView"
 import type { PairingContext } from "./deviceSyncContext"
-import { meshTrace, type MeshTraceLevel } from "./meshTrace"
+import { traceEnrollment } from "./enrollmentDiagnostics"
 import { offlineRetryDelay } from "./offlineRetry"
 import { meshIngressBudgetProfile } from "../iroh"
 
@@ -38,11 +38,6 @@ type EnrollmentContext = PairingContext & {
 
 function isCurrent(context: EnrollmentContext, run: number) {
   return context.currentRun() === run
-}
-
-function traceEnrollment(role: "host" | "guest", event: string, run: number,
-  detail: Record<string, unknown> = {}, level: MeshTraceLevel = "info") {
-  meshTrace(`enrollment.${role}.${event}`, { runId: run, ...detail }, level)
 }
 
 function errorReason(error: unknown, depth = 0): string {

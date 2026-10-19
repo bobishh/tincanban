@@ -4,6 +4,7 @@ import { decodePairingFrame, encodePairingFrame } from "@meta-uber/mesh-pairing"
 import { dialEnrollmentPeer, sendEnrollmentRejection } from "./deviceSyncEnrollment"
 import type { SyncConnection, SyncNode } from "./transport"
 import { meshTraceSnapshot } from "./meshTrace"
+import * as telemetry from "./telemetry"
 
 const connection = (): SyncConnection => ({
   openStream: vi.fn(),
@@ -17,6 +18,17 @@ const invitation = {
 
 describe("device enrollment dialing", () => {
   afterEach(() => vi.useRealTimers())
+
+  it("Given normal diagnostics without a URL flag, when enrollment dials, then export the exact phase without invitation secrets", async () => {
+    const record = vi.spyOn(telemetry, "record").mockImplementation(() => {})
+    const node = { dial: vi.fn(async () => connection()), dialRelay: vi.fn() } as unknown as SyncNode
+    try {
+      await dialEnrollmentPeer({ currentRun: () => 21 } as never, 21, node,
+        { ...invitation, secret: "private-invitation-value" })
+      expect(record).toHaveBeenCalledWith("enrollment.guest.dial.started", expect.objectContaining({ phase: "guest.dial.started" }), "info")
+      expect(JSON.stringify(record.mock.calls)).not.toContain("private-invitation-value")
+    } finally { record.mockRestore() }
+  })
 
   it("closes a late losing direct connection without closing the relay winner", async () => {
     vi.useFakeTimers()

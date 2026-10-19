@@ -1,10 +1,24 @@
 import { ref } from "vue"
 import { afterEach, expect, it, vi } from "vitest"
-import { connectWorkspaceJoin } from "./workspaceJoinBrowserView"
+import { connectWorkspaceJoin, isWorkspacePairingLocation } from "./workspaceJoinBrowserView"
+import * as telemetry from "./telemetry"
 
 const flow = vi.hoisted(() => vi.fn())
 vi.mock("./workspaceJoinBrowserFlow", () => ({ connectWorkspaceJoin: flow }))
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks() })
+
+it("Given a pairing URL, when startup inspects its route, then report route and fragment presence without exporting its URL or secret", () => {
+  const record = vi.spyOn(telemetry, "record").mockImplementation(() => {})
+  const prepare = vi.fn()
+  try {
+    expect(isWorkspacePairingLocation("https://example.test/pair#secret=private-invitation", prepare)).toBe(true)
+    expect(record).toHaveBeenCalledWith("pairing.route.checked", { phase: "pairing", mode: "fragment_present" })
+    expect(isWorkspacePairingLocation("https://example.test/pair", prepare)).toBe(false)
+    expect(record).toHaveBeenLastCalledWith("pairing.route.checked", { phase: "pairing", mode: "fragment_absent" })
+    expect(JSON.stringify(record.mock.calls)).not.toContain("private-invitation")
+    expect(JSON.stringify(record.mock.calls)).not.toContain("https://")
+  } finally { record.mockRestore() }
+})
 
 it("Given an invitation accepted offline, when connectivity returns, then load the join flow only after showing automatic retry", async () => {
   const network = { onLine: false }

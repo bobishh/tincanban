@@ -4,10 +4,120 @@ import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
 import { encryptBlindObject, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, canonicalBlindJson, type BlindAccess, type BlindReceipt, blindObjectId } from "./blindClient"
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 
 const signer = await createReceiptSigner()
 let receiptSequence = 0
 const receiptCache = new Map<string, BlindReceipt>()
+
+async function checkpointRefreshFixture() {
+  const oldKey = crypto.getRandomValues(new Uint8Array(32)), nextKey = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "https://rusty.example", scopeId: "checkpoint-refresh", workspaceId: "board",
+    servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 2, keyEpoch: 2,
+    contentKey: encodeBlindBytes(nextKey), historicalContentKeys: { "1": encodeBlindBytes(oldKey) }, cursor: 0, lastUploaded: "" }
+  let progress = emptyReplicaState<BlindObject>("checkpoint-browser"), revision = "local", document = new Uint8Array([1])
+  const checkpoint = await encryptBlindObject(config.scopeId, 1, oldKey, new TextEncoder().encode(JSON.stringify({
+    version: 1, workspaceId: config.workspaceId, document: encodeBlindBytes(new Uint8Array([7])), authorization: { signed: true }, chat: null,
+  })))
+  const inventory = vi.fn(async (_access: BlindAccess, after: number) => after < 7
+    ? { objects: [{ objectId: await blindObjectId(checkpoint), sequence: 7 }], cursor: 7, hasMore: false }
+    : { objects: [], cursor: after, hasMore: false })
+  const upload = vi.fn(async (access: BlindAccess, object: BlindObject, requestId: string, observedSequence = 0) => {
+    if (upload.mock.calls.length === 1) throw new Error("Original reply lost")
+    if (observedSequence < 7) throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+      { code: "checkpoint_generation_required", status: 409 })
+    receiptSequence = Math.max(receiptSequence, 7)
+    return signedReceipt(access, object, requestId)
+  })
+  const commits: ReplicaState<BlindObject>[] = []
+  const store = {
+    replicaBinding: "checkpoint-browser", read: async () => document, readSnapshotRevision: async () => revision,
+    authorization: async () => ({ signed: true }), readChat: async () => null, mergeChat: async () => {},
+    merge: vi.fn(async (_id: string, remote: Uint8Array) => { document = new Uint8Array([...document, ...remote]); revision = "merged" }),
+    persist: async () => {}, readReplicaProgress: async () => structuredClone(progress),
+    ensureCurrent: vi.fn(async () => {}),
+    persistReplicaProgress: async (expected: number, next: ReplicaState<BlindObject>) => {
+      expect(progress.generation).toBe(expected); progress = structuredClone(next); commits.push(structuredClone(next))
+    },
+  }
+  const open = () => new BlindReplica({ ...config }, store, { inventory, download: async () => checkpoint, upload })
+  return { open, inventory, upload, store, commits, progress: () => structuredClone(progress) }
+}
+
+test("Given a reopened outbox rejected by a newer checkpoint, when recovery flushes its snapshot, then admit the checkpoint before retiring that exact request and confirm a merged fresh-key upload", async () => {
+  const f = await checkpointRefreshFixture()
+  await expect(f.open().push()).rejects.toThrow("Original reply lost")
+  const pending = f.progress().pending!
+  await f.open().flushCurrentSnapshot()
+  expect(f.upload.mock.calls.map(call => call[3])).toEqual([0, 0, 7])
+  expect(f.upload.mock.calls[1]).toEqual(f.upload.mock.calls[0])
+  expect(f.upload.mock.calls[2]![2]).not.toBe(pending.requestId)
+  expect(f.upload.mock.calls[2]![1].keyEpoch).toBe(2)
+  expect(f.store.merge).toHaveBeenCalledOnce()
+  expect(f.progress()).toMatchObject({ cursor: 7, lastUploaded: expect.any(String) })
+  expect(f.progress().lastUploaded).not.toBe("")
+  expect(f.progress().pending).toBeUndefined()
+  expect(f.commits.find(value => value.cursor === 7 && value.pending)?.pending).toEqual(pending)
+})
+
+test("Given a rejected request and unavailable checkpoint inventory, when recovery refreshes, then preserve the original ciphertext, request identity and acknowledgment", async () => {
+  const f = await checkpointRefreshFixture()
+  await expect(f.open().push()).rejects.toThrow("Original reply lost")
+  const before = f.progress()
+  f.inventory.mockRejectedValueOnce(new Error("Inventory unavailable"))
+  await expect(f.open().flushCurrentSnapshot()).rejects.toThrow("Inventory unavailable")
+  expect(f.progress()).toEqual(before)
+  expect(f.upload).toHaveBeenCalledTimes(2)
+  expect(f.store.merge).not.toHaveBeenCalled()
+})
+
+test("Given a stale outbox and a newer admitted checkpoint, when ordinary polling runs, then recover without a separate user action", async () => {
+  const f = await checkpointRefreshFixture()
+  await expect(f.open().push()).rejects.toThrow("Original reply lost")
+  expect(await f.open().sync()).toBe(true)
+  expect(f.progress().pending).toBeUndefined()
+  expect(f.progress().cursor).toBe(7)
+  expect(f.upload.mock.calls.map(call => call[3])).toEqual([0, 0, 7])
+})
+
+test("Given a rejected request but denied checkpoint admission, when refreshing, then preserve its exact ciphertext and never prepare another upload", async () => {
+  const f = await checkpointRefreshFixture()
+  await expect(f.open().push()).rejects.toThrow("Original reply lost")
+  const before = f.progress()
+  f.store.merge.mockRejectedValueOnce(new Error("Current authority denied checkpoint"))
+  await expect(f.open().flushCurrentSnapshot()).rejects.toThrow("Current authority denied checkpoint")
+  expect(f.progress()).toEqual(before)
+  expect(f.upload).toHaveBeenCalledTimes(2)
+})
+
+test("Given admitted checkpoint history but refused outbox CAS, when refreshing, then retain the rejected request and resume it safely in a fresh instance", async () => {
+  const f = await checkpointRefreshFixture()
+  await expect(f.open().push()).rejects.toThrow("Original reply lost")
+  const pending = f.progress().pending!
+  const commit = f.store.persistReplicaProgress
+  f.store.persistReplicaProgress = async (expected, next) => {
+    if (!next.pending) throw new Error("Outbox CAS refused")
+    return commit(expected, next)
+  }
+  await expect(f.open().flushCurrentSnapshot()).rejects.toThrow("Outbox CAS refused")
+  expect(f.progress()).toMatchObject({ cursor: 7, pending })
+  f.store.persistReplicaProgress = commit
+  await f.open().flushCurrentSnapshot()
+  expect(f.progress().pending).toBeUndefined()
+  expect(f.upload.mock.calls.at(-1)![3]).toBe(7)
+})
+
+test.each([{ code: "checkpoint_generation_required", status: 503 }, { code: "checkpoint_conflict", status: 409 }])(
+  "Given a different storage error %j, when delivery fails, then never retire the original request or refresh its evidence", async failure => {
+    const f = await checkpointRefreshFixture()
+    await expect(f.open().push()).rejects.toThrow("Original reply lost")
+    const before = f.progress()
+    f.upload.mockRejectedValueOnce(Object.assign(new Error("Different failure"), failure))
+    await expect(f.open().flushCurrentSnapshot()).rejects.toThrow("Different failure")
+    expect(f.progress()).toEqual(before)
+    expect(f.inventory).not.toHaveBeenCalled()
+  }
+)
 
 test("Given a first WASM snapshot failure, when replication catches it, then retain the original exception and exact phase before reporting UI failure", async () => {
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey,

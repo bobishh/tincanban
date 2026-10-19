@@ -12,6 +12,11 @@ rotation do not gate this flow. Earlier automation proofs remain in the retained
 recovery journal; automation credentials require separate maintenance after a
 device replaces conflicting credentials.
 
+If Rusty rejects a fresh upload because its storage checkpoint advanced, board
+and profile sync admit the newer checkpoint before replacing that exact rejected
+request. Uncertain uploads retain their original ciphertext and request identity;
+successful uploads still require a signed receipt.
+
 A board for keeping track of work, with cards, documents, and chat. Your data lives
 in your browser. You can share a board with someone else or connect your own
 second device and keep working across both.

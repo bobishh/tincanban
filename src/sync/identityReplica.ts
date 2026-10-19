@@ -1,10 +1,11 @@
-import { ReplicaEngine, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
+import { ReplicaEngine, type ReplicaPorts, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type { IdentityReplicaConfig } from "./blindReplication"
 import { encryptPurposeBoundObject, decryptPurposeBoundObject, decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, canonicalBlindJson, inventoryBlindObjects, downloadBlindObject, uploadBlindObject,
   verifyBlindReceipt, type BlindReceipt, type BlindAccess } from "./blindClient"
 import { readIdentityReplicaRecord, type IdentityReplicaRecord } from "./identityReplicaProtocol"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
+import { pushWithCheckpointRefresh, uploadWithCheckpointEvidence } from "./rustyCheckpointRecovery"
 
 type Transfer = Awaited<ReturnType<typeof readIdentityReplicaRecord>>["transfer"]
 export type IdentityReplicaStore = {
@@ -17,12 +18,13 @@ export type IdentityReplicaStore = {
   runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>
 }
 type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject;
-  upload: (access: BlindAccess, object: BlindObject, requestId: string) => Promise<BlindReceipt> }
+  upload: (access: BlindAccess, object: BlindObject, requestId: string, observedSequence?: number) => Promise<BlindReceipt> }
 const encoder = new TextEncoder()
 
 /** Private identity state has its own content adapter. Cursor/outbox/receipt behavior stays in the shared engine. */
 export class IdentityReplica {
-  private readonly engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
+  private engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
+  private readonly restartEngine: () => void
 
   constructor(config: IdentityReplicaConfig, binding: string, private readonly store: IdentityReplicaStore,
     transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject }) {
@@ -33,7 +35,7 @@ export class IdentityReplica {
       record.payload.personId, record.payload.origin, record.payload.serviceId, record.payload.scopeId, record.payload.keyEpoch,
       record.payload.managementRevision, record.payload.state,
     ])))
-    this.engine = new ReplicaEngine(binding, {
+    const ports: ReplicaPorts<Uint8Array, BlindObject, BlindReceipt> = {
       repository: store.repository,
       content: { revision: store.revision, capture: async () => {
         const record = await store.capture()
@@ -42,7 +44,8 @@ export class IdentityReplica {
         return { payload, bytes: payload.length, hash: await blindHash(payload), identity: await identity(record) }
       }, seal: payload => encryptPurposeBoundObject(cryptoBinding, contentKey, payload) },
       transport: { inventory: cursor => transport.inventory(config, cursor), download: id => transport.download(config, id),
-        upload: (object, requestId) => transport.upload(config, object, requestId) },
+        upload: (object, requestId, observedSequence) => uploadWithCheckpointEvidence({ object, requestId, observedSequence },
+          () => transport.upload(config, object, requestId, observedSequence)) },
       admit: async object => {
         const bytes = await openWithReplicaContentKeys(config, object.keyEpoch,
           key => decryptPurposeBoundObject(object, { ...cryptoBinding, keyEpoch: object.keyEpoch }, decodeBlindBytes(key)))
@@ -54,12 +57,19 @@ export class IdentityReplica {
         return { hash: await blindHash(bytes), identity: await identity(parsed.record) }
       },
       verifyReceipt: (receipt, object, requestId) => verifyBlindReceipt(receipt, config, object, requestId), guard: store.guard,
-    })
+    }
+    this.engine = new ReplicaEngine(binding, ports)
+    this.restartEngine = () => { this.engine = new ReplicaEngine(binding, ports) }
   }
 
   private run<T>(operation: () => Promise<T>): Promise<T> { return this.store.runExclusive ? this.store.runExclusive(operation) : operation() }
+  private pushNow(operation = () => this.engine.push()): Promise<boolean> {
+    return pushWithCheckpointRefresh({ guard: this.store.guard, read: this.store.repository.read,
+      commit: this.store.repository.commit, pull: () => this.engine.pull(), push: () => this.engine.push(),
+      restart: this.restartEngine }, operation)
+  }
   pull(): Promise<boolean> { return this.run(() => this.engine.pull()) }
-  push(): Promise<boolean> { return this.run(() => this.engine.push()) }
+  push(): Promise<boolean> { return this.run(() => this.pushNow()) }
   drainPending(): Promise<boolean> { return this.run(() => this.engine.drainPending()) }
-  sync(): Promise<boolean> { return this.run(() => this.engine.sync()) }
+  sync(): Promise<boolean> { return this.run(() => this.pushNow(() => this.engine.sync())) }
 }

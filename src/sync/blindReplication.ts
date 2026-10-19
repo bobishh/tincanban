@@ -8,6 +8,7 @@ import type { BlindCheckpointRequest as HistoryCheckpointRequest } from "./blind
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { AttachmentLocator } from "../product-replica"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
+import { pushWithCheckpointRefresh, uploadWithCheckpointEvidence } from "./rustyCheckpointRecovery"
 
 import type { BlindReplicaConfig } from "../product-replica"
 export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica"
@@ -67,7 +68,7 @@ export class BlindReplica {
   private retainedObjects = 0
   private checkpointSequence = 0
   private checkpointPending: { hash: string; parts: ContentParts; bytes: number; request: BlindCheckpointRequest } | undefined
-  private readonly engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
+  private engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
   private memoryProgress: ReplicaState<BlindObject>
   private readonly accessBinding: string
   private capturedParts?: ContentParts
@@ -80,7 +81,12 @@ export class BlindReplica {
     this.accessBinding = this.credentialBinding()
     const binding = store.replicaBinding ?? this.accessBinding
     this.memoryProgress = emptyReplicaState(binding, config.cursor, config.lastUploaded)
-    this.engine = new ReplicaEngine(binding, {
+    this.engine = this.createEngine()
+  }
+
+  private createEngine() {
+    const { config, store, transport } = this
+    return new ReplicaEngine(store.replicaBinding ?? this.accessBinding, {
       repository: { read: () => this.readProgress(), commit: (expected, next) => this.persistProgress(expected, next) },
       content: { revision: () => this.snapshotRevision(), capture: () => this.phase("snapshot", () => this.captureSnapshot()),
         seal: plaintext => this.phase("encrypt", () => encryptBlindObject(config.scopeId, config.keyEpoch, decodeBlindBytes(config.contentKey), plaintext)) },
@@ -139,7 +145,14 @@ export class BlindReplica {
     return caughtUp
   }
 
-  push(): Promise<void> { return this.schedule(async () => { await this.store.prepareAttachments?.(); await this.engine.push() }) }
+  push(): Promise<void> { return this.schedule(async () => { await this.store.prepareAttachments?.(); await this.pushNow() }) }
+
+  private pushNow(): Promise<boolean> {
+    return pushWithCheckpointRefresh({ guard: () => this.ensureCurrent(), read: () => this.readProgress(),
+      commit: (expected, next) => this.persistProgress(expected, next), pull: () => this.pullNow(), push: () => this.engine.push(),
+      restart: () => { this.engine = this.createEngine() },
+      diagnostic: phase => this.observe(`mesh.rusty.checkpoint.refresh.${phase}`, { phase: "refresh_checkpoint_generation" }) })
+  }
 
   /** Maintenance retries saved ciphertext without preparing attachments or serializing a fresh snapshot. */
   drainPending(): Promise<boolean> { return this.schedule(() => this.engine.drainPending()) }
@@ -172,7 +185,7 @@ export class BlindReplica {
   /** Confirm the current locator index as well as any older uncertain upload before file coverage completes. */
   flushCurrentSnapshot(): Promise<void> {
     return this.schedule(async () => {
-      for (let attempt = 0; attempt < 4; attempt++) if (await this.engine.push()) return
+      for (let attempt = 0; attempt < 4; attempt++) if (await this.pushNow()) return
       throw new Error("Board is still changing. File backup will retry.")
     })
   }
@@ -237,7 +250,8 @@ export class BlindReplica {
     const phase = uploadPhase(!this.freshUpload, this.previousParts !== undefined || this.receivedParts !== undefined)
     this.freshUpload = false
     this.observe("mesh.rusty.upload.started", { phase, changedFields })
-    try { return await this.transport.upload({ ...this.config }, object, requestId, observedSequence) }
+    try { return await uploadWithCheckpointEvidence({ object, requestId, observedSequence },
+      () => this.transport.upload({ ...this.config }, object, requestId, observedSequence)) }
     catch (error) { this.observe("mesh.rusty.upload.failed", { phase: "delivery", error }); throw error }
   }
 
@@ -369,7 +383,7 @@ export class BlindReplica {
         if (result === "conflict") return false
         if (result === "completed") return true
       }
-      const uploaded = await this.engine.push()
+      const uploaded = await this.pushNow()
       return caughtUp && uploaded
     })
   }

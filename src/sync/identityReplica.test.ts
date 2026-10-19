@@ -37,7 +37,7 @@ async function fixture() {
       attempts.push({ object: structuredClone(object), requestId })
       const id = await blindObjectId(object)
       let stored = objects.find(value => value.objectId === id)
-      if (!stored) { stored = { objectId: id, sequence: objects.length + 1, object: structuredClone(object) }; objects.push(stored) }
+      if (!stored) { stored = { objectId: id, sequence: Math.max(0, ...objects.map(value => value.sequence)) + 1, object: structuredClone(object) }; objects.push(stored) }
       if (failReply) { failReply = false; throw new Error("reply lost") }
       const serviceId = await blindHash(pub)
       return signEnvelope(keys.privateKey, { kind: "blind-storage-receipt", version: 2, serviceId, scopeId: config.scopeId,
@@ -55,6 +55,23 @@ async function fixture() {
   }
   return { config, record, root, objects, attempts, transport, store, loseReply: () => { failReply = true } }
 }
+
+it("Given identity recovery at an old storage cursor, when a checkpoint rejects the fresh upload, then automatically admit it and confirm a fresh upload with the observed sequence", async () => {
+  const f = await fixture(), source = f.store("source")
+  await new IdentityReplica(f.config, "source", source, f.transport).push()
+  f.objects[0]!.sequence = 7
+  const target = f.store("target")
+  const upload = vi.fn(async (access: Parameters<typeof f.transport.upload>[0], object: BlindObject, requestId: string, observedSequence = 0) => {
+    if (observedSequence < 7) throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+      { code: "checkpoint_generation_required", status: 409 })
+    return f.transport.upload(access, object, requestId)
+  })
+  await expect(new IdentityReplica(f.config, "target", target, { ...f.transport, upload }).push()).resolves.toBe(true)
+  expect(upload.mock.calls.map(call => call[3])).toEqual([0, 7])
+  expect(target.merge).toHaveBeenCalledOnce()
+  expect(target.progress()).toMatchObject({ cursor: 7, lastUploaded: expect.any(String) })
+  expect(target.progress().pending).toBeUndefined()
+})
 
 it("Given Rusty retained an encrypted identity package, when its source closes, then another replica receives it without contacting the source", async () => {
   const f = await fixture()

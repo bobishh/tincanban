@@ -8,7 +8,7 @@ import { readLocal, writeLocal } from "../localDb"
 import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { changeReplicaPreference, emptyPrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
 import { capturePrivateReplicaConflict, getReplicaConfigurations, persistPrivateReplicaProgress,
-  receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
+  privateReplicaBinding, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
 import { replicaCredentialFreezeKey } from "./replicaCredentialFreeze"
 import { buildReplicaCredentialConflictRecovery } from "./replicaCredentialConflictRecovery"
 import { recoverRustyCredentialConflict } from "./replicaCredentialConflictWorkflow"
@@ -96,4 +96,22 @@ it("Given a retained policy with an invalid signature, when this device resumes,
   expect(await readLocal(f.journalKey)).toBe(raw)
   expect(await readLocal(f.freezeKey)).toBe(frozen)
   expect(network.snapshot).not.toHaveBeenCalled()
+})
+
+it("Given activation completed but the fresh snapshot reply was lost, when a new recovery invocation resumes, then confirm the snapshot and archive once without changing credentials again", async () => {
+  const f = await fixture()
+  network.snapshot.mockRejectedValueOnce(new Error("Fresh snapshot reply lost"))
+  await expect(recoverRustyCredentialConflict(f.app, f.config.origin, f.config.scopeId, f.config.workspaceId, () => {}))
+    .rejects.toThrow("Fresh snapshot reply lost")
+  expect(await readLocal(f.freezeKey)).toBeNull()
+  const pending = JSON.parse((await readLocal(f.journalKey))!)
+  expect(pending.activated).toBeDefined()
+  expect(await readLocal(`${f.journalKey}.completed.${f.freeze.id}`)).toBeNull()
+  const credentials = await getReplicaConfigurations(f.owner)
+  await recoverRustyCredentialConflict(f.app, f.config.origin, f.config.scopeId, f.config.workspaceId, () => {})
+  expect(await readLocal(f.journalKey)).toBeNull()
+  expect(privateReplicaBinding(f.owner, (await getReplicaConfigurations(f.owner))[0]!))
+    .toBe(privateReplicaBinding(f.owner, credentials[0]!))
+  expect(network.completeIntent).toHaveBeenCalledOnce()
+  expect(JSON.parse((await readLocal(`${f.journalKey}.completed.${f.freeze.id}`))!).capture).toEqual(f.journal.capture)
 })

@@ -1,6 +1,7 @@
 import { offlineRetryDelay } from "./offlineRetry"
 import type { ScopedInvitation } from "@meta-uber/mesh-pairing"
 import { userMessage, type DeviceSyncState } from "./deviceSyncState"
+import { record } from "./telemetry"
 import type { connectWorkspaceJoin as ConnectWorkspaceJoin } from "./workspaceJoinBrowserFlow"
 
 type WorkspaceJoinInvite = Extract<ScopedInvitation, { kind: "workspace-join" }>
@@ -18,7 +19,10 @@ export async function connectWorkspaceJoin(...args: Parameters<typeof ConnectWor
 
 export function isWorkspacePairingLocation(rawUrl: string, prepare: (url: string) => void) {
   const url = new URL(rawUrl)
-  if (url.pathname.replace(/\/$/, "") !== "/pair" || !url.hash) return false
+  const pairing = url.pathname.replace(/\/$/, "") === "/pair"
+  try { record("pairing.route.checked", { phase: pairing ? "pairing" : "ordinary", mode: url.hash ? "fragment_present" : "fragment_absent" }) }
+  catch { /* Route diagnostics never change invitation admission. */ }
+  if (!pairing || !url.hash) return false
   prepare(rawUrl)
   return true
 }
