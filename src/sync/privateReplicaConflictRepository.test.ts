@@ -10,6 +10,7 @@ import { assertReplicaCredentialsUnfrozen, parseReplicaCredentialFreeze, replica
 import type { ReplicaCredentialConflictFreeze } from "./replicaCredentialConflictFreeze"
 import { contentKeysForEpoch } from "./replicaContentKeys"
 import { blindObjectId } from "./blindClient"
+import { privateReplicaConflictSourceDifference, samePrivateReplicaConflictSource } from "./privateReplicaConflictSource"
 
 const key = (byte: number) => encodeBlindBytes(new Uint8Array(32).fill(byte))
 async function fixture(withOther = false) {
@@ -79,9 +80,19 @@ it("Given an exact recovery proposal, when a historical key is omitted, then rej
 })
 
 it("Given two causal variants, when capturing recovery twice, then preserve exact source revision and bytes without creating another queue", async () => {
-  const { owner, config, capture } = await fixture()
-  const capturedAgain = await capturePrivateReplicaConflict(owner, config.origin, config.scopeId)
+  const { owner, config, capture, freeze } = await fixture()
+  const savedCapture = JSON.parse(JSON.stringify(capture))
+  const capturedAgain = await capturePrivateReplicaConflict(owner, config.origin, config.scopeId, freeze)
   expect(canonicalizeJson(capturedAgain)).toBe(canonicalizeJson(capture))
+  expect(samePrivateReplicaConflictSource(capturedAgain, savedCapture)).toBe(true)
+  expect(privateReplicaConflictSourceDifference(capturedAgain, savedCapture)).toBeUndefined()
+  expect(privateReplicaConflictSourceDifference(capturedAgain, { ...savedCapture, sourceRevision: "redacted" })).toBe("sourceRevision")
+  const changedActor = structuredClone(savedCapture)
+  const state = JSON.parse(changedActor.sourceConditions[0].value)
+  state.actorId = "different-device-actor"
+  changedActor.sourceConditions[0].value = JSON.stringify(state)
+  expect(privateReplicaConflictSourceDifference(capturedAgain, changedActor)).toBe("repositoryState.actorId")
+  expect(samePrivateReplicaConflictSource(capturedAgain, changedActor)).toBe(false)
   expect(capture.previousVariants).toHaveLength(2)
   expect(capture.progress).toBeUndefined()
 })
@@ -116,6 +127,10 @@ it("Given an orphaned original outbox, when recovering with a signed exact recei
   expect(capture.progress?.pending).toEqual(pending)
   expect(capture.progressConfig?.contentKey).toBe(key(1))
   expect(capture.previousVariants.map(value => value.contentKey)).not.toContain(key(1))
+  const savedCapture = JSON.parse(JSON.stringify(capture))
+  const capturedAgain = await capturePrivateReplicaConflict(owner, config.origin, config.scopeId)
+  expect(samePrivateReplicaConflictSource(capturedAgain, savedCapture)).toBe(true)
+  expect(privateReplicaConflictSourceDifference(capturedAgain, savedCapture)).toBeUndefined()
   const proposal = buildReplicaCredentialConflictRecovery(capture.sourceWire, { ...config, expectedPolicyRevision: 7,
     freshContentKey: key(4), freshReadToken: key(5), freshWriteToken: key(6), extraRetainedConfigs: [capture.progressConfig!] })
   const freeze: ReplicaCredentialConflictFreeze = { kind: "rusty-credential-conflict-freeze", version: 2, id: crypto.randomUUID(),

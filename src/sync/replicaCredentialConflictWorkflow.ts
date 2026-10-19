@@ -1,4 +1,4 @@
-import { samePrivateReplicaConflictSource } from "./privateReplicaConflictSource"
+import { privateReplicaConflictSourceDifference } from "./privateReplicaConflictSource"
 import type { useTincanban } from '../state'
 import { canonicalizeJson, sha256Base64Url, type LocalProfile } from '../domain/identity'
 import { assertSigningContextCurrent } from '../domain/signingContext'
@@ -329,7 +329,11 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
     const live = async () => {
       await guard()
       if (await readLocal(freezeKey) !== (journal!.activated ? null : frozenRaw)) throw new Error('Recovery freeze changed')
-      if (!journal!.activated && !samePrivateReplicaConflictSource(await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture)) throw new Error('Exact conflict source or original outbox changed during recovery')
+      if (!journal!.activated) {
+        const difference = privateReplicaConflictSourceDifference(
+          await capturePrivateReplicaConflict(personId, origin, scopeId, freeze), journal!.capture)
+        if (difference) throw new Error(`Exact conflict source or original outbox changed during recovery (${difference})`)
+      }
       await guard()
     }
     const save = async (changed: Journal, plan?: LocalStatePlan) => {
