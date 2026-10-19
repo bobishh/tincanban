@@ -5,6 +5,13 @@ and isolated image live under `services/reaction-runtime/`. Reflux owns scheduli
 and access to the participant's persistent state; no separate executor HTTP
 service or deployment is used.
 
+Rusty connection recovery on a device talks directly to Rusty. It requires the
+signed replacement policy, confirmation of the exact original pending upload,
+and a fresh snapshot receipt. Reflux availability and automation credential
+rotation do not gate this flow. Earlier automation proofs remain in the retained
+recovery journal; automation credentials require separate maintenance after a
+device replaces conflicting credentials.
+
 A board for keeping track of work, with cards, documents, and chat. Your data lives
 in your browser. You can share a board with someone else or connect your own
 second device and keep working across both.

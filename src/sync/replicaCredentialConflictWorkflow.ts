@@ -11,7 +11,7 @@ import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindObjectId, blindProducerHeaders, discoverBlindKeeper, verifyBlindReceipt, type BlindReceipt } from './blindClient'
 import { fetchBlind, readBlindJson } from './rustyHttp'
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
-import type { BlindReplicaConfig, PrivateReplicaConfig } from './blindReplication'
+import type { PrivateReplicaConfig } from './blindReplication'
 import { assertRetainsReplicaContentKeys, contentKeysForEpoch } from "./replicaContentKeys"
 import { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
 import { privateReplicaBinding } from './privateReplicaBinding'
@@ -22,9 +22,7 @@ import { workspaceOwnerSigningContext } from './workspaceOwnerSigning'
 import { approveRustyScope, readRustyScopePolicyRevision, verifySavedScopeEnrollmentConfirmation } from './rustyEnrollment'
 import { completeScopeEnrollmentIntent, readScopeEnrollmentIntent, type ScopeEnrollmentBinding, type ScopeEnrollmentIntent } from './rustyEnrollmentJournal'
 import { capturePrivateReplicaConflict, planPrivateReplicaConflictActivation, getPrivateReplicaProgress, privateReplicaStateStorageKey } from './privateReplicaRepository'
-import { discoverWorkspaceReplicaWorkers } from './workspaceReplicaWorkers'
 import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from './replicaWriterWorkersState'
-import { assertAutomationKeyHistorySupported, assertAutomationStorageRotationSupported, prepareAutomationStorageRotation, readAutomationInstance, rotateAutomationStorageCredentials } from '../app/automationInstanceClient'
 import type { RustyScopePolicyReceipt } from '../product-replica'
 import { identityDevicePreferencesChanged } from './identityDevicePreferenceEvents'
 import { record, traceDiagnosticOperation } from './telemetry'
@@ -41,13 +39,11 @@ const pin = (config: Pick<PrivateReplicaConfig, "origin" | "scopeId" | "keyEpoch
 const unavailable = async (): Promise<never> => { throw new Error('Conflict recovery cannot manufacture old replica content') }
 
 export async function continueCredentialConflictRecovery(ports: {
-  freezeWorkers: () => Promise<void>; confirmPolicy: () => Promise<void>; drainOriginal: () => Promise<void>;
-  rotateWorkers: () => Promise<void>; activate: () => Promise<void>; confirmSnapshot: () => Promise<void>;
+  confirmPolicy: () => Promise<void>; drainOriginal: () => Promise<void>;
+  activate: () => Promise<void>; confirmSnapshot: () => Promise<void>;
 }, trace?: CredentialRecoveryTrace): Promise<void> {
-  await traceRecoveryPhase(trace, "freezeWorkers", ports.freezeWorkers)
   await traceRecoveryPhase(trace, "confirmPolicy", ports.confirmPolicy)
   await traceRecoveryPhase(trace, "drainOriginal", ports.drainOriginal)
-  await traceRecoveryPhase(trace, "rotateWorkers", ports.rotateWorkers)
   await traceRecoveryPhase(trace, "activate", ports.activate)
   await traceRecoveryPhase(trace, "confirmSnapshot", ports.confirmSnapshot)
 }
@@ -137,9 +133,9 @@ async function validateConflictDrain(journal: Journal): Promise<void> {
 function validateConflictActivation(journal: Journal): void {
   const freeze = journal.freeze
   const portable = (config: PrivateReplicaConfig) => { const copy = { ...config }; delete copy.preferenceRevision; return { ...copy, cursor: 0, lastUploaded: '' } }
-  if (journal.activated && (!journal.drained || !journal.workers || journal.workers.some(worker => !worker.rotated) || !same(portable(journal.activated), portable(freeze.proposal.next)) ||
+  if (journal.activated && (!journal.policy || !journal.drained || !same(portable(journal.activated), portable(freeze.proposal.next)) ||
     journal.activated.cursor !== (journal.capture.progress?.cursor ?? journal.capture.progressRecord?.cursor ?? 0))) {
-    throw new Error('Recovery activated before exact policy/outbox/Worker confirmation')
+    throw new Error('Recovery activated before exact policy/outbox confirmation')
   }
 }
 
@@ -155,7 +151,7 @@ async function validateJournal(input: unknown, profile: LocalProfile): Promise<J
   const freeze = parseReplicaCredentialConflictFreeze(journal.freeze, profile.identity.personId, journal.freeze.origin)
   if (freeze.signerDeviceId !== profile.device.deviceId || !same(journal.capture.sourceWire, freeze.proposal.sourceWire)) throw new Error('Conflict recovery signer or source evidence changed')
   assertConflictKeysRetained(journal)
-  if (journal.policy && (!journal.workers || journal.workers.some(worker => !worker.frozen))) throw new Error('Policy changed before every Worker freeze confirmed')
+  // Retain and verify earlier automation evidence without making device recovery depend on its host.
   if (journal.capture.progress) {
     if (!journal.capture.progressConfig) throw new Error('Original outbox credential binding is missing')
     parseReplicaState(journal.capture.progress, privateReplicaBinding(freeze.personId, journal.capture.progressConfig))
@@ -182,39 +178,16 @@ export async function readPendingRustyCredentialConflict(profile: LocalProfile, 
 }
 
 type ConflictExecution = {
-  app: ReturnType<typeof useTincanban>; profile: LocalProfile; freeze: ReplicaCredentialConflictFreeze; capture: ConflictCapture;
+  profile: LocalProfile; freeze: ReplicaCredentialConflictFreeze; capture: ConflictCapture;
   trace: CredentialRecoveryTrace;
   journal: () => Journal; live: () => Promise<void>; save: (changed: Journal, plan?: LocalStatePlan) => Promise<void>;
   finishSnapshot: () => Promise<void>;
 }
 
 function conflictRecoverySteps(state: ConflictExecution) {
-  const { app, profile, freeze, capture, trace, live, save, finishSnapshot } = state
+  const { profile, freeze, capture, trace, live, save, finishSnapshot } = state
   const next = freeze.proposal.next, origin = freeze.origin, scopeId = freeze.scopeId, personId = freeze.personId
   return {
-      freezeWorkers: async () => {
-        if (!state.journal().workers) {
-          const workers: Worker[] = []
-          if (next.purpose !== 'identity') {
-            const candidates = freeze.proposal.previousVariants.filter((config): config is BlindReplicaConfig => config.purpose !== 'identity')
-            const routes = await traceRecoveryPhase(trace, 'discoverWorkers', () => discoverWorkspaceReplicaWorkers(app, candidates[0]!, live, candidates))
-            for (const route of routes) {
-              await traceRecoveryPhase(trace, 'checkWorkerStorageRotation', () => assertAutomationStorageRotationSupported(route.origin))
-              if (next.historicalContentKeyVariants) await traceRecoveryPhase(trace, 'checkWorkerKeyHistory', () => assertAutomationKeyHistorySupported(route.origin))
-              const before = await traceRecoveryPhase(trace, 'readWorkerIdentity', () => readAutomationInstance(profile, route, { ensureCurrent: live }))
-              workers.push({ route, before: before.proof })
-            }
-          }
-          await save({ ...state.journal(), workers })
-        }
-        for (const worker of state.journal().workers!) {
-          if (worker.frozen) continue
-          const before = await traceRecoveryPhase(trace, 'verifyWorkerIdentity', () => workerDescription(worker, worker.before))
-          const frozen = await traceRecoveryPhase(trace, 'prepareWorkerRotation', () => prepareAutomationStorageRotation(profile,
-            { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id }, { ensureCurrent: live }))
-          await save({ ...state.journal(), workers: state.journal().workers!.map(value => same(value.route, worker.route) ? { ...value, frozen: frozen.proof } : value) })
-        }
-      },
       confirmPolicy: async () => {
         const policy = state.journal().policy
         if (policy) {
@@ -241,16 +214,6 @@ function conflictRecoverySteps(state: ConflictExecution) {
         const progress = { ...capture.progress!, generation: capture.progress!.generation + 1, lastUploaded: pending.hash, ...(pending.revision === undefined ? {} : { uploadedRevision: pending.revision }), ...(pending.identity === undefined ? {} : { contentIdentity: pending.identity }) }
         delete progress.pending
         await save({ ...state.journal(), drained: { progress, receipt } })
-      },
-      rotateWorkers: async () => {
-        if (next.purpose === 'identity') return
-        for (const worker of state.journal().workers!) {
-          if (worker.rotated) continue
-          const before = await traceRecoveryPhase(trace, 'verifyWorkerIdentity', () => workerDescription(worker, worker.before))
-          const rotated = await traceRecoveryPhase(trace, 'rotateWorkerCredentials', () => rotateAutomationStorageCredentials(profile,
-            { ...worker.route, storage: pin(before.storage!), transitionId: freeze.id, credentials: next, receipt: state.journal().policy!.receipt }, { ensureCurrent: live }))
-          await save({ ...state.journal(), workers: state.journal().workers!.map(value => same(value.route, worker.route) ? { ...value, rotated: rotated.proof } : value) })
-        }
       },
       activate: async () => {
         await live()
@@ -371,7 +334,7 @@ export async function recoverRustyCredentialConflict(app: ReturnType<typeof useT
     }
     trace.transitionId = freeze.id
     if (journal.activated) return traceRecoveryPhase(trace, "confirmSnapshot", finishSnapshot)
-    await continueCredentialConflictRecovery(conflictRecoverySteps({ app, profile, freeze, capture, trace, live, save,
+    await continueCredentialConflictRecovery(conflictRecoverySteps({ profile, freeze, capture, trace, live, save,
       journal: () => journal!, finishSnapshot }), trace)
     async function finishSnapshot() {
       const config = journal!.activated
