@@ -1,7 +1,8 @@
 import { createLeadFixture } from "./test/leadFixture"
 import "fake-indexeddb/auto"
 import { hasEntityKind } from "./domain/model"
-import { defaultStorage } from "./storage"
+import { readWorkspaceBasisSnapshot } from "./storageJournal"
+import { defaultStorage, type WorkspaceTransactionContext } from "./storage"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "./crdt"
@@ -15,6 +16,7 @@ import { projectBoardSchema } from "./domain/schema"
 import { isItem } from "./domain/model"
 import { authorizeLocalChanges, exportAuthorizationBundle, exportAuthorizations, prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync/changeAuthorization"
 import { executeCommand } from "./domain/commands"
+import * as domainCommands from "./domain/commands"
 import { peerStore } from "./sync/peerStore"
 import * as causalAdmission from "./stateCausalAdmission"
 import * as changeAuthorization from "./sync/changeAuthorization"
@@ -24,6 +26,11 @@ import { publicKeyId, toBase64Url } from "./domain/identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { withWorkspaceMutation } from "./workspaceMutation"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
+
+async function persistWorkspaceForTest(workspaceId: string,
+  ...commit: Parameters<WorkspaceTransactionContext["commitWorkspace"]>) {
+  return defaultStorage.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(...commit))
+}
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -58,7 +65,9 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const base = app.getActiveDoc()!
     const profile = app.getCurrentProfile()!
     const other = new WorkspaceStorage()
-    await persistAuthorizedCommand(base, { kind: "renameWorkspace", title: "Other tab title" }, profile, other)
+    const returned = await persistAuthorizedCommand(base, { kind: "renameWorkspace", title: "Other tab title" }, profile, other)
+    try { expect(returned.title).toBe("Other tab title") }
+    finally { Automerge.free(returned) }
     expect(app.getActiveDoc()!.title).not.toBe("Other tab title")
     const publish = vi.fn()
     const unsubscribe = app.subscribeLocalChanges(publish)
@@ -136,15 +145,15 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const app = useTincanban()
     await createLeadFixture(app, { company: "Admitted once", role: "Engineer", status: "lead" })
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
-    const commit = vi.spyOn(defaultStorage, "commitWorkspace")
+    const savedSnapshot = await readWorkspaceBasisSnapshot(app.activeWorkspace.id)
     resetStateForTest()
     try {
       await hydrate()
       expect(app.ready.value).toBe(true)
       expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Admitted once")
       expect(admission).not.toHaveBeenCalled()
-      expect(commit).not.toHaveBeenCalled()
-    } finally { admission.mockRestore(); commit.mockRestore() }
+      expect(await readWorkspaceBasisSnapshot(app.activeWorkspace.id)).toEqual(savedSnapshot)
+    } finally { admission.mockRestore() }
   })
 
   it("Given admitted history and unchanged rights, When archiving then restoring a card, Then only the local commands are checked and both durable checkpoints survive reload", async () => {
@@ -213,7 +222,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       evidence.bytes = Automerge.save(raw)
       Automerge.free(raw)
     }
-    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    await persistWorkspaceForTest(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     try {
       await app.executeCommandAsync({ kind: "setEntityArchived", entityId: item.id, archived: true })
@@ -228,7 +237,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const doc = app.getActiveDoc()!
     const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
     evidence.admissionCheckpoint!.policy = "previous-policy"
-    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    await persistWorkspaceForTest(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
     const publish = vi.fn()
     const unsubscribe = app.subscribeLocalChanges(publish)
     try {
@@ -253,7 +262,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       evidence.bytes = Automerge.save(raw)
       Automerge.free(raw)
     }
-    await defaultStorage.commitWorkspace(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    await persistWorkspaceForTest(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     resetStateForTest()
     try {
@@ -300,7 +309,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
       presetBindings: { ...(board.preset?.bindings ?? {}) },
       fields: [{ title: "  ", valueType: "text" as const, required: false }],
     }
-    const saveSnapshot = vi.spyOn(defaultStorage, "saveSnapshot")
+    const saveSnapshot = vi.spyOn(defaultStorage, "withWorkspaceTransaction")
 
     await expect(tincanban.createWorkspaceAsync("Invalid config", "job-search", defaultStorage, draft)).rejects.toThrow(/field title|Presentation must reference/i)
 
@@ -338,7 +347,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     }
     const source = Automerge.from(old)
     await recordGenesisAuthority(source as never, profile)
-    await defaultStorage.saveSnapshot(old.id, source as never, Automerge.save(source))
+    await persistWorkspaceForTest(old.id, source as never, Automerge.save(source), [])
     resetStateForTest()
     await hydrate()
     const stored = (await defaultStorage.loadWorkspaceDoc(old.id))!.doc
@@ -416,17 +425,17 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await app.mergeAuthorizedWorkspace(doc.id, bytes, authorization)
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     const evidence = vi.spyOn(defaultStorage, "loadCausalEvidence")
-    const commit = vi.spyOn(defaultStorage, "commitWorkspace")
+    const savedSnapshot = await readWorkspaceBasisSnapshot(app.activeWorkspace.id)
     const save = vi.mocked(Automerge.save)
     save.mockClear()
     try {
       for (let index = 0; index < 3; index++) await app.mergeAuthorizedWorkspace(doc.id, bytes.slice(), structuredClone(authorization))
       expect(admission).not.toHaveBeenCalled()
       expect(evidence).not.toHaveBeenCalled()
-      expect(commit).not.toHaveBeenCalled()
+      expect(await readWorkspaceBasisSnapshot(app.activeWorkspace.id)).toEqual(savedSnapshot)
       expect(save).not.toHaveBeenCalled()
       expect(app.workspace.items.map(item => item.title.split(" — ")[0])).toContain("Repeated packet")
-    } finally { admission.mockRestore(); evidence.mockRestore(); commit.mockRestore(); save.mockClear() }
+    } finally { admission.mockRestore(); evidence.mockRestore(); save.mockClear() }
   })
 
   it("Given a valid peer packet, When optional cache maintenance fails after commit, Then merging still succeeds and reopened storage retains the saved view", async () => {
@@ -474,7 +483,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     } finally { admission.mockRestore() }
   })
 
-  it("Given a cached packet with a previously unknown forged proof, When its claimed hash enters local history, Then repeating the packet revalidates that newly relevant proof", async () => {
+  it.each(["snapshot", "delta"])("Given a cached packet with a previously unknown forged proof, When its claimed hash enters local history through %s, Then repeating the packet revalidates that newly relevant proof", async mode => {
     const app = useTincanban()
     await createLeadFixture(app, { company: "Unknown hash guard", role: "Engineer", status: "lead" })
     const base = app.getActiveDoc()!, profile = app.getCurrentProfile()!
@@ -484,12 +493,20 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     const bytes = Automerge.save(base), bundle = await exportAuthorizationBundle(bytes, profile)
     bundle.records.push({ ...authorizations[0]!, signed: { ...authorizations[0]!.signed, signature: "forged-unknown-proof" } })
     await app.mergeAuthorizedWorkspace(base.id, bytes, bundle)
-    const raw = Automerge.save(candidate.value.newDoc)
-    const previous = (await defaultStorage.loadCausalEvidence(base.id))!
-    await defaultStorage.commitWorkspace(base.id, candidate.value.newDoc, raw, authorizations, undefined, {
-      bytes: raw, decisions: [...previous.decisions, { hash: candidate.value.receipt.changeHash, status: { type: "admitted", role: "owner" } }],
-      authorizationEvidence: [...previous.authorizationEvidence ?? [], ...authorizations],
-    })
+    if (mode === "snapshot") {
+      const raw = Automerge.save(candidate.value.newDoc)
+      const previous = (await defaultStorage.loadCausalEvidence(base.id))!
+      await persistWorkspaceForTest(base.id, candidate.value.newDoc, raw, authorizations, undefined, {
+        bytes: raw, decisions: [...previous.decisions, { hash: candidate.value.receipt.changeHash, status: { type: "admitted", role: "owner" } }],
+        authorizationEvidence: [...previous.authorizationEvidence ?? [], ...authorizations],
+      })
+    } else {
+      const command = vi.spyOn(domainCommands, "executeCommand").mockResolvedValueOnce(candidate)
+      try { await app.executeCommandAsync({ kind: "renameWorkspace", title: "Newly present hash" }) }
+      finally { command.mockRestore() }
+      expect(await defaultStorage.readDeltaFrontier(base.id)).toMatchObject({ revision: 1,
+        heads: [candidate.value.receipt.changeHash] })
+    }
     const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
     try {
       await expect(app.mergeAuthorizedWorkspace(base.id, bytes, structuredClone(bundle))).rejects.toThrow(/signature|authorization/i)
@@ -622,7 +639,7 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     if (!candidate.ok) throw new Error(candidate.error.message)
     const hash = candidate.value.receipt.changeHash
     const bytes = Automerge.save(candidate.value.newDoc)
-    await defaultStorage.commitWorkspace(workspaceId, base, Automerge.save(base), [], undefined, {
+    await persistWorkspaceForTest(workspaceId, base, Automerge.save(base), [], undefined, {
       bytes,
       decisions: [{ hash, status: { type: "quarantined", reason: "test draft" } }],
       authorizationEvidence: [],

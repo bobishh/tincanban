@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, test, vi } from "vitest"
 import { IDBFactory } from "fake-indexeddb"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type * as ReplicaRepository from "./privateReplicaRepository"
 import type * as LocalDb from "../localDb"

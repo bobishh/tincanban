@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import { decodePairingFrame, encodePairingFrame, inspectPairingFrame } from "@meta-uber/mesh-pairing"
-import type { SyncConnection } from "./transport"
-import { liveAutomergeWorkspaceSync, liveWorkspaceSetSync, workspaceSet, publishConfirmedWorkspace, publishOwnerWorkspaceOffer } from "./workspaceSet"
+import type { DuplexStream, SyncConnection } from "./transport"
+import { liveAutomergeWorkspaceSync as createAutomergeSync, liveWorkspaceSetSync as createWorkspaceSetSync, workspaceSet, publishConfirmedWorkspace, publishOwnerWorkspaceOffer } from "./workspaceSet"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { readProofPage, writeProofPage, clearProofPages } from "./proofPageCache"
 import { WorkspaceChangeRejected } from "./changeAuthorization"
@@ -13,6 +13,35 @@ import { initializeAutomerge } from "../crdt"
 import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { clearMeshTrace, meshTraceSnapshot, setMeshTraceVerboseLogging } from "./meshTrace"
 import { withWorkspaceMutation } from "../workspaceMutation"
+
+// In-memory streams expose the same bounded raw/pairing operations as the transport SDK.
+function fixtureConnection(connection: SyncConnection): SyncConnection {
+  const stream = (value: DuplexStream): DuplexStream => ({
+    ...value,
+    readRaw: async maximum => {
+      const bytes = await value.read(maximum)
+      if (maximum !== undefined && bytes.length > maximum) throw new Error("Raw fixture read exceeds limit")
+      return bytes
+    },
+    readPairingOrRawPrefix: async (prefix, maximum) => {
+      const bytes = await value.read()
+      if (prefix.every((byte, index) => bytes[index] === byte) && maximum !== undefined && bytes.length > prefix.length + maximum) {
+        throw new Error("Raw fixture ingress exceeds limit")
+      }
+      return bytes
+    },
+  })
+  return { ...connection,
+    openStream: async () => stream(await connection.openStream()),
+    acceptStream: async () => stream(await connection.acceptStream()),
+  }
+}
+function liveAutomergeWorkspaceSync(...[connection, ...rest]: Parameters<typeof createAutomergeSync>) {
+  return createAutomergeSync(fixtureConnection(connection), ...rest)
+}
+function liveWorkspaceSetSync(...[connection, ...rest]: Parameters<typeof createWorkspaceSetSync>) {
+  return createWorkspaceSetSync(fixtureConnection(connection), ...rest)
+}
 
 beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -27,8 +56,8 @@ describe("Confirmed ownership delivery", () => {
     const response = new Uint8Array([...magic, 0, ...payload])
     const send = vi.fn()
     const connection = {
-      openStream: async () => ({ send, closeSend: vi.fn(), read: async () => response, reset: vi.fn() }),
-      acceptStream: async () => new Promise<never>(() => {}), close: vi.fn(),
+      openStream: async () => ({ send, closeSend: vi.fn(async () => {}), read: async () => response, reset: vi.fn(async () => {}) }),
+      acceptStream: async () => new Promise<never>(() => {}), close: vi.fn(async () => {}),
     } as unknown as SyncConnection
     const store = { read: vi.fn(), merge: vi.fn(), activate: vi.fn() }
     const session = mode === "pairing" ? liveWorkspaceSetSync(connection, "secret", workspaceSet(store, ["workspace"]))
@@ -48,9 +77,9 @@ describe("Confirmed ownership delivery", () => {
       partIndex: 0, partCount: 1 }
     const frame = new TextEncoder().encode(magic + JSON.stringify({ version: 1, kind: "workspace-history-object-read",
       baselineId: "A".repeat(43), objectId: "B".repeat(43), binding }))
-    const send = vi.fn(), stream = { read: async () => frame, send, closeSend: vi.fn() }
+    const send = vi.fn(), stream = { read: async () => frame, send, closeSend: vi.fn(async () => {}) }
     let accepted = false
-    const connection = { openStream: vi.fn(), close: vi.fn(), acceptStream: async () => {
+    const connection = { openStream: vi.fn(), close: vi.fn(async () => {}), acceptStream: async () => {
       if (!accepted) { accepted = true; return stream }
       return new Promise<never>(() => {})
     } }
@@ -68,7 +97,7 @@ describe("Confirmed ownership delivery", () => {
     const bytes = new Uint8Array([1, 2, 3])
     let acknowledge!: (bytes: Uint8Array) => void
     const read = new Promise<Uint8Array>(resolve => { acknowledge = resolve })
-    const connection = { openStream: async () => ({ send: vi.fn(), closeSend: vi.fn(), read: () => read }) } as never
+    const connection = { openStream: async () => ({ send: vi.fn(), closeSend: vi.fn(async () => {}), read: () => read }) } as never
     let finished = false
     const delivery = publishConfirmedWorkspace(connection, "secret", bytes).then(() => { finished = true })
     await Promise.resolve()
@@ -79,7 +108,7 @@ describe("Confirmed ownership delivery", () => {
   })
 
   it("rejects a receipt for different contents", async () => {
-    const connection = { openStream: async () => ({ send: vi.fn(), closeSend: vi.fn(),
+    const connection = { openStream: async () => ({ send: vi.fn(), closeSend: vi.fn(async () => {}),
       read: async () => encodePairingFrame("mesh-durable-ack", "secret", new TextEncoder().encode("wrong")) }) } as never
     await expect(publishConfirmedWorkspace(connection, "secret", new Uint8Array([1]))).rejects.toThrow(/receipt/i)
   })
@@ -88,10 +117,10 @@ describe("Confirmed ownership delivery", () => {
     let save!: () => void
     const persisted = new Promise<void>(resolve => { save = resolve })
     const bytes = new TextEncoder().encode(JSON.stringify([{ id: "workspace", bytes: "AA", mesh: {} }]))
-    const stream = { send: vi.fn(), closeSend: vi.fn(), read: async () => encodePairingFrame("mesh-durable-batch", "secret", bytes) }
+    const stream = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => encodePairingFrame("mesh-durable-batch", "secret", bytes) }
     let accepted = false
     const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return stream }; return new Promise<never>(() => {}) },
-      close: vi.fn(), openStream: vi.fn() }
+      close: vi.fn(async () => {}), openStream: vi.fn() }
     const mergeMesh = vi.fn(() => persisted)
     const session = liveWorkspaceSetSync(connection, "secret", workspaceSet({ read: vi.fn(), merge: vi.fn(), activate: vi.fn(), mergeMesh }, ["workspace"]))
     await vi.waitFor(() => expect(mergeMesh).toHaveBeenCalled())
@@ -210,7 +239,7 @@ describe("live mesh heartbeat", () => {
   it("Given a joined peer requests durable handoff, when live sync receives it, then control reaches the host without parsing it as data", async () => {
     let delivered = false
     const stream = {
-      send: vi.fn(), closeSend: vi.fn(),
+      send: vi.fn(), closeSend: vi.fn(async () => {}),
       read: vi.fn(async () => encodePairingFrame("mesh-handoff-request", "mesh-secret", new Uint8Array())),
     }
     let accepted = false
@@ -267,7 +296,7 @@ describe("incremental workspace control plane", () => {
     const bytes = Automerge.save(Automerge.from({ id: "workspace" }))
     const sender = liveAutomergeWorkspaceSync({
       openStream: async () => ({ send: async frame => { sent.push(frame) }, closeSend: async () => {}, read: vi.fn() }),
-      acceptStream: () => new Promise(() => {}), close: vi.fn(),
+      acceptStream: () => new Promise(() => {}), close: vi.fn(async () => {}),
     }, "secret", { read: async () => bytes, merge: vi.fn(), activate: vi.fn(), readAuthorization: async () => authorization },
     "workspace", "a", "b")
     await expect(sender.publish()).resolves.toBeUndefined()
@@ -280,9 +309,9 @@ describe("incremental workspace control plane", () => {
     const merge = vi.fn()
     let index = 0
     const receiver = liveAutomergeWorkspaceSync({
-      openStream: vi.fn(), close: vi.fn(),
+      openStream: vi.fn(), close: vi.fn(async () => {}),
       acceptStream: async () => index < control.length
-        ? { read: async () => control[index++]!, send: vi.fn(), closeSend: vi.fn() }
+        ? { read: async () => control[index++]!, send: vi.fn(), closeSend: vi.fn(async () => {}) }
         : new Promise(() => {}),
     }, "secret", { read: async () => bytes, merge, activate: vi.fn() },
     "workspace", "b", "a")
@@ -394,7 +423,7 @@ describe("incremental workspace control plane", () => {
 
   it("requires a matching receipt when publishing an owner workspace", async () => {
     const offer = new Uint8Array([1, 2, 3])
-    const stream = { send: vi.fn(), closeSend: vi.fn(),
+    const stream = { send: vi.fn(), closeSend: vi.fn(async () => {}),
       read: async () => encodePairingFrame("mesh-durable-ack", "secret",
         new TextEncoder().encode(await sha256Base64Url(offer))) }
     const connection = { openStream: async () => stream } as never
@@ -416,7 +445,7 @@ describe("rejected document isolation", () => {
       if (accepted) return new Promise<never>(() => {})
       accepted = true
       return stream
-    }, close: vi.fn(), openStream: vi.fn() }
+    }, close: vi.fn(async () => {}), openStream: vi.fn() }
     setMeshTraceVerboseLogging(true)
     const session = liveAutomergeWorkspaceSync(connection, "secret", {
       read: async () => new Uint8Array(), merge: vi.fn(), activate: vi.fn(),
@@ -445,7 +474,7 @@ describe("rejected document isolation", () => {
     const streams = frames.map(frame => ({ read: async () => frame, send: vi.fn(), closeSend: vi.fn(async () => {}) }))
     let index = 0
     const connection = { acceptStream: async () => streams[index++] ?? new Promise<never>(() => {}),
-      close: vi.fn(), openStream: vi.fn() }
+      close: vi.fn(async () => {}), openStream: vi.fn() }
     const merge = vi.fn(() => pending)
     const session = liveAutomergeWorkspaceSync(connection, "secret", {
       read: async () => new Uint8Array(), merge, activate: vi.fn(),
@@ -474,7 +503,7 @@ describe("rejected document isolation", () => {
     let index = 0
     const connection = {
       acceptStream: async () => streams[index++] ?? new Promise<never>(() => {}),
-      close: vi.fn(), openStream: vi.fn(),
+      close: vi.fn(async () => {}), openStream: vi.fn(),
     }
     const merge = vi.fn().mockRejectedValueOnce(new TypeError("legacy proof cannot be merged"))
     const session = liveAutomergeWorkspaceSync(connection as never, "secret", {
@@ -517,9 +546,9 @@ describe("rejected document isolation", () => {
     const mergeMesh = vi.fn()
     const frames = [syncFrame, encodePairingFrame("sync-heartbeat", "secret", new Uint8Array()),
       encodePairingFrame("mesh-control-sync", "secret", new TextEncoder().encode(JSON.stringify({version:1,workspaceId:"workspace",mesh:{epoch:2}}))), syncFrame]
-    const streams = frames.map(frame => ({ read: async () => frame, send: vi.fn(), closeSend: vi.fn() }))
+    const streams = frames.map(frame => ({ read: async () => frame, send: vi.fn(), closeSend: vi.fn(async () => {}) }))
     let index = 0
-    const connection = { acceptStream: async () => streams[index++] ?? new Promise<never>(() => {}), close: vi.fn(), openStream: vi.fn(async () => ({send:vi.fn(), closeSend:vi.fn(), read:vi.fn(async () => new Uint8Array())})) }
+    const connection = { acceptStream: async () => streams[index++] ?? new Promise<never>(() => {}), close: vi.fn(async () => {}), openStream: vi.fn(async () => ({send:vi.fn(), closeSend:vi.fn(), read:vi.fn(async () => new Uint8Array())})) }
     const merge = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
     const session = liveAutomergeWorkspaceSync(connection, "secret", {read:async () => current,merge,activate:vi.fn(),mergeMesh},
       "workspace","local","remote",reject)
@@ -543,7 +572,7 @@ describe("scope shutdown fitness", () => {
     const frame = encodePairingFrame("mesh-control-sync", "secret", new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: "workspace", mesh: { epoch: 2 } })))
     let accepted = false
     let finished = false
-    const stream = { read: async () => frame, send: vi.fn(), closeSend: vi.fn() }
+    const stream = { read: async () => frame, send: vi.fn(), closeSend: vi.fn(async () => {}) }
     let endAccept!: () => void
     const disconnected = new Promise<never>((_, reject) => { endAccept = () => reject(new Error("Disconnected")) })
     const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return stream } return disconnected },
@@ -565,7 +594,7 @@ describe("scope shutdown fitness", () => {
     const disconnected = new Promise<never>((_, reject) => { endAccept = () => reject(new Error("Disconnected")) })
     let accepted = false
     let finished = false
-    const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return { read: async () => frame, send: vi.fn(), closeSend: vi.fn() } } return disconnected },
+    const connection = { acceptStream: async () => { if (!accepted) { accepted = true; return { read: async () => frame, send: vi.fn(), closeSend: vi.fn(async () => {}) } } return disconnected },
       close: vi.fn(async () => endAccept()), openStream: vi.fn() }
     const session = await withWorkspaceMutation("workspace", async () => {
       const current = liveAutomergeWorkspaceSync(connection, "secret", { read: vi.fn(), merge: vi.fn(), activate: vi.fn(),
@@ -613,7 +642,7 @@ describe("paged initial snapshot transport", () => {
           if (requests === failAt) throw new Error("Lost page response")
           return reply
         } }
-    }, acceptStream: vi.fn(), close: vi.fn() } as SyncConnection
+    }, acceptStream: vi.fn(), close: vi.fn(async () => {}) } as SyncConnection
     return { id: doc.id, document, authorization, source, target, merge, validate, readAuthorization, connection, frames,
       count: () => requests, fail: (at: number) => { failAt = at } }
   }
@@ -667,7 +696,7 @@ describe("paged initial snapshot transport", () => {
     let stop!: (error: Error) => void
     const pending = new Promise<Uint8Array>((_, reject) => { stop = reject })
     const reset = vi.fn(async () => { stop(new Error("Read stopped")) })
-    f.connection.openStream = async () => ({ send: vi.fn(), closeSend: vi.fn(), read: () => { began(); return pending }, reset })
+    f.connection.openStream = async () => ({ send: vi.fn(), closeSend: vi.fn(async () => {}), read: () => { began(); return pending }, reset })
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
     try {
       const result = f.target.resolveProofs(snapshot, f.connection, "secret").catch(error => error as Error)
@@ -737,7 +766,7 @@ describe("paged initial snapshot transport", () => {
     const durable = new Promise<void>(resolve => { release = resolve })
     const merge = vi.fn(() => durable)
     const target = workspaceSet({ read: async () => { throw new Error("Absent snapshot") }, merge, activate: vi.fn() }, [f.id])
-    const stream = { send: vi.fn(), closeSend: vi.fn(), read: async () => encodePairingFrame("mesh-durable-batch", "secret", await f.source.snapshot()) }
+    const stream = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => encodePairingFrame("mesh-durable-batch", "secret", await f.source.snapshot()) }
     let sent = false
     f.connection.acceptStream = async () => { if (!sent) { sent = true; return stream }; return new Promise<never>(() => {}) }
     const session = liveWorkspaceSetSync(f.connection, "secret", target)
@@ -782,7 +811,7 @@ describe("paged initial snapshot transport", () => {
             "secret", () => { if (!authorityCurrent) throw new Error("Device access revoked") })
           return reply
         } }
-    }, acceptStream: vi.fn(), close: vi.fn() } as SyncConnection
+    }, acceptStream: vi.fn(), close: vi.fn(async () => {}) } as SyncConnection
     const snapshot = await source.snapshot()
     const resolving = target.resolveProofs(snapshot, connection, "secret")
     await pageReadStarted

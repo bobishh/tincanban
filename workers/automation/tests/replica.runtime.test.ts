@@ -10,8 +10,9 @@ import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/
 import { createWorkspaceDoc } from "../../../src/test/boardFixture";
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs";
 import { executeCommand as executeCommandWithoutSigningContext } from "../../../src/domain/commands";
-import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "../../../src/sync/blindClient";
-import { decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject } from "../../../src/sync/blindEnvelope";
+import { rustyHash as blindHash, rustyObjectId as blindObjectId, canonicalRustyJson as canonicalBlindJson,
+  type RustyStorageReceipt as BlindReceipt, decodeBlindBytes, decryptBlindObject, encodeBlindBytes,
+  encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica";
 import { AutomationReplica, type AutomationActivationPacket, type ReplicaTransport } from "../src/replica";
 import { automationTypes, parseAutomationDefinition } from "../../../src/domain/automationContract";
 import { automationEntityId } from "../../../src/domain/automationLifecycle";
@@ -27,12 +28,12 @@ import { automationBodyHash } from "../../../src/domain/automationProtocol";
 import { createApplicationReviewRequest, type ApplicationReviewRequestInput } from "../../../src/domain/applicationReviewProtocol";
 import { createAutomationInstanceRequest, type AutomationInstanceAction } from "../../../src/domain/automationInstanceProtocol";
 import { verifyAutomationInstanceIdentity } from "../../../src/domain/automationInstanceIdentity";
-import { rotateReplicaContentKeys } from "../../../src/sync/replicaContentKeys";
+import { rotateReplicaContentKeys } from "../../../src/domain/replicaContentKeys";
 import { createApplicationBinding, type ApplicationBindingInput } from "../../../src/domain/applicationBinding";
 import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from "../../../src/domain/applicationReviewData";
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
-import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
+import type { AttachmentLocator } from "../../../src/product-replica";
 import type { ExecutionCoordinator } from "../src/executionCoordinator";
 
 /** Domain test seams use the local adapter; production requests execute in Reflux. */
@@ -1113,7 +1114,7 @@ it("Given a queued Worker on an older conflicting epoch, when owner prepares joi
     expect(row).toEqual({ status: "pending", attempt: 0 });
   });
 
-  const { mergeReplicaContentKeyVariants } = await import("../../../src/sync/replicaContentKeys");
+  const { mergeReplicaContentKeyVariants } = await import("../../../src/domain/replicaContentKeys");
   const fresh = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)));
   const sibling = { ...stored.blind, contentKey: fresh() };
   const newer = { ...stored.blind, ...rotateReplicaContentKeys(stored.blind, fresh()) };
@@ -2901,7 +2902,7 @@ it('Given a Worker on an older conflicting branch, when recovery advances beyond
   const data = await typedFixture()
   const replica = await AutomationReplica.activate(data.packet, data.automation)
   const before = replica.serialize(), stored = JSON.parse(before)
-  const { mergeReplicaContentKeyVariants } = await import('../../../src/sync/replicaContentKeys')
+  const { mergeReplicaContentKeyVariants } = await import('../../../src/domain/replicaContentKeys')
   const fresh = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
   const sibling = { ...stored.blind, contentKey: fresh() }
   const newer = { ...stored.blind, ...rotateReplicaContentKeys(stored.blind, fresh()) }

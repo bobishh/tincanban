@@ -3,7 +3,7 @@ import { privateReplicaBinding } from "./privateReplicaBinding"
 import { createAttachmentIndexRepository, planAttachmentIndexMigration } from "./attachmentIndexRepository"
 import { parseReplicaConfig } from "./blindReplicaConfig"
 import { canonicalBlindJson } from "./blindClient"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import { replicaContentKeyEntries } from "./replicaContentKeys"
 import type { LocalStatePlan } from "../localDb"
 

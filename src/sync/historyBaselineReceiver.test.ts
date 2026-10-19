@@ -6,7 +6,7 @@ vi.mock("@meta-uber/mesh-transport/wasm", () => ({
   WasmVerifiedReceivedHistoryBaseline: class WasmVerifiedReceivedHistoryBaseline {},
 }))
 
-import { reverifyStoredHistoryBaseline } from "./historyBaselineReceiver"
+import { reverifyStoredHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 
 afterEach(() => vi.restoreAllMocks())
 

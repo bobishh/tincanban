@@ -57,7 +57,7 @@ it("Given ordinary error reporting, when background HTTP runs, then verbose netw
   const telemetry = await import("./telemetry")
   telemetry.record("browser.error", { error: new Error("normal error reporting") }, "error")
   await vi.dynamicImportSettled()
-  const { beginDiagnosticHttpRequest } = await import("./httpDiagnostics")
+  const { beginDiagnosticHttpRequest } = await import("../domain/httpDiagnostics")
   beginDiagnosticHttpRequest("HTTP_GET")
   expect(state.httpStarts).toBe(0)
   window.location.search = "?syncTrace=1"

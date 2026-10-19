@@ -1,5 +1,5 @@
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 /** A repeated identical attestation is an active-tail merge, never a new child baseline or coverage assertion. */
 export async function mergeCurrentBlindHistory(input: { previous?: WasmVerifiedReceivedHistoryBaseline; signedJson: string;

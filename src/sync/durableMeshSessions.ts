@@ -2,6 +2,7 @@ import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked } from
 import { type LocalProfile} from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { isMeshNetworkFailure, meshNetworkConnection as networkConnection, meshNetworkIO as networkIO } from "@meta-uber/mesh-transport"
+import { meshIngressBudgetProfile } from "../iroh"
 import { BrowserMeshDialScheduler, BrowserMeshOutgoingHandshake, BrowserMeshSessions } from "@meta-uber/mesh-runtime"
 import { adaptVerifiedWorkspaceAdvertisement, connectToDevice, type DeviceRoute } from "@meta-uber/mesh-replication/protocol"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
@@ -209,7 +210,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     const mode = this.reconnectPolicy.mode(node, key)
     this.trace("dial.started", { connectionId, peerId: peer.deviceId, workspaceId: peer.workspaceId,
       endpoint: peer.endpoint.slice(0, 8), mode })
-    const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<SyncConnection>(node, key, route.endpoint)))
+    const connection = networkConnection(await networkIO(this.reconnectPolicy.dial<Awaited<ReturnType<SyncNode["dial"]>>>(node, key, route.endpoint)),
+      meshIngressBudgetProfile())
     this.trace("dial.connected", { connectionId, peerId: peer.deviceId, mode })
     return connection
   }
@@ -329,7 +331,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
   protected async installSession(workspaceId: string, deviceId: string, instanceId: string, remoteIssuedAt: string,
     remoteRouteSequence: number | undefined, direction: "incoming" | "outgoing", connection: SyncConnection, heartbeatSupported = false,
     connectionId = this.connectionId(direction), ownershipReceiptSupported = false,
-    remotePersonId = "", ownerWorkspaceSupported = false, ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | undefined = undefined,
+    remotePersonId = "", ownerWorkspaceSupported = false,
+    ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined = undefined,
     blobTransferSupported = false, remoteEndpoint = "") {
     return this.browserSessions.install({ workspaceId, deviceId, instanceId, remoteIssuedAt, remoteRouteSequence,
       direction, connection, heartbeatSupported, connectionId, ownershipReceiptSupported,

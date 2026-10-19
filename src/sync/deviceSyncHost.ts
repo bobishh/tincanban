@@ -10,6 +10,7 @@ import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceGrant } from "../domain/model"
 import { toBase64Url } from "../domain/identity"
 import { defaultProofStore } from "../domain/proofs"
+import { defaultStorage } from "../storage"
 import { isMeshNetworkFailure, meshNetworkConnection, startMeshHeartbeat } from "@meta-uber/mesh-transport"
 import { BrowserWorkspaceJoinHandoffHost, BrowserWorkspaceJoinHost } from "@meta-uber/mesh-runtime"
 import { WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff } from "../iroh"
@@ -22,6 +23,7 @@ import { showInviteQr } from "./deviceSyncInviteView"
 import type { PairingContext } from "./deviceSyncContext"
 import type { JoinDecision } from "./deviceSyncJoinApproval"
 import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from "./keeperCommitReceipt"
+import { meshIngressBudgetProfile } from "../iroh"
 import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
@@ -252,7 +254,7 @@ async function acceptHostPeers(runtime: HostRuntime, connected: () => void) {
   while (!runtime.stopped() && runtime.run === runtime.context.currentRun()) {
     const connection = await runtime.acceptor.accept()
     if (!connection) return
-    void receivePeer(runtime, meshNetworkConnection(connection), connected).catch(runtime.fail)
+    void receivePeer(runtime, meshNetworkConnection(connection, meshIngressBudgetProfile()), connected).catch(runtime.fail)
   }
 }
 
@@ -404,7 +406,8 @@ async function issueWorkspaceGrants(runtime: HostRuntime, personId: string, role
   )
   if (!result.ok) throw new Error(result.error)
   for (const grant of result.grants) {
-    await defaultProofStore.putGrant(grant.payload.grantId, grant)
+    await defaultStorage.withWorkspaceAuthorityMutation(grant.payload.workspaceId,
+      context => context.write(() => defaultProofStore.putGrant(grant.payload.grantId, grant)))
   }
   return result.grants
 }

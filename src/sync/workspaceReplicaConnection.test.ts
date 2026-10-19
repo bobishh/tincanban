@@ -5,7 +5,7 @@ import { getReplicaConfigurations, setReplicaPreference } from "./privateReplica
 import { prepareReplicaCredentialFreeze } from "./replicaCredentialFreeze"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { RustyScopeEnrollmentOptions } from "./rustyEnrollment"
-import type { RustyScopePolicyReceipt } from "./rustyScopePolicy"
+import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
 
 const workspaceId = "workspace-1"
 const remote = vi.hoisted(() => ({

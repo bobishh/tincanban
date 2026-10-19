@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest"
 import { publishHistoryStorageCheckpoint, recordHistoryStorageFence } from "./blindHistoryCheckpoint"
 import { blindHash } from "./blindClient"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { readReplicaWriterUpgrade } from "./privateReplicaRepository"

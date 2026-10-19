@@ -95,11 +95,14 @@ function scheduleDeliveryRetry(current: ReturnType<typeof setTimeout> | undefine
 async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryCapture, disposed: boolean) {
   const sameSource = (value: DeliveryCapture) => sameDeliverySource(input, value, disposed)
   const before = await currentEditorCredential(captured, sameSource)
-  const { deliverPublicBoard } = await import("../public/publicDelivery")
+  const [{ deliverPublicBoard }, { fetchBlind, readBlindJson }] = await Promise.all([
+    import("../public/publicDelivery"), import("../sync/rustyHttp"),
+  ])
   const ensureCurrent = async () => { await currentEditorCredential(captured, sameSource) }
   return await deliverPublicBoard({ origin: input.origin, boardId: captured.boardId, workspaceId: captured.workspaceId,
     identity: captured.profile.identity, deviceId: captured.profile.device.deviceId, certificates: before.writerCertificates,
     grant: before.grant, sourceHeads: captured.sourceHeads, ensureCurrent,
+    http: { request: (url, init, diagnosticContext) => fetchBlind(url, { ...init, diagnosticContext }), readJson: readBlindJson },
     ensureSourceCovers: async heads => {
       const { includesWorkspaceHeads } = await import("../storageCatalog")
       if (!includesWorkspaceHeads(captured.document, heads)) throw new Error("Synchronize board before public delivery")

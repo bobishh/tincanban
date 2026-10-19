@@ -9,9 +9,10 @@ import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type Workspace
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
 import { rememberWorkspaceAdmission, reusedWorkspaceAdmission } from "./workspaceAdmissionReuse"
-import { receivedHistoryBasisIdentity } from "./receivedHistoryBasisIdentity"
-import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "./workspaceAdmissionCore"
+import { receivedHistoryBasisIdentity } from "../product-replica/receivedHistoryBasisIdentity"
+import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica/workspaceAdmission"
 import { readWorkspaceSnapshot } from "../storageJournal"
+import { defaultStorage } from "../storage"
 import { meshTrace } from "./meshTrace"
 import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoint, type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
 import type { StoredCausalEvidence } from "../storageJournal"
@@ -106,7 +107,8 @@ export async function recordGenesisAuthority(doc: Automerge.Doc<WorkspaceDocumen
     ownerCertificates: creator.certificates, epoch: 1,
     updatedAt: new Date().toISOString(), catalog: {}, scopeAuthoritySnapshot,
   }
-  await peerStore.putWorkspaceAuthority(authority)
+  await defaultStorage.withWorkspaceAuthorityMutation(doc.id,
+    context => context.write(() => peerStore.putWorkspaceAuthority(authority)))
   const hashes = Automerge.getChangesMetaSince(doc, []).map(change => change.hash)
   return hashes.length ? authorizeLocalChanges(doc, profile, hashes, signingContext) : []
 }
@@ -309,7 +311,9 @@ export async function exportAuthorizationBundle(bytes: Uint8Array, knownProfile?
   finally { Automerge.free(doc) }
 }
 
-export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile): Promise<Extract<IncomingAuthorizationBundle, { version: 1 }>> {
+export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile): Promise<{
+  version: 1; records: WorkspaceChangeAuthorization[]; authority: WorkspaceWriteAuthorityEvidence
+}> {
   const { authority: evidence } = await localWorkspaceAdmissionAuthority(doc, knownProfile)
   const snapshot = await readWorkspaceSnapshot(doc.id)
   const rawEvidence = (snapshot?.causalEvidence?.authorizationEvidence ?? []) as Authorization[]

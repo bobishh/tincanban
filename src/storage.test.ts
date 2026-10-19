@@ -1,10 +1,11 @@
 import { hasEntityKind } from "./domain/model"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "./crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, type LocalProfile } from "./domain/identity"
-import { prepareLocalChangeAuthorizations } from "./sync/changeAuthorization"
+import { prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync/changeAuthorization"
 import { createPersonalRoot } from "./domain/personalRoot"
 import { createWorkspaceDoc } from "./test/boardFixture"
 import { deleteLocal, readLocal } from "./localDb"
@@ -12,12 +13,41 @@ import { executeCommand, type Command } from "./domain/commands"
 import { isItem } from "./domain/model"
 import {
   WorkspaceStorage,
+  WorkspaceRevisionConflict,
+  claimWorkspaceTransaction,
+  resolveWorkspaceTransactionClaim,
+  type WorkspaceTransactionClaim,
+  type WorkspaceTransactionContext,
   setStorageFailureHookForTest,
 } from "./storage"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { exportWorkspaceBundleV2, readWorkspaceBundleV2 } from "./domain/workspaceBundle"
 import * as journal from "./storageJournal"
 import { createAdmissionCheckpoint } from "./sync/workspaceAdmissionCheckpoint"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
+
+async function persistSnapshotForTest(storage: WorkspaceStorage, workspaceId: string,
+  doc: Automerge.Doc<WorkspaceDocumentV2>, bytes = Automerge.save(doc)) {
+  return persistWorkspaceForTest(storage, workspaceId, doc, bytes, [])
+}
+
+async function persistWorkspaceForTest(storage: WorkspaceStorage, workspaceId: string,
+  ...commit: Parameters<WorkspaceTransactionContext["commitWorkspace"]>) {
+  return storage.withWorkspaceTransaction(workspaceId, transaction => transaction.commitWorkspace(...commit))
+}
+
+async function persistCommandForTest(storage: WorkspaceStorage, workspaceId: string,
+  receipt: import("./domain/model").TransactionReceipt, changeBytes: Uint8Array,
+  proof: import("./domain/model").ChangeProof) {
+  await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+    const loaded = await transaction.loadWorkspaceDoc()
+    if (!loaded) throw new Error("Workspace not found")
+    try {
+      await transaction.commitWorkspace(loaded.doc, Automerge.save(loaded.doc), [], { receipt, changeBytes, proof })
+    } finally { Automerge.free(loaded.doc) }
+  })
+  return receipt
+}
 
 vi.mock("@automerge/automerge/slim", async () => {
   const actual = await vi.importActual<typeof Automerge>("@automerge/automerge/slim")
@@ -116,7 +146,7 @@ describe("Workspace catalog across browser tabs", () => {
     const loaded = await storage.loadWorkspaceDoc(id)
     const base = loaded?.doc ?? Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(id, title, "owner", "blank"))
     const doc = Automerge.change(Automerge.clone(base), draft => { draft.title = title; draft.archivedAt = archivedAt })
-    try { await storage.saveSnapshot(id, doc, Automerge.save(doc)) }
+    try { await persistSnapshotForTest(storage, id, doc) }
     finally { Automerge.free(doc); Automerge.free(base) }
   }
 
@@ -150,15 +180,15 @@ describe("Workspace catalog across browser tabs", () => {
     const id = crypto.randomUUID()
     const stale = tab()
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(id, "Gone", "owner", "blank"))
-    await stale.saveSnapshot(id, doc, Automerge.save(doc))
+    await persistSnapshotForTest(stale, id, doc)
     const archived = Automerge.change(doc, draft => { draft.archivedAt = new Date().toISOString() })
     expect(doc.archivedAt).toBeNull()
-    await tab().saveSnapshot(id, archived, Automerge.save(archived))
+    await persistSnapshotForTest(tab(), id, archived)
     expect((await stale.listWorkspaces()).some(workspace => workspace.id === id)).toBe(false)
-    await expect(stale.saveSnapshot(id, doc, Automerge.save(doc))).rejects.toThrow(/archived/i)
+    await expect(persistSnapshotForTest(stale, id, doc)).rejects.toThrow(/archived/i)
     const loaded = (await tab().loadWorkspaceDoc(id))!.doc
     const restored = Automerge.change(Automerge.clone(loaded), draft => { draft.archivedAt = null })
-    await tab().saveSnapshot(id, restored, Automerge.save(restored))
+    await persistSnapshotForTest(tab(), id, restored)
     expect((await tab().listWorkspaces()).some(workspace => workspace.id === id)).toBe(true)
   })
 })
@@ -174,10 +204,107 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     storage = new WorkspaceStorage()
   })
 
+  it("Given a workspace transaction claim, When forged, foreign, reused, or closed, Then it cannot authorize a final write", async () => {
+    const workspaceId = crypto.randomUUID()
+    let closedClaim!: WorkspaceTransactionClaim
+    await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+      const forged = { ...transaction }
+      expect(() => claimWorkspaceTransaction(forged, workspaceId)).toThrow(WorkspaceRevisionConflict)
+      expect(() => claimWorkspaceTransaction(transaction, `${workspaceId}-foreign`)).toThrow(WorkspaceRevisionConflict)
+
+      const capturedBasis = { revision: transaction.capturedRevision,
+        frontier: transaction.capturedFrontier, baselineId: transaction.capturedBaselineId }
+      const claim = claimWorkspaceTransaction(transaction, workspaceId)
+      closedClaim = claim
+      const resolved = resolveWorkspaceTransactionClaim(claim, workspaceId)
+      expect(resolved.basis).toEqual(capturedBasis)
+      expect(() => resolved.ensureCurrent()).not.toThrow()
+      expect(() => resolveWorkspaceTransactionClaim(claim, `${workspaceId}-foreign`)).toThrow(WorkspaceRevisionConflict)
+      expect(() => claimWorkspaceTransaction(transaction, workspaceId)).toThrow(WorkspaceRevisionConflict)
+    })
+    expect(() => resolveWorkspaceTransactionClaim(closedClaim, workspaceId).ensureCurrent()).toThrow(WorkspaceRevisionConflict)
+  })
+
+  it("Given admission at revision R, When authority changes without changing heads, Then a stale snapshot conflicts and authority remains durable", async () => {
+    const previousIndexedDb = globalThis.indexedDB
+    const previousKeyRange = globalThis.IDBKeyRange
+    const previousNavigator = globalThis.navigator
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+    vi.stubGlobal("navigator", { locks: { request: async (_name: string, operation: () => Promise<unknown>) => operation() } })
+    vi.stubGlobal("indexedDB", new IDBFactory())
+    try {
+      const base = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Authority race", profile.identity.personId, "blank"))
+      await recordGenesisAuthority(base, profile)
+      await persistSnapshotForTest(storage, base.id, base)
+      const genesisHash = Automerge.getChangesMetaSince(base, [])[0]!.hash
+      const authorization = await prepareLocalChangeAuthorizations(base, profile, [genesisHash])
+      const secondTab = new WorkspaceStorage()
+      let entered!: () => void
+      let resume!: () => void
+      const atBasis = new Promise<void>(resolve => { entered = resolve })
+      const continueCommit = new Promise<void>(resolve => { resume = resolve })
+
+      const staleCommit = storage.withWorkspaceTransaction(base.id, async transaction => {
+        const loaded = await transaction.loadWorkspaceDoc()
+        if (!loaded) throw new Error("Workspace disappeared")
+        const staleCandidate = Automerge.change(Automerge.clone(loaded.doc), draft => { draft.title = "Stale candidate" })
+        entered()
+        await continueCommit
+        try {
+          return await transaction.commitWorkspace(staleCandidate, Automerge.save(staleCandidate), [])
+        } finally {
+          Automerge.free(staleCandidate)
+          Automerge.free(loaded.doc)
+        }
+      })
+      await atBasis
+      const database = await journal.openWorkspaceJournal()
+      const authorityWrite = database.transaction(["authorizations", "frontiers", "revisions"], "readwrite")
+      const authorityDone = journal.transactionDone(authorityWrite)
+      const authorizationStore = authorityWrite.objectStore("authorizations")
+      const stored = await journal.requestResult(authorizationStore.get(base.id)) as { records: WorkspaceChangeAuthorization[] } | undefined
+      authorizationStore.put({ id: base.id, workspaceId: base.id,
+        records: mergeAuthorizationRecords(stored?.records ?? [], authorization) })
+      const frontierStore = authorityWrite.objectStore("frontiers")
+      const frontier = await journal.requestResult(frontierStore.get(base.id)) as import("./workspaceDeltaJournal").WorkspaceDeltaFrontier | undefined
+      if (frontier) frontierStore.put({ ...frontier, invalidated: true })
+      journal.advanceWorkspaceRevision(authorityWrite, base.id)
+      await authorityDone
+      resume()
+
+      await expect(staleCommit).rejects.toBeInstanceOf(WorkspaceRevisionConflict)
+      const current = await secondTab.loadWorkspaceDoc(base.id)
+      expect(current?.heads).toEqual(Automerge.getHeads(base).sort())
+      expect(await secondTab.getProofs(base.id)).toMatchObject({ changeProofs: [] })
+      expect(await (await import("./sync/workspaceChangeProofStore")).records(base.id)).toEqual(authorization)
+      Automerge.free(current!.doc)
+      Automerge.free(base)
+    } finally {
+      vi.stubGlobal("indexedDB", previousIndexedDb)
+      vi.stubGlobal("IDBKeyRange", previousKeyRange)
+      vi.stubGlobal("navigator", previousNavigator)
+    }
+  })
+
+  it("Given a cross-database authority mutation, When its write fails, Then the admission revision was invalidated first", async () => {
+    const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Authority ordering", profile.identity.personId, "blank"))
+    try {
+      await persistSnapshotForTest(storage, doc.id, doc)
+      const before = await storage.readWorkspaceRevision(doc.id)
+      await expect(storage.withWorkspaceAuthorityMutation(doc.id, async context => {
+        await context.write(async () => {
+          expect(await storage.readWorkspaceRevision(doc.id)).not.toBe(before)
+          throw new Error("authority database write failed")
+        })
+      })).rejects.toThrow("authority database write failed")
+      expect(await storage.readWorkspaceRevision(doc.id)).not.toBe(before)
+    } finally { Automerge.free(doc) }
+  })
+
   it("Given a committed snapshot, When another instance reads the catalog, Then metadata comes only from the atomic journal", async () => {
     const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Atomic catalog", profile.identity.personId, "blank"))
     try {
-      await expect(storage.saveSnapshot(doc.id, doc, Automerge.save(doc))).resolves.toBeUndefined()
+      await expect(persistSnapshotForTest(storage, doc.id, doc)).resolves.toMatchObject({ proofChanged: false })
       expect((await new WorkspaceStorage().listWorkspaces()).find(record => record.id === doc.id)?.title).toBe(doc.title)
     } finally { Automerge.free(doc) }
   })
@@ -189,56 +316,17 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const result = await executeCommand(doc, { kind: "createItem", parentId: column.id, title: "Legacy" }, profile)
     if (!result.ok) throw new Error(result.error.message)
     const heads = Automerge.getHeads(doc)
-    await storage.saveSnapshot(doc.id, doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, doc.id, doc)
     expect((await storage.loadWorkspaceDoc(doc.id))!.heads).toEqual(heads)
-  })
-
-  it("requires new owner authorization before publishing a rekeyed workspace", async () => {
-    const oldId = crypto.randomUUID()
-    const newId = crypto.randomUUID()
-    const original = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(oldId, "Before rekey", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(oldId, original, Automerge.save(original))
-    const authorize = async (document: Automerge.Doc<WorkspaceDocumentV2>) => {
-      const hashes = Automerge.getAllChanges(document).map(change => Automerge.decodeChange(change).hash)
-      return prepareLocalChangeAuthorizations(document, profile, hashes)
-    }
-
-    await expect(storage.rekeyWorkspace(oldId, newId, "After rekey", async () => []))
-      .rejects.toThrow(/requires authorization evidence/i)
-    expect(await storage.loadWorkspaceDoc(oldId)).toBeTruthy()
-    expect(await storage.loadWorkspaceDoc(newId)).toBeNull()
-
-    await expect(storage.rekeyWorkspace(oldId, newId, "After rekey", async document => {
-      const [authorization] = await authorize(document)
-      if (!authorization) return []
-      return [{ ...authorization, signed: { ...authorization.signed,
-        payload: { ...authorization.signed.payload, workspaceId: oldId } } }]
-    })).rejects.toThrow(/does not match/i)
-    expect(await storage.loadWorkspaceDoc(oldId)).toBeTruthy()
-    expect(await storage.loadWorkspaceDoc(newId)).toBeNull()
-
-    await expect(storage.rekeyWorkspace(oldId, newId, "After rekey", async document => {
-      const authorizations = await authorize(document)
-      setStorageFailureHookForTest(true)
-      return authorizations
-    })).rejects.toThrow(/Storage failure/i)
-    setStorageFailureHookForTest(false)
-    expect(await storage.loadWorkspaceDoc(oldId)).toBeTruthy()
-    expect(await storage.loadWorkspaceDoc(newId)).toBeNull()
-
-    const moved = await storage.rekeyWorkspace(oldId, newId, "After rekey", authorize)
-    expect(moved.id).toBe(newId)
-    expect(await storage.loadWorkspaceDoc(oldId)).toBeNull()
-    expect((await storage.loadWorkspaceDoc(newId))?.doc.title).toBe("After rekey")
   })
 
   it("reuses a matching snapshot without losing a later journal write or consuming the borrowed document", async () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Cached", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(doc.id, doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, doc.id, doc)
     const column = Object.values(doc.entities).find(e => hasEntityKind(e, "column"))!
     const result = await executeCommand(Automerge.clone(doc), { kind: "createItem", parentId: column.id, title: "Other tab" }, profile)
     if (!result.ok) throw new Error(result.error.message)
-    await storage.commitTransaction(doc.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
+    await persistCommandForTest(storage, doc.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
     const loaded = (await storage.loadWorkspaceDoc(doc.id, doc))!.doc
     expect(Object.values(loaded.entities).filter(isItem).map(item => item.title)).toEqual(["Other tab"])
     expect(Automerge.change(doc, draft => { draft.title = "Still writable" }).title).toBe("Still writable")
@@ -246,15 +334,15 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
 
   it("loads another tab's newer snapshot when cached heads differ", async () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Old", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(doc.id, doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, doc.id, doc)
     const newer = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Other tab saved" })
-    await storage.saveSnapshot(doc.id, newer, Automerge.save(newer))
+    await persistSnapshotForTest(storage, doc.id, newer)
     expect((await storage.loadWorkspaceDoc(doc.id, doc))!.doc.title).toBe("Other tab saved")
   })
 
   it("reuses decoded documents across reads, but sees another storage instance's snapshot and journal writes", async () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Cached read", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(doc.id, doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, doc.id, doc)
     const first = (await storage.loadWorkspaceDoc(doc.id))!.doc
     const second = (await storage.loadWorkspaceDoc(doc.id))!.doc
     expect(second.title).toBe("Cached read")
@@ -262,15 +350,15 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(first.title).toBe("Cached read")
     const other = new WorkspaceStorage()
     const newer = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Other tab saved" })
-    await other.saveSnapshot(doc.id, newer, Automerge.save(newer))
+    await persistSnapshotForTest(other, doc.id, newer)
     expect((await storage.loadWorkspaceDoc(doc.id))!.doc.title).toBe("Other tab saved")
     const column = Object.values(newer.entities).find(e => hasEntityKind(e, "column"))!
     const result = await executeCommand(Automerge.clone(newer), { kind: "createItem", parentId: column.id, title: "Journal delta" }, profile)
     if (!result.ok) throw new Error(result.error.message)
-    await other.commitTransaction(doc.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
+    await persistCommandForTest(other, doc.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
     const updated = (await storage.loadWorkspaceDoc(doc.id))!.doc
     expect(Object.values(updated.entities).filter(isItem).map(item => item.title)).toEqual(["Journal delta"])
-    await storage.saveSnapshot(doc.id, updated, Automerge.save(updated))
+    await persistSnapshotForTest(storage, doc.id, updated)
     expect((await storage.loadWorkspaceDoc(doc.id))!.heads).toEqual(Automerge.getHeads(updated))
   })
 
@@ -289,7 +377,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const initialBytes = Automerge.save(doc)
 
     // Save initial snapshot
-    await storage.saveSnapshot("ws_atomic", doc, initialBytes)
+    await persistSnapshotForTest(storage, "ws_atomic", doc, initialBytes)
 
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
     const cmd: Command = { kind: "createItem", parentId: col.id, title: "Persisted Item" }
@@ -299,12 +387,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     if (!res.ok) return
 
     const changeBytes = Automerge.getLastLocalChange(res.value.newDoc)!
-    await storage.commitTransaction(
-      "ws_atomic",
-      res.value.receipt,
-      changeBytes,
-      res.value.proof
-    )
+    await persistCommandForTest(storage, "ws_atomic", res.value.receipt, changeBytes, res.value.proof)
 
     // Verify receipt was saved
     const storedReceipt = await storage.getReceipt("ws_atomic", res.value.receipt.transactionId)
@@ -325,13 +408,13 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
 
   it.each(["quarantined", "pending"] as const)("Given a legacy journal change classified as %s, When reopening its admitted projection, Then raw journal replay cannot expose that change", async type => {
     const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Admitted title", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(base.id, base, Automerge.save(base))
+    await persistSnapshotForTest(storage, base.id, base)
     const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Unadmitted title" }, profile)
     if (!result.ok) throw new Error(result.error.message)
     const { receipt, proof, newDoc } = result.value
-    await storage.commitTransaction(base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
+    await persistCommandForTest(storage, base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
     const decisions = [{ hash: receipt.changeHash, status: { type, reason: "unreviewed authority" } }]
-    await storage.commitWorkspace(base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(newDoc), decisions })
+    await persistWorkspaceForTest(storage, base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(newDoc), decisions })
     const reader = new WorkspaceStorage()
     expect((await reader.loadWorkspaceDoc(base.id))!.doc.title).toBe("Admitted title")
     expect(Automerge.load<WorkspaceDocumentV2>((await reader.loadCausalEvidence(base.id))!.bytes).title).toBe("Unadmitted title")
@@ -342,10 +425,10 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Old checkpoint", profile.identity.personId, "blank"))
     const decisions = Automerge.getChangesMetaSince(base, []).map(change => ({ hash: change.hash, status: { type: "admitted" as const, role: "owner" as const } }))
     const admissionCheckpoint = await createAdmissionCheckpoint("old-raw-input", Automerge.getHeads(base), decisions)
-    await storage.commitWorkspace(base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(base), decisions, admissionCheckpoint })
+    await persistWorkspaceForTest(storage, base.id, base, Automerge.save(base), [], undefined, { bytes: Automerge.save(base), decisions, admissionCheckpoint })
     const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Legacy tail survives" }, profile)
     if (!result.ok) throw new Error(result.error.message)
-    await storage.commitTransaction(base.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
+    await persistCommandForTest(storage, base.id, result.value.receipt, Automerge.getLastLocalChange(result.value.newDoc)!, result.value.proof)
     const evidence = (await new WorkspaceStorage().loadCausalEvidence(base.id))!
     expect(Automerge.load<WorkspaceDocumentV2>(evidence.bytes).title).toBe("Legacy tail survives")
     expect(evidence.decisions).toEqual(decisions)
@@ -354,15 +437,15 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
 
   it("Given a full local admission covering every legacy journal hash, When reading unchanged evidence repeatedly, Then raw bytes are reused without decoding historical documents", async () => {
     const base = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Checked history", profile.identity.personId, "blank"))
-    await storage.saveSnapshot(base.id, base, Automerge.save(base))
+    await persistSnapshotForTest(storage, base.id, base)
     const result = await executeCommand(Automerge.clone(base), { kind: "renameWorkspace", title: "Checked command" }, profile)
     if (!result.ok) throw new Error(result.error.message)
     const { receipt, proof, newDoc } = result.value
-    await storage.commitTransaction(base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
+    await persistCommandForTest(storage, base.id, receipt, Automerge.getLastLocalChange(newDoc)!, proof)
     const decisions = Automerge.getChangesMetaSince(newDoc, []).map(change => ({ hash: change.hash, status: { type: "admitted" as const, role: "owner" as const } }))
     const admissionCheckpoint = await createAdmissionCheckpoint("checked-input", Automerge.getHeads(newDoc), decisions)
     const bytes = Automerge.save(newDoc)
-    await storage.commitWorkspace(base.id, newDoc, bytes, [], undefined, { bytes, decisions, admissionCheckpoint })
+    await persistWorkspaceForTest(storage, base.id, newDoc, bytes, [], undefined, { bytes, decisions, admissionCheckpoint })
     const load = vi.mocked(Automerge.load)
     load.mockClear()
     for (let index = 0; index < 3; index++) expect((await storage.loadCausalEvidence(base.id))!.bytes).toEqual(bytes)
@@ -372,18 +455,18 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
   it("Given raw history and classifications, when causal evidence commits, then raw bytes and decisions survive reload as one snapshot", async () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("ws_causal_atomic", "Causal evidence", profile.identity.personId, "blank"))
     const raw = Automerge.save(doc)
-    await storage.saveSnapshot(doc.id, doc, raw)
+    await persistSnapshotForTest(storage, doc.id, doc, raw)
     const evidence = { bytes: raw, decisions: [{ hash: "raw-hash", status: { type: "quarantined" as const, reason: "revoked" } }],
       authorizationEvidence: [{ signed: { signature: "verified-proof" } }], dismissedHashes: [], resolvedReviews: [] }
 
-    await storage.commitWorkspace(doc.id, doc, raw, [], undefined, evidence)
+    await persistWorkspaceForTest(storage, doc.id, doc, raw, [], undefined, evidence)
     const reopened = new WorkspaceStorage({ changes: new Map(), proofs: new Map(), receipts: new Map(),
       snapshots: new Map(), workspaces: new Map(), personalRoots: new Map() })
     expect(await reopened.loadCausalEvidence(doc.id)).toEqual(evidence)
 
     setStorageFailureHookForTest(true)
     try {
-      await expect(storage.commitWorkspace(doc.id, doc, raw, [], undefined, { ...evidence, decisions: [] })).rejects.toThrow(/Storage failure/i)
+      await expect(persistWorkspaceForTest(storage, doc.id, doc, raw, [], undefined, { ...evidence, decisions: [] })).rejects.toThrow(/Storage failure/i)
     } finally { setStorageFailureHookForTest(false) }
     expect(await reopened.loadCausalEvidence(doc.id)).toEqual(evidence)
   })
@@ -392,10 +475,10 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(crypto.randomUUID(), "Unchanged", profile.identity.personId, "blank"))
     const bytes = Automerge.save(doc)
     const evidence = { bytes, decisions: [], authorizationEvidence: [], dismissedHashes: [], resolvedReviews: [] }
-    await storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)
+    await persistWorkspaceForTest(storage, doc.id, doc, bytes, [], undefined, evidence)
     const write = vi.spyOn(journal, "writeLocalJournal")
     try {
-      await expect(storage.commitWorkspace(doc.id, doc, bytes, [], undefined, evidence)).resolves.toEqual({ proofChanged: false, causalChanged: false })
+      await expect(persistWorkspaceForTest(storage, doc.id, doc, bytes, [], undefined, evidence)).resolves.toEqual({ proofChanged: false, causalChanged: false })
       expect(write).not.toHaveBeenCalled()
     } finally { write.mockRestore(); Automerge.free(doc) }
   })
@@ -403,7 +486,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
   it("handles same-ID retry idempotently returning existing receipt without duplicating change", async () => {
     const rawWs = createWorkspaceDoc("ws_retry", "Retry Test", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
-    await storage.saveSnapshot("ws_retry", doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, "ws_retry", doc)
 
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
     const res = await executeCommand(doc, { kind: "createItem", parentId: col.id, title: "Idempotent Item" }, profile)
@@ -413,11 +496,11 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const changeBytes = Automerge.getLastLocalChange(res.value.newDoc)!
 
     // First commit
-    const firstReceipt = await storage.commitTransaction("ws_retry", res.value.receipt, changeBytes, res.value.proof)
+    const firstReceipt = await persistCommandForTest(storage, "ws_retry", res.value.receipt, changeBytes, res.value.proof)
     expect(firstReceipt.saved).toBe(true)
 
     // Retry same transaction ID
-    const retryReceipt = await storage.commitTransaction("ws_retry", res.value.receipt, changeBytes, res.value.proof)
+    const retryReceipt = await persistCommandForTest(storage, "ws_retry", res.value.receipt, changeBytes, res.value.proof)
     expect(retryReceipt.transactionId).toBe(firstReceipt.transactionId)
 
     // Check that there is only 1 change stored, not 2
@@ -428,7 +511,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
   it("aborts commit cleanly when storage failure hook is active", async () => {
     const rawWs = createWorkspaceDoc("ws_fail", "Fail Test", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
-    await storage.saveSnapshot("ws_fail", doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, "ws_fail", doc)
 
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
     const res = await executeCommand(doc, { kind: "createItem", parentId: col.id, title: "Failed Item" }, profile)
@@ -441,7 +524,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     setStorageFailureHookForTest(true)
 
     await expect(
-      storage.commitTransaction("ws_fail", res.value.receipt, changeBytes, res.value.proof)
+      persistCommandForTest(storage, "ws_fail", res.value.receipt, changeBytes, res.value.proof)
     ).rejects.toThrow(/Storage failure/i)
 
     // Verify nothing uncommitted was saved
@@ -457,7 +540,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
   it("handles stale-tab concurrent saves without overwriting unseen writes", async () => {
     const rawWs = createWorkspaceDoc("ws_stale", "Stale Test", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
-    await storage.saveSnapshot("ws_stale", doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, "ws_stale", doc)
 
     const todoCol = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
 
@@ -467,7 +550,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const res1 = await executeCommand(docTab1, { kind: "createItem", parentId: todoCol.id, title: "Tab 1 Item" }, profile, actor1)
     expect(res1.ok).toBe(true)
     if (!res1.ok) return
-    await storage.commitTransaction("ws_stale", res1.value.receipt, Automerge.getLastLocalChange(res1.value.newDoc)!, res1.value.proof)
+    await persistCommandForTest(storage, "ws_stale", res1.value.receipt, Automerge.getLastLocalChange(res1.value.newDoc)!, res1.value.proof)
 
     // Tab 2 (has not loaded Tab 1's change yet) creates Item 2 from original doc
     const actor2 = "22222222222222222222222222222222"
@@ -475,7 +558,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const res2 = await executeCommand(docTab2, { kind: "createItem", parentId: todoCol.id, title: "Tab 2 Item" }, profile, actor2)
     expect(res2.ok).toBe(true)
     if (!res2.ok) return
-    await storage.commitTransaction("ws_stale", res2.value.receipt, Automerge.getLastLocalChange(res2.value.newDoc)!, res2.value.proof)
+    await persistCommandForTest(storage, "ws_stale", res2.value.receipt, Automerge.getLastLocalChange(res2.value.newDoc)!, res2.value.proof)
 
     // Reopening workspace must union both Tab 1 and Tab 2 changes!
     const reloaded = await storage.loadWorkspaceDoc("ws_stale")
@@ -487,32 +570,38 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(titles).toContain("Tab 2 Item")
   })
 
-  it("compacts snapshot while preserving unseen concurrent writer chunks", async () => {
+  it("rejects stale compaction, then compacts the reloaded basis without losing concurrent writer content", async () => {
     const rawWs = createWorkspaceDoc("ws_compact", "Compact Test", profile.identity.personId, "blank")
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
-    await storage.saveSnapshot("ws_compact", doc, Automerge.save(doc))
+    await persistSnapshotForTest(storage, "ws_compact", doc)
     const todoCol = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
 
     // Save Change 1
     const res1 = await executeCommand(doc, { kind: "createItem", parentId: todoCol.id, title: "Item 1" }, profile)
     if (!res1.ok) throw new Error("res1 failed")
-    await storage.commitTransaction("ws_compact", res1.value.receipt, Automerge.getLastLocalChange(res1.value.newDoc)!, res1.value.proof)
+    await persistCommandForTest(storage, "ws_compact", res1.value.receipt, Automerge.getLastLocalChange(res1.value.newDoc)!, res1.value.proof)
 
     // Concurrently, an unseen writer saves Change 2 on original doc
     const unseenActor = "99999999999999999999999999999999"
     const unseenDoc = Automerge.clone(doc, { actor: unseenActor })
     const resUnseen = await executeCommand(unseenDoc, { kind: "createItem", parentId: todoCol.id, title: "Unseen Writer Item" }, profile, unseenActor)
     if (!resUnseen.ok) throw new Error("resUnseen failed")
-    await storage.commitTransaction("ws_compact", resUnseen.value.receipt, Automerge.getLastLocalChange(resUnseen.value.newDoc)!, resUnseen.value.proof)
+    await persistCommandForTest(storage, "ws_compact", resUnseen.value.receipt, Automerge.getLastLocalChange(resUnseen.value.newDoc)!, resUnseen.value.proof)
 
-    // Tab 1 compacts only based on res1.value.newDoc (which does not have unseen change yet)
-    await storage.compactWorkspace("ws_compact", res1.value.newDoc)
+    // Tab 1's stale snapshot cannot replace the basis after the unseen writer commits.
+    await expect(storage.compactWorkspace("ws_compact", res1.value.newDoc)).rejects.toBeInstanceOf(WorkspaceRevisionConflict)
 
-    // The unseen writer's change chunk must NOT be archived!
+    // The rejected compaction leaves the unseen change available for admission.
     const remainingChanges = await storage.listChanges("ws_compact")
     expect(remainingChanges.some((c) => c.changeHash === resUnseen.value.receipt.changeHash)).toBe(true)
 
-    // Reload unions the compacted snapshot and the unseen writer's change
+    // Reload the current admitted basis before retrying compaction.
+    const current = await storage.loadWorkspaceDoc("ws_compact")
+    expect(current).toBeDefined()
+    await storage.compactWorkspace("ws_compact", current!.doc)
+    Automerge.free(current!.doc)
+
+    // Reload still includes both changes after compaction.
     const reloaded = await storage.loadWorkspaceDoc("ws_compact")
     const items = Object.values(reloaded!.doc.entities).filter(isItem)
     expect(items).toHaveLength(2)
@@ -563,7 +652,8 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     if (!res.ok) return
 
     const changeBytes = Automerge.getLastLocalChange(res.value.newDoc)!
-    await storage.commitTransaction("ws_export", res.value.receipt, changeBytes, res.value.proof)
+    await persistWorkspaceForTest(storage, "ws_export", res.value.newDoc, Automerge.save(res.value.newDoc), [],
+      { receipt: res.value.receipt, changeBytes, proof: res.value.proof })
 
     const proofs = await storage.getProofs("ws_export")
     expect(proofs.changeProofs).toHaveLength(1)
@@ -599,7 +689,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     const doc = Automerge.from<WorkspaceDocumentV2>(rawWs)
     const initialBytes = Automerge.save(doc)
 
-    await storage.saveSnapshot("ws_reload", doc, initialBytes)
+    await persistSnapshotForTest(storage, "ws_reload", doc, initialBytes)
 
     const col = Object.values(doc.entities).find((e) => hasEntityKind(e, "column") && e.title === "To do")!
     const res = await executeCommand(doc, { kind: "createItem", parentId: col.id, title: "Persisted Item" }, profile)
@@ -607,7 +697,7 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     if (!res.ok) return
 
     const changeBytes = Automerge.getLastLocalChange(res.value.newDoc)!
-    await storage.commitTransaction("ws_reload", res.value.receipt, changeBytes, res.value.proof)
+    await persistCommandForTest(storage, "ws_reload", res.value.receipt, changeBytes, res.value.proof)
 
     await storage.savePersonalRoot({
       kind: "personal-root",

@@ -1,6 +1,6 @@
 import { expect, test } from "vitest"
 import { sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
-import { verifyRustyWriterPolicyReceipt } from "./rustyScopePolicy"
+import { verifyRustyWriterPolicyReceipt } from "../product-replica/rustyScopePolicy"
 
 async function fixture() {
   const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])

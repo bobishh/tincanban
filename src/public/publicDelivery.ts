@@ -1,9 +1,14 @@
 import { canonicalizeJson, fromBase64Url, sha256Base64Url, toBase64Url, verifyEnvelope, type SignedEnvelope } from "@meta-uber/mesh-identity"
+import { fetchRusty, readRustyJson } from "@meta-uber/mesh-replication/rusty-replica"
 import type { Context } from "@opentelemetry/api"
 import type { DeviceCertificate, PublicIdentity, WorkspaceGrant } from "../domain/model"
-import { blindOrigin } from "../domain/blindOrigin"
-import { fetchBlind, readBlindJson } from "../sync/rustyHttp"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { validatePublicBoardProjection, type PublicBoardProjection } from "./publicSchema"
+
+export type PublicDeliveryHttpPort = {
+  request: (url: string, init: RequestInit, diagnosticContext?: Context) => Promise<Response>
+  readJson: <T>(response: Response, maximumBytes: number) => Promise<T>
+}
 
 export type PublicDeliveryCommand = {
   kind: "rusty-publication-command"; version: 1; challengeId: string; nonce: string; serviceId: string
@@ -16,6 +21,7 @@ export type PublicDeliveryInput = {
   certificates: DeviceCertificate[]; grant: WorkspaceGrant; sourceHeads: string[]
   client?: "tincanban" | "automation"
   diagnosticContext?: Context
+  http?: PublicDeliveryHttpPort
   ensureCurrent: () => void | Promise<void>
   ensureSourceCovers: (heads: string[]) => void | Promise<void>
   sign: (payload: PublicDeliveryCommand) => Promise<SignedEnvelope<PublicDeliveryCommand>>
@@ -38,17 +44,21 @@ export async function deliverPublicBoard(input: PublicDeliveryInput): Promise<{ 
   const sourceHeads = admittedSourceHeads(input.sourceHeads)
   await input.ensureCurrent()
   const endpoint = `${origin}/v1/public/boards/${encodeURIComponent(input.boardId)}`
-  const request: typeof fetchBlind = (url, init) => {
+  const http = input.http ?? {
+    request: (url: string, init: RequestInit) => fetchRusty(url, init),
+    readJson: async <T>(response: Response, maximumBytes: number) => await readRustyJson(response, maximumBytes) as T,
+  }
+  const request: PublicDeliveryHttpPort["request"] = (url, init, diagnosticContext) => {
     const headers = new Headers(init.headers)
     headers.set("X-Rusty-Client", input.client ?? "tincanban")
-    return fetchBlind(url, { ...init, headers, diagnosticContext: input.diagnosticContext })
+    return http.request(url, { ...init, headers }, diagnosticContext ?? input.diagnosticContext)
   }
-  const current = await readCurrentBoard(request, endpoint, input)
+  const current = await readCurrentBoard(request, endpoint, input, http.readJson)
   if (!current) return null
-  const service = await readDeliveryService(origin, request)
+  const service = await readDeliveryService(origin, request, http.readJson)
   const writer = deliveryWriter(input, sourceHeads)
   const sourceHeadsHash = await hash(sourceHeads)
-  const context = { input, origin, endpoint, request, current, service, writer, sourceHeadsHash }
+  const context = { input, origin, endpoint, request, http, current, service, writer, sourceHeadsHash }
   let generation: number | undefined
   const challenge = async () => {
     const envelope = await requestDeliveryChallenge(context)
@@ -74,7 +84,7 @@ export async function deliverPublicBoard(input: PublicDeliveryInput): Promise<{ 
   if (nextHash === current.hash) { await input.ensureCurrent(); return { revision: current.revision, hash: current.hash } }
   const envelope = staged.size ? await challenge() : initialChallenge
   const authorization = await signCommand(envelope, "update", nextHash)
-  const receipt = await readBlindJson<SignedEnvelope<Record<string, unknown>>>(await request(endpoint, {
+  const receipt = await http.readJson<SignedEnvelope<Record<string, unknown>>>(await request(endpoint, {
     method: "PUT", signal: AbortSignal.timeout(30000), headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challenge: envelope, ...writer, action: "update", projection: next, authorization }),
   }), 16384)
@@ -88,7 +98,8 @@ export async function deliverPublicBoard(input: PublicDeliveryInput): Promise<{ 
 type CurrentPublicBoard = { revision: number; hash: string; projection: PublicBoardProjection }
 type PublicDeliveryService = { serviceId: string; publicKey: string }
 type PublicDeliveryWriter = { identity: PublicIdentity; deviceId: string; certificates: DeviceCertificate[]; deliveryGrant: WorkspaceGrant; sourceHeads: string[] }
-type DeliveryContext = { input: PublicDeliveryInput; origin: string; endpoint: string; request: typeof fetchBlind;
+type DeliveryContext = { input: PublicDeliveryInput; origin: string; endpoint: string; request: PublicDeliveryHttpPort["request"];
+  http: PublicDeliveryHttpPort;
   current: CurrentPublicBoard; service: PublicDeliveryService; writer: PublicDeliveryWriter; sourceHeadsHash: string }
 type DeliveryAsset = { sha256: string; bytes: Uint8Array }
 
@@ -100,10 +111,11 @@ function admittedSourceHeads(value: string[] | undefined): string[] {
   return heads
 }
 
-async function readCurrentBoard(request: typeof fetchBlind, endpoint: string, input: PublicDeliveryInput): Promise<CurrentPublicBoard | null> {
+async function readCurrentBoard(request: PublicDeliveryHttpPort["request"], endpoint: string, input: PublicDeliveryInput,
+  readJson: PublicDeliveryHttpPort["readJson"]): Promise<CurrentPublicBoard | null> {
   const response = await request(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
   if (response.status === 404) { await response.body?.cancel(); await input.ensureCurrent(); return null }
-  const current = await readBlindJson<{ boardId: string; revision: number; projection: unknown; hash: string }>(response, 3 * 1024 * 1024)
+  const current = await readJson<{ boardId: string; revision: number; projection: unknown; hash: string }>(response, 3 * 1024 * 1024)
   const projection = validatePublicBoardProjection(current.projection)
   if (current.boardId !== input.boardId || projection.board.id !== input.boardId || !Number.isSafeInteger(current.revision) || current.revision < 1 ||
       await hash(projection) !== current.hash) throw new Error("Public delivery source integrity check failed")
@@ -111,8 +123,9 @@ async function readCurrentBoard(request: typeof fetchBlind, endpoint: string, in
   return { revision: current.revision, hash: current.hash, projection }
 }
 
-async function readDeliveryService(origin: string, request: typeof fetchBlind): Promise<PublicDeliveryService> {
-  const descriptor = await readBlindJson<{ publicOrigin: string; service: PublicDeliveryService; capabilities: { publicBoardPublication?: { deliveryVersion?: number } } }>(
+async function readDeliveryService(origin: string, request: PublicDeliveryHttpPort["request"],
+  readJson: PublicDeliveryHttpPort["readJson"]): Promise<PublicDeliveryService> {
+  const descriptor = await readJson<{ publicOrigin: string; service: PublicDeliveryService; capabilities: { publicBoardPublication?: { deliveryVersion?: number } } }>(
     await request(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
   const service = descriptor.service
   if (descriptor.publicOrigin !== origin || descriptor.capabilities.publicBoardPublication?.deliveryVersion !== 1 ||
@@ -129,9 +142,9 @@ function deliveryWriter(input: PublicDeliveryInput, sourceHeads: string[]): Publ
 }
 
 async function requestDeliveryChallenge(context: DeliveryContext): Promise<SignedEnvelope<Challenge>> {
-  const { input, origin, writer, request } = context
+  const { input, origin, writer, request, http } = context
   await input.ensureCurrent()
-  const { challenge } = await readBlindJson<{ challenge: SignedEnvelope<Challenge> }>(await request(`${origin}/v1/public/challenges`, {
+  const { challenge } = await http.readJson<{ challenge: SignedEnvelope<Challenge> }>(await request(`${origin}/v1/public/challenges`, {
     method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ version: 1, boardId: input.boardId, ...writer }),
   }), 16384)
@@ -217,7 +230,7 @@ async function stagePublicAsset(context: DeliveryContext, asset: DeliveryAsset, 
   if (asset.bytes.byteLength > 16 * 1024 * 1024 || await sha256Base64Url(asset.bytes) !== asset.sha256) throw new Error("Public delivery file bytes changed")
   const envelope = await challenge()
   const authorization = await signCommand(envelope, "stage-file", asset.sha256, asset.bytes.byteLength)
-  const receipt = await readBlindJson<SignedEnvelope<Record<string, unknown>>>(await request(`${endpoint}/files`, {
+  const receipt = await context.http.readJson<SignedEnvelope<Record<string, unknown>>>(await request(`${endpoint}/files`, {
     method: "PUT", signal: AbortSignal.timeout(60000), headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challenge: envelope, ...writer, sha256: asset.sha256, byteLength: asset.bytes.byteLength, bytes: toBase64Url(asset.bytes), authorization }),
   }), 16384)

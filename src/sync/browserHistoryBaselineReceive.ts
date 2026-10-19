@@ -1,8 +1,9 @@
 import { z } from "zod"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "./historyBaselineReceiver"
+import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import type { StoredWorkspaceSnapshot } from "../storageJournal"
+import type { WorkspaceTransactionContext } from "../storage"
 
 type BrowserHistoryReceiveLocalState = {
   bytes: Uint8Array
@@ -16,11 +17,12 @@ type ReceiveRepository = {
   readActive(): Promise<{ baselineId?: string } | undefined>
   readStaged(): Promise<{ baselineId?: string; stageId: string } | undefined>
   stage(candidate: WasmVerifiedReceivedHistoryBaseline, expected: StoredWorkspaceSnapshot | null, wire: WireHistoryBaseline): Promise<string>
-  activate(stageId: string, candidate: WasmVerifiedReceivedHistoryBaseline): Promise<void>
+  activate(stageId: string, candidate: WasmVerifiedReceivedHistoryBaseline, context: WorkspaceTransactionContext): Promise<void>
 }
 
 export type BrowserHistoryBaselineReceivePorts = {
   repository: ReceiveRepository
+  workspaceTransaction<T>(operation: (context: WorkspaceTransactionContext) => Promise<T>): Promise<T>
   ensureCurrent(): void | Promise<void>
   readLocal(): Promise<BrowserHistoryReceiveLocalState>
   verify(input: { wire: unknown; config: BlindReplicaConfig; trustedScopeAuthority: unknown;
@@ -78,7 +80,7 @@ async function activateReceivedScope(ports: BrowserHistoryBaselineReceivePorts, 
   const preActivation = await ports.readLocal()
   await ports.ensureCurrent()
   if (!sameLocalState(before, preActivation)) throw new Error("Workspace or Rusty outbox changed before history activation")
-  await ports.repository.activate(stageId, candidate)
+  await ports.workspaceTransaction(context => ports.repository.activate(stageId, candidate, context))
   await ports.ensureCurrent()
 }
 

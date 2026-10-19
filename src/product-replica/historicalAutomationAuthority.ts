@@ -1,7 +1,7 @@
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import { computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "./workspaceAdmissionCore"
+import { computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceWriteAuthorityEvidence } from "./workspaceAdmission"
 
 /** Historical issuer evidence never substitutes for a currently authorized owner or a live execution grant. */
 export function admitHistoricalAutomationAuthority(input: {

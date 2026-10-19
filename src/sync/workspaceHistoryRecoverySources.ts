@@ -1,7 +1,7 @@
 import { sha256Base64Url, toBase64Url } from "../domain/identity"
 import type { PrivateReplicaWire } from "./privateReplicaPreferences"
 import type { BlindReplicaConfig } from "./blindReplication"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { getPrivateReplicaConfigurations, getPrivateReplicaProgress } from "./privateReplicaRepository"
 import { contentKeysForEpoch } from "./replicaContentKeys"
 import { listWorkspaceHistoryPublications, readPreparedHistoryObject } from "./historyBaselinePublicationRepository"
@@ -10,10 +10,10 @@ import { createArchiveRemote, ArchiveRemoteError } from "@meta-uber/mesh-replica
 import { openArchiveObject, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import type { ArchiveLocatorRoot } from "@meta-uber/mesh-replication/history-archive-locators"
 import type { HistoryRecoveryArchiveSource } from "./historyRecoveryArchive"
-import { fetchBlind } from "./blindClient"
+import { fetchBlind } from "./rustyHttp"
 import { listRetainedWorkspaceRecoveryArchives } from "./workspaceHistoryRecoveryArchives"
 import { listWorkspaceRecoveryObjectIndexes, readWorkspaceRecoveryObject } from "./workspaceHistoryRecoveryObjects"
-import { parseWireHistoryBaseline } from "./historyBaselineReceiver"
+import { parseWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import type { StoredReceivedHistoryBaseline } from "../storageJournalRecords"
 
 type Routing = { payload: { workspaceId: string; baselineId: string; locatorRoot: ArchiveLocatorRoot;

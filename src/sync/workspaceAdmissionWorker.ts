@@ -1,6 +1,7 @@
 import policyInit, { WasmStateCore } from "@meta-uber/mesh-transport/wasm"
 import { initializeAutomerge } from "../crdt"
-import { computeWorkspaceAdmission, type WorkspaceAdmissionRequest, type WorkspaceAdmissionResponse } from "./workspaceAdmissionCore"
+import { computeWorkspaceAdmission } from "../product-replica/workspaceAdmission"
+import type { WorkspaceAdmissionRequest, WorkspaceAdmissionResponse } from "./workspaceAdmissionWorkerContract"
 import { decideWorkspaceAccessInWorker } from "./workspaceAccessWorker"
 
 const scope = globalThis as unknown as {

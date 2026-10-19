@@ -14,6 +14,7 @@ import {
 import {
   defaultStorage,
   type WorkspaceStorage,
+  type WorkspaceTransactionContext,
 } from "./storage";
 import {
   notifyLocalChanges,
@@ -21,10 +22,9 @@ import {
   refreshAvailableWorkspaces,
   updateReactiveState,
 } from "./statePersistence";
-import { withWorkspaceMutation } from "./workspaceMutation";
 import { reclassifyStoredWorkspace } from "./stateCausalAdmission";
-import { receivedHistoryBasisIdentity } from "./sync/receivedHistoryBasisIdentity";
-import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore";
+import { receivedHistoryBasisIdentity } from "./product-replica/receivedHistoryBasisIdentity";
+import type { WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords";
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { stateRuntime } from "./stateContext";
 import {
@@ -49,17 +49,27 @@ export function createSyncActions() {
 }
 
 async function reclassifyWorkspace(id: string, storage = defaultStorage): Promise<void> {
+  let result: Awaited<ReturnType<typeof reclassifyStoredWorkspace>> | undefined
+  let transferred = false
   try {
-    const result = await reclassifyStoredWorkspace(id, storage)
+    result = await reclassifyStoredWorkspace(id, storage)
     if (!result.doc) return
-    if (result.changed) await publishCommittedWorkspace(id, result.doc, storage)
+    if (result.changed) {
+      transferred = stateRuntime.activeDoc?.id === id
+      await publishCommittedWorkspace(id, result.doc, storage)
+    }
     else {
-      if (stateRuntime.activeDoc?.id === id && !sameHeads(stateRuntime.activeDoc, result.doc)) updateReactiveState(result.doc)
+      if (stateRuntime.activeDoc?.id === id && !sameHeads(stateRuntime.activeDoc, result.doc)) {
+        transferred = true
+        updateReactiveState(result.doc)
+      }
       await refreshCausalReview(storage, id)
     }
   } catch (error) {
     stateRuntime.causalReviewError.value = "Access update pending. Workspace history could not be reclassified; reload to retry."
     throw error
+  } finally {
+    if (result?.doc && !transferred) Automerge.free(result.doc)
   }
 }
 
@@ -74,25 +84,35 @@ async function readWorkspaceDoc(
   id: string,
   storage = defaultStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
-  const doc = stateRuntime.activeDoc?.id === id
-    ? stateRuntime.activeDoc
-    : (await storage.loadWorkspaceDoc(id))?.doc;
-  if (!doc) throw new WorkspaceUnavailableError();
-  return doc;
+  return (await readWorkspaceDocLease(id, storage)).doc;
+}
+
+async function readWorkspaceDocLease(id: string, storage: WorkspaceStorage = defaultStorage): Promise<{
+  doc: Automerge.Doc<WorkspaceDocumentV2>; owned: boolean
+}> {
+  const active = stateRuntime.activeDoc?.id === id ? stateRuntime.activeDoc : null;
+  if (active) return { doc: active, owned: false };
+  const loaded = await storage.loadWorkspaceDoc(id);
+  if (!loaded) throw new WorkspaceUnavailableError();
+  return { doc: loaded.doc, owned: true };
 }
 
 async function readWorkspaceHeads(id: string): Promise<string[]> {
-  return Automerge.getHeads(await readWorkspaceDoc(id))
+  const lease = await readWorkspaceDocLease(id)
+  try { return Automerge.getHeads(lease.doc) }
+  finally { if (lease.owned) Automerge.free(lease.doc) }
 }
 
 async function recordVerifiedOwnerWorkspace(id: string, storage = defaultStorage): Promise<void> {
   const profile = await requireProfile()
-  const doc = await readWorkspaceDoc(id, storage)
-  if (doc.ownerPersonId !== profile.identity.personId) {
-    throw new Error("Only a workspace owned by this identity can be added from an owner offer.")
-  }
-  await addWorkspaceToPersonalRoot(id, "import", storage)
-  await refreshAvailableWorkspaces(storage)
+  const lease = await readWorkspaceDocLease(id, storage)
+  try {
+    if (lease.doc.ownerPersonId !== profile.identity.personId) {
+      throw new Error("Only a workspace owned by this identity can be added from an owner offer.")
+    }
+    await addWorkspaceToPersonalRoot(id, "import", storage)
+    await refreshAvailableWorkspaces(storage)
+  } finally { if (lease.owned) Automerge.free(lease.doc) }
 }
 
 async function readWorkspaceBytes(
@@ -101,8 +121,9 @@ async function readWorkspaceBytes(
 ): Promise<Uint8Array> {
   const evidence = await storage.loadCausalEvidence(id)
   if (evidence) return new Uint8Array(evidence.bytes)
-  const doc = await readWorkspaceDoc(id, storage);
-  return Automerge.save(doc);
+  const lease = await readWorkspaceDocLease(id, storage);
+  try { return Automerge.save(lease.doc) }
+  finally { if (lease.owned) Automerge.free(lease.doc) }
 }
 
 async function mergeAuthorizedWorkspace(
@@ -112,38 +133,49 @@ async function mergeAuthorizedWorkspace(
   storage = defaultStorage,
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline,
 ): Promise<void> {
-  await withWorkspaceMutation(id, async () => {
+  await storage.withWorkspaceTransaction(id, async transaction => {
     const { reuseIncomingPacket, copyIncomingPacket, rememberIncomingPacket } = await import("./stateIncomingReuse")
-    const { fullyVerifiedIncomingInput } = await import("./stateIncomingReuseEquality")
     const profile = stateRuntime.currentProfile ?? undefined
-    if (!receivedBasis && await reuseIncomingPacket(id, { bytes, authorization }, storage, profile)) return
+    if (!receivedBasis && await reuseIncomingPacket(id, { bytes, authorization }, transaction, profile)) return
     const packet = copyIncomingPacket(bytes, authorization)
     // Validation must use the same current durable base as the eventual merge.
-    const { remote, local, admission, receivedBasis: admittedBasis } = await validateAuthorizedWorkspace(
-      id, packet.bytes, packet.authorization, storage, receivedBasis)
-    const merged = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument);
-    const mergedValidation = validateWorkspaceDoc(merged);
-    if (!mergedValidation.ok) throw invalidWorkspaceReceived(mergedValidation.error);
-    if (local && remote.ownerPersonId !== local.ownerPersonId)
-      throw new Error("Workspace ownership cannot change through sync.");
-    await assertReceivedBasisCurrent(storage, id, admittedBasis)
-    const documentChanged = !local || !sameHeads(merged, local);
-    const { proofChanged, causalChanged } = await storage.commitWorkspace(
-      id, merged, Automerge.save(merged), admission.verifiedAuthorizations as WorkspaceChangeAuthorization[], undefined,
-      { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
-        admissionCheckpoint: admission.admissionCheckpoint },
-    );
-    if (documentChanged) traceNewRemoteChanges(id, merged, local)
-    if (documentChanged || proofChanged || causalChanged) await publishCommittedWorkspace(id, merged, storage);
-    // Optional cache maintenance follows durable success and cannot reject that success.
-    await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint,
-      fullyVerifiedIncomingInput(packet.authorization, admission), profile).catch(() => undefined)
+    const validated = await validateAuthorizedWorkspace(
+      id, packet.bytes, packet.authorization, storage, receivedBasis, transaction)
+    const { remote, local, admission, receivedBasis: admittedBasis } = validated
+    let merged: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let transferred = false
+    try {
+      merged = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
+      const mergedValidation = validateWorkspaceDoc(merged);
+      if (!mergedValidation.ok) throw invalidWorkspaceReceived(mergedValidation.error);
+      if (local && remote.ownerPersonId !== local.ownerPersonId)
+        throw new Error("Workspace ownership cannot change through sync.");
+      await assertReceivedBasisCurrent(storage, id, admittedBasis, transaction)
+      const documentChanged = !local || !sameHeads(merged, local);
+      const { proofChanged, causalChanged } = await transaction.commitWorkspace(
+        merged, Automerge.save(merged), admission.verifiedAuthorizations as WorkspaceChangeAuthorization[], undefined,
+        { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
+          admissionCheckpoint: admission.admissionCheckpoint },
+      );
+      if (documentChanged) traceNewRemoteChanges(id, merged, local)
+      if (documentChanged || proofChanged || causalChanged) {
+        transferred = stateRuntime.activeDoc?.id === id
+        await publishCommittedWorkspace(id, merged, storage)
+      }
+      // Optional cache maintenance follows durable success and cannot reject that success.
+      await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint, profile).catch(() => undefined)
+    } finally {
+      Automerge.free(remote)
+      if (local) Automerge.free(local)
+      if (merged && !transferred) Automerge.free(merged)
+    }
   });
 }
 
-async function assertReceivedBasisCurrent(storage: WorkspaceStorage, id: string, admitted?: WasmVerifiedReceivedHistoryBaseline) {
+async function assertReceivedBasisCurrent(storage: WorkspaceStorage, id: string, admitted?: WasmVerifiedReceivedHistoryBaseline,
+  transaction?: WorkspaceTransactionContext) {
   if (!admitted) return
-  const current = await storage.getVerifiedReceivedHistoryBaseline(id)
+  const current = await (transaction ? transaction.getVerifiedReceivedHistoryBaseline() : storage.getVerifiedReceivedHistoryBaseline(id))
   if (!current || receivedHistoryBasisIdentity(current)?.baselineId !== receivedHistoryBasisIdentity(admitted)?.baselineId)
     throw new Error("Received history basis changed during workspace admission")
 }
@@ -167,22 +199,32 @@ async function validateAuthorizedWorkspace(
   authorization: unknown,
   storage = defaultStorage,
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline,
+  transaction?: WorkspaceTransactionContext,
 ): Promise<{ remote: Automerge.Doc<WorkspaceDocumentV2>; local: Automerge.Doc<WorkspaceDocumentV2> | undefined;
   admission: Awaited<ReturnType<typeof evaluateIncomingWorkspaceAdmission>>; receivedBasis?: WasmVerifiedReceivedHistoryBaseline }> {
   const remote = Automerge.load<WorkspaceDocumentV2>(bytes);
-  const valid = validateRemoteWorkspace(remote, id)
-  const local = await mergeAuthorizationBase(id, remote, storage);
-  if (!valid && (!local || local.formatVersion !== 3))
-    throw invalidWorkspaceReceived({ code: "unsupported_format", message: "Workspace owner must reopen this board in updated tincanban before sharing it." });
-  const evidence = await storage.loadCausalEvidence(id)
-  const basis = receivedBasis ?? await storage.getVerifiedReceivedHistoryBaseline(id)
-  const rawLocal = evidence ? Automerge.load<WorkspaceDocumentV2>(evidence.bytes) : local
+  let local: Automerge.Doc<WorkspaceDocumentV2> | undefined
   try {
-    const admission = await evaluateIncomingWorkspaceAdmission(rawLocal, remote, authorization,
-      (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], basis)
-    return { remote, local, admission, receivedBasis: basis }
-  } finally {
-    if (rawLocal && rawLocal !== local) Automerge.free(rawLocal)
+    const valid = validateRemoteWorkspace(remote, id)
+    local = await mergeAuthorizationBase(id, remote, storage, transaction);
+    if (!valid && (!local || local.formatVersion !== 3))
+      throw invalidWorkspaceReceived({ code: "unsupported_format", message: "Workspace owner must reopen this board in updated tincanban before sharing it." });
+    const evidence = await (transaction ? transaction.loadCausalEvidence() : storage.loadCausalEvidence(id))
+    const basis = receivedBasis ?? await (transaction
+      ? transaction.getVerifiedReceivedHistoryBaseline()
+      : storage.getVerifiedReceivedHistoryBaseline(id))
+    const rawLocal = evidence ? Automerge.load<WorkspaceDocumentV2>(evidence.bytes) : local
+    try {
+      const admission = await evaluateIncomingWorkspaceAdmission(rawLocal, remote, authorization,
+        (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], basis)
+      return { remote, local, admission, receivedBasis: basis }
+    } finally {
+      if (evidence) Automerge.free(rawLocal!)
+    }
+  } catch (error) {
+    Automerge.free(remote)
+    if (local) Automerge.free(local)
+    throw error
   }
 }
 
@@ -207,10 +249,14 @@ async function mergeAuthorizationBase(
   id: string,
   remote: Automerge.Doc<WorkspaceDocumentV2>,
   storage = defaultStorage,
+  transaction?: WorkspaceTransactionContext,
 ) {
   const reusable = stateRuntime.activeDoc?.id === id ? stateRuntime.activeDoc : undefined;
-  const local = (await storage.loadWorkspaceDoc(id, reusable))?.doc;
-  if (local && !sharesBoard(local, remote)) throw new Error(`Workspace conflict: ${id} identifies different boards. Nothing was replaced.`);
+  const local = (await (transaction ? transaction.loadWorkspaceDoc() : storage.loadWorkspaceDoc(id, reusable)))?.doc;
+  if (local && !sharesBoard(local, remote)) {
+    Automerge.free(local)
+    throw new Error(`Workspace conflict: ${id} identifies different boards. Nothing was replaced.`);
+  }
   return local;
 }
 
@@ -256,14 +302,21 @@ async function importWorkspaceDocument(
   if (!validation.ok) throw invalidWorkspaceReceived(validation.error);
   const profile = await requireProfile();
   await assertImportAllowed(doc, profile, storage);
-  const local = (await storage.loadWorkspaceDoc(doc.id))?.doc;
-  if (local) {
-    const bytes = Automerge.save(doc)
-    const authorization = await exportAuthorizationBundle(bytes, profile)
-    await mergeAuthorizedWorkspace(doc.id, bytes, authorization, storage)
+  const existing = await storage.loadWorkspaceDoc(doc.id);
+  if (existing) {
+    try {
+      const bytes = Automerge.save(doc)
+      const authorization = await exportAuthorizationBundle(bytes, profile)
+      await mergeAuthorizedWorkspace(doc.id, bytes, authorization, storage)
+    } finally { Automerge.free(existing.doc) }
   } else {
-    await withWorkspaceMutation(doc.id, async () => {
-      await storage.saveSnapshot(doc.id, doc, Automerge.save(doc));
+    await storage.withWorkspaceTransaction(doc.id, async transaction => {
+      const current = await transaction.loadWorkspaceDoc()
+      if (current) {
+        Automerge.free(current.doc)
+        throw new Error("Workspace already exists; import must be admitted against its current state.")
+      }
+      await transaction.commitWorkspace(doc, Automerge.save(doc), []);
     });
   }
   await addWorkspaceToPersonalRoot(doc.id, "import", storage);

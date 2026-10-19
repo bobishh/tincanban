@@ -1,4 +1,4 @@
-import type { WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
+import type { WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
 
 /** Reuse the caller's Automerge handle only when admission kept its exact heads. */
 export function canReuseAdmittedDocument(admission: WorkspaceAdmissionResult, candidateHeads: string[]): boolean {

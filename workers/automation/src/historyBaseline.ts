@@ -1,8 +1,9 @@
 import { WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from '@meta-uber/mesh-transport/wasm';
-import { decodeBlindBytes, encodeBlindBytes } from '../../../src/sync/blindEnvelope';
-import type { BlindReplicaConfig } from '../../../src/sync/blindReplication';
-import { contentKeysForEpoch, openWithReplicaContentKeys } from '../../../src/sync/replicaContentKeys';
-import { parseWireHistoryBaseline, reverifyStoredHistoryBaseline, verifyReceivedWireHistoryBaseline, type HistoryBaselineFetchPort, type WireHistoryBaseline } from '../../../src/sync/historyBaselineReceiver';
+import { decodeBlindBytes, encodeBlindBytes } from '@meta-uber/mesh-replication/rusty-replica';
+import type { BlindReplicaConfig } from '../../../src/product-replica/config';
+import { contentKeysForEpoch, openWithReplicaContentKeys } from '../../../src/domain/replicaContentKeys';
+import { parseWireHistoryBaseline, reverifyStoredHistoryBaseline, verifyReceivedWireHistoryBaseline,
+  type HistoryBaselineFetchPort, type WireHistoryBaseline } from '../../../src/product-replica';
 import type { EncryptedArchiveObject } from '@meta-uber/mesh-replication/history-archive-crypto';
 import type { ArchiveCoverageAuthority } from '@meta-uber/mesh-replication/history-archive-coverage';
 
@@ -69,11 +70,10 @@ export async function restoreWorkerHistoryBasis(storedInput: StoredWorkerHistory
   }
   await guard();
   const basis = await openWithReplicaContentKeys(config, keyEpoch, contentKey => reverifyStoredHistoryBaseline({
-    stored: { id: config.scopeId, stageId: config.scopeId, workspaceId, state: 'active',
+    stored: { workspaceId, state: 'active',
       signedJson: decodeBlindBytes(wire.signedJson), document: decodeBlindBytes(stored.document), wire,
       encryptedObjects: [...objects].map(([ciphertextId, object]) => ({ ciphertextId, object })),
-      scopeId: config.scopeId, keyEpoch, pinnedStorage: { ...pinnedStorage }, expectedSnapshot: null,
-      createdAt: '1970-01-01T00:00:00.000Z' },
+      scopeId: config.scopeId, keyEpoch, pinnedStorage: { ...pinnedStorage } },
     scope: { scopeId: config.scopeId, keyEpoch, key: decodeBlindBytes(contentKey) },
     trustedScopeAuthority: scopeAuthority, ensureCurrent,
   }));

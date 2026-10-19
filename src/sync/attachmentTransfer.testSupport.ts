@@ -3,7 +3,7 @@ import { createBlobDescriptor } from "@meta-uber/mesh-blob"
 import type { AttachmentPreparation } from "./attachmentPreparationData"
 import type { AttachmentProgress, AttachmentTransferRepository } from "./attachmentTransfer"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
-import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindBlobReceipt } from "./blindBlobClient"
 
 export function repository() {

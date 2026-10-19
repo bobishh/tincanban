@@ -1,8 +1,8 @@
 import { expect, it, vi } from "vitest"
 import { BlindReplica, type BlindReplicaConfig, type BlindReplicaStore } from "./blindReplication"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"
-import { decryptBlindObject, encryptBlindObject, decodeBlindBytes, encodeBlindBytes, type BlindObject } from "./blindEnvelope"
-import type { AttachmentLocator } from "./attachmentCodec"
+import { decryptBlindObject, encryptBlindObject, decodeBlindBytes, encodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import type { AttachmentLocator } from "../product-replica"
 
 const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
 const publicBytes = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey))

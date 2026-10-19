@@ -43,7 +43,8 @@ import { clearPendingItemMoves } from "./pendingItemMoves";
 import { startPendingWrite } from "./statePendingWrites";
 import { diagnoseStartupStep } from "./sync/startupDiagnostics";
 import { causalReviewMetadata, hasUnresolvedCausalChanges } from "./stateCausalReviewMetadata";
-import { persistDeltaCommand } from "./stateDeltaAdmission";
+import { persistDeltaCommand, prepareLocalDeltaAdmission } from "./stateDeltaAdmission";
+import { requestWebLock } from "./webLock";
 
 type ReadinessWaiter = {
   resolve: () => void;
@@ -203,10 +204,18 @@ export async function persistAuthorizedCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
-  return withWorkspaceMutation(doc.id, async () => {
-    const stored = (await storage.loadWorkspaceDoc(doc.id))?.doc;
-    const base = stored ? Automerge.merge(Automerge.clone(stored), Automerge.clone(doc)) : doc;
-    return commitAuthorizedCommand(base, command, profile, storage);
+  await prepareLocalDeltaAdmission(doc.id, storage, profile)
+  return storage.withWorkspaceTransaction(doc.id, async transaction => {
+    const stored = (await transaction.loadWorkspaceDoc())?.doc;
+    const base = stored ? mergeWorkspaceDocuments(stored, doc) : doc;
+    let result: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    try {
+      result = await commitAuthorizedCommand(base, command, profile, storage, transaction);
+      return result;
+    } finally {
+      if (stored) Automerge.free(stored)
+      if (stored && result !== base) Automerge.free(base)
+    }
   });
 }
 
@@ -233,6 +242,7 @@ async function requireReviewAction() {
 async function commitAuthorizedCommand(
   doc: Automerge.Doc<WorkspaceDocumentV2>, command: Command,
   profile: LocalProfile, storage: WorkspaceStorage,
+  transaction: import("./storage").WorkspaceTransactionContext,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   await assertWorkspaceWritesAllowed(doc.id);
   const role = await workspaceRole(doc, profile);
@@ -246,28 +256,30 @@ async function commitAuthorizedCommand(
   })
   const result = await executeCommand(doc, command, profile, undefined, authorityGrantHash, signingContext);
   if (!result.ok) throw new Error(`Command failed: [${result.error.code}] ${result.error.message}`);
-  return persistNewLocalChange(doc, result.value, profile, storage, undefined, role);
+  return persistNewLocalChange(doc, result.value, profile, storage, undefined, role, transaction);
 }
 
 type CreatedLocalChange = Extract<ExecuteResult, { ok: true }>['value']
 
 async function persistNewLocalChange(
   base: Automerge.Doc<WorkspaceDocumentV2>, created: CreatedLocalChange,
-  profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash?: string, localRole?: WorkspaceRole,
+  profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash: string | undefined, localRole: WorkspaceRole | undefined,
+  transaction: import("./storage").WorkspaceTransactionContext,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   await assertWorkspaceWritesAllowed(base.id);
   const changeBytes = Automerge.getLastLocalChange(created.newDoc);
   if (!changeBytes) throw new Error("No change produced");
   const authorizations = await prepareLocalChangeAuthorizations(created.newDoc, profile, [created.receipt.changeHash], undefined, base);
-  const deltaDoc = await persistDeltaCommand(base, created, changeBytes, authorizations, profile, storage, localRole, reviewedChangeHash)
+  const deltaDoc = await persistDeltaCommand(base, created, changeBytes, authorizations, profile, transaction,
+    localRole, reviewedChangeHash)
   if (deltaDoc) {
     tracePersistedLocalChange(base.id, created, deltaDoc, changeBytes)
     return deltaDoc
   }
   const bundle = await exportDocumentAuthorizationBundle(base, profile)
-  const receivedBasis = await storage.getVerifiedReceivedHistoryBaseline(base.id)
-  const previousEvidence = await storage.loadCausalEvidence(base.id)
-  bundle.records = mergeAuthorizationRecords(bundle.records as WorkspaceChangeAuthorization[], authorizations)
+  const receivedBasis = await transaction.getVerifiedReceivedHistoryBaseline()
+  const previousEvidence = await transaction.loadCausalEvidence()
+  bundle.records = mergeAuthorizationRecords(bundle.records, authorizations)
   // An all-admitted evidence snapshot is already represented by the authorized
   // base document. Reuse it instead of synchronously loading the full raw
   // history on every local write. Keep loading raw bytes when quarantined or
@@ -294,11 +306,13 @@ async function persistNewLocalChange(
     ? created.newDoc
     : Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
   const reviewMetadata = causalReviewMetadata(previousEvidence, reviewedChangeHash, created.receipt.changeHash)
-  await storage.commitWorkspace(base.id, authorizedDoc, Automerge.save(authorizedDoc), admission.verifiedAuthorizations, {
+  const evidence = {
+    bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
+    admissionCheckpoint: admission.admissionCheckpoint, ...reviewMetadata,
+  }
+  await transaction.commitWorkspace(authorizedDoc, Automerge.save(authorizedDoc), admission.verifiedAuthorizations, {
     receipt: created.receipt, changeBytes, proof: created.proof,
-  }, { bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
-    admissionCheckpoint: admission.admissionCheckpoint,
-    ...reviewMetadata });
+  }, evidence)
   if (allChangesAdmitted) (await import("./sync/workspaceAccess")).inheritLocalMoveAccess(base, authorizedDoc)
   tracePersistedLocalChange(base.id, created, authorizedDoc, changeBytes)
   return authorizedDoc;
@@ -414,8 +428,8 @@ async function loadPreferredWorkspace(
 async function initializeFirstWorkspace(
   storage: WorkspaceStorage,
   profile: LocalProfile,
-) {
-  const initialize = async () => {
+): Promise<Automerge.Doc<WorkspaceDocumentV2> | null> {
+  const initialize = async (): Promise<Automerge.Doc<WorkspaceDocumentV2> | null> => {
     const catalogRoot = await storage.loadPersonalRoot();
     const entitledIds = catalogRoot
       ? new Set(Object.values(catalogRoot.workspaces ?? {}).filter(reference => !reference.forgotten).map(reference => reference.workspaceId))
@@ -427,14 +441,31 @@ async function initializeFirstWorkspace(
     const doc = Automerge.from<WorkspaceDocumentV2>(
       createWorkspaceDoc(workspaceId, "Untitled", profile.identity.personId, "blank"),
     );
-    await recordGenesisAuthority(doc, profile);
-    await storage.saveSnapshot(workspaceId, doc, Automerge.save(doc));
-    await registerWorkspaceInCurrentRoot(storage, profile, workspaceId, "genesis");
-    await writeLocal("tincanban.active_workspace_id", workspaceId);
-    return doc;
+    let committed: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let docReleased = false
+    try {
+      const authorizations = await recordGenesisAuthority(doc, profile);
+      committed = await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+        const existing = await transaction.loadWorkspaceDoc()
+        if (existing) return existing.doc
+        await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations)
+        return doc
+      })
+      if (committed !== doc) {
+        Automerge.free(doc)
+        docReleased = true
+      }
+      await registerWorkspaceInCurrentRoot(storage, profile, workspaceId, "genesis");
+      await writeLocal("tincanban.active_workspace_id", workspaceId);
+      return committed;
+    } catch (error) {
+      if (!docReleased) Automerge.free(doc)
+      if (committed && committed !== doc) Automerge.free(committed)
+      throw error
+    }
   };
   return typeof navigator !== "undefined" && navigator.locks
-    ? navigator.locks.request("tincanban-first-workspace", initialize)
+    ? requestWebLock("tincanban-first-workspace", initialize)
     : initialize();
 }
 
@@ -444,35 +475,70 @@ async function persistCommand(
   profile: LocalProfile,
   storage: WorkspaceStorage,
 ): Promise<void> {
-  await withWorkspaceMutation(workspaceId, async () => {
-    const base = await latestWorkspaceDocument(workspaceId, storage);
-    const next = await commitAuthorizedCommand(base, command, profile, storage);
-    if (stateRuntime.activeDoc?.id === workspaceId) {
-      updateReactiveState(next);
-      await refreshCausalReview(storage, workspaceId);
+  await prepareLocalDeltaAdmission(workspaceId, storage, profile)
+  await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+    const borrowed = stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null;
+    let base: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let next: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let retained: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    try {
+      base = await latestWorkspaceDocument(workspaceId, storage, transaction);
+      next = await commitAuthorizedCommand(base, command, profile, storage, transaction);
+      if (stateRuntime.activeDoc?.id === workspaceId) {
+        retained = next
+        updateReactiveState(next);
+        next = undefined
+        await refreshCausalReview(storage, workspaceId);
+      }
+      stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId });
+      notifyLocalChanges(workspaceId);
+    } finally {
+      if (base && base !== borrowed && base !== retained) Automerge.free(base)
+      if (next) Automerge.free(next)
     }
-    stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId });
-    notifyLocalChanges(workspaceId);
   });
 }
 
 async function latestWorkspaceDocument(
   workspaceId: string,
   storage: WorkspaceStorage,
+  transaction?: import("./storage").WorkspaceTransactionContext,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   const local =
     stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null;
-  const stored = (await storage.loadWorkspaceDoc(workspaceId, local ?? undefined))?.doc ?? null;
+  const stored = (transaction
+    ? await transaction.loadWorkspaceDoc()
+    : await storage.loadWorkspaceDoc(workspaceId, local ?? undefined))?.doc ?? null;
   if (!local && !stored) throw new Error("Workspace not hydrated");
-  const hasCausalEvidence = Boolean(stored && await storage.hasCausalEvidence(workspaceId));
-  return chooseLatestWorkspaceDocument(local, stored, hasCausalEvidence);
+  try {
+    const hasCausalEvidence = Boolean(stored && await storage.hasCausalEvidence(workspaceId));
+    const selected = chooseLatestWorkspaceDocument(local, stored, hasCausalEvidence);
+    if (stored && selected !== stored) Automerge.free(stored)
+    return selected
+  } catch (error) {
+    if (stored) Automerge.free(stored)
+    throw error
+  }
 }
 
 function chooseLatestWorkspaceDocument(local: Automerge.Doc<WorkspaceDocumentV2> | null,
   stored: Automerge.Doc<WorkspaceDocumentV2> | null, hasCausalEvidence: boolean): Automerge.Doc<WorkspaceDocumentV2> {
   if (!local) return stored!
   if (!stored || hasCausalEvidence || Automerge.getHeads(local).sort().join() === Automerge.getHeads(stored).sort().join()) return stored ?? local
-  return Automerge.merge(Automerge.clone(local), Automerge.clone(stored))
+  return mergeWorkspaceDocuments(local, stored)
+}
+
+function mergeWorkspaceDocuments(left: Automerge.Doc<WorkspaceDocumentV2>, right: Automerge.Doc<WorkspaceDocumentV2>) {
+  const leftCopy = Automerge.clone(left)
+  const rightCopy = Automerge.clone(right)
+  try {
+    return Automerge.merge(leftCopy, rightCopy)
+  } catch (error) {
+    Automerge.free(leftCopy)
+    throw error
+  } finally {
+    Automerge.free(rightCopy)
+  }
 }
 
 function ensureContentWrite(role: WorkspaceRole): void {

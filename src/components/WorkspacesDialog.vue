@@ -2,10 +2,10 @@
 import type { Preset } from "../domain/seeds"
 
 import ModalLayer from "./ModalLayer.vue"
-import { computed, defineAsyncComponent, ref, watch } from "vue"
+import { computed, defineAsyncComponent, ref, watch, type Component } from "vue"
 import type { WorkspaceCreationDraft } from "../domain/seeds"
 
-const CreateWorkspaceDialog = defineAsyncComponent(() => import("./CreateWorkspaceDialog.vue"))
+const CreateWorkspaceDialog = defineAsyncComponent(() => import("./CreateWorkspaceDialog.vue") as Promise<{ default: Component }>)
 
 const props = defineProps<{
   workspaces: { id: string; title: string; updatedAt: string }[]

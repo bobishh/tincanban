@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
+import { initializePolicyBrowserRuntime } from "./iroh"
 import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import {
@@ -46,3 +47,5 @@ installMeshRustRuntime({
 })
 
 installPairingCodec(new WasmPairingCodec())
+
+await initializePolicyBrowserRuntime()

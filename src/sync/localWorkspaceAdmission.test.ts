@@ -37,8 +37,9 @@ async function fixture() {
   const evidence = { bytes: admitted.rawBytes, decisions: admitted.decisions,
     authorizationEvidence: admitted.authorizationEvidence, admissionCheckpoint: admitted.admissionCheckpoint }
   const storage = new WorkspaceStorage()
-  await storage.commitWorkspace(base.id, base, Automerge.save(base), admitted.verifiedAuthorizations, undefined, evidence)
-  expect(await reusableDeltaAdmission(base, storage, profile)).toBeDefined()
+  await storage.withWorkspaceTransaction(base.id, transaction => transaction.commitWorkspace(
+    base, Automerge.save(base), admitted.verifiedAuthorizations, undefined, evidence))
+  expect(await storage.withWorkspaceTransaction(base.id, transaction => reusableDeltaAdmission(base, transaction, profile))).toBeDefined()
   const result = await executeCommand(base, { kind: "renameWorkspace", title: "Local edit" }, profile)
   if (!result.ok) throw new Error(result.error.message)
   const { newDoc, receipt } = result.value
@@ -47,7 +48,7 @@ async function fixture() {
   const authority: WorkspaceAuthorityRecord = { version: 1, workspaceId: base.id, ownerPersonId: profile.identity.personId,
     ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], epoch: 2,
     updatedAt: new Date().toISOString(), catalog: {} }
-  const extend = () => persistDeltaCommand(base, result.value, changeBytes, authorizations, profile, storage, "owner")
+  const extend = () => storage.withWorkspaceTransaction(base.id, transaction => persistDeltaCommand(base, result.value, changeBytes, authorizations, profile, transaction, "owner"))
   return { base, profile, authorizations, authority, extend, storage }
 }
 
@@ -64,7 +65,7 @@ it("Given an unchanged validated frontier, when the next command checks admissio
   const save = vi.mocked(Automerge.save)
   save.mockClear()
   try {
-    await expect(reusableDeltaAdmission(f.base, f.storage, f.profile)).resolves.toBeDefined()
+    await expect(f.storage.withWorkspaceTransaction(f.base.id, transaction => reusableDeltaAdmission(f.base, transaction, f.profile))).resolves.toBeDefined()
     expect(basis).not.toHaveBeenCalled()
     expect(save).not.toHaveBeenCalled()
   } finally { basis.mockRestore() }

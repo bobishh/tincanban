@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest"
 import { encryptBlindObject, decryptBlindObject, encryptPurposeBoundObject, decryptPurposeBoundObject, decodeBlindBytes, encodeBlindBytes,
-  type PurposeBoundBinding } from "./blindEnvelope"
+  type PurposeBoundBinding } from "@meta-uber/mesh-replication/rusty-replica"
 
 // Given a client-held content key, when it sends a document through an opaque
 // store, then a second authorized client can decrypt but substitutions fail.

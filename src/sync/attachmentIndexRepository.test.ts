@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 
 afterEach(() => vi.unstubAllGlobals())
 

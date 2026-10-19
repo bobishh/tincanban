@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { createHistoryCompactionAction } from "./privateHistoryCompactionAction"
 import { createReplicationState } from "./privateReplicationState"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { HistoryBaselineTransitionPorts } from "./historyBaselineTransition"
 import * as replicaRepository from "./privateReplicaRepository"

@@ -1,4 +1,4 @@
-import { decodeBlindBytes, encodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 export type ReplicaContentKeys = {
   keyEpoch: number

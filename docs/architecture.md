@@ -6,6 +6,12 @@ production readiness report. Detailed requirements live in the
 named scenarios and required evidence live in the
 [acceptance map](../openspec/changes/unified-device-and-replica-architecture/verification-map.md).
 
+Shared replica packaging, workspace commit/handle ownership and browser/native
+input budgets are tracked in
+[enforce sync contract boundaries](../openspec/changes/enforce-sync-contract-boundaries/proposal.md).
+Its [tasks](../openspec/changes/enforce-sync-contract-boundaries/tasks.md) distinguish
+authored checks, implementation, CI verification and production rollout.
+
 ## Boundaries
 
 | Component | Owns | Does not establish |
@@ -97,11 +103,27 @@ original evidence. Clocks and unsigned certificate-list ordering do not grant ri
 
 ## Persistence, startup and history
 
-Local commands and incoming replication share `withWorkspaceMutation`, including a
-per-workspace Web Lock across tabs. IndexedDB transactions publish changes, proofs,
-receipts and durable revisions together. Reactive state and replication notifications
-follow commit. An aborted write preserves the previous durable state. Optimistic
-card placement remains presentation state until its corresponding command commits.
+Local commands and incoming replication enter `WorkspaceStorage.withWorkspaceTransaction`.
+Storage creates a live context bound to the workspace, repository, lifecycle and
+captured revision/frontier/baseline. A per-workspace Web Lock covers the read,
+admission and commit. The final short IndexedDB transaction compares that captured
+basis before writing snapshot/delta, evidence, proofs, receipts and revision.
+Unchanged document heads do not bypass revision checks. A closed or consumed
+context cannot authorize another commit. Recovery and received-history activation
+use the same live claims for their explicit authorized replacements.
+
+Authority records use a separate database. Their adapters hold the workspace lock;
+the first actual authority write durably invalidates journal admission first.
+An unchanged catalog does not invalidate it. Failure after invalidation can require
+another admission pass even if authority remained unchanged; this is not an atomic
+transaction across databases. Reactive state and replication success follow durable
+commit. An aborted command preserves previous command rows and pending upload.
+Optimistic card placement remains presentation state until its command commits.
+
+Loaded documents belong to the caller; caches retain their own clones. A returned
+delta document is paired with the frontier actually read, even if another request
+evicts or replaces the cache during an await. Discarded caller handles are released;
+active or returned documents transfer ownership to their recipient.
 
 An admitted immutable basis plus a chained delta journal avoids saving and hashing
 the complete document for every ordinary local command. Reuse requires unchanged
@@ -166,8 +188,13 @@ verify/decrypt chunks into an atomic local sink; partial cache entries never bec
 readable files. Product preview/download may materialize a completed file within
 the application limit. Current workspace/device authorization is checked around IO.
 
-Stream limits, deadlines and reset release the affected stream without closing a
-healthy connection; older adapters retain their documented fallback. The relevant
+The SDK core exposes one ingress profile: a 4 KiB header and a 16 MiB complete
+ordinary pairing frame, with tighter kind-specific limits and explicit payload
+units. Raw history streams use a separate finite reader. Logical owner offers up
+to 24 MiB use authenticated bounded pages only when the peer advertises support.
+Read concurrency, partial reassembly and deadlines are bounded; expiry releases
+partial transfers while retaining authenticated peers. Browser adapters require
+the matching bounded WASM API. Stream reset cancels the affected stream. The relevant
 contracts and scenarios are in [`proof-transfer.md`](proof-transfer.md) and the
 acceptance map. A connection indicator alone proves neither file delivery nor
 recovery coverage.
@@ -177,6 +204,11 @@ recovery coverage.
 The approved Worker can read its workspace and issue only granted commands. CLEF
 classifies within that workflow; Rusty does not run CLEF. Browser and Worker share
 replication behavior but retain different storage, execution and network adapters.
+Public `@meta-uber/mesh-replication/rusty-replica` exports own Rusty HTTP,
+envelope/AAD and pinned receipt verification. Product admission, history receive
+and attachment-index implementations live in `src/product-replica`; they do not
+import browser sync orchestration. Automation imports that explicit product layer
+and SDK exports. A transitive dependency rule enforces this separation in CI.
 Unchanged acknowledged revisions skip full historical export; uncertain writes
 retain the exact outbox and require signed receipt validation.
 

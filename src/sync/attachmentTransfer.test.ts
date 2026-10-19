@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest"
 import { AttachmentTransfer } from "./attachmentTransfer"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
-import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { fixture, repository } from "./attachmentTransfer.testSupport"
 import { selectWorkspaceAttachmentTransfer } from "./workspaceAttachmentTransfers"
 import type { BlindReplicaConfig } from "./blindReplication"

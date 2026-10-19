@@ -1,6 +1,6 @@
 import { telemetryConfig, subscribeTelemetryConfig } from "./telemetryConfig"
 import type { BrowserOtelSdk, DiagnosticInput, OperationInput } from "./otelBrowserSdk"
-import { setHttpDiagnosticSpanFactory } from "./httpDiagnostics"
+import { setHttpDiagnosticSpanFactory } from "../domain/httpDiagnostics"
 import type { Context } from "@opentelemetry/api"
 
 export type TelemetryStatus = {

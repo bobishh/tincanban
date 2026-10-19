@@ -1,10 +1,10 @@
-import type { WorkspaceStorage } from "./storage"
+import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
+import type { WorkspaceStorage, WorkspaceTransactionContext } from "./storage"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import type { LocalProfile } from "./domain/identity"
 import type * as Automerge from "@automerge/automerge/slim"
 import { localWorkspaceAdmissionAuthority } from "./sync/changeAuthorization"
 import { admissionPolicy } from "./sync/workspaceAdmissionCheckpoint"
-import { reusableDeltaAdmission } from "./stateDeltaAdmission"
 import { equalIncomingPacket } from "./stateIncomingReuseEquality"
 
 type Packet = { bytes: Uint8Array; authorization: unknown }
@@ -15,19 +15,19 @@ const recent = new Map<string, Entry>()
 const maximumBytes = 32 * 1024 * 1024
 
 /** Only successfully committed, privately copied packets can authorize a no-op. */
-export async function reuseIncomingPacket(id: string, packet: Packet, storage: WorkspaceStorage, profile?: LocalProfile) {
+export async function reuseIncomingPacket(id: string, packet: Packet, transaction: WorkspaceTransactionContext, profile?: LocalProfile) {
   const entry = recent.get(id)
   if (!entry || entry.policy !== admissionPolicy() || !equalIncomingPacket(entry, packet)) return false
   const context = await localWorkspaceAdmissionAuthority(entry.root, profile)
   if (context.fingerprint !== entry.authority) return false
-  const revision = await storage.readWorkspaceRevision(id)
+  const revision = transaction.capturedRevision ?? undefined
   if (!revision) return false
   if (revision !== entry.revision) {
-    const frontier = await storage.readDeltaFrontier(id)
+    const frontier = await transaction.readDeltaFrontier()
     if (!sameAdmittedGeneration(entry, frontier)) return false
   }
   if ((await localWorkspaceAdmissionAuthority(entry.root, profile)).fingerprint !== context.fingerprint ||
-    await storage.readWorkspaceRevision(id) !== revision || !equalIncomingPacket(entry, packet)) return false
+    transaction.capturedRevision !== revision || !equalIncomingPacket(entry, packet)) return false
   return true
 }
 
@@ -36,17 +36,24 @@ function sameAdmittedGeneration(entry: Entry, frontier: Awaited<ReturnType<Works
     frontier.policy === entry.policy && frontier.authorityFingerprint === entry.authority)
 }
 
+/** Link only the exact committed packet revision to its newly verified delta basis. */
+export function bindIncomingPacketDeltaBasis(id: string, previousRevision: string | null, frontier: WorkspaceDeltaFrontier): void {
+  const entry = recent.get(id)
+  if (!entry || entry.revision !== previousRevision || frontier.workspaceId !== id || frontier.invalidated ||
+      frontier.revision !== 0 || frontier.policy !== entry.policy || frontier.authorityFingerprint !== entry.authority) return
+  entry.generation = frontier.generation
+}
+
 export function copyIncomingPacket(bytes: Uint8Array, authorization: unknown): Packet {
   return { bytes: bytes.slice(), authorization: structuredClone(authorization) }
 }
 
 export async function rememberIncomingPacket(packet: Packet, doc: Automerge.Doc<WorkspaceDocumentV2>, storage: WorkspaceStorage,
-  credentialFingerprint: string, fullyVerifiedInput: boolean, profile?: LocalProfile) {
+  credentialFingerprint: string, profile?: LocalProfile) {
   let context: Context
   // Lack of binding disables reuse; it cannot turn a durable success into an error.
   try { context = await localWorkspaceAdmissionAuthority(doc, profile) } catch { return }
   if (context.credentialFingerprint !== credentialFingerprint) return
-  const frontier = fullyVerifiedInput ? await reusableDeltaAdmission(doc, storage, profile) : undefined
   const revision = await storage.readWorkspaceRevision(doc.id)
   if (!revision || (await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== context.fingerprint) return
   let weight: number
@@ -54,7 +61,7 @@ export async function rememberIncomingPacket(packet: Packet, doc: Automerge.Doc<
   if (weight > maximumBytes) return
   recent.delete(doc.id)
   recent.set(doc.id, { ...packet, root: { id: doc.id, ownerPersonId: doc.ownerPersonId }, policy: admissionPolicy(),
-    authority: context.fingerprint, revision, generation: frontier?.generation, weight })
+    authority: context.fingerprint, revision, weight })
   while (recent.size > 8 || [...recent.values()].reduce((sum, entry) => sum + entry.weight, 0) > maximumBytes)
     recent.delete(recent.keys().next().value!)
 }

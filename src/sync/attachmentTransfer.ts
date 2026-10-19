@@ -1,13 +1,14 @@
 import { BLOB_CHUNK_BYTES, validateBlobDescriptor, type BlobDescriptor } from "@meta-uber/mesh-blob"
 import { openAttachmentManifest, openAttachmentChunk,
-  type AttachmentLocator, type AttachmentScope, type AttachmentManifest } from "./attachmentCodec"
+  type AttachmentScope, type AttachmentManifest } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import { createBlobStreamVerifier, type BlobByteSource } from "@meta-uber/mesh-blob/stream"
 import type { AttachmentPreparationRepository } from "./attachmentPreparationData"
 import { prepareAttachmentStream } from "./attachmentPreparation"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
 import { uploadBlindBlob, downloadBlindBlob, verifyBlindBlobReceipt, type BlindBlobReceipt } from "./blindBlobClient"
-import { parseAttachmentLocators } from "./attachmentIndex"
+import { parseAttachmentLocators } from "../product-replica/attachmentIndex"
 
 export type AttachmentProgress = {
   version: 1

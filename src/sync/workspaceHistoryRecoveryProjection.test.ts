@@ -47,7 +47,9 @@ vi.mock("./peerStore", () => ({ peerStore: {
   putWorkspaceAuthority: ports.putAuthority, putWorkspaceCredential: ports.putCredential,
   transferWorkspaceCredential: ports.transferCredential,
 } }))
-vi.mock("../storage", () => ({ defaultStorage: { invalidateWorkspaceCache: ports.invalidate } }))
+vi.mock("../storage", () => ({ defaultStorage: { invalidateWorkspaceCache: ports.invalidate,
+  withWorkspaceAuthorityMutation: async <T>(_workspaceId: string, operation: (context: { write<R>(write: () => Promise<R>): Promise<R> }) => Promise<T>) =>
+    operation({ write: async write => write() }) } }))
 vi.mock("../statePersonalRoot", () => ({ registerWorkspaceInCurrentRoot: ports.currentRoot }))
 vi.mock("../storageCatalog", () => ({ readWorkspaceCatalogRecords: ports.catalog }))
 

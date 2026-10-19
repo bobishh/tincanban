@@ -11,8 +11,9 @@ import {
   decryptPurposeBoundObject,
   encryptPurposeBoundObject,
   type BlindObject,
-} from "./blindEnvelope"
+} from "@meta-uber/mesh-replication/rusty-replica"
 import { openWithReplicaContentKeys, parseReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
+import type { AttachmentLocator } from "../product-replica"
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder("utf-8", { fatal: true })
@@ -23,7 +24,6 @@ const objectIdPattern = /^[A-Za-z0-9_-]{43}$/
 const descriptorKeys = new Set(["kind", "version", "blobId", "name", "mediaType", "size", "hash", "ticket"])
 
 export type AttachmentScope = { workspaceId: string; scopeId: string } & ReplicaContentKeys
-export type AttachmentLocator = { version: 1; blobId: string; transferId: string; manifestId: string }
 export type AttachmentManifest = {
   kind: "rusty-attachment-manifest"
   version: 1

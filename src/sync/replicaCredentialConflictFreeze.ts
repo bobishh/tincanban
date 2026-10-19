@@ -1,5 +1,5 @@
 import { canonicalizeJson } from '../domain/identity'
-import { blindOrigin } from './blindOrigin'
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { buildReplicaCredentialConflictRecovery, type ReplicaCredentialConflictRecoveryProposal } from './replicaCredentialConflictRecovery'
 
 export type ReplicaCredentialConflictFreeze = {

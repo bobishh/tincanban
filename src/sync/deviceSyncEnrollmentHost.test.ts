@@ -168,7 +168,7 @@ describe("device enrollment host admission", () => {
   it("closes the listener when a replacement run cancels a pending admission", async () => {
     const invite = await enrollmentInvitation()
     let run = 1
-    const acceptor = { accept: vi.fn(() => new Promise<SyncConnection | undefined>(() => {})), close: vi.fn(async () => undefined) }
+    const acceptor = { accept: vi.fn(() => new Promise<Awaited<ReturnType<SyncNode["dial"]>> | undefined>(() => {})), close: vi.fn(async () => undefined) }
     const node = { close: vi.fn(async () => undefined) } as unknown as SyncNode
     const { context } = contextFor()
     context.currentRun = () => run

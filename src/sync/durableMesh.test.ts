@@ -9,6 +9,7 @@ import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defa
 import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
 import { isNativeKeeperRoute } from "./durableMeshSessions"
+import { defaultStorage } from "../storage"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
@@ -95,7 +96,7 @@ type MeshTestHooks = {
   publishWorkspace: (workspaceId: string) => Promise<void>
   broadcastWorkspaceGossip: (workspaceId: string) => Promise<void>
   installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>,
-    boolean?, string?, boolean?, string?, boolean?, "mesh-owner-workspace-offer"?, boolean?, string?]) => Promise<boolean>
+    boolean?, string?, boolean?, string?, boolean?, ("mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1")?, boolean?, string?]) => Promise<boolean>
   dialLoop: (signal: AbortSignal) => Promise<void>
   mergeOwnershipTransfers: (credential: TestCredential, transfers: WorkspaceOwnershipTransfer[]) => Promise<TestCredential>
   pruneInvalidStoredPeers: (credential: TestCredential, localDeviceId: string) => Promise<void>
@@ -243,7 +244,7 @@ describe("DurableMesh peer catalog gossip", () => {
     }
   })
 
-  it("still enforces stored revocations when the incoming list is empty", async () => {
+  it("Given unchanged stored revocations and an empty incoming list, then enforces eviction without rewriting unchanged peers", async () => {
     const credential = { workspaceId: "workspace-1", catalog: { revocations: [{ payload: { personId: "local" } }] } }
     const peer = { workspaceId: "workspace-1", personId: "remote", deviceId: "remote-device" }
     const state = meshRustRuntime().state
@@ -251,18 +252,22 @@ describe("DurableMesh peer catalog gossip", () => {
       credential, peers: [peer], evictDeviceIds: [peer.deviceId], evictPersonIds: [], localAccessRevoked: true,
     })
     const upsertPeer = vi.fn()
+    const putWorkspaceCredential = vi.fn()
     const evict = vi.fn(async () => {})
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "local" }, device: { deviceId: "local-device" } } as never),
-      store: { listPeers: async () => [peer], putWorkspaceCredential: vi.fn(), upsertPeer } as never })
+      store: { listPeers: async () => [peer], putWorkspaceCredential, upsertPeer } as never })
     const internal = meshHooks(mesh)
     internal.sessions.set("workspace-1:remote-device:slot", { workspaceId: "workspace-1", deviceId: peer.deviceId, evict })
 
     try {
+      const revision = await defaultStorage.readWorkspaceRevision(credential.workspaceId)
       await expect(internal.mergeRevocations(credential, [])).rejects.toThrow("Workspace access revoked")
       expect(plan).toHaveBeenCalledWith(expect.objectContaining({ credential,
         records: { kind: "revocations", records: [] } }))
-      expect(upsertPeer).toHaveBeenCalledWith(peer)
+      expect(upsertPeer).not.toHaveBeenCalled()
+      expect(putWorkspaceCredential).not.toHaveBeenCalled()
+      expect(await defaultStorage.readWorkspaceRevision(credential.workspaceId)).toBe(revision)
       expect(evict).toHaveBeenCalledWith("peer revoked")
     } finally {
       plan.mockRestore()
@@ -1225,7 +1230,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const credential = { version: 1 as const, workspaceId, ownerPersonId: profile.identity.personId,
       ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], transportSecret: "mesh-secret",
       epoch: 1, updatedAt: new Date().toISOString() }
-    const authority = { ...credential, scopeAuthoritySnapshot }
+    let authority = { ...credential, scopeAuthoritySnapshot }
     const sender = new DurableMesh({ transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
       getProfile: async () => profile,
       store: { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => authority,
@@ -1236,7 +1241,7 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(catalog.scopeAuthoritySnapshot).toEqual({ ...scopeAuthoritySnapshot, successionTransfers: [] })
 
     const order: string[] = []
-    const putWorkspaceAuthority = vi.fn(async () => { order.push("persist") })
+    const putWorkspaceAuthority = vi.fn(async (next: typeof authority) => { authority = next; order.push("persist") })
     const receiver = new DurableMesh({ transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
       getProfile: async () => profile,
       store: { getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => authority,
@@ -1252,13 +1257,25 @@ describe("DurableMesh peer catalog gossip", () => {
     const notify = vi.fn(async () => { order.push("notify") })
     internal.notify = notify
     try {
+      const revisionBeforeAuthorityChange = await defaultStorage.readWorkspaceRevision(workspaceId)
       await receiver.mergeWorkspace(workspaceId, catalog)
       expect(putWorkspaceAuthority).toHaveBeenCalledWith(expect.objectContaining({
         scopeAuthoritySnapshot: { ...scopeAuthoritySnapshot, successionTransfers: [] },
       }))
+      const revisionAfterAuthorityChange = await defaultStorage.readWorkspaceRevision(workspaceId)
+      expect(revisionAfterAuthorityChange).not.toBe(revisionBeforeAuthorityChange)
       expect(order).toEqual(["persist", "notify"])
       order.length = 0
       notify.mockClear()
+      putWorkspaceAuthority.mockClear()
+      await receiver.mergeWorkspace(workspaceId, catalog)
+      expect(putWorkspaceAuthority).not.toHaveBeenCalled()
+      expect(await defaultStorage.readWorkspaceRevision(workspaceId)).toBe(revisionAfterAuthorityChange)
+      expect(order).toEqual(["notify"])
+      notify.mockClear()
+      order.length = 0
+      putWorkspaceAuthority.mockClear()
+      authority = { ...authority, scopeAuthoritySnapshot }
       putWorkspaceAuthority.mockRejectedValueOnce(new Error("Ledger commit failed"))
       await expect(receiver.mergeWorkspace(workspaceId, catalog)).rejects.toThrow("Ledger commit failed")
       expect(internal.notify).not.toHaveBeenCalled()
@@ -1296,7 +1313,7 @@ describe("DurableMesh peer catalog gossip", () => {
     ]
     try {
       await mergeSuccessionState(store as never, credential as never,
-        async () => ({ identity: { personId: "successor" } } as never), undefined, [], [claim] as never[], false, async () => {})
+        async () => ({ identity: { personId: "successor" } } as never), undefined, [], [claim] as never[], false, async () => {}, undefined, operation => operation())
       const bridge = { fromControlEpoch: 1, claim, revocations: [historicalRevocation] } as never
       expect(transferWorkspaceCredential).toHaveBeenCalledWith("owner", nextCredential, expect.objectContaining({
         successionTransfers: [bridge],
@@ -1304,7 +1321,7 @@ describe("DurableMesh peer catalog gossip", () => {
       transferWorkspaceCredential.mockClear()
       await mergeSuccessionState(store as never, credential as never,
         async () => ({ identity: { personId: "successor" } } as never), undefined, [], [claim] as never[], false, async () => {},
-        { ...scopeAuthoritySnapshot, successionTransfers: [bridge] })
+        { ...scopeAuthoritySnapshot, successionTransfers: [bridge] }, operation => operation())
       expect(transferWorkspaceCredential).toHaveBeenCalledWith("owner", nextCredential, expect.objectContaining({
         successionTransfers: [bridge],
       }))

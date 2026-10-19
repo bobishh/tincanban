@@ -1,9 +1,9 @@
 import { peerStore } from "./peerStore"
-import { reverifyStoredHistoryBaseline } from "./historyBaselineReceiver"
+import { reverifyStoredHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { reverifyStoredPeerHistoryBaseline } from "./peerHistoryBaselineReceiver"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { getPrivateReplicaConfigurations } from "./privateReplicaRepository"
 
 /** Rebuild the active compact Owner-attested basis before any workspace read. */

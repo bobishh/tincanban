@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
+import type { WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
 import { canReuseAdmittedDocument } from "./localAdmissionReuse"
 
 function admission(overrides: Partial<WorkspaceAdmissionResult> = {}): WorkspaceAdmissionResult {

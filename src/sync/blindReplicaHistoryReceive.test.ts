@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 const ports = vi.hoisted(() => ({ validate: vi.fn(), authority: vi.fn(), previous: vi.fn(), merge: vi.fn(), download: vi.fn(), route: vi.fn() }))
 vi.mock("@meta-uber/mesh-transport/wasm", () => ({ WasmStateCore: { validateScopeAuthority: (...args: unknown[]) => ports.validate(...args) } }))
@@ -8,7 +8,7 @@ vi.mock("../storage", () => ({ defaultStorage: { getVerifiedReceivedHistoryBasel
 vi.mock("./receivedHistoryBaselineRepository", () => ({ createReceivedHistoryBaselineRepository: () => ({ readActive: async () => undefined,
   recordActiveWireRoute: (...args: unknown[]) => ports.route(...args) }) }))
 vi.mock("@meta-uber/mesh-replication/history-archive-remote", () => ({ createArchiveRemote: () => ({ download: ports.download }) }))
-vi.mock("./historyBaselineReceiver", () => ({ parseWireHistoryBaseline: (value: unknown) => value }))
+vi.mock("../product-replica/historyBaselineReceiver", () => ({ parseWireHistoryBaseline: (value: unknown) => value }))
 import { receiveBlindReplicaHistory, type ReceiveContext } from "./blindReplicaHistoryReceive"
 
 beforeEach(() => { vi.clearAllMocks(); ports.validate.mockReset().mockReturnValue({ scopeId: "workspace-board" }); ports.merge.mockResolvedValue(undefined) })

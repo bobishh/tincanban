@@ -1,9 +1,9 @@
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { canonicalizeJson, sha256Base64Url } from "@meta-uber/mesh-identity"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { WireHistoryBaseline } from "./historyBaselineReceiver"
+import type { WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 
 beforeAll(() => {
   vi.stubGlobal("indexedDB", new IDBFactory())
@@ -71,7 +71,7 @@ it("Given a covered candidate before storage CAS, when retaining it, then keep p
   const f = await fixture(`deferred-${crypto.randomUUID()}`)
   const repository = await import("./historyBaselinePublicationRepository")
   const original = (await f.readCurrentWorkspaceHistoryPublication(f.workspaceId, () => {}))!
-  const envelope = JSON.parse(new TextDecoder().decode((await import("./blindEnvelope")).decodeBlindBytes(original.wire.signedJson))) as { payload: Record<string, unknown> }
+  const envelope = JSON.parse(new TextDecoder().decode((await import("@meta-uber/mesh-replication/rusty-replica")).decodeBlindBytes(original.wire.signedJson))) as { payload: Record<string, unknown> }
   const previousBaselineId = envelope.payload.baselineId as string
   envelope.payload.previousBaselineId = previousBaselineId; envelope.payload.historyEpoch = 2; delete envelope.payload.baselineId
   envelope.payload.baselineId = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(envelope.payload)))

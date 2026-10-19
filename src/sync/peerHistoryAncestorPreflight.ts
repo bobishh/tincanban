@@ -1,6 +1,6 @@
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import { HistoryAncestorBudget } from "./historyAncestorBudget"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { verifyPeerReceivedHistoryBaseline } from "./peerHistoryBaselineReceiver"
 import { captureVerifiedHistoryAncestors, type VerifiedHistoryAncestors } from "./verifiedHistoryAncestors"
 import type { PeerHistoryObjectReader } from "./workspaceSetHistory"

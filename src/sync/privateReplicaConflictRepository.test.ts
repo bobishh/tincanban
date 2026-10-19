@@ -1,7 +1,7 @@
 import { expect, it } from "vitest"
 import { canonicalizeJson, sha256Base64Url, signEnvelope } from "../domain/identity"
 import { compareAndSwapLocal, deleteLocal, readLocal, writeLocal } from "../localDb"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { changeReplicaPreference, emptyPrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
 import { capturePrivateReplicaConflict, getPrivateReplicaProgress, getReplicaConfigurations, planPrivateReplicaConflictActivation,
   privateReplicaStateStorageKey, persistPrivateReplicaState, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"

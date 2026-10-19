@@ -5,7 +5,8 @@ import type { SyncNode } from "./transport"
 const scenario = vi.hoisted(() => ({ beforeResume: undefined as (() => Promise<void>) | undefined }))
 
 vi.mock("./workspaceSet", () => ({ workspaceSet: () => ({}), liveWorkspaceSetSync: () => ({ publish: async () => {}, close: async () => {} }) }))
-vi.mock("../iroh", () => ({ WasmWorkspaceJoinHandshake: class {}, WasmWorkspaceJoinHandoff: class {} }))
+vi.mock("../iroh", async importOriginal => ({ ...await importOriginal<typeof import("../iroh")>(),
+  WasmWorkspaceJoinHandshake: class {}, WasmWorkspaceJoinHandoff: class {} }))
 vi.mock("@meta-uber/mesh-runtime", () => ({
   BrowserWorkspaceJoinGuest: class { async handle() {} },
   BrowserWorkspaceJoinHandoffGuest: class {
@@ -20,7 +21,7 @@ it.each(["request", "resume", "replacement"])("Given guest handoff in %s, When p
   const previousWindow = globalThis.window, previousNavigator = globalThis.navigator
   vi.stubGlobal("window", new EventTarget())
   vi.stubGlobal("navigator", { onLine: true })
-  const stream = { send: async () => {}, read: async () => new Uint8Array(), closeSend: async () => {} }
+  const stream = { send: async () => {}, read: async () => new Uint8Array(), readPairingFrame: async () => new Uint8Array(), closeSend: async () => {} }
   const connection = { openStream: async () => stream, acceptStream: async () => stream, close: async () => {} }
   const close = vi.fn(async () => {})
   const node: SyncNode = { endpointId: "guest-node", close, dial: async () => connection,

@@ -2,15 +2,16 @@ import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
 import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import { withWorkspaceMutation } from "../workspaceMutation"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 const f = vi.hoisted(() => ({ publication: undefined as unknown, verify: vi.fn(), stage: vi.fn(), activate: vi.fn(), commit: vi.fn(), active: undefined as unknown }))
 vi.mock("./historyBaselinePublicationRepository", () => ({ readPreparedHistoryPublication: async () => f.publication,
   readPublishedHistoryBaseline: async () => undefined, commitPreparedHistoryPublication: (...args: unknown[]) => f.commit(...args) }))
 vi.mock("./receivedHistoryBaselineRepository", () => ({ createReceivedHistoryBaselineRepository: () => ({ readActive: async () => f.active,
   readStaged: async () => undefined, stage: (...args: unknown[]) => f.stage(...args), activate: (...args: unknown[]) => f.activate(...args) }) }))
-vi.mock("./historyBaselineReceiver", () => ({ verifyReceivedWireHistoryBaseline: (...args: unknown[]) => f.verify(...args) }))
-vi.mock("../storageJournal", () => ({ readWorkspaceBasisSnapshot: async () => null }))
+vi.mock("../product-replica/historyBaselineReceiver", () => ({ verifyReceivedWireHistoryBaseline: (...args: unknown[]) => f.verify(...args) }))
+vi.mock("../storageJournal", async importOriginal => ({ ...await importOriginal<typeof import("../storageJournal")>(),
+  readWorkspaceBasisSnapshot: async () => null }))
 vi.mock("./historyBaselineStartup", () => ({ reverifyActiveHistoryForWorkspace: async () => null }))
 vi.mock("@meta-uber/mesh-replication/history-archive-remote", () => ({ createArchiveRemote: () => ({ download: vi.fn() }) }))
 import { resumePublishedHistoryBaseline } from "./historyBaselinePublicationResume"

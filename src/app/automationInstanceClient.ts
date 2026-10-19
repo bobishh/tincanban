@@ -10,7 +10,7 @@ import { verifyAutomationInstanceIdentity,
 import { createAutomationInstanceRequest, type AutomationInstanceAction } from "../domain/automationInstanceProtocol"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import type { LocalProfile } from "../domain/identity"
-import { verifyRustyWriterPolicyReceipt } from "../sync/rustyScopePolicy"
+import { verifyRustyWriterPolicyReceipt } from "../product-replica/rustyScopePolicy"
 
 const maxResponseBytes = 384 * 1024
 const actionSchema = z.enum(["discover", "identity", "activate", "refresh-access", "prepare-storage-rotation", "rotate-storage", "prepare-history-baseline", "activate-history-baseline"])

@@ -46,14 +46,25 @@ async function createWorkspaceAsync(
     ? await import("./domain/workspaceCreation").then(({ createWorkspaceDocFromDraft }) => createWorkspaceDocFromDraft(id, cleanTitle, profile.identity.personId, presetKey, creationDraft))
     : createWorkspaceDoc(id, cleanTitle, profile.identity.personId, presetKey)
   const doc = Automerge.from<WorkspaceDocumentV2>(initialDocument)
-  await recordGenesisAuthority(doc, profile);
-  await storage.saveSnapshot(id, doc, Automerge.save(doc));
-  await addWorkspaceToPersonalRoot(id, "genesis", storage);
-  await saveActiveWorkspaceId(id);
-  updateReactiveState(doc);
-  await refreshAvailableWorkspaces(storage);
-  stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: id });
-  return doc;
+  let transferred = false
+  try {
+    const authorizations = await recordGenesisAuthority(doc, profile);
+    await storage.withWorkspaceTransaction(id, async transaction => {
+      const existing = await transaction.loadWorkspaceDoc()
+      if (existing) {
+        Automerge.free(existing.doc)
+        throw new Error("Workspace already exists")
+      }
+      await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
+    });
+    await addWorkspaceToPersonalRoot(id, "genesis", storage);
+    await saveActiveWorkspaceId(id);
+    transferred = true
+    updateReactiveState(doc);
+    await refreshAvailableWorkspaces(storage);
+    stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: id });
+    return doc;
+  } finally { if (!transferred) Automerge.free(doc) }
 }
 
 async function importWorkspaceAsNew(
@@ -69,14 +80,25 @@ async function importWorkspaceAsNew(
   );
   if (!copied.ok) throw new Error(copied.error.message);
   const doc = copied.value;
-  await recordGenesisAuthority(doc, profile);
-  await storage.saveSnapshot(doc.id, doc, Automerge.save(doc));
-  await addWorkspaceToPersonalRoot(doc.id, "genesis", storage);
-  await saveActiveWorkspaceId(doc.id);
-  updateReactiveState(doc);
-  await refreshAvailableWorkspaces(storage);
-  stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: doc.id });
-  return doc;
+  let transferred = false
+  try {
+    const authorizations = await recordGenesisAuthority(doc, profile);
+    await storage.withWorkspaceTransaction(doc.id, async transaction => {
+      const existing = await transaction.loadWorkspaceDoc()
+      if (existing) {
+        Automerge.free(existing.doc)
+        throw new Error("Workspace already exists")
+      }
+      await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
+    });
+    await addWorkspaceToPersonalRoot(doc.id, "genesis", storage);
+    await saveActiveWorkspaceId(doc.id);
+    transferred = true
+    updateReactiveState(doc);
+    await refreshAvailableWorkspaces(storage);
+    stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: doc.id });
+    return doc;
+  } finally { if (!transferred) Automerge.free(doc) }
 }
 
 export async function switchWorkspace(
@@ -86,9 +108,13 @@ export async function switchWorkspace(
   const loaded = await storage.loadWorkspaceDoc(workspaceId);
   if (!loaded) return;
   const doc = loaded.doc;
-  if (doc.archivedAt) return;
-  await saveActiveWorkspaceId(workspaceId);
-  updateReactiveState(doc);
+  let transferred = false
+  try {
+    if (doc.archivedAt) return;
+    await saveActiveWorkspaceId(workspaceId);
+    transferred = true
+    updateReactiveState(doc);
+  } finally { if (!transferred) Automerge.free(doc) }
 }
 
 async function getWorkspaceRole(
@@ -96,12 +122,12 @@ async function getWorkspaceRole(
   storage = defaultStorage,
 ): Promise<WorkspaceRole> {
   const profile = await requireProfile();
-  const doc =
-    stateRuntime.activeDoc?.id === workspaceId
-      ? stateRuntime.activeDoc
-      : (await storage.loadWorkspaceDoc(workspaceId))?.doc;
+  const active = stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null
+  const loaded = active ? null : await storage.loadWorkspaceDoc(workspaceId)
+  const doc = active ?? loaded?.doc;
   if (!doc) throw new Error("Workspace not found");
-  return workspaceRole(doc, profile);
+  try { return await workspaceRole(doc, profile) }
+  finally { if (loaded) Automerge.free(loaded.doc) }
 }
 
 async function renameWorkspaceAsync(

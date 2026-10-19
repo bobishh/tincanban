@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext, runInDurableObject } from "cloudflare:test";
 import worker, { type WorkerEnv } from "../src/index";
@@ -398,6 +398,195 @@ describe("automation Worker", () => {
     }
     const eventId = await digestIdForTest("test-integration:email:<gmail-forward@example.test>");
     expect(await testEnv.AUTOMATION.getByName("test-integration").getEvent(eventId)).toMatchObject({ source: "email", status: "pending" });
+  });
+
+  it("Given a lost Reflux email-ingress response, When the same MIME is retried, Then retain the event identity and exact source evidence without using the Durable Object", async () => {
+    const raw = [
+      "From: recruiter@example.test",
+      "To: owner@example.test",
+      "Subject: Interview invitation",
+      "Message-ID: <reflux-retry@example.test>",
+      "Content-Type: text/plain; charset=utf-8",
+      "",
+      "A role update for the integration test.",
+    ].join("\r\n");
+    const mime = new TextEncoder().encode(raw);
+    const requests: Array<{ url: string; authorization: string | null; origin: string | null; body: Record<string, unknown> }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      requests.push({ url: request.url, authorization: request.headers.get("authorization"),
+        origin: request.headers.get("x-tincanban-public-origin"), body: await request.json() as Record<string, unknown> });
+      if (requests.length === 1) throw new Error("Reflux accepted the event but response was lost");
+      return Response.json({ eventId: requests[1]!.body.eventId, durable: true, status: "pending", duplicate: true }, { status: 202 });
+    });
+    const getByName = vi.fn(() => { throw new Error("Durable Object fallback must not run"); });
+    const refluxEnv = { ...testEnv, REFLUX_ORIGIN: "https://reflux.example.test",
+      REFLUX_SERVICE_TOKEN: "test-only-reflux-service-token-with-enough-entropy", EVENT_STORAGE_SECRET: undefined,
+      AUTOMATION: { getByName } } as unknown as WorkerEnv;
+    const makeMessage = (rejections: string[]) => ({
+      from: "owner@example.test", to: "intake@example.test", rawSize: mime.byteLength,
+      raw: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(mime); controller.close(); } }),
+      headers: new Headers(), setReject(reason: string) { rejections.push(reason); },
+      async forward() { throw new Error("not expected"); }, async reply() { throw new Error("not expected"); },
+    } as ForwardableEmailMessage);
+
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const firstRejections: string[] = [];
+      const firstContext = createExecutionContext();
+      const firstWaitUntil = vi.spyOn(firstContext, "waitUntil");
+      await expect(worker.email!(makeMessage(firstRejections), refluxEnv, firstContext)).rejects.toThrow();
+      const retryRejections: string[] = [];
+      const retryContext = createExecutionContext();
+      const retryWaitUntil = vi.spyOn(retryContext, "waitUntil");
+      await worker.email!(makeMessage(retryRejections), refluxEnv, retryContext);
+
+      expect(firstRejections).toEqual([]);
+      expect(retryRejections).toEqual([]);
+      expect(firstWaitUntil).toHaveBeenCalledTimes(1);
+      expect(retryWaitUntil).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(requests.map(request => request.url)).toEqual([
+        "https://reflux.example.test/internal/tincanban/v2/integrations/test-integration/email-ingress",
+        "https://reflux.example.test/internal/tincanban/v2/integrations/test-integration/email-ingress",
+      ]);
+      expect(requests.map(request => request.authorization)).toEqual([
+        "Bearer test-only-reflux-service-token-with-enough-entropy",
+        "Bearer test-only-reflux-service-token-with-enough-entropy",
+      ]);
+      expect(requests.map(request => request.origin)).toEqual([testEnv.PUBLIC_ORIGIN, testEnv.PUBLIC_ORIGIN]);
+      const first = requests[0]!.body;
+      const retry = requests[1]!.body;
+      expect(retry).toMatchObject({ eventId: first.eventId, sourceId: first.sourceId, bodyHash: first.bodyHash });
+      expect(first).toMatchObject({
+        eventId: await digestIdForTest("test-integration:email:<reflux-retry@example.test>"),
+        sourceId: "<reflux-retry@example.test>",
+        bodyHash: await digestIdForTest(raw),
+      });
+      const payload = first.payload as { source: string; message: { subject: string }; rawMime: string };
+      const retryPayload = retry.payload as { source: string; message: { subject: string }; rawMime: string };
+      expect(payload).toMatchObject({ source: "email", message: { subject: "Interview invitation" } });
+      expect(payload.rawMime).toBe(btoa(String.fromCharCode(...mime)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""));
+      expect(retryPayload.rawMime).toBe(payload.rawMime);
+      expect(getByName).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("Given a private route for a Reflux-owned participant, When its UUID mail recipient arrives without local integration storage, Then submit directly to Reflux", async () => {
+    const integrationId = crypto.randomUUID();
+    const address = `jobs-${"b".repeat(32)}@example.test`;
+    const getByName = vi.fn(() => { throw new Error("Reflux email ingress must not consult the Durable Object"); });
+    const refluxEnv = { ...testEnv, INTEGRATIONS_JSON: "[]", EVENT_STORAGE_SECRET: undefined,
+      REFLUX_ORIGIN: "https://reflux.example.test", REFLUX_SERVICE_TOKEN: "test-only-reflux-service-token-with-enough-entropy",
+      EMAIL_ROUTES_JSON: JSON.stringify([{ id: integrationId, address, mailbox: "owner@example.test" }]),
+      AUTOMATION: { getByName } } as unknown as WorkerEnv;
+    const urls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      urls.push(request.url);
+      const body = await request.json() as { eventId: string };
+      return Response.json({ eventId: body.eventId, status: "pending", duplicate: false, durable: true }, { status: 202 });
+    });
+    const mime = new TextEncoder().encode("From: recruiter@example.test\r\nMessage-ID: <private-route@example.test>\r\n\r\nTest message");
+    const deliver = (to: string, rejections: string[]) => worker.email!({ from: "recruiter@example.test", to, rawSize: mime.byteLength,
+      raw: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(mime); controller.close(); } }),
+      headers: new Headers(), setReject(reason: string) { rejections.push(reason); },
+      async forward() { throw new Error("not expected"); }, async reply() { throw new Error("not expected"); },
+    } as ForwardableEmailMessage, refluxEnv, createExecutionContext());
+
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const accepted: string[] = [];
+      await deliver(address, accepted);
+      expect(accepted).toEqual([]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(urls).toEqual([`https://reflux.example.test/internal/tincanban/v2/integrations/${integrationId}/email-ingress`]);
+      const unknownRoute: string[] = [];
+      await deliver(`jobs-${"c".repeat(32)}@example.test`, unknownRoute);
+      expect(unknownRoute).toEqual(["Unknown automation forwarding address"]);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(getByName).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("Given invalid Reflux email ingress, When recipient, sender or MIME limits fail, Then reject before contacting Reflux or the Durable Object", async () => {
+    const getByName = vi.fn(() => { throw new Error("Durable Object fallback must not run"); });
+    const refluxEnv = { ...testEnv, REFLUX_ORIGIN: "https://reflux.example.test",
+      REFLUX_SERVICE_TOKEN: "test-only-reflux-service-token-with-enough-entropy",
+      EMAIL_ROUTES_JSON: JSON.stringify([{ id: "test-integration", address: `jobs-${"a".repeat(32)}@example.test`, mailbox: "owner@example.test" }]),
+      AUTOMATION: { getByName } } as unknown as WorkerEnv;
+    const fetchMock = vi.fn(async () => Response.json({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const mime = new TextEncoder().encode("From: recruiter@example.test\r\n\r\nTest message");
+    const attempt = async (to: string, from: string, rawSize: number) => {
+      const rejections: string[] = [];
+      await worker.email!({ from, to, rawSize,
+        raw: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(mime); controller.close(); } }),
+        headers: new Headers(), setReject(reason: string) { rejections.push(reason); },
+        async forward() { throw new Error("not expected"); }, async reply() { throw new Error("not expected"); },
+      } as ForwardableEmailMessage, refluxEnv, createExecutionContext());
+      return rejections;
+    };
+    try {
+      expect(await attempt("different@example.test", "recruiter@example.test", mime.byteLength)).toEqual(["Unknown automation forwarding address"]);
+      expect(await attempt("intake@example.test", "unauthorized@example.test", mime.byteLength)).toEqual(["Sender is not approved for this automation integration"]);
+      expect(await attempt("intake@example.test", "owner@example.test", 1_048_577)).toEqual(["Email exceeds the automation message size limit"]);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getByName).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("Given Reflux reports a conflict, When email ingress runs, Then reject only the exact content-conflict code", async () => {
+    const getByName = vi.fn(() => { throw new Error("Durable Object fallback must not run"); });
+    const refluxEnv = { ...testEnv, REFLUX_ORIGIN: "https://reflux.example.test",
+      REFLUX_SERVICE_TOKEN: "test-only-reflux-service-token-with-enough-entropy", EVENT_STORAGE_SECRET: undefined,
+      AUTOMATION: { getByName } } as unknown as WorkerEnv;
+    let conflictResponses = 0;
+    const fetchMock = vi.fn(async () => {
+      conflictResponses += 1;
+      return new Response(JSON.stringify({ code: conflictResponses === 1 ? "email-content-conflict" : "workflow-paused" }), { status: 409 });
+    });
+    const mime = new TextEncoder().encode("From: recruiter@example.test\r\nMessage-ID: <conflict@example.test>\r\n\r\nTest message");
+    const rejections: string[] = [];
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const deliver = () => worker.email!({ from: "owner@example.test", to: "intake@example.test", rawSize: mime.byteLength,
+          raw: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(mime); controller.close(); } }),
+          headers: new Headers(), setReject(reason: string) { rejections.push(reason); },
+          async forward() { throw new Error("not expected"); }, async reply() { throw new Error("not expected"); },
+        } as ForwardableEmailMessage, refluxEnv, createExecutionContext());
+      await deliver();
+      expect(rejections).toEqual(["Email message ID conflicts with a stored intake event"]);
+      await expect(deliver()).rejects.toThrow("unexpected conflict");
+      expect(rejections).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(getByName).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it("Given the private Reflux email-ingress route, When called through the public Worker fetch API, Then keep it private", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ eventId: "unexpected", durable: true, status: "pending", duplicate: false }));
+    const getByName = vi.fn(() => { throw new Error("Durable Object fallback must not run"); });
+    const refluxEnv = { ...testEnv, REFLUX_ORIGIN: "https://reflux.example.test",
+      REFLUX_SERVICE_TOKEN: "test-only-reflux-service-token-with-enough-entropy", OTEL_EXPORTER_OTLP_ENDPOINT: undefined,
+      TELEMETRY_TOKEN: undefined, AUTOMATION: { getByName } } as unknown as WorkerEnv;
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      for (const path of [
+        "/v2/integrations/test-integration/email-ingress",
+        "/v2/integrations/test-integration/email-ingress/",
+        "/v2/integrations/test-integration%2Femail-ingress",
+        "/v2/integrations/test-integration/email-ingress%2Fretry",
+      ]) {
+        const response = await worker.fetch(new Request(`https://automation.example.test${path}`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+        }), refluxEnv, createExecutionContext());
+        expect(response.status).toBe(404);
+        expect(await response.json()).toEqual({ error: "Not found" });
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(getByName).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("Given a clear vacancy decision, When Clef classifies intake, Then it records a review instead of claiming a board write", async () => {

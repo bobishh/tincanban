@@ -26,6 +26,7 @@ import type {
 } from "./model"
 import { readLocal, writeLocal, deleteLocal } from "../localDb"
 import { normalizeDisplayName, randomDisplayName, validateDisplayName } from "../chat/names"
+import { requestWebLock } from "../webLock"
 
 export { canonicalizeJson, fromBase64Url, publicKeyId, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope }
 export type { SignedEnvelope }
@@ -70,7 +71,7 @@ export async function bootstrapIdentity(displayName?: string): Promise<LocalProf
   if (identityInitialized) return bootstrap()
   identityBootstrap ??= (async () => {
     const profile = typeof navigator !== "undefined" && navigator.locks
-      ? await navigator.locks.request("tincanban-identity-bootstrap", bootstrap)
+      ? await requestWebLock("tincanban-identity-bootstrap", bootstrap)
       : await bootstrap()
     identityInitialized = true
     return profile
@@ -92,7 +93,7 @@ export async function refreshIdentityPresentation(expectedRaw?: string): Promise
 export async function renewDeviceIdentity(): Promise<LocalProfile> {
   const renew = () => identityStore.renewDevice()
   return typeof navigator !== "undefined" && navigator.locks
-    ? await navigator.locks.request("tincanban-identity-bootstrap", renew) : await renew()
+    ? await requestWebLock("tincanban-identity-bootstrap", renew) : await renew()
 }
 
 /** Creates an encrypted backup of the existing identity root; it never rotates identity. */

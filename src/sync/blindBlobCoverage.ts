@@ -1,7 +1,9 @@
-import { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes } from "./blindEnvelope"
-import { blindHash, canonicalBlindJson, fetchBlind, readBlindJson, blindProducerHeaders,
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { blindHash, canonicalBlindJson, blindProducerHeaders,
   type BlindAccess } from "./blindClient"
+
+import { fetchBlind, readBlindJson } from "./rustyHttp"
 
 const MAX_RESPONSE_BYTES = 32 * 1024
 const encoder = new TextEncoder()

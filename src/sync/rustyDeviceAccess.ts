@@ -1,6 +1,6 @@
 import type { useTincanban } from "../state"
 import { discoverBlindKeeper } from "./blindClient"
-import { blindOrigin } from "./blindOrigin"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { getReplicaConfigurations } from "./privateReplicaRepository"
 import { ensureRustyPersonPolicy, resolveRustyManagementAuthority } from "./rustyManagementClient"
 import type { BlindReplicaConfig } from "./blindReplication"

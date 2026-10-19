@@ -3,7 +3,7 @@ import { canonicalizeJson, publicKeyId, verifyEnvelope, type LocalProfile } from
 import { automationTypes, parseAutomationDefinition, type AutomationDefinition } from "../domain/automationContract"
 import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2 } from "../domain/model"
 import { createAutomationWorkspaceGrant, validateCertificateChain, verifyWorkspaceGrant } from "../domain/proofs"
-import { encodeBlindBytes } from "../sync/blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { automationEntityId, automationLifecycle, isAutomationOrigin } from "../domain/automationLifecycle"
 import { parseAutomationApproval } from "../domain/automationApproval"
 import { verifyAutomationDefinition } from "../domain/automationDefinitionProof"
@@ -166,7 +166,7 @@ async function existingApprovalIssuer(profile: LocalProfile, authorization: Auto
     return { personId: profile.identity.personId, publicKey: authorization.authority.currentOwner.publicKey ?? profile.identity.publicKey,
       certificates: authorization.authority.currentOwner.certificates ?? [profile.certificate] }
   }
-  const { admitHistoricalAutomationAuthority } = await import("../sync/historicalAutomationAuthority")
+  const { admitHistoricalAutomationAuthority } = await import("../product-replica/historicalAutomationAuthority")
   const history = admitHistoricalAutomationAuthority({ workspaceId, epoch, bytes, authorization })
   history.requireCurrentOwner({ personId: profile.identity.personId, publicKey: profile.identity.publicKey,
     certificates: [profile.certificate, ...history.authority.currentOwner.certificates] }, profile.device.deviceId)

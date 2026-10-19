@@ -9,8 +9,8 @@ import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from "./replicaWr
 import { readScopeEnrollmentIntent, type ScopeEnrollmentBinding, type ScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
 import { verifySavedScopeEnrollmentConfirmation } from "./rustyEnrollment"
 import { verifyRustyManagementCapability, type RustyManagementCapability } from "./rustyManagementCapability"
-import type { RustyScopePolicyReceipt } from "./rustyScopePolicy"
-import { blindOrigin } from "./blindOrigin"
+import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { getPrivateReplicaConfigurations, getPrivateReplicaProgress, planReplicaCredentialActivation, privateReplicaBinding,
   privateReplicaStateStorageKey } from "./privateReplicaRepository"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"

@@ -1,7 +1,7 @@
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
-import { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 export type ScopeEnrollmentBinding = {
   origin: string; scopeId: string; servicePublicKey: string; personId: string; deviceId: string;

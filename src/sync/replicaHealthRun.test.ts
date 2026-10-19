@@ -1,5 +1,6 @@
 import { ref } from "vue"
 import { expect, test } from "vitest"
+import { RustyResponseError } from "@meta-uber/mesh-replication/rusty-replica"
 import { recordReplicaHealth } from "./replicaHealthRun"
 import { replicaKey, replicaStatus, type ReplicaHealth } from "./replicationHealth"
 import type { BlindReplicaConfig } from "./blindReplication"
@@ -23,6 +24,19 @@ test("Given an actual transport failure, when sync stops, then show a safe serve
   const statuses = ref<Record<string, ReplicaHealth>>({})
   const issues = ref<Record<string, string>>({})
   await recordReplicaHealth(config, statuses, async () => { throw rustyRequestFailure(new Error("raw-private-detail")) }, () => true, issues)
+  expect(statuses.value[replicaKey(config)]).toMatchObject({ phase: "error", error: "Rusty connection unavailable. Retry sync." })
+  expect(issues.value).toEqual({})
+})
+
+test("Given an SDK response parsing failure, when sync reports it, then classify only the HTTP failure as Rusty-originated", async () => {
+  const { isRustyRequestFailure } = await import("./replicationErrors")
+  const responseFailure = new RustyResponseError("Rusty returned HTTP 503", { status: 503 })
+  expect(isRustyRequestFailure(responseFailure)).toBe(true)
+  expect(isRustyRequestFailure(new Error("Rusty receipt signature invalid"))).toBe(false)
+
+  const statuses = ref<Record<string, ReplicaHealth>>({})
+  const issues = ref<Record<string, string>>({})
+  await recordReplicaHealth(config, statuses, async () => { throw responseFailure }, () => true, issues)
   expect(statuses.value[replicaKey(config)]).toMatchObject({ phase: "error", error: "Rusty connection unavailable. Retry sync." })
   expect(issues.value).toEqual({})
 })

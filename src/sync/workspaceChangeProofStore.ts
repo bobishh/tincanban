@@ -1,9 +1,10 @@
 import { openWorkspaceJournal, readLocalJournalReference, readWorkspaceDeltaAuthorizations, writeLocalJournal, readLocalJournal,
   withLocalJournalLock, advanceWorkspaceRevision, requestResult, transactionDone } from "../storageJournal"
 import { canonicalizeJson } from "../domain/identityCrypto"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica/workspaceAuthorizationRecords"
 import type { WorkspaceDeltaFrontier } from "../workspaceDeltaJournal"
-export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
+import { withWorkspaceMutation } from "../workspaceMutation"
+export { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "../product-replica/workspaceAuthorizationRecords"
 
 type WorkspaceAuthorizationRow = {
   id: string
@@ -30,6 +31,10 @@ export async function basisRecords(workspaceId: string): Promise<WorkspaceChange
 }
 
 export async function putRecords(workspaceId: string, incoming: WorkspaceChangeAuthorization[]): Promise<boolean> {
+  return withWorkspaceMutation(workspaceId, () => putRecordsLocked(workspaceId, incoming))
+}
+
+async function putRecordsLocked(workspaceId: string, incoming: WorkspaceChangeAuthorization[]): Promise<boolean> {
   const previous = await records(workspaceId)
   if (typeof indexedDB === "undefined") return withLocalJournalLock(workspaceId, async () => {
     const journal = readLocalJournal(workspaceId)
@@ -38,6 +43,8 @@ export async function putRecords(workspaceId: string, incoming: WorkspaceChangeA
     const changed = canonicalizeJson(existing) !== canonicalizeJson(next)
     if (!changed) return false
     journal.authorizations = next
+    journal.revision = crypto.randomUUID()
+    if (journal.frontier) journal.frontier = { ...journal.frontier, invalidated: true }
     writeLocalJournal(workspaceId, journal)
     return changed
   })

@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest"
 import * as local from "../localDb"
 import type { LocalStatePlan } from "../localDb"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { changeReplicaPreference, emptyPrivateReplicaState, mergePrivateReplicaState, portableReplicaState } from "./privateReplicaPreferences"
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
 import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations, getReplicaPreferenceConflicts, persistPrivateReplicaProgress, persistPrivateReplicaState,

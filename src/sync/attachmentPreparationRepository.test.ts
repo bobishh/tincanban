@@ -4,7 +4,7 @@ import { afterEach, expect, test, vi } from "vitest"
 import { blindHash, blindObjectId } from "./blindClient"
 import { AttachmentPreparationCodec } from "./attachmentCodec"
 import type { AttachmentPreparation } from "./attachmentPreparationData"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { AttachmentProgress } from "./attachmentTransfer"
 
 afterEach(() => vi.unstubAllGlobals())

@@ -67,11 +67,19 @@ export class StorageDeltaRepository {
       candidate?.id === workspaceId && Automerge.getHeads(candidate).sort().join() === frontier.heads.join())
       return { doc: Automerge.clone(candidate), heads: [...frontier.heads] }
     const checked = await this.read(workspaceId)
-    return checked ? { doc: Automerge.clone(this.entries.get(workspaceId)!.document), heads: [...checked.frontier.heads] } : undefined
+    if (!checked) return undefined
+    const current = this.entries.get(workspaceId)
+    if (current && canonicalizeJson(current.checked.frontier) === canonicalizeJson(checked.frontier)) {
+      return { doc: Automerge.clone(current.document), heads: [...checked.frontier.heads] }
+    }
+    // Cache replacement can race this await. Materialize the exact checked
+    // result instead of borrowing a later cache entry with unrelated heads.
+    return { doc: createDeltaWorkspaceDocument(checked), heads: [...checked.frontier.heads] }
   }
 
-  async append(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>) {
-    const next = await (await this.journal()).append(frontier, delta)
+  async append(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>,
+    expectedRevision: string | null, ensureCurrent: () => void) {
+    const next = await (await this.journal()).append(frontier, delta, expectedRevision, ensureCurrent)
     const entry = this.entries.get(frontier.workspaceId)
     if (entry && next.revision === delta.sequence && next.chainHash === delta.chainHash &&
       canonicalizeJson(entry.checked.frontier) === canonicalizeJson(frontier)) {

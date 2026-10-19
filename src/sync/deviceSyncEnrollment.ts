@@ -17,6 +17,7 @@ import { fromBase64Url, type LocalProfile } from "../domain/identity"
 import { createPeerHistoryObjectReader, workspaceSet, type PeerHistoryObjectReader } from "./workspaceSet"
 import { createEnrollmentHistoryReader } from "./enrollmentHistoryReader"
 import { createEnrollmentHistoryAuthorizationGuard } from "./enrollmentHistoryAuthorization"
+import { readPeerHistoryRequestOrPairing } from "./peerHistoryTransport"
 import { awaitEnrollmentAcknowledgement, enrollmentRejection, sendEnrollmentRejection } from "./enrollmentAcknowledgement"
 export { sendEnrollmentRejection } from "./enrollmentAcknowledgement"
 import { peerStore } from "./peerStore"
@@ -360,7 +361,7 @@ async function approveEnrollment(
   let acknowledgement: Uint8Array | undefined
   for (let rounds = 0; rounds < 4096; rounds++) {
     const incoming = await connection.acceptStream()
-    const frame = await incoming.read()
+    const frame = await readPeerHistoryRequestOrPairing(incoming)
     await historyGuard()
     if (await replica.servePeerHistoryBaselineRead(frame, incoming, guest.deviceId, historyGuard)) continue
     if (await replica.servePeerHistoryDocumentRead(frame, incoming, guest.deviceId, historyGuard)) continue

@@ -66,3 +66,21 @@ test("Given a cached website form, when it POSTs a challenge, then use the exist
     expect(await response.json()).toEqual({ challenge: "original-challenge" });
   } finally { vi.unstubAllGlobals(); }
 });
+
+test("Given the private email-ingress path, when the generic Reflux proxy receives path variants, then never expose the private endpoint", async () => {
+  const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    for (const path of [
+      "/v2/integrations/integration-1/email-ingress",
+      "/v2/integrations/integration-1/email-ingress/",
+      "/v2/integrations/integration-1%2Femail-ingress",
+      "/v2/integrations/integration-1/email-ingress%2Fretry",
+    ]) {
+      const response = await forwardRefluxRequest(new Request(`https://automation.example${path}`, { method: "POST", body: "{}" }), env, new Headers());
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({ error: "Not found" });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { BLOB_CHUNK_BYTES, createBlobDescriptor } from "@meta-uber/mesh-blob"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { sealAttachment, type AttachmentScope } from "./attachmentCodec"
 import { confirmRustyAttachmentCoverage } from "./attachmentCoverage"
 

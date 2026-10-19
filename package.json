@@ -19,6 +19,7 @@
     "quality:layout": "node scripts/check-layout.mjs",
     "quality:dead": "knip",
     "quality:deps": "depcruise src --config .dependency-cruiser.cjs --output-type err-long",
+    "quality:replica": "depcruise src/product-replica workers/automation/src --config .replica-dependency-cruiser.cjs --output-type err-long",
     "quality:dup": "jscpd src --config .jscpd.json",
     "quality:patterns": "ast-grep test --config sgconfig.yml --test-dir quality-rule-tests --skip-snapshot-tests && ast-grep scan src --config sgconfig.yml --report-style short",
     "quality:size": "node --test scripts/build-budget-files.test.mjs && npm run build && size-limit",

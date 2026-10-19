@@ -21,8 +21,16 @@ function streamPair() {
       const value = await response
       if (maximum !== undefined && value.length > maximum) throw new Error("stream response too large")
       return value
+    }, readRaw: async (maximum?: number) => {
+      const value = await response
+      if (maximum !== undefined && value.length > maximum) throw new Error("stream response too large")
+      return value
     } },
     server: { read: async (maximum?: number) => {
+      const value = await request
+      if (maximum !== undefined && value.length > maximum) throw new Error("stream request too large")
+      return value
+    }, readRaw: async (maximum?: number) => {
       const value = await request
       if (maximum !== undefined && value.length > maximum) throw new Error("stream request too large")
       return value
@@ -131,13 +139,15 @@ describe("direct peer history object transport", () => {
 
   it("resets a stalled history stream when its bounded read deadline expires", async () => {
     const reset = vi.fn(async () => {}), stream = { send: vi.fn(async () => {}), closeSend: vi.fn(async () => {}),
-      read: vi.fn(() => new Promise<Uint8Array>(() => {})), reset }
+      read: vi.fn(), readRaw: vi.fn(() => new Promise<Uint8Array>(() => {})), reset }
     vi.useFakeTimers()
     try {
       const pending = readPeerHistoryObject(async () => stream as never, { baselineId, objectId, binding }, () => {})
       const rejected = expect(pending).rejects.toThrow(/deadline/i)
       await vi.advanceTimersByTimeAsync(10_000)
       await rejected
+      expect(stream.readRaw).toHaveBeenCalledWith(new TextEncoder().encode("tincanban-peer-history-v1\n").length + 1 + 256 * 1024)
+      expect(stream.read).not.toHaveBeenCalled()
       expect(reset).toHaveBeenCalledOnce()
     } finally { vi.useRealTimers() }
   })

@@ -11,9 +11,9 @@ import { BatchLogRecordProcessor, LoggerProvider, type LogRecordExporter } from 
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { WebTracerProvider } from "@opentelemetry/sdk-trace-web"
 import type { TelemetryConfig } from "./telemetryConfig"
-import { capturedException } from "./exceptionCapture"
+import { capturedException } from "../domain/exceptionCapture"
 import { diagnosticErrorCode } from "./failureDiagnostic"
-import type { HttpDiagnosticSpan } from "./httpDiagnostics"
+import type { HttpDiagnosticSpan } from "../domain/httpDiagnostics"
 
 export type DiagnosticInput = {
   event: string

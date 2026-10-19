@@ -1,67 +1,52 @@
-import { fetchBlind, readBlindJson } from "./rustyHttp"
-export { fetchBlind, readBlindJson } from "./rustyHttp"
-import { z } from "zod"
-import { verifyEnvelope } from "../domain/identityCrypto"
 import type { BlindServiceCapabilities } from "./blindServiceCapabilities"
-import { blindOrigin } from "./blindOrigin"
-export { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes, encodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { fetchBlind, readBlindJson } from "./rustyHttp"
+import {
+  canonicalRustyJson,
+  decodeBlindBytes,
+  downloadRustyObject,
+  encodeBlindBytes,
+  inventoryRustyObjects,
+  rustyHash,
+  rustyObjectId,
+  rustyProducerHeaders,
+  rustyOrigin,
+  uploadRustyObject,
+  verifyRustyStorageReceipt,
+  type BlindObject,
+  type RustyReplicaAccess,
+  type RustyStorageReceipt,
+} from "@meta-uber/mesh-replication/rusty-replica"
 
-export type BlindAccess = { origin: string; scopeId: string; servicePublicKey: string; readToken: string; writeToken: string; policyRevision: number; client?: "tincanban" | "automation"; clientBuild?: string }
-export type BlindReceipt = { payload: { kind: "blind-storage-receipt"; version: 2; serviceId: string; scopeId: string; keyEpoch: number;
-  objectId: string; sequence: number; policyRevision: number; requestId: string }; signerKeyId: string; signature: string }
-const encoder = new TextEncoder()
-const policyId = z.string().min(1).max(128)
-const policyHash = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
-const scopePolicyReceiptSchema = z.strictObject({
-  signerKeyId: policyHash, signature: z.string().min(1).max(128),
-  payload: z.strictObject({ kind: z.literal("rusty-scope-policy-receipt"), version: z.literal(1), serviceId: policyHash,
-    scopeId: policyId, personId: policyId, revision: z.number().int().positive().refine(Number.isSafeInteger), revoked: z.boolean(),
-    challengeId: policyId, authorizationHash: policyHash, minimumWriterVersion: z.literal(2).optional() }),
-})
-export type RustyScopePolicyReceipt = z.infer<typeof scopePolicyReceiptSchema>
-type RustyPolicyStorage = { scopeId: string; servicePublicKey: string }
+export { decodeBlindBytes, encodeBlindBytes, type BlindObject }
+export type BlindAccess = RustyReplicaAccess
+export type BlindReceipt = RustyStorageReceipt
 
-/** Structural parsing is safe during a local transaction; callers verify cryptography before using saved evidence. */
-export function parseRustyScopePolicyReceipt(value: unknown): RustyScopePolicyReceipt {
-  return scopePolicyReceiptSchema.parse(structuredClone(value))
+function appAccess(access: BlindAccess): BlindAccess {
+  return { ...access, client: access.client ?? "tincanban" }
 }
 
-/** A service receipt confirms only storage policy. Current Owner requests separately authorize maintenance. */
-export async function verifyRustyWriterPolicyReceipt(value: unknown, storageValue: RustyPolicyStorage,
-  personId: string, minimumRevision: number): Promise<RustyScopePolicyReceipt> {
-  const receipt = parseRustyScopePolicyReceipt(value)
-  const storage = structuredClone(storageValue)
-  const payload = receipt.payload
-  const key = decodeBlindBytes(storage.servicePublicKey)
-  if (key.length !== 32 || !Number.isSafeInteger(minimumRevision) || minimumRevision < 0 ||
-    payload.scopeId !== storage.scopeId || payload.personId !== personId || payload.revoked ||
-    payload.minimumWriterVersion !== 2 || payload.revision < minimumRevision ||
-    receipt.signerKeyId !== payload.serviceId || payload.serviceId !== await blindHash(key) ||
-    !await verifyEnvelope(receipt, storage.servicePublicKey, "RUSTY/2")) throw new Error("Rusty receipt does not confirm this writer policy")
-  return receipt
+export const canonicalBlindJson = canonicalRustyJson
+export const blindHash = rustyHash
+export const blindObjectId = rustyObjectId
+export const blindProducerHeaders = (access: BlindAccess) => rustyProducerHeaders(appAccess(access))
+export async function verifyBlindReceipt(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string): Promise<void> {
+  return verifyRustyStorageReceipt(receipt, access, object, requestId)
 }
-
-export function canonicalBlindJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalBlindJson).join(",")}]`
-  if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalBlindJson(item)}`).join(",")}}`
-  const encoded = JSON.stringify(value)
-  if (encoded === undefined) throw new Error("Invalid JSON value")
-  return encoded
+export async function uploadBlindObject(access: BlindAccess, object: BlindObject, requestId: string = crypto.randomUUID(), observedSequence = 0): Promise<BlindReceipt> {
+  return uploadRustyObject(appAccess(access), object, requestId, observedSequence, fetchBlind)
 }
-export async function blindHash(bytes: Uint8Array): Promise<string> {
-  return encodeBlindBytes(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))))
+export async function inventoryBlindObjects(access: BlindAccess, after: number): ReturnType<typeof inventoryRustyObjects> {
+  return inventoryRustyObjects(appAccess(access), after, fetchBlind)
 }
-export async function blindObjectId(object: BlindObject): Promise<string> { return blindHash(encoder.encode(canonicalBlindJson(object))) }
-
-
+export async function downloadBlindObject(access: BlindAccess, id: string): Promise<BlindObject> {
+  return downloadRustyObject(appAccess(access), id, fetchBlind)
+}
 
 export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; scopeEnrollmentRetry?: 1;
   encryptedBlobs?: { version: 1; maximumCiphertextBytes: number }; writerPolicy?: { version: 1; maximumWriterVersion: 2 };
   blobCoverage?: { version: 1; maximumObjects: 33 }; encryptedArchives?: { version: 1; maximumCiphertextBytes: 262160 };
   archiveCoverageBatches?: { version: 1; maximumObjects: 64 }; archiveCoverageAggregates?: { version: 1; maximumChildren: 8; maximumHeight: 31 } }> {
-  const origin = blindOrigin(input)
+  const origin = rustyOrigin(input)
   const descriptor = await readBlindJson<{ protocolVersions: number[]; publicOrigin: string; service: { serviceId: string; publicKey: string };
     capabilities: BlindServiceCapabilities }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
   if (!descriptor.protocolVersions?.includes(2) || descriptor.publicOrigin !== origin || !descriptor.capabilities?.modes?.includes("blind") ||
@@ -71,91 +56,4 @@ export async function discoverBlindKeeper(input: string): Promise<{ origin: stri
   }
   return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId,
     ...(await import("./blindServiceCapabilities")).supportedManagementFeatures(descriptor.capabilities) }
-}
-
-export async function verifyBlindReceipt(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string): Promise<void> {
-  const payload = receipt.payload
-  const serviceId = await blindHash(decodeBlindBytes(access.servicePublicKey))
-  const objectId = await blindObjectId(object)
-  const mismatches = blindReceiptMismatches(receipt, access, object, requestId, serviceId, objectId)
-  if (mismatches.length) throw new Error(`Rusty receipt does not cover this encrypted object (${mismatches.join(", ")})`)
-  const publicKey = await crypto.subtle.importKey("raw", decodeBlindBytes(access.servicePublicKey), "Ed25519", false, ["verify"])
-  const message = encoder.encode(`RUSTY/2/${payload.kind}\0${canonicalBlindJson(payload)}`)
-  if (!await crypto.subtle.verify("Ed25519", publicKey, decodeBlindBytes(receipt.signature), message)) throw new Error("Rusty receipt signature invalid")
-}
-
-function blindReceiptMismatches(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string,
-  serviceId: string, objectId: string): string[] {
-  const payload = receipt.payload
-  return [
-    ...blindReceiptScopeMismatches(receipt, access, serviceId),
-    ...blindReceiptObjectMismatches(payload, object, objectId, requestId),
-    ...blindReceiptProgressMismatches(payload, access),
-  ]
-}
-
-function blindReceiptScopeMismatches(receipt: BlindReceipt, access: BlindAccess, serviceId: string): string[] {
-  const payload = receipt.payload
-  return [
-    !payload || payload.kind !== "blind-storage-receipt" ? "kind" : undefined,
-    payload?.version !== 2 ? "version" : undefined,
-    payload?.serviceId !== serviceId || receipt.signerKeyId !== serviceId ? "service" : undefined,
-    payload?.scopeId !== access.scopeId ? "scope" : undefined,
-  ].filter((field): field is string => field !== undefined)
-}
-
-function blindReceiptObjectMismatches(payload: BlindReceipt["payload"], object: BlindObject, objectId: string, requestId: string): string[] {
-  return [
-    payload?.keyEpoch !== object.keyEpoch ? "epoch" : undefined,
-    payload?.objectId !== objectId ? "object" : undefined,
-    payload?.requestId !== requestId ? "request" : undefined,
-  ].filter((field): field is string => field !== undefined)
-}
-
-function blindReceiptProgressMismatches(payload: BlindReceipt["payload"], access: BlindAccess): string[] {
-  return [
-    !Number.isSafeInteger(payload?.sequence) || payload.sequence < 1 ? "sequence" : undefined,
-    payload?.policyRevision !== access.policyRevision ? "policy-revision" : undefined,
-  ].filter((field): field is string => field !== undefined)
-}
-
-export async function uploadBlindObject(access: BlindAccess, object: BlindObject, requestId: string = crypto.randomUUID(), observedSequence = 0): Promise<BlindReceipt> {
-  if (!Number.isSafeInteger(observedSequence) || observedSequence < 0) throw new Error("Invalid admitted storage sequence")
-  const id = await blindObjectId(object)
-  const receipt = await readBlindJson<BlindReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}?writerVersion=2&observedSequence=${observedSequence}`, {
-    method: "PUT", signal: AbortSignal.timeout(30000),
-    headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json", "X-Rusty-Request-Id": requestId }, body: JSON.stringify(object),
-  }), 16384)
-  await verifyBlindReceipt(receipt, access, object, requestId)
-  return receipt
-}
-export async function inventoryBlindObjects(access: BlindAccess, after: number): Promise<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean; objectCount?: number; maxSequence?: number }> {
-  const result = await readBlindJson<{ objects: Array<{ objectId: string; sequence: number }>; cursor: number; hasMore: boolean; objectCount?: number; maxSequence?: number }>(
-    await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects?after=${after}`, {
-      signal: AbortSignal.timeout(15000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}` },
-    }), 65536)
-  if (!Array.isArray(result.objects) || result.objects.length > 128 || typeof result.hasMore !== "boolean" || !Number.isSafeInteger(result.cursor) || result.cursor < after ||
-    result.objects.some((object, index) => !/^[A-Za-z0-9_-]{43}$/.test(object.objectId) || !Number.isSafeInteger(object.sequence) || object.sequence <= (result.objects[index - 1]?.sequence ?? after)) ||
-    result.cursor !== (result.objects.at(-1)?.sequence ?? after) || result.hasMore && result.objects.length === 0) throw new Error("Invalid Rusty inventory")
-  validateCheckpointInventory(result)
-  return result
-}
-export async function downloadBlindObject(access: BlindAccess, id: string): Promise<BlindObject> {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(id)) throw new Error("Invalid encrypted object ID")
-  const object = await readBlindJson<BlindObject>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/objects/${id}`, {
-    signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}` },
-  }))
-  if (object.scopeId !== access.scopeId || await blindObjectId(object) !== id) throw new Error("Rusty object integrity failure")
-  return object
-}
-
-// One fsynced checkpoint may temporarily exceed the normal 10,000-object cap before manifest recovery.
-function validateCheckpointInventory(result: { objectCount?: number; maxSequence?: number; cursor: number; hasMore: boolean }): void {
-  if (result.objectCount !== undefined && (!Number.isSafeInteger(result.objectCount) || result.objectCount < 0 || result.objectCount > 10001) ||
-    result.maxSequence !== undefined && (!Number.isSafeInteger(result.maxSequence) || result.maxSequence < result.cursor ||
-      !result.hasMore && result.maxSequence !== result.cursor)) throw new Error("Invalid Rusty checkpoint inventory")
-}
-
-export function blindProducerHeaders(access: BlindAccess): Record<string, string> {
-  return { "X-Rusty-Client": access.client ?? "tincanban", ...(access.clientBuild && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(access.clientBuild) ? { "X-Rusty-Build": access.clientBuild } : {}) }
 }

@@ -85,7 +85,7 @@ it("Given an empty frozen queue, When draining for transition, Then perform no c
 
 it("Given pending ciphertext at freeze, When a transition loses upload confirmation, Then retain exact object, request and acknowledgment state for retry", async () => {
   const f = await fixture(), owner = f.profile.identity.personId
-  const envelope = await import("./blindEnvelope")
+  const envelope = await import("@meta-uber/mesh-replication/rusty-replica")
   const object = await envelope.encryptBlindObject(f.config.scopeId, f.config.keyEpoch,
     envelope.decodeBlindBytes(f.config.contentKey), new Uint8Array([1, 2, 3]))
   const original = await f.repository.getPrivateReplicaProgress(owner, f.config)

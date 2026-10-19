@@ -2,7 +2,10 @@ import * as Automerge from "@automerge/automerge/slim"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import { canonicalizeJson } from "@meta-uber/mesh-identity"
 import { toBase64Url } from "../domain/identity"
-import type { WireHistoryBaseline } from "./historyBaselineReceiver"
+import type { WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import type { WorkspaceRevisionBasis } from "../storageCommitSupport"
+import type { WorkspaceTransactionContext } from "../storageTransactionAccess"
+import { claimWorkspaceTransaction, resolveWorkspaceTransactionClaim } from "../storageTransactionClaims"
 import { captureReceivedHistoryCandidate, type ReceivedHistoryCandidate } from "./receivedHistoryCandidate"
 import { readVerifiedHistoryAncestors, type VerifiedHistoryAncestors } from "./verifiedHistoryAncestors"
 import { retainActiveHistoryAncestors, retainHistoryAncestorRows } from "./receivedHistoryAncestorRetention"
@@ -73,9 +76,15 @@ function assertVerifiedParent(baselineId: string | undefined, parent: StoredRece
   if (baselineId && parent?.state !== "active") throw new Error("Verified history parent is missing")
 }
 
-function assertStagedRevision(revision: { revision?: string } | undefined, frontier: unknown, staged: StoredReceivedHistoryBaseline) {
+function assertStagedRevision(revision: { revision?: string } | undefined, frontier: unknown,
+  snapshot: StoredWorkspaceSnapshot | undefined, staged: StoredReceivedHistoryBaseline, expected: WorkspaceRevisionBasis) {
   if ((revision?.revision ?? undefined) !== staged.expectedWorkspaceRevision ||
-      canonicalizeJson(frontier ?? null) !== canonicalizeJson(staged.expectedFrontier ?? null)) {
+      canonicalizeJson(frontier ?? null) !== canonicalizeJson(staged.expectedFrontier ?? null) ||
+      (revision?.revision ?? null) !== expected.revision || canonicalizeJson(frontier ?? null) !== canonicalizeJson(expected.frontier) ||
+      (snapshot?.receivedHistory?.baselineId ?? null) !== expected.baselineId ||
+      (staged.expectedWorkspaceRevision ?? null) !== expected.revision ||
+      canonicalizeJson(staged.expectedFrontier ?? null) !== canonicalizeJson(expected.frontier) ||
+      (staged.previousBaselineId ?? null) !== expected.baselineId) {
     throw new Error("Workspace history changed after received history was staged")
   }
 }
@@ -291,8 +300,12 @@ class ReceivedHistoryBaselineRepository {
     return rows
   }
 
-  async activate(stageId: string, candidate: WasmVerifiedReceivedHistoryBaseline): Promise<void> {
+  async activate(stageId: string, candidate: WasmVerifiedReceivedHistoryBaseline,
+    context: WorkspaceTransactionContext): Promise<void> {
     const { workspaceId } = this
+    const claim = claimWorkspaceTransaction(context, workspaceId)
+    const basisClaim = resolveWorkspaceTransactionClaim(claim, workspaceId)
+    const ensureActivationCurrent = () => { basisClaim.ensureCurrent(); this.ensureCurrent() }
     const captured = captureReceivedHistoryCandidate(candidate)
     if (captured.workspaceId !== workspaceId) throw new Error("Received history candidate belongs to another workspace")
     const doc = Automerge.load<{ id: string; title: string; archivedAt?: string | null }>(captured.document)
@@ -300,7 +313,7 @@ class ReceivedHistoryBaselineRepository {
       if (doc.id !== workspaceId) throw new Error("Received history basis document belongs to another workspace")
       const heads = Automerge.getHeads(doc).sort()
       const database = await openWorkspaceJournal()
-      this.ensureCurrent()
+      ensureActivationCurrent()
       const transaction = database.transaction(["snapshots", "receivedBaselines", "changes", "archivedChanges", "authorizations", "archivedAuthorizations", "frontiers", "revisions", "historyProgress"], "readwrite")
       const done = transactionDone(transaction)
       try {
@@ -319,7 +332,7 @@ class ReceivedHistoryBaselineRepository {
           ? await requestResult(transaction.objectStore("receivedBaselines").get(`${workspaceId}:baseline:${staged.previousBaselineId}`)) as StoredReceivedHistoryBaseline | undefined
           : undefined
         assertVerifiedParent(staged.previousBaselineId, parent)
-        assertStagedRevision(revision, frontier, staged)
+        assertStagedRevision(revision, frontier, snapshot, staged, structuredClone(basisClaim.basis))
         const nextSnapshot: StoredWorkspaceSnapshot = {
           id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null, heads,
           bytes: captured.document.slice(), savedAt: new Date().toISOString(),
@@ -336,7 +349,7 @@ class ReceivedHistoryBaselineRepository {
           priorHistoryProgress: historyProgress ? structuredClone(historyProgress) : undefined,
           activatedAt: nextSnapshot.savedAt, activationRevision, activatedSnapshotMetadata,
         }
-        this.ensureCurrent()
+        ensureActivationCurrent()
         archiveActiveChanges(transaction, workspaceId, captured.baselineId, changes)
         const archivedAuthorizations = transaction.objectStore("archivedAuthorizations")
         archivedAuthorizations.put({ id: `${workspaceId}:baseline:${captured.baselineId}`, workspaceId,
@@ -352,7 +365,7 @@ class ReceivedHistoryBaselineRepository {
             transitionPreviousBaselineId: historyProgress.transitionPreviousBaselineId } : {}) })
         transaction.objectStore("revisions").put({ id: workspaceId, workspaceId, revision: activationRevision })
         await done
-        this.ensureCurrent()
+        ensureActivationCurrent()
       } catch (error) {
         try { transaction.abort() } catch { /* Transaction already completed. */ }
         await done.catch(() => undefined)

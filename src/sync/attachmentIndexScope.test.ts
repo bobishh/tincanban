@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb"
 import { afterEach, expect, it, vi } from "vitest"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 

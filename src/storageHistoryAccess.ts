@@ -1,6 +1,7 @@
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import { StorageDeltaAccess } from "./storageDeltaAccess"
-import { openWorkspaceJournal, readWorkspaceBasisSnapshot, requestResult, transactionDone, type StoredWorkspaceSnapshot } from "./storageJournal"
+import { openWorkspaceJournal, readWorkspaceBasisSnapshot, requestResult, transactionDone,
+  type StoredHistoryProgress, type StoredWorkspaceSnapshot } from "./storageJournal"
 
 type VerifiedHistory = { baselineId: string; candidate: WasmVerifiedReceivedHistoryBaseline; personId?: string; deviceId?: string }
 type CapturedHistory = { candidate: WasmVerifiedReceivedHistoryBaseline; workspaceId: string; baselineId: string;
@@ -99,9 +100,10 @@ export abstract class StorageHistoryAccess extends StorageDeltaAccess {
   }
 
   /** Return a cached Native handle only while its exact baseline and device remain active. */
-  async getVerifiedReceivedHistoryBaseline(workspaceId: string, ensureCurrent: () => void = () => {}): Promise<WasmVerifiedReceivedHistoryBaseline | undefined> {
+  async getVerifiedReceivedHistoryBaseline(workspaceId: string, ensureCurrent: () => void = () => {},
+    progressOverride?: StoredHistoryProgress): Promise<WasmVerifiedReceivedHistoryBaseline | undefined> {
     ensureCurrent()
-    const progress = await this.ensureHistoryProgress(workspaceId)
+    const progress = progressOverride ?? await this.ensureHistoryProgress(workspaceId)
     ensureCurrent()
     const cached = this.verifiedReceivedHistory.get(workspaceId)
     if (!progress.baselineId || !cached || cached.baselineId !== progress.baselineId) {

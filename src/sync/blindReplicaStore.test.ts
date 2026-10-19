@@ -2,9 +2,9 @@ import { beforeEach, expect, it, vi } from "vitest"
 import { type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { blindHash } from "./blindClient"
 import type { BlindReplicaConfig } from "./blindReplication"
-import { decodeBlindBytes, encryptBlindObject, type BlindObject } from "./blindEnvelope"
+import { decodeBlindBytes, encryptBlindObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { setReplicaPreference, getReplicaConfigurations } from "./privateReplicaRepository"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 
 const captured = vi.hoisted(() => ({ stores: [] as Array<{ config: unknown; store: Record<string, unknown> }> }))
 const background = vi.hoisted(() => ({ run: vi.fn(async () => {}) }))

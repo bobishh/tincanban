@@ -1,5 +1,5 @@
 import { BLOB_CHUNK_BYTES, type BlobDescriptor } from "@meta-uber/mesh-blob"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { AttachmentProgress } from "./attachmentTransfer"
 import { ID_PATTERN, REQUEST_PATTERN, STATE_LIMIT, hasExactKeys, validateDescriptor } from "./attachmentRepositoryData"
 

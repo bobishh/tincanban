@@ -6,7 +6,7 @@ import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope, fromBase64Url } from "../domain/identity"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { computeWorkspaceAdmission, type IncomingAuthorizationBundle } from "./workspaceAdmissionCore"
+import { computeWorkspaceAdmission, type IncomingAuthorizationBundle } from "../product-replica/workspaceAdmission"
 import { liveAutomergeWorkspaceSync, workspaceSet } from "./workspaceSet"
 import { registerOwnerOfferProofs, serveOwnerOfferProofs, publishOwnerWorkspaceOffer } from "./ownerOfferProofs"
 import { createLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
@@ -77,7 +77,9 @@ it("Given approved future-board offer, pages bypass current scope and ACK waits 
   const f = await fixture()
   let commit!: () => void
   f.merge.mockImplementation(() => new Promise<void>(resolve => { commit = resolve }))
-  const inbound = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => encodePairingFrame("mesh-owner-workspace-offer", "old-secret", f.offer) }
+  const frame = encodePairingFrame("mesh-owner-workspace-offer", "old-secret", f.offer)
+  const inbound = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => frame,
+    readPairingOrRawPrefix: async () => frame }
   let sent = false
   f.connection.acceptStream = async () => { if (!sent) { sent = true; return inbound }; return new Promise<never>(() => {}) }
   const session = liveAutomergeWorkspaceSync(f.connection, "old-secret", {
@@ -101,7 +103,9 @@ it("Given approved future-board offer, pages bypass current scope and ACK waits 
 
 it.each(["missing", "forged"] as const)("Given %s owner proof page, no durable write or ACK", async corruption => {
   const f = await fixture(corruption)
-  const inbound = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => encodePairingFrame("mesh-owner-workspace-offer", "old-secret", f.offer) }
+  const frame = encodePairingFrame("mesh-owner-workspace-offer", "old-secret", f.offer)
+  const inbound = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: async () => frame,
+    readPairingOrRawPrefix: async () => frame }
   let sent = false
   f.connection.acceptStream = async () => { if (!sent) { sent = true; return inbound }; return new Promise<never>(() => {}) }
   const session = liveAutomergeWorkspaceSync(f.connection, "old-secret", {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
-import { mergeAttachmentLocators, parseAttachmentLocators } from "./attachmentIndex"
-import type { AttachmentLocator } from "./attachmentCodec"
+import { mergeAttachmentLocators, parseAttachmentLocators } from "../product-replica/attachmentIndex"
+import type { AttachmentLocator } from "../product-replica"
 
 const locator = (blobByte: string, transferId: string, manifestByte: string): AttachmentLocator => ({
   version: 1,

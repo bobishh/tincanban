@@ -2,7 +2,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson, sha256Base64Url, toBase64Url } from "./domain/identity"
 import type { ChangeProof, TransactionReceipt } from "./domain/model"
 import type { WorkspaceRole } from "./domain/permissions"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { advanceWorkspaceRevision, advanceHistoryProgress, advanceLocalHistoryProgress, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone,
   type StoredHistoryProgress, type StoredReceiptRecord, type StoredWorkspaceSnapshot } from "./storageJournalRecords"
@@ -157,17 +157,20 @@ export class WorkspaceDeltaJournal {
   }
 
 
-  async append(expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta): Promise<WorkspaceDeltaFrontier> {
+  async append(expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, expectedRevision: string | null,
+    ensureCurrent: () => void): Promise<WorkspaceDeltaFrontier> {
     // Crypto runs before opening the transaction; no async crypto can close an IDB transaction early.
     await verifyDelta(expected, delta)
+    ensureCurrent()
     const next = nextFrontier(expected, delta)
-    if (!this.database) return this.appendMemory(expected, delta, next)
+    if (!this.database) return this.appendMemory(expected, delta, next, expectedRevision, ensureCurrent)
     const transaction = this.database.transaction(["frontiers", "deltas", "changes", "proofs", "receipts", "revisions", "snapshots", "historyProgress"], "readwrite")
     const done = transactionDone(transaction)
     try {
       const frontiers = transaction.objectStore("frontiers")
       const current = await requestResult(frontiers.get(expected.workspaceId)) as WorkspaceDeltaFrontier | undefined
       const snapshot = await requestResult(transaction.objectStore("snapshots").get(expected.workspaceId)) as StoredWorkspaceSnapshot | undefined
+      const revision = await requestResult(transaction.objectStore("revisions").get(expected.workspaceId)) as { revision: string } | undefined
       const progress = await requestResult(transaction.objectStore("historyProgress").get(expected.workspaceId)) as StoredHistoryProgress | undefined
       const deltas = transaction.objectStore("deltas")
       const receipts = transaction.objectStore("receipts")
@@ -182,6 +185,9 @@ export class WorkspaceDeltaJournal {
         return current
       }
       if (canonicalizeJson(current) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
+      if ((revision?.revision ?? null) !== expectedRevision)
+        throw new Error("Workspace revision changed in another tab")
+      ensureCurrent()
       const changeKey = `${expected.workspaceId}:${receipt.changeHash}`
       deltas.add(delta)
       frontiers.put(next)
@@ -204,7 +210,8 @@ export class WorkspaceDeltaJournal {
     return next
   }
 
-  private appendMemory(expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, next: WorkspaceDeltaFrontier) {
+  private appendMemory(expected: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, next: WorkspaceDeltaFrontier,
+    expectedRevision: string | null, ensureCurrent: () => void) {
     let result = next
     updateLocalJournal(expected.workspaceId, current => {
       const { receipt, proof, changeBytes } = delta.command
@@ -216,6 +223,9 @@ export class WorkspaceDeltaJournal {
         return { ...current }
       }
       if (canonicalizeJson(current.frontier) !== canonicalizeJson(expected)) throw new Error("Delta frontier changed in another tab")
+      if ((current.revision ?? null) !== expectedRevision)
+        throw new Error("Workspace revision changed in another tab")
+      ensureCurrent()
       const nextJournal = { ...current, revision: crypto.randomUUID(), frontier: structuredClone(next), deltas: [...current.deltas ?? [], structuredClone(delta)],
         changes: [...current.changes, { workspaceId: expected.workspaceId, changeHash: receipt.changeHash,
           bytesBase64: toBase64Url(changeBytes), addedAt: delta.savedAt }],
@@ -229,26 +239,35 @@ export class WorkspaceDeltaJournal {
   }
 
   /** Install only against the exact saved basis and proof set checked by the caller. */
-  async install(basis: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier, authorizations: unknown[]): Promise<boolean> {
+  async install(basis: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier, authorizations: unknown[], expectedRevision: string | null,
+    ensureCurrent: () => void, nextRevision: string): Promise<boolean> {
     if (!this.database) {
       let installed = false
       updateLocalJournal(basis.workspaceId, current => {
-        if (current.frontier || !sameBasis(current.snapshot, basis) || canonicalizeJson(current.authorizations ?? []) !== canonicalizeJson(authorizations))
+        ensureCurrent()
+        if (current.frontier || (current.revision ?? null) !== expectedRevision ||
+            !sameBasis(current.snapshot, basis) || canonicalizeJson(current.authorizations ?? []) !== canonicalizeJson(authorizations))
           return { ...current }
         installed = true
-        return { ...current, frontier: structuredClone(frontier), deltas: [] }
+        return { ...current, revision: nextRevision, frontier: structuredClone(frontier), deltas: [] }
       })
       return installed
     }
-    const transaction = this.database.transaction(["snapshots", "authorizations", "frontiers"], "readwrite")
+    const transaction = this.database.transaction(["snapshots", "authorizations", "frontiers", "revisions"], "readwrite")
     const done = transactionDone(transaction)
-    const [snapshot, proofs, current] = await Promise.all([
+    const [snapshot, proofs, current, revision] = await Promise.all([
       requestResult(transaction.objectStore("snapshots").get(basis.workspaceId)) as Promise<StoredWorkspaceSnapshot | undefined>,
       requestResult(transaction.objectStore("authorizations").get(basis.workspaceId)) as Promise<{ records: unknown[] } | undefined>,
       requestResult(transaction.objectStore("frontiers").get(basis.workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
+      requestResult(transaction.objectStore("revisions").get(basis.workspaceId)) as Promise<{ revision: string } | undefined>,
     ])
-    const installed = !current && sameBasis(snapshot, basis) && canonicalizeJson(proofs?.records ?? []) === canonicalizeJson(authorizations)
-    if (installed) transaction.objectStore("frontiers").put(frontier)
+    const installed = !current && (revision?.revision ?? null) === expectedRevision &&
+      sameBasis(snapshot, basis) && canonicalizeJson(proofs?.records ?? []) === canonicalizeJson(authorizations)
+    ensureCurrent()
+    if (installed) {
+      transaction.objectStore("frontiers").put(frontier)
+      transaction.objectStore("revisions").put({ id: basis.workspaceId, workspaceId: basis.workspaceId, revision: nextRevision })
+    }
     await done
     return installed
   }

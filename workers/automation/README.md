@@ -17,6 +17,18 @@ nonce, idempotency, replica and upload receipt state. Completion still requires 
 signed Rusty upload receipt; uncertain classification and unavailable authority
 retain review or retry state.
 
+When `REFLUX_ORIGIN` is configured, email ingress sends the normalized event and
+retained MIME to Reflux over the authenticated private ingress route. The stable
+event ID and raw-MIME digest support exact retries; Reflux owns durable queuing and
+deduplication. Only a durable event-ID conflict rejects mail permanently. Gateway,
+timeout and malformed-outcome failures throw so the mail platform can retry; the
+email path never falls back to Durable Object processing.
+
+Reflux routes these signals to the **Job search automation** reflex, with its own
+workflow and run history. The reflex references the existing board participant;
+identity, grants, sync state and pending writes remain shared. Its creation and
+source activation must complete before mail ingress can acknowledge delivery.
+
 Unchanged snapshots reuse the last confirmed upload. Wire JSON uses canonical key
 ordering and omits absent optional grants on owner proof wrappers; signed payloads
 remain intact. This prevents a first self-echo from creating an extra encrypted
@@ -167,7 +179,7 @@ checks. These changes require both frontend and Worker rollout.
 
 ## Local setup
 
-Use Node.js 22+ and pnpm. Install within this directory so the local `allowBuilds` policy permits only the `esbuild` and `workerd` build scripts used by the test runtime.
+Use Node.js 22.12+ (Node.js 22, 24, or 26+) and pnpm. Install within this directory so the local `allowBuilds` policy permits only the `esbuild` and `workerd` build scripts used by the test runtime.
 
 ```sh
 pnpm install

@@ -4,7 +4,10 @@ import type { Context } from "@opentelemetry/api";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
-import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence } from "../../../src/sync/workspaceAdmissionCore";
+import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence,
+  mergeAuthorizationRecords, admitHistoricalAutomationAuthority, mergeAttachmentLocators, parseAttachmentLocators,
+  parseWireHistoryBaseline, type AttachmentLocator, type HistoryBaselineFetchPort, type WireHistoryBaseline,
+  type WorkspaceChangeAuthorization } from "../../../src/product-replica";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, type SignedEnvelope } from "../../../src/domain/identityCrypto";
 import type { LocalProfile } from "../../../src/domain/identity";
@@ -14,11 +17,11 @@ import { automationEntityId, automationLifecycle, type AutomationDesiredState } 
 import { parseAutomationApproval } from "../../../src/domain/automationApproval";
 import { itemWorkflow, workflowColumnId } from "../../../src/domain/archive";
 import { hasEntityKind, isItem, type AutomationGrantScope, type WorkspaceDocumentV2, type WorkspaceGrant } from "../../../src/domain/model";
-import type { WorkspaceChangeAuthorization } from "../../../src/sync/workspaceChangeProofStore";
-import { mergeAuthorizationRecords } from "../../../src/sync/workspaceAuthorizationRecords";
-import { blindHash, downloadBlindObject, inventoryBlindObjects, uploadBlindObject, verifyBlindReceipt, type BlindAccess, type BlindReceipt } from "../../../src/sync/blindClient";
-import { decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject, type BlindObject } from "../../../src/sync/blindEnvelope";
-import type { BlindReplicaConfig } from "../../../src/sync/blindReplication";
+import { rustyHash as blindHash, downloadRustyObject as downloadBlindObject, inventoryRustyObjects as inventoryBlindObjects,
+  uploadRustyObject as uploadBlindObject, verifyRustyStorageReceipt as verifyBlindReceipt,
+  decodeBlindBytes, decryptBlindObject, encodeBlindBytes, encryptBlindObject,
+  type RustyReplicaAccess as BlindAccess, type RustyStorageReceipt as BlindReceipt, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica";
+import type { BlindReplicaConfig } from "../../../src/product-replica/config";
 import { ReplicaEngine, emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine";
 import { captureApplicationSource } from "./applicationSourceCapture";
 import type { JobPageResult } from "./extraction";
@@ -28,19 +31,14 @@ import { parseApplicationBindingProof, verifyApplicationBinding, type Applicatio
 import { resolveSigningContext, signingEvidence, signWithContext } from "../../../src/domain/signingContext";
 import { parseAutomationObservationProof, type AutomationObservationProof } from "../../../src/domain/automationProtocol";
 import type { ApplicationReviewOption } from "../../../src/domain/applicationReviewData";
-import { admitHistoricalAutomationAuthority } from "../../../src/sync/historicalAutomationAuthority";
-import { mergeAttachmentLocators, parseAttachmentLocators } from "../../../src/sync/attachmentIndex";
-import type { AttachmentLocator } from "../../../src/sync/attachmentCodec";
-import { assertRetainsReplicaContentKeys, openWithReplicaContentKeys, parseReplicaContentKeys } from "../../../src/sync/replicaContentKeys";
-import { parseReplicaConfig } from "../../../src/sync/blindReplicaConfig";
+import { assertRetainsReplicaContentKeys, openWithReplicaContentKeys, parseReplicaContentKeys } from "../../../src/domain/replicaContentKeys";
+import { parseReplicaConfig } from "../../../src/domain/replicaConfig";
 import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote";
-import type { HistoryBaselineFetchPort, WireHistoryBaseline } from "../../../src/sync/historyBaselineReceiver";
-import { parseWireHistoryBaseline } from "../../../src/sync/historyBaselineReceiver";
 import { assertWorkerHistoryCoversHeads, receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority,
   type StoredWorkerHistoryBasis } from "./historyBaseline";
 import { deliverPublicBoard } from "../../../src/public/publicDelivery";
 import { automationPublicProjection } from "./publicBoardDelivery";
-import { automationDiagnosticContext, automationTelemetry, recordAutomationException, withAutomationSpan } from "./telemetry";
+import { automationDiagnosticContext, automationPublicDeliveryHttp, automationTelemetry, recordAutomationException, withAutomationSpan } from "./telemetry";
 
 initSync({ module: wasmModule });
 
@@ -240,10 +238,13 @@ type WireSnapshot = { version: 1 | 2; history?: WireHistoryBaseline; workspaceId
   chat: OpaqueChatBatch | null; attachments?: AttachmentLocator[] };
 
 const defaultTransport: ReplicaTransport = {
-  publicDelivery: input => deliverPublicBoard({ ...input, client: "automation" }),
-  inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after),
-  download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id),
-  upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence),
+  publicDelivery: input => deliverPublicBoard({ ...input, client: "automation", http: automationPublicDeliveryHttp }),
+  inventory: (access, after) => inventoryBlindObjects({ ...access, client: "automation", clientBuild: undefined }, after,
+    automationPublicDeliveryHttp.request),
+  download: (access, id) => downloadBlindObject({ ...access, client: "automation", clientBuild: undefined }, id,
+    automationPublicDeliveryHttp.request),
+  upload: (access, object, requestId, observedSequence) => uploadBlindObject({ ...access, client: "automation", clientBuild: undefined }, object, requestId, observedSequence,
+    automationPublicDeliveryHttp.request),
 };
 
 /** Hosts may journal a storage acknowledgement only after the shared verifier accepts it. */

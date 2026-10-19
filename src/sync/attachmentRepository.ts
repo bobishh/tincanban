@@ -1,6 +1,6 @@
 import { BLOB_CHUNK_BYTES } from "@meta-uber/mesh-blob"
 import { blindHash, blindObjectId, canonicalBlindJson } from "./blindClient"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { AttachmentProgress, AttachmentTransferRepository } from "./attachmentTransfer"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { ID_PATTERN, STATE_LIMIT, attachmentObjectKey, hasExactKeys, validateObject, validateProgress, parseProgress } from "./attachmentRepositoryData"

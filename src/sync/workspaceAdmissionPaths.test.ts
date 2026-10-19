@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, indexOperationParents, touchedPathsForChange, indexAdmissionOperations } from "./workspaceAdmissionCore"
+import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, indexOperationParents, touchedPathsForChange, indexAdmissionOperations } from "../product-replica/workspaceAdmission"
 
 vi.mock("@automerge/automerge/slim", async importOriginal => {
   const original = await importOriginal<typeof Automerge>()

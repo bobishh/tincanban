@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindAccess } from "./blindClient"
-import { encodeBlindBytes, encryptBlindObject, type BlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, encryptBlindObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { downloadBlindBlob, uploadBlindBlob, verifyBlindBlobReceipt, type BlindBlobReceipt } from "./blindBlobClient"
 
 const scope = "private-scope"

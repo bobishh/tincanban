@@ -14,7 +14,7 @@ import type { ArchiveCoverageAuthority as HistoryArchiveCoverageAuthority } from
 import type { BlindReplicaConfig } from "./blindReplication"
 import { signingEvidence, type VerifiedSigningContext } from "../domain/signingContext"
 import { finalizeWorkspaceHistoryBaseline } from "./historyBaselineFinalize"
-import { verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "./historyBaselineReceiver"
+import { verifyReceivedWireHistoryBaseline, type WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import type { useTincanban } from "../state"
@@ -22,8 +22,7 @@ import { defaultStorage } from "../storage"
 import { exportAuthorizationBundle, localWorkspaceAdmissionAuthority, workspaceRole } from "./changeAuthorization"
 import { defaultProofStore } from "../domain/proofs"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
-import { decodeBlindBytes } from "./blindEnvelope"
-import { withWorkspaceMutation } from "../workspaceMutation"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { HistoryCaptureSourceChangedError } from "./historyCheckpointSource"
 import { checkpointAdmissionReady } from "./blindCheckpointAdmission"
 
@@ -375,7 +374,7 @@ async function activateCapturedHistory(work: CaptureWork, baselineId: string, wi
     } }, ensureCurrent: ensureNativeCurrent, trustedScopeAuthority: scopeAuthority })
   try {
     const repository = createReceivedHistoryBaselineRepository(config.workspaceId, ensureNativeCurrent)
-    await withWorkspaceMutation(config.workspaceId, async () => {
+    await defaultStorage.withWorkspaceTransaction(config.workspaceId, async transaction => {
       const active = await repository.readActive()
       if (active?.baselineId !== baselineId) {
         const currentBytes = await work.readCurrentWorkspaceBytes()
@@ -398,7 +397,7 @@ async function activateCapturedHistory(work: CaptureWork, baselineId: string, wi
         if (!equalBytes(await work.readCurrentWorkspaceBytes(), capturedBytes)) throw new HistoryCaptureSourceChangedError(baselineId)
         if (work.checkpointBeforeActivation) await (await import("./historyBaselinePublicationRepository"))
           .commitPreparedHistoryPublication(config.workspaceId, work.transitionId, ensureNativeCurrent)
-        await repository.activate(stageId, candidate)
+        await repository.activate(stageId, candidate, transaction)
       }
     })
   } finally {

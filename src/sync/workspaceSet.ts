@@ -31,7 +31,7 @@ export type LiveWorkspaceSync = {
   done: Promise<void>
 }
 
-export type OwnerWorkspaceOfferFrame = "mesh-owner-workspace-offer"
+export type OwnerWorkspaceOfferFrame = "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1"
 
 export type WorkspaceSetStore = {
   read: (id: string) => Promise<Uint8Array>

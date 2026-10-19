@@ -1,10 +1,10 @@
 import { canonicalizeJson } from "../domain/identity"
 import { parsePrivateReplicaConfig } from "./blindReplicaConfig"
 import type { BlindReplicaConfig, PrivateReplicaConfig } from "./blindReplication"
-import { blindOrigin } from "./blindOrigin"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import type { ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
-import type { BlindObject } from "./blindEnvelope"
-import type { RustyScopePolicyReceipt } from "./rustyScopePolicy"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
 import type { ReplicaWriterWorker } from "./replicaWriterWorkersState"
 import { assertRetainsReplicaContentKeys } from "./replicaContentKeys"
 

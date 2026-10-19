@@ -1,7 +1,7 @@
 import { ReplicaEngine } from "@meta-uber/mesh-replication/replica-engine"
 import { uploadBlindObject, verifyBlindReceipt, type BlindReceipt } from "./blindClient"
 import type { PrivateReplicaConfig } from "./blindReplication"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { getPrivateReplicaProgress, persistPrivateReplicaState, privateReplicaBinding } from "./privateReplicaRepository"
 import { assertReplicaCredentialFreezeCurrent, type ReplicaCredentialFreeze } from "./replicaCredentialFreeze"
 

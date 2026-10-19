@@ -14,6 +14,16 @@ const PEER_HISTORY_DEADLINE_MS = 10_000
 const PEER_HISTORY_DOCUMENT_DEADLINE_MS = 60_000
 const MAX_OBJECT_ID = /^[A-Za-z0-9_-]{43}$/
 
+export function readPeerHistoryRequestOrPairing(stream: DuplexStream): Promise<Uint8Array> {
+  if (!stream.readPairingOrRawPrefix) throw new Error("Bounded pairing/raw ingress is unavailable")
+  return stream.readPairingOrRawPrefix(MAGIC, MAX_REQUEST_BYTES)
+}
+
+async function readRaw(stream: DuplexStream, maximumBytes: number): Promise<Uint8Array> {
+  if (!stream.readRaw) throw new Error("Raw bounded stream reads are unavailable")
+  return stream.readRaw(maximumBytes)
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
@@ -147,7 +157,7 @@ export async function readPeerHistoryObject(openStream: () => Promise<DuplexStre
     await stream.closeSend()
     await ensureCurrent()
     ensureActive()
-    const response = await stream.read(MAGIC.length + 1 + maximumFor(request.binding))
+    const response = await readRaw(stream, MAGIC.length + 1 + maximumFor(request.binding))
     await ensureCurrent()
     ensureActive()
     if (!startsWithMagic(response) || response.length <= MAGIC.length) throw new Error("Invalid peer history response")
@@ -171,7 +181,7 @@ export async function readPeerHistoryBaseline(openStream: () => Promise<DuplexSt
   return runBoundedPeerHistoryStream(openStream, ensureCurrent, async (stream, ensureActive) => {
     await ensureCurrent(); ensureActive()
     await stream.send(concatenate(MAGIC, payload)); await stream.closeSend(); await ensureCurrent(); ensureActive()
-    const response = await stream.read(MAGIC.length + maximumResponseBytes); await ensureCurrent(); ensureActive()
+    const response = await readRaw(stream, MAGIC.length + maximumResponseBytes); await ensureCurrent(); ensureActive()
     if (!startsWithMagic(response) || response.length <= MAGIC.length || response.length > MAGIC.length + maximumResponseBytes) {
       throw new Error("Invalid peer history baseline response")
     }
@@ -227,7 +237,7 @@ export async function readPeerHistoryDocument(openStream: () => Promise<DuplexSt
       ensureActive()
       await stream.send(concatenate(MAGIC, payload)); await stream.closeSend(); await ensureCurrent()
       ensureActive()
-      const response = await stream.read(MAGIC.length + 1 + request.length); await ensureCurrent(); ensureActive()
+      const response = await readRaw(stream, MAGIC.length + 1 + request.length); await ensureCurrent(); ensureActive()
       if (startsWithMagic(response) && response.length === MAGIC.length + 1 && response[MAGIC.length] === 1) {
         throw new PeerHistoryObjectUnavailableError("Peer history document part is unavailable")
       }

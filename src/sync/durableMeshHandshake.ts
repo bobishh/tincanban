@@ -6,6 +6,7 @@ import { BrowserMeshHandshake, BrowserMeshLifecycle, MeshHandshakeCodec, type Me
 import { defaultProofStore } from "../domain/proofs"
 import { startPersistentNode } from "./persistentNode"
 import { meshNetworkConnection as networkConnection } from "@meta-uber/mesh-transport"
+import { meshIngressBudgetProfile } from "../iroh"
 import { meshRustRuntime, type RustMeshAuthenticatedSessions } from "@meta-uber/mesh-replication/runtime"
 import { createPeerAdvertisement,
   verifyWorkspaceMemberBundle, type WorkspaceMemberBundle, type WorkspaceOwnershipTransfer,
@@ -17,6 +18,7 @@ import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSA
 import { DurableMeshAuthority } from "./durableMeshAuthority"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { meshRecordSigning } from "./meshRecordSigning"
+import { defaultStorage } from "../storage"
 
 type InstallSessionArguments = [
   workspaceId: string,
@@ -31,7 +33,7 @@ type InstallSessionArguments = [
   ownershipReceiptSupported?: boolean,
   remotePersonId?: string,
   ownerWorkspaceSupported?: boolean,
-  ownerWorkspaceOfferFrame?: "mesh-owner-workspace-offer",
+  ownerWorkspaceOfferFrame?: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1",
   blobTransferSupported?: boolean,
   remoteEndpoint?: string,
 ]
@@ -247,7 +249,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
         const connectionId = this.connectionId("incoming")
         this.pendingIncomingConnections += 1
         this.trace("accept.connection", { connectionId })
-        void this.acceptConnection(networkConnection(raw), signal, undefined, connectionId).finally(() => {
+        void this.acceptConnection(networkConnection(raw, meshIngressBudgetProfile()), signal, undefined, connectionId).finally(() => {
           this.pendingIncomingConnections = Math.max(0, this.pendingIncomingConnections - 1)
         })
       } catch (error) {
@@ -350,7 +352,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
 
   protected async afterIncomingInstall(credential: WorkspaceMeshCredential, remote: IncomingPeer,
     ownerWorkspaceIds: string[] | undefined, connection: SyncConnection,
-    ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | undefined): Promise<void> {
+    ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined): Promise<void> {
     await this.refreshWorkspaceGossip(credential.workspaceId)
     await this.offerMissingOwnerWorkspaces(connection, credential.transportSecret, ownerWorkspaceIds, remote.personId,
       ownerWorkspaceOfferFrame)
@@ -447,7 +449,8 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
           allowStaleRoute: true,
         })
       } catch {
-        await this.store.removePeer(credential.workspaceId, peer.deviceId)
+        await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId,
+          context => context.write(() => this.store.removePeer(credential.workspaceId, peer.deviceId)))
         this.clearRouteReconnects(`${credential.workspaceId}:${peer.deviceId}:`)
       }
     }

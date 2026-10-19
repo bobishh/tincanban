@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { assertRetainsReplicaContentKeys, contentKeyForEpoch, parseReplicaContentKeys, rotateReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
 
 const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"

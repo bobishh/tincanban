@@ -6,8 +6,15 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BatchLogRecordProcessor, LoggerProvider } from "@opentelemetry/sdk-logs";
 import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
-import { capturedException } from "../../../src/sync/exceptionCapture";
-import { setHttpDiagnosticSpanFactory, type HttpDiagnosticSpanFactory } from "../../../src/sync/httpDiagnostics";
+import { capturedException } from "../../../src/domain/exceptionCapture";
+import { diagnosticHttpRequest, setHttpDiagnosticSpanFactory, type HttpDiagnosticSpanFactory } from "../../../src/domain/httpDiagnostics";
+import { fetchRusty, readRustyJson } from "@meta-uber/mesh-replication/rusty-replica";
+import type { PublicDeliveryHttpPort } from "../../../src/public/publicDelivery";
+
+export const automationPublicDeliveryHttp: PublicDeliveryHttpPort = {
+  request: (url, init, parent) => diagnosticHttpRequest(url, init, fetchRusty, parent),
+  readJson: async <T>(response: Response, maximumBytes: number) => await readRustyJson(response, maximumBytes) as T,
+};
 
 export type AutomationTelemetryBindings = {
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;

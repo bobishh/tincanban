@@ -1,8 +1,8 @@
 import { canonicalizeJson } from '../domain/identity'
 import type { PrivateReplicaConfig } from './blindReplication'
 import { parsePrivateReplicaConfig } from './blindReplicaConfig'
-import { decodeBlindBytes, encodeBlindBytes } from './blindEnvelope'
-import { blindOrigin } from './blindOrigin'
+import { decodeBlindBytes, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { mergeReplicaContentKeyVariants, replicaContentKeyEntries } from './replicaContentKeys'
 import { parsePrivateReplicaWire, type PrivateReplicaWire } from './privateReplicaPreferences'
 

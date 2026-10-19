@@ -1,6 +1,9 @@
 import { z } from "zod"
 import { BrowserMeshStore } from "@meta-uber/mesh-browser-store"
 import { canonicalizeJson, sha256Base64Url, toBase64Url } from "../domain/identity"
+import type { WorkspaceTransactionContext } from "../storageTransactionAccess"
+import { claimWorkspaceTransaction, resolveWorkspaceTransactionClaim } from "../storageTransactionClaims"
+import type { WorkspaceRevisionBasis } from "../storageCommitSupport"
 import { openWorkspaceJournal, requestResult, transactionDone } from "../storageJournal"
 import type { WorkspaceRecoveryJournal, WorkspaceRecoveryJournalRow, WorkspaceRecoveryStoreName } from "./workspaceHistoryRecoveryDecode"
 import { WORKSPACE_RECOVERY_STORES } from "../workspaceRecoveryStores"
@@ -164,8 +167,27 @@ function shouldActivateRecovery(current: WorkspaceRecoveryJournal, revision: Rec
   return true
 }
 
+function assertCapturedWorkspaceBasis(current: WorkspaceRecoveryJournal, revision: unknown, workspaceId: string,
+  basis: WorkspaceRevisionBasis): void {
+  const revisionValue = revision && typeof revision === "object" && !Array.isArray(revision)
+    ? (revision as Record<string, unknown>).revision : undefined
+  const frontier = current.frontiers.find(row => row.id === workspaceId)?.value ?? null
+  const snapshot = current.snapshots.find(row => row.id === workspaceId)?.value
+  const snapshotRecord = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+    ? snapshot as Record<string, unknown> : undefined
+  const receivedHistory = snapshotRecord?.receivedHistory
+  const historyRecord = receivedHistory && typeof receivedHistory === "object" && !Array.isArray(receivedHistory)
+    ? receivedHistory as Record<string, unknown> : undefined
+  const baselineId = historyRecord?.baselineId ?? null
+  if (receivedHistory !== undefined && (!historyRecord || baselineId !== null && typeof baselineId !== "string")) {
+    throw new Error("Workspace recovery snapshot has malformed received history state")
+  }
+  if ((revisionValue ?? null) !== basis.revision || canonicalizeJson(frontier) !== canonicalizeJson(basis.frontier) ||
+      baselineId !== basis.baselineId) throw new Error("Workspace changed during recovery activation")
+}
+
 async function activateRecoveryJournal(database: IDBDatabase, workspaceId: string, activation: Activation,
-  candidate: WorkspaceRecoveryJournal, ensureCurrent: () => void): Promise<void> {
+  candidate: WorkspaceRecoveryJournal, basis: WorkspaceRevisionBasis, ensureCurrent: () => void): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const tx = database.transaction([...STORE_NAMES, "historyProgress"], "readwrite")
     const requests = STORE_NAMES.map(name => [name, tx.objectStore(name).index("workspaceId").getAll(workspaceId)] as const)
@@ -180,6 +202,7 @@ async function activateRecoveryJournal(database: IDBDatabase, workspaceId: strin
         ensureCurrent()
         const current = journalFromRows(Object.fromEntries(STORE_NAMES.map(name => [name, values.get(name)!])) as Record<WorkspaceRecoveryStoreName, unknown[]>)
         const revision = values.get("revisions")!.find(row => (row as Record<string, unknown>).id === workspaceId) as Record<string, unknown> | undefined
+        assertCapturedWorkspaceBasis(current, revision, workspaceId, basis)
         if (!shouldActivateRecovery(current, revision, historyProgress, workspaceId, activation)) return
         for (const [name, rows] of values) {
           const target = tx.objectStore(name)
@@ -280,10 +303,11 @@ async function verifyPreservedRecoveryCopies(persistence: BrowserMeshStore, copy
 /** Preserve old private rows, then atomically replace exactly one workspace journal under a revision and session guard. */
 export async function restoreWorkspaceRecoveryJournal(workspaceId: string, journalRows: WorkspaceRecoveryJournal,
   options: { replace: boolean; ensureCurrent: () => void; expectedRevision: string | null; recoveryId: string; personId: string;
+    transaction: WorkspaceTransactionContext;
     sourceJournal?: WorkspaceRecoveryJournal }): Promise<void> {
-  const { replace, ensureCurrent, expectedRevision, recoveryId, personId } = options
+  const { replace, ensureCurrent, expectedRevision, recoveryId, personId, transaction: workspaceTransaction } = options
   exactBinding(workspaceId, personId, recoveryId)
-  if (typeof replace !== "boolean" || typeof ensureCurrent !== "function" ||
+  if (workspaceTransaction.workspaceId !== workspaceId || typeof replace !== "boolean" || typeof ensureCurrent !== "function" ||
       !(expectedRevision === null || typeof expectedRevision === "string")) throw new Error("Invalid workspace recovery activation options")
   const candidate = captureJournal(journalRows, workspaceId)
   const imported = captureJournal(options.sourceJournal ?? journalRows, workspaceId, true)
@@ -293,6 +317,9 @@ export async function restoreWorkspaceRecoveryJournal(workspaceId: string, journ
   const database = await openWorkspaceJournal()
   const initial = await readCurrentJournal(database, workspaceId)
   ensureCurrent()
+  const capturedBasis: WorkspaceRevisionBasis = { revision: workspaceTransaction.capturedRevision,
+    frontier: workspaceTransaction.capturedFrontier, baselineId: workspaceTransaction.capturedBaselineId }
+  assertCapturedWorkspaceBasis(initial.journal, initial.revision, workspaceId, capturedBasis)
   const baselineCopyDigest = await digest(initial.journal)
   ensureCurrent()
   const baselineFingerprint = canonicalizeJson(digestTree(initial.journal))
@@ -325,7 +352,10 @@ export async function restoreWorkspaceRecoveryJournal(workspaceId: string, journ
   }
 
   ensureCurrent()
-  await activateRecoveryJournal(database, workspaceId, activation, candidate, ensureCurrent)
+  const claim = claimWorkspaceTransaction(workspaceTransaction, workspaceId)
+  const claimState = resolveWorkspaceTransactionClaim(claim, workspaceId)
+  const ensureActivationCurrent = () => { claimState.ensureCurrent(); ensureCurrent() }
+  await activateRecoveryJournal(database, workspaceId, activation, candidate, claimState.basis, ensureActivationCurrent)
   const final = await readCurrentJournal(database, workspaceId)
   const finalRevision = final.revision as Record<string, unknown> | undefined
   final.journal.revisions = []

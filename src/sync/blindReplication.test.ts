@@ -1,9 +1,9 @@
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
 import { expect, test, vi } from "vitest"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
-import { encryptBlindObject, encodeBlindBytes } from "./blindEnvelope"
+import { encryptBlindObject, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, canonicalBlindJson, type BlindAccess, type BlindReceipt, blindObjectId } from "./blindClient"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 
 const signer = await createReceiptSigner()
 let receiptSequence = 0

@@ -7,6 +7,7 @@ import { defaultProofStore } from "../domain/proofs"
 import { registerWorkspaceInRoot } from "../domain/personalRoot"
 import { defaultStorage } from "../storage"
 import { WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff } from "../iroh"
+import { meshIngressBudgetProfile } from "../iroh"
 import type { DeviceSyncState, WorkspaceJoinPayload } from "./deviceSyncState"
 import { meshOwnersMatch, validWorkspaceJoinPayload } from "./deviceSyncState"
 import type { DurableMesh } from "./durableMesh"
@@ -80,7 +81,8 @@ async function connectGuestCycle(context: WorkspaceJoinBrowserContext, run: numb
     if (context.currentRun() !== run) return cycle
     context.setNode(cycle.node)
     cycle.registered = true
-    cycle.connection = meshNetworkConnection(await meshNetworkIO(dialGuest(cycle.node, invite.issuerEndpoint)))
+    cycle.connection = meshNetworkConnection(await meshNetworkIO(dialGuest(cycle.node, invite.issuerEndpoint)),
+      meshIngressBudgetProfile())
     await installGuestInvitation(context, run, invite, profile, replica, cycle)
     cycle.session = liveWorkspaceSetSync(cycle.connection, invite.secret, replica, {
       remoteDeviceId: invite.issuerDeviceId,
@@ -176,7 +178,8 @@ async function installReceivedInvitation(context: WorkspaceJoinBrowserContext, r
     if (context.currentRun() !== run) throw new Error("Workspace join was cancelled")
   }, admittedScopes)
   await replica.validate(snapshot, historyReader)
-  for (const grant of received.grants) await defaultProofStore.putGrant(grant.payload.grantId, grant)
+  for (const grant of received.grants) await defaultStorage.withWorkspaceAuthorityMutation(grant.payload.workspaceId,
+    context => context.write(() => defaultProofStore.putGrant(grant.payload.grantId, grant)))
   await context.durableMesh?.receiveInvitation(received.meshWorkspaces, workspaceIds, profile, received.grants)
   await replica.receive(snapshot, true, historyReader)
   await defaultStorage.updatePersonalRootForIdentity(profile.identity.personId, personalRoot => {

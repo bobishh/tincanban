@@ -1,5 +1,5 @@
 /** Compare JSON payloads without serializing or hashing historical proof arrays. */
-import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult } from "./sync/workspaceAdmissionCore"
+import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult } from "./product-replica/workspaceAdmission"
 export function equalIncomingPacket(left: { bytes: Uint8Array; authorization: unknown }, right: { bytes: Uint8Array; authorization: unknown }) {
   return right.bytes.buffer instanceof ArrayBuffer && left.bytes.length === right.bytes.length &&
     left.bytes.every((byte, index) => byte === right.bytes[index]) && equalJson(left.authorization, right.authorization)

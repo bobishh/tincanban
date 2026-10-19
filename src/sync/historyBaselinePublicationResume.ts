@@ -1,16 +1,16 @@
-import { withWorkspaceMutation } from "../workspaceMutation"
+import { defaultStorage } from "../storage"
 import { HistoryCaptureSourceChangedError } from "./historyCheckpointSource"
 import { load, getHeads, free } from "@automerge/automerge/slim"
 import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote"
 import { captureArchiveCoverageAuthority } from "@meta-uber/mesh-replication/history-archive-coverage"
 import type { useTincanban } from "../state"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
-import { decodeBlindBytes } from "./blindEnvelope"
-import { fetchBlind } from "./blindClient"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { fetchBlind } from "./rustyHttp"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import { readPublishedHistoryBaseline, readPreparedHistoryPublication, commitPreparedHistoryPublication } from "./historyBaselinePublicationRepository"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
-import { verifyReceivedWireHistoryBaseline } from "./historyBaselineReceiver"
+import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { reverifyActiveHistoryForWorkspace } from "./historyBaselineStartup"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { CaptureCheckpointPort } from "./historyBaselineCapture"
@@ -54,7 +54,7 @@ export async function resumePublishedHistoryBaseline(input: Input) {
         trustedScopeAuthority: input.scopeAuthority, previous, fetch: { download: remote.download, ensureCurrent: input.ensureCurrent },
         ensureCurrent: input.ensureNativeCurrent })
       try {
-        await withWorkspaceMutation(config.workspaceId, async () => {
+        await defaultStorage.withWorkspaceTransaction(config.workspaceId, async transaction => {
           const currentActive = await repository.readActive()
           if (currentActive?.baselineId !== publication.baselineId) {
             await assertSourceUnchanged(input, payload.sourceHeads, publication.baselineId)
@@ -65,7 +65,7 @@ export async function resumePublishedHistoryBaseline(input: Input) {
             await input.checkpointBeforeActivation?.(candidate, publication.wire)
             await assertSourceUnchanged(input, payload.sourceHeads, publication.baselineId)
             if (prepared) await commitPreparedHistoryPublication(config.workspaceId, input.transitionId, input.ensureNativeCurrent)
-            await repository.activate(stageId, candidate)
+            await repository.activate(stageId, candidate, transaction)
           }
         })
         await input.ensureCurrent()

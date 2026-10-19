@@ -1,4 +1,4 @@
-import { forwardRefluxRequest } from "./refluxClient";
+import { forwardRefluxEmailIngress, forwardRefluxRequest, isPrivateEmailIngressPath } from "./refluxClient";
 import { normalizeEmail, parseIntegrations, requiredString, type AutomationIntegration } from "./configuration";
 export { parseIntegrations } from "./configuration";
 export type { AutomationScope, AutomationIntegration } from "./configuration";
@@ -80,52 +80,94 @@ const defaultHandler = {
     return response;
   },
 
-  async email(message: ForwardableEmailMessage, env: WorkerEnv): Promise<void> {
-    const route = await findEmailIntegration(env, message.to);
-    if (!route) {
-      message.setReject("Unknown automation forwarding address");
-      return;
-    }
+  async email(message: ForwardableEmailMessage, env: WorkerEnv, executionCtx?: ExecutionContext): Promise<void> {
+    const telemetry = configureAutomationTelemetry(env);
     try {
-      assertActiveIntegration(route.integration);
-    } catch {
-      message.setReject("Automation integration is expired");
-      return;
-    }
-    const sender = normalizeEmail(message.from);
-    if (!route.privateRecipient && !route.integration.allowedForwarders.includes(sender)) {
-      message.setReject("Sender is not approved for this automation integration");
-      return;
-    }
-    if (!env.EVENT_STORAGE_SECRET || new TextEncoder().encode(env.EVENT_STORAGE_SECRET).byteLength < 32) {
-      message.setReject("Automation event storage is not configured");
-      return;
-    }
+      await withAutomationSpan(telemetry, "automation.email.ingress", {
+        "messaging.system": "cloudflare-email",
+        "messaging.operation": "receive",
+        "service.name": "tincanban-automation",
+      }, async span => {
+        const reject = (reason: string) => {
+          span?.setAttribute("email.outcome", "rejected");
+          message.setReject(reason);
+        };
+        try {
+          const route = await findEmailIntegration(env, message.to);
+          if (!route) {
+            reject("Unknown automation forwarding address");
+            return;
+          }
+          if (!env.REFLUX_ORIGIN) {
+            if (!route.integration) {
+              reject("Unknown automation forwarding address");
+              return;
+            }
+            try {
+              assertActiveIntegration(route.integration);
+            } catch {
+              reject("Automation integration is expired");
+              return;
+            }
+          }
+          const sender = normalizeEmail(message.from);
+          if (!route.privateRecipient && !route.integration.allowedForwarders.includes(sender)) {
+            reject("Sender is not approved for this automation integration");
+            return;
+          }
+          if (!env.REFLUX_ORIGIN && (!env.EVENT_STORAGE_SECRET || new TextEncoder().encode(env.EVENT_STORAGE_SECRET).byteLength < 32)) {
+            reject("Automation event storage is not configured");
+            return;
+          }
 
-    if (message.rawSize > MAX_RAW_EMAIL_BYTES) {
-      message.setReject("Email exceeds the automation message size limit");
-      return;
+          if (message.rawSize > MAX_RAW_EMAIL_BYTES) {
+            reject("Email exceeds the automation message size limit");
+            return;
+          }
+          const bytes = await new Response(message.raw).arrayBuffer();
+          if (bytes.byteLength > MAX_RAW_EMAIL_BYTES) {
+            reject("Email exceeds the automation message size limit");
+            return;
+          }
+          let parsed;
+          try { parsed = await parseForwardedMail(bytes); }
+          catch { reject("Email could not be parsed within the supported MIME limits"); return; }
+          const rawHash = await digestBytes(bytes);
+          const stableSourceId = parsed.messageId ?? `sha256:${rawHash}`;
+          const eventId = await digestId(`${route.integrationId}:email:${stableSourceId}`);
+          const payload: AutomationEvent = { source: "email", receivedAt: new Date().toISOString(), message: parsed, rawMime: encodeBase64Url(new Uint8Array(bytes)) };
+          if (env.REFLUX_ORIGIN) {
+            const result = await forwardRefluxEmailIngress(route.integrationId, {
+              eventId,
+              sourceId: stableSourceId,
+              bodyHash: rawHash,
+              payload,
+            }, env);
+            if (result === "conflict") reject("Email message ID conflicts with a stored intake event");
+            else console.log(JSON.stringify({ event: "email.intake.accepted", integrationId: route.integrationId, eventId }));
+            if (result !== "conflict") span?.setAttribute("email.outcome", "accepted");
+            return;
+          }
+          const integration = route.integration;
+          if (!integration) throw new Error("Local email route has no configured integration");
+          const result = await coordinator(env, route.integrationId).enqueueEmail({
+            eventId,
+            sourceId: stableSourceId,
+            bodyHash: rawHash,
+            payload: await encryptEventPayload(env.EVENT_STORAGE_SECRET, eventId, payload),
+          });
+          if ("error" in result) reject("Email message ID conflicts with a stored intake event");
+          else console.log(JSON.stringify({ event: "email.intake.accepted", integrationId: route.integrationId, eventId, duplicate: result.duplicate }));
+          if (!("error" in result)) span?.setAttribute("email.outcome", "accepted");
+        } catch (error) {
+          span?.setAttribute("email.outcome", "retry");
+          throw error;
+        }
+      });
+    } finally {
+      try { executionCtx?.waitUntil(telemetry.flush()); }
+      catch { /* Telemetry lifecycle support must not alter email delivery. */ }
     }
-    const bytes = await new Response(message.raw).arrayBuffer();
-    if (bytes.byteLength > MAX_RAW_EMAIL_BYTES) {
-      message.setReject("Email exceeds the automation message size limit");
-      return;
-    }
-    let parsed;
-    try { parsed = await parseForwardedMail(bytes); }
-    catch { message.setReject("Email could not be parsed within the supported MIME limits"); return; }
-    const rawHash = await digestBytes(bytes);
-    const stableSourceId = parsed.messageId ?? `sha256:${rawHash}`;
-    const eventId = await digestId(`${route.integration.id}:email:${stableSourceId}`);
-    const payload: AutomationEvent = { source: "email", receivedAt: new Date().toISOString(), message: parsed, rawMime: encodeBase64Url(new Uint8Array(bytes)) };
-    const result = await coordinator(env, route.integration.id).enqueueEmail({
-      eventId,
-      sourceId: stableSourceId,
-      bodyHash: rawHash,
-      payload: await encryptEventPayload(env.EVENT_STORAGE_SECRET, eventId, payload),
-    });
-    if ("error" in result) message.setReject("Email message ID conflicts with a stored intake event");
-    else console.log(JSON.stringify({ event: "email.intake.accepted", integrationId: route.integration.id, eventId, duplicate: result.duplicate }));
   },
 } satisfies ExportedHandler<WorkerEnv>;
 
@@ -136,6 +178,7 @@ async function handleFetch(request: Request, env: WorkerEnv): Promise<Response> 
   const cors = corsHeaders(request, env);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (request.method === "GET" && url.pathname === "/health") return json({ status: "ready", ...workerReleaseIdentity(env) }, 200, cors);
+  if (isPrivateEmailIngressPath(url.pathname)) return json({ error: "Not found" }, 404, cors);
   if (env.REFLUX_ORIGIN) return forwardRefluxRequest(request, env, cors);
   if (url.pathname.startsWith("/v2/application-review/")) return handleApplicationReviewApi(request, env, cors);
   if (url.pathname.startsWith("/v2/automation-instances/")) return handleAutomationInstanceApi(request, env, cors);
@@ -309,15 +352,20 @@ function assertActiveIntegration(integration: AutomationIntegration): void {
   if (Date.parse(integration.scope.expiresAt) <= Date.now()) throw new Error("Integration authorization has expired");
 }
 
-async function findEmailIntegration(env: WorkerEnv, recipient: string): Promise<{ integration: AutomationIntegration; privateRecipient?: boolean } | null> {
+type EmailIntegrationRoute =
+  | { integrationId: string; privateRecipient: true; integration?: AutomationIntegration }
+  | { integrationId: string; privateRecipient: false; integration: AutomationIntegration };
+
+async function findEmailIntegration(env: WorkerEnv, recipient: string): Promise<EmailIntegrationRoute | null> {
   const address = normalizeEmail(recipient);
   const route = privateEmailRoutes(env).find(value => constantTimeEqual(value.address, address));
   if (route) {
+    if (env.REFLUX_ORIGIN) return { integrationId: route.id, privateRecipient: true };
     const integration = await getIntegration(env, route.id);
-    return { integration, privateRecipient: true };
+    return { integrationId: route.id, integration, privateRecipient: true };
   }
   const integration = parseIntegrations(env).find((candidate) => candidate.emailAddress === address);
-  return integration ? { integration } : null;
+  return integration ? { integrationId: integration.id, integration, privateRecipient: false } : null;
 }
 
 function stripHumanCheck(submission: WebsiteSubmission): Omit<WebsiteSubmission, "humanCheckToken" | "humanCheckAnswer"> {

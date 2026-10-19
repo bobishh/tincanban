@@ -16,6 +16,7 @@ import { registerOwnerOfferProofs } from "./ownerOfferProofs"
 import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked, isGrantRevoked, uniqueCertificates, isEnvelope, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities,
   type MeshExport, type MeshWorkspaceEnvelope } from "./durableMeshBase"
 import { DurableMeshBase } from "./durableMeshBase"
+import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { workspaceRecordSigning } from "./meshRecordSigning"
 import { z } from "zod"
@@ -107,18 +108,20 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
 
   protected abstract refreshOwnBundle(credential: WorkspaceMeshCredential, profile: LocalProfile,
     endpoint: string, certificates: DeviceCertificate[]): Promise<WorkspaceMemberBundle | undefined>
-  protected abstract mergeRevocations(credential: WorkspaceMeshCredential, raw: unknown[], disconnect?: boolean): Promise<void>
+  protected abstract mergeRevocations(credential: WorkspaceMeshCredential, raw: unknown[], disconnect?: boolean,
+    authorityContext?: WorkspaceAuthorityMutationContext): Promise<void>
   protected abstract mergePeerBundles(credential: WorkspaceMeshCredential, bundles: WorkspaceMemberBundle[]): Promise<void>
   protected abstract putVerifiedBundle(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle): Promise<void>
   protected abstract mergeOwnershipTransfers(credential: WorkspaceMeshCredential, raw: WorkspaceOwnershipTransfer[]): Promise<WorkspaceMeshCredential>
   protected abstract mergeSuccessionState(credential: WorkspaceMeshCredential, policy: WorkspaceSuccessionPolicy | undefined, votes: WorkspaceSuccessionVote[], claims: WorkspaceSuccessionClaim[]): Promise<WorkspaceMeshCredential>
-  protected abstract refreshSuccessionPolicy(workspaceId: string): Promise<void>
+  protected abstract refreshSuccessionPolicy(workspaceId: string, authorityContext?: WorkspaceAuthorityMutationContext): Promise<void>
   protected async refreshOwnerCertificates(credential: WorkspaceMeshCredential, profile: LocalProfile,
     certificates: DeviceCertificate[]): Promise<WorkspaceMeshCredential> {
     const next = meshRustRuntime().state.planOwnerCertificateRefresh(credential,
       profile.identity.personId, certificates, new Date().toISOString()) as WorkspaceMeshCredential | null
     if (!next) return credential
-    await this.store.putWorkspaceCredential(next)
+    await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId,
+      context => context.write(() => this.store.putWorkspaceCredential(next)))
     const committed = await this.store.getWorkspaceCredential(credential.workspaceId)
     if (!committed) throw new Error("Workspace credential disappeared during certificate refresh")
     return committed
@@ -172,7 +175,8 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
     const credential: WorkspaceMeshCredential = { version: 1, workspaceId, ownerPersonId: profile.identity.personId,
       ownerPublicKey: profile.identity.publicKey, ownerCertificates: certificates, transportSecret: createPairingSecret(),
       epoch: 1, updatedAt: new Date().toISOString() }
-    await this.store.putWorkspaceCredential(credential)
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+      context => context.write(() => this.store.putWorkspaceCredential(credential)))
     return credential
   }
 
@@ -319,7 +323,8 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
   }
 
   protected async offerMissingOwnerWorkspaces(connection: SyncConnection, secret: string,
-    remoteWorkspaceIds: unknown, remotePersonId: string, ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | undefined,
+    remoteWorkspaceIds: unknown, remotePersonId: string,
+    ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined,
     onlyWorkspaceIds?: string[]) {
     const profile = await this.options.getProfile()
     if (!ownerWorkspaceOfferFrame) return
@@ -354,7 +359,8 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
               { personId: remotePersonId, role: keeper.role, accessEpoch }, async () =>
                 await this.store.getWorkspaceAuthority(workspaceId) ?? await this.store.getWorkspaceCredential(workspaceId))
             grant = await createWorkspaceGrant(profile, workspaceId, remotePersonId, keeper.role, accessEpoch, context)
-            await defaultProofStore.putGrant(grant.payload.grantId, grant)
+            await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+              context => context.write(() => defaultProofStore.putGrant(grant!.payload.grantId, grant!)))
           }
           const value = z.record(z.string(), z.unknown()).parse(JSON.parse(new TextDecoder().decode(offer)))
           offer = new TextEncoder().encode(JSON.stringify({ ...value, grant, controllerPersonId: profile.identity.personId }))
@@ -386,7 +392,8 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
         this.clearRouteReconnect(key)
         await entry.evict("device forgotten")
       }
-      await this.store.removePeer(workspaceId, deviceId)
+      await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+        context => context.write(() => this.store.removePeer(workspaceId, deviceId)))
     }
   }
 
@@ -474,12 +481,14 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       previousCredential: previous ?? null, previousAuthority: previousAuthority ?? null,
       localPersonId: profile.identity.personId, localGrant: localGrant ?? null,
       updatedAt: new Date().toISOString() }) as WorkspaceMeshCredential
-    await this.store.putWorkspaceCredential(credential)
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+      context => context.write(() => this.store.putWorkspaceCredential(credential)))
     if (envelope.scopeAuthoritySnapshot) {
       meshRustRuntime().state.validateScopeAuthority(envelope.scopeAuthoritySnapshot, Date.now())
       const authority = await this.store.getWorkspaceAuthority(workspaceId)
       if (!authority) throw new Error("Workspace authority disappeared during invitation install")
-      await this.store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: envelope.scopeAuthoritySnapshot })
+      await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+        context => context.write(() => this.store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: envelope.scopeAuthoritySnapshot! })))
     }
     await this.mergeInvitationCatalog(credential, envelope)
   }

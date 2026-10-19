@@ -3,7 +3,7 @@ import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/w
 import type { StoredWorkspaceSnapshot } from "../storageJournal"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import { defaultStorage } from "../storage"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { PeerHistoryBaselineDescriptor, PeerHistoryObjectReader } from "./workspaceSet"
 import { verifyPeerReceivedHistoryBaseline } from "./peerHistoryBaselineReceiver"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
@@ -181,7 +181,8 @@ export async function activatePeerBrowserHistoryBaseline(input: {
   }
   const stageId = await repository.stage(input.candidate, expected, undefined, verifiedAncestors.get(input.candidate))
   guard()
-  await repository.activate(stageId, input.candidate)
+  await defaultStorage.withWorkspaceTransaction(input.workspaceId,
+    transaction => repository.activate(stageId, input.candidate, transaction))
   guard()
   await defaultStorage.acceptVerifiedReceivedHistoryBaseline(input.candidate, guard)
 }

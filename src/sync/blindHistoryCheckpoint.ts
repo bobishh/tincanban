@@ -2,7 +2,7 @@ import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { privateReplicaBinding, readReplicaWriterUpgrade } from "./privateReplicaRepository"
 import { blindHash, discoverBlindKeeper } from "./blindClient"
-import { decodeBlindBytes, decryptBlindObject, encryptBlindObject } from "./blindEnvelope"
+import { decodeBlindBytes, decryptBlindObject, encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { verifyCheckpointReceipt, type BlindCheckpointReceipt, type BlindCheckpointRequest } from "./blindCheckpoint"
 import type { BlindReplicaConfig } from "./blindReplication"
 

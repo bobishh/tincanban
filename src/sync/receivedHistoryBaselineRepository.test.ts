@@ -6,8 +6,11 @@ import { initializeAutomerge } from "../crdt"
 import { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { StoredWorkspaceSnapshot } from "../storageJournal"
+import { defaultStorage } from "../storage"
 
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
   vi.stubGlobal("indexedDB", new IDBFactory())
   vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
@@ -72,6 +75,10 @@ async function setup() {
     priorFrontier, priorDelta, openWorkspaceJournal, requestResult, transactionDone }
 }
 
+async function activate(f: Awaited<ReturnType<typeof setup>>, stageId: string, candidate: WasmVerifiedReceivedHistoryBaseline) {
+  return defaultStorage.withWorkspaceTransaction("history-workspace", transaction => f.repository.activate(stageId, candidate, transaction))
+}
+
 describe("received history baseline activation", () => {
   it("stages verified source durably against exact prior snapshot and rejects a stale parent", async () => {
     const f = await setup()
@@ -85,7 +92,7 @@ describe("received history baseline activation", () => {
   it("atomically installs the verified basis while retaining preactivation snapshot and raw evidence", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
-    await f.repository.activate(stageId, f.candidate)
+    await activate(f, stageId, f.candidate)
     const database = await f.openWorkspaceJournal()
     const transaction = database.transaction(["snapshots", "receivedBaselines", "changes", "archivedChanges", "authorizations", "archivedAuthorizations", "proofs", "receipts", "frontiers", "deltas"], "readonly")
     const [snapshot, baseline, changes, proofs, receipts, frontier, delta, archivedChanges, activeAuthorizations, archivedAuthorizations] = await Promise.all([
@@ -122,7 +129,7 @@ describe("received history baseline activation", () => {
   it("Given a borrowed Native basis, when its cache entry is replaced, evicted or identity-invalidated, then keep the outstanding borrow alive without exposing stale authority", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
-    await f.repository.activate(stageId, f.candidate)
+    await activate(f, stageId, f.candidate)
     const { WorkspaceStorage } = await import("../storage")
     const { stateRuntime } = await import("../stateContext")
     const previousProfile = stateRuntime.currentProfile
@@ -162,9 +169,9 @@ describe("received history baseline activation", () => {
   it("Given a peer-admitted active basis, when Rusty repeats its exact signed baseline, then retain only the matching Rusty read route", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
-    await f.repository.activate(stageId, f.candidate)
+    await activate(f, stageId, f.candidate)
     const signedJson = f.candidate.originalJson()
-    const wire = { version: 1 as const, signedJson: (await import("./blindEnvelope")).encodeBlindBytes(signedJson),
+    const wire = { version: 1 as const, signedJson: (await import("@meta-uber/mesh-replication/rusty-replica")).encodeBlindBytes(signedJson),
       basis: { context: {}, reference: {}, locatorRoot: {}, coverage: {} } } as never
     await f.repository.recordActiveWireRoute("baseline-1", signedJson, wire)
     const row = (await f.repository.readActive())!
@@ -182,14 +189,14 @@ describe("received history baseline activation", () => {
     const substitutedBytes = Automerge.save(other)
     Automerge.free(other)
     const substituted = opaqueCandidate(substitutedBytes, new TextEncoder().encode('{"signed":false}'))
-    await expect(f.repository.activate(stageId, substituted)).rejects.toThrow(/staged candidate/i)
+    await expect(activate(f, stageId, substituted)).rejects.toThrow(/staged candidate/i)
     await expect(f.repository.readStaged()).resolves.toMatchObject({ stageId, state: "staged" })
   })
 
   it("restores the exact local snapshot and delta frontier while retaining the received source record", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
-    await f.repository.activate(stageId, f.candidate)
+    await activate(f, stageId, f.candidate)
     await f.repository.restorePriorLocalHistory()
     const database = await f.openWorkspaceJournal()
     const transaction = database.transaction(["snapshots", "receivedBaselines", "changes", "proofs", "receipts"], "readonly")
@@ -220,7 +227,7 @@ describe("received history baseline activation", () => {
   it.each(["snapshot", "revision", "frontier", "authorization", "history-transition"] as const)("refuses parent rollback after a post-activation %s mutation without losing the new source", async mutation => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
-    await f.repository.activate(stageId, f.candidate)
+    await activate(f, stageId, f.candidate)
     const database = await f.openWorkspaceJournal()
     const tx = database.transaction(["snapshots", "revisions", "frontiers", "authorizations", "historyProgress"], "readwrite")
     const saved = await f.requestResult(tx.objectStore("snapshots").get("history-workspace")) as StoredWorkspaceSnapshot
@@ -279,7 +286,7 @@ it("Given an already-active enrolled basis, when adding its verified ancestors, 
   const { captureVerifiedHistoryAncestors } = await import("./verifiedHistoryAncestors")
   const evidence = captureVerifiedHistoryAncestors(current, [parent])
   const stageId = await f.repository.stage(current, f.priorSnapshot)
-  await f.repository.activate(stageId, current)
+  await activate(f, stageId, current)
   const before = await f.repository.readActive()
   await f.repository.retainVerifiedAncestors(current, evidence)
   expect(await f.repository.readActive()).toEqual(before)

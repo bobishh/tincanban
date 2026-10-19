@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
+import { WorkspaceStorage, type WorkspaceTransactionContext } from "../storage"
 import { receiveBrowserHistoryBaseline } from "./browserHistoryBaselineReceive"
 
 function fixture() {
@@ -9,7 +10,10 @@ function fixture() {
   const active = { baselineId: "prior" }
   const repository = { readActive: vi.fn(async () => active), readStaged: vi.fn(async () => undefined),
     stage: vi.fn(async () => "stage-a"), activate: vi.fn(async () => {}) }
-  const ports = { repository, ensureCurrent: vi.fn(), readLocal: vi.fn(async () => ({
+  const storage = new WorkspaceStorage()
+  const ports = { repository, workspaceTransaction: <T>(operation: (context: WorkspaceTransactionContext) => Promise<T>) =>
+    storage.withWorkspaceTransaction("board-a", operation),
+    ensureCurrent: vi.fn(), readLocal: vi.fn(async () => ({
       bytes: new Uint8Array([1]), heads: ["a".repeat(64)], revision: "local-1", catalogRevision: "catalog-1", pending: false,
     })),
     verify: vi.fn(async () => candidate as unknown as WasmVerifiedReceivedHistoryBaseline), coversHeads: vi.fn(async () => {}), readExpectedSnapshot: vi.fn(async () => null),
@@ -30,7 +34,7 @@ describe("browser received history baseline", () => {
     expect(ports.verify).toHaveBeenCalledOnce()
     expect(ports.coversHeads.mock.calls[0]?.slice(0, 2)).toEqual([candidate, ["a".repeat(64)]])
     expect(repository.stage).toHaveBeenCalledOnce()
-    expect(repository.activate).toHaveBeenCalledWith("stage-a", candidate)
+    expect(repository.activate).toHaveBeenCalledWith("stage-a", candidate, expect.objectContaining({ workspaceId: "board-a", capturedRevision: null, capturedBaselineId: null }))
     expect(ports.accept).toHaveBeenCalledWith(candidate)
     expect(ports.merge).toHaveBeenCalledWith(new Uint8Array([2]), { signed: true }, candidate)
   })

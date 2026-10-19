@@ -7,7 +7,6 @@ import { readStoredAttachment, writeStoredAttachmentStream } from "../attachment
 import { defaultStorage } from "../storage"
 import { openWorkspaceJournal, requestResult, transactionDone } from "../storageJournal"
 import { refreshAvailableWorkspaces } from "../statePersistence"
-import { withWorkspaceMutation } from "../workspaceMutation"
 import { authorityValidationFingerprint, exportAuthorizationBundle, readWorkspaceSigningAuthority, workspaceRole } from "../sync/changeAuthorization"
 import { workspaceSigningContext } from "../sync/workspaceSigning"
 import { peerStore } from "../sync/peerStore"
@@ -181,9 +180,9 @@ export async function restorePrivateWorkspaceRecovery(core: Core, preview: Priva
   if (!profile || profile.identity.personId !== preview.personId) throw new Error("Recover this file's identity in Settings → Identity first")
   const guard = identityGuard(profile), wasActive = core.tincanban.activeWorkspace.id === preview.workspaceId
   guard()
-  await withWorkspaceMutation(preview.workspaceId, async () => {
+  await defaultStorage.withWorkspaceTransaction(preview.workspaceId, async transaction => {
     guard()
-    const historyProgress = await defaultStorage.ensureHistoryProgress(preview.workspaceId)
+    const historyProgress = await defaultStorage.historyProgressForRead(preview.workspaceId)
     if (historyProgress.transitionId) throw new Error("Finish archiving this workspace before replacing its local copy")
     const current = await readWorkspaceSigningAuthority(preview.workspaceId)
     if (current.invalid) throw new Error("Current workspace authority is invalid; recovery cannot replace its permissions")
@@ -228,9 +227,9 @@ export async function restorePrivateWorkspaceRecovery(core: Core, preview: Priva
     }
     await restoreWorkspaceRecoveryJournal(preview.workspaceId, admitted.journal, { personId: preview.personId,
       recoveryId: retained.recoveryId, replace, expectedRevision: retained.expectedRevision, ensureCurrent: guard,
-      sourceJournal: retained.decoded.journal })
-    defaultStorage.invalidateWorkspaceCache(preview.workspaceId)
+      sourceJournal: retained.decoded.journal, transaction })
   })
+  defaultStorage.invalidateWorkspaceCache(preview.workspaceId)
   guard()
   // Identity projections can acquire this workspace's mutation lock themselves.
   // Their durable intent resumes after journal activation releases that lock.

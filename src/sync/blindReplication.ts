@@ -1,17 +1,16 @@
 import { blindHash, inventoryBlindObjects, downloadBlindObject, uploadBlindObject, verifyBlindReceipt, type BlindReceipt, type BlindAccess } from "./blindClient"
-import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
+import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject, decryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindCheckpointRequest, submitBlindCheckpoint } from "./blindCheckpoint"
 import { canonicalizeJson } from "../domain/identityCrypto"
 import { ReplicaEngine, emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindCheckpointRequest as HistoryCheckpointRequest } from "./blindCheckpoint"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import { openWithReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
 
-export type BlindReplicaConfig = BlindAccess & ReplicaContentKeys & { purpose?: "workspace"; workspaceId: string; cursor: number; lastUploaded: string; removalPending?: boolean; preferenceRevision?: string; minimumWriterVersion?: 2 }
-export type IdentityReplicaConfig = Omit<BlindAccess, "client" | "clientBuild"> & ReplicaContentKeys & { purpose: "identity"; personId: string; cursor: number; lastUploaded: string; removalPending?: boolean; preferenceRevision?: string }
-export type PrivateReplicaConfig = BlindReplicaConfig | IdentityReplicaConfig
+import type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
+export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
 export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
 export type BlindReplicaStore = {
   read: (id: string) => Promise<Uint8Array>
@@ -57,7 +56,7 @@ function changedParts(parts: ContentParts, previous?: ContentParts): string[] {
 function uploadPhase(retry: boolean, known: boolean): string { return retry ? "retry" : known ? "changed" : "initial" }
 async function readAttachmentLocators(value: unknown): Promise<AttachmentLocator[]> {
   if (value === undefined) return []
-  return (await import("./attachmentIndex")).parseAttachmentLocators(value)
+  return (await import("../product-replica/attachmentIndex")).parseAttachmentLocators(value)
 }
 
 /** Rusty supplies opaque bytes. Only the existing signed causal admission may merge them. */
@@ -262,7 +261,7 @@ export class BlindReplica {
       authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
     const history = historyOverride ?? await this.store.readHistoryBaseline?.(this.config.workspaceId)
     if (history !== undefined) {
-      snapshot.history = (await import("./historyBaselineReceiver")).parseWireHistoryBaseline(history)
+      snapshot.history = (await import("../product-replica/historyBaselineReceiver")).parseWireHistoryBaseline(history)
       snapshot.version = 2
     }
     const attachments = await readAttachmentLocators(await this.store.readAttachments?.(this.config.workspaceId))

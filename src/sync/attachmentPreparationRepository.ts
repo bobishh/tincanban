@@ -3,7 +3,7 @@ import { canonicalBlindJson, blindObjectId } from "./blindClient"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { parseAttachmentPreparation, type AttachmentPreparation, type AttachmentPreparationRepository } from "./attachmentPreparationData"
 import { attachmentObjectKey, parseProgress, validateObject, validateProgress } from "./attachmentRepositoryData"
-import type { BlindObject } from "./blindEnvelope"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { AttachmentProgress } from "./attachmentTransfer"
 
 type ObjectRecord = { objectId: string; object: BlindObject }

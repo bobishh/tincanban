@@ -2,7 +2,7 @@ import { afterEach, expect, test, vi } from "vitest"
 import { signEnvelope, publicKeyId } from "../domain/identity"
 import { prepareBlindCheckpoint, submitBlindCheckpoint, verifyCheckpointReceipt, type BlindCheckpointReceipt } from "./blindCheckpoint"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
-import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject } from "./blindEnvelope"
+import { decodeBlindBytes, encodeBlindBytes, encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, canonicalBlindJson, type BlindAccess } from "./blindClient"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises"
-import { IDBFactory } from "fake-indexeddb"
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest"
 import type { BlindReplicaConfig } from "./blindReplication"
@@ -16,6 +16,9 @@ async function modules() {
 }
 let runtime: Awaited<ReturnType<typeof modules>>
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   vi.stubGlobal("indexedDB", new IDBFactory())
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))

@@ -1,5 +1,7 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { type LocalProfile } from "../domain/identity"
+
+type ScopedAuthorityWrite = <T>(operation: () => Promise<T>) => Promise<T>
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { signWithContext } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
@@ -79,7 +81,7 @@ function planSuccession(credential: WorkspaceMeshCredential, rawPolicy: Workspac
 
 async function applySuccessionTransitions(store: PeerStore, initialCredential: WorkspaceMeshCredential,
   plan: ReturnType<typeof planSuccession>, importedSnapshot: ScopeAuthoritySnapshot | undefined,
-  getProfile: () => Promise<LocalProfile>) {
+  getProfile: () => Promise<LocalProfile>, write: ScopedAuthorityWrite) {
   let credential = initialCredential
   let snapshot = (await store.getWorkspaceAuthority(initialCredential.workspaceId))?.scopeAuthoritySnapshot
   if (plan.conflicted) return { credential, snapshot }
@@ -100,8 +102,8 @@ async function applySuccessionTransitions(store: PeerStore, initialCredential: W
         previousOwnerPersonId: string; credential: WorkspaceMeshCredential; peers: WorkspacePeerRecord[]
       }
     credential = adoption.credential
-    await store.transferWorkspaceCredential(adoption.previousOwnerPersonId, credential, snapshot)
-    for (const peer of adoption.peers) await store.upsertPeer(peer)
+    await write(() => store.transferWorkspaceCredential(adoption.previousOwnerPersonId, credential, snapshot))
+    for (const peer of adoption.peers) await write(() => store.upsertPeer(peer))
   }
   return { credential, snapshot }
 }
@@ -109,17 +111,18 @@ async function applySuccessionTransitions(store: PeerStore, initialCredential: W
 export async function mergeSuccessionState(store: PeerStore, initialCredential: WorkspaceMeshCredential,
   getProfile: () => Promise<LocalProfile>, rawPolicy: WorkspaceSuccessionPolicy | undefined,
   rawVotes: WorkspaceSuccessionVote[], rawClaims: WorkspaceSuccessionClaim[], hasSessions: boolean,
-  publish: () => Promise<void>, importedSnapshot?: ScopeAuthoritySnapshot): Promise<WorkspaceMeshCredential> {
+  publish: () => Promise<void>, importedSnapshot: ScopeAuthoritySnapshot | undefined,
+  write: ScopedAuthorityWrite): Promise<WorkspaceMeshCredential> {
   const plan = planSuccession(initialCredential, rawPolicy, rawVotes, rawClaims)
   if (plan.noop) return initialCredential
-  const { credential: adopted } = await applySuccessionTransitions(store, initialCredential, plan, importedSnapshot, getProfile)
+  const { credential: adopted } = await applySuccessionTransitions(store, initialCredential, plan, importedSnapshot, getProfile, write)
   let credential = adopted
   const catalogPlan = meshRustRuntime().state.planSuccessionCatalog({ originalCatalog: meshCatalog(initialCredential),
     originalOwnerPersonId: initialCredential.ownerPersonId, credential,
     policy: plan.policy ?? null, votes: plan.votes, claims: plan.claims, updatedAt: new Date().toISOString() })
   if (catalogPlan.persist) {
     credential = catalogPlan.credential as WorkspaceMeshCredential
-    await store.putWorkspaceCredential(credential)
+    await write(() => store.putWorkspaceCredential(credential))
     credential = await store.getWorkspaceCredential(credential.workspaceId) ?? credential
   }
   if (catalogPlan.publish && hasSessions) queueMicrotask(() => { void publish() })
@@ -232,7 +235,8 @@ function planOwnershipScopeSnapshot(snapshot: ScopeAuthoritySnapshot, existingSn
   return staged
 }
 
-export async function persistScopeAuthoritySnapshot(store: PeerStore, workspaceId: string, snapshot: ScopeAuthoritySnapshot | undefined) {
+export async function persistScopeAuthoritySnapshot(store: PeerStore, workspaceId: string, snapshot: ScopeAuthoritySnapshot | undefined,
+  write: ScopedAuthorityWrite) {
   if (!snapshot) return
   const validated = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
     scopeId: string; controller: { personId: string; publicKey: string }
@@ -242,7 +246,8 @@ export async function persistScopeAuthoritySnapshot(store: PeerStore, workspaceI
   if (validated.scopeId !== workspaceId || validated.controller.personId !== authority.ownerPersonId ||
     validated.controller.publicKey !== authority.ownerPublicKey)
     throw new Error("Scope authority snapshot does not match current workspace owner")
-  await store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: snapshot })
+  if (canonicalizeJson(authority.scopeAuthoritySnapshot ?? null) === canonicalizeJson(snapshot ?? null)) return
+  await write(() => store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: snapshot }))
 }
 
 export async function confirmedOwnershipSnapshot(store: WorkspaceSetStore, workspaceId: string, transfer: WorkspaceOwnershipTransfer,

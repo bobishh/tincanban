@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest"
 import { mergeCurrentBlindHistory } from "./blindCurrentHistory"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 it("Given the exact already verified attestation from Rusty, when polling current v2 again, then admit its tail with the current opaque basis without a self-parent root switch", async () => {
   const signed = new Uint8Array([1, 2, 3]), previous = { originalJson: () => signed.slice() } as never

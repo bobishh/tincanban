@@ -1,7 +1,7 @@
 import { installPairingCodec } from "@meta-uber/mesh-pairing"
 import { installMeshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { GossipStateMachine } from "@meta-uber/mesh-replication"
-import type { MeshStream } from "@meta-uber/mesh-transport"
+import type { IrohStream as RawIrohStream, MeshStream } from "@meta-uber/mesh-transport"
 import { z } from "zod"
 import policyInit, {
   WasmAutomergeSyncEngine,
@@ -17,15 +17,18 @@ import policyInit, {
   WasmMeshHandshakeFlow,
   WasmMeshAuthenticatedSessions,
   WasmPairingCodec,
+  WasmIngressBudgetProfile,
   WasmWorkspaceJoinHandshake,
   WasmWorkspaceJoinHandoff,
   WasmStateCore,
 } from "@meta-uber/mesh-transport/wasm"
 export { WasmPairingCodec, WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff }
+export { WasmIngressBudgetProfile }
 
 let pairingCodecInstalled = false
 let rustRuntimeInstalled = false
 let browserRuntimeInitialization: Promise<void> | undefined
+let ingressBudgetProfile: InstanceType<typeof WasmIngressBudgetProfile> | undefined
 
 const automergeDeviceSyncRequestSchema = z.object({
   frame: z.unknown(),
@@ -49,8 +52,8 @@ export type IrohNode = {
 
 type IrohConnection = {
   remoteEndpointId: string
-  openStream: () => Promise<IrohStream>
-  acceptStream: () => Promise<IrohStream>
+  openStream: () => Promise<RawIrohStream>
+  acceptStream: () => Promise<RawIrohStream>
   close: () => Promise<void>
 }
 
@@ -59,8 +62,6 @@ type IrohAcceptor = {
   close: () => Promise<void>
 }
 
-type IrohStream = MeshStream
-
 function irohArtifactAvailable(): boolean {
   return typeof WebAssembly !== "undefined"
 }
@@ -68,6 +69,7 @@ function irohArtifactAvailable(): boolean {
 async function installPolicyBrowserRuntime(): Promise<void> {
   if (!irohArtifactAvailable()) throw new Error("WebAssembly unavailable in this browser")
   await policyInit()
+  ingressBudgetProfile ??= new WasmIngressBudgetProfile()
   if (!rustRuntimeInstalled) {
     installMeshRustRuntime({
       state: WasmStateCore,
@@ -80,7 +82,7 @@ async function installPolicyBrowserRuntime(): Promise<void> {
         automergeDeviceSyncRequestSchema.parse(
           WasmAutomergeDeviceSyncFlow.decodeIncomingRequest(request, expectedRemoteDeviceId),
         ),
-      encodeAutomergeDeviceSyncResponse: (batchId, ack, frame) =>
+      encodeAutomergeDeviceSyncResponse: (batchId, ack, frame): unknown =>
         WasmAutomergeDeviceSyncFlow.encodeResponse(batchId, ack, frame),
       createBatchDeliveryFlow: (targetDeviceId, routeInstanceIds, fallbackDelayMs, retryDelaysMs) =>
         new WasmMeshBatchDeliveryFlow(targetDeviceId, routeInstanceIds, fallbackDelayMs, retryDelaysMs),
@@ -99,6 +101,27 @@ async function installPolicyBrowserRuntime(): Promise<void> {
     installPairingCodec(new WasmPairingCodec())
     pairingCodecInstalled = true
   }
+}
+
+/** Returns a finite Rust-owned outer frame limit after the matching WASM initializes. */
+export function meshIngressFrameLimit(frameType: string): number {
+  if (!ingressBudgetProfile) throw new Error("Mesh ingress budget profile is unavailable")
+  return ingressBudgetProfile.maxFrameBytes(frameType)
+}
+
+export function meshIngressBudgetProfile(): InstanceType<typeof WasmIngressBudgetProfile> {
+  if (!ingressBudgetProfile) throw new Error("Mesh ingress budget profile is unavailable")
+  return ingressBudgetProfile
+}
+
+export function meshIngressPayloadLimit(frameType: string): number {
+  if (!ingressBudgetProfile) throw new Error("Mesh ingress budget profile is unavailable")
+  return ingressBudgetProfile.maxPayloadBytes(frameType)
+}
+
+export function meshIngressTransferDeadlineMs(): number {
+  if (!ingressBudgetProfile) throw new Error("Mesh ingress budget profile is unavailable")
+  return ingressBudgetProfile.maxTransferDeadlineMs()
 }
 
 /** Initializes the Rust/WASM policy runtime before application state reads it. */

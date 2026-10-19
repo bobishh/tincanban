@@ -4,6 +4,7 @@ import { fromBase64Url } from "../domain/identity"
 import { workspaceProofTransfer } from "./workspaceProofTransfer"
 import type { WorkspaceSetStore, OwnerWorkspaceOfferFrame } from "./workspaceSet"
 import type { DuplexStream, SyncConnection } from "./transport"
+import { meshIngressPayloadLimit, meshIngressTransferDeadlineMs } from "../iroh"
 
 type Source = ReturnType<typeof workspaceProofTransfer>
 type Pending = { manifest: string; source: Source }
@@ -11,11 +12,27 @@ const pending = new WeakMap<SyncConnection, Map<string, Pending>>()
 
 export async function publishOwnerWorkspaceOffer(connection: SyncConnection, secret: string, bytes: Uint8Array,
   frame: OwnerWorkspaceOfferFrame): Promise<void> {
-  const protocol = createLiveWorkspaceSession("owner-offer", secret)
+  const protocol = createLiveWorkspaceSession("workspace-set", secret)
   try {
-    let outgoing = protocol.encode(frame, bytes)
+    let response: Uint8Array | undefined
+    if (bytes.byteLength <= meshIngressPayloadLimit("mesh-owner-workspace-offer")) {
+      response = await exchangeOwnerFrame(connection, protocol.encode("mesh-owner-workspace-offer", bytes),
+        meshIngressTransferDeadlineMs())
+    } else {
+      if (frame !== "mesh-owner-workspace-offer-page-v1") {
+        throw new Error("Peer does not support bounded owner workspace offers")
+      }
+      const pages = protocol.encodeOwnerWorkspaceOfferPages(bytes)
+      const deadline = Date.now() + meshIngressTransferDeadlineMs()
+      for (let index = 0; index < pages.length; index++) {
+        response = await exchangeOwnerFrame(connection, pages[index]!, Math.max(1, deadline - Date.now()))
+        if (response.byteLength > 0) break
+        if (index === pages.length - 1) throw new Error("Owner workspace offer was not durably acknowledged")
+      }
+    }
+    if (!response?.byteLength) throw new Error("Owner workspace offer was not durably acknowledged")
+    let outgoing: Uint8Array
     for (let round = 0; round <= 4096; round++) {
-      const response = await exchangeOwnerFrame(connection, outgoing, round === 0 ? 600_000 : 20_000)
       if (inspectPairingFrame(response).type !== "mesh-proof-request-v1") {
         protocol.verifySavedReceipt(response, bytes)
         return
@@ -28,6 +45,8 @@ export async function publishOwnerWorkspaceOffer(connection: SyncConnection, sec
       }, response)
       if (!handled || !page) throw new Error("Native requested proofs outside approved owner offer")
       outgoing = page
+      response = await exchangeOwnerFrame(connection, outgoing, Math.min(20_000,
+        meshIngressTransferDeadlineMs()))
     }
     throw new Error("Owner proof reply limit exceeded")
   } finally { protocol.free?.() }
@@ -35,15 +54,23 @@ export async function publishOwnerWorkspaceOffer(connection: SyncConnection, sec
 
 async function exchangeOwnerFrame(connection: SyncConnection, frame: Uint8Array, timeoutMs: number): Promise<Uint8Array> {
   let timer: ReturnType<typeof setTimeout> | undefined
+  let stream: DuplexStream | undefined
   try {
     return await Promise.race([(async () => {
-      const stream = await connection.openStream()
+      stream = await connection.openStream()
       await stream.send(frame)
       await stream.closeSend()
       return stream.read()
     })(), new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("Owner delivery is unconfirmed; retry the same offer")), timeoutMs)
+      timer = setTimeout(() => {
+        if (stream?.reset) void stream.reset().catch(() => connection.close().catch(() => undefined))
+        else void connection.close().catch(() => undefined)
+        reject(new Error("Owner delivery is unconfirmed; retry the same offer"))
+      }, timeoutMs)
     })])
+  } catch (error) {
+    await stream?.reset?.().catch(() => undefined)
+    throw error
   } finally { if (timer) clearTimeout(timer) }
 }
 

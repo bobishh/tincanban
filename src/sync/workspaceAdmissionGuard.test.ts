@@ -5,7 +5,7 @@ import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { validateIncomingChangeAuthorizations } from "./changeAuthorization"
-import type { WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
+import type { WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import { evaluateIncomingWorkspaceAdmission } from "./changeAuthorization"
 

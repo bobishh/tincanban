@@ -3,7 +3,7 @@ import { canonicalizeJson, verifyEnvelope, type LocalProfile } from "../domain/i
 import type { TransactionReceipt, WorkspaceDocumentV2 } from "../domain/model"
 import { assertWorkspaceEntityTransitions, assertWorkspaceTransition, type WorkspaceRole } from "../domain/permissions"
 import type { WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
-import { indexAdmissionOperations, touchedPathsForChange } from "./workspaceAdmissionCore"
+import { indexAdmissionOperations, touchedPathsForChange } from "../product-replica/workspaceAdmission"
 
 /** Only locally executed commands may extend an admitted frontier without replay. */
 export async function assertLocalCommandTransition(

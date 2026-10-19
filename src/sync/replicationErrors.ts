@@ -1,3 +1,5 @@
+import { RustyResponseError } from "@meta-uber/mesh-replication/rusty-replica"
+
 const requestFailures = new WeakSet<Error>()
 
 /** Preserve HTTP error identity and protocol fields while recording its actual source. */
@@ -8,7 +10,7 @@ export function rustyRequestFailure(cause: unknown, status?: number): Error {
   return error
 }
 export function isRustyRequestFailure(cause: unknown): cause is Error {
-  return cause instanceof Error && requestFailures.has(cause)
+  return cause instanceof RustyResponseError || cause instanceof Error && requestFailures.has(cause)
 }
 
 /** A competing local writer committed first; restart from its durable state. */

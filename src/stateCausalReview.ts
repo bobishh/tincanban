@@ -12,13 +12,16 @@ import {
 } from "./sync/changeAuthorization"
 import { defaultStorage, type WorkspaceStorage } from "./storage"
 import { stateRuntime } from "./stateContext"
-import { withWorkspaceMutation } from "./workspaceMutation"
+import type { WorkspaceTransactionContext } from "./storage"
 
 type CreatedLocalChange = Extract<ExecuteResult, { ok: true }>['value']
 export type CausalReviewCallbacks = {
-  latestWorkspaceDocument: (workspaceId: string, storage: WorkspaceStorage) => Promise<Automerge.Doc<WorkspaceDocumentV2>>
+  latestWorkspaceDocument: (workspaceId: string, storage: WorkspaceStorage, transaction: WorkspaceTransactionContext) => Promise<Automerge.Doc<WorkspaceDocumentV2>>
+  // Persistence returns `created.newDoc` unchanged when all changes are admitted,
+  // otherwise it returns a separately loaded authorized projection.
   persistNewLocalChange: (base: Automerge.Doc<WorkspaceDocumentV2>, created: CreatedLocalChange,
-    profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash?: string) => Promise<Automerge.Doc<WorkspaceDocumentV2>>
+    profile: LocalProfile, storage: WorkspaceStorage, reviewedChangeHash: string | undefined, localRole: WorkspaceRole | undefined,
+    transaction: WorkspaceTransactionContext) => Promise<Automerge.Doc<WorkspaceDocumentV2>>
   updateReactiveState: (doc: Automerge.Doc<WorkspaceDocumentV2>) => void
   notifyLocalChanges: (workspaceId?: string) => void
 }
@@ -56,18 +59,20 @@ export async function refreshCausalReview(storage = defaultStorage, workspaceId 
 export async function setCausalChangeDismissed(changeHash: string, dismissed: boolean, storage = defaultStorage): Promise<void> {
   const workspaceId = stateRuntime.activeDoc?.id
   if (!workspaceId) throw new Error("Workspace not hydrated")
-  await withWorkspaceMutation(workspaceId, async () => {
-    const evidence = await storage.loadCausalEvidence(workspaceId)
+  await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+    const evidence = await transaction.loadCausalEvidence()
     const decision = evidence?.decisions.find(item => item.hash === changeHash)
     if (!evidence || !decision || decision.status.type === "admitted") throw new Error("Workspace change history is unavailable")
     const dismissedHashes = new Set(evidence.dismissedHashes ?? [])
     if (dismissed) dismissedHashes.add(changeHash)
     else dismissedHashes.delete(changeHash)
-    const loaded = await storage.loadWorkspaceDoc(workspaceId)
+    const loaded = await transaction.loadWorkspaceDoc()
     if (!loaded) throw new Error("Workspace content is unavailable")
-    await storage.commitWorkspace(workspaceId, loaded.doc, Automerge.save(loaded.doc), [], undefined, {
-      ...evidence, dismissedHashes: [...dismissedHashes].sort(),
-    })
+    try {
+      await transaction.commitWorkspace(loaded.doc, Automerge.save(loaded.doc), [], undefined, {
+        ...evidence, dismissedHashes: [...dismissedHashes].sort(),
+      })
+    } finally { Automerge.free(loaded.doc) }
     if (stateRuntime.activeDoc?.id === workspaceId) await refreshCausalReview(storage, workspaceId)
   })
 }
@@ -118,12 +123,17 @@ export async function reviewCausalChange(changeHash: string, storage: WorkspaceS
   const workspaceId = stateRuntime.activeDoc?.id
   const profile = stateRuntime.currentProfile
   if (!workspaceId || !profile) throw new Error("Workspace not hydrated")
-  await withWorkspaceMutation(workspaceId, async () => {
-    const evidence = await storage.loadCausalEvidence(workspaceId)
+  await storage.withWorkspaceTransaction(workspaceId, async transaction => {
+    const evidence = await transaction.loadCausalEvidence()
     if (!evidence) throw new Error("No quarantined workspace history is available")
     const decision = evidence.decisions.find(item => item.hash === changeHash)
     if (decision?.status.type !== "quarantined") throw new Error("Only quarantined changes can be reviewed")
     const raw = Automerge.load<WorkspaceDocumentV2>(evidence.bytes)
+    const borrowed = stateRuntime.activeDoc?.id === workspaceId ? stateRuntime.activeDoc : null
+    let base: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let createdDocument: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let next: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let transferred: Automerge.Doc<WorkspaceDocumentV2> | undefined
     try {
       if (resolvedReviewLinks(evidence, raw).has(changeHash)) throw new Error("This review already has an authorized change")
       const change = Automerge.getChangesMetaSince(raw, []).find(item => item.hash === changeHash)
@@ -131,21 +141,35 @@ export async function reviewCausalChange(changeHash: string, storage: WorkspaceS
       const before = Automerge.view(raw, change.deps)
       const candidate = Automerge.view(raw, [changeHash])
       const patch = reviewedPatch(before, candidate)
-      const base = await callbacks.latestWorkspaceDocument(workspaceId, storage)
-      const role = await workspaceRole(base, profile)
+      const latest = await callbacks.latestWorkspaceDocument(workspaceId, storage, transaction)
+      base = latest
+      const role = await workspaceRole(latest, profile)
       ensureContentWrite(role)
       const authorityGrantHash = await localChangeAuthorityGrantHash(workspaceId, profile.identity.personId)
       const { localCommandSigningContext } = await import("./sync/localCommandSigning")
-      const signingContext = await localCommandSigningContext(base, profile, async () => { ensureContentWrite(await workspaceRole(base, profile)) })
-      const result = await executeReviewedWorkspaceChange(base, changeHash, patch, profile, authorityGrantHash, signingContext)
+      const signingContext = await localCommandSigningContext(latest, profile, async () => { ensureContentWrite(await workspaceRole(latest, profile)) })
+      const result = await executeReviewedWorkspaceChange(latest, changeHash, patch, profile, authorityGrantHash, signingContext)
       if (!result.ok) throw new Error(`Review failed: [${result.error.code}] ${result.error.message}`)
-      assertWorkspaceTransition(role, base, result.value.newDoc)
-      const next = await callbacks.persistNewLocalChange(base, result.value, profile, storage, changeHash)
-      if (stateRuntime.activeDoc?.id === workspaceId) callbacks.updateReactiveState(next)
+      createdDocument = result.value.newDoc
+      assertWorkspaceTransition(role, latest, result.value.newDoc)
+      const persisted = await callbacks.persistNewLocalChange(latest, result.value, profile, storage, changeHash, undefined, transaction)
+      next = persisted
+      if (stateRuntime.activeDoc?.id === workspaceId) {
+        transferred = persisted
+        callbacks.updateReactiveState(persisted)
+      }
       await refreshCausalReview(storage, workspaceId)
       stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId })
       callbacks.notifyLocalChanges(workspaceId)
-    } finally { Automerge.free(raw) }
+    } finally {
+      Automerge.free(raw)
+      // The callback above has two exact ownership outcomes documented on its
+      // contract: shared object or separately loaded projection. Deduplicate
+      // only those callback-owned roots; never infer sharing from equal heads.
+      for (const doc of new Set([base, createdDocument, next])) {
+        if (doc && doc !== borrowed && doc !== transferred) Automerge.free(doc)
+      }
+    }
   })
 }
 

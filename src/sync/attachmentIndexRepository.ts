@@ -1,6 +1,6 @@
 import { blindHash, canonicalBlindJson } from "./blindClient"
-import { mergeAttachmentLocators, parseAttachmentLocators } from "./attachmentIndex"
-import type { AttachmentLocator } from "./attachmentCodec"
+import { mergeAttachmentLocators, parseAttachmentLocators } from "../product-replica/attachmentIndex"
+import type { AttachmentLocator } from "../product-replica"
 import { readLocal, updateLocal, type LocalStatePlan } from "../localDb"
 
 const keyPrefix = "tincanban.attachment-index.v1."

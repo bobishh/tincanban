@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ROOT_CONTEXT } from "@opentelemetry/api"
-import { setHttpDiagnosticSpanFactory } from "./httpDiagnostics"
+import { setHttpDiagnosticSpanFactory } from "../domain/httpDiagnostics"
 import { fetchBlind } from "./rustyHttp"
 
 afterEach(() => { vi.unstubAllGlobals(); setHttpDiagnosticSpanFactory(undefined) })

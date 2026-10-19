@@ -10,9 +10,11 @@ test.describe("Column add actions and overlay notices", () => {
     await expect(header.getByRole("button", { name: /Add lead to/ })).toHaveCount(0)
 
     const applied = page.getByRole("region", { name: "Applied" })
+    const columnId = await applied.getAttribute("data-column-id")
+    if (!columnId) throw new Error("Applied column has no configured identifier")
     await applied.getByRole("button", { name: "Add lead to Applied" }).click()
     const form = page.getByRole("dialog", { name: "Add item" })
-    await expect(form.getByLabel("Status")).toHaveValue((await applied.getAttribute("data-column-id"))!)
+    await expect(form.getByLabel("Status")).toHaveValue(columnId)
   })
 
   test("Given a successful action, when its notice appears, then it overlays content and disappears", async ({ page }) => {

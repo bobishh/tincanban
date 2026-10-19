@@ -7,8 +7,19 @@ import { captureArchiveLocatorRoot, createLocatedArchiveStore, iterateArchiveLoc
 import type { ArchiveEncryptionScope, EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import { captureArchiveCoverageChild, type ArchiveCoverageAuthority } from "@meta-uber/mesh-replication/history-archive-coverage"
 import { verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
-import type { StoredReceivedHistoryBaseline } from "../storageJournal"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+
+export type StoredHistoryBaselineEvidence = {
+  workspaceId: string
+  state: "staged" | "active" | "restored"
+  signedJson: Uint8Array
+  document: Uint8Array
+  wire?: unknown
+  encryptedObjects: Array<{ ciphertextId: string; object: unknown }>
+  scopeId: string
+  keyEpoch: number
+  pinnedStorage: Record<string, unknown>
+}
 
 const MAX_SIGNED_BASELINE_BYTES = 256 * 1024
 const MAX_BASELINE_DOCUMENT_BYTES = 256 * 1024 * 1024
@@ -236,7 +247,7 @@ export async function verifyReceivedHistoryBaseline(input: {
       scope.keyEpoch, scope.key, pinnedStorage, trustedScopeAuthority, objects, ensureCurrent)
 }
 
-async function reverifyRetainedWire(stored: StoredReceivedHistoryBaseline, scope: ArchiveEncryptionScope,
+async function reverifyRetainedWire(stored: StoredHistoryBaselineEvidence, scope: ArchiveEncryptionScope,
   objects: Map<string, EncryptedArchiveObject>, ensureCurrent: () => void): Promise<void> {
     if (stored.wire !== undefined) {
       const wire = parseWireHistoryBaseline(stored.wire)
@@ -273,7 +284,7 @@ async function reverifyRetainedWire(stored: StoredReceivedHistoryBaseline, scope
     }
 }
 
-async function reverifyRetainedCiphertexts(stored: StoredReceivedHistoryBaseline, scope: ArchiveEncryptionScope,
+async function reverifyRetainedCiphertexts(stored: StoredHistoryBaselineEvidence, scope: ArchiveEncryptionScope,
   trustedScopeAuthority: unknown, previous: WasmVerifiedReceivedHistoryBaseline | null | undefined, ensureCurrent: () => void): Promise<WasmVerifiedReceivedHistoryBaseline> {
     const objects = new Map<string, EncryptedArchiveObject>()
     for (const entry of stored.encryptedObjects) {
@@ -292,7 +303,7 @@ async function reverifyRetainedCiphertexts(stored: StoredReceivedHistoryBaseline
 
 /** Recreate the opaque Native handle from a durable stage after reload. Never trust a serialized host-side verification flag. */
 export async function reverifyStoredHistoryBaseline(input: {
-  stored: StoredReceivedHistoryBaseline
+  stored: StoredHistoryBaselineEvidence
   scope: ArchiveEncryptionScope
   previous?: WasmVerifiedReceivedHistoryBaseline | null
   fetch?: HistoryBaselineFetchPort
@@ -309,7 +320,7 @@ export async function reverifyStoredHistoryBaseline(input: {
   return verifyStoredCandidate(candidate, stored)
 }
 
-function assertStoredHistoryBounds(stored: StoredReceivedHistoryBaseline): void {
+function assertStoredHistoryBounds(stored: StoredHistoryBaselineEvidence): void {
   if (!stored || !(stored.signedJson instanceof Uint8Array) || stored.signedJson.length > MAX_SIGNED_BASELINE_BYTES ||
       !(stored.document instanceof Uint8Array) || stored.document.length > MAX_BASELINE_DOCUMENT_BYTES ||
       !Array.isArray(stored.encryptedObjects) || stored.encryptedObjects.length > MAX_CAPTURED_OBJECTS) {
@@ -318,7 +329,7 @@ function assertStoredHistoryBounds(stored: StoredReceivedHistoryBaseline): void 
   assertEncryptedRowsBound(stored.encryptedObjects)
 }
 
-function assertEncryptedRowsBound(rows: StoredReceivedHistoryBaseline["encryptedObjects"]): void {
+function assertEncryptedRowsBound(rows: StoredHistoryBaselineEvidence["encryptedObjects"]): void {
   let totalBytes = 0
   const ids = new Set<string>()
   for (const entry of rows) {
@@ -329,7 +340,7 @@ function assertEncryptedRowsBound(rows: StoredReceivedHistoryBaseline["encrypted
   }
 }
 
-function validateRetainedCiphertextEntry(entry: StoredReceivedHistoryBaseline["encryptedObjects"][number], ids: Set<string>): void {
+function validateRetainedCiphertextEntry(entry: StoredHistoryBaselineEvidence["encryptedObjects"][number], ids: Set<string>): void {
   const object: unknown = entry?.object
   if (!entry || typeof entry.ciphertextId !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(entry.ciphertextId) || ids.has(entry.ciphertextId) ||
       !object || typeof object !== "object" || Array.isArray(object)) throw new Error("Stored history ciphertext evidence is malformed")
@@ -346,14 +357,14 @@ function exactStoredCiphertext(value: Record<string, unknown>): boolean {
     value.ciphertext.length >= 22 && value.ciphertext.length <= MAX_ENCRYPTED_PART_TEXT && /^[A-Za-z0-9_-]+$/.test(value.ciphertext)
 }
 
-function assertStoredHistoryScope(stored: StoredReceivedHistoryBaseline, scope: ArchiveEncryptionScope): void {
+function assertStoredHistoryScope(stored: StoredHistoryBaselineEvidence, scope: ArchiveEncryptionScope): void {
   if ((stored.state !== "staged" && stored.state !== "active") || !stored.workspaceId || stored.scopeId !== scope.scopeId ||
       stored.keyEpoch !== scope.keyEpoch || !stored.pinnedStorage || typeof stored.pinnedStorage !== "object") {
     throw new Error("Stored history baseline is outside its pinned receive scope")
   }
 }
 
-async function createStoredCandidate(stored: StoredReceivedHistoryBaseline, scope: ArchiveEncryptionScope,
+async function createStoredCandidate(stored: StoredHistoryBaselineEvidence, scope: ArchiveEncryptionScope,
   trustedScopeAuthority: unknown, previous: WasmVerifiedReceivedHistoryBaseline | null | undefined,
   input: { fetch?: HistoryBaselineFetchPort; ensureCurrent: () => void }): Promise<WasmVerifiedReceivedHistoryBaseline> {
   if (stored.encryptedObjects.length > 0) {
@@ -366,7 +377,7 @@ async function createStoredCandidate(stored: StoredReceivedHistoryBaseline, scop
 }
 
 function verifyStoredCandidate(candidate: WasmVerifiedReceivedHistoryBaseline,
-  stored: StoredReceivedHistoryBaseline): WasmVerifiedReceivedHistoryBaseline {
+  stored: StoredHistoryBaselineEvidence): WasmVerifiedReceivedHistoryBaseline {
   try {
     const capturedDocument = candidate.document(), capturedSigned = candidate.originalJson()
     if (capturedDocument.length !== stored.document.length || !capturedDocument.every((byte, index) => byte === stored.document[index]) ||

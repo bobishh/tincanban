@@ -1,7 +1,7 @@
 import { expect, test, vi } from "vitest"
 import { blindHash, blindObjectId, canonicalBlindJson, discoverBlindKeeper, inventoryBlindObjects, uploadBlindObject,
   verifyBlindReceipt, type BlindAccess, type BlindReceipt } from "./blindClient"
-import { encodeBlindBytes, encryptBlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 
 test("Given scope enrollment retry discovery, when advertised, then recognize only the exact v1 contract", async () => {
   const key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
@@ -163,7 +163,7 @@ test("durable receipt binds pinned service, ciphertext, scope, epoch, policy and
   for (const patch of [{ scopeId: "other" }, { keyEpoch: 2 }, { policyRevision: 2 }, { sequence: 0 }, { objectId: "other" }, { requestId: "previous-request" }]) {
     await expect(verifyBlindReceipt(await sign({ ...payload, ...patch }), access, object, "fresh-request")).rejects.toThrow("does not cover")
   }
-  await expect(verifyBlindReceipt({ ...receipt, signature: encodeBlindBytes(new Uint8Array(64)) }, access, object, "fresh-request")).rejects.toThrow("signature invalid")
+  await expect(verifyBlindReceipt({ ...receipt, signature: encodeBlindBytes(new Uint8Array(64)) }, access, object, "fresh-request")).rejects.toThrow("does not cover")
   await expect(verifyBlindReceipt(receipt, { ...access, servicePublicKey: encodeBlindBytes(new Uint8Array(32)) }, object, "fresh-request")).rejects.toThrow("does not cover")
 })
 
@@ -193,7 +193,7 @@ test("Inventory permits one durable checkpoint repair slot above normal capacity
 test("Given a checkpoint service, when discovering storage fencing, then require its explicit observed-sequence capability", async () => {
   const pair = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
   const publicKey = encodeBlindBytes(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)))
-  const service = { publicKey, serviceId: await blindHash((await import("./blindEnvelope")).decodeBlindBytes(publicKey)) }
+  const service = { publicKey, serviceId: await blindHash((await import("@meta-uber/mesh-replication/rusty-replica")).decodeBlindBytes(publicKey)) }
   let snapshotCheckpoints: { version: number; observedSequence?: boolean } = { version: 1 }
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ protocolVersions: [2], publicOrigin: "https://rusty.example", service,
     capabilities: { modes: ["blind"], applicationWrites: false, classification: false, snapshotCheckpoints } })))

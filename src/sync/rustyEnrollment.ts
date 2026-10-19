@@ -3,15 +3,17 @@ import { verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { assertSigningContextCurrent, signingEvidence, signWithContext } from "../domain/signingContext"
 import type { DeviceCertificate, PublicIdentity } from "../domain/model"
-import { blindHash, blindOrigin, discoverBlindKeeper, fetchBlind, readBlindJson, type BlindAccess } from "./blindClient"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { blindHash, discoverBlindKeeper, type BlindAccess } from "./blindClient"
+import { fetchBlind, readBlindJson } from "./rustyHttp"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { resolveRustyManagementAuthority, rustyManagementAuthorityRevision } from "./rustyManagementClient"
-import type { RustyScopePolicyReceipt } from "./rustyScopePolicy"
+import type { RustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
 import type { RustyManagementCapability } from "./rustyManagementCapability"
 import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
 import { completeScopeEnrollmentIntent, prepareScopeEnrollmentIntent, readScopeEnrollmentIntent, replaceScopeEnrollmentIntent,
   type ScopeEnrollmentBinding, type ScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
-import { parseRustyScopePolicyReceipt } from "./rustyScopePolicy"
+import { parseRustyScopePolicyReceipt } from "../product-replica/rustyScopePolicy"
 
 type Challenge = {
   kind: "rusty-enrollment-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string;

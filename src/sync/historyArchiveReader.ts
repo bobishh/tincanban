@@ -4,7 +4,7 @@ import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-a
 import { captureArchiveEncryptionScope, type ArchiveEncryptionScope, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import { readArchiveIndex, readArchiveBytes, captureArchiveBytesReference,
   type ArchiveIndexRoot, type ArchiveBytesReference, type ArchiveTreeContext, type ArchiveObjectStore } from "@meta-uber/mesh-replication/history-archive"
-import type { HistoryBaselineFetchPort } from "./historyBaselineReceiver"
+import type { HistoryBaselineFetchPort } from "../product-replica/historyBaselineReceiver"
 import type { PeerHistoryPlaintextFetch } from "./peerHistoryBaselineReceiver"
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { isItem, validateEntity, type Item, type WorkspaceDocumentV2 } from "../domain/model"

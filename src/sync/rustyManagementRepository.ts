@@ -3,8 +3,8 @@ import { canonicalizeJson, sha256Base64Url, verifyEnvelope, type SignedEnvelope 
 import type { DeviceCertificate, PublicIdentity } from "../domain/model"
 import { compareAndSwapLocal, readLocal, updateLocal, type LocalStatePlan } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
-import { decodeBlindBytes } from "./blindEnvelope"
-import { blindOrigin } from "./blindOrigin"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { verifyRustyManagementCapability, verifyRustyManagementEvidence, type RustyManagementCapability } from "./rustyManagementCapability"
 
 export type ManagementBinding = { origin: string; servicePublicKey: string; resourceKind: "scope" | "board" | "person"; resourceId: string }

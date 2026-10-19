@@ -1,6 +1,6 @@
-import { blindOrigin } from "./blindOrigin"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "../domain/identity"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindAccess } from "./blindClient"
 
 export type RustyManagementCapability = {

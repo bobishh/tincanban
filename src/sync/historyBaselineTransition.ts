@@ -6,7 +6,7 @@ import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { CaptureCheckpointPort } from "./historyBaselineCapture"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from "./replicaWriterWorkersState"
-import { decodeBlindBytes } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 const STORE = "records"
 const DATABASE = "tincanban-history-baseline-transitions-v1"

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import ts from "typescript";
+import { maxItemCommandBytes } from "../../../workers/automation/src/itemCommands.ts";
+import { processMail, type AutomationEvent, type AutomationPipelineResult } from "../../../workers/automation/src/pipeline.ts";
 import { CLEF_MODEL, classifyApplicationEvent, classifyOpportunity, type ApplicationEventClassification,
   type OpportunityClassification, type DecisionAi } from "../../../workers/automation/src/clef.ts";
 import type { EmployeeProfile } from "../../../workers/automation/src/jobPriority.ts";
@@ -36,6 +38,7 @@ export interface ReactionContext {
   getItemCommandResult(commandId: string): Promise<ReactionCommandResult | null>;
   classifyApplicationEvent(state: string): Promise<ApplicationEventClassification>;
   classifyOpportunity(state: string, profile?: EmployeeProfile, bands?: Array<{ optionId: string; minScore: number }>): Promise<OpportunityClassification>;
+  classifyEmail(event: Extract<AutomationEvent, { source: "email" }>): Promise<AutomationPipelineResult>;
 }
 export type ReactionOutput = {
   version: 1;
@@ -55,7 +58,7 @@ export async function runReaction(request: ReactionRequest & { source: string },
   const input = { version: request.version, runId: request.runId, sourceDigest: request.sourceDigest,
     signals: request.signals, ...(request.classification === undefined ? {} : { classification: request.classification }),
     participant: request.participant, capabilities: request.capabilities };
-  assertBoundedJson(input, "Reaction input");
+  assertBoundedJson(input, "Reaction input", maxItemCommandBytes);
   const moduleSource = compileReaction(request.source, request.capabilities.operations);
   const commands: ReactionOutput["commands"] = [];
   let commandFailure: string | undefined;
@@ -66,7 +69,7 @@ export async function runReaction(request: ReactionRequest & { source: string },
         throw new Error("Reaction target capability denied for this participant");
       }
       if (commands.length >= 100) throw new TypeError("Reaction command count exceeds its bound");
-      assertBoundedJson(command, "Reaction command");
+      assertBoundedJson(command, "Reaction command", maxItemCommandBytes);
       const slot = commands.length;
       const stableId = await stableCommandId(request.runId, request.sourceDigest, slot);
       const pending = { commandId: stableId, status: "pending" };
@@ -119,6 +122,16 @@ export async function runReaction(request: ReactionRequest & { source: string },
       const evidenceKey = await stableEvidenceKey(request, "opportunity", inputHash);
       return participant.getOrCreateOpportunity(evidenceKey, inputHash,
         () => classifyOpportunity(createReactionAi(), state, selectedProfile, selectedBands));
+    },
+    classifyEmail: async event => {
+      if (!event || event.source !== "email") throw new TypeError("Reaction email event is invalid");
+      return processMail(event, {
+        classifyApplicationEvent: state => api.classifyApplicationEvent(state),
+        classifyOpportunity: (state, profile, bands) => api.classifyOpportunity(state, profile, bands),
+      }, async (url, init) => {
+        requireCapability(request, "job-page-fetch");
+        return globalThis.fetch(url, init);
+      });
     },
   };
   let result: unknown;
@@ -224,10 +237,10 @@ function validateRequest(request: ReactionRequest & { source: string }): void {
     !Array.isArray(request.capabilities?.targets) || !/^[A-Za-z0-9_-]{1,128}$/.test(request.participant?.integrationId) ||
     !Number.isSafeInteger(request.participant?.epoch) || request.participant.epoch < 1) throw new TypeError("Reaction request shape is invalid");
 }
-function assertBoundedJson(value: unknown, label: string): void {
+function assertBoundedJson(value: unknown, label: string, maximumBytes = reactionJsonLimit): void {
   let encoded: string | undefined;
   try { encoded = JSON.stringify(value); } catch { throw new TypeError(`${label} must be bounded JSON`); }
-  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > reactionJsonLimit) throw new TypeError(`${label} exceeds its JSON bound`);
+  if (encoded === undefined || Buffer.byteLength(encoded, "utf8") > maximumBytes) throw new TypeError(`${label} exceeds its JSON bound`);
 }
 function object(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(message);

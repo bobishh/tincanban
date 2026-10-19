@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { parseWireHistoryBaseline } from "./historyBaselineReceiver"
+import { parseWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 
 const digest = "A".repeat(43)
 function validWire() {

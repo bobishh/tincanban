@@ -6,41 +6,43 @@ import type {
   PersonalRootDocumentV1,
   Heads,
 } from "./domain/model"
-import { records, mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
+import { records } from "./sync/workspaceChangeProofStore"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
 import { canonicalizeJson } from "./domain/identity"
 import { causalEvidenceChanged, snapshotCausalEvidence, replayAdmittedJournal } from "./causalEvidence"
 import type { StoredProofsV1 } from "./domain/proofs"
-import { toBase64Url, fromBase64Url } from "./domain/identity"
-import { validateRekeyAuthorizations } from "./storageRekey"
+import { fromBase64Url } from "./domain/identity"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
-import { StorageHistoryAccess } from "./storageHistoryAccess"
+import { StorageTransactionAccess } from "./storageTransactionAccess"
 import {
   activeHistoryDifference,
   persistWorkspaceInIndexedDb,
   persistWorkspaceLocally,
+  WorkspaceRevisionConflict,
+  type WorkspaceRevisionBasis,
   type WorkspaceCommitCommand,
 } from "./storageCommitSupport"
 import { includesWorkspaceHeads, partitionCatalog, readWorkspaceCatalogRecords, type WorkspaceMeta } from "./storageCatalog"
 import {
   deleteWorkspaceJournal,
-  advanceWorkspaceRevision,
   readWorkspaceSnapshot,
   type StoredWorkspaceSnapshot,
   openWorkspaceJournal,
   readLocalJournal,
   recordsForWorkspace,
-  requestResult,
-  transactionDone,
-  withLocalJournalLock,
-  writeLocalJournal,
   type StoredChange,
   type StoredProofRecord,
   type StoredReceiptRecord,
   type StoredCausalEvidence,
 } from "./storageJournal"
+import { withWorkspaceMutation } from "./workspaceMutation"
 
 export type { StoredChange } from "./storageJournal"
-
+export { WorkspaceRevisionConflict } from "./storageCommitSupport"
+export type { WorkspaceTransactionContext, WorkspaceAuthorityMutationContext } from "./storageTransactionAccess"
+export type { WorkspaceTransactionClaim } from "./storageTransactionClaims"
+export { isWorkspaceAuthorityMutation } from "./storageTransactionAccess"
+export { claimWorkspaceTransaction, resolveWorkspaceTransactionClaim } from "./storageTransactionClaims"
 
 function canReuseDocument(doc: Automerge.Doc<WorkspaceDocumentV2> | undefined, workspaceId: string, heads: Heads) {
   return doc?.id === workspaceId && Automerge.getHeads(doc).sort().join() === heads.slice().sort().join()
@@ -84,11 +86,14 @@ const memoryStore: InMemoryStore = {
 }
 
 
-export class WorkspaceStorage extends StorageHistoryAccess {
+export class WorkspaceStorage extends StorageTransactionAccess {
   private inMemory: InMemoryStore
   private personalRootStore: PersonalRootMapStore
   private loadedDocuments = new Map<string, Automerge.Doc<WorkspaceDocumentV2>>()
   protected checkDeltaWrites() { checkStorageFailureHook() }
+  protected withHistoryProgressMutation<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    return withWorkspaceMutation(workspaceId, operation)
+  }
 
   constructor(store = memoryStore) {
     super()
@@ -96,6 +101,7 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     this.personalRootStore = new PersonalRootMapStore(store.personalRoots, checkStorageFailureHook)
   }
 
+  /** Capture a storage-owned workspace basis and keep it live through admission and commit. */
   private rememberDocument(workspaceId: string, doc?: Automerge.Doc<WorkspaceDocumentV2>) {
     const previous = this.loadedDocuments.get(workspaceId)
     this.loadedDocuments.delete(workspaceId)
@@ -110,6 +116,7 @@ export class WorkspaceStorage extends StorageHistoryAccess {
 
   /** A recovery transaction replaces durable sources outside the ordinary command cache. */
   invalidateWorkspaceCache(workspaceId: string): void {
+    this.advanceWorkspaceLifecycle(workspaceId)
     this.delta.forget(workspaceId)
     this.rememberDocument(workspaceId)
     this.forgetReceivedHistory(workspaceId)
@@ -142,42 +149,8 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     return records
   }
 
-  async rekeyWorkspace(
-    oldId: string,
-    newId: string,
-    newTitle: string,
-    authorize: (document: Automerge.Doc<WorkspaceDocumentV2>) => Promise<WorkspaceChangeAuthorization[]>,
-  ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
-    checkStorageFailureHook()
-    if (oldId === newId) throw new Error("Workspace IDs must differ")
-    if (!authorize) throw new Error("Workspace rekey requires new workspace authorization")
-    if (await this.loadWorkspaceDoc(newId)) throw new Error(`Workspace ${newId} already exists`)
-    const loaded = await this.loadWorkspaceDoc(oldId)
-    if (!loaded) throw new Error(`Workspace ${oldId} not found`)
-
-    const moved = Automerge.change(Automerge.clone(loaded.doc), draft => {
-      draft.id = newId
-      draft.title = newTitle
-    })
-    // Document-ID changes invalidate old workspace-scoped signatures. Require
-    // verified owner authorization for every change before persisting the copy.
-    const authorizations = await authorize(moved)
-    await validateRekeyAuthorizations(moved, authorizations)
-    await this.commitWorkspace(newId, moved, Automerge.save(moved), authorizations)
-
-    this.inMemory.snapshots.delete(oldId)
-    this.rememberDocument(oldId)
-    this.inMemory.workspaces.delete(oldId)
-    for (const map of [this.inMemory.changes, this.inMemory.proofs, this.inMemory.receipts]) {
-      for (const key of map.keys()) {
-        if (key.startsWith(`${oldId}:`)) map.delete(key)
-      }
-    }
-    await deleteWorkspaceJournal(oldId)
-    return moved
-  }
-
   async purgeWorkspaceForTest(workspaceId: string): Promise<void> {
+    this.advanceWorkspaceLifecycle(workspaceId)
     this.delta.forget(workspaceId)
     this.inMemory.snapshots.delete(workspaceId)
     this.rememberDocument(workspaceId)
@@ -190,103 +163,26 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     await deleteWorkspaceJournal(workspaceId)
   }
 
-  async commitTransaction(
-    workspaceId: string,
-    receipt: TransactionReceipt,
-    changeBytes: Uint8Array,
-    proof: ChangeProof
-  ): Promise<TransactionReceipt> {
-    checkStorageFailureHook()
-    const receiptKey = `${workspaceId}:${receipt.transactionId}`
-    const changeKey = `${workspaceId}:${receipt.changeHash}`
-    const storedChange: StoredChange = {
-      workspaceId,
-      changeHash: receipt.changeHash,
-      bytes: new Uint8Array(changeBytes),
-      addedAt: new Date().toISOString(),
-    }
-
-    if (typeof indexedDB !== "undefined") {
-      const database = await openWorkspaceJournal()
-      const transaction = database.transaction(["changes", "proofs", "receipts", "frontiers", "revisions"], "readwrite")
-      const completion = transactionDone(transaction)
-      try {
-        const existing = await requestResult(transaction.objectStore("receipts").get(receiptKey)) as StoredReceiptRecord | undefined
-        if (existing) {
-          await completion
-          return existing.receipt
-        }
-        transaction.objectStore("changes").put({ id: changeKey, ...storedChange })
-        transaction.objectStore("proofs").put({
-          id: changeKey, workspaceId, changeHash: receipt.changeHash, proof,
-        } satisfies StoredProofRecord)
-        transaction.objectStore("receipts").put({
-          id: receiptKey, workspaceId, transactionId: receipt.transactionId, receipt,
-        } satisfies StoredReceiptRecord)
-        advanceWorkspaceRevision(transaction, workspaceId)
-        await this.invalidateDeltaFrontier(transaction, workspaceId)
-      } catch (error) {
-        transaction.abort()
-        await completion.catch(() => undefined)
-        throw error
-      }
-      await completion
-    } else {
-      const existing = await withLocalJournalLock(workspaceId, async () => {
-        const journal = readLocalJournal(workspaceId)
-        const saved = journal.receipts[receipt.transactionId]
-        if (saved) return saved
-        journal.changes = journal.changes.filter(change => change.changeHash !== receipt.changeHash)
-        journal.changes.push({
-          workspaceId, changeHash: receipt.changeHash, bytesBase64: toBase64Url(changeBytes), addedAt: storedChange.addedAt,
-        })
-        journal.proofs[receipt.changeHash] = proof
-        journal.receipts[receipt.transactionId] = receipt
-        writeLocalJournal(workspaceId, journal)
-        return null
-      })
-      if (existing) return existing
-    }
-
-    this.inMemory.changes.set(changeKey, storedChange)
-    this.inMemory.proofs.set(changeKey, proof)
-    this.inMemory.receipts.set(receiptKey, receipt)
-    return receipt
-  }
-
-  async saveSnapshot(
-    workspaceId: string,
-    doc: Automerge.Doc<WorkspaceDocumentV2>,
-    bytes: Uint8Array
-  ): Promise<void> {
-    await this.commitWorkspace(workspaceId, doc, bytes, [])
-  }
-
-  /** Snapshot, authorization evidence and optional local transaction are one
-   * durable unit. Callers hold the shared workspace mutation lock while reading
-   * the latest document, validating it and committing the candidate. */
-  // Atomic snapshot, proof and receipt commit shares one transaction.
-  async commitWorkspace(
+  /** Snapshot, authorization evidence and optional local transaction are one durable unit. */
+  protected async commitWorkspaceAtRevision(
     workspaceId: string,
     doc: Automerge.Doc<WorkspaceDocumentV2>,
     bytes: Uint8Array,
     authorizations: WorkspaceChangeAuthorization[],
-    command?: WorkspaceCommitCommand,
-    causalEvidence?: StoredCausalEvidence,
-    onPhase?: (phase: string) => void,
+    command: WorkspaceCommitCommand | undefined,
+    causalEvidence: StoredCausalEvidence | undefined,
+    onPhase: ((phase: string) => void) | undefined,
+    expectedBasis: WorkspaceRevisionBasis,
+    compactChangeHashes: string[] = [],
+    ensureContextCurrent: () => void,
   ): Promise<{ proofChanged: boolean; causalChanged: boolean }> {
     checkStorageFailureHook()
+    await this.assertWorkspaceBasisCurrent(workspaceId, expectedBasis)
     if (doc.id !== workspaceId) throw new Error("Workspace commit ID mismatch")
     onPhase?.("snapshot-read")
     const committed = await readWorkspaceSnapshot(workspaceId)
     const previous = committed
-    if (previous && !doc.archivedAt && previous.archivedAt !== null) {
-      const previousDoc = Automerge.load<WorkspaceDocumentV2>(previous.bytes)
-      try {
-        if (previousDoc.archivedAt && !includesWorkspaceHeads(doc, Automerge.getHeads(previousDoc)))
-          throw new Error("Workspace was archived in another tab")
-      } finally { Automerge.free(previousDoc) }
-    }
+    this.assertWorkspaceTransition(previous, doc)
     const snapshot: StoredWorkspaceSnapshot = {
       id: workspaceId, workspaceId, title: doc.title, archivedAt: doc.archivedAt ?? null,
       heads: Automerge.getHeads(doc).sort(), bytes: new Uint8Array(bytes), savedAt: new Date().toISOString(),
@@ -301,19 +197,60 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     const causalChanged = causalEvidenceChanged(previous?.causalEvidence, snapshot.causalEvidence)
     const checkpointChanged = canonicalizeJson(previous?.causalEvidence?.admissionCheckpoint) !== canonicalizeJson(snapshot.causalEvidence?.admissionCheckpoint)
     const incomingProofChanged = canonicalizeJson(previousProofs) !== canonicalizeJson(mergeAuthorizationRecords(previousProofs, authorizations))
-    if (committed && !command && !causalChanged && !checkpointChanged && !incomingProofChanged && committed.heads.join() === snapshot.heads.join()) {
+    const savedCommand = command ? await this.getReceipt(workspaceId, command.receipt.transactionId) : null
+    if (command && savedCommand && savedCommand.changeHash !== command.receipt.changeHash)
+      throw new Error("Transaction ID conflicts with a committed change")
+    ensureContextCurrent()
+    if (this.workspaceCommitUnchanged(committed, snapshot, savedCommand ? undefined : command, compactChangeHashes, causalChanged,
+      checkpointChanged, incomingProofChanged)) {
       return this.reuseCommittedWorkspace(workspaceId, committed, doc)
     }
-    const proofChanged = typeof indexedDB === "undefined"
-      ? await persistWorkspaceLocally(workspaceId, snapshot, previous, previousProofs, authorizations,
-        command, activeTailChanges, activeTailBytes)
-      : await persistWorkspaceInIndexedDb(workspaceId, snapshot, previous, previousProofs, authorizations,
-        command, causalChanged, checkpointChanged, activeTailChanges, activeTailBytes,
-        (transaction, id) => this.clearDeltaRows(transaction, id), onPhase)
+    const proofChanged = await this.persistWorkspaceState(workspaceId, snapshot, previous, previousProofs, authorizations,
+      command, causalChanged, checkpointChanged, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes,
+      ensureContextCurrent, onPhase)
     // Memory projections advance only after the durable transaction completes.
     this.rememberCommittedSnapshot(workspaceId, snapshot, doc)
     onPhase?.("completed")
     return { proofChanged, causalChanged }
+  }
+
+  private async assertWorkspaceBasisCurrent(workspaceId: string, expected: WorkspaceRevisionBasis): Promise<void> {
+    const [revision, frontier, snapshot] = await Promise.all([
+      this.readWorkspaceRevision(workspaceId), this.readDeltaFrontier(workspaceId), readWorkspaceSnapshot(workspaceId),
+    ])
+    const changed = (revision ?? null) !== expected.revision ||
+      canonicalizeJson(frontier ?? null) !== canonicalizeJson(expected.frontier) ||
+      (snapshot?.receivedHistory?.baselineId ?? null) !== expected.baselineId
+    if (changed) throw new WorkspaceRevisionConflict()
+  }
+
+  private assertWorkspaceTransition(previous: StoredWorkspaceSnapshot | undefined, doc: Automerge.Doc<WorkspaceDocumentV2>): void {
+    if (!previous || doc.archivedAt || previous.archivedAt === null) return
+    const previousDoc = Automerge.load<WorkspaceDocumentV2>(previous.bytes)
+    try {
+      if (previousDoc.archivedAt && !includesWorkspaceHeads(doc, Automerge.getHeads(previousDoc)))
+        throw new Error("Workspace was archived in another tab")
+    } finally { Automerge.free(previousDoc) }
+  }
+
+  private workspaceCommitUnchanged(committed: StoredWorkspaceSnapshot | undefined, snapshot: StoredWorkspaceSnapshot,
+    command: WorkspaceCommitCommand | undefined, compactHashes: string[], causalChanged: boolean,
+    checkpointChanged: boolean, incomingProofChanged: boolean): committed is StoredWorkspaceSnapshot {
+    return Boolean(committed && !command && compactHashes.length === 0 && !causalChanged && !checkpointChanged &&
+      !incomingProofChanged && committed.heads.join() === snapshot.heads.join())
+  }
+
+  private persistWorkspaceState(workspaceId: string, snapshot: StoredWorkspaceSnapshot,
+    previous: StoredWorkspaceSnapshot | undefined, previousProofs: WorkspaceChangeAuthorization[],
+    authorizations: WorkspaceChangeAuthorization[], command: WorkspaceCommitCommand | undefined,
+    causalChanged: boolean, checkpointChanged: boolean, activeTailChanges: number, activeTailBytes: number,
+    expectedBasis: WorkspaceRevisionBasis, compactChangeHashes: string[],
+    ensureContextCurrent: () => void, onPhase?: (phase: string) => void): Promise<boolean> {
+    if (typeof indexedDB === "undefined") return persistWorkspaceLocally(workspaceId, snapshot, previous, previousProofs,
+      authorizations, command, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes, ensureContextCurrent)
+    return persistWorkspaceInIndexedDb(workspaceId, snapshot, previous, previousProofs, authorizations, command,
+      causalChanged, checkpointChanged, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes,
+      ensureContextCurrent, (transaction, id) => this.clearDeltaRows(transaction, id), onPhase)
   }
 
   private rememberCommittedSnapshot(workspaceId: string, snapshot: StoredWorkspaceSnapshot, doc: Automerge.Doc<WorkspaceDocumentV2>) {
@@ -361,31 +298,18 @@ export class WorkspaceStorage extends StorageHistoryAccess {
     doc: Automerge.Doc<WorkspaceDocumentV2>
   ): Promise<void> {
     checkStorageFailureHook()
-    const snapshotBytes = Automerge.save(doc)
-    await this.saveSnapshot(workspaceId, doc, snapshotBytes)
-
-    // Identify which changes are included in doc
-    const includedHashes = new Set(Automerge.getChangesMetaSince(doc, []).map(change => change.hash))
-
-    if (typeof indexedDB !== "undefined") {
-      const database = await openWorkspaceJournal()
-      const transaction = database.transaction("changes", "readwrite")
-      const completion = transactionDone(transaction)
-      const store = transaction.objectStore("changes")
-      const records = await requestResult(store.index("workspaceId").getAll(workspaceId)) as Array<StoredChange & { id: string }>
-      for (const record of records) if (includedHashes.has(record.changeHash)) store.delete(record.id)
-      await completion
-    } else {
-      await withLocalJournalLock(workspaceId, async () => {
-        const journal = readLocalJournal(workspaceId)
-        journal.changes = journal.changes.filter(change => !includedHashes.has(change.changeHash))
-        writeLocalJournal(workspaceId, journal)
-      })
-    }
-
+    const includedHashes = Automerge.getChangesMetaSince(doc, []).map(change => change.hash)
+    await this.withWorkspaceTransaction(workspaceId, async context => {
+      const current = await context.loadWorkspaceDoc()
+      if (!current) throw new Error("Workspace not found")
+      try {
+        if (current.heads.join() !== Automerge.getHeads(doc).sort().join()) throw new WorkspaceRevisionConflict()
+        await context.commitWorkspace(current.doc, Automerge.save(current.doc), [], undefined, undefined, undefined, includedHashes)
+      } finally { Automerge.free(current.doc) }
+    })
     const prefix = `${workspaceId}:`
     for (const [key, change] of this.inMemory.changes.entries()) {
-      if (key.startsWith(prefix) && includedHashes.has(change.changeHash)) this.inMemory.changes.delete(key)
+      if (key.startsWith(prefix) && includedHashes.includes(change.changeHash)) this.inMemory.changes.delete(key)
     }
   }
 

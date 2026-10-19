@@ -143,16 +143,19 @@ async function project(intent: ProjectionIntent, ensureCurrent: () => void): Pro
     await assertCurrent(intent.personId, ensureCurrent)
     if (current && current.ownerPersonId !== intent.credential.ownerPersonId) {
       if (intent.credential.epoch === current.epoch) throw new Error("Recovered workspace ownership conflicts with current authority")
-      if (intent.credential.epoch > current.epoch) await peerStore.transferWorkspaceCredential(current.ownerPersonId,
-        { ...intent.credential, transportSecret: current.transportSecret }, intent.authority?.scopeAuthoritySnapshot)
+      if (intent.credential.epoch > current.epoch) await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
+        context => context.write(() => peerStore.transferWorkspaceCredential(current.ownerPersonId,
+          { ...intent.credential!, transportSecret: current.transportSecret }, intent.authority?.scopeAuthoritySnapshot)))
     } else {
-      await peerStore.putWorkspaceCredential(current ? { ...intent.credential, transportSecret: current.transportSecret } : intent.credential)
+      await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
+        context => context.write(() => peerStore.putWorkspaceCredential(current ? { ...intent.credential!, transportSecret: current.transportSecret } : intent.credential!)))
     }
     await assertCurrent(intent.personId, ensureCurrent)
   }
   if (intent.authority) {
     // PeerStore performs the durable monotonic merge and retains a newer admitted ledger.
-    await peerStore.putWorkspaceAuthority(intent.authority)
+    await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
+      context => context.write(() => peerStore.putWorkspaceAuthority(intent.authority!)))
     await assertCurrent(intent.personId, ensureCurrent)
   }
   await assertCurrent(intent.personId, ensureCurrent)

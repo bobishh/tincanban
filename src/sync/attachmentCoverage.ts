@@ -1,8 +1,10 @@
 import { validateBlobDescriptor, type BlobDescriptor } from "@meta-uber/mesh-blob"
-import { blindOrigin, type BlindAccess } from "./blindClient"
-import { decodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import type { BlindAccess } from "./blindClient"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { downloadBlindBlob } from "./blindBlobClient"
-import { openAttachmentManifest, type AttachmentLocator, type AttachmentScope } from "./attachmentCodec"
+import { openAttachmentManifest, type AttachmentScope } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import { requestBlindBlobCoverage, type BlindBlobCoverageReceipt } from "./blindBlobCoverage"
 import { parseReplicaContentKeys } from "./replicaContentKeys"
 

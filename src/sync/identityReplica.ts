@@ -1,6 +1,6 @@
 import { ReplicaEngine, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import type { IdentityReplicaConfig } from "./blindReplication"
-import { encryptPurposeBoundObject, decryptPurposeBoundObject, decodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { encryptPurposeBoundObject, decryptPurposeBoundObject, decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, canonicalBlindJson, inventoryBlindObjects, downloadBlindObject, uploadBlindObject,
   verifyBlindReceipt, type BlindReceipt, type BlindAccess } from "./blindClient"
 import { readIdentityReplicaRecord, type IdentityReplicaRecord } from "./identityReplicaProtocol"

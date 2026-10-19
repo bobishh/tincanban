@@ -5,7 +5,7 @@ import { readApplicationEventClassification, readOpportunityClassification } fro
 import { parseWebsiteSubmission } from "./intake";
 import type { AutomationEvent, AutomationPipelineResult } from "./pipeline";
 
-const maxCommandBytes = 2_097_152;
+export const maxItemCommandBytes = 2_097_152;
 const sourceEventPattern = /^[A-Za-z0-9_-]{43}$/;
 
 export type ItemCommandEnvelope = {
@@ -40,7 +40,7 @@ export async function prepareItemCommand(value: unknown, expectedIntegrationId: 
   if (await itemCommandSourceBodyHash(event) !== idempotencyKey) throw new TypeError("idempotencyKey does not match the original intake payload");
   const classification = validateItemCommandClassification(envelope.classification, event, []);
   const canonical = canonicalizeJson({ integrationId, sourceEventId, idempotencyKey, event, classification });
-  if (new TextEncoder().encode(canonical).byteLength > maxCommandBytes) throw new TypeError("Item command exceeds the size limit");
+  if (new TextEncoder().encode(canonical).byteLength > maxItemCommandBytes) throw new TypeError("Item command exceeds the size limit");
   return { eventId: sourceEventId, source: event.source, sourceId: sourceEventId, idempotencyKey,
     bodyHash: await sha256Base64Url(new TextEncoder().encode(canonical)), event, classification };
 }

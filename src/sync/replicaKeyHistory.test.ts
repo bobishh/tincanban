@@ -1,5 +1,5 @@
 import { expect, it } from "vitest"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { parseReplicaConfig } from "./blindReplicaConfig"
 import { changeReplicaPreference, effectivePrivateReplicaConfigs, emptyPrivateReplicaState, mergePrivateReplicaState, parsePrivateReplicaWire, portableReplicaState, replicaPreferenceConflicts } from "./privateReplicaPreferences"
 

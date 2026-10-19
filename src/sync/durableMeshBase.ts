@@ -98,7 +98,7 @@ export type SessionEntry = {
   session: LiveWorkspaceSync
   ownershipReceiptSupported?: boolean
   remotePersonId: string
-  ownerWorkspaceOfferFrame?: "mesh-owner-workspace-offer"
+  ownerWorkspaceOfferFrame?: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1"
   blobTransferSupported?: boolean
   runtimeGeneration?: number
   evict: (cause: string) => Promise<void>

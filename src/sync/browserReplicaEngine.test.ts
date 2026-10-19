@@ -2,7 +2,7 @@ import { expect, test, vi } from "vitest"
 import { emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { blindHash, canonicalBlindJson, type BlindAccess, type BlindReceipt } from "./blindClient"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
-import { encodeBlindBytes, type BlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 
 async function createReceiptAuthority() {

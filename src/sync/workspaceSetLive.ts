@@ -5,13 +5,14 @@ import { createScopeShutdown } from "./scopeShutdown"
 import { HandoffConfirmationInbox } from "./handoffConfirmation"
 import { WorkspaceChangeRejected } from "./changeAuthorization"
 import { MeshNetworkError as SyncNetworkError } from "@meta-uber/mesh-transport"
+import { meshIngressTransferDeadlineMs } from "../iroh"
 import { meshTrace } from "./meshTrace"
 import { readProofPage, writeProofPage, clearProofPages } from "./proofPageCache"
 import { createProofTransferRestarter } from "./proofTransferRestart"
 import { serveOwnerOfferProofs } from "./ownerOfferProofs"
 import type { DuplexStream, SyncConnection } from "./transport"
 import { createPeerHistoryObjectReader } from "./workspaceSetHistory"
-import { isPeerHistoryFrame } from "./peerHistoryTransport"
+import { isPeerHistoryFrame, readPeerHistoryRequestOrPairing } from "./peerHistoryTransport"
 import type { LiveWorkspaceSync, WorkspaceSetStore, WorkspaceSetWorkspace, WorkspaceSetFactory, LiveWorkspaceOptions } from "./workspaceSet"
 
 const MESH_HEARTBEAT_TIMEOUT_MS = 12_000
@@ -113,24 +114,38 @@ export function createLiveWorkspaceSetSync(
   }
   const peerHistory = createPeerHistoryObjectReader(connection, peerHistoryGuard)
   let receiveFailure: unknown
+  let pendingTransferTimer: ReturnType<typeof setTimeout> | undefined
   const done = (async () => {
     while (!stopped) {
       const stream = await connection.acceptStream()
       if (stopped) return
       const task = (async () => {
-        const frame = await stream.read()
+        const frame = await readPeerHistoryRequestOrPairing(stream)
         if (await replica.servePeerHistoryBaselineRead(frame, stream, options.remoteDeviceId, peerHistoryGuard)) return
         if (await replica.servePeerHistoryDocumentRead(frame, stream, options.remoteDeviceId, peerHistoryGuard)) return
         if (await replica.servePeerHistoryObjectRead(frame, stream, options.remoteDeviceId, peerHistoryGuard)) return
+        let frameType: string | undefined
         try {
-          if (inspectPairingFrame(frame).type === "mesh-handoff-confirmed") {
+          frameType = inspectPairingFrame(frame).type
+          if (frameType === "mesh-handoff-confirmed") {
             handoffConfirmations.push(stream, frame)
             return
           }
         } catch { /* Not a pairing frame; decode below. */ }
         if (await replica.serveProofPage(frame, stream, secret)) return
         const operation = protocol.receiveWithPlan(frame)
-        if (!operation) { await stream.closeSend(); return }
+        if (!operation) {
+          if (frameType === "mesh-owner-workspace-offer-page-v1" || frameType === "mesh-control-sync") {
+            pendingTransferTimer ??= setTimeout(() => {
+              pendingTransferTimer = undefined
+              protocol.clearPendingTransfers()
+            }, meshIngressTransferDeadlineMs())
+          }
+          await stream.closeSend()
+          return
+        }
+        if (pendingTransferTimer) clearTimeout(pendingTransferTimer)
+        pendingTransferTimer = undefined
         await applyWorkspaceSetReceivePlan(protocol, operation, stream, frame,
           async bytes => replica.receive(await replica.resolveProofs(bytes, connection, secret), false, peerHistory), options, handoffConfirmations)
       })().catch(async error => {
@@ -172,6 +187,9 @@ export function createLiveWorkspaceSetSync(
     },
     async close() {
       stopped = true
+      if (pendingTransferTimer) clearTimeout(pendingTransferTimer)
+      pendingTransferTimer = undefined
+      protocol.clearPendingTransfers()
       await connection.close()
       await Promise.allSettled(handlers)
       protocol.free?.()
@@ -200,7 +218,7 @@ async function applyWorkspaceSetReceivePlan(
     sendSavedAcknowledgement: async () => { await stream.send(protocol.acknowledgeSaved(bytes)) },
     sendHeartbeatAcknowledgement: async () => { await stream.send(protocol.encode("sync-heartbeat-ack", new Uint8Array())) },
     handleOwnerWorkspaceOffer: async () => {
-      await requiredHandler(options.ownerWorkspaceOfferFrame === "mesh-owner-workspace-offer"
+      await requiredHandler(options.ownerWorkspaceOfferFrame === "mesh-owner-workspace-offer" || options.ownerWorkspaceOfferFrame === "mesh-owner-workspace-offer-page-v1"
         ? options.onOwnerWorkspaceOffer : undefined, "Unsupported owner workspace offer")(bytes)
     },
     handleGossip: async () => {
@@ -318,7 +336,7 @@ function createLiveAutomergeScope(context: AutomergeScopeContext) {
     },
     readProofPage: key => readProofPage(workspaceId, key),
     writeProofPage: (key, payload) => writeProofPage(workspaceId, key, payload),
-    onOwnerWorkspaceOffer: options.ownerWorkspaceOfferFrame === "mesh-owner-workspace-offer" && options.onOwnerWorkspaceOffer
+    onOwnerWorkspaceOffer: options.ownerWorkspaceOfferFrame && options.onOwnerWorkspaceOffer
       ? bytes => measureScopePhase("callback.owner-workspace-offer", workspaceId, remoteDeviceId,
         () => options.onOwnerWorkspaceOffer!(bytes), bytes.byteLength) : undefined,
     onGossip: options.onGossipPacket
@@ -470,7 +488,7 @@ async function handleLiveWorkspaceStream(stream: DuplexStream, context: {
     const started = performance.now()
     let kind = "unread"
     try {
-      const frame = await stream.read()
+      const frame = await readPeerHistoryRequestOrPairing(stream)
       if (context.isStopped()) return
       kind = isPeerHistoryFrame(frame) ? "workspace-history" : inspectPairingFrame(frame).type
       meshTrace("workspace.receive.started", {

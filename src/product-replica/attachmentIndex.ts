@@ -1,5 +1,5 @@
 import { isValidBlobId } from "@meta-uber/mesh-blob"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "./attachmentLocator"
 
 const locatorKeys = ["blobId", "manifestId", "transferId", "version"]
 const transferIdPattern = /^[A-Za-z0-9_-]{1,128}$/

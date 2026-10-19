@@ -1,6 +1,6 @@
 import { canonicalizeJson, sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "../domain/identity"
-import { decodeBlindBytes } from "./blindEnvelope"
-import { blindOrigin } from "./blindOrigin"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindAccess } from "./blindClient"
 import { verifyRustyManagementCapability, type ExpectedManagementAuthority, type RustyManagementCapability } from "./rustyManagementCapability"
 

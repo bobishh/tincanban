@@ -5,8 +5,9 @@ import { profileFromIdentitySeedForDevice, signEnvelope } from "../../../vendor/
 import { createWorkspaceDoc } from "../../../src/test/boardFixture"
 import { createAutomationWorkspaceGrant } from "../../../src/domain/proofs"
 import * as identity from "../../../src/domain/identity"
-import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "../../../src/sync/blindClient"
-import { decodeBlindBytes, encodeBlindBytes, type BlindObject } from "../../../src/sync/blindEnvelope"
+import { rustyHash as blindHash, rustyObjectId as blindObjectId, canonicalRustyJson as canonicalBlindJson,
+  type RustyStorageReceipt as BlindReceipt, decodeBlindBytes, encodeBlindBytes, type BlindObject }
+  from "@meta-uber/mesh-replication/rusty-replica"
 import { AutomationReplica, type AutomationActivationPacket, type ReplicaTransport } from "../src/replica"
 
 await Automerge.initializeWasm(automergeWasm as unknown as Uint8Array)

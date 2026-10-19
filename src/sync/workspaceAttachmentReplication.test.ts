@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest"
 import { createBlobDescriptor } from "@meta-uber/mesh-blob"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import { WorkspaceAttachmentReplication, type AttachmentReplicationPorts } from "./workspaceAttachmentReplication"
 

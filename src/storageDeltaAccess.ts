@@ -3,9 +3,10 @@ import type { WorkspaceDocumentV2 } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { StorageDeltaRepository } from "./storageDeltaRepository"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
-import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, updateLocalJournal, requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence, type StoredChange, type StoredHistoryProgress } from "./storageJournal"
+import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, updateLocalJournal, writeLocalJournal,
+  requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence, type StoredChange, type StoredHistoryProgress } from "./storageJournal"
 import { cloneCausalEvidence, extendRawEvidence } from "./causalEvidence"
-import { HISTORY_ACTIVE_BYTE_LIMIT, HISTORY_ACTIVE_CHANGE_LIMIT } from "./storageJournalRecords"
+import { advanceWorkspaceRevision, HISTORY_ACTIVE_BYTE_LIMIT, HISTORY_ACTIVE_CHANGE_LIMIT } from "./storageJournalRecords"
 
 function validBaselineId(value: unknown) { return value === null || typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value) }
 function validProgressTransition(value: StoredHistoryProgress) {
@@ -22,19 +23,20 @@ function validHistoryProgress(value: StoredHistoryProgress | undefined, workspac
 
 async function localHistoryProgress(workspaceId: string): Promise<StoredHistoryProgress> {
   const journal = readLocalJournalReference(workspaceId)
-  if (journal.historyProgress) return structuredClone(journal.historyProgress)
+  if (validHistoryProgress(journal.historyProgress, workspaceId)) return structuredClone(journal.historyProgress)
   const snapshot = await readWorkspaceSnapshot(workspaceId)
   const baselineId = snapshot?.receivedHistory?.baselineId ?? null
   const admittedChanges = baselineId ? HISTORY_ACTIVE_CHANGE_LIMIT : Math.min(HISTORY_ACTIVE_CHANGE_LIMIT, journal.changes.length)
   const encodedBytes = baselineId ? HISTORY_ACTIVE_BYTE_LIMIT : Math.min(HISTORY_ACTIVE_BYTE_LIMIT,
     journal.changes.reduce((total, change) => Math.min(HISTORY_ACTIVE_BYTE_LIMIT, total + Math.floor(change.bytesBase64.length * 3 / 4)), 0))
   const row: StoredHistoryProgress = { id: workspaceId, workspaceId, baselineId, admittedChanges, encodedBytes }
-  updateLocalJournal(workspaceId, current => ({ ...current, historyProgress: row }))
+  writeLocalJournal(workspaceId, { ...journal, historyProgress: row })
   return structuredClone(row)
 }
 
 export abstract class StorageDeltaAccess {
   protected abstract checkDeltaWrites(): void
+  protected abstract withHistoryProgressMutation<T>(workspaceId: string, operation: () => Promise<T>): Promise<T>
   abstract listChanges(workspaceId: string): Promise<StoredChange[]>
   protected delta = new StorageDeltaRepository()
 
@@ -50,6 +52,40 @@ export abstract class StorageDeltaAccess {
   }
   /** Initialize one small sentinel from the current snapshot; later reads are metadata-only. */
   async ensureHistoryProgress(workspaceId: string): Promise<StoredHistoryProgress> {
+    const existing = await this.readHistoryProgressRow(workspaceId)
+    if (validHistoryProgress(existing, workspaceId)) return structuredClone(existing)
+    return this.withHistoryProgressMutation(workspaceId, () => this.ensureHistoryProgressLocked(workspaceId))
+  }
+
+  /** Read or conservatively derive progress without persisting metadata. Used inside a live transaction. */
+  async historyProgressForRead(workspaceId: string): Promise<StoredHistoryProgress> {
+    const existing = await this.readHistoryProgressRow(workspaceId)
+    if (validHistoryProgress(existing, workspaceId)) return structuredClone(existing)
+    return this.deriveHistoryProgress(workspaceId)
+  }
+
+  private async readHistoryProgressRow(workspaceId: string): Promise<StoredHistoryProgress | undefined> {
+    if (typeof indexedDB === "undefined") return readLocalJournalReference(workspaceId).historyProgress
+    const transaction = (await openWorkspaceJournal()).transaction("historyProgress", "readonly")
+    const done = transactionDone(transaction)
+    const existing = await requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as StoredHistoryProgress | undefined
+    await done
+    return existing
+  }
+
+  private async deriveHistoryProgress(workspaceId: string): Promise<StoredHistoryProgress> {
+    const journal = typeof indexedDB === "undefined" ? readLocalJournalReference(workspaceId) : undefined
+    const snapshot = await readWorkspaceSnapshot(workspaceId)
+    const baselineId = snapshot?.receivedHistory?.baselineId ?? null
+    const changes = journal?.changes ?? await this.listChanges(workspaceId)
+    const admittedChanges = baselineId ? HISTORY_ACTIVE_CHANGE_LIMIT : Math.min(HISTORY_ACTIVE_CHANGE_LIMIT, changes.length)
+    const encodedBytes = baselineId ? HISTORY_ACTIVE_BYTE_LIMIT : Math.min(HISTORY_ACTIVE_BYTE_LIMIT,
+      changes.reduce((total, change) => Math.min(HISTORY_ACTIVE_BYTE_LIMIT,
+        total + ("bytesBase64" in change ? Math.floor(change.bytesBase64.length * 3 / 4) : change.bytes.byteLength)), 0))
+    return { id: workspaceId, workspaceId, baselineId, admittedChanges, encodedBytes }
+  }
+
+  private async ensureHistoryProgressLocked(workspaceId: string): Promise<StoredHistoryProgress> {
     if (typeof indexedDB === "undefined") return localHistoryProgress(workspaceId)
     const database = await openWorkspaceJournal()
     const lookup = database.transaction("historyProgress", "readonly")
@@ -58,7 +94,7 @@ export abstract class StorageDeltaAccess {
     await lookupDone
     if (validHistoryProgress(existing, workspaceId)) return structuredClone(existing)
 
-    const transaction = database.transaction(["historyProgress", "snapshots", "changes"], "readwrite")
+    const transaction = database.transaction(["historyProgress", "snapshots", "changes", "revisions", "frontiers"], "readwrite")
     const done = transactionDone(transaction)
     const [saved, snapshot] = await Promise.all([
       requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as Promise<StoredHistoryProgress | undefined>,
@@ -91,10 +127,18 @@ export abstract class StorageDeltaAccess {
     const row: StoredHistoryProgress = { id: workspaceId, workspaceId, baselineId,
       admittedChanges, encodedBytes }
     transaction.objectStore("historyProgress").put(row)
+    advanceWorkspaceRevision(transaction, workspaceId)
+    const frontierStore = transaction.objectStore("frontiers")
+    const frontierRequest = frontierStore.get(workspaceId) as IDBRequest<WorkspaceDeltaFrontier | undefined>
+    frontierRequest.onsuccess = () => { if (frontierRequest.result) frontierStore.put({ ...frontierRequest.result, invalidated: true }) }
     await done
     return structuredClone(row)
   }
   async claimHistoryTransitionId(workspaceId: string): Promise<{ transitionId: string; previousBaselineId: string | null }> {
+    return this.withHistoryProgressMutation(workspaceId, () => this.claimHistoryTransitionIdLocked(workspaceId))
+  }
+
+  private async claimHistoryTransitionIdLocked(workspaceId: string): Promise<{ transitionId: string; previousBaselineId: string | null }> {
     const valid = (value: unknown): value is string => typeof value === "string" &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
     const fallback = crypto.randomUUID()
@@ -111,12 +155,16 @@ export abstract class StorageDeltaAccess {
         }
         const previousBaselineId = valid(progress.transitionId) ? progress.transitionPreviousBaselineId ?? null : progress.baselineId
         result = { transitionId, previousBaselineId }
-        return { ...current, historyProgress: { ...progress, transitionId, transitionPreviousBaselineId: previousBaselineId } }
+        if (existingTransition) return { ...current }
+        const next = { ...current, historyProgress: { ...progress, transitionId, transitionPreviousBaselineId: previousBaselineId } }
+        next.revision = crypto.randomUUID()
+        if (next.frontier) next.frontier = { ...next.frontier, invalidated: true }
+        return next
       })
       return result
     }
     const database = await openWorkspaceJournal()
-    const transaction = database.transaction("historyProgress", "readwrite")
+    const transaction = database.transaction(["historyProgress", "revisions", "frontiers"], "readwrite")
     const done = transactionDone(transaction)
     const current = await requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as StoredHistoryProgress | undefined
     if (current?.transitionId !== undefined && !valid(current.transitionId)) {
@@ -137,12 +185,22 @@ export abstract class StorageDeltaAccess {
       await done.catch(() => undefined)
       throw new Error("History transition baseline is malformed")
     }
-    if (!existingTransition) transaction.objectStore("historyProgress").put({ ...current, transitionId,
-      transitionPreviousBaselineId: previousBaselineId })
+    if (!existingTransition) {
+      transaction.objectStore("historyProgress").put({ ...current, transitionId,
+        transitionPreviousBaselineId: previousBaselineId })
+      advanceWorkspaceRevision(transaction, workspaceId)
+      const frontiers = transaction.objectStore("frontiers")
+      const frontier = frontiers.get(workspaceId) as IDBRequest<WorkspaceDeltaFrontier | undefined>
+      frontier.onsuccess = () => { if (frontier.result) frontiers.put({ ...frontier.result, invalidated: true }) }
+    }
     await done
     return { transitionId, previousBaselineId }
   }
   async completeHistoryTransition(workspaceId: string, transitionId: string): Promise<void> {
+    return this.withHistoryProgressMutation(workspaceId, () => this.completeHistoryTransitionLocked(workspaceId, transitionId))
+  }
+
+  private async completeHistoryTransitionLocked(workspaceId: string, transitionId: string): Promise<void> {
     if (typeof indexedDB === "undefined") {
       updateLocalJournal(workspaceId, current => {
         const progress = current.historyProgress
@@ -150,12 +208,14 @@ export abstract class StorageDeltaAccess {
         const completed = { ...progress }
         delete completed.transitionId
         delete completed.transitionPreviousBaselineId
-        return { ...current, historyProgress: completed }
+        const next = { ...current, historyProgress: completed, revision: crypto.randomUUID() }
+        if (next.frontier) next.frontier = { ...next.frontier, invalidated: true }
+        return next
       })
       return
     }
     const database = await openWorkspaceJournal()
-    const transaction = database.transaction("historyProgress", "readwrite")
+    const transaction = database.transaction(["historyProgress", "revisions", "frontiers"], "readwrite")
     const done = transactionDone(transaction)
     const progress = await requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as StoredHistoryProgress | undefined
     if (!validHistoryProgress(progress, workspaceId) || progress.transitionId !== transitionId) {
@@ -167,18 +227,24 @@ export abstract class StorageDeltaAccess {
     delete completed.transitionId
     delete completed.transitionPreviousBaselineId
     transaction.objectStore("historyProgress").put(completed)
+    advanceWorkspaceRevision(transaction, workspaceId)
+    const frontiers = transaction.objectStore("frontiers")
+    const frontier = frontiers.get(workspaceId) as IDBRequest<WorkspaceDeltaFrontier | undefined>
+    frontier.onsuccess = () => { if (frontier.result) frontiers.put({ ...frontier.result, invalidated: true }) }
     await done
   }
-  async installDeltaBasis(snapshot: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier,
-    authorizations: WorkspaceChangeAuthorization[], doc: Automerge.Doc<WorkspaceDocumentV2>) {
+  protected async installDeltaBasis(snapshot: StoredWorkspaceSnapshot, frontier: WorkspaceDeltaFrontier,
+    authorizations: WorkspaceChangeAuthorization[], doc: Automerge.Doc<WorkspaceDocumentV2>, expectedRevision: string | null,
+    ensureCurrent: () => void, nextRevision: string) {
     this.checkDeltaWrites()
-    const installed = await (await this.delta.journal()).install(snapshot, frontier, authorizations)
+    const installed = await (await this.delta.journal()).install(snapshot, frontier, authorizations, expectedRevision, ensureCurrent, nextRevision)
     if (installed) this.delta.remember({ basis: snapshot, frontier, deltas: [] }, doc)
     return installed
   }
-  async commitDelta(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>) {
+  protected async commitDelta(frontier: WorkspaceDeltaFrontier, delta: StoredWorkspaceDelta, doc: Automerge.Doc<WorkspaceDocumentV2>, expectedRevision: string | null,
+    ensureCurrent: () => void) {
     this.checkDeltaWrites()
-    return this.delta.append(frontier, delta, doc)
+    return this.delta.append(frontier, delta, doc, expectedRevision, ensureCurrent)
   }
   async hasCausalEvidence(workspaceId: string) {
     return Boolean(await this.delta.frontier(workspaceId) || await this.loadCausalEvidence(workspaceId))

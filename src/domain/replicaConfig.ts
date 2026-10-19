@@ -1,6 +1,6 @@
-import { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes } from "./blindEnvelope"
-import type { BlindReplicaConfig, PrivateReplicaConfig, IdentityReplicaConfig } from "../sync/blindReplication"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import type { BlindReplicaConfig, PrivateReplicaConfig, IdentityReplicaConfig } from "../product-replica/config"
 import { parseReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
 
 export function parseReplicaConfig(text: string): BlindReplicaConfig {

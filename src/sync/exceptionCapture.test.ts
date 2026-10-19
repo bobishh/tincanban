@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { capturedException } from "./exceptionCapture"
+import { capturedException } from "../domain/exceptionCapture"
 
 describe("OpenTelemetry exception capture", () => {
   it("Given an Error with a cause, When captured, Then type, readable message, stack, and bounded cause details use standard keys", () => {

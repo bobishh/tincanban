@@ -2,6 +2,7 @@ import { normalizeMessageContext, type MessageContext } from "./context"
 import { chatStore, type StoredChatMessage, type StoredChatProfile } from "./store"
 import { verifyChatRecord, type ChatRecord } from "./records"
 import { meshTrace } from "../sync/meshTrace"
+import { requestWebLock } from "../webLock"
 
 export type ChatChange = { workspaceId: string; added: StoredChatMessage[]; remote: boolean; history: boolean; typing?: ChatRecord[] }
 export type ChatTyping = { personId: string; deviceId: string }
@@ -80,7 +81,7 @@ async function signed(workspaceId: string, kind: "chat-message" | "chat-profile"
 }
 
 async function exclusive<T>(workspaceId: string, action: () => Promise<T>): Promise<T> {
-  return navigator.locks.request(`tincanban-chat-write:${workspaceId}`, action)
+  return requestWebLock(`tincanban-chat-write:${workspaceId}`, action)
 }
 
 export async function ensureChatProfile(workspaceId: string, options: { updateName?: boolean } = {}) {
@@ -164,6 +165,15 @@ function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value)
 }
 
+function parseChatCapabilities(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!isUnknownArray(value) || value.length > 16) throw new Error("Invalid chat capabilities")
+  return value.map(item => {
+    if (typeof item !== "string" || item.length > 64) throw new Error("Invalid chat capabilities")
+    return item
+  })
+}
+
 function parseChatWire(value: unknown): ChatWire {
   if (!isChatWireObject(value)) throw new Error("Invalid chat batch")
   const wire = value
@@ -172,7 +182,7 @@ function parseChatWire(value: unknown): ChatWire {
     throw new Error("Invalid chat batch")
   }
   if (typing !== undefined && !isUnknownArray(typing)) throw new Error("Invalid chat batch")
-  if (capabilities !== undefined && (!isUnknownArray(capabilities) || capabilities.length > 16 || capabilities.some(item => typeof item !== "string" || item.length > 64))) throw new Error("Invalid chat capabilities")
+  const validCapabilities = parseChatCapabilities(capabilities)
   const activeTyping: unknown[] = typing === undefined ? [] : typing
   if (messages.length > 2000 || profiles.length > 512 || activeTyping.length > 512) {
     throw new Error("Invalid chat batch")
@@ -180,9 +190,6 @@ function parseChatWire(value: unknown): ChatWire {
   if (new TextEncoder().encode(JSON.stringify(wire)).byteLength > 8 * 1024 * 1024) {
     throw new Error("Invalid chat batch")
   }
-  const validCapabilities = isUnknownArray(capabilities)
-    ? capabilities.filter((item): item is string => typeof item === "string")
-    : undefined
   return { version, capabilities: validCapabilities, messages, profiles, typing: activeTyping }
 }
 

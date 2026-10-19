@@ -13,7 +13,7 @@ import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalR
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
-import { defaultStorage } from "../storage"
+import { defaultStorage, type WorkspaceTransactionContext } from "../storage"
 import { deleteLocal, listLocalKeys } from "../localDb"
 import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivateReplicaProgress, getReplicaConfigurations,
   persistPrivateReplicaState, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
@@ -22,7 +22,7 @@ import { ensureIdentityReplicaConnection } from "./identityReplicaConnection"
 import { createIdentityReplica } from "./identityReplicaStore"
 import { approveRustyScope } from "./rustyEnrollment"
 import { blindObjectId, discoverBlindKeeper, inventoryBlindObjects, uploadBlindObject, downloadBlindObject } from "./blindClient"
-import { decodeBlindBytes, encryptBlindObject, decryptBlindObject } from "./blindEnvelope"
+import { decodeBlindBytes, encryptBlindObject, decryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { prepareBlindCheckpoint, submitBlindCheckpoint } from "./blindCheckpoint"
 import { ensureRustyPersonPolicy, readRustyManagementStatus, updateRustyManagementPolicy } from "./rustyManagementClient"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
@@ -41,13 +41,14 @@ import { createAttachmentIndexRepository } from "./attachmentIndexRepository"
 import { privateReplicaBinding } from "./privateReplicaRepository"
 import { fetchRustyAttachment } from "./rustyAttachmentDelivery"
 import { recordGenesisAuthority } from "./changeAuthorization"
-import { blindHash, canonicalBlindJson } from "./blindClient"
+import { blindHash, canonicalBlindJson, encodeBlindBytes } from "./blindClient"
 import { ensureWorkspaceReplicaWriter } from "./workspaceReplicaWriter"
 import { confirmRustyAttachmentCoverage } from "./attachmentCoverage"
 import { createBlindReplica } from "./blindReplicaStore"
 import { storeAttachment, blobDescriptor } from "../attachments"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
-import { writeArchiveBytes, readArchiveBytes, readArchiveIndex, type ArchiveObjectStore } from "@meta-uber/mesh-replication/history-archive"
+import { MAX_ARCHIVE_PART_BYTES, writeArchiveBytes, readArchiveBytes, readArchiveIndex,
+  type ArchiveObjectStore, type ArchiveTreeContext } from "@meta-uber/mesh-replication/history-archive"
 import { openArchiveObject, type ArchiveEncryptionBinding, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote"
 import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-archive-locators"
@@ -56,6 +57,11 @@ import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-
 import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
 import { verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
 import { createWorkspaceHistoryPreparation } from "./historyPreparationRepository"
+import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
+import { receiveBrowserHistoryBaseline, type BrowserHistoryBaselineReceivePorts } from "./browserHistoryBaselineReceive"
+import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
+import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority } from "../../workers/automation/src/historyBaseline"
+import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
 
 let automergeReady: Promise<void> | undefined
@@ -395,6 +401,58 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     fixtureKey.fill(152, 16)
     const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
     const signedBaseline = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MESH-HISTORY/1")
+    const signedBaselineBytes = new TextEncoder().encode(canonicalBlindJson(signedBaseline))
+    const basisContext: ArchiveTreeContext = { workspaceId: context.workspaceId, historyEpoch: context.historyEpoch, indexId: "basis-document" }
+    const basisIdentity = { ...identity, transitionId: `${transitionId}-basis-data`,
+      sourceRevision: await blindHash(current.document) }
+    const basisData = createWorkspaceHistoryPreparation(basisIdentity, () => {})
+    await basisData.capture([current.document])
+    let partIndex = 0
+    const partCount = Math.ceil(current.document.byteLength / MAX_ARCHIVE_PART_BYTES)
+    const compactStore: ArchiveObjectStore = {
+      async read() { return undefined },
+      async write(objectId, bytes) {
+        let page = false
+        try {
+          const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+          page = Boolean(value && typeof value === "object" && !Array.isArray(value) &&
+            (value as Record<string, unknown>).kind === "workspace-history-index-page")
+        } catch { /* Binary archive parts are not index pages. */ }
+        const binding: ArchiveEncryptionBinding = { ...basisContext, objectId,
+          objectKind: page ? "page" : "part", partIndex: page ? 0 : partIndex++, partCount: page ? 1 : partCount }
+        await basisData.stage(scope, binding, bytes)
+      },
+    }
+    const basisReference = await writeArchiveBytes(basisContext, [current.document], compactStore)
+    let basisRootBinding: ArchiveEncryptionBinding | undefined
+    for await (const item of basisData.objects()) {
+      if (item.binding.objectId === basisReference.root.objectId) basisRootBinding = item.binding
+    }
+    if (!basisRootBinding) throw new Error("Compact history basis root was not staged")
+    await basisData.archive(basisRootBinding)
+    const preparationRemote = createArchiveRemote(access, { fetch, ensureCurrent: () => {} })
+    await basisData.cover(preparationRemote)
+    const basisDirectory = createWorkspaceHistoryPreparation({ ...basisIdentity, transitionId: `${transitionId}-basis-directory` }, () => {})
+    const basisLocators = await prepareArchiveLocators({ data: basisData, directory: basisDirectory, scope,
+      remote: preparationRemote, ensureCurrent: () => {} })
+    const basisCoverageObjects: Array<{ objectId: string; keyEpoch: number }> = []
+    for (const source of [basisData, basisDirectory]) {
+      for await (const item of source.objects()) basisCoverageObjects.push({ objectId: item.sealed.ciphertextId, keyEpoch: scope.keyEpoch })
+    }
+    basisCoverageObjects.sort((left, right) => left.objectId < right.objectId ? -1 : left.objectId > right.objectId ? 1 : 0)
+    const basisCoverage = await confirmArchiveCoverageSet(nativeInput.authority, basisLocators.root.root.ciphertextId,
+      `${transitionId}-basis-set`, basisCoverageObjects, { coverage: preparationRemote.coverage,
+        aggregate: preparationRemote.aggregate, ensureCurrent: () => {} })
+    const wire = { version: 1 as const, signedJson: encodeBlindBytes(signedBaselineBytes),
+      basis: { context: basisContext, reference: basisReference, locatorRoot: basisLocators.root, coverage: basisCoverage } }
+    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(capturedHistory.originals.control)))
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
+      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
+        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
+    const trustedScopeAuthority = validateWorkerHistoryAuthority(scopeAuthoritySnapshot, context.workspaceId)
+    const receiveConfig = { ...access, workspaceId: context.workspaceId, keyEpoch: scope.keyEpoch,
+      contentKey: toBase64Url(scope.key), cursor: 0, lastUploaded: "", minimumWriterVersion: 2 as const }
     expect(await verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(signedBaseline) })).toEqual({ ...verified,
       ownerAttestation: { baselineId: verified.ownerProposal.baselineId, historyEpoch: 1, deviceId: nativeInput.signer.deviceId } })
     if (process.env.TINCANBAN_PRIOR_READER_PROBE === "1") {
@@ -426,6 +484,55 @@ test("Given a Native-derived original-history catalogue, when data and locator c
         originalBytes, retainedObjects, () => { throw new Error("Session replaced") })).toThrow()
       expect(() => received.verifyPreviousBaseline(received)).toThrow(/predecessor/)
       expect(received.document()).toEqual(current.document)
+
+      const receiveFetch = { ensureCurrent: async () => {}, download: recipient.download }
+      const workerReceived = await receiveWorkerHistoryBasis({ wire, workspaceId: context.workspaceId, config: receiveConfig,
+        trustedScopeAuthority, fetch: receiveFetch, guard: async () => {}, ensureCurrent: () => {} })
+      try {
+        expect(workerReceived.stored.wire).toEqual(wire)
+        expect(decodeBlindBytes(workerReceived.stored.document)).toEqual(current.document)
+        const restoredWorkerBasis = await restoreWorkerHistoryBasis(workerReceived.stored, context.workspaceId,
+          receiveConfig, trustedScopeAuthority, async () => {}, () => {})
+        try {
+          expect(restoredWorkerBasis.originalJson()).toEqual(signedBaselineBytes)
+          expect(restoredWorkerBasis.document()).toEqual(current.document)
+        } finally { restoredWorkerBasis.free() }
+      } finally { workerReceived.basis.free() }
+
+      // The browser adapter receives the same published wire through the production Native verifier and durable repository.
+      vi.stubGlobal("indexedDB", new IDBFactory())
+      const browserRepository = createReceivedHistoryBaselineRepository(context.workspaceId, () => {})
+      const browserOriginalBytes = decodeBlindBytes(capturedHistory.originals.document)
+      const originalDoc = Automerge.load<WorkspaceDocumentV2>(browserOriginalBytes)
+      const browserHeads = Automerge.getHeads(originalDoc).sort()
+      const browserRoute = { ensureCurrent: async () => {}, download: recipient.download }
+      const browserPorts: BrowserHistoryBaselineReceivePorts = {
+        repository: browserRepository,
+        workspaceTransaction: <T>(operation: (transaction: WorkspaceTransactionContext) => Promise<T>) =>
+          defaultStorage.withWorkspaceTransaction(context.workspaceId, transaction => operation(transaction)),
+        ensureCurrent: () => {},
+        readLocal: async () => ({ bytes: browserOriginalBytes, heads: browserHeads, revision: undefined,
+          catalogRevision: "native-history-fixture", pending: false }),
+        verify: ({ wire: receivedWire, previous, fetch: archiveFetch }) => verifyReceivedWireHistoryBaseline({ wire: receivedWire,
+            scope, pinnedStorage: nativeInput.authority, previous, fetch: archiveFetch, ensureCurrent: () => {}, trustedScopeAuthority }),
+        coversHeads: async (candidate: typeof received) => candidate.verifyArchivedSnapshot(scope.scopeId, scope.keyEpoch,
+          scope.key, browserOriginalBytes, retainedObjects, () => {}),
+        readExpectedSnapshot: async () => (await readWorkspaceBasisSnapshot(context.workspaceId)) ?? null,
+        accept: async (candidate: typeof received) => browserRepository.recordActiveWireRoute(verified.ownerProposal.baselineId,
+          candidate.originalJson(), wire),
+        merge: async (document: Uint8Array, authorization: unknown, candidate: typeof received) => {
+          expect(document).toEqual(current.document)
+          expect(authorization).toEqual(capturedHistory.originals.authorizations)
+          expect(candidate.document()).toEqual(current.document)
+        },
+      }
+      try {
+        await receiveBrowserHistoryBaseline({ workspaceId: context.workspaceId, config: receiveConfig, wire,
+          document: current.document, authorization: capturedHistory.originals.authorizations,
+          trustedScopeAuthority, fetch: browserRoute, ports: browserPorts })
+        expect((await browserRepository.readActive())?.baselineId).toBe(verified.ownerProposal.baselineId)
+        expect((await browserRepository.readArchiveRecord())?.wire).toEqual(wire)
+      } finally { Automerge.free(originalDoc) }
     } finally { received.free() }
     const wrongDomain = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MATCH/1")
     await expect(verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(wrongDomain) })).rejects.toThrow(/signature/)
@@ -447,9 +554,9 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const originalProof = await readOriginal("proof/0000000000000001", "source-proof/0000000000000001")
     expect(originalProof).toEqual(decodeBlindBytes(capturedHistory.originals.authorizations[1]))
     const proof = JSON.parse(new TextDecoder().decode(originalProof))
-    const control = JSON.parse(new TextDecoder().decode(await readOriginal("control", "source-control")))
-    expect(control.genesisOwner.publicKey).toBe(capturedHistory.expected.publicKey)
-    const authorKey = await verifyDeviceCertificateChain({ ...control.genesisOwner, displayName: "" }, proof.signed.signerKeyId, proof.certificates)
+    const archivedControl = JSON.parse(new TextDecoder().decode(await readOriginal("control", "source-control")))
+    expect(archivedControl.genesisOwner.publicKey).toBe(capturedHistory.expected.publicKey)
+    const authorKey = await verifyDeviceCertificateChain({ ...archivedControl.genesisOwner, displayName: "" }, proof.signed.signerKeyId, proof.certificates)
     expect(await verifyEnvelope(proof.signed, authorKey)).toBe(true)
     expect(proof.signed.payload.hashes).toEqual([decoded.hash])
     for (const source of [journal, directory]) for (const method of ["read", "readSource", "objects", "locators"] as const) expect(source[method]).not.toHaveBeenCalled()

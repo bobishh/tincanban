@@ -1,6 +1,7 @@
-import { blindOrigin } from "./blindOrigin"
-import { decodeBlindBytes, type BlindObject } from "./blindEnvelope"
-import { blindHash, blindObjectId, canonicalBlindJson, fetchBlind, readBlindJson, blindProducerHeaders, type BlindAccess } from "./blindClient"
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { blindHash, blindObjectId, canonicalBlindJson, blindProducerHeaders, type BlindAccess } from "./blindClient"
+import { fetchBlind, readBlindJson } from "./rustyHttp"
 
 const MAX_BLOB_CIPHERTEXT_BYTES = 1_048_592
 const MAX_BLOB_RESPONSE_BYTES = 2 * 1024 * 1024

@@ -1,6 +1,6 @@
 import { BLOB_CHUNK_BYTES, validateBlobDescriptor, type BlobDescriptor } from "@meta-uber/mesh-blob"
-import { decodeBlindBytes } from "./blindEnvelope"
-import type { BlindObject } from "./blindEnvelope"
+import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindBlobReceipt } from "./blindBlobClient"
 import type { AttachmentProgress } from "./attachmentTransfer"
 

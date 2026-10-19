@@ -2,14 +2,14 @@ import { WasmVerifiedHistoryArchiveCapture, type WasmVerifiedHistoryArchiveCover
   type WasmVerifiedHistoryArchiveStorage, type WasmVerifiedHistoryBaselineAttestation } from "@meta-uber/mesh-transport/wasm"
 import { canonicalizeJson } from "../domain/identity"
 import { signWithContext, assertSigningContextCurrent, signingEvidence, type VerifiedSigningContext } from "../domain/signingContext"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { ArchiveEncryptionScope, EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import type { ArchiveLocatorRoot } from "@meta-uber/mesh-replication/history-archive-locators"
 import type { ArchiveCoverageAggregateReceipt, ArchiveCoverageAuthority as HistoryArchiveCoverageAuthority } from "@meta-uber/mesh-replication/history-archive-coverage"
 import type { HistoryPreparationIdentity } from "@meta-uber/mesh-replication/history-preparation-journal"
 import { verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { BlindReplicaConfig } from "./blindReplication"
-import type { WireHistoryBaseline } from "./historyBaselineReceiver"
+import type { WireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { publishWorkspaceHistoryRecord, retainPreparedHistoryPublication } from "./historyBaselinePublicationRepository"
 
 const encoder = new TextEncoder()

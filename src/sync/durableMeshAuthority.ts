@@ -9,14 +9,15 @@ import { createWorkspaceDeparture, type WorkspaceDeparture, createWorkspaceDevic
   type WorkspaceMemberBundle, type WorkspaceOwnershipTransfer, type WorkspaceSuccessionPolicy,
   type WorkspaceSuccessionVote, type WorkspaceSuccessionClaim } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
+import { defaultStorage, isWorkspaceAuthorityMutation, type WorkspaceAuthorityMutationContext } from "../storage"
 import { deviceRevocations, isDeviceRevoked, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, isGrantRevoked, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
 import { DurableMeshCredentials } from "./durableMeshCredentials"
 import { workspaceSet } from "./workspaceSet"
 import { meshTrace } from "./meshTrace"
 import { assertKeeperGrantGeneration, emptyRevocationGeneration, reconcilePriorPersonRevocation } from "./revocationGeneration"
-import { withWorkspaceMutation } from "../workspaceMutation"
 import { runKeeperRevocationActions } from "./keeperRevocationActions"
 import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
+import { canonicalizeJson } from "../domain/identity"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
 import { awaitOwnerDelivery, confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
@@ -72,7 +73,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
         action === "peers" ? { peerCount: value.peers.length } : {}, effect)
     }
     await this.traceSlowPhase("authority-snapshot.persist", workspaceId, {},
-      () => persistScopeAuthoritySnapshot(this.store, workspaceId, scopeImport.snapshot))
+      () => defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context =>
+        persistScopeAuthoritySnapshot(this.store, workspaceId, scopeImport.snapshot, context.write)))
     await this.reclassifyWorkspaceAuthority(workspaceId)
     if (actions.includes("notify"))
       await this.traceSlowPhase("effect.notify", workspaceId, {}, effects.notify!)
@@ -95,10 +97,14 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   }
   protected async putVerifiedBundle(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle,
     batch?: { index: number; total: number }) {
-    return withWorkspaceMutation(credential.workspaceId, () => this.putVerifiedBundleLocked(credential, raw, batch))
+    return defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId,
+      context => this.putVerifiedBundleLocked(credential, raw, batch, context))
   }
   private async putVerifiedBundleLocked(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle,
-    batch?: { index: number; total: number }) {
+    batch: { index: number; total: number } | undefined, authorityContext: WorkspaceAuthorityMutationContext) {
+    if (!isWorkspaceAuthorityMutation(authorityContext, credential.workspaceId, defaultStorage))
+      throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+    const persistAuthority = <T>(operation: () => Promise<T>) => authorityContext.write(operation)
     const peer = { personId: raw.advertisement.payload.personId.slice(0, 8), deviceId: raw.advertisement.payload.deviceId.slice(0, 8),
       ...(batch ? { bundleIndex: batch.index, bundleCount: batch.total } : {}) }
     const phase = <T>(name: string, operation: () => T | Promise<T>) =>
@@ -119,7 +125,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       ...(verified.ownerCertificates ?? []),
     ].map(certificate => [certificate.signature, certificate])).values()])
     if (ownerCertificates.length > credential.ownerCertificates.length) {
-      await phase("peer.certificates.persist", () => this.store.putWorkspaceCredential({ ...credential, ownerCertificates, updatedAt: new Date().toISOString() }))
+      await persistAuthority(() => phase("peer.certificates.persist", () => this.store.putWorkspaceCredential({ ...credential,
+        ownerCertificates, updatedAt: new Date().toISOString() })))
     }
     const p = verified.advertisement.payload
     const deviceRevoked = await phase("peer.device-revocation.check", () => isDeviceRevoked(credential, p.personId, p.deviceId))
@@ -132,8 +139,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       localPersonId: profile.identity.personId, grant: raw.grant ?? null,
       ownerCertificates, updatedAt: new Date().toISOString() }))
     if (local.grantId && local.grant && local.credential) {
-      await phase("peer.local-grant.persist", () => defaultProofStore.putGrant(local.grantId!, local.grant as WorkspaceGrant))
-      await phase("peer.local-credential.persist", () => this.store.putWorkspaceCredential(local.credential as WorkspaceMeshCredential))
+      await persistAuthority(() => phase("peer.local-grant.persist", () => defaultProofStore.putGrant(local.grantId!, local.grant as WorkspaceGrant)))
+      await persistAuthority(() => phase("peer.local-credential.persist", () => this.store.putWorkspaceCredential(local.credential as WorkspaceMeshCredential)))
     }
     const record = await phase("peer.record.build", () => ({
       workspaceId: route.scopeId,
@@ -148,7 +155,12 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       revokedAt: null,
       advertisement: raw,
     }))
-    await phase("peer.upsert", () => this.store.upsertPeer(record))
+    const previousGrant = (previous?.advertisement as { grant?: WorkspaceGrant } | undefined)?.grant
+    const nextGrant = raw.grant
+    const authorizationChanged = !previous || previous.role !== record.role || previous.revokedAt !== record.revokedAt ||
+      canonicalizeJson(previousGrant ?? null) !== canonicalizeJson(nextGrant ?? null)
+    if (authorizationChanged) await persistAuthority(() => phase("peer.upsert", () => this.store.upsertPeer(record)))
+    else await phase("peer.upsert", () => this.store.upsertPeer(record))
   }
   protected async mergeOwnershipTransfers(
     initialCredential: WorkspaceMeshCredential,
@@ -169,20 +181,23 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       credential = adoption.credential as WorkspaceMeshCredential
       peers = adoption.peers as WorkspacePeerRecord[]
     }
-    if (plan.steps.length) {
-      await this.store.transferWorkspaceCredential(initialCredential.ownerPersonId, credential, scopeAuthoritySnapshot)
-      for (const peer of peers) await this.store.upsertPeer(peer)
-    }
-    if (plan.persistCatalog) {
-      credential = { ...credential, catalog: { ...meshCatalog(credential), ownershipTransfers: plan.accepted } }
-      await this.store.putWorkspaceCredential(credential)
-    }
+    if (plan.steps.length || plan.persistCatalog) await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId, async context => {
+      if (plan!.steps.length) {
+        await context.write(() => this.store.transferWorkspaceCredential(initialCredential.ownerPersonId, credential, scopeAuthoritySnapshot))
+        for (const peer of peers) await context.write(() => this.store.upsertPeer(peer))
+      }
+      if (plan!.persistCatalog) {
+        credential = { ...credential, catalog: { ...meshCatalog(credential), ownershipTransfers: plan!.accepted } }
+        await context.write(() => this.store.putWorkspaceCredential(credential))
+      }
+    })
     return credential
   }
   protected async mergeSuccessionState(initialCredential: WorkspaceMeshCredential, rawPolicy: WorkspaceSuccessionPolicy | undefined,
     rawVotes: WorkspaceSuccessionVote[], rawClaims: WorkspaceSuccessionClaim[], importedSnapshot?: ScopeAuthoritySnapshot): Promise<WorkspaceMeshCredential> {
-    return mergeSuccessionStateInScope(this.store, initialCredential, () => this.options.getProfile(), rawPolicy,
-      rawVotes, rawClaims, this.sessions.size > 0, () => this.publishAll(), importedSnapshot)
+    return defaultStorage.withWorkspaceAuthorityMutation(initialCredential.workspaceId, context =>
+      mergeSuccessionStateInScope(this.store, initialCredential, () => this.options.getProfile(), rawPolicy,
+        rawVotes, rawClaims, this.sessions.size > 0, () => this.publishAll(), importedSnapshot, context.write))
   }
   async setSuccessor(workspaceId: string, personId: string | null): Promise<void> {
     const [profile, credential] = await Promise.all([this.options.getProfile(), this.store.getWorkspaceCredential(workspaceId)])
@@ -195,13 +210,16 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     for (const action of actions) {
       if (action === "createPolicy") policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, personId, eligible, credential!.epoch,
         new Date().toISOString(), await meshRecordSigning(profile, credential!, { kind: "owner" }, this.store))
-      if (action === "setPolicy") await this.store.putWorkspaceCredential({ ...credential!, updatedAt: new Date().toISOString(),
-        catalog: { ...meshCatalog(credential!), successionPolicy: policy, successionVotes: [] } })
+      if (action === "setPolicy") await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+        context => context.write(() => this.store.putWorkspaceCredential({ ...credential!, updatedAt: new Date().toISOString(),
+            catalog: { ...meshCatalog(credential!), successionPolicy: policy, successionVotes: [] } })
+        )
+      )
       if (action === "notify") await this.notify()
       if (action === "publish") await this.publishAll()
     }
   }
-  protected async refreshSuccessionPolicy(workspaceId: string): Promise<void> {
+  protected async refreshSuccessionPolicy(workspaceId: string, authorityContext?: WorkspaceAuthorityMutationContext): Promise<void> {
     const profile = await this.options.getProfile()
     const credential = await this.store.getWorkspaceCredential(workspaceId)
     const current = credential && successionPolicy(credential)
@@ -211,8 +229,13 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     if (!refresh.changed) return
     const policy = await createWorkspaceSuccessionPolicy(profile, workspaceId, refresh.successorPersonId, eligible, credential.epoch,
       new Date().toISOString(), await meshRecordSigning(profile, credential, { kind: "owner" }, this.store))
-    await this.store.putWorkspaceCredential({ ...credential, updatedAt: new Date().toISOString(),
+    const persist = () => this.store.putWorkspaceCredential({ ...credential, updatedAt: new Date().toISOString(),
       catalog: { ...meshCatalog(credential), successionPolicy: policy, successionVotes: [] } })
+    if (authorityContext) {
+      if (!isWorkspaceAuthorityMutation(authorityContext, workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+      await authorityContext.write(persist)
+    }
+    else await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context => context.write(persist))
   }
   async voteForSuccessor(workspaceId: string, candidatePersonId: string): Promise<void> {
     const profile = await this.options.getProfile()
@@ -267,14 +290,27 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     await this.reclassifyWorkspaceAuthority(workspaceId)
   }
 
-  protected async mergeRevocations(credential: WorkspaceMeshCredential, raw: unknown[], disconnect = true) {
+  protected async mergeRevocations(credential: WorkspaceMeshCredential, raw: unknown[], disconnect = true,
+    authorityContext?: WorkspaceAuthorityMutationContext) {
     if (!raw.length && revocations(credential).length === 0) return
     const profile = await this.options.getProfile()
+    const previousPeers = await this.store.listPeers(credential.workspaceId)
     const plan = meshRustRuntime().state.planAuthorityMerge({ credential,
-      peers: await this.store.listPeers(credential.workspaceId), localPersonId: profile.identity.personId,
+      peers: previousPeers, localPersonId: profile.identity.personId,
       localDeviceId: profile.device.deviceId, nowMs: Date.now(), records: { kind: "revocations", records: raw } })
-    await this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential)
-    for (const peer of plan.peers) await this.store.upsertPeer(peer as WorkspacePeerRecord)
+    const changed = canonicalizeJson(plan.credential) !== canonicalizeJson(credential) ||
+      canonicalizeJson(plan.peers) !== canonicalizeJson(previousPeers)
+    const persist = async () => {
+      await this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential)
+      for (const peer of plan.peers) await this.store.upsertPeer(peer as WorkspacePeerRecord)
+    }
+    if (changed) {
+      if (authorityContext) {
+        if (!isWorkspaceAuthorityMutation(authorityContext, credential.workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+        await authorityContext.write(persist)
+      }
+      else await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId, context => context.write(persist))
+    }
     if (disconnect) for (const session of [...this.sessions.values()]) {
       if (session.workspaceId === credential.workspaceId && plan.evictDeviceIds.includes(session.deviceId)) await session.evict("peer revoked")
     }
@@ -287,9 +323,13 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     const plan = meshRustRuntime().state.planAuthorityMerge({ credential,
       peers: await this.store.listPeers(credential.workspaceId), localPersonId: profile.identity.personId,
       localDeviceId: profile.device.deviceId, nowMs: Date.now(), records: { kind: "departures", records } })
-    await this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential)
+    if (canonicalizeJson(plan.credential) === canonicalizeJson(credential) &&
+        (!disconnect || canonicalizeJson(plan.peers) === canonicalizeJson(await this.store.listPeers(credential.workspaceId)))) return
+    await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId, async context => {
+      await context.write(() => this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential))
+      if (disconnect) for (const peer of plan.peers) await context.write(() => this.store.upsertPeer(peer as WorkspacePeerRecord))
+    })
     if (!disconnect) return
-    for (const peer of plan.peers) await this.store.upsertPeer(peer as WorkspacePeerRecord)
     for (const session of [...this.sessions.values()]) {
       if (session.workspaceId === credential.workspaceId && plan.evictPersonIds.includes(session.remotePersonId)) await session.evict("member left workspace")
     }
@@ -301,8 +341,12 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     const plan = meshRustRuntime().state.planAuthorityMerge({ credential,
       peers: await this.store.listPeers(credential.workspaceId), localPersonId: profile.identity.personId,
       localDeviceId: profile.device.deviceId, nowMs: Date.now(), records: { kind: "deviceRevocations", records } })
-    await this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential)
-    for (const peer of plan.peers) await this.store.upsertPeer(peer as WorkspacePeerRecord)
+    if (canonicalizeJson(plan.credential) === canonicalizeJson(credential) &&
+        canonicalizeJson(plan.peers) === canonicalizeJson(await this.store.listPeers(credential.workspaceId))) return
+    await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId, async context => {
+      await context.write(() => this.store.putWorkspaceCredential(plan.credential as WorkspaceMeshCredential))
+      for (const peer of plan.peers) await context.write(() => this.store.upsertPeer(peer as WorkspacePeerRecord))
+    })
     if (disconnect) for (const session of [...this.sessions.values()]) {
       if (session.workspaceId === credential.workspaceId && plan.evictDeviceIds.includes(session.deviceId)) await session.evict("device revoked")
     }
@@ -343,11 +387,12 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   }
 
   async promotePerson(workspaceId: string, personId: string): Promise<void> {
-    await withWorkspaceMutation(workspaceId, () => this.promotePersonLocked(workspaceId, personId))
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
+      context => this.promotePersonLocked(workspaceId, personId, context))
     await this.reclassifyWorkspaceAuthority(workspaceId)
     await this.publishAll()
   }
-  private async promotePersonLocked(workspaceId: string, personId: string): Promise<void> {
+  private async promotePersonLocked(workspaceId: string, personId: string, authorityContext: WorkspaceAuthorityMutationContext): Promise<void> {
     const profile = await this.options.getProfile()
     const credential = await this.store.getWorkspaceCredential(workspaceId)
     const peers = (await this.peerInstances(workspaceId)).filter(peer => peer.personId === personId && !peer.revokedAt && peer.advertisement)
@@ -367,20 +412,20 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       }
       if (action === "persistGrant") {
         if (!grant) throw new Error("Promotion grant was not created")
-        await defaultProofStore.putGrant(grant.payload.grantId, grant)
-        await this.store.putWorkspaceCredential(credential!)
+        await authorityContext.write(() => defaultProofStore.putGrant(grant!.payload.grantId, grant!))
+        await authorityContext.write(() => this.store.putWorkspaceCredential(credential!))
         for (const peer of peers) {
           const bundle = { ...peer.advertisement as WorkspaceMemberBundle, grant, ownerPublicKey: credential!.ownerPublicKey, ownerCertificates: credential!.ownerCertificates as DeviceCertificate[] }
-          await this.putVerifiedBundleLocked(credential!, bundle)
+          await this.putVerifiedBundleLocked(credential!, bundle, undefined, authorityContext)
         }
       }
-      if (action === "refreshSuccessionPolicy") await this.refreshSuccessionPolicy(workspaceId)
+      if (action === "refreshSuccessionPolicy") await this.refreshSuccessionPolicy(workspaceId, authorityContext)
       if (action === "notify") await this.notify()
       // Publishing can await a concurrent receive that needs this mutation lock.
     }
   }
   async revokePerson(workspaceId: string, personId: string, expectedGrantEpoch?: number): Promise<void> {
-    await withWorkspaceMutation(workspaceId, async () => {
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async authorityContext => {
       const profile = await this.options.getProfile(); let current = await this.store.getWorkspaceCredential(workspaceId)
       if (expectedGrantEpoch !== undefined) {
         const { verifiedKeeperGrantEpochs } = await import("./keeperGrantGeneration")
@@ -389,7 +434,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
           profile, personId, expectedGrantEpoch, verifiedEpochs)
       }
       const prior = await reconcilePriorPersonRevocation(current, personId, () => this.store.listPeers(workspaceId),
-        async () => { await this.mergeRevocations(current!, [], true) },
+        async () => { await this.mergeRevocations(current!, [], true, authorityContext) },
         () => this.notify(), generation => meshTrace("authority.revoke.generation-check", generation as Record<string, unknown>))
       if (prior.completed) return
       const generation = prior.generation ?? emptyRevocationGeneration()
@@ -403,8 +448,8 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
           if (expectedGrantEpoch !== undefined && record.payload.epoch <= expectedGrantEpoch) throw new Error("Revocation did not advance beyond the issued keeper grant.")
           meshTrace("authority.revoke.generation-created", { ...generation, newRevocationEpoch: record.payload.epoch }); return record
         },
-        merge: (record, disconnect) => this.mergeRevocations(current!, [record], disconnect),
-        refresh: () => this.refreshSuccessionPolicy(workspaceId),
+        merge: (record, disconnect) => this.mergeRevocations(current!, [record], disconnect, authorityContext),
+        refresh: () => this.refreshSuccessionPolicy(workspaceId, authorityContext),
         publish: () => queueMicrotask(() => { void this.publishWorkspace(workspaceId).catch(error => this.report("Publish revocation", error)) }),
         reload: async () => { current = await this.store.getWorkspaceCredential(workspaceId) ?? current },
         notify: () => this.notify(),
@@ -511,8 +556,10 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   private async leaveWorkspaceHost(workspaceId: string): Promise<void> {
     for (const [, entry] of [...this.sessions]) if (entry.workspaceId === workspaceId) await entry.evict("workspace left")
     this.gossip.close(workspaceId)
-    await this.store.removeWorkspaceMeshData(workspaceId)
-    await defaultProofStore.removeWorkspaceGrants(workspaceId)
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async context => {
+      await context.write(() => this.store.removeWorkspaceMeshData(workspaceId))
+      await context.write(() => defaultProofStore.removeWorkspaceGrants(workspaceId))
+    })
     this.lastDiagnostic = ""; this.options.onDiagnostic?.("")
     this.clearRouteReconnects(`${workspaceId}:`)
   }

@@ -33,7 +33,7 @@ import { parseAutomationInstanceBody, type AutomationInstanceActivateBody, type 
 import { createAutomationInstanceIdentity, verifyAutomationInstanceIdentity, type AutomationInstanceIdentityProof } from "../../../src/domain/automationInstanceIdentity";
 import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseAutomationDefinition } from "../../../src/domain/automationContract";
-import { verifyRustyWriterPolicyReceipt } from "../../../src/sync/rustyScopePolicy";
+import { verifyRustyWriterPolicyReceipt } from "../../../src/product-replica/rustyScopePolicy";
 
 /** Publish a complete encrypted generation atomically; callers encrypt before entering this sync transaction. */
 export function writeReplicaChunksAtomically(storage: ExecutionSqlTransactionPort, generation: string, chunks: string[], updatedAt: number,

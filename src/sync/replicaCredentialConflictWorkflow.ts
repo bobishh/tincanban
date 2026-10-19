@@ -5,10 +5,11 @@ import { verifyAutomationInstanceIdentity, type AutomationInstanceIdentityProof 
 import { compareAndSwapLocal, readLocal, type LocalStatePlan } from '../localDb'
 import { withLocalStateWriteLock } from '../localStateLock'
 import { parseReplicaState, type ReplicaState } from '@meta-uber/mesh-replication/replica-engine'
-import type { BlindObject } from './blindEnvelope'
-import { encodeBlindBytes } from './blindEnvelope'
-import { blindObjectId, blindProducerHeaders, discoverBlindKeeper, fetchBlind, readBlindJson, verifyBlindReceipt, type BlindReceipt } from './blindClient'
-import { blindOrigin } from './blindOrigin'
+import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { blindObjectId, blindProducerHeaders, discoverBlindKeeper, verifyBlindReceipt, type BlindReceipt } from './blindClient'
+import { fetchBlind, readBlindJson } from './rustyHttp'
+import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindReplicaConfig, PrivateReplicaConfig } from './blindReplication'
 import { assertRetainsReplicaContentKeys, contentKeysForEpoch } from "./replicaContentKeys"
 import { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
@@ -23,7 +24,7 @@ import { capturePrivateReplicaConflict, planPrivateReplicaConflictActivation, ge
 import { discoverWorkspaceReplicaWorkers } from './workspaceReplicaWorkers'
 import { parseReplicaWriterWorkers, type ReplicaWriterWorker } from './replicaWriterWorkersState'
 import { assertAutomationKeyHistorySupported, assertAutomationStorageRotationSupported, prepareAutomationStorageRotation, readAutomationInstance, rotateAutomationStorageCredentials } from '../app/automationInstanceClient'
-import type { RustyScopePolicyReceipt } from './rustyScopePolicy'
+import type { RustyScopePolicyReceipt } from '../product-replica/rustyScopePolicy'
 import { identityDevicePreferencesChanged } from './identityDevicePreferenceEvents'
 
 type ConflictCapture = Awaited<ReturnType<typeof capturePrivateReplicaConflict>>

@@ -1,6 +1,6 @@
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import type { BlobByteSource } from "@meta-uber/mesh-blob/stream"
-import type { AttachmentLocator } from "./attachmentCodec"
+import type { AttachmentLocator } from "../product-replica"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 
 type Guard = () => Promise<void>

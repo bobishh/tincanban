@@ -2,7 +2,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import type { ChangeProof, TransactionReceipt, WorkspaceDocumentV2 } from "./domain/model"
 import { toBase64Url } from "./domain/identity"
 import { canonicalizeJson } from "./domain/identityCrypto"
-import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./sync/workspaceAuthorizationRecords"
+import { mergeAuthorizationRecords, type WorkspaceChangeAuthorization } from "./product-replica/workspaceAuthorizationRecords"
 import {
   advanceHistoryProgress,
   advanceLocalHistoryProgress,
@@ -16,12 +16,27 @@ import {
   withLocalJournalLock,
   writeLocalJournal,
   type StoredHistoryProgress,
+  type StoredChange,
   type StoredReceiptRecord,
   type StoredWorkspaceSnapshot,
 } from "./storageJournal"
 import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
 
 export type WorkspaceCommitCommand = { receipt: TransactionReceipt; changeBytes: Uint8Array; proof: ChangeProof }
+
+export class WorkspaceRevisionConflict extends Error {
+  readonly code = "workspace_revision_conflict"
+  constructor() {
+    super("Workspace changed during admission. Reload and retry.")
+    this.name = "WorkspaceRevisionConflict"
+  }
+}
+
+export type WorkspaceRevisionBasis = {
+  revision: string | null
+  frontier: WorkspaceDeltaFrontier | null
+  baselineId: string | null
+}
 
 export function activeHistoryDifference(previous: Pick<StoredWorkspaceSnapshot, "heads" | "bytes"> | null, doc: Automerge.Doc<WorkspaceDocumentV2>, heads: string[]) {
   if (!previous || previous.heads.join() === heads.join()) return { activeTailChanges: 0, activeTailBytes: 0 }
@@ -67,9 +82,18 @@ export async function persistWorkspaceLocally(
   command: WorkspaceCommitCommand | undefined,
   activeTailChanges: number,
   activeTailBytes: number,
+  expectedBasis: WorkspaceRevisionBasis,
+  compactChangeHashes: string[] = [],
+  ensureContextCurrent: () => void,
 ): Promise<boolean> {
   return withLocalJournalLock(workspaceId, async () => {
+    ensureContextCurrent()
     const journal = readLocalJournal(workspaceId)
+    if ((journal.revision ?? null) !== expectedBasis.revision ||
+        canonicalizeJson(journal.frontier ?? null) !== canonicalizeJson(expectedBasis.frontier) ||
+        (journal.snapshot?.receivedHistory?.baselineId ?? null) !== expectedBasis.baselineId) {
+      throw new WorkspaceRevisionConflict()
+    }
     const existing = mergeAuthorizationRecords(previousProofs, (journal.authorizations ?? []) as WorkspaceChangeAuthorization[])
     const next = mergeAuthorizationRecords(existing, authorizations)
     const proofChanged = canonicalizeJson(existing) !== canonicalizeJson(next)
@@ -78,10 +102,15 @@ export async function persistWorkspaceLocally(
     journal.deltas = []
     journal.authorizations = next
     appendLocalWorkspaceCommand(journal, workspaceId, snapshot.savedAt, command)
+    if (compactChangeHashes.length) {
+      const included = new Set(compactChangeHashes)
+      journal.changes = journal.changes.filter(change => !included.has(change.changeHash))
+    }
     const progressBaselineId = previous?.receivedHistory?.baselineId ?? journal.historyProgress?.baselineId
     if (progressBaselineId !== undefined && !journal.frontier) {
       advanceLocalHistoryProgress(journal, workspaceId, progressBaselineId, activeTailChanges, activeTailBytes)
     }
+    journal.revision = crypto.randomUUID()
     writeLocalJournal(workspaceId, journal)
     return proofChanged
   })
@@ -126,6 +155,9 @@ export async function persistWorkspaceInIndexedDb(
   checkpointChanged: boolean,
   activeTailChanges: number,
   activeTailBytes: number,
+  expectedBasis: WorkspaceRevisionBasis,
+  compactChangeHashes: string[],
+  ensureContextCurrent: () => void,
   clearDeltaRows: (transaction: IDBTransaction, workspaceId: string) => Promise<void>,
   onPhase?: (phase: string) => void,
 ): Promise<boolean> {
@@ -133,15 +165,22 @@ export async function persistWorkspaceInIndexedDb(
   const database = await openWorkspaceJournal()
   const transaction = database.transaction(["snapshots", "authorizations", "changes", "proofs", "receipts", "frontiers", "deltas", "revisions", "historyProgress"], "readwrite")
   const completion = transactionDone(transaction)
-  let proofChanged = false
+  let proofChanged: boolean
   try {
     const snapshotStore = transaction.objectStore("snapshots")
     onPhase?.("transaction-read")
     const existingSnapshot = await requestResult(snapshotStore.get(workspaceId)) as StoredWorkspaceSnapshot | undefined
-    const [existingFrontier, progress] = await Promise.all([
+    const [existingFrontier, progress, revision] = await Promise.all([
       requestResult(transaction.objectStore("frontiers").get(workspaceId)) as Promise<WorkspaceDeltaFrontier | undefined>,
       requestResult(transaction.objectStore("historyProgress").get(workspaceId)) as Promise<StoredHistoryProgress | undefined>,
+      requestResult(transaction.objectStore("revisions").get(workspaceId)) as Promise<{ revision: string } | undefined>,
     ])
+    ensureContextCurrent()
+    if ((revision?.revision ?? null) !== expectedBasis.revision ||
+        canonicalizeJson(existingFrontier ?? null) !== canonicalizeJson(expectedBasis.frontier) ||
+        (existingSnapshot?.receivedHistory?.baselineId ?? null) !== expectedBasis.baselineId) {
+      throw new WorkspaceRevisionConflict()
+    }
     const proofStore = transaction.objectStore("authorizations")
     const stored = await requestResult(proofStore.get(workspaceId)) as { records: WorkspaceChangeAuthorization[] } | undefined
     const existing = mergeAuthorizationRecords(previousProofs, stored?.records ?? [])
@@ -153,6 +192,12 @@ export async function persistWorkspaceInIndexedDb(
       activeTailChanges, activeTailBytes)
     if (!stored || proofChanged) proofStore.put({ id: workspaceId, workspaceId, records: next })
     await clearDeltaRows(transaction, workspaceId)
+    if (compactChangeHashes.length) {
+      const included = new Set(compactChangeHashes)
+      const changeStore = transaction.objectStore("changes")
+      const changes = await requestResult(changeStore.index("workspaceId").getAll(workspaceId)) as Array<StoredChange & { id: string }>
+      for (const change of changes) if (included.has(change.changeHash)) changeStore.delete(change.id)
+    }
     advanceWorkspaceRevision(transaction, workspaceId)
     await appendWorkspaceCommand(transaction, workspaceId, snapshot.savedAt, command)
   } catch (error) {

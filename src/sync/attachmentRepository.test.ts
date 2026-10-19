@@ -2,7 +2,7 @@ import { IDBFactory } from "fake-indexeddb"
 import { createBlobDescriptor } from "@meta-uber/mesh-blob"
 import { afterEach, expect, test, vi } from "vitest"
 import { blindHash, blindObjectId } from "./blindClient"
-import { encodeBlindBytes, encryptBlindObject } from "./blindEnvelope"
+import { encodeBlindBytes, encryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { AttachmentProgress } from "./attachmentTransfer"
 
 afterEach(() => vi.unstubAllGlobals())

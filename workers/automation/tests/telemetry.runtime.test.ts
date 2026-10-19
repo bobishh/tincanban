@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { trace } from "@opentelemetry/api";
-import { automationDiagnosticContext, configureAutomationTelemetry, flushAutomationTelemetryAfter, withAutomationSpan } from "../src/telemetry";
-import { fetchBlind } from "../../../src/sync/rustyHttp";
+import { automationDiagnosticContext, automationPublicDeliveryHttp, configureAutomationTelemetry, flushAutomationTelemetryAfter, withAutomationSpan } from "../src/telemetry";
 
 describe("automation OpenTelemetry producers", () => {
   it("exports correlated standard OTLP logs and traces with server tenant headers", async () => {
@@ -26,9 +25,9 @@ describe("automation OpenTelemetry producers", () => {
       const propagated = trace.getSpan(automationDiagnosticContext(span)!);
       propagatedTraceId = propagated?.spanContext().traceId ?? "";
       workerSpanId = propagated?.spanContext().spanId ?? "";
-      await fetchBlind("https://rusty.example.test/v2/scopes/scope-1/objects", {
-        method: "GET", diagnosticContext: automationDiagnosticContext(span),
-      });
+      await automationPublicDeliveryHttp.request("https://rusty.example.test/v2/scopes/scope-1/objects", {
+        method: "GET",
+      }, automationDiagnosticContext(span));
       throw new Error("merge failed; Bearer do-not-export");
     }, "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")).rejects.toThrow("merge failed");
     expect(propagatedTraceId).toBe("4bf92f3577b34da6a3ce929d0e0e4736");

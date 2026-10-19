@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest"
 import { blindHash, discoverBlindKeeper } from "./blindClient"
-import { encodeBlindBytes } from "./blindEnvelope"
+import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 test("Given advertised archive capabilities, when discovered, then accept only the exact v1 contracts", async () => {
   const key = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])

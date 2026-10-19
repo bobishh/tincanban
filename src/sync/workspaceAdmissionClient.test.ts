@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import type { WorkspaceAdmissionInput, WorkspaceAdmissionRequest, WorkspaceAdmissionResponse, WorkspaceAdmissionResult } from "./workspaceAdmissionCore"
+import type { WorkspaceAdmissionInput, WorkspaceAdmissionResult } from "../product-replica/workspaceAdmission"
+import type { WorkspaceAdmissionRequest, WorkspaceAdmissionResponse } from "./workspaceAdmissionWorkerContract"
 
 const workers: FakeWorker[] = []
 const onlineListeners: Array<() => void> = []

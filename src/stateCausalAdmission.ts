@@ -5,7 +5,6 @@ import { exportDocumentAuthorizationBundle, evaluateIncomingWorkspaceAdmission, 
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { peerStore } from "./sync/peerStore"
 import { defaultStorage } from "./storage"
-import { withWorkspaceMutation } from "./workspaceMutation"
 import { stateRuntime } from "./stateContext"
 import { meshTrace } from "./sync/meshTrace"
 import { diagnoseStartupStep } from "./sync/startupDiagnostics"
@@ -33,42 +32,51 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
       elapsedMs: Math.round(performance.now() - phaseStartedAt) })
     return result
   }
-  return withWorkspaceMutation(workspaceId, async () => {
-    const loaded = await phase("load-document", () => storage.loadWorkspaceDoc(workspaceId))
+  return storage.withWorkspaceTransaction(workspaceId, async transaction => {
+    const loaded = await phase("load-document", () => transaction.loadWorkspaceDoc())
     if (!loaded) return { doc: undefined, changed: false }
-    const receivedBasis = await phase("load-history-basis", () => storage.getVerifiedReceivedHistoryBaseline(workspaceId))
-    // Keep the last admitted projection available if its local authority record
-    // is malformed. Raw causal bytes may contain unreviewed changes, so this
-    // branch must neither replay them nor persist a new classification.
-    if (await phase("validate-authority", () => workspaceAuthorityIsInvalid(workspaceId))) return { doc: loaded.doc, changed: false }
-    if (await phase("reuse-projection", () => reusableDeltaAdmission(loaded.doc, storage, stateRuntime.currentProfile ?? undefined))) {
-      meshTrace("workspace.reclassify.reused", { workspaceId })
-      return { doc: loaded.doc, changed: false }
-    }
-    const evidence = await phase("load-evidence", () => storage.loadCausalEvidence(workspaceId))
-    const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(loaded.doc, stateRuntime.currentProfile ?? undefined))
-    if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization,
-      undefined, receivedBasis))) {
-      meshTrace("workspace.reclassify.reused", { workspaceId })
-      return { doc: loaded.doc, changed: false }
-    }
-    const rawBytes = evidence ? new Uint8Array(evidence.bytes) : Automerge.save(loaded.doc)
-    const raw = Automerge.load<WorkspaceDocumentV2>(rawBytes)
+    let returnedLoaded = false
+    let returnedProjection = false
+    let raw: Automerge.Doc<WorkspaceDocumentV2> | undefined
+    let projection: Automerge.Doc<WorkspaceDocumentV2> | undefined
     try {
-      const admission = await phase("admit-history", () => evaluateIncomingWorkspaceAdmission(raw, raw, authorization,
+      const receivedBasis = await phase("load-history-basis", () => transaction.getVerifiedReceivedHistoryBaseline())
+      // Keep the last admitted projection available if its local authority record
+      // is malformed. Raw causal bytes may contain unreviewed changes, so this
+      // branch must neither replay them nor persist a new classification.
+      if (await phase("validate-authority", () => workspaceAuthorityIsInvalid(workspaceId))) {
+        returnedLoaded = true
+        return { doc: loaded.doc, changed: false }
+      }
+      if (await phase("reuse-projection", () => reusableDeltaAdmission(loaded.doc, transaction,
+        stateRuntime.currentProfile ?? undefined))) {
+        meshTrace("workspace.reclassify.reused", { workspaceId })
+        returnedLoaded = true
+        return { doc: loaded.doc, changed: false }
+      }
+      const evidence = await phase("load-evidence", () => transaction.loadCausalEvidence())
+      const authorization = await phase("export-authorization", () => exportDocumentAuthorizationBundle(loaded.doc, stateRuntime.currentProfile ?? undefined))
+      if (evidence && await phase("reuse-projection", () => storedWorkspaceAdmissionIsCurrent(loaded.doc, evidence, authorization,
+        undefined, receivedBasis))) {
+        meshTrace("workspace.reclassify.reused", { workspaceId })
+        returnedLoaded = true
+        return { doc: loaded.doc, changed: false }
+      }
+      const rawBytes = evidence ? new Uint8Array(evidence.bytes) : Automerge.save(loaded.doc)
+      const rawDocument = Automerge.load<WorkspaceDocumentV2>(rawBytes)
+      raw = rawDocument
+      const admission = await phase("admit-history", () => evaluateIncomingWorkspaceAdmission(rawDocument, rawDocument, authorization,
         (evidence?.authorizationEvidence ?? []) as WorkspaceChangeAuthorization[], receivedBasis))
       stage = "validate-projection"
-      const doc = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
-      const validation = validateWorkspaceDoc(doc)
+      projection = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
+      const validation = validateWorkspaceDoc(projection)
       if (!validation.ok) {
-        Automerge.free(doc)
         throw new Error(`Invalid authorized workspace projection: ${validation.error.message}`)
       }
-      if (doc.ownerPersonId !== loaded.doc.ownerPersonId) {
-        Automerge.free(doc)
+      if (projection.ownerPersonId !== loaded.doc.ownerPersonId) {
         throw new Error("Workspace ownership cannot change through reclassification.")
       }
-      const result = await phase("commit", () => storage.commitWorkspace(workspaceId, doc, Automerge.save(doc),
+      const result = await phase("commit", () => transaction.commitWorkspace(projection!, Automerge.save(projection!),
         admission.verifiedAuthorizations as WorkspaceChangeAuthorization[], undefined, {
           bytes: admission.rawBytes,
           decisions: admission.decisions,
@@ -79,9 +87,14 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
           meshTrace("workspace.commit.phase", { workspaceId, phase: commitPhase,
             elapsedMs: Math.round(performance.now() - startedAt) })
         }))
-      const documentChanged = !sameHeads(doc, loaded.doc)
-      return { doc, changed: documentChanged || result.proofChanged || result.causalChanged }
-    } finally { Automerge.free(raw) }
+      const documentChanged = !sameHeads(projection!, loaded.doc)
+      returnedProjection = true
+      return { doc: projection!, changed: documentChanged || result.proofChanged || result.causalChanged }
+    } finally {
+      if (raw) Automerge.free(raw)
+      if (projection && !returnedProjection) Automerge.free(projection)
+      if (!returnedLoaded) Automerge.free(loaded.doc)
+    }
   }).then(result => {
     meshTrace("workspace.reclassify.completed", { workspaceId, changed: result.changed,
       elapsedMs: Math.round(performance.now() - startedAt) })

@@ -1,6 +1,6 @@
 import { expect, it } from "vitest"
 import { equalIncomingPacket, fullyVerifiedIncomingInput } from "./stateIncomingReuseEquality"
-import type { WorkspaceAdmissionResult } from "./sync/workspaceAdmissionCore"
+import type { WorkspaceAdmissionResult } from "./product-replica/workspaceAdmission"
 
 const packet = () => ({ bytes: new Uint8Array([1, 2, 3]), authorization: {
   records: [{ certificates: [{ signature: "a", payload: { device: "a" } }, { signature: "b", payload: { device: "b" } }],

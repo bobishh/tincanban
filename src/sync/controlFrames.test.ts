@@ -24,7 +24,9 @@ describe("bounded control snapshots", () => {
     const receiver = new ControlFrameReceiver("w")
     receiver.receive(part)
     expect(() => receiver.receive(part)).toThrow(/Conflicting/)
-    expect(() => receiver.receive(rewrite(part, { transferId: crypto.randomUUID() }))).toThrow(/Conflicting/)
+    const overlapping = new ControlFrameReceiver("w")
+    overlapping.receive(part)
+    expect(() => overlapping.receive(rewrite(part, { transferId: crypto.randomUUID() }))).toThrow(/Conflicting/)
   })
 
   it("rejects oversized physical frames and logical snapshots", () => {

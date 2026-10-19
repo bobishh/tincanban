@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import { IDBFactory } from "fake-indexeddb"
 import { BrowserMeshStore } from "@meta-uber/mesh-browser-store"
 import { canonicalizeJson } from "../domain/identity"
+import { defaultStorage } from "../storage"
 import { openWorkspaceJournal, requestResult, transactionDone } from "../storageJournal"
 import type { WorkspaceRecoveryJournal } from "./workspaceHistoryRecoveryDecode"
 import { readPendingWorkspaceRecoveryActivation, readStoredWorkspaceRecoveryCopy,
@@ -12,6 +13,12 @@ const personId = "recovery-journal-person"
 let recoveryId: string
 const stores = ["changes", "archivedChanges", "proofs", "receipts", "snapshots", "authorizations", "archivedAuthorizations", "frontiers", "deltas", "revisions", "receivedBaselines"] as const
 let database: IDBDatabase
+type RestoreOptions = Omit<Parameters<typeof restoreWorkspaceRecoveryJournal>[2], "transaction">
+
+function restoreCandidate(options: RestoreOptions, rows = candidate()): Promise<void> {
+  return defaultStorage.withWorkspaceTransaction(workspaceId, transaction =>
+    restoreWorkspaceRecoveryJournal(workspaceId, rows, { ...options, transaction }))
+}
 
 function candidate(title = "Recovered"): WorkspaceRecoveryJournal {
   return {
@@ -42,6 +49,8 @@ async function seedOriginal() {
 }
 
 beforeAll(async () => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
   vi.stubGlobal("indexedDB", new IDBFactory())
   database = await openWorkspaceJournal()
 })
@@ -71,7 +80,7 @@ it("Given an unfinished history transition with frozen workers, when restoring a
   const transitionId = crypto.randomUUID()
   await putProgress({ transitionId, transitionPreviousBaselineId: null })
   const progress = await readProgress()
-  await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+  await expect(restoreCandidate({ replace: true, ensureCurrent: () => {},
     expectedRevision: canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" }), recoveryId, personId }))
     .rejects.toThrow(/history.*transition|transition.*history/i)
   expect(await getRows("snapshots")).toEqual([expect.objectContaining({ title: "Original" })])
@@ -96,7 +105,7 @@ it.each([
     return result
   })
   try {
-    await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+    await expect(restoreCandidate({ replace: true, ensureCurrent: () => {},
       expectedRevision: canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" }), recoveryId, personId }))
       .rejects.toThrow(/history.*changed|history.*transition|progress.*changed/i)
     expect(changed).toBe(true)
@@ -111,7 +120,7 @@ it("Given an existing workspace journal, when restoring admitted recovery rows, 
   await seedOriginal()
   const priorRevision = canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" })
   const guard = vi.fn()
-  await restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: guard,
+  await restoreCandidate({ replace: true, ensureCurrent: guard,
     expectedRevision: priorRevision, recoveryId, personId })
 
   expect(guard).toHaveBeenCalled()
@@ -136,7 +145,7 @@ it("Given an existing workspace journal, when restoring admitted recovery rows, 
 
 it("Given an existing workspace snapshot, when replacement is not authorized, then leave target journal unchanged", async () => {
   await seedOriginal()
-  await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: false, ensureCurrent: () => {},
+  await expect(restoreCandidate({ replace: false, ensureCurrent: () => {},
     expectedRevision: canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" }), recoveryId, personId }))
     .rejects.toThrow(/already exists|replace/i)
   expect(await getRows("snapshots")).toEqual([expect.objectContaining({ title: "Original" })])
@@ -145,7 +154,7 @@ it("Given an existing workspace snapshot, when replacement is not authorized, th
 
 it("Given a changed revision row, when restoring recovery rows, then fail the CAS without changing target data", async () => {
   await seedOriginal()
-  await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+  await expect(restoreCandidate({ replace: true, ensureCurrent: () => {},
     expectedRevision: canonicalizeJson({ id: workspaceId, workspaceId, revision: "stale" }), recoveryId, personId }))
     .rejects.toThrow(/changed|revision|concurrent/i)
   expect(await getRows("snapshots")).toEqual([expect.objectContaining({ title: "Original" })])
@@ -163,7 +172,7 @@ it("Given an interrupted activation, when reading pending state, then expose saf
     return result
   })
   try {
-    await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true,
+    await expect(restoreCandidate({ replace: true,
       ensureCurrent: () => { if (activationSaved) throw new Error("profile changed") }, expectedRevision: priorRevision, recoveryId, personId }))
       .rejects.toThrow(/profile changed/)
     const pending = await readPendingWorkspaceRecoveryActivation(personId, workspaceId, recoveryId)
@@ -177,11 +186,11 @@ it("Given successful restoration followed by a new history transition, when retr
   await putProgress({})
   const options = { replace: true, ensureCurrent: () => {},
     expectedRevision: canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" }), recoveryId, personId }
-  await restoreWorkspaceRecoveryJournal(workspaceId, candidate(), options)
+  await restoreCandidate(options)
   expect(await readProgress()).toBeUndefined()
   await putProgress({ transitionId: crypto.randomUUID(), transitionPreviousBaselineId: null })
   const progress = await readProgress()
-  await restoreWorkspaceRecoveryJournal(workspaceId, candidate(), options)
+  await restoreCandidate(options)
   expect(await readProgress()).toEqual(progress)
   expect(await getRows("snapshots")).toEqual([expect.objectContaining({ title: "Recovered" })])
 })
@@ -189,12 +198,12 @@ it("Given successful restoration followed by a new history transition, when retr
 it("Given a completed recovery marker, when the current candidate rows were changed afterward, then an idempotent retry rejects instead of trusting the recovery ID", async () => {
   await seedOriginal()
   const priorRevision = canonicalizeJson({ id: workspaceId, workspaceId, revision: "before-recovery" })
-  await restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+  await restoreCandidate({ replace: true, ensureCurrent: () => {},
     expectedRevision: priorRevision, recoveryId, personId })
   const tx = database.transaction("snapshots", "readwrite")
   tx.objectStore("snapshots").put({ id: workspaceId, workspaceId, title: "Later edit" })
   await transactionDone(tx)
-  await expect(restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+  await expect(restoreCandidate({ replace: true, ensureCurrent: () => {},
     expectedRevision: priorRevision, recoveryId, personId })).rejects.toThrow(/candidate|recovery|changed/i)
 })
 
@@ -204,7 +213,7 @@ it("Given a sanitized active candidate and its full imported source journal, whe
   const source = candidate()
   source.deltas.push({ id: `${workspaceId}:source-delta`, value: { id: `${workspaceId}:source-delta`, workspaceId, raw: new Uint8Array([7, 8]) } })
   source.frontiers.push({ id: workspaceId, value: { id: workspaceId, workspaceId, generation: "source-generation" } })
-  await restoreWorkspaceRecoveryJournal(workspaceId, candidate(), { replace: true, ensureCurrent: () => {},
+  await restoreCandidate({ replace: true, ensureCurrent: () => {},
     expectedRevision: priorRevision, recoveryId, personId, sourceJournal: source })
   expect(await getRows("deltas")).toEqual([])
   const imported = await readStoredWorkspaceRecoveryImport(personId, workspaceId, recoveryId)
