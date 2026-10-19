@@ -10,7 +10,7 @@ import type { AttachmentLocator } from "../product-replica"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 
 import type { BlindReplicaConfig } from "../product-replica/config"
-export type { BlindReplicaConfig } from "../product-replica/config"
+export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica/config"
 export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
 export type BlindReplicaStore = {
   read: (id: string) => Promise<Uint8Array>

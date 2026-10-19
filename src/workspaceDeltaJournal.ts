@@ -333,7 +333,7 @@ function appendMemoryJournal(
 }
 
 function existingMemoryAppend(
-  current: ReturnType<typeof readLocalJournalReference>, existing: StoredReceiptRecord,
+  current: ReturnType<typeof readLocalJournalReference>, existing: TransactionReceipt,
   delta: StoredWorkspaceDelta,
 ): { journal: ReturnType<typeof readLocalJournalReference>; frontier: WorkspaceDeltaFrontier } {
   const committed = current.deltas?.find(item => item.id === delta.id)

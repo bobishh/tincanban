@@ -45,9 +45,8 @@ async function verifyPeerBundle(credential: WorkspaceMeshCredential, raw: Worksp
   return { bundle, verified }
 }
 
-async function persistPeerLocalGrant<T extends {
-  grantId?: string | null; grant?: WorkspaceGrant | null; credential?: WorkspaceMeshCredential | null
-}>(local: T, context: PeerAdmissionContext, trace: PeerAdmissionTrace): Promise<void> {
+async function persistPeerLocalGrant(local: { grantId?: string; grant?: unknown; credential?: unknown },
+  context: PeerAdmissionContext, trace: PeerAdmissionTrace): Promise<void> {
   if (!local.grantId || !local.grant || !local.credential) return
   await context.authorityContext.write(() => trace("peer.local-grant.persist", {},
     () => defaultProofStore.putGrant(local.grantId!, local.grant as WorkspaceGrant)))
