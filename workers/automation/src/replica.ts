@@ -5,9 +5,10 @@ import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence,
-  mergeAuthorizationRecords, admitHistoricalAutomationAuthority, mergeAttachmentLocators, parseAttachmentLocators,
+  admitHistoricalAutomationAuthority, mergeAttachmentLocators, parseAttachmentLocators,
   parseWireHistoryBaseline, type AttachmentLocator, type HistoryBaselineFetchPort, type WireHistoryBaseline,
   type WorkspaceChangeAuthorization } from "../../../src/product-replica";
+import { mergeAuthorizationRecords } from "../../../src/product-replica/workspaceAuthorizationRecords";
 import { executeOwnedCommand } from "../../../src/domain/commands";
 import { canonicalizeJson, publicKeyId, sha256Base64Url, type SignedEnvelope } from "../../../src/domain/identityCrypto";
 import type { LocalProfile } from "../../../src/domain/identity";
