@@ -32,9 +32,10 @@ export async function requestWorkerJson(origin: string, path: string, method: "G
 async function readWorkerJsonResponse(response: Response, maximumBytes: number,
   invalidJsonMessage = "Worker returned invalid JSON", trace?: RequestTrace): Promise<unknown> {
   const bytes = await stage(trace, "readBody", () => readBoundedBody(response, maximumBytes, trace))
-  let parsed: unknown
-  try { parsed = await stage(trace, "parseJson", () => JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown) }
-  catch { throw new Error(response.ok ? invalidJsonMessage : `Automation service is unavailable (HTTP ${response.status}). Retry the same operation.`) }
+  const parsed = await stage(trace, "parseJson", () => {
+    try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown }
+    catch { throw new Error(response.ok ? invalidJsonMessage : `Automation service is unavailable (HTTP ${response.status}). Retry the same operation.`) }
+  })
   if (!response.ok) {
     const message = parsed !== null && typeof parsed === "object" && "error" in parsed && typeof parsed.error === "string" ? parsed.error : `Worker returned ${response.status}`
     throw new Error(message)
