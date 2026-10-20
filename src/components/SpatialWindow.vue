@@ -89,18 +89,22 @@ function maximize() {
   else { restored = { ...descriptor.value.geometry }; updateWindowGeometry(descriptor.value, { x: 12, y: 12, width: window.innerWidth, height: window.innerHeight }) }
   maximized.value = !maximized.value
 }
+function containModalTab(event: KeyboardEvent) {
+  if (event.key !== "Tab" || !props.modal || !root.value) return false
+  const targets = [...root.value.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter(element => element.getClientRects().length && !element.closest('[inert], [aria-hidden="true"]'))
+  const active = document.activeElement
+  if (!targets.includes(active as HTMLElement) || event.shiftKey && active === targets[0] || !event.shiftKey && active === targets.at(-1)) {
+    event.preventDefault()
+    ;(event.shiftKey ? targets.at(-1) : targets[0])?.focus({ preventScroll: true })
+  }
+  return true
+}
 function keydown(event: KeyboardEvent) {
   // A keyboard choice takes precedence over the opening click's focus repair.
   if (deferredFocusFrame) { cancelAnimationFrame(deferredFocusFrame); deferredFocusFrame = 0 }
-  if (event.key === "Tab" && props.modal && root.value) {
-    const targets = [...root.value.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')]
-      .filter(element => element.getClientRects().length && !element.closest('[inert], [aria-hidden="true"]'))
-    const active = document.activeElement
-    if (!targets.includes(active as HTMLElement) || event.shiftKey && active === targets[0] || !event.shiftKey && active === targets.at(-1)) {
-      event.preventDefault()
-      ;(event.shiftKey ? targets.at(-1) : targets[0])?.focus({ preventScroll: true })
-    }
-  } else if (event.altKey && event.code === "Backquote") { event.preventDefault(); cycleSpatialWindow(props.workspaceId, event.shiftKey) }
+  if (containModalTab(event)) return
+  if (event.altKey && event.code === "Backquote") { event.preventDefault(); cycleSpatialWindow(props.workspaceId, event.shiftKey) }
   else if (event.key === "Escape" && !event.defaultPrevented && !event.isComposing) { event.stopPropagation(); if (!props.busy) emit("close") }
 }
 onMounted(() => { register(); window.addEventListener("resize", resizeViewport); root.value?.focus() })
