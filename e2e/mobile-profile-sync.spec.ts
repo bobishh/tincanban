@@ -54,9 +54,9 @@ test("Given an enrolled mobile owner device with large history, when desktop pho
     await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
     await phone.getByRole("button", { name: "Sync", exact: true }).click()
-    const tabs = phone.getByRole("tab")
-    await expect(tabs).toHaveCount(4)
-    for (const tab of await tabs.all()) await expect(tab).toHaveCSS("border-bottom-width", "2px")
+    await expect(phone.getByRole("tab")).toHaveCount(0)
+    await expect(phone.getByRole("list", { name: "Mesh members" })).toBeVisible()
+    await expect(phone.getByRole("region", { name: "Rusty", exact: true })).toBeVisible()
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", source!, { timeout: 30_000 })
     await phone.screenshot({ path: info.outputPath("mobile-profile-arrived.png") })
   } finally { await context.close(); await mobileBrowser.close() }

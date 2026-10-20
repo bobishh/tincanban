@@ -346,6 +346,16 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     const inviteDialog = owner.getByRole("dialog", { name: "Device sync" })
     await inviteDialog.getByRole("button", { name: "Add someone", exact: true }).click()
     await inviteDialog.getByRole("button", { name: "Generate link", exact: true }).click()
+    // This scenario explicitly exercises peer-only recovery. Normal participants
+    // receive board storage automatically; the dedicated shared-Rusty scenario covers that path.
+    await editor.route("**/src/sync/workspaceRustyAccess.ts*", async route => {
+      const response = await route.fetch()
+      const source = await response.text()
+      if (!/export\s+async\s+function\s+receiveBoardStorageAccess\s*\(/.test(source)) {
+        throw new Error("Board storage receiver module has no receiveBoardStorageAccess function to isolate")
+      }
+      await route.fulfill({ response, body: `${source}\n;receiveBoardStorageAccess = async function() {}\n` })
+    })
     await editor.goto(await inviteDialog.getByLabel("Pairing link").inputValue())
     const join = editor.getByRole("dialog", { name: "Device sync" })
     await join.getByRole("button", { name: "Accept and join", exact: true }).click()

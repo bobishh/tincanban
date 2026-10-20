@@ -136,14 +136,18 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     await expect(page.getByRole("region", { name: "Job search", exact: true })).toBeVisible()
     await syncFromBlindRusty(page)
     await expectStatusColumn(page, "Interview", "Nacre Light Integration GmbH — Principal Systems Engineer")
+    // Keep browser checkpoint maintenance/GC outside the headless replay invariant.
+    await page.close()
     const afterInterview = await rustyObjectCount(rustyDirectory)
 
     // Replaying identical RFC message must reuse its event and produce no second board write.
     expect(await postForwardedMail(workerOrigin, "<automation-interview-1@example.test>", applicationHeader,
       "We would like to invite you to an interview for Principal Systems Engineer at Nacre Light Integration GmbH.")).toBe(interviewId)
     await expect.poll(() => eventStatus(workerOrigin, interviewId)).toMatchObject({ status: "applied", result: { action: { cardId: leadCardId } } })
-    await syncFromBlindRusty(page)
     expect(await rustyObjectCount(rustyDirectory)).toBe(afterInterview)
+    page = await context.newPage()
+    await page.goto(baseURL!)
+    await syncFromBlindRusty(page)
     await expectStatusColumn(page, "Interview", "Nacre Light Integration GmbH — Principal Systems Engineer")
 
     const rejectionId = await postForwardedMail(workerOrigin, "<automation-rejection-1@example.test>",
@@ -158,14 +162,13 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     await syncFromBlindRusty(page)
     await expectStatusColumn(page, "Rejected", "Nacre Light Integration GmbH — Principal Systems Engineer")
     await testInfo.attach("rejected-after-client-reopen", { body: await page.screenshot(), contentType: "image/png" })
+    await page.close()
     const afterRejection = await rustyObjectCount(rustyDirectory)
     expect(await postForwardedMail(workerOrigin, "<automation-rejection-1@example.test>",
       "Application update: Nacre Light Integration GmbH",
       "We rejected your application and will not continue for Principal Systems Engineer at Nacre Light Integration GmbH.")).toBe(rejectionId)
     await expect.poll(() => eventStatus(workerOrigin, rejectionId)).toMatchObject({ status: "applied", result: { action: { cardId: leadCardId } } })
-    await syncFromBlindRusty(page)
     expect(await rustyObjectCount(rustyDirectory)).toBe(afterRejection)
-    await expectStatusColumn(page, "Rejected", "Nacre Light Integration GmbH — Principal Systems Engineer")
 
     // Stale message dates must not move an application even when Clef classifies it as an interview.
     const staleInterviewId = await postForwardedMail(workerOrigin, "<automation-stale-interview@example.test>",
@@ -174,8 +177,10 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
       new Date("2000-01-01T00:00:00.000Z").toUTCString())
     const staleInterview = await waitForReviewEvent(workerOrigin, staleInterviewId)
     expect(staleInterview).toMatchObject({ result: { reason: "Email is older than the latest application status" } })
-    await syncFromBlindRusty(page)
     expect(await rustyObjectCount(rustyDirectory)).toBe(afterRejection)
+    page = await context.newPage()
+    await page.goto(baseURL!)
+    await syncFromBlindRusty(page)
     await expectStatusColumn(page, "Rejected", "Nacre Light Integration GmbH — Principal Systems Engineer")
 
     const stored = await readRustyObjects(rustyDirectory)
