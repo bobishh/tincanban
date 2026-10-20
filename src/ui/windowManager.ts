@@ -9,6 +9,7 @@ export type WindowDescriptor = {
   root: HTMLElement
   trigger: HTMLElement | null
   z: number
+  modal: boolean
 }
 const windows: WindowDescriptor[] = reactive([])
 
@@ -26,7 +27,12 @@ export function windowLayoutKey(workspaceId: string, windowId: string) {
   return `tincanban:window:v1:${JSON.stringify([workspaceId, windowId])}`
 }
 function viewport() { return { width: window.innerWidth, height: window.innerHeight } }
-function reorder() { windows.forEach((entry, index) => { entry.z = index + 1 }) }
+function reorder() {
+  windows.forEach((entry, index) => { entry.z = index + 1 })
+  let modalIndex = -1
+  windows.forEach((entry, index) => { if (entry.modal) modalIndex = index })
+  windows.forEach((entry, index) => { entry.root.inert = modalIndex >= 0 && index < modalIndex })
+}
 
 export function ensureWindowHost() {
   let host = document.getElementById("spatial-window-host")
@@ -63,7 +69,7 @@ export function saveWindowGeometry(entry: WindowDescriptor) {
 export function updateWindowGeometry(entry: WindowDescriptor, geometry: WindowGeometry) {
   Object.assign(entry.geometry, clampWindowGeometry(geometry, viewport()))
 }
-export function registerSpatialWindow(workspaceId: string, windowId: string, root: HTMLElement, initial: WindowGeometry) {
+export function registerSpatialWindow(workspaceId: string, windowId: string, root: HTMLElement, initial: WindowGeometry, modal = false) {
   if (focusSpatialWindow(workspaceId, windowId)) return null
   const key = windowLayoutKey(workspaceId, windowId)
   let geometry = initial
@@ -71,9 +77,10 @@ export function registerSpatialWindow(workspaceId: string, windowId: string, roo
     const stored = JSON.parse(localStorage.getItem(key) ?? "null") as WindowGeometry | null
     if (stored && [stored.x, stored.y, stored.width, stored.height].every(value => typeof value === "number" && Number.isFinite(value))) geometry = stored
   } catch { /* Ignore corrupt or inaccessible local layouts. */ }
-  const entry: WindowDescriptor = reactive({ key, workspaceId, windowId, geometry: clampWindowGeometry(geometry, viewport()), root: markRaw(root),
+  const entry: WindowDescriptor = reactive({ key, workspaceId, windowId, geometry: clampWindowGeometry(geometry, viewport()), root: markRaw(root), modal,
     trigger: document.activeElement instanceof HTMLElement ? markRaw(document.activeElement) : null, z: windows.length + 1 })
   windows.push(entry)
+  reorder()
   return entry
 }
 export function unregisterSpatialWindow(entry: WindowDescriptor) {

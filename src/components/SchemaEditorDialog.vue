@@ -279,7 +279,7 @@ function invalidJsonError(error: unknown): SchemaValidationError {
 </script>
 
 <template>
-  <DialogWindow :window-id="mode === 'entity' ? 'entity-settings' : 'workspace-settings'" :workspace-id="workspaceId ?? 'local'" :title="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" :aria-label="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" close-label="Dismiss" :busy="saving || showPreview" @close="emit('close')">
+  <DialogWindow :window-id="mode === 'entity' ? 'entity-settings' : 'workspace-settings'" :workspace-id="workspaceId ?? 'local'" :title="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" :aria-label="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" :initial-width="mode === 'entity' ? 760 : 1120" :initial-height="mode === 'entity' ? 720 : 820" :modal="mode !== 'entity'" close-label="Dismiss" :busy="saving || showPreview" @close="emit('close')">
     <section
       class="dialog dialog-window-content schema-editor-dialog"
       :class="{ 'schema-entity-dialog': mode === 'entity', 'settings-dialog': mode === 'templates' }"

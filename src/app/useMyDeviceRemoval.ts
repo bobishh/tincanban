@@ -25,12 +25,13 @@ export function useMyDeviceRemoval(core: ReturnType<typeof useAppCore>) {
       throw new Error("Identity changed during device removal")
   }
   async function refresh() {
+    if (typeof core.tincanban.getCurrentProfile !== "function") return
     const profile = core.tincanban.getCurrentProfile()
     if (!profile) { jobs.value = []; return }
     const value = parse(await readLocal(key(profile.identity.personId)))
     if (core.tincanban.getCurrentProfile()?.identity.personId === profile.identity.personId) jobs.value = value
   }
-  watch(() => [core.tincanban.ready.value, replication.currentDeviceId.value], () => { void refresh() }, { immediate: true })
+  watch(() => [core.tincanban.ready?.value, replication?.currentDeviceId?.value], () => { void refresh() }, { immediate: true })
   const origins = computed(() => [...new Set([...replication.configs.value.filter(config => !config.boardAccess),
     ...replication.identityConfigs.value].map(config => config.origin))])
   async function prepare(deviceId: string, includeNewOrigins = false): Promise<PreparedDeviceRemoval> {

@@ -485,18 +485,19 @@ test("Given a Native-derived original-history catalogue, when data and locator c
     const objects = []
     for (const ciphertextId of archiveIds) objects.push({ ciphertextId, object: await recipient.download(ciphertextId) })
     const originalSigner = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.authorizations[0])))
+    // Generated public fixture seed; never send a signing key to the Native adapter.
+    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.control)))
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
+      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
+        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, originalSigner.signed.signerKeyId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
     const nativeInput = { originals: historyFixture.originals, historyEpoch: context.historyEpoch, proposeInitialBaseline: true,
       signer: { personId: historyFixture.expected.personId, deviceId: originalSigner.signed.signerKeyId, certificates: originalSigner.certificates },
       scope: { ...scope, key: toBase64Url(scope.key) }, locatorRoot: prepared.root,
       authority: { servicePublicKey: access.servicePublicKey, scopeId: access.scopeId, policyRevision: access.policyRevision },
       dataTransitionId: identity.transitionId, directoryTransitionId: directoryIdentity.transitionId,
-      dataReceipt: JSON.stringify(covered.coverage), directoryReceipt: JSON.stringify(prepared.directory.coverage), objects }
-    // Generated public fixture seed; never send a signing key to the Native adapter.
-    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.control)))
-    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
-      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
-        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
-      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
+      dataReceipt: JSON.stringify(covered.coverage), directoryReceipt: JSON.stringify(prepared.directory.coverage), objects,
+      scopeAuthority: scopeAuthoritySnapshot }
     const verified = await verifyNativeArchive(nativeInput) as { ownerProposal: { kind: string; baselineId: string }; ownerAttestation: null; basis: { byteLength: number } }
     expect(verified).toEqual({ kind: "verified-history-archive-coverage", version: 1,
       catalogueRoot: current.catalogue.root, locatorRoot: prepared.root, captureRevision: current.catalogue.captureRevision,

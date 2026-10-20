@@ -49,7 +49,7 @@ function insertBefore(source: string, anchor: string, statement: string): string
 function instrumentWorkspaceRecovery(source: string): string {
   source = `const __backupProgress = globalThis.__historyBackupProgress;\n${source}`
   const stages = [
-    ["read document", "  const doc = await core.tincanban.readWorkspaceDoc(workspaceId);"],
+    ["read document", "  const doc = await core.tincanban.readWorkspaceDoc(workspaceId)"],
     ["signing context", "  const signing = await workspaceSigningContext("],
     ["identity backup", '  const identity = await createIdentityDeviceRecovery("better");'],
     ["open identity backup", "  const transfer = (await openIdentityDeviceRecovery("],

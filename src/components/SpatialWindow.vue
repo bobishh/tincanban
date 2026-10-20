@@ -5,8 +5,8 @@ import { hideLeavingElement, showEnteringElement } from "../ui/modal"
 import ScrollFrame from "./ScrollFrame.vue"
 
 const props = withDefaults(defineProps<{
-  windowId: string; workspaceId: string; title: string; ariaLabel?: string; closeLabel?: string; resizeLabel?: string; initialWidth?: number; initialHeight?: number; framed?: boolean; busy?: boolean
-}>(), { initialWidth: 620, initialHeight: 620, closeLabel: "Close" })
+  windowId: string; workspaceId: string; title: string; ariaLabel?: string; closeLabel?: string; resizeLabel?: string; initialWidth?: number; initialHeight?: number; framed?: boolean; busy?: boolean; modal?: boolean
+}>(), { initialWidth: 620, initialHeight: 620, closeLabel: "Close", modal: false })
 const emit = defineEmits<{ close: [] }>()
 const host = ensureWindowHost()
 const root = ref<HTMLElement | null>(null)
@@ -29,7 +29,7 @@ function register() {
   descriptor.value = registerSpatialWindow(props.workspaceId, props.windowId, root.value, {
     x: Math.max(12, (window.innerWidth - props.initialWidth) / 2), y: 80,
     width: props.initialWidth, height: props.initialHeight,
-  })
+  }, props.modal)
   duplicate.value = !descriptor.value
   if (descriptor.value) {
     const entry = descriptor.value
@@ -103,7 +103,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 <template>
   <Teleport :to="host">
     <Transition name="window" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
-    <section v-if="!duplicate" ref="root" class="dialog spatial-window" :class="{ 'spatial-geometry-motion': geometryAnimating }" role="dialog" :aria-label="ariaLabel ?? title" tabindex="-1"
+    <section v-if="!duplicate" ref="root" class="dialog spatial-window" :class="{ 'spatial-geometry-motion': geometryAnimating }" role="dialog" :aria-label="ariaLabel ?? title" :aria-modal="modal ? 'true' : undefined" tabindex="-1"
       :data-window-id="windowId" :style="style" @pointerdown.capture="raise" @focusin="raise" @keydown="keydown">
       <header class="spatial-titlebar" tabindex="0" :aria-label="`Move ${title}: arrow keys`" :title="title"
         @pointerdown="start($event)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event)">
@@ -118,7 +118,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
         <ScrollFrame v-if="framed"><slot /></ScrollFrame>
         <slot v-else />
       </div>
-      <button class="spatial-resize" type="button" :aria-label="resizeLabel ?? `Resize ${title}: arrow keys`" :disabled="maximized"
+      <button class="spatial-resize" type="button" :aria-label="resizeLabel ?? 'Resize dialog with arrow keys'" :disabled="maximized"
         @pointerdown="start($event, true)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event, true)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 20 12-12M14 20l6-6" /></svg></button>
     </section>
     </Transition>

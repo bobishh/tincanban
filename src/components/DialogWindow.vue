@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useSlots } from "vue"
 import SpatialWindow from "./SpatialWindow.vue"
 
 withDefaults(defineProps<{
@@ -8,15 +9,18 @@ withDefaults(defineProps<{
   ariaLabel?: string
   busy?: boolean
   closeLabel?: string
+  modal?: boolean
   initialWidth?: number
   initialHeight?: number
 }>(), {
   closeLabel: "Close",
   initialWidth: 720,
   initialHeight: 680,
+  modal: false,
 })
 
 const emit = defineEmits<{ close: [] }>()
+const slots = useSlots()
 </script>
 
 <template>
@@ -27,10 +31,12 @@ const emit = defineEmits<{ close: [] }>()
     :aria-label="ariaLabel ?? title"
     :busy="busy"
     :close-label="closeLabel"
+    :modal="modal"
     :initial-width="initialWidth"
     :initial-height="initialHeight"
     @close="emit('close')"
   >
+    <template v-if="slots.header" #header><slot name="header" /></template>
     <slot />
   </SpatialWindow>
 </template>

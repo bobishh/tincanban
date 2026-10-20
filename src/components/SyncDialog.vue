@@ -189,6 +189,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
 
 <template>
   <DialogWindow window-id="device-sync" :workspace-id="workspaceId ?? 'local'" :title="title" aria-label="Device sync" :busy="leavingMesh" @close="emit('dismiss')">
+    <template #header><h2 class="sync-window-title">{{ title }}</h2></template>
     <section class="dialog dialog-window-content sync-dialog">
       <DeviceSyncProblems v-if="blindReplication" :controller="blindReplication" />
 
