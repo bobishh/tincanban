@@ -129,6 +129,7 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
     core.selectedItemId.value = null
   }
   const openAddItem = (columnId?: string, beforeId?: string) => {
+    if (core.savingItem.value) return
     itemInsertion.value = columnId && beforeId ? { columnId, beforeId } : null
     core.storageError.value = ""
     core.itemFormError.value = ""
@@ -153,7 +154,7 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
   const undoArchive = () => restoreArchivedItem(core, board.highlightMoved)
   const handleOpenItem = (item: Item) => { core.selectedItemId.value = item.id }
   const handleOpenItemEdit = (item: Item) => openItemEdit(core, item)
-  const handleAddSubitem = (parentItemId: string) => { core.itemFormParentId.value = parentItemId; core.itemFormError.value = ""; core.showItemForm.value = true }
+  const handleAddSubitem = (parentItemId: string) => { if (core.savingItem.value) return; core.itemFormParentId.value = parentItemId; core.itemFormError.value = ""; core.showItemForm.value = true }
   const handleStartMove = (item: Item) => { core.itemToMove.value = item; core.showMoveDialog.value = true }
   const handleConfirmMove = (newParentId: string) => confirmMove(core, newParentId)
   let columnSave = Promise.resolve()

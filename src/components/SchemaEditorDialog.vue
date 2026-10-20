@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, toRaw, useId, useSlots, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useId, useSlots, watch } from "vue";
 import "./SchemaEditorDialog.css";
 import DialogWindow from "./DialogWindow.vue";
 import SettingsIdentitySection from "./SettingsIdentitySection.vue";
@@ -9,6 +9,7 @@ import SchemaPrioritySection from "./schema-editor/SchemaPrioritySection.vue";
 import SchemaTemplateSection from "./schema-editor/SchemaTemplateSection.vue";
 import SchemaWorkspaceJsonSection from "./schema-editor/SchemaWorkspaceJsonSection.vue";
 import { compareRanks } from "../domain/ancestry";
+import { cloneJsonData } from "../domain/jsonData";
 import type {
   Board,
   Column,
@@ -158,7 +159,7 @@ function reviewEntityChanges() {
   validateCurrentDraft();
   if (validationErrors.value.length) return;
 
-  reviewedSchema.value = structuredClone(toRaw(draft.value));
+  reviewedSchema.value = cloneJsonData(draft.value);
   reviewedHeads.value = props.heads ? structuredClone(props.heads) : undefined;
   schemaDiff.value = diffBoardSchema(props.doc, props.board.id, reviewedSchema.value);
   showPreview.value = true;

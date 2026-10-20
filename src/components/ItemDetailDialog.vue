@@ -15,6 +15,7 @@ const props = defineProps<{
   workspaceId?: string
   attachmentCoverage?: Record<string, AttachmentCoverageStatus[]>
   readOnly?: boolean
+  itemSaving?: boolean
   item: Item
   columns: Column[]
   cardStageButtons: CardStageButton[]
@@ -107,7 +108,7 @@ const emit = defineEmits<{
               <span class="detail-label">Subitems</span>
               <h3>{{ subitems.length ? `${subitems.length} subitems` : "No subitems" }}</h3>
             </div>
-            <button class="button button-small" type="button" :disabled="readOnly" @click="emit('addSubitem', item.id)">+ Add subitem</button>
+            <button class="button button-small" type="button" :disabled="readOnly || itemSaving" @click="emit('addSubitem', item.id)">+ Add subitem</button>
           </div>
 
           <div v-if="subitems.length" class="subitem-list">

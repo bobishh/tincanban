@@ -46,11 +46,14 @@ test("Given a migrated scope, when enrolling storage, then send current capabili
       authorizationHash: await hash(body.authorization), capabilityHash: await hash(capability), revision: 2, migrationPending: false, issuedAt: Date.now(),
     }, serviceId, "RUSTY/2") })
     expect(body.managementCapability).toEqual(capability)
-    if (url.endsWith("/challenge")) return Response.json({ challenge: await signEnvelope(service.privateKey, {
+    if (url.endsWith("/challenge")) {
+      const issuedAt = Date.now()
+      return Response.json({ challenge: await signEnvelope(service.privateKey, {
       kind: "rusty-enrollment-challenge", version: 1, challengeId: "challenge", nonce: "nonce", serviceId,
       publicOrigin: access.origin, scopeId: access.scopeId, personId: profile.identity.personId, deviceId: profile.device.deviceId,
-      deviceKeyId: profile.device.deviceId, expectedRevision: 1, issuedAt: Date.now(), expiresAt: Date.now() + 120_000,
+      deviceKeyId: profile.device.deviceId, expectedRevision: 1, issuedAt, expiresAt: issuedAt + 120_000,
     }, serviceId, "RUSTY/2") })
+    }
     mutations++
     expect(body.authorization.payload.managementRevision).toBe(2)
     expect(await verifyEnvelope(body.authorization, profile.device.publicKey)).toBe(true)
@@ -80,11 +83,12 @@ test("Given a trusted device, when connecting or removing Rusty, then device pro
     const body = JSON.parse(String(init.body))
     expect(JSON.stringify(body)).not.toContain("contentKey")
     if (url.endsWith("/challenge")) {
+      const issuedAt = Date.now()
       return Response.json({ challenge: await signEnvelope(service.privateKey, {
         kind: "rusty-enrollment-challenge", version: 1, challengeId: "challenge", nonce: "nonce", serviceId,
         publicOrigin: access.origin, scopeId: badBinding ? "other-scope" : access.scopeId,
         personId: profile.identity.personId, deviceId: profile.device.deviceId, deviceKeyId: profile.device.deviceId,
-        expectedRevision: revision, issuedAt: Date.now(), expiresAt: Date.now() + 120_000,
+        expectedRevision: revision, issuedAt, expiresAt: issuedAt + 120_000,
       }, serviceId, "RUSTY/2") })
     }
     uploads++

@@ -4,7 +4,7 @@ import { createJobSearchWorkspace } from "./support/workspaces"
 test("Given a new lead, when its detail module is still loading then a pending status precedes the window", async ({ page }) => {
   let releaseModule!: () => void
   const moduleGate = new Promise<void>(resolve => { releaseModule = resolve })
-  await page.route(/SpatialWindow\.vue/, async route => {
+  await page.route(/ItemDetailDialog\.vue/, async route => {
     await moduleGate
     await route.continue()
   })

@@ -20,16 +20,23 @@ async function expandQuickNote(detail: Locator) {
   await detail.locator("summary").filter({ hasText: /^Quick note$/ }).click()
 }
 
-test("Given an item overview, when a quick note is added, then it appears immediately and survives reload", async ({ page }) => {
+test("Given an item overview, when a quick note is typed and added, then focus stays in the input and the note survives reload", async ({ page }, testInfo) => {
   await openItem(page, "Remember this")
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
+  await expect(detail.locator(".spatial-titlebar").getByText("Item", { exact: true })).toHaveCount(0)
   await expect(detail.getByRole("textbox", { name: "Quick note", exact: true })).toBeHidden()
   await expandQuickNote(detail)
-  await detail.getByRole("textbox", { name: "Quick note", exact: true }).fill("Call Alice after lunch")
+  const input = detail.getByRole("textbox", { name: "Quick note", exact: true })
+  await input.click()
+  await expect(input).toBeFocused()
+  await input.pressSequentially("Call Alice after lunch", { delay: 20 })
+  await expect(input).toBeFocused()
+  await expect(input).toHaveValue("Call Alice after lunch")
   await detail.getByRole("button", { name: "Add note", exact: true }).click()
 
   await expect(detail.getByText("Call Alice after lunch", { exact: true })).toBeVisible()
   await expect(detail.getByRole("textbox", { name: "Quick note", exact: true })).toHaveValue("")
+  await detail.screenshot({ path: testInfo.outputPath("quick-note-saved-without-item-label.png") })
   await page.reload()
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Call Alice after lunch")
   await expect(page.getByRole("button", { name: "Open Remember this", exact: true })).toBeVisible()

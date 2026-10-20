@@ -302,10 +302,10 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event" @scroll="trackBoardScroll"
       @open="openCard" @select="openBoardItem" @discuss="conversations.openCardDiscussion" @task-toggle="toggleCardTask">
       <template #before-item="{ column, item, index }">
-              <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
+              <div v-if="index > 0 && !isEditingBoard && canEditItems && !isArchiveColumn(column)" class="card-add-gap"><button class="column-add-button card-insert-button" type="button" :aria-label="`Add ${entityName} between cards in ${column.title}, before ${item.title}`" :disabled="savingItem" @click="openAddItem(column.id, item.id)">{{ addItemLabel }}</button></div>
       </template>
       <template #add-item="{ column }">
-        <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
+        <button v-if="!isEditingBoard && canEditItems && !isArchiveColumn(column)" class="column-add-button" type="button" :aria-label="`Add ${entityName} to ${column.title}`" :disabled="savingItem" @click="openAddItem(column.id)">{{ addItemLabel }}</button>
       </template>
       <template #empty>
       <div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div>
@@ -362,6 +362,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
       :narrative="selectedItem ? cardNotes(selectedItem) : ''"
       :narrative-field-id="activeBoard?.cardPresentation?.narrativeFieldId"
       :read-only="!canEditItems"
+      :item-saving="savingItem"
       :subitems="subitemsForSelectedItem"
       :fields="boardFields.filter(field => field.id !== activeBoard?.cardPresentation?.narrativeFieldId)"
       :documents="documentsFor(selectedItem.id)"

@@ -42,7 +42,7 @@ test.describe("Visual board and entity editing", () => {
     await editor.getByRole("textbox", { name: "Entity name" }).fill("")
     await expect(editor.getByText("/entityName")).toBeVisible()
     await expect(editor.getByRole("button", { name: "Review changes" })).toBeDisabled()
-    await editor.getByRole("button", { name: "Dismiss" }).click()
+    await page.getByRole("dialog", { name: "Edit lead" }).getByRole("button", { name: "Dismiss" }).click()
   })
 
   test("Given a column with an item, when it is archived from visual edit mode, then its item is hidden", async ({ page }) => {

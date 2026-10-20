@@ -46,7 +46,7 @@ for (const width of [1440, 390]) {
     }
     await page.getByRole("button", { name: /Add book to/ }).first().click()
     const item = page.getByRole("dialog", { name: "Item details" })
-    await expect(item.getByRole("heading", { name: "Book details" })).toBeVisible()
+    await expect(item.getByRole("banner", { name: "Move book details: arrow keys" })).toBeVisible()
     await expect(item.getByLabel("Author *")).toBeVisible()
     await expect(item.getByLabel("Genre")).toBeVisible()
     await expect(item.getByLabel("Genre").getByRole("option", { name: "Fiction" })).toHaveCount(1)
