@@ -42,8 +42,10 @@ export async function captureHistoryBackupProgress(page: Page, info: TestInfo): 
 }
 
 function insertBefore(source: string, anchor: string, statement: string): string {
-  if (source.split(anchor).length !== 2) throw new Error(`Backup diagnostic anchor changed: ${anchor}`)
-  return source.replace(anchor, `${statement}\n${anchor}`)
+  const escaped = anchor.trim().split(/\s+/).map(token => token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+")
+  const match = new RegExp(escaped).exec(source)
+  if (!match || match.index === undefined) throw new Error(`Backup diagnostic anchor changed: ${anchor}`)
+  return `${source.slice(0, match.index)}${statement}\n${source.slice(match.index)}`
 }
 
 function instrumentWorkspaceRecovery(source: string): string {

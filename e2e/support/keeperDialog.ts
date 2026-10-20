@@ -3,6 +3,12 @@ import WorkspaceFileActions from "../../src/components/WorkspaceFileActions.vue"
 import SyncDialog from "../../src/components/SyncDialog.vue"
 import { replicationPresence, replicaKey } from "../../src/sync/replicationHealth"
 
+export function mountWorkspaceFileActions(exportWorkspace: () => Promise<void>) {
+  const root = document.createElement("div")
+  document.body.appendChild(root)
+  createApp(WorkspaceFileActions, { exportWorkspace }).mount(root)
+}
+
 export function mountMobileDeviceListDialog() {
   const root = document.createElement("div")
   document.body.appendChild(root)
