@@ -36,6 +36,17 @@ test("Given Vite promotes a shared private entry, When its manifest key is hashe
   }, "private"), /Ambiguous/)
 })
 
+test("Given Vite shares a directly loaded startup module, When it omits isDynamicEntry, Then include its static dependency closure", () => {
+  const shared = { ...manifest,
+    "index.html": { ...manifest["index.html"], dynamicImports: ["src/App.vue", "_startupDiagnostics-hash.js", "src/public/PublicBoardApp.vue"] },
+    "_startupDiagnostics-hash.js": { file: "assets/startupDiagnostics.js", name: "startupDiagnostics", imports: ["private"] },
+  }
+  delete shared["src/sync/startupDiagnostics.ts"]
+  const files = startupBudgetFiles(shared, "private")
+  assert.ok(files.js.includes("dist/assets/startupDiagnostics.js"))
+  assert.ok(files.js.includes("dist/assets/private.js"))
+})
+
 test("Given missing or invalid manifest roots, When collecting startup files, Then budget verification fails closed", () => {
   assert.throws(() => startupBudgetFiles({}, "private"), /entry/)
   assert.throws(() => startupBudgetFiles({ "index.html": manifest["index.html"] }, "private"), /Missing/)

@@ -8,6 +8,7 @@ export type IncomingPacketEntry = IncomingPacket & {
   policy: string
   authority: string
   revision: string
+  baselineId?: string | null
   generation?: string
   weight: number
 }

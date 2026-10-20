@@ -4,7 +4,8 @@ import type { LocalProfile } from "./domain/identity"
 import type * as Automerge from "@automerge/automerge/slim"
 import { localWorkspaceAdmissionAuthority } from "./sync/changeAuthorization"
 import { admissionPolicy } from "./sync/workspaceAdmissionCheckpoint"
-import { equalIncomingPacket } from "./stateIncomingReuseEquality"
+import { equalIncomingPacket, fullyVerifiedIncomingInput } from "./stateIncomingReuseEquality"
+import type { WorkspaceAdmissionResult } from "./product-replica/workspaceAdmission"
 import { recentIncomingPackets, type IncomingPacket, type IncomingPacketEntry } from "./stateIncomingPacketCache"
 
 type Context = Awaited<ReturnType<typeof localWorkspaceAdmissionAuthority>>
@@ -13,7 +14,7 @@ const maximumBytes = 32 * 1024 * 1024
 /** Only successfully committed, privately copied packets can authorize a no-op. */
 export async function reuseIncomingPacket(id: string, packet: IncomingPacket, transaction: WorkspaceTransactionContext, profile?: LocalProfile) {
   const entry = recentIncomingPackets.get(id)
-  if (!entry || entry.policy !== admissionPolicy() || !equalIncomingPacket(entry, packet)) return false
+  if (!entry || entry.policy !== admissionPolicy() || entry.baselineId !== transaction.capturedBaselineId || !equalIncomingPacket(entry, packet)) return false
   const context = await localWorkspaceAdmissionAuthority(entry.root, profile)
   if (context.fingerprint !== entry.authority) return false
   const revision = transaction.capturedRevision ?? undefined
@@ -37,13 +38,12 @@ export function copyIncomingPacket(bytes: Uint8Array, authorization: unknown): I
 }
 
 export async function rememberIncomingPacket(packet: IncomingPacket, doc: Automerge.Doc<WorkspaceDocumentV2>, storage: WorkspaceStorage,
-  credentialFingerprint: string, profile?: LocalProfile) {
+  credentialFingerprint: string, profile?: LocalProfile, admission?: WorkspaceAdmissionResult, baselineId?: string | null) {
   let context: Context
-  let fullyVerified: boolean
   // Lack of binding disables reuse; it cannot turn a durable success into an error.
   try {
     context = await localWorkspaceAdmissionAuthority(doc, profile)
-    fullyVerified = fullyVerifiedIncomingInput(packet.authorization, admission)
+    if (!admission || !fullyVerifiedIncomingInput(packet.authorization, admission)) return
   } catch { return }
   if (context.credentialFingerprint !== credentialFingerprint) return
   const revision = await storage.readWorkspaceRevision(doc.id)
@@ -53,7 +53,7 @@ export async function rememberIncomingPacket(packet: IncomingPacket, doc: Autome
   if (weight > maximumBytes) return
   recentIncomingPackets.delete(doc.id)
   recentIncomingPackets.set(doc.id, { ...packet, root: { id: doc.id, ownerPersonId: doc.ownerPersonId }, policy: admissionPolicy(),
-    authority: context.fingerprint, revision, weight })
+    authority: context.fingerprint, revision, baselineId: baselineId ?? null, weight })
   while (recentIncomingPackets.size > 8 || [...recentIncomingPackets.values()].reduce((sum, entry) => sum + entry.weight, 0) > maximumBytes)
     recentIncomingPackets.delete(recentIncomingPackets.keys().next().value!)
 }

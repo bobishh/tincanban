@@ -17,6 +17,7 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
   const scope = `public:${projection.board.id}`
   const itemById = new Map(projection.cards.map(card => [card.id, card]))
   const fieldTitles = Object.fromEntries(projection.fields.map(field => [field.id, field.title]))
+  const memberAvatars = Object.fromEntries((projection.discussionAuthors ?? []).flatMap(author => author.avatarData ? [[author.id, author.avatarData]] : []))
   const allMessages: PublicChatMessage[] = projection.discussions.map(message => {
     const references = message.targets.flatMap(target => {
       if (target.type === "board") return []
@@ -25,7 +26,7 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
       return [{ workspaceScope: scope, boardId: projection.board.id, itemId,
         ...(target.type === "field" ? { fieldId: target.id } : {}) }]
     })
-    return { id: message.id, workspaceId: scope, personId: "", name: message.author, body: message.body,
+    return { id: message.id, workspaceId: scope, personId: message.authorId ?? "", name: message.author, body: message.body,
       createdAt: message.createdAt, context: { references, mentions: [], ...(message.replyTo ? { replyTo: message.replyTo, conversationRootId: message.threadId } : {}) } }
   })
   const referenceChoices: ReferenceChoice[] = projection.cards.flatMap(card => {
@@ -58,7 +59,7 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
   function referenceCard(anchor: Anchor): string | null {
     return anchor.workspaceScope === scope && anchor.boardId === projection.board.id && itemById.has(anchor.itemId) ? anchor.itemId : null
   }
-  return { scope, allMessages, fieldTitles, referenceChoices, cardDiscussions, boardWindow, cardWindow, threadWindow, messages, referenceCard }
+  return { scope, allMessages, memberAvatars, fieldTitles, referenceChoices, cardDiscussions, boardWindow, cardWindow, threadWindow, messages, referenceCard }
 }
 
 export function publicItemDocuments(projection: PublicBoardProjection, itemId: string) {

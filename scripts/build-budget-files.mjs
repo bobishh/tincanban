@@ -32,7 +32,7 @@ export function startupBudgetFiles(manifest, mode) {
     const name = key.split("/").at(-1).replace(/\.(?:vue|ts|js)$/, "")
     const candidates = (manifest["index.html"].dynamicImports ?? []).filter(imported => {
       const chunk = manifest[imported]
-      return chunk?.isDynamicEntry && chunk.name === name
+      return chunk?.name === name
     })
     if (candidates.length > 1) throw new Error(`Ambiguous startup chunk in build manifest: ${key}`)
     if (!candidates.length) throw new Error(`Missing startup chunk in build manifest: ${key}`)

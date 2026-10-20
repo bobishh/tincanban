@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef } from "vue"
 import DialogWindow from "./DialogWindow.vue"
-import { myDeviceRemovalComplete } from "../sync/myDeviceRemoval"
+import { myDeviceRemovalComplete } from "../app/useMyDeviceRemoval"
 import type { useMyDeviceRemoval, PreparedDeviceRemoval } from "../app/useMyDeviceRemoval"
 const props = defineProps<{ deviceId: string; name: string; workspaceId?: string; controller: ReturnType<typeof useMyDeviceRemoval> }>()
 const confirming = ref(false)

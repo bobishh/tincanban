@@ -5,7 +5,7 @@ import { meshTrace } from "../sync/meshTrace"
 import { requestWebLock } from "../webLock"
 
 export type ChatChange = { workspaceId: string; added: StoredChatMessage[]; remote: boolean; history: boolean;
-  profilesChanged?: boolean; typing?: ChatRecord[] }
+  profilesChanged?: boolean; contentChanged?: boolean; typing?: ChatRecord[] }
 export type ChatTyping = { personId: string; deviceId: string }
 const listeners = new Set<(event: ChatChange) => void>()
 const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("tincanban-chat")
@@ -244,5 +244,5 @@ export async function receiveChat(workspaceId: string, value: unknown, history: 
     meshTrace("chat.persisted", { workspaceId, recordId: message.id, elapsedMs: performance.now() - started, phase: "remote", peerId: remoteDeviceId })
   }
   if (result.changed || typing.length) publish({ workspaceId, added: result.added, remote: true, history,
-    profilesChanged: result.profilesChanged, typing })
+    profilesChanged: result.profilesChanged, contentChanged: result.changed, typing })
 }

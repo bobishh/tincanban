@@ -13,6 +13,7 @@ playwright-report/
 .env.*
 !.env.example
 tmp/
+.codex-artifacts/
 
 test-results-automation-worker/
 

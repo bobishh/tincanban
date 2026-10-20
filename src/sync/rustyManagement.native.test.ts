@@ -491,6 +491,12 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       authority: { servicePublicKey: access.servicePublicKey, scopeId: access.scopeId, policyRevision: access.policyRevision },
       dataTransitionId: identity.transitionId, directoryTransitionId: directoryIdentity.transitionId,
       dataReceipt: JSON.stringify(covered.coverage), directoryReceipt: JSON.stringify(prepared.directory.coverage), objects }
+    // Generated public fixture seed; never send a signing key to the Native adapter.
+    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.control)))
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
+      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
+        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
     const verified = await verifyNativeArchive(nativeInput) as { ownerProposal: { kind: string; baselineId: string }; ownerAttestation: null; basis: { byteLength: number } }
     expect(verified).toEqual({ kind: "verified-history-archive-coverage", version: 1,
       catalogueRoot: current.catalogue.root, locatorRoot: prepared.root, captureRevision: current.catalogue.captureRevision,
@@ -503,12 +509,6 @@ test("Given a Native-derived original-history catalogue, when data and locator c
         historyEpoch: 1, previousBaselineId: null, authorityRevision: current.catalogue.authorityRevision,
         archive: current.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
     expect(verified.basis.byteLength).toBeLessThan(2048)
-    // Generated public fixture seed; never send a signing key to the Native adapter.
-    const control = JSON.parse(new TextDecoder().decode(decodeBlindBytes(historyFixture.originals.control)))
-    const scopeAuthoritySnapshot = { genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1,
-      scopeId: context.workspaceId, creator: { personId: control.genesisOwner.personId,
-        publicKey: control.genesisOwner.publicKey, certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId),
-      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
     const trustedScopeAuthority = validateWorkerHistoryAuthority(scopeAuthoritySnapshot, context.workspaceId)
     const basisContext: ArchiveTreeContext = { workspaceId: context.workspaceId, historyEpoch: context.historyEpoch, indexId: "basis-document" }
     const basisIdentity = { ...identity, transitionId: `${transitionId}-basis-data`,
@@ -654,7 +654,10 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       } finally { Automerge.free(originalDoc) }
     } finally { received.free() }
     await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: undefined })).rejects.toThrow(/requires signed scope authority/)
-    await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: unrelatedScopeAuthority })).rejects.toThrow(/controller does not match/)
+    await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: { ...scopeAuthoritySnapshot,
+      genesis: await signEnvelope(signer, { kind: "scope-genesis", version: 1, scopeId: "unrelated", creator: {
+        personId: control.genesisOwner.personId, publicKey: control.genesisOwner.publicKey,
+        certificates: originalSigner.certificates }, controlEpoch: 1 }, nativeInput.signer.deviceId) } })).rejects.toThrow(/controller does not match/)
     const wrongDomain = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MATCH/1")
     await expect(verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(wrongDomain) })).rejects.toThrow(/signature/)
     await expect(verifyNativeArchive({ ...nativeInput, directoryReceipt: nativeInput.dataReceipt })).rejects.toThrow(/exact Native set and preparation/)

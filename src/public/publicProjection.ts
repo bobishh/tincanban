@@ -1,6 +1,7 @@
 import { compareRanks } from "../domain/ancestry"
 import { columnColors } from "../domain/columnColors"
 import { itemNarrative } from "../domain/narrative"
+import { memberAvatarData } from "../domain/avatarData"
 import { orderItemsByPriority, projectItemPriority } from "../domain/priority"
 import { isArchiveColumn, isItemArchived } from "../domain/archive"
 import { isItem, type FileReference, type WorkspaceDocumentV2, type WorkspaceEntity } from "../domain/model"
@@ -73,7 +74,11 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
     fields: publicFields, cards, discussions: [], files: [],
   }
   const chat = ports.chat ?? { scope: workspaceId, messages: [], profiles: [] }
-  projection.discussions = await projectDiscussions(chat.messages, chat.profiles, chat.scope, boardId, publicFields, cards)
+  const memberAvatars = new Map(entities.flatMap(entity => entity.kind === "member_profile" ?
+    [[entity.personId, memberAvatarData(entity.data)] as const] : []))
+  const discussionProjection = await projectDiscussions(chat.messages, chat.profiles, chat.scope, boardId, publicFields, cards, memberAvatars)
+  projection.discussions = discussionProjection.messages
+  projection.discussionAuthors = discussionProjection.authors
   const projectedFiles = await projectFiles(entities, boardId, new Set(cards.map(card => card.id)), stageAsset, ports.readFile)
   projection.files = projectedFiles.files
   return { projection: validatePublicBoardProjection(projection), assets: projectedFiles.assets }
@@ -167,14 +172,18 @@ function targetFor(anchor: Anchor, scope: string, boardId: string, fieldIds: Set
   if (anchor.itemId === boardId) return { type: "board", id: boardId }
   return undefined
 }
-async function projectDiscussions(messages: StoredChatMessage[], profiles: Array<{ personId: string; name: string }>, scope: string, boardId: string, fields: PublicBoardProjection["fields"], cards: PublicBoardProjection["cards"]): Promise<PublicBoardProjection["discussions"]> {
+async function projectDiscussions(messages: StoredChatMessage[], profiles: Array<{ personId: string; name: string }>, scope: string, boardId: string, fields: PublicBoardProjection["fields"], cards: PublicBoardProjection["cards"], memberAvatars: Map<string, string | undefined>): Promise<{ messages: PublicBoardProjection["discussions"]; authors: NonNullable<PublicBoardProjection["discussionAuthors"]> }> {
   const cardIds = new Set(cards.map(card => card.id))
   const fieldIds = new Set(fields.map(field => field.id))
   const roots = conversationRoots(messages)
   const target = (anchor: Anchor) => targetFor(anchor, scope, boardId, fieldIds, cardIds)
   const includedRoots = includedDiscussionRoots(messages, roots, target)
   const ids = await publicDiscussionIds(messages, roots, includedRoots)
-  return buildPublicDiscussions(messages, profiles, roots, includedRoots, ids, target)
+  const projectedMessages = await buildPublicDiscussions(messages, profiles, roots, includedRoots, ids, target)
+  const includedPersonIds = new Set(messages.filter(message => includedRoots.has(roots.get(message.id)?.rootId ?? "")).map(message => message.personId))
+  const photoAuthors = [...includedPersonIds].filter(personId => memberAvatars.has(personId)).slice(0, 64)
+  const authors = await Promise.all(photoAuthors.map(async personId => ({ id: await publicOpaqueId(personId), avatarData: memberAvatars.get(personId)! })))
+  return { messages: projectedMessages, authors }
 }
 async function publicDiscussionIds(messages: StoredChatMessage[], roots: ReturnType<typeof conversationRoots>, includedRoots: Set<string>): Promise<Map<string, string>> {
   const ids = new Map<string, string>()
@@ -201,6 +210,7 @@ function discussionTargets(message: StoredChatMessage, root: StoredChatMessage |
 }
 async function publicDiscussion(message: StoredChatMessage, targets: PublicTarget[], rootId: string, ids: Map<string, string>, profileNames: Map<string, string>): Promise<PublicBoardProjection["discussions"][number]> {
   return { id: ids.get(message.id)!, threadId: await publicOpaqueId(rootId), replyTo: message.context?.replyTo ? ids.get(message.context.replyTo) ?? null : null,
+    authorId: await publicOpaqueId(message.personId),
     targets, author: profileNames.get(message.personId) ?? "Participant", createdAt: message.createdAt, body: message.body }
 }
 function includedDiscussionRoots(messages: StoredChatMessage[], roots: ReturnType<typeof conversationRoots>, target: (anchor: Anchor) => PublicTarget | undefined): Set<string> {

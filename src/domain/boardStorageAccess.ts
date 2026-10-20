@@ -2,7 +2,7 @@ import type { SignedEnvelope } from "./identityCrypto"
 import type { DeviceCertificate } from "./model"
 import type { BlindReplicaConfig } from "../product-replica/config"
 
-export type BoardStorageConnection = Omit<BlindReplicaConfig, "boardAccess" | "writeToken" | "cursor" | "lastUploaded" | "preferenceRevision">
+type BoardStorageConnection = Omit<BlindReplicaConfig, "boardAccess" | "writeToken" | "cursor" | "lastUploaded" | "preferenceRevision">
 export type BoardStorageAuthorization = {
   kind: "workspace-rusty-access"
   version: 1

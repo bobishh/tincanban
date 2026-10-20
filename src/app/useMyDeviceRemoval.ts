@@ -3,6 +3,7 @@ import type { useAppCore } from "./useAppCore"
 import { readLocal, updateLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { continueMyDeviceRemoval, myDeviceRemovalComplete, type MyDeviceRemoval } from "../sync/myDeviceRemoval"
+export { myDeviceRemovalComplete } from "../sync/myDeviceRemoval"
 
 
 function captureReviewedOrigins(job: MyDeviceRemoval, previous: MyDeviceRemoval | undefined, includeNewOrigins: boolean, origins: string[]) {

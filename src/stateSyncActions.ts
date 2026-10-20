@@ -139,7 +139,7 @@ async function mergeAuthorizedWorkspace(
     if (!receivedBasis && await reuseIncomingPacket(id, { bytes, authorization }, transaction, profile)) return
     const packet = copyIncomingPacket(bytes, authorization)
     // Validation must use the same current durable base as the eventual merge.
-    const validated = await validateAuthorizedWorkspace(
+    const validated = await prepareAuthorizedWorkspace(
       id, packet.bytes, packet.authorization, storage, receivedBasis, transaction)
     const { remote, local, admission, receivedBasis: admittedBasis } = validated
     let merged: Automerge.Doc<WorkspaceDocumentV2> | undefined
@@ -163,7 +163,8 @@ async function mergeAuthorizedWorkspace(
         await publishCommittedWorkspace(id, merged, storage)
       }
       // Optional cache maintenance follows durable success and cannot reject that success.
-      await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint, profile).catch(() => undefined)
+      await rememberIncomingPacket(packet, merged, storage, admission.credentialFingerprint, profile, admission,
+        transaction.capturedBaselineId).catch(() => undefined)
     } finally {
       releaseReceivedDocuments(remote, local, merged, transferred)
     }

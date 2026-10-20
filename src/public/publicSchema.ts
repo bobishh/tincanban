@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { textFormatSchema, cardPresentationSchema, cardAgingPolicySchema } from "../domain/entitySchemas"
 import { isValidRank } from "../domain/rank"
+import { isAvatarDataUrl } from "../domain/avatarData"
 
 const MAX_PROJECTION_BYTES = 2 * 1024 * 1024
 const id = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/)
@@ -13,7 +14,8 @@ const fieldSchema = z.strictObject({ id, title: z.string().max(4096), valueType:
 const scalar = z.union([z.string().max(200_000), z.number().finite(), z.boolean(), z.null()])
 const cardSchema = z.strictObject({ id, parentId: id.nullable(), columnId: id, title: z.string().max(4096), body: z.string().max(200_000), values: z.record(id, scalar), rank, createdAt: z.string().max(128).optional(), updatedAt: z.string().max(128).optional(), lastActivityAt: z.string().max(128).optional() })
 const discussionTargetSchema = z.strictObject({ type: z.enum(["board", "card", "field"]), id, cardId: id.optional() })
-const discussionSchema = z.strictObject({ id, threadId: id, replyTo: id.nullable(), targets: z.array(discussionTargetSchema).min(1).max(8), author: z.string().max(500), createdAt: z.string().max(128), body: z.string().max(8000) })
+const discussionSchema = z.strictObject({ id, threadId: id, replyTo: id.nullable(), targets: z.array(discussionTargetSchema).min(1).max(8), authorId: id.optional(), author: z.string().max(500), createdAt: z.string().max(128), body: z.string().max(8000) })
+const discussionAuthorSchema = z.strictObject({ id, avatarData: z.string().max(22_000).refine(isAvatarDataUrl).optional() })
 const fileSchema = z.strictObject({ id, parentId: id, title: z.string().max(4096), fileName: z.string().max(512), mediaType: z.string().max(256), byteLength: z.number().int().nonnegative().max(16 * 1024 * 1024), sha256: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
 const presentationSchema = z.strictObject({
   entityName: z.string().min(1).max(100).optional(),
@@ -26,7 +28,7 @@ const presentationSchema = z.strictObject({
 export const publicBoardProjectionSchema = z.strictObject({
   kind: z.literal("tincanban-public-board"), version: z.literal(1), board: z.strictObject({ id, title: z.string().max(4096), presentation: presentationSchema.optional() }),
   columns: z.array(columnSchema).max(100), fields: z.array(fieldSchema).max(200), cards: z.array(cardSchema).max(5000),
-  discussions: z.array(discussionSchema).max(2000), files: z.array(fileSchema).max(500),
+  discussions: z.array(discussionSchema).max(2000), discussionAuthors: z.array(discussionAuthorSchema).max(128).optional(), files: z.array(fileSchema).max(500),
 }).superRefine(validateProjection)
 
 function validateProjection(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
@@ -42,7 +44,7 @@ function validateProjection(p: PublicBoardProjection, ctx: z.RefinementCtx): voi
 }
 
 function validateUniqueIdentifiers(p: PublicBoardProjection, ctx: z.RefinementCtx): void {
-  const ids = [p.board.id, ...p.columns.map(x => x.id), ...p.fields.map(x => x.id), ...p.fields.flatMap(x => x.options.map(o => o.id)), ...p.cards.map(x => x.id), ...p.discussions.map(x => x.id), ...p.files.map(x => x.id)]
+  const ids = [p.board.id, ...p.columns.map(x => x.id), ...p.fields.map(x => x.id), ...p.fields.flatMap(x => x.options.map(o => o.id)), ...p.cards.map(x => x.id), ...p.discussions.map(x => x.id), ...(p.discussionAuthors ?? []).map(x => x.id), ...p.files.map(x => x.id)]
   if (new Set(ids).size !== ids.length) issue(ctx, "Public identifiers must be unique")
 }
 
@@ -149,7 +151,8 @@ export type PublicBoardProjection = {
   columns: Array<{ id: string; title: string; rank: string; color?: string; archive?: true; collapsible?: boolean }>
   fields: Array<{ id: string; title: string; valueType: "text" | "url" | "date" | "datetime" | "boolean" | "number" | "select"; format?: "plain" | "markdown" | "json" | "code"; required: boolean; rank: string; min?: number | null; max?: number | null; options: Array<{ id: string; title: string; rank: string }> }>
   cards: Array<{ id: string; parentId: string | null; columnId: string; title: string; body: string; values: Record<string, string | number | boolean | null>; rank: string; createdAt?: string; updatedAt?: string; lastActivityAt?: string }>
-  discussions: Array<{ id: string; threadId: string; replyTo: string | null; targets: Array<{ type: "board" | "card" | "field"; id: string; cardId?: string }>; author: string; createdAt: string; body: string }>
+  discussions: Array<{ id: string; threadId: string; replyTo: string | null; targets: Array<{ type: "board" | "card" | "field"; id: string; cardId?: string }>; authorId?: string; author: string; createdAt: string; body: string }>
+  discussionAuthors?: Array<{ id: string; avatarData?: string }>
   files: Array<{ id: string; parentId: string; title: string; fileName: string; mediaType: string; byteLength: number; sha256: string }>
 }
 export function validatePublicBoardProjection(value: unknown): PublicBoardProjection {

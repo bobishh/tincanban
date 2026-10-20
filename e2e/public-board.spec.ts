@@ -10,7 +10,8 @@ const snapshot = {
   fields: [{ id: "field-a", title: "Company", valueType: "text", required: false, rank: "0/1", options: [] }],
   cards: [{ id: "card-a", parentId: null, columnId: "column-a", title: "Public card", body: "**Public body**",
     values: { "field-a": "Example Co" }, rank: "0/1" }, { id: "card-child", parentId: "card-a", columnId: "column-a", title: "Nested card", body: "", values: {}, rank: "1/1" }],
-  discussions: [{ id: "discussion-root", threadId: "discussion-root", replyTo: null, targets: [{ type: "card", id: "card-a" }], author: "Public author", createdAt: "2026-10-10T10:00:00Z", body: "Read only discussion" }],
+  discussions: [{ id: "discussion-root", threadId: "discussion-root", replyTo: null, targets: [{ type: "card", id: "card-a" }], authorId: "A".repeat(42) + "E", author: "Public author", createdAt: "2026-10-10T10:00:00Z", body: "Read only discussion" }],
+  discussionAuthors: [{ id: "A".repeat(42) + "E", avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA" }],
   files: [{ id: "file-a", parentId: "card-a", title: "Handout", fileName: "handout.txt", mediaType: "text/plain", byteLength: 7, sha256: fileHash }],
 }
 
@@ -152,6 +153,8 @@ test("Given a live public board, When its publication changes or is withdrawn, T
   await page.getByRole("button", { name: "Workspace chat", exact: true }).click()
   const chat = page.getByRole("dialog", { name: "Board discussion", exact: true })
   await expect(chat).toHaveClass(/spatial-window/)
+  await expect(chat.getByText("(You)", { exact: true })).toHaveCount(0)
+  await expect(chat.locator(".participant-avatar-photo")).toBeVisible()
 
   revision = 2
   await expect(page.getByRole("heading", { name: "Updated publication" })).toBeVisible({ timeout: 10_000 })

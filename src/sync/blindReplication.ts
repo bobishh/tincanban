@@ -147,6 +147,10 @@ export class BlindReplica {
 
   push(): Promise<void> { return this.schedule(async () => { await this.store.prepareAttachments?.(); await this.pushNow() }) }
 
+  private requireWriter(): void {
+    if (this.config.boardAccess?.mode === "read") throw new Error("Board storage access is read-only")
+  }
+
   private pushNow(): Promise<boolean> {
     return pushWithCheckpointRefresh({ guard: () => this.ensureCurrent(), read: () => this.readProgress(),
       commit: (expected, next) => this.persistProgress(expected, next), pull: () => this.pullNow(), push: () => this.engine.push(),

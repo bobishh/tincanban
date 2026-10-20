@@ -9,7 +9,7 @@ import { createWorkspaceDeparture, type WorkspaceDeparture, createWorkspaceDevic
   type WorkspaceSuccessionVote, type WorkspaceSuccessionClaim } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { defaultStorage, isWorkspaceAuthorityMutation, type WorkspaceAuthorityMutationContext } from "../storage"
-import { deviceRevocations, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
+import { deviceRevocations, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, isDeviceRevoked, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
 import { DurableMeshCredentials } from "./durableMeshCredentials"
 import { workspaceSet } from "./workspaceSet"
 import { meshTrace } from "./meshTrace"
@@ -497,8 +497,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       uniqueCertificates(profile, await defaultProofStore.listCertificates()),
       await meshRecordSigning(profile, credential, { kind: "departure" }, this.store))
     await this.mergeDepartures(credential, [departure], false)
-    await this.publishAll()
-    const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
+    await this.publishAll(); const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
     await this.mergeDepartures(current, [departure])
     await this.reclassifyWorkspaceAuthority(workspaceId)
     for (const action of meshRustRuntime().state.planAuthorityCommand({ kind: "leave", workspaceId })) {

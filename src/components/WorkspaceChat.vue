@@ -337,11 +337,11 @@ function formatDisplayTime(createdAt: string): string {
         <button v-if="hasEarlier" class="button button-small" type="button" @click="loadEarlier">Load earlier messages</button>
         <p v-if="loading" role="status">Loading messages…</p>
         <p v-else-if="!displayedMessages.length">No messages yet. Send a message to start chatting.</p>
-        <article v-for="msg in displayedMessages" :key="msg.id" v-memo="[msg.personId, msg.body, msg.name, msg.createdAt, msg.status, msg.context, memberAvatars?.[msg.personId], replyCounts.get(msg.id), targetId, readOnly, workspaceScope, referenceChoices, fieldTitles, inThread, threadRoot, currentPersonId]" class="chat-message-item" :data-message-id="msg.id" tabindex="-1" :class="{ 'is-own': msg.personId === currentPersonId, 'is-reply': Boolean(msg.context?.replyTo), 'is-linked-message': msg.id === targetId }">
+        <article v-for="msg in displayedMessages" :key="msg.id" v-memo="[msg.personId, msg.body, msg.name, msg.createdAt, msg.status, msg.context, memberAvatars?.[msg.personId], replyCounts.get(msg.id), targetId, readOnly, workspaceScope, referenceChoices, fieldTitles, inThread, threadRoot, currentPersonId]" class="chat-message-item" :data-message-id="msg.id" tabindex="-1" :class="{ 'is-own': Boolean(currentPersonId) && msg.personId === currentPersonId, 'is-reply': Boolean(msg.context?.replyTo), 'is-linked-message': msg.id === targetId }">
           <div class="chat-message-meta">
             <ParticipantAvatar :person-id="msg.personId" :avatar-data="memberAvatars?.[msg.personId]" />
             <strong class="chat-message-author">{{ msg.name || 'Anonymous' }}</strong>
-            <span v-if="msg.personId === currentPersonId" class="chat-author-tag">(You)</span>
+            <span v-if="currentPersonId && msg.personId === currentPersonId" class="chat-author-tag">(You)</span>
             <time class="chat-message-time" :datetime="msg.createdAt">{{ formatDisplayTime(msg.createdAt) }}</time>
             <span v-if="msg.status === 'saving'" class="chat-message-pending">Saving locally…</span>
           </div>

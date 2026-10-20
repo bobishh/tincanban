@@ -7,11 +7,12 @@ import type { BlindReplicationController } from "../app/blindReplication"
 import { describeUserAgent, isKeeper, type MeshMemberView } from "../ui/deviceInfo"
 import EnrollmentRequest from "./EnrollmentRequest.vue"
 import DeviceRemovalControl from "./DeviceRemovalControl.vue"
-import ModalLayer from "./ModalLayer.vue"
-import WorkspaceFileActions from "./WorkspaceFileActions.vue"
-import WorkspaceHistoryMaintenance from "./WorkspaceHistoryMaintenance.vue"
+import MyDeviceRemovalControl from "./MyDeviceRemovalControl.vue"
+import DialogWindow from "./DialogWindow.vue"
+import type { useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
+import { myDeviceRemovalComplete } from "../app/useMyDeviceRemoval"
 import { syncDialogConnectionStatus } from "./syncDialogConnectionStatus"
-import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { SyncStep, SuccessionView } from "../app/syncTypes"
 
 const props = defineProps<{
@@ -202,7 +203,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
       <template v-if="step === 'members'">
         <p v-if="meshActionError" class="sync-error" role="alert">{{ meshActionError }}</p>
         <p v-if="leavingMesh" class="dialog-copy" role="status">Leaving workspace mesh…</p>
-        <div v-show="activeTab === 'Participants'" :id="`${tabId}-Participants-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Participants-tab`">
+        <div>
         <p class="mesh-connection-summary" :class="{ 'is-warning': connectionStatus.warning }" role="status">
           <strong>{{ connectionStatus.title }}</strong>
           · {{ connectionStatus.message }}
@@ -292,7 +293,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button>
           <button class="button" type="button" @click="emit('selectSyncAll')">Add my device</button>
         </div>
-        </section>
+        </div>
         <section class="sync-storage" aria-label="Persistent storage">
           <RustyPanel v-if="blindReplication && activeWorkspaceId" :controller="blindReplication" :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
           <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>

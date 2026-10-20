@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { Preset } from "../domain/seeds"
 
-import ModalLayer from "./ModalLayer.vue"
-import { computed, defineAsyncComponent, ref, watch, type Component } from "vue"
+import DialogWindow from "./DialogWindow.vue"
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch, type Component } from "vue"
 import type { WorkspaceCreationDraft } from "../domain/seeds"
 
 const CreateWorkspaceDialog = defineAsyncComponent(() => import("./CreateWorkspaceDialog.vue") as Promise<{ default: Component }>)

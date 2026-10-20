@@ -23,12 +23,12 @@ function transaction(baselineId: string | null) {
 }
 
 it("Given a committed packet, when the durable history basis changes without a different packet, then do not reuse its old admission", async () => {
-  await rememberIncomingPacket(packet, doc, storage, "credential", admission)
+  await rememberIncomingPacket(packet, doc, storage, "credential", undefined, admission)
   expect(await reuseIncomingPacket(doc.id, packet, transaction("new-basis"))).toBe(false)
 })
 
 it("Given a committed packet, when current authority changes during reuse, then require fresh admission", async () => {
-  await rememberIncomingPacket(packet, doc, storage, "credential", admission)
+  await rememberIncomingPacket(packet, doc, storage, "credential", undefined, admission)
   mocks.authority.mockReset()
     .mockResolvedValueOnce({ fingerprint: "authority" })
     .mockResolvedValueOnce({ fingerprint: "revoked-authority" })
@@ -36,7 +36,7 @@ it("Given a committed packet, when current authority changes during reuse, then 
 })
 
 it("Given a committed packet on a verified basis, when only its identical durable basis repeats, then reuse without loading the Native baseline", async () => {
-  await rememberIncomingPacket(packet, doc, storage, "credential", admission, undefined, "verified-basis")
+  await rememberIncomingPacket(packet, doc, storage, "credential", undefined, admission, "verified-basis")
   expect(await reuseIncomingPacket(doc.id, packet, transaction("verified-basis"))).toBe(true)
   expect(await reuseIncomingPacket(doc.id, packet, transaction("other-basis"))).toBe(false)
   expect(await reuseIncomingPacket(doc.id, packet, transaction(null))).toBe(false)
