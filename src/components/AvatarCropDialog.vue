@@ -175,7 +175,6 @@ async function saveCrop() {
 .avatar-crop-controls { display: grid; justify-items: center; gap: var(--space-4); }
 .avatar-crop-frame { position: relative; box-sizing: border-box; width: 256px; max-width: 76vw; aspect-ratio: 1; overflow: hidden; border: 2px solid var(--ink); border-radius: 50%; background: var(--panel); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .avatar-crop-frame:active { cursor: grabbing; }
-.avatar-crop-frame:focus-visible { outline: 3px dotted var(--ink); outline-offset: 4px; }
 .avatar-crop-image { position: absolute; max-width: none; max-height: none; user-select: none; -webkit-user-drag: none; -webkit-user-select: none; pointer-events: none; }
 .avatar-crop-loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font: 700 .8rem var(--site-font-sans); }
 .avatar-crop-zoom { display: grid; width: min(320px, 100%); gap: var(--space-2); font: 700 .8rem var(--site-font-sans); }

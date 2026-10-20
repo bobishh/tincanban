@@ -21,6 +21,7 @@ test("Given mobile navigation, when settings open and close, then focus stays in
   const dialog = page.getByRole("dialog", { name: "Settings", exact: true })
   await expect(dialog).toBeVisible()
   await expect.poll(() => dialog.evaluate(el => el.contains(document.activeElement))).toBe(true)
+  await expect(dialog).toHaveAttribute("aria-modal", "true")
   await page.keyboard.press("Shift+Tab")
   await expect.poll(() => dialog.evaluate(el => el.contains(document.activeElement))).toBe(true)
   await page.keyboard.press("Escape")

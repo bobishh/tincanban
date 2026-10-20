@@ -63,7 +63,7 @@ const emit = defineEmits<{
       <template #header>
       <div class="detail-head" :data-discussion-item="item.id">
         <div>
-          <h2 data-discussion-field="title" data-discussion-text>{{ item.title }}</h2>
+          <h2 data-discussion-field="title">{{ item.title }}</h2>
         </div>
         <div class="detail-head-actions">
           <button class="button button-small" type="button" :disabled="readOnly" @click="emit('edit', item)">Edit</button>

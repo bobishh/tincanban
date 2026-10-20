@@ -26,6 +26,7 @@ async function createBoard(page: Page) {
     await form.getByLabel("Body", { exact: true }).fill(`Context for ${title}: decisions and next steps.`)
     await form.getByLabel("Owner", { exact: true }).fill("Alex")
     await form.getByRole("button", { name: "Save item" }).click()
+    await expect(form).toBeHidden()
   }
 }
 

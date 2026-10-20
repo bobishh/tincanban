@@ -1,6 +1,6 @@
 import { expect, test } from "./support/coverage"
 
-for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, When keyboard focus moves across controls, Then focus stays visible on window controls, disclosure and message links`, async ({ page }) => {
+for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, When keyboard focus moves across controls, Then focus stays visible on window controls, disclosure and message links`, async ({ page }, info) => {
   await page.setViewportSize({ width, height: 900 })
   await page.goto("/")
   const search = page.getByRole("searchbox", { name: "Search cards" })
@@ -12,14 +12,16 @@ for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, 
   const titlebar = chat.locator(".spatial-titlebar")
   await page.keyboard.press("Tab")
   await titlebar.focus()
-  await expect(titlebar).toHaveCSS("outline-style", "dotted")
+  await expect(titlebar).toHaveCSS("outline-style", "none")
+  await expect(titlebar).toHaveCSS("border-image-source", /ink-focus-\d\.svg/)
   if (width < 600) {
     await chat.getByRole("button", { name: "Add reference or participant", exact: true }).focus()
     await page.keyboard.press("Enter")
   }
   const summary = chat.locator(".mention-picker summary")
   await summary.focus()
-  await expect(summary).toHaveCSS("outline-style", "dotted")
+  await expect(summary).toHaveCSS("outline-style", "none")
+  await expect(summary).toHaveCSS("border-image-source", /ink-focus-\d\.svg/)
   if (width < 600) {
     await chat.getByRole("button", { name: "Add reference or participant", exact: true }).click()
     await page.keyboard.press("Tab")
@@ -30,5 +32,25 @@ for (const width of [390, 1440]) test(`Given a ${width}px board and empty chat, 
   const link = chat.getByRole("link", { name: "Board documentation" })
   await page.keyboard.press("Tab")
   await link.focus()
-  await expect(link).toHaveCSS("outline-style", "dotted")
+  await expect(link).toHaveCSS("outline-style", "none")
+  await expect(link).toHaveCSS("border-image-source", /ink-focus-\d\.svg/)
+  await chat.screenshot({ path: info.outputPath("shared-ink-link-focus.png") })
+})
+
+test("Given a native checkbox, when keyboard focus reaches it, then its label uses the shared ink contour and the checkbox still toggles", async ({ page }, info) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "Edit board", exact: true }).click()
+  await page.getByRole("region", { name: "To do", exact: true }).getByRole("button", { name: "Edit column", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Edit column", exact: true })
+  const checkbox = dialog.getByRole("checkbox", { name: "Allow this column to collapse" })
+  await page.keyboard.press("Tab")
+  await checkbox.focus()
+  await expect(checkbox).toHaveCSS("outline-style", "none")
+  await expect(checkbox.locator("..")).toHaveCSS("border-image-source", /ink-focus-\d\.svg/)
+  await page.keyboard.press("Space")
+  await expect(checkbox).toBeChecked()
+  await page.keyboard.press("Space")
+  await expect(checkbox).not.toBeChecked()
+  await dialog.evaluate(element => Promise.all(element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))))
+  await dialog.screenshot({ path: info.outputPath("shared-ink-checkbox-focus.png") })
 })

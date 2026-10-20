@@ -318,12 +318,11 @@ textarea) {
 /* Focus adds irregular ink dots outside the unchanged frame.
    Pixel widths keep the same stroke scale for borderless controls. */
 
-:is(button,
-input,
-select,
-textarea,
-.button,
-.icon-button):focus-visible,
+:where(a, summary, [tabindex]:not(.dialog)) {
+  --ink-focus: url("/assets/ink-focus-0.svg?v=3#transparent");
+}
+
+:focus-visible,
 .search-field:focus-within {
   outline: none !important;
   background: transparent !important;
@@ -342,8 +341,15 @@ input[type="checkbox"]:focus-visible,
 input[type="radio"]:focus-visible {
   border-image: none !important;
   background: revert !important;
-  outline: 3px dotted var(--focus) !important;
-  outline-offset: 3px;
+}
+
+/* Keep native check marks; paint their keyboard contour around the label. */
+:is(label, .markdown-content li):has(> input:is([type="checkbox"], [type="radio"]):focus-visible) {
+  border-image-source: url("/assets/ink-focus-0.svg?v=3#transparent") !important;
+  border-image-slice: 33 !important;
+  border-image-width: 9.35px !important;
+  border-image-outset: 6.65px !important;
+  border-image-repeat: round !important;
 }
 
 @media (prefers-reduced-motion: reduce) {

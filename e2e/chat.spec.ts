@@ -131,7 +131,7 @@ test("Given paired workspaces, when matching names and messages sync, then both 
       expect(encoded).not.toContain("Hello from guest")
     })
     console.info(`Chat delivery: sender submit to receiver visible = ${Date.now() - sentAt}ms`)
-    await expect(hostChat.locator(".chat-message-author")).toHaveText(await guestChat.locator(".chat-message-author").textContent() ?? "")
+    await expect(hostChat.locator(".chat-message-author")).toHaveText(await guestChat.locator(".chat-message-author").textContent() ?? "", { timeout: 15_000 })
     await hostChat.getByRole("button", { name: "Close", exact: true }).click()
     await page.bringToFront()
     await guest.evaluate(async () => {

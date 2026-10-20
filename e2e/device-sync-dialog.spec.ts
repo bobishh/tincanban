@@ -65,7 +65,7 @@ test("Given Device sync shows an invalid-link failure, when it renders recovery 
   await expect(dialog.getByText("Close", { exact: true })).toHaveCount(0)
 })
 
-test("Given many devices on mobile, when their list is scrolled, then the list moves and the board stays locked", async ({ page }) => {
+test("Given many devices in a mobile sync window, when their list is scrolled, then the list moves without scrolling or locking the board", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 640 })
   await page.goto("/")
   const backgroundScroll = await page.evaluate(() => window.scrollY)
@@ -84,7 +84,8 @@ test("Given many devices on mobile, when their list is scrolled, then the list m
   await devices.hover()
   await page.mouse.wheel(0, 500)
   await expect.poll(() => devices.evaluate(list => list.scrollTop)).toBeGreaterThan(0)
-  await expect(page.locator("body")).toHaveCSS("position", "fixed")
+  await expect(dialog).not.toHaveAttribute("aria-modal", "true")
+  await expect(page.locator("body")).not.toHaveCSS("position", "fixed")
   expect(await page.locator(".board").evaluate(board => board.getBoundingClientRect().top)).toBe(boardTop)
 
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
