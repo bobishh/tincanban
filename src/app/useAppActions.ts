@@ -156,7 +156,15 @@ function useBoardActions(core: ReturnType<typeof useAppCore>, board: ReturnType<
   const handleAddSubitem = (parentItemId: string) => { core.itemFormParentId.value = parentItemId; core.itemFormError.value = ""; core.showItemForm.value = true }
   const handleStartMove = (item: Item) => { core.itemToMove.value = item; core.showMoveDialog.value = true }
   const handleConfirmMove = (newParentId: string) => confirmMove(core, newParentId)
-  const handleRenameColumn = (newTitle: string, collapsible: boolean, archive: boolean) => renameColumn(core, newTitle, collapsible, archive)
+  let columnSave = Promise.resolve()
+  const handleRenameColumn = (newTitle: string, collapsible: boolean, archive: boolean) => {
+    const columnId = core.editingColumn.value?.id
+    if (!columnId) return columnSave
+    columnSave = columnSave.then(() => renameColumn(core, columnId, newTitle, collapsible, archive)).catch(error => {
+      core.notice.value = `Column settings failed: ${messageFrom(error)}`
+    })
+    return columnSave
+  }
   const handleArchiveColumn = () => archiveColumn(core)
   const addBoardColumn = async () => {
     if (addingBoardColumn.value || !core.newBoardColumnTitle.value.trim()) return
@@ -310,13 +318,12 @@ async function confirmMove(core: ReturnType<typeof useAppCore>, newParentId: str
   core.notice.value = "Item moved"
 }
 
-async function renameColumn(core: ReturnType<typeof useAppCore>, title: string, collapsible: boolean, archive: boolean) {
-  if (!core.editingColumn.value) return
+async function renameColumn(core: ReturnType<typeof useAppCore>, columnId: string, title: string, collapsible: boolean, archive: boolean) {
   const doc = core.tincanban.getActiveDoc()
   const board = core.tincanban.activeBoard.value
   if (!doc || !board) return
   const settings = projectWorkspaceSettings(doc, board.id)
-  const target = settings.board.columns.find(column => column.id === core.editingColumn.value?.id)
+  const target = settings.board.columns.find(column => column.id === columnId)
   if (!target) return
   target.title = title
   target.collapsible = collapsible
@@ -325,7 +332,7 @@ async function renameColumn(core: ReturnType<typeof useAppCore>, title: string, 
     target.archive = true
   } else delete target.archive
   if (!await applyWorkspaceSettings(core, { settings, expectedHeads: Automerge.getHeads(doc) })) return
-  core.editingColumn.value = null
+  if (core.editingColumn.value?.id === columnId) core.editingColumn.value = null
   core.notice.value = "Column settings updated"
 }
 

@@ -319,6 +319,7 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
 
     <ColumnDialog
       v-if="editingColumn"
+      :key="editingColumn.id"
       :column-id="editingColumn.id"
       :workspace-id="activeWorkspace.id"
       :initial-title="editingColumn.title"
