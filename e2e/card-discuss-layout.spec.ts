@@ -1,9 +1,8 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 
-for (const width of [390, 1440]) {
-  test(`Given ${width}px board and fit score, when Discuss appears on hover or focus then score stays readable and only saved messages add a count on the icon`, async ({ page }, info) => {
-    await page.setViewportSize({ width, height: 900 })
+  test("Given a card discussion, when a draft is reopened and replies are saved then only persisted messages increment the count", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto("/")
     await createJobSearchWorkspace(page, "Card controls")
     await page.getByRole("button", { name: "Add lead to Lead", exact: true }).click()
@@ -17,16 +16,7 @@ for (const width of [390, 1440]) {
     await details.getByRole("button", { name: "Close detail", exact: true }).click()
     const card = page.locator(".item-card").filter({ hasText: "Reedsy" })
     const discuss = card.getByRole("button", { name: /Discuss Reedsy/ })
-    for (const activate of [() => card.hover(), () => discuss.focus()]) {
-      await activate()
-      await expect(discuss).toHaveCSS("opacity", "1")
-      const fit = (await card.locator(".card-summary dd").filter({ hasText: /^8$/ }).boundingBox())!
-      const button = (await discuss.boundingBox())!
-      expect(fit.x + fit.width <= button.x || fit.y + fit.height <= button.y || fit.x >= button.x + button.width || fit.y >= button.y + button.height).toBe(true)
-      expect(await card.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
-    }
-    const initialHeight = await card.evaluate(element => element.clientHeight)
-    await card.screenshot({ path: info.outputPath(`card-controls-${width}.png`) })
+    await discuss.focus()
     await discuss.click()
     const discussion = page.getByRole("dialog", { name: /^Discussion · Reedsy/ })
     await expect(card.locator(".has-discussion")).toHaveCount(0)
@@ -43,12 +33,9 @@ for (const width of [390, 1440]) {
     await discussion.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("heading", { name: "Lead", exact: true }).click()
     const existingDiscussion = card.getByRole("button", { name: /Open discussion for Reedsy/ })
-    await expect(existingDiscussion).toHaveCSS("opacity", "1")
     const badge = existingDiscussion.locator(".card-discussion-count")
     await expect(badge).toHaveText("1")
     await expect(card).not.toContainText("Unsent card question")
-    expect(await card.evaluate(element => element.clientHeight)).toBe(initialHeight)
-    await card.screenshot({ path: info.outputPath(`card-existing-discussion-${width}.png`) })
     await page.reload()
     await expect(badge).toHaveText("1")
     await expect(existingDiscussion).toBeVisible()
@@ -63,7 +50,6 @@ for (const width of [390, 1440]) {
     await thread.getByRole("button", { name: "Close", exact: true }).click()
     await expect(badge).toHaveText("2")
     await expect(card).not.toContainText("Latest saved reply")
-    expect(await card.evaluate(element => element.clientHeight)).toBe(initialHeight)
     await page.reload()
     await existingDiscussion.click()
     await expect(thread.locator(".chat-message-item")).toHaveCount(2)
@@ -78,4 +64,3 @@ for (const width of [390, 1440]) {
     expect(reply.context?.replyTo).toBe(root.id)
     expect(reply.context?.conversationRootId).toBe(root.id)
   })
-}

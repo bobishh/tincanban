@@ -1,4 +1,4 @@
-import { expect, test, type Locator, type Page } from "./support/coverage"
+import { expect, test, type Page } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
 async function openMenuAction(page: Page, name: string) {
@@ -6,39 +6,14 @@ async function openMenuAction(page: Page, name: string) {
   await page.getByRole("button", { name, exact: true }).filter({ visible: true }).click()
 }
 
-async function expectLayout(surface: Locator, page: Page) {
-  await expect(surface).toBeVisible()
-  const result = await surface.evaluate(root => {
-    const box = root.getBoundingClientRect()
-    const overflowing = [...root.querySelectorAll<HTMLElement>("form, fieldset, label, .dialog-actions")]
-      .filter(element => element.getClientRects().length && !element.closest('[hidden], [aria-hidden="true"]'))
-      .filter(element => element.scrollWidth > element.clientWidth + 1)
-      .map(element => `${element.tagName}.${element.className}`)
-    return { x: box.x, y: box.y, right: box.right, bottom: box.bottom, overflowing, overflow: root.scrollWidth > root.clientWidth + 1 }
-  })
-  expect(result.overflowing).toEqual([])
-  expect(result.overflow).toBe(false)
-  expect(result.x).toBeGreaterThanOrEqual(0)
-  expect(result.y).toBeGreaterThanOrEqual(0)
-  expect(result.right).toBeLessThanOrEqual(page.viewportSize()!.width + 1)
-  expect(result.bottom).toBeLessThanOrEqual(page.viewportSize()!.height + 1)
-}
-
-for (const width of [320, 390, 768, 1280]) test(`Given shared layouts at ${width}px, when settings, sync and workspace forms open, then controls fit their container and validation keeps actions reachable`, async ({ page }, info) => {
-  await page.setViewportSize({ width, height: 900 })
+test("Given profile and workspace forms, when invalid drafts are submitted, then validation blocks them and a valid profile saves", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await openMenuAction(page, "Settings")
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
-  for (const section of ["Identity", "Workspace", "Document templates", "Priority rules", "settings.json"]) {
-    await settings.getByRole("tab", { name: section, exact: true }).click()
-    if (section === "Identity") await expect(settings.getByRole("group", { name: "Your profile", exact: true })).toBeVisible()
-    await expectLayout(settings, page)
-    await page.screenshot({ path: info.outputPath(`${section.replace(/\W/g, "-")}-${width}.png`), animations: "disabled" })
-  }
   await settings.getByRole("tab", { name: "Identity", exact: true }).click()
   const profile = settings.getByRole("group", { name: "Your profile", exact: true })
-  await expect(profile.locator(".identity-profile-actions")).toHaveCount(1)
   const name = profile.getByLabel("Name", { exact: true })
   const save = profile.getByRole("button", { name: "Save profile", exact: true })
   await name.fill("")
@@ -46,28 +21,20 @@ for (const width of [320, 390, 768, 1280]) test(`Given shared layouts at ${width
   await name.fill("Grid profile")
   await save.click()
   await expect(profile.getByRole("status")).toHaveText("Profile saved.")
-  expect((await name.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-  expect((await save.boundingBox())!.height).toBeGreaterThanOrEqual(44)
-  const buttonPadding = await save.evaluate(element => getComputedStyle(element).padding)
-  expect(Number.parseFloat(buttonPadding.split(" ")[1])).toBeGreaterThanOrEqual(24)
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
-  await openMenuAction(page, width <= 768 ? "Sync" : "Sync")
+  await openMenuAction(page, "Sync")
   const sync = page.getByRole("dialog", { name: "Device sync", exact: true })
-  await expect(sync.getByRole("tab")).toHaveCount(0)
-  await expectLayout(sync, page)
   await sync.getByRole("button", { name: "Close", exact: true }).click()
   await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
-  await expectLayout(page.getByRole("dialog", { name: "Workspaces", exact: true }), page)
   await page.getByRole("button", { name: "New workspace", exact: true }).click()
   const create = page.getByRole("dialog", { name: "Create workspace", exact: true })
   await create.getByRole("button", { name: "Create", exact: true }).click()
   await expect(create.getByRole("alert")).toBeVisible()
-  await expectLayout(create, page)
   await create.getByRole("button", { name: "Cancel", exact: true }).click()
 })
 
-for (const width of [390, 1280]) test(`Given a card editor at ${width}px, when editing, resizing and retrying a failed save, then a nonmodal window keeps its draft and board usable`, async ({ page }, info) => {
-  await page.setViewportSize({ width, height: 900 })
+test("Given a card editor, when editing and retrying a failed save, then its window keeps the draft and the board stays usable", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto("/")
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const create = page.getByRole("dialog", { name: "Item details", exact: true })
@@ -80,7 +47,6 @@ for (const width of [390, 1280]) test(`Given a card editor at ${width}px, when e
   await expect(editor).toHaveAttribute("data-window-id", /item-edit:/)
   await expect(editor).not.toHaveAttribute("aria-modal", "true")
   await expect(page.locator(".overlay")).toHaveCount(0)
-  await expectLayout(editor, page)
   await editor.getByLabel("Title *").fill("Edited grid card")
   await page.getByRole("button", { name: "Workspace chat", exact: true }).filter({ visible: true }).focus()
   await page.keyboard.press("Enter")
@@ -88,24 +54,11 @@ for (const width of [390, 1280]) test(`Given a card editor at ${width}px, when e
   await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toBeEnabled()
   await chat.getByRole("button", { name: "Close", exact: true }).click()
   await expect(editor.getByLabel("Title *")).toHaveValue("Edited grid card")
-  if (width > 600) {
-    const titlebar = editor.locator(".spatial-titlebar")
-    const before = (await editor.boundingBox())!
-    await titlebar.focus()
-    await page.keyboard.press("ArrowRight")
-    expect((await editor.boundingBox())!.x).toBe(before.x + 10)
-    const resize = editor.getByRole("button", { name: /^Resize/ })
-    await resize.focus()
-    for (let index = 0; index < 8; index++) await page.keyboard.press("Shift+ArrowLeft")
-    await expectLayout(editor, page)
-    await expect(editor.locator(".form-grid")).toHaveCSS("grid-template-columns", /^(?:minmax\(0px, 1fr\)|[\d.]+px)$/)
-  }
   await page.evaluate(async () => (await import("/src/storage.ts")).setStorageFailureHookForTest(true))
   await editor.getByRole("button", { name: "Save changes", exact: true }).click()
   await expect(editor.getByRole("alert")).toBeVisible()
   await expect(editor.getByRole("button", { name: "Retry save", exact: true })).toBeInViewport()
   await expect(editor.getByLabel("Title *")).toHaveValue("Edited grid card")
-  await page.screenshot({ path: info.outputPath(`editor-retry-${width}.png`), animations: "disabled" })
   await page.evaluate(async () => (await import("/src/storage.ts")).setStorageFailureHookForTest(false))
   await editor.getByRole("button", { name: "Retry save", exact: true }).click()
   await expect(editor).toBeHidden()
@@ -130,20 +83,4 @@ test("Given external resources in chat, when a link is activated, then a new tab
   expect(page.url()).toBe(url)
   await resource.close()
   await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toBeEnabled()
-})
-
-for (const width of [320, 1280]) test(`Given standalone screens at ${width}px, when sign-in fails or the agent guide opens, then content and actions retain the shared spacing without horizontal overflow`, async ({ page }, info) => {
-  await page.setViewportSize({ width, height: 900 })
-  await page.goto("/service-login")
-  await expect(page.getByRole("alert")).toBeVisible()
-  await expect(page.getByRole("button", { name: "Approve sign-in", exact: true })).toBeDisabled()
-  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeInViewport()
-  await expect(page.locator(".ui-actions")).toHaveCSS("display", "flex")
-  expect(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-  await page.screenshot({ path: info.outputPath(`service-login-${width}.png`), animations: "disabled" })
-  await page.goto("/agent/")
-  await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
-  expect(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-  expect(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--space-4").trim())).toBe("16px")
 })

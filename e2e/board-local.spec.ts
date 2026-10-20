@@ -97,32 +97,7 @@ test("Given several leads, when filters intersect, then only matching cards rema
   await expect(page.getByRole("button", { name: "Open VREY — Product" })).toHaveCount(0)
 })
 
-test("Given a mid-size desktop viewport, when tincanban opens, then the title and filters stay legible without clipped controls", async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 900 })
-  await page.goto("/")
-  await ensureJobSearchWorkspace(page)
-
-  await expect(page.getByRole("heading", { name: "TINCANBAN" })).toBeVisible()
-  const toolbar = await page.getByRole("region", { name: "tincanban controls" }).evaluate((element) => {
-    const search = element.querySelector<HTMLElement>(".search-field")!
-    const selects = [...element.querySelectorAll<HTMLSelectElement>("select")]
-    const workModeLabel = selects.find((select) => select.labels?.[0]?.textContent?.includes("Work mode"))!.labels![0]
-    return {
-      clientWidth: element.clientWidth,
-      scrollWidth: element.scrollWidth,
-      searchWidth: search.getBoundingClientRect().width,
-      selectWidths: selects.map((select) => select.getBoundingClientRect().width),
-      workModeLabelVisible: workModeLabel.getBoundingClientRect().height > 0 && workModeLabel.getBoundingClientRect().width > 0,
-    }
-  })
-
-  expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth)
-  expect(toolbar.searchWidth).toBeGreaterThanOrEqual(220)
-  expect(Math.min(...toolbar.selectWidths)).toBeGreaterThanOrEqual(150)
-  expect(toolbar.workModeLabelVisible).toBe(true)
-})
-
-test("Given an iPhone 17e portrait viewport, when tincanban opens, then filters start closed and columns snap one page at a time", async ({ page }) => {
+test("Given an iPhone 17e portrait viewport, when tincanban opens, then filters stay hidden until opened", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto("/")
 
@@ -131,14 +106,7 @@ test("Given an iPhone 17e portrait viewport, when tincanban opens, then filters 
   await page.getByRole("button", { name: "Filters", exact: true }).click()
   await expect(filters).toBeVisible()
 
-  const layout = await page.locator(".board").evaluate((board) => {
-    const column = board.querySelector<HTMLElement>(".column")!
-    const styles = getComputedStyle(board)
-    return { clientWidth: board.clientWidth, scrollWidth: board.scrollWidth, columnWidth: column.getBoundingClientRect().width, snap: styles.scrollSnapType }
-  })
-  expect(layout.columnWidth).toBeLessThan(layout.clientWidth)
-  expect(layout.scrollWidth).toBeGreaterThan(layout.clientWidth)
-  expect(layout.snap).toContain("x")
+
 })
 
 test("Given two tabs on one device, when one tab saves a card, then the other reads and merges IndexedDB without pairing", async ({ page }) => {

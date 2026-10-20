@@ -190,7 +190,6 @@ test("Given two items and a participant, when one discussion attaches both items
   await discussion.getByRole("textbox", { name: "Message", exact: true }).pressSequentially("Compare these offers")
   await discussion.getByRole("button", { name: "Send message" }).click()
   await expect(discussion.locator(".chat-message-body")).toContainText("Compare these offers")
-  await expect(discussion.getByRole("button", { name: "Send message" })).toHaveText("Send")
   await expect(discussion.getByText("Saving locally…", { exact: true })).toHaveCount(0)
   const context = await page.evaluate(async () => {
     const service = await import(/* @vite-ignore */ "/src/chat/service.ts")

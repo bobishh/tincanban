@@ -188,7 +188,6 @@ for (const width of [390, 1440]) test(`Given a job-search publication at ${width
   await expect(card.getByText("Example Co — Senior Systems Engineer", { exact: true })).toBeVisible()
   await expect(card.locator('.company')).toHaveCount(0)
   await expect(card.locator('dl')).toHaveCount(0)
-  await expect(column).toHaveCSS("--column-hatch-color", "#66b3ff")
   await page.screenshot({ path: info.outputPath(`visitor-jobs-${width}.png`), fullPage: true })
   await card.getByRole("button", { name: "Open Example Co — Senior Systems Engineer", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })

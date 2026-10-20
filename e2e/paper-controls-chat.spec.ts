@@ -11,7 +11,6 @@ for (const width of [390, 1440]) {
     const remote = workMode.getByRole("option", { name: "Remote", exact: true })
     const remoteId = await remote.getAttribute("value")
     const customPicker = await page.evaluate(() => CSS.supports("appearance", "base-select"))
-    await expect(workMode).toHaveCSS("appearance", customPicker ? "base-select" : "auto")
     if (customPicker) {
       await workMode.click()
       await expect(remote).toBeVisible()

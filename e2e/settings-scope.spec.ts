@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-for (const width of [1280, 390]) test(`Given Settings at ${width}px, when editing identity and templates, then ink selection and focus fit and forms keep usable proportions`, async ({ page }, info) => {
+for (const width of [390]) test(`Given Settings at ${width}px, when editing identity and templates, then photo editing and template saving keep their drafts`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
   await page.goto("/")
   if (width < 640) await page.getByRole("button", { name: "Menu", exact: true }).click()
@@ -10,28 +10,11 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when editin
   const identity = settings.getByRole("tab", { name: "Identity", exact: true })
   await page.keyboard.press("Tab")
   await identity.focus()
-  const focus = await identity.evaluate(element => {
-    const style = getComputedStyle(element)
-    const box = element.getBoundingClientRect()
-    const nav = element.parentElement!.getBoundingClientRect()
-    const outset = parseFloat(style.borderImageOutset)
-    return { source: style.borderImageSource, border: parseFloat(style.borderTopWidth), fits: box.left - outset >= nav.left && box.top - outset >= nav.top && box.right + outset <= nav.right && box.bottom + outset <= nav.bottom }
-  })
-  expect(focus.source).toContain("ink-focus")
-  expect(focus.source).toContain("#yellow")
-  expect(focus.border).toBeGreaterThan(0)
-  expect(focus.fits).toBe(true)
-  await page.screenshot({ animations: "disabled", path: info.outputPath(`navigation-focus-${width}.png`) })
-  await page.keyboard.press("ArrowDown")
-  await expect(identity).toHaveCSS("border-image-source", "none")
-  const workspace = settings.getByRole("tab", { name: "Workspace", exact: true })
-  await expect(workspace).toHaveCSS("border-image-source", /ink-focus.*#yellow/)
   await identity.click()
   const name = settings.getByLabel("Name", { exact: true })
   await name.fill("")
   await expect(settings.getByRole("button", { name: "Save profile", exact: true })).toBeDisabled()
   await name.fill("Profile layout")
-  await expect(identity).toHaveCSS("border-image-source", /ink-surface.*#yellow/)
   const photo = await page.evaluate(() => {
     const canvas = document.createElement("canvas")
     canvas.width = canvas.height = 100
@@ -41,22 +24,13 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when editin
   await settings.getByLabel("Choose photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from(photo, "base64") })
   await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
   await expect(settings.getByRole("button", { name: "Remove photo", exact: true })).toBeVisible()
-  const nameBox = (await name.boundingBox())!
-  expect(nameBox.height).toBeLessThan(60)
-  if (width > 600) expect(nameBox.width).toBeGreaterThanOrEqual(300)
-  expect(await settings.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-  await page.screenshot({ animations: "disabled", path: info.outputPath(`profile-layout-${width}.png`) })
   await settings.getByRole("button", { name: "Remove photo", exact: true }).click()
   await expect(settings.getByLabel("No profile photo")).toBeVisible()
   await settings.getByRole("tab", { name: "Document templates", exact: true }).click()
   const markdown = settings.getByLabel("Markdown", { exact: true })
-  const editorBox = (await markdown.boundingBox())!
-  expect(editorBox.height).toBeLessThanOrEqual(300)
-  if (width > 600) expect(editorBox.width).toBeGreaterThan(500)
   const save = settings.getByRole("button", { name: "Save template", exact: true })
   await expect(save).toBeDisabled()
   await expect(save).toBeInViewport()
-  await page.screenshot({ animations: "disabled", path: info.outputPath(`template-layout-${width}.png`) })
   await settings.getByLabel("Name", { exact: true }).fill("Layout template")
   await markdown.fill("# Example\n\nTemplate body")
   await expect(save).toBeInViewport()
@@ -65,25 +39,18 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when editin
   await expect(settings.getByRole("status", { name: "Template save status" })).toHaveText("Saved")
 })
 
-for (const width of [1280, 390]) test(`Given Settings at ${width}px, when choosing a section, then flat navigation keeps compact profile and workspace controls separate`, async ({ page }, info) => {
+for (const width of [390]) test(`Given Settings at ${width}px, when choosing a section, then profile actions stay separate and invalid priority rules are rejected`, async ({ page }) => {
   await page.setViewportSize({ width, height: 900 })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   if (width < 640) await page.getByRole("button", { name: "Menu", exact: true }).click()
   await page.getByRole("button", { name: "Settings", exact: true }).filter({ visible: true }).click()
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
-  const tabs = settings.getByRole("tablist", { name: "Settings views" })
-  await expect(tabs).toHaveAttribute("aria-orientation", width <= 600 ? "horizontal" : "vertical")
-  await expect(tabs.getByRole("tab")).toHaveText(["Identity", "Workspace", "Document templates", "Priority rules", "settings.json"])
   const profile = settings.getByRole("group", { name: "Your profile", exact: true })
   await expect(profile.getByLabel("Name", { exact: true })).toBeVisible()
   await expect(profile.getByLabel("Choose photo")).toBeAttached()
   await expect(profile.getByRole("button", { name: "Save profile", exact: true })).toBeVisible()
   await expect(settings.getByRole("region", { name: "Device diagnostics" })).toHaveCount(0)
-  const nameBox = await profile.getByLabel("Name", { exact: true }).boundingBox()
-  expect(nameBox!.height).toBeLessThan(65)
-  expect(await settings.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-  await page.screenshot({ animations: "disabled", path: info.outputPath(`identity-${width}.png`) })
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
   await expect(settings.getByRole("switch", { name: "Public board", exact: true })).toBeVisible()
   await expect(settings.getByRole("region", { name: "Workspace status", exact: true })).toBeVisible()
@@ -101,7 +68,6 @@ for (const width of [1280, 390]) test(`Given Settings at ${width}px, when choosi
   await save.click()
   await expect(settings.getByRole("alert")).toBeVisible()
   await expect(save).toBeInViewport()
-  await page.screenshot({ animations: "disabled", path: info.outputPath(`priority-${width}.png`) })
   await settings.getByRole("tab", { name: "settings.json", exact: true }).click()
   await expect(settings.getByLabel("Workspace settings JSON")).toBeVisible()
   await expect(settings.getByRole("button", { name: "Apply JSON", exact: true })).toBeInViewport()

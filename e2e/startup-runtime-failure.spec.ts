@@ -11,5 +11,4 @@ test("Given the Rust policy runtime request fails, when tincanban opens, then it
   await expect(alert).toBeInViewport()
   await expect(page.locator(".boot-placeholder")).toHaveCount(0)
   await expect(page.locator(".topbar")).toBeVisible()
-  await expect(alert).toHaveCSS("position", "static")
 })

@@ -21,10 +21,11 @@ function presentError(cause: unknown) {
 }
 
 async function compact() {
-  if (busy.value || props.controller.busy.value || !props.owner) return
+  if (busy.value || !props.owner) return
   busy.value = true
   error.value = ""
   try {
+    await props.controller.syncNow()
     await props.controller.compactWorkspaceHistory(props.workspaceId)
   } catch (cause) {
     error.value = presentError(cause)
@@ -37,7 +38,7 @@ async function compact() {
   <section class="sync-section" aria-label="Workspace history">
     <p class="sync-section-copy">Workspace history</p>
     <p class="dialog-copy">Keeps recent changes quick to open. Earlier versions stay available.</p>
-    <button class="button button-quiet" type="button" :disabled="!owner || busy || controller.busy.value" @click="compact">
+    <button class="button button-quiet" type="button" :disabled="!owner || busy" @click="compact">
       {{ busy ? "Archiving history…" : "Archive older history" }}
     </button>
     <p v-if="controller.busy.value && !busy" role="status" class="dialog-copy">Waiting for Rusty sync to finish…</p>

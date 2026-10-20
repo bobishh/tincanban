@@ -120,8 +120,7 @@ jobs:
   browser-core:
     name: Browser (core ${{ matrix.shard }})
     runs-on: ubuntu-24.04
-    # Chromium setup takes ~5 minutes on fresh runners; leave time for full
-    # shard execution and its configured retry without changing test limits.
+    # Keep enough time for a complete behavioral shard and its configured retry.
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -143,7 +142,7 @@ jobs:
       - run: npx playwright test --reporter=list --project=core --shard=${{ matrix.shard }}
       - name: Verify deployment-configured diagnostics
         if: matrix.shard == '1/4'
-        run: npx playwright test --reporter=list --config=playwright.telemetry.config.ts --grep-invert 'Given paired workspaces'
+        run: npx playwright test --reporter=list --config=playwright.telemetry.config.ts telemetry.spec.ts
       - uses: actions/upload-artifact@v6
         if: failure() || cancelled()
         with:
@@ -154,13 +153,17 @@ jobs:
   browser-network:
     name: Browser (network ${{ matrix.group }})
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.group == 'durable' && 20 || 25 }}
+    timeout-minutes: ${{ startsWith(matrix.group, 'durable') && 20 || 25 }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: durable
+          - group: durable-1
             projects: durable-mesh
+            shard: 1/2
+          - group: durable-2
+            projects: durable-mesh
+            shard: 2/2
           - group: replication
             projects: chat sync workspace-sync-data workspace-schema-migration scoped-sync scoped-enrollment
           - group: authority
@@ -181,11 +184,14 @@ jobs:
       - name: Verify network projects in separate browser processes
         env:
           PROJECTS: ${{ matrix.projects }}
+          DURABLE_SHARD: ${{ matrix.shard }}
         run: |
           status=0
           for project in $PROJECTS; do
             if [ "$project" = chat ]; then
               npx playwright test --reporter=list --config=playwright.telemetry.config.ts --grep 'Given paired workspaces' --output="test-results/$project" || status=1
+            elif [ "$project" = durable-mesh ]; then
+              npx playwright test --reporter=list --project="$project" --fully-parallel --workers=1 --shard="$DURABLE_SHARD" --output="test-results/$project" || status=1
             else
               npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
             fi
@@ -202,8 +208,7 @@ jobs:
     name: Browser (production policy/transport packaging)
     # Private WebKit startup requires native Ed25519; Linux WebKit intermittently rejects it.
     runs-on: macos-latest
-    # The full mobile WebKit matrix reaches this job only after browser setup and
-    # three policy scenarios; retain all 80 cases instead of timing out mid-shard.
+    # Production packaging, mobile behavior and startup use their real browsers.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

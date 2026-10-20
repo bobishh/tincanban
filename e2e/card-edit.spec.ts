@@ -25,8 +25,6 @@ test.describe("schema-driven lead editing", () => {
     const edit = detail.getByRole("button", { name: "Edit" })
     await expect(edit).toBeVisible()
     await expect(edit).toBeInViewport()
-    await expect(detail).toHaveCSS("border-radius", "0px")
-    await expect(detail).toHaveCSS("outline-style", "none")
 
     await edit.click()
     const form = page.getByRole("dialog", { name: "Edit item" })

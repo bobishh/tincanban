@@ -159,7 +159,6 @@ for (const width of [1440, 390]) {
     expect(gridColumnCount).toBe(width === 390 ? 1 : 2)
     if (width === 1440) {
       await page.getByRole("button", { name: "Dismiss notice" }).click()
-      await expect(detail).toHaveCSS("opacity", "1")
       await page.waitForTimeout(400)
       await page.screenshot({ path: testInfo.outputPath("release-checklist-mixed-schema.png") })
     }

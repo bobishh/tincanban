@@ -135,19 +135,6 @@ test("Given slow startup, when data is not ready, then the full loader keeps con
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
 })
 
-test("Given reduced motion, when mobile navigation opens and closes, then transitions do not delay interaction", async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" })
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto("/")
-  await page.getByRole("button", { name: "Menu", exact: true }).click()
-  const drawer = page.getByRole("dialog", { name: "Navigation menu", exact: true })
-  await expect(drawer).toBeVisible()
-  expect(await drawer.evaluate(el => parseFloat(getComputedStyle(el).transitionDuration))).toBeLessThanOrEqual(0.001)
-  await page.keyboard.press("Escape")
-  await expect(drawer).toBeHidden()
-  await expect(page.getByRole("button", { name: "Menu", exact: true })).toBeFocused()
-})
-
 test("Given a pending save, when the user tries to edit or submit again, then the form waits and publishes one card", async ({ page }) => {
   await blankBoard(page)
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
@@ -192,35 +179,4 @@ test("Given fast startup, when the first board paint completes, then the loader 
   await expect(page.getByRole("region", { name: "Untitled", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
   await expect(page.locator(".startup-screen")).toHaveCount(0)
-})
-
-test("Given a desktop scrollbar, when settings open, reject a draft, and close, then header and logo keep their positions", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 720 })
-  await page.goto("/")
-  await expect(page.getByRole("region", { name: "Untitled", exact: true })).toBeVisible()
-  await page.evaluate(() => document.fonts.ready)
-  await expect(page.getByRole("status", { name: "Board status" })).toHaveCount(0)
-  // Headless macOS uses overlay scrollbars. Exercise the space occupied by a classic scrollbar.
-  await page.addStyleTag({ content: 'html { scrollbar-gutter: stable; } ::-webkit-scrollbar { width: 18px; } html[style*="overflow: hidden"] { scrollbar-gutter: auto; }' })
-  expect(await page.evaluate(() => document.documentElement.scrollHeight > window.innerHeight)).toBe(true)
-  const geometry = () => page.evaluate(() => {
-    const rect = (selector: string) => {
-      const { x, y, width, height } = document.querySelector(selector)!.getBoundingClientRect()
-      return { x, y, width, height }
-    }
-    return { header: rect(".topbar"), brand: rect(".brand"), logo: rect(".brand-mark") }
-  })
-  const initial = await geometry()
-  await page.getByRole("button", { name: "Settings", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "Settings", exact: true })
-  await expect(dialog).toBeVisible()
-  expect(await geometry()).toEqual(initial)
-  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
-  await dialog.getByText("settings.json", { exact: true }).click()
-  await dialog.getByLabel("Workspace settings JSON").fill("{")
-  await expect(dialog.getByRole("button", { name: "Apply JSON", exact: true })).toBeDisabled()
-  expect(await geometry()).toEqual(initial)
-  await dialog.getByRole("button", { name: "Dismiss", exact: true }).click()
-  await expect.poll(() => page.evaluate(() => document.body.style.position)).toBe("")
-  expect(await geometry()).toEqual(initial)
 })

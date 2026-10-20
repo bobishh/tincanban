@@ -1,5 +1,43 @@
 # Test suite audit — 2026-10-02
 
+## 2026-10-20: remove cosmetic browser checks
+
+User direction: retain behavioral scenarios and unit tests; do not start the
+application merely to assert button wording, fonts, colors, icon pixels, spacing,
+or animation details. Accessible names remain selectors for actual interactions.
+
+Measured [run 39495044034](https://github.com/bobishh/tincanban/actions/runs/39495044034):
+
+| Work | Time |
+| --- | ---: |
+| Packaging/mobile job, total | 855 s |
+| Its serial mobile WebKit suite, 87 cases | 587 s |
+| Durable network scenarios | 670 s |
+| Core shards, browser execution | 425–644 s |
+| Browser installation on the measured Linux jobs | 25–40 s |
+
+The suite listed 560 expanded cases before trimming and 468 afterward. Core goes
+from 395 to 336 cases; mobile WebKit from 87 to 54. Every network case is retained.
+All 22 durable cases are divided into two disjoint groups of 11, each using one
+worker and fresh test processes. Discovery verifies their union equals the
+original project. Actual new CI wall time remains to be measured.
+
+Removed 13 presentation-only files: component/brand/detail geometry, Rusty mark
+size, column color and fold motion, breakpoint, Sync decoration, window styling,
+focus artwork, footer animation, avatar preview proportions, and technical fonts.
+Removed direct CSS assertions from retained scenarios. Reduced repeated viewport
+passes where the assertion being retained is the same functional operation.
+
+Retained save/retry and draft preservation, profile photo editing, templates,
+priority validation, discussion persistence and reply counts, keyboard navigation,
+workspace creation, and persistence after a font request fails. Card editing,
+stage changes, recovery, and window geometry policy also retain their dedicated
+behavioral scenarios and unit coverage. Unit files and coverage floors are unchanged.
+
+Startup diagnostics previously ran in both the core diagnostics step and its
+dedicated Chromium/WebKit job. The core diagnostics step now selects only
+`telemetry.spec.ts`; startup scenarios remain in their dedicated job.
+
 ## 2026-10-08: complete description inventory and CI correction
 
 The [complete inventory](test-description-inventory.tsv) records every test

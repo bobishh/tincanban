@@ -23,7 +23,6 @@ async function expandQuickNote(detail: Locator) {
 test("Given an item overview, when a quick note is typed and added, then focus stays in the input and the note survives reload", async ({ page }, testInfo) => {
   await openItem(page, "Remember this")
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
-  await expect(detail.locator(".spatial-titlebar").getByText("Item", { exact: true })).toHaveCount(0)
   await expect(detail.getByRole("textbox", { name: "Quick note", exact: true })).toBeHidden()
   await expandQuickNote(detail)
   const input = detail.getByRole("textbox", { name: "Quick note", exact: true })

@@ -40,7 +40,6 @@ test("owner promotes a visitor, then removes only their device through an explic
   await host.getByRole("button", { name: "Remove device", exact: true }).click()
   await confirmation.getByLabel("All workspaces I can manage for this device").check()
   await expect(confirmation.getByRole("listitem")).toHaveCount(1)
-  await expect(confirmation.locator("..")).toHaveCSS("opacity", "1")
   await page.screenshot({ animations: "disabled", path: testInfo.outputPath("device-removal-confirmation.png") })
   await confirmation.getByRole("button", { name: "Confirm removal", exact: true }).click()
   await expect(confirmation).toHaveCount(0)
@@ -55,7 +54,6 @@ test("owner promotes a visitor, then removes only their device through an explic
   await guest.goto(await host.getByLabel("Pairing link").inputValue())
   const reconnect = guestDialog.getByRole("region", { name: "Confirm device reconnection" })
   await expect(reconnect).toContainText("owner must approve")
-  await expect(reconnect).toHaveCSS("border-top-width", "2px")
   await guest.screenshot({ animations: "disabled", path: testInfo.outputPath("device-reconnection.png") })
   await expect(host.getByRole("button", { name: "Approve access", exact: true })).toHaveCount(0)
 

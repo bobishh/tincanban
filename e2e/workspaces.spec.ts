@@ -206,8 +206,6 @@ test.describe("Workspaces and Generic Board UI (Outer Scenarios)", () => {
     const restoredDialog = page.getByRole("dialog", { name: "Workspaces" })
     await restoredDialog.getByRole("button", { name: "Show archived" }).click()
     const restore = restoredDialog.getByRole("button", { name: "Restore workspace" })
-    await expect(restore).toHaveCSS("text-transform", "uppercase")
-    await expect(restore).toHaveCSS("border-radius", "0px")
     await page.evaluate(() => { (window as Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
     await restore.click()
     await expect(restoredDialog.getByRole("alert")).toBeVisible()

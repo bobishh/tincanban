@@ -84,7 +84,6 @@ test("Given mobile chat with safe insets, when viewport shrinks and message send
   await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Mobile edge check")
   await chat.getByRole("button", { name: "Send message", exact: true }).tap()
   await expect(chat.getByText("Mobile edge check", { exact: true })).toBeVisible()
-  await expect(chat.getByRole("button", { name: "Send message", exact: true })).toHaveText("Send")
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: info.outputPath("mobile-chat-bottom.png") })
   await chat.getByRole("button", { name: "Close", exact: true }).tap()

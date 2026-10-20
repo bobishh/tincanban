@@ -28,7 +28,6 @@ test.describe("Column add actions and overlay notices", () => {
 
     const notice = page.getByRole("status").filter({ hasText: "Workspace \"Notice board\" created" })
     await expect(notice).toBeVisible()
-    await expect(page.locator(".notice-overlay")).toHaveCSS("position", "fixed")
     await expect(notice).toBeHidden({ timeout: 6_000 })
   })
 
