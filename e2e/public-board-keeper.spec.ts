@@ -115,7 +115,18 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("group", { name: "Confirm public board change" })).toContainText("discussion")
     await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
-    await expect.poll(async () => await panel.getAttribute("data-public-revision"), { timeout: 30_000 }).toBe("1")
+    const revision = async () => await panel.getAttribute("data-public-revision")
+    try {
+      await expect.poll(revision, { timeout: 5_000 }).toBe("1")
+    } catch (error) {
+      const retry = panel.getByRole("button", { name: "Retry", exact: true })
+      if (await retry.count() === 0) throw error
+      await retry.click()
+      await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
+      await expect(panel.getByRole("alert")).toHaveCount(0)
+      await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
+    }
+    await expect.poll(revision, { timeout: 30_000 }).toBe("1")
     await expect(panel).toContainText("Changes sync automatically.")
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)

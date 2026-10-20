@@ -29,7 +29,15 @@ export async function retainPreviousAssets(previous, directory, request, { now =
   let failure;
   onProgress(0, pending.length);
   const download = async ([path, hash, until]) => {
-    const asset = await request(path);
+    let asset;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try { asset = await request(path); }
+      catch (error) {
+        if (attempt === 3) throw error;
+      }
+      if (asset?.ok || attempt === 3) break;
+      await new Promise(resolve => setTimeout(resolve, [250, 750, 1500][attempt]));
+    }
     if (!asset.ok) throw new Error(`Previous chunk unavailable: ${path}`);
     const bytes = Buffer.from(await asset.arrayBuffer());
     if (digest(bytes) !== hash) throw new Error(`Previous chunk checksum mismatch: ${path}`);

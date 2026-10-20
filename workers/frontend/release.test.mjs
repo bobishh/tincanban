@@ -58,6 +58,24 @@ test('Given a corrupted previous chunk, when concurrent retention fails, then st
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
+test('Given a previous chunk during release propagation, when its first request is missing, then retry until the verified chunk is available', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'frontend-retention-'));
+  try {
+    mkdirSync(join(directory, 'assets'));
+    const bytes = Buffer.from('verified previous chunk');
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    const path = 'assets/previous-Abc12345.js';
+    let calls = 0;
+    const result = await retainPreviousAssets({ files: { [path]: hash } }, directory, async () => {
+      calls++;
+      return calls === 1 ? new Response(null, { status: 404 }) : new Response(bytes);
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(result.retained, { [path]: hash });
+    assert.deepEqual(readFileSync(join(directory, path)), bytes);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('Given several deployments while a tab stays open, when retaining assets, then keep its chunks for seven days without renewing their expiry', () => {
   const now = Date.parse('2026-10-11T18:00:00Z');
   const hash = 'a'.repeat(64);

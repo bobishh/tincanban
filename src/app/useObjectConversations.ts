@@ -103,7 +103,7 @@ export function useObjectConversations(app: ReturnType<typeof useAppController>)
   function dismissContext(event: Event) {
     if (!(event.target instanceof Element) || !event.target.closest(".discussion-context-menu")) contextMenu.value = null
   }
-  function menuKey(event: KeyboardEvent) { if (event.key === "Escape" && contextMenu.value) { contextMenu.value = null; event.preventDefault() } }
+  function menuKey(event: KeyboardEvent) { dismissContextMenuOnEscape(event, contextMenu) }
   function openCard(item: Item, event: MouseEvent) {
     if ((event.target as Element).closest("a, input, button")) return
     app.actions.openBoardItem(item)
@@ -160,7 +160,7 @@ function registerConversationListeners(handlers: {
     document.addEventListener("selectionchange", captureSelection)
     document.addEventListener("contextmenu", contextual)
     document.addEventListener("pointerdown", dismissContext)
-    document.addEventListener("keydown", menuKey)
+    document.addEventListener("keydown", menuKey, true)
     window.addEventListener("hashchange", onHashChange)
     void navigate()
   })
@@ -169,7 +169,14 @@ function registerConversationListeners(handlers: {
     document.removeEventListener("selectionchange", captureSelection)
     document.removeEventListener("contextmenu", contextual)
     document.removeEventListener("pointerdown", dismissContext)
-    document.removeEventListener("keydown", menuKey)
+    document.removeEventListener("keydown", menuKey, true)
     window.removeEventListener("hashchange", onHashChange)
   })
+}
+
+function dismissContextMenuOnEscape(event: KeyboardEvent, contextMenu: Ref<{ itemId: string; fieldId?: string; selection?: Anchor["selection"]; x: number; y: number } | null>) {
+  if (event.key !== "Escape" || !contextMenu.value) return
+  contextMenu.value = null
+  event.preventDefault()
+  event.stopPropagation()
 }
