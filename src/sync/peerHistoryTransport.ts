@@ -1,4 +1,5 @@
 import type { DuplexStream, SyncConnection } from "./transport"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { PeerHistoryObjectUnavailableError } from "./peerHistoryErrors"
 export { PeerHistoryObjectUnavailableError } from "./peerHistoryErrors"
 import { captureArchiveTreeContext, type ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
@@ -32,7 +33,9 @@ export function readPeerHistoryAwareAcceptStream(connection: SyncConnection): Sy
 
 async function readRaw(stream: DuplexStream, maximumBytes: number): Promise<Uint8Array> {
   if (!stream.readRaw) throw new Error("Raw bounded stream reads are unavailable")
-  return stream.readRaw(maximumBytes)
+  const response = await stream.readRaw(maximumBytes)
+  if (!response.byteLength) throw new MeshNetworkError("Peer history stream closed without a response")
+  return response
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

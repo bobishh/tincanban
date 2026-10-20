@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { sha256Base64Url } from "../domain/identity"
 import { parsePeerHistoryBaselineRead, parsePeerHistoryDocumentRead, parsePeerHistoryObjectRead, readPeerHistoryBaseline,
   readPeerHistoryDocument, readPeerHistoryObject, respondToPeerHistoryBaselineRead, respondToPeerHistoryDocumentRead,
@@ -39,6 +40,30 @@ function streamPair() {
 }
 
 describe("direct peer history object transport", () => {
+  it.each(["object", "baseline"])("Given an archive %s request, when the peer closes without any response bytes, then reports a transport failure", async kind => {
+    const reset = vi.fn(async () => {})
+    const stream = { send: async () => {}, closeSend: async () => {}, read: vi.fn(),
+      readRaw: async () => new Uint8Array(), reset }
+    const read = kind === "object"
+      ? readPeerHistoryObject(async () => stream, { baselineId, objectId, binding }, () => {})
+      : readPeerHistoryBaseline(async () => stream, "board", () => {}, baselineId)
+    await expect(read).rejects.toBeInstanceOf(MeshNetworkError)
+    expect(reset).toHaveBeenCalledOnce()
+    expect(stream.read).not.toHaveBeenCalled()
+  })
+
+  it.each(["object", "baseline"])("Given an archive %s request, when the response contains an invalid protocol prefix, then preserves the protocol error", async kind => {
+    const stream = { send: async () => {}, closeSend: async () => {}, read: vi.fn(),
+      readRaw: async () => new TextEncoder().encode("invalid history message"), reset: async () => {} }
+    const read = kind === "object"
+      ? readPeerHistoryObject(async () => stream, { baselineId, objectId, binding }, () => {})
+      : readPeerHistoryBaseline(async () => stream, "board", () => {}, baselineId)
+    const error = await read.catch(error => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(MeshNetworkError)
+    expect(error).toMatchObject({ message: expect.stringMatching(/Invalid peer history/) })
+  })
+
   it("reads bounded history requests on workspace-join acknowledgement streams", async () => {
     const request = new TextEncoder().encode("tincanban-peer-history-v1\n{}")
     const rawStream = {
