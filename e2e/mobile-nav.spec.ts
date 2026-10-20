@@ -47,7 +47,7 @@ test.describe("Mobile Navigation & Drawer (Gate D)", () => {
       await expect(drawer.getByRole("button", { name: "Workspaces" })).toBeVisible()
       await expect(drawer.getByRole("button", { name: "Settings" })).toBeVisible()
       await expect(drawer.getByRole("button", { name: "Workspace settings" })).toHaveCount(0)
-      await expect(drawer.getByRole("button", { name: "Sync & backups" })).toBeVisible()
+      await expect(drawer.getByRole("button", { name: "Sync" })).toBeVisible()
 
       // Escape key closes drawer and restores focus to hamburger trigger
       await page.keyboard.press("Escape")

@@ -76,8 +76,8 @@ test("owner promotes a visitor, then removes only their device through an explic
   await expect(guest.getByLabel("Mesh offline", { exact: true })).toHaveCount(0)
   await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()
   await guest.getByRole("button", { name: "Sync", exact: true }).click()
-  await guestDialog.getByText("Recovery", { exact: true }).click()
-  await expect(guestDialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
+
+  await expect(guestDialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
   await guest.reload()
   await expect(guest.getByLabel("Workspace role: visitor")).toBeVisible()
   await guest.getByRole("button", { name: "Sync", exact: true }).click()

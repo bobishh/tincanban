@@ -4,9 +4,9 @@ import { createJobSearchWorkspace } from "./support/workspaces"
 test("Given a private workspace recovery file, when created then inspected and restored, then words appear only after creation and replacement stays explicit", async ({ page }) => {
   await page.goto("/")
   await createJobSearchWorkspace(page, "Private recovery board")
-  await page.getByRole("button", { name: "Sync", exact: true }).click()
-  const sync = page.getByRole("dialog", { name: "Device sync" })
-  await sync.getByRole("tab", { name: "Backups", exact: true }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const sync = page.getByRole("dialog", { name: "Settings", exact: true })
+  await sync.getByRole("tab", { name: "Identity", exact: true }).click()
   const backups = sync.getByRole("region", { name: "Private workspace recovery" })
   await expect(backups.getByRole("button", { name: "Create private recovery backup", exact: true })).toBeVisible()
   await expect(backups.getByLabel("Recovery words", { exact: true })).toHaveCount(0)
@@ -32,4 +32,35 @@ test("Given a private workspace recovery file, when created then inspected and r
   await backups.getByRole("button", { name: "Restore recovered workspace", exact: true }).click()
   await expect(backups.getByRole("status")).toContainText(/restored/i)
   await expect(preview.getByText(/Workspace:\s*Private recovery board/)).toBeVisible()
+})
+
+test("Given a real private backup from another identity, when inspected on this device, then show its file scope and keep restore disabled without adopting identity", async ({ page, browser }) => {
+  await page.goto("/")
+  await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const backup = page.getByRole("region", { name: "Private workspace recovery" })
+  const downloadEvent = page.waitForEvent("download")
+  await backup.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
+  const path = await (await downloadEvent).path()
+  const words = await backup.getByLabel("Recovery words", { exact: true }).inputValue()
+  const context = await browser.newContext()
+  try {
+    const recipient = await context.newPage()
+    await recipient.goto("/")
+    await expect(recipient.getByLabel("Workspace role: owner")).toBeVisible()
+    const before = await recipient.evaluate(async () => {
+      const identity = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
+      return identity.identity.personId
+    })
+    await recipient.getByRole("button", { name: "Settings", exact: true }).click()
+    const inspection = recipient.getByRole("region", { name: "Private workspace recovery" })
+    await inspection.locator('input[type="file"]').setInputFiles(path!)
+    await inspection.getByLabel("Recovery words to inspect").fill(words)
+    await inspection.getByRole("button", { name: "Inspect recovery file", exact: true }).click()
+    await expect(inspection.getByRole("region", { name: "Recovery preview" })).toContainText("Different identity")
+    await expect(inspection.getByRole("region", { name: "Recovery preview" })).toContainText("Inspection only")
+    await expect(inspection.getByRole("button", { name: "Restore recovered workspace", exact: true })).toBeDisabled()
+    await expect(inspection.getByRole("alert")).toContainText("Workspace restore requires the same identity")
+    expect(await recipient.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(before)
+  } finally { await context.close() }
 })

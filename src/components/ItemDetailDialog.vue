@@ -62,8 +62,7 @@ const emit = defineEmits<{
       <template #header>
       <div class="detail-head" :data-discussion-item="item.id">
         <div>
-          <span class="eyebrow">Item</span>
-          <h2 data-discussion-text data-discussion-field="title">{{ item.title }}</h2>
+          <h2 data-discussion-field="title">{{ item.title }}</h2>
         </div>
         <div class="detail-head-actions">
           <button class="button button-small" type="button" :disabled="readOnly" @click="emit('edit', item)">Edit</button>
@@ -76,27 +75,29 @@ const emit = defineEmits<{
 
       </template>
     <section class="detail-dialog" :data-discussion-item="item.id">
-      <div class="detail-layout" data-detail-layout>
-        <aside class="detail-inspector" data-detail-inspector aria-label="Item actions and properties">
+      <div class="detail-actions-row" data-detail-actions>
+        <div class="detail-stages-row" data-detail-stages>
           <CardStageStrip :item="item" :columns="columns" :buttons="cardStageButtons" :read-only="readOnly" :move="moveToColumn" />
-          <QuickNoteForm
-            :model-value="quickNote"
-            :saving="noteSaving"
-            :error="noteError"
-            :read-only="readOnly"
-            @update:model-value="emit('update:quickNote', $event)"
-            @save="emit('saveNote')"
-          />
-
-          <CardFields :fields="fields" :item="item" />
-
-        </aside>
-
+        </div>
+        <QuickNoteForm
+          :model-value="quickNote"
+          :saving="noteSaving"
+          :error="noteError"
+          :read-only="readOnly"
+          @update:model-value="emit('update:quickNote', $event)"
+          @save="emit('saveNote')"
+        />
+      </div>
+      <div class="detail-layout" data-detail-layout>
         <div class="detail-primary" data-detail-primary role="region" aria-label="Item content">
           <div v-if="narrative" class="detail-section" :data-discussion-field="narrativeFieldId">
             <span class="detail-label">Description</span>
             <MarkdownContent class="detail-copy reading-prose" data-discussion-field="narrative" data-discussion-text :source="narrative" :editable-tasks="!readOnly" @task-toggle="emit('updateMarkdown', item, $event)" />
           </div>
+          <section v-if="fields.length" class="detail-section detail-configured-fields" aria-label="Configured fields">
+            <span class="detail-label">Fields</span>
+            <CardFields :fields="fields" :item="item" />
+          </section>
           <slot name="documents" />
           <slot name="discussion" />
 

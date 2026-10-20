@@ -17,6 +17,7 @@ import { ChatStore, chatStore, doesProfileWin } from "./store"
 import { configureChat, ensureChatProfile, exportChat, receiveChat, sendChatMessage, sendChatTyping, subscribeChat,
   type ChatChange } from "./service"
 import { clearMeshTrace, meshTraceSnapshot } from "../sync/meshTrace"
+import { createSignedChatRecord } from "./signing"
 
 const originalNavigator = globalThis.navigator
 const originalIndexedDb = globalThis.indexedDB
@@ -75,6 +76,36 @@ async function useDevice(profile: LocalProfile, store: ChatStore) {
 }
 
 describe("shared chat profile intent across certified devices", () => {
+  it("Given a stored profile, when local typing is published, then mark presence as non-durable while retaining peer delivery", async () => {
+    const scope = `${workspace}-${first.device.deviceId}`
+    await ensureChatProfile(scope)
+    const published: Array<{ contentChanged?: boolean; typing?: ChatRecord[] }> = []
+    const unsubscribe = subscribeChat(change => published.push(change))
+    try {
+      await sendChatTyping(scope, true)
+      expect(published).toHaveLength(1)
+      expect(published[0]).toMatchObject({ contentChanged: false, typing: [expect.any(Object)] })
+      expect((await exportChat(scope)).typing).toHaveLength(1)
+    } finally { unsubscribe() }
+  })
+
+  it("Given a new signed profile bundled with typing, when received, then report durable content despite having no new messages", async () => {
+    const scope = `${workspace}-${first.device.deviceId}`
+    const packet = await exportChat(scope)
+    const typing = await createSignedChatRecord(scope, "chat-typing", "typing", {
+      readOwner: async () => first.identity.personId, readScope: async id => id,
+    }, Date.now())
+    await useDevice(second, secondStore)
+    const published: Array<{ contentChanged?: boolean; added: unknown[] }> = []
+    const unsubscribe = subscribeChat(change => published.push(change))
+    try {
+      await receiveChat(scope, { ...packet, typing: [typing] }, false)
+      expect(published).toHaveLength(1)
+      expect(published[0]).toMatchObject({ contentChanged: true, added: [], typing: [typing] })
+      expect((await secondStore.load(scope)).profiles).toHaveLength(1)
+    } finally { unsubscribe() }
+  })
+
   it("Given one root on two certified devices with different local names, normal exports converge without profile-signing ping-pong", async () => {
     const initial = await exportChat(workspace)
     const changes: unknown[] = []

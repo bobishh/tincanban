@@ -7,7 +7,7 @@ const BoardCreationEditor = defineAsyncComponent(() => import("./BoardCreationEd
 const props = defineProps<{
   createWorkspace: (payload: { title: string; preset: Preset; config?: WorkspaceCreationDraft }) => Promise<void>
 }>()
-const emit = defineEmits<{ (event: "close"): void }>()
+const emit = defineEmits<{ (event: "close"): void; (event: "busy", value: boolean): void }>()
 const title = ref("")
 const preset = ref<keyof typeof templateData>("blank")
 const error = ref("")
@@ -35,6 +35,7 @@ async function handleCreate() {
   error.value = ""
   configErrors.value = []
   creating.value = true
+  emit("busy", true)
   try {
     if (configDraft.value) {
       const { validateBoardSchemaDraft } = await import("../domain/schema")
@@ -47,18 +48,14 @@ async function handleCreate() {
     error.value = cause instanceof Error ? cause.message : "Workspace could not be created"
   } finally {
     creating.value = false
+    emit("busy", false)
   }
 }
 </script>
 
 <template>
-  <section class="dialog workspace-create-dialog" role="dialog" aria-modal="true" aria-label="Create workspace">
+  <section class="dialog dialog-window-content workspace-create-dialog">
     <form novalidate :aria-busy="creating" @submit.prevent="handleCreate">
-      <div class="dialog-head">
-        <h2>Create workspace</h2>
-        <button class="icon-button" type="button" aria-label="Close" :disabled="creating" @click="emit('close')">×</button>
-      </div>
-
       <div class="workspace-create-content">
         <div class="workspace-create-form ui-stack">
           <label><span>Title</span><input v-model="title" autofocus required placeholder="e.g. Reading List" :disabled="creating" /></label>

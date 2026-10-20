@@ -312,12 +312,19 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   }
 
   async removeDevice(personId: string, deviceId: string, workspaceIds: string[]): Promise<void> {
-    const eligible = await this.removableDeviceWorkspaces(personId, deviceId)
-    if (!workspaceIds.length || workspaceIds.some(id => !eligible.includes(id))) throw new Error("Device removal scope is no longer authorized")
     const profile = await this.options.getProfile()
     if (deviceId === profile.device.deviceId) throw new Error("Remove this device from another device")
-    const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())
+    if (!workspaceIds.length) throw new Error("Device removal scope is no longer authorized")
+    const pending: string[] = []
     for (const workspaceId of new Set(workspaceIds)) {
+      const credential = await this.store.getWorkspaceCredential(workspaceId)
+      if (!credential || !isDeviceRevoked(credential, personId, deviceId)) pending.push(workspaceId)
+    }
+    // Exact signed tombstones acknowledge an interrupted reply without issuing another revocation.
+    const eligible = pending.length ? await this.removableDeviceWorkspaces(personId, deviceId) : []
+    if (pending.some(id => !eligible.includes(id))) throw new Error("Device removal scope is no longer authorized")
+    const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())
+    for (const workspaceId of pending) {
       const credential = (await this.store.getWorkspaceCredential(workspaceId))!
       const heads = await this.readAuthorityHeads(workspaceId)
       const record = await createWorkspaceDeviceRevocation(profile, workspaceId, personId, deviceId, heads, certificates,

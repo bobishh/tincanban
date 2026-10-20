@@ -6,6 +6,7 @@ const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("./Ident
 type ProfileDraft = { name: string; avatarData?: string | null; revision?: string }
 type PhotoOption = { avatarData: string | null; changedAt: string }
 const props = defineProps<{
+  workspaceId?: string
   displayName: string
   saveName: (value: string) => Promise<void>
   avatarData?: string
@@ -99,7 +100,7 @@ async function save() {
 <template>
   <section class="identity-settings ui-stack" aria-label="Identity settings">
     <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
-      <IdentityPhotoPanel :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
+      <IdentityPhotoPanel :workspace-id="workspaceId" :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
       <div class="identity-profile-fields">
         <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending()" @input="editName" /></label>
       </div>
@@ -126,9 +127,10 @@ async function save() {
         </button>
       </div>
     </section>
+    <slot />
     <section class="identity-recovery" aria-label="Identity recovery">
       <h3>Identity recovery</h3>
-      <p class="dialog-copy">Create an encrypted identity backup or restore one on this device.</p>
+      <p class="dialog-copy">Identity-only backup and identity replacement on this device. Workspace recovery above keeps the current identity.</p>
       <button class="button" type="button" @click="emit('recovery')">Recovery backup</button>
     </section>
   </section>

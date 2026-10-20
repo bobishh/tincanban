@@ -14,12 +14,15 @@ function buildCommit() {
 export default defineConfig(({ command }) => ({
   build: {
     manifest: true,
+    target: ["chrome107", "edge107", "firefox104", "safari16"],
     minify: "terser",
     terserOptions: { compress: { passes: 2, unsafe: false } },
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes("/node_modules/vue/") || id.includes("/node_modules/@vue/") || id.includes("/node_modules/zod/")) return "framework"
+        codeSplitting: {
+          groups: [
+            { name: "framework", test: /node_modules\/(?:vue|@vue|zod)\// },
+          ],
         },
       },
     },

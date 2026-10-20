@@ -28,7 +28,7 @@ test("Given mobile navigation, when settings open and close, then focus stays in
   await expect(menu).toBeFocused()
 })
 
-test("Given an empty form, when Escape is pressed, then it closes; a dirty draft survives a backdrop click", async ({ page }) => {
+test("Given an empty form, when Escape is pressed, then it closes; a dirty draft survives window layout changes", async ({ page }) => {
   await blankBoard(page)
   const add = page.getByRole("button", { name: "Add item to To do", exact: true })
   await add.click()
@@ -39,7 +39,8 @@ test("Given an empty form, when Escape is pressed, then it closes; a dirty draft
   await expect(add).toBeFocused()
   await add.click()
   await form.getByLabel("Title *", { exact: true }).fill("Keep this draft")
-  await page.locator(".overlay").last().click({ position: { x: 5, y: 5 } })
+  await form.getByRole("button", { name: "Maximize window", exact: true }).click()
+  await form.getByRole("button", { name: "Restore window size", exact: true }).click()
   await expect(form).toBeVisible()
   await expect(form.getByLabel("Title *", { exact: true })).toHaveValue("Keep this draft")
   await form.getByRole("button", { name: "Save item", exact: true }).click()
@@ -55,13 +56,18 @@ test("Given nested schema dialogs, when the preview closes, then focus returns t
   await editEntity.click()
   const editor = page.getByRole("dialog", { name: "Edit lead", exact: true })
   await expect(editor).toBeVisible()
+  const entityName = editor.getByLabel("Entity name", { exact: true })
+  const reviewedName = await entityName.inputValue()
   await editor.getByRole("button", { name: "Review changes", exact: true }).click()
   const preview = page.getByRole("dialog", { name: "Preview schema changes", exact: true })
   await expect(preview).toBeVisible()
+  await expect(editor.locator(".schema-editor-dialog")).toHaveAttribute("inert", "")
   await expect.poll(() => preview.evaluate(node => node.contains(document.activeElement))).toBe(true)
 
   await page.keyboard.press("Escape")
   await expect(preview).toBeHidden()
+  await expect(editor.locator(".schema-editor-dialog")).not.toHaveAttribute("inert", "")
+  await expect(entityName).toHaveValue(reviewedName)
   await expect.poll(() => editor.evaluate(node => node.contains(document.activeElement))).toBe(true)
   await page.keyboard.press("Escape")
   await expect(editor).toBeHidden()

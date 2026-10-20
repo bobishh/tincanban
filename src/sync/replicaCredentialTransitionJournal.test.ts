@@ -235,3 +235,22 @@ it("Given activation storage loses its compare-and-swap, When publishing confirm
   expect(await f.journalModule.readCredentialTransitionJournal(f.profile, f.pending.origin)).toEqual(beforeJournal)
   expect(await (await import("./replicaCredentialFreeze")).readReplicaCredentialFreeze(f.profile.identity.personId, f.pending.origin)).toEqual(f.pending)
 })
+
+it("Given signed device removal completed before its outer job saved, when retry checks retained audit, then prove the exact target complete without a second rotation", async () => {
+  const f = await fixture()
+  await fullyConfirmedTransition(f)
+  const activated = await f.journalModule.activateCredentialTransitionJournal(f.profile, f.pending.origin, () => {})
+  for (const config of activated.activated!) {
+    const progress = await f.repository.getPrivateReplicaProgress(f.profile.identity.personId, config)
+    await f.repository.persistPrivateReplicaState(f.profile.identity.personId, config, progress.generation, { ...progress, generation: progress.generation + 1, lastUploaded: "A".repeat(43) })
+  }
+  await f.journalModule.completeCredentialTransitionJournal(f.profile, f.pending.origin, () => {})
+  const before = await f.repository.getReplicaConfigurations(f.profile.identity.personId)
+  expect(await f.journalModule.readCompletedDeviceRevocation(f.profile, f.pending.origin, f.pending.revokedDeviceId, () => {})).toBe(f.pending.servicePublicKey)
+  expect(await f.journalModule.readCompletedDeviceRevocation(f.profile, f.pending.origin, "another-device", () => {})).toBeUndefined()
+  const discovery = vi.spyOn(await import("./blindClient"), "discoverBlindKeeper").mockRejectedValue(new Error("Must not rotate again"))
+  await (await import("./rustyCredentialTransition")).revokeRustyIdentityDevice({ getCurrentProfile: () => f.profile } as never,
+    f.pending.origin, f.pending.revokedDeviceId, () => {})
+  expect(discovery).not.toHaveBeenCalled()
+  expect(await f.repository.getReplicaConfigurations(f.profile.identity.personId)).toEqual(before)
+})

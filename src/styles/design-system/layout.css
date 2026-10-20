@@ -2,11 +2,6 @@
 
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
 fieldset.form-grid { min-inline-size: 0; padding: 0; border: 0; margin-inline: 0; }
-.modal-enter-active, .modal-leave-active { transition: opacity var(--motion-panel) ease; }
-.modal-enter-active > .dialog, .modal-leave-active > .dialog { transition: transform var(--motion-panel) var(--motion-ease), opacity var(--motion-fast) ease; }
-.modal-enter-from, .modal-leave-to { opacity: 0; }
-.modal-enter-from > .dialog, .modal-leave-to > .dialog { transform: translateY(10px); opacity: 0; }
-.modal-leave-active { pointer-events: none; }
 .dialog [role="tabpanel"], .dialog details[open] > :not(summary), .dialog .mesh-member-action, .dialog .document-form { animation: panel-appear var(--motion-panel) var(--motion-ease); }
 @keyframes panel-appear { from { opacity: 0; } to { opacity: 1; } }
 @keyframes window-appear { from { opacity: 0; } to { opacity: 1; } }

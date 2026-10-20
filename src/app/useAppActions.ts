@@ -1,3 +1,5 @@
+import { createPrivateRecoveryForSelectedWorkspace } from "./privateRecoveryCreation"
+import { useMyDeviceRemoval } from "./useMyDeviceRemoval"
 import type { Preset } from "../domain/seeds"
 import { cardTitle, narrativeFieldId } from "../domain/cardPresentation"
 import { recordUsageAction } from "../usageActions"
@@ -341,14 +343,15 @@ async function addColumn(core: ReturnType<typeof useAppCore>, title: string, arc
 }
 
 function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
+  const myDeviceRemoval = useMyDeviceRemoval(core)
   const exportWorkspace = async () => (await import("./workspaceFiles")).exportActiveWorkspace(core)
   const privateRecoveryUnavailableReason = computed(() => {
     void core.tincanban.docVersion.value
     return core.tincanban.getCurrentProfile()?.privateKeys.identityPrivateKey
       ? ""
-      : "Create a full backup on your original device. You can inspect and restore backups here."
+      : "Identity root private key is unavailable on this device. Backup creation requires that key. You can inspect and restore existing backups here."
   })
-  const createPrivateRecovery = async () => (await import("./workspaceHistoryRecovery")).createPrivateWorkspaceRecovery(core)
+  const createPrivateRecovery = () => createPrivateRecoveryForSelectedWorkspace(core)
   const inspectPrivateRecovery = async (file: Blob, words: string) =>
     (await import("./workspaceHistoryRecovery")).inspectPrivateWorkspaceRecovery(file, words)
   const restorePrivateRecovery = async (inspection: { workspaceId: string; personId: string; coverage: "complete" | "incomplete"; missingCount: number }, replace: boolean) =>
@@ -382,7 +385,7 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     await core.tincanban.restoreWorkspaceAsync(id)
     core.notice.value = "Workspace restored"
   }
-  return { exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
+  return { myDeviceRemoval, exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
     openImport, importWorkspace, workspaceImportState, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace,
     handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
 }

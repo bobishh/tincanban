@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import type { IdentitySecurity } from "../domain/identity"
 import { createIdentityDeviceRecovery, restoreIdentityDeviceRecovery, maximumIdentityRecoveryFileBytes,
   parseIdentityRecoveryFile, type IdentityDeviceRecoveryFile, type IdentityRecoveryFile } from "../app/identityRecovery"
 
-const props = defineProps<{ beforeRestore: () => Promise<void>; displayName: string }>()
+const props = defineProps<{ workspaceId?: string; beforeRestore: () => Promise<void>; displayName: string }>()
 const emit = defineEmits<{ close: []; restored: [] }>()
 const security = ref<IdentitySecurity>("better")
 const task = ref<"backup" | "restore">("backup")
@@ -74,9 +74,9 @@ async function loadRecoveryFile(event: Event) {
 </script>
 
 <template>
-  <ModalLayer :busy="busy" class="overlay-level-120" @close="emit('close')">
-    <section class="dialog" role="dialog" aria-modal="true" aria-label="Identity recovery">
-      <div class="dialog-head"><h2>Back up or restore your identity</h2><button class="icon-button" type="button" aria-label="Close" :disabled="busy" @click="emit('close')">×</button></div>
+  <DialogWindow window-id="identity-recovery" :workspace-id="workspaceId ?? 'local'" title="Identity recovery" :busy="busy" @close="emit('close')">
+    <section class="dialog dialog-window-content">
+      <h2>Back up or restore your identity</h2>
       <p class="dialog-copy">Your encrypted recovery file and words restore your identity, profile and private Rusty connections. Board and attachment bytes need a separate workspace backup or an available Rusty copy. Keep the file and words safe and separate.</p>
       <div class="dialog-actions" role="group" aria-label="Identity recovery tasks">
         <button class="button" :class="task === 'backup' ? 'button-primary' : 'button-quiet'" :aria-pressed="task === 'backup'" :disabled="busy" @click="task = 'backup'; error = ''">Create backup</button>
@@ -96,5 +96,5 @@ async function loadRecoveryFile(event: Event) {
       </section>
       <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>

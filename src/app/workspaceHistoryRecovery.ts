@@ -72,10 +72,10 @@ async function* attachmentSource(bytes: Uint8Array): AsyncGenerator<Uint8Array> 
 }
 
 /** Explicit private export: keys travel only inside the encrypted recovery stream. */
-export async function createPrivateWorkspaceRecovery(core: Core): Promise<PrivateWorkspaceRecoveryBackup> {
+export async function createPrivateWorkspaceRecovery(core: Core, selectedWorkspaceId = core.tincanban.activeWorkspace.id): Promise<PrivateWorkspaceRecoveryBackup> {
   const profile = core.tincanban.getCurrentProfile()
   if (!profile?.privateKeys.identityPrivateKey) throw new Error("Create this backup on a device holding your identity recovery key")
-  const workspaceId = core.tincanban.activeWorkspace.id, ensureIdentity = identityGuard(profile)
+  const workspaceId = selectedWorkspaceId, ensureIdentity = identityGuard(profile)
   ensureIdentity()
   const doc = await core.tincanban.readWorkspaceDoc(workspaceId)
   const signing = await workspaceSigningContext(doc, profile, "history-recovery-read", "workspaceId", undefined, {

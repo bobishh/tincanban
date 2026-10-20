@@ -32,7 +32,7 @@ async function enrollDevice(hostPage: Page, recipient: Page) {
 
 async function connectRusty(page: Page, origin: string) {
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
@@ -82,7 +82,7 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
     await phone.route(`${rusty.origin}/**`, route => route.abort())
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync", exact: true }).click()
     await expect.poll(() => phone.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
       const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
@@ -152,13 +152,13 @@ test("Given an acknowledged profile photo update, when the source closes and the
     const latestSource = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
     await page.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
     await page.goto("about:blank")
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", latestSource!, { timeout: 30_000 })
     const saved = await phone.evaluate(async () => {
       const { defaultStorage } = await import("/src/storage.ts")

@@ -16,10 +16,9 @@ import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync, type PeerHistoryBas
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
 import { DurableMeshHandshake } from "./durableMeshHandshake"
-import { lazyIdentityDevicePreferences } from "./lazyIdentityDevicePreferences"
+import { participantWorkspaceStore } from "./participantWorkspaceStore"
 import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
 import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
-import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
 import { isNativeKeeperRoute } from "./nativeKeeperRoute"
@@ -269,17 +268,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     create: input => {
       const credential = input.credential as WorkspaceMeshCredential
       const stage = `Workspace ${input.workspaceId.slice(0, 8)} from ${input.deviceId.slice(0, 8)}`
-      const store = this.identityPreferenceConnections.has(input.connection) && input.remotePersonId === input.profile.identity.personId
-        ? lazyIdentityDevicePreferences(this.options.workspaceStore, input.profile, input.remotePersonId, input.deviceId,
-          () => !this.stopped && this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection === input.connection)
-        : this.options.workspaceStore
-      const ensurePeerHistoryCurrent = createDurablePeerHistoryGuard({ workspaceId: input.workspaceId, deviceId: input.deviceId,
+      const { store, guard: ensurePeerHistoryCurrent } = participantWorkspaceStore(this.options.workspaceStore, { workspaceId: input.workspaceId, deviceId: input.deviceId,
         remotePersonId: input.remotePersonId, transportSecret: credential.transportSecret, profile: input.profile, store: this.store,
         profileProvider: () => this.options.getProfile(), assertSession: () => {
           if (this.stopped || this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection !== input.connection) {
             throw new Error("Direct peer session is no longer current")
           }
-        } })
+        } }, this.identityPreferenceConnections.has(input.connection))
       const session = liveAutomergeWorkspaceSync(input.connection, credential.transportSecret,
         store,
         input.workspaceId, input.profile.device.deviceId, input.deviceId, error => {

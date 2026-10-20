@@ -38,6 +38,11 @@ function initializeNativeAutomerge(): Promise<void> {
     .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
 }
 
+beforeEach(() => {
+  vi.stubGlobal("navigator", { locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+    (callback ?? options as () => Promise<unknown>)() } })
+})
+
 afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
 
 function stubWindow(origin: string): void {

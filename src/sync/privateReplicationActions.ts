@@ -98,6 +98,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     configs.value = next
   }
   async function remove(config: BlindReplicaConfig) {
+    if (config.boardAccess) throw new Error("Only the board owner can remove its Rusty connection")
     if (busy.value) throw new Error("Wait for current Rusty sync to finish")
     notice.value = ""
     error.value = ""

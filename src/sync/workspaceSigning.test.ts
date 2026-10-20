@@ -6,10 +6,11 @@ import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
-import { certHashDefault, createAutomationWorkspaceGrant, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
+import { certHashDefault, createAutomationWorkspaceGrant, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { automationTypes } from "../domain/automationContract"
 import { hasEntityKind } from "../domain/model"
 import { resolveSigningContext, signWithContext } from "../domain/signingContext"
+import * as signingContext from "../domain/signingContext"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { authorizeLocalChanges, recordGenesisAuthority, prepareLocalChangeAuthorizations, type WorkspaceSigningContextFactory } from "./changeAuthorization"
 import { createWorkspaceDeviceRevocation } from "./meshRecords"
@@ -97,6 +98,74 @@ it("Given an owner workspace, when building public delivery policy, then sign th
 
     const editor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Not the owner")
     await expect(buildPublicBoardDeliveryPolicy(editor, doc.id, "board-a", 1)).rejects.toThrow(/owner authority is unavailable/i)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given unchanged verified public delivery inputs, when polling again, then reuse signed policy while still rejecting changed owner authority", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Expected stored workspace authority")
+    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+    const sign = vi.spyOn(signingContext, "signWithContext")
+    const cache = {}
+    const boardId = Object.values(doc.entities).find(entity => hasEntityKind(entity, "board"))!.id
+    let scans = 0
+    const source = { ...doc, entities: new Proxy({ ...doc.entities }, { ownKeys(target) { scans++; return Reflect.ownKeys(target) } }) }
+    const first = await buildPublicBoardDeliveryPolicy(profile, doc.id, boardId, 1, () => {}, source, cache, 1)
+    const next = await buildPublicBoardDeliveryPolicy(profile, doc.id, boardId, 1, () => {}, source, cache, 1)
+    expect(next).toEqual(first)
+    expect(sign).toHaveBeenCalledOnce()
+    expect(scans).toBe(1)
+    await buildPublicBoardDeliveryPolicy(profile, doc.id, boardId, 1, () => {}, source, cache, 2)
+    expect(scans).toBe(2)
+    expect(sign).toHaveBeenCalledOnce()
+    await replaceStoredDeviceKey()
+    await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/stale|signing key/i)
+    credential.mockResolvedValue({ ...authority, ownerPublicKey: "changed-owner-key", transportSecret: "test-secret" })
+    await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/owner authority/i)
+    expect(sign).toHaveBeenCalledOnce()
+  } finally { Automerge.free(doc) }
+})
+
+it("Given a cached public policy, when grants, certificates, epoch or automation expiry change without board heads changing, then rebuild verified evidence", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const authority = await peerStore.getWorkspaceAuthority(doc.id)
+    if (!authority) throw new Error("Expected stored workspace authority")
+    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+    const sign = vi.spyOn(signingContext, "signWithContext")
+    const cache = {}
+    const build = () => buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)
+    await build()
+    const grant = await createWorkspaceGrant(profile, doc.id, "editor", "editor")
+    await defaultProofStore.putGrant(grant.payload.grantId, grant)
+    expect((await build()).policy.payload.acceptedGrants).toEqual([grant])
+    expect(sign).toHaveBeenCalledTimes(2)
+    const enrolled = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Enrolled")
+    const certificate = await createDelegatedCertificate(profile.privateKeys.devicePrivateKey, profile.device.deviceId,
+      profile.identity.personId, enrolled.device.deviceId, enrolled.device.publicKey, await certHashDefault(profile.certificate))
+    await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
+    expect((await build()).ownerCertificates).toContainEqual(certificate)
+    expect(sign).toHaveBeenCalledTimes(3)
+    credential.mockResolvedValue({ ...authority, epoch: authority.epoch + 1, transportSecret: "test-secret" })
+    expect((await build()).policy.payload.acceptedGrants).toEqual([])
+    expect(sign).toHaveBeenCalledTimes(4)
+    credential.mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+    const expiresAt = Date.now() + 60_000
+    const automation = await createAutomationWorkspaceGrant(profile, doc.id, "automation", {
+      version: 1, boardId: "board-a", columns: { lead: "lead", interview: "interview", rejected: "rejected" }, fieldIds: [], expiresAt,
+    })
+    await defaultProofStore.putGrant(automation.payload.grantId, automation)
+    expect((await build()).policy.payload.acceptedGrants).toContainEqual(automation)
+    expect(sign).toHaveBeenCalledTimes(5)
+    vi.spyOn(Date, "now").mockReturnValue(expiresAt)
+    expect((await build()).policy.payload.acceptedGrants).toEqual([grant])
+    expect(sign).toHaveBeenCalledTimes(6)
+    await build()
+    expect(sign).toHaveBeenCalledTimes(6)
   } finally { Automerge.free(doc) }
 })
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import { computed, defineAsyncComponent, reactive, ref, type Component } from "vue"
 import { useDelayedFlag } from "../ui/useDelayedFlag"
 import type { Column, FieldDefinition, FieldValue, Item } from "../domain/model"
@@ -48,7 +48,16 @@ const surfaceProps = computed(() => props.item ? {
   windowId: `item-edit:${props.item.id}`, workspaceId: props.workspaceId ?? "local",
   title: `Edit ${props.entityName || 'item'}`, ariaLabel: "Edit item", closeLabel: "Dismiss",
   initialWidth: 720, initialHeight: 700, busy: props.saving, class: "item-editor-window",
-} : { busy: props.saving, protectDraft: true, class: "overlay overlay-level-120" })
+} : {
+  windowId: `item-create:${props.parentId}`,
+  workspaceId: props.workspaceId ?? "local",
+  title: props.showCoreFields !== false ? `${props.entityName || "Item"} details` : `Add ${props.entityName || "item"}`,
+  ariaLabel: props.showCoreFields !== false ? "Item details" : "Add item",
+  closeLabel: "Dismiss",
+  busy: props.saving,
+  initialWidth: 720,
+  initialHeight: 680,
+})
 
 // Materialize schema metadata once per schema change. Draft keystrokes must not
 // repeatedly traverse Automerge proxies or rebuild every select's options.
@@ -113,16 +122,9 @@ function handleSave() {
 </script>
 
 <template>
-  <component :is="item ? ItemEditWindow : ModalLayer" v-bind="surfaceProps" @close="emit('cancel')">
-    <section :class="item ? 'item-edit-content' : 'dialog'" :role="item ? undefined : 'dialog'" :aria-modal="item ? undefined : true" :aria-label="item ? undefined : showCoreFields !== false ? 'Item details' : 'Add item'">
+  <component :is="item ? ItemEditWindow : DialogWindow" v-bind="surfaceProps" @close="emit('cancel')">
+    <section :class="item ? 'item-edit-content' : 'dialog dialog-window-content'">
       <form class="item-form" novalidate :aria-busy="saving" @submit.prevent="handleSave">
-        <div v-if="!item" class="dialog-head">
-          <div>
-            <h2>{{ item ? `Edit ${entityName || 'item'}` : showCoreFields !== false ? `${entityName || 'Item'} details` : `Add ${entityName || 'item'}` }}</h2>
-          </div>
-          <button class="icon-button" type="button" aria-label="Dismiss" :disabled="saving" @click="emit('cancel')">×</button>
-        </div>
-
         <div class="item-form-content">
         <fieldset class="form-grid" :disabled="saving">
           <label v-if="showCoreFields !== false" class="wide">

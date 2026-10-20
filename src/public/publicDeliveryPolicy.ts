@@ -7,6 +7,7 @@ import { signWithContext, signingEvidence } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "../sync/workspaceOwnerSigning"
 import { deviceRevocations, hasLeftWorkspace, isGrantRevoked } from "../sync/durableMeshBase"
 import { peerStore } from "../sync/peerStore"
+import { workspaceAuthorityFingerprint } from "../sync/authorityFingerprint"
 
 type PublicBoardDeliveryPolicy = {
   kind: "rusty-public-board-delivery-policy"; version: 1; workspaceId: string; boardId: string
@@ -16,6 +17,14 @@ type PublicBoardDeliveryPolicy = {
 export type PublicBoardDeliveryPolicyEvidence = {
   policy: SignedEnvelope<PublicBoardDeliveryPolicy>; ownerCertificates: DeviceCertificate[]
 }
+/** Opaque lifetime token owned by one board-access scope. */
+export type PublicBoardDeliveryPolicyCache = object
+const verifiedPolicies = new WeakMap<PublicBoardDeliveryPolicyCache, {
+  fingerprint: string; deviceKey: CryptoKey; identityKey?: CryptoKey; evidence: PublicBoardDeliveryPolicyEvidence
+}>()
+const automationSources = new WeakMap<PublicBoardDeliveryPolicyCache, {
+  document: WorkspaceDocumentV2; workspaceId: string; boardId: string; sourceVersion: number; grants: WorkspaceGrant[]
+}>()
 const encoder = new TextEncoder()
 export function publicBoardDeliveryPolicyHash(evidence: PublicBoardDeliveryPolicyEvidence) {
   return sha256Base64Url(encoder.encode(canonicalizeJson(evidence)))
@@ -91,11 +100,22 @@ function admittedAutomationGrants(document: WorkspaceDocumentV2 | undefined, wor
   return grants
 }
 
+function automationGrantsForSource(document: WorkspaceDocumentV2 | undefined, workspaceId: string, boardId: string,
+  cache: PublicBoardDeliveryPolicyCache | undefined, sourceVersion: number | undefined) {
+  const previous = cache && automationSources.get(cache)
+  if (previous && previous.document === document && previous.workspaceId === workspaceId && previous.boardId === boardId &&
+      sourceVersion !== undefined && previous.sourceVersion === sourceVersion) return previous.grants
+  const grants = admittedAutomationGrants(document, workspaceId, boardId)
+  if (cache && document && sourceVersion !== undefined) automationSources.set(cache, { document, workspaceId, boardId, sourceVersion, grants })
+  return grants
+}
+
 /** Peer grants and admitted automation approvals share the same signature, expiry and revocation filters. */
 export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, workspaceId: string, boardId: string,
-  generation: number, ensureCurrent: () => void | Promise<void> = () => {}, document?: WorkspaceDocumentV2): Promise<PublicBoardDeliveryPolicyEvidence> {
+  generation: number, ensureCurrent: () => void | Promise<void> = () => {}, document?: WorkspaceDocumentV2,
+  cache?: PublicBoardDeliveryPolicyCache, sourceVersion?: number): Promise<PublicBoardDeliveryPolicyEvidence> {
   // Capture signed metadata before awaits; Automerge documents are proxy-backed.
-  const automationGrants = admittedAutomationGrants(document, workspaceId, boardId)
+  const automationGrants = automationGrantsForSource(document, workspaceId, boardId, cache, sourceVersion)
   await ensureCurrent()
   const credential = await peerStore.getWorkspaceCredential(workspaceId)
   const authority = await peerStore.getWorkspaceAuthority(workspaceId)
@@ -103,22 +123,40 @@ export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, work
   if (!credential || !authority) throw new Error("Workspace credential unavailable")
   const [grants, storedCertificates] = await Promise.all([defaultProofStore.listGrants(workspaceId), defaultProofStore.listCertificates()])
   await ensureCurrent()
-  const ownerCerts = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
-    [...credential.ownerCertificates as DeviceCertificate[], ...authority.ownerCertificates as DeviceCertificate[],
-      ...storedCertificates, profile.certificate])
-  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, [...grants, ...automationGrants], credential, ownerCerts)
-  const revokedDeviceIds = [...new Set(deviceRevocations(credential).map(item => item.record.payload.deviceId))].sort()
-  const payload: PublicBoardDeliveryPolicy = { kind: "rusty-public-board-delivery-policy", version: 1, workspaceId, boardId,
-    generation, accessEpoch: credential.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }
+  const allGrants = [...grants, ...automationGrants]
+  const metadataFingerprint = canonicalizeJson({ workspaceId, boardId, generation,
+    profile: { identity: profile.identity, device: profile.device, certificate: profile.certificate },
+    authority: workspaceAuthorityFingerprint([credential], [authority]),
+    grants: allGrants, certificates: storedCertificates })
+  const fingerprint = () => metadataFingerprint + canonicalizeJson(allGrants.map(grant =>
+    grant.payload.role === "automation" && Boolean(grant.payload.automation && grant.payload.automation.expiresAt <= Date.now())))
+  const capturedFingerprint = fingerprint()
+  // Metadata equality cannot replace the live guard: scope expiry, revocation, durable identity,
+  // release writability and signing-key binding must still be checked on every owner poll.
   const context = await workspaceOwnerSigningContext(profile, workspaceId, "rusty-public-board-delivery-policy", { boardId, generation }, async () =>
     await peerStore.getWorkspaceAuthority(workspaceId) ?? await peerStore.getWorkspaceCredential(workspaceId))
   await ensureCurrent()
+  const previous = cache && verifiedPolicies.get(cache)
+  if (previous?.fingerprint === capturedFingerprint && fingerprint() === capturedFingerprint &&
+      previous.deviceKey === profile.privateKeys.devicePrivateKey && previous.identityKey === profile.privateKeys.identityPrivateKey) {
+    return structuredClone(previous.evidence)
+  }
+  const ownerCerts = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
+    [...credential.ownerCertificates as DeviceCertificate[], ...authority.ownerCertificates as DeviceCertificate[],
+      ...storedCertificates, profile.certificate])
+  const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, allGrants, credential, ownerCerts)
+  const revokedDeviceIds = [...new Set(deviceRevocations(credential).map(item => item.record.payload.deviceId))].sort()
+  const payload: PublicBoardDeliveryPolicy = { kind: "rusty-public-board-delivery-policy", version: 1, workspaceId, boardId,
+    generation, accessEpoch: credential.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }
   const policy = await signWithContext(context, payload)
   await ensureCurrent()
   if (canonicalizeJson(policy.payload) !== canonicalizeJson(payload)) throw new Error("Public delivery policy signer changed its payload")
   const certificates = await verifiedOwnerCertificates(credential.ownerPersonId, credential.ownerPublicKey,
     [...ownerCerts, ...signingEvidence(context).certificates])
-  return { policy, ownerCertificates: certificates.sort((left, right) => left.signature < right.signature ? -1 : left.signature > right.signature ? 1 : 0) }
+  const evidence = { policy, ownerCertificates: certificates.sort((left, right) => left.signature < right.signature ? -1 : left.signature > right.signature ? 1 : 0) }
+  if (cache && fingerprint() === capturedFingerprint) verifiedPolicies.set(cache, { fingerprint: capturedFingerprint,
+    deviceKey: profile.privateKeys.devicePrivateKey, identityKey: profile.privateKeys.identityPrivateKey, evidence: structuredClone(evidence) })
+  return evidence
 }
 
 async function verifiedOwnerCertificates(ownerPersonId: string, ownerPublicKey: string, certificates: DeviceCertificate[]) {

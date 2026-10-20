@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import ModalLayer from "../ModalLayer.vue";
+import DialogWindow from "../DialogWindow.vue";
 import type { SchemaDiff } from "../../domain/schema";
 
 defineProps<{
+  workspaceId: string;
   diff: SchemaDiff;
 }>();
 
@@ -13,32 +14,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <ModalLayer
-    protect-draft
-    class="overlay overlay-level-150"
-    @close="emit('close')"
-  >
+  <DialogWindow window-id="schema-preview" :workspace-id="workspaceId" title="Preview schema changes" close-label="Dismiss" @close="emit('close')">
     <section
-      class="dialog schema-preview-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Preview schema changes"
+      class="dialog dialog-window-content schema-preview-dialog"
     >
-      <header class="dialog-head">
-        <div>
-          <span class="eyebrow">Confirm Schema Update</span>
-          <h2>Preview schema changes</h2>
-        </div>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="Dismiss"
-          @click="emit('close')"
-        >
-          ×
-        </button>
-      </header>
-
       <div class="preview-body">
         <p v-if="diff.cardAgingChange">Card aging: {{ diff.cardAgingChange.before }} → {{ diff.cardAgingChange.after }} days</p>
         <section v-if="diff.columnsRenamed.length">
@@ -125,5 +104,5 @@ const emit = defineEmits<{
         </button>
       </div>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>

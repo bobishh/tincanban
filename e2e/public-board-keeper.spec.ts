@@ -4,8 +4,9 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { discussObject } from "./support/discussions"
+import { verifyPublicOwnerPollingDraft } from "./support/publicOwnerPolling"
 
-test("Given an owner publishes a board, when Keeper restarts and the owner withdraws it, then anonymous readers get only the active snapshot and file bytes", async ({ page, browser, baseURL }) => {
+test("Given an owner publishes a board, when Keeper restarts and the owner withdraws it, then anonymous readers get only the active snapshot and file bytes", async ({ page, browser, baseURL }, info) => {
   test.setTimeout(120_000)
   await page.goto("/")
   await page.getByRole("button", { name: "Open workspaces" }).click()
@@ -90,7 +91,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await start()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const syncDialog = page.getByRole("dialog", { name: "Device sync" })
-    await syncDialog.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     const rustyPanel = syncDialog.getByRole("region", { name: "Rusty", exact: true })
     await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await rustyPanel.getByLabel("Address", { exact: true }).fill(origin)
@@ -131,6 +132,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
+    if (info.project.name === "chromium") await verifyPublicOwnerPollingDraft(page, origin, fixture.boardId, info)
 
     anonymousContext = await browser.newContext({ acceptDownloads: true })
     const reader = await anonymousContext.newPage()

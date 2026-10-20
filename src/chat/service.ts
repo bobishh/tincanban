@@ -127,7 +127,7 @@ export async function sendChatTyping(workspaceId: string, active: boolean) {
   await ensureChatProfile(workspaceId)
   const record = await signed(workspaceId, "chat-typing", active ? "typing" : "idle", Date.now())
   rememberTyping(workspaceId, record)
-  publish({ workspaceId, added: [], remote: false, history: false, typing: [record] })
+  publish({ workspaceId, added: [], remote: false, history: false, typing: [record], contentChanged: false })
 }
 
 export async function exportChat(workspaceId: string, known?: Set<string>, remoteDeviceId?: string): Promise<{ version: 1 | 2; capabilities: string[]; upgradeRequired?: boolean; messages: unknown[]; profiles: unknown[]; typing: unknown[] }> {

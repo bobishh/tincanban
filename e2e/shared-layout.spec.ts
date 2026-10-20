@@ -51,12 +51,10 @@ for (const width of [320, 390, 768, 1280]) test(`Given shared layouts at ${width
   const buttonPadding = await save.evaluate(element => getComputedStyle(element).padding)
   expect(Number.parseFloat(buttonPadding.split(" ")[1])).toBeGreaterThanOrEqual(24)
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
-  await openMenuAction(page, width <= 768 ? "Sync & backups" : "Sync")
+  await openMenuAction(page, width <= 768 ? "Sync" : "Sync")
   const sync = page.getByRole("dialog", { name: "Device sync", exact: true })
-  for (const name of ["Participants", "Rusty", "Backups", "Recovery"]) {
-    await sync.getByRole("tab", { name, exact: true }).click()
-    await expectLayout(sync, page)
-  }
+  await expect(sync.getByRole("tab")).toHaveCount(0)
+  await expectLayout(sync, page)
   await sync.getByRole("button", { name: "Close", exact: true }).click()
   await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
   await expectLayout(page.getByRole("dialog", { name: "Workspaces", exact: true }), page)

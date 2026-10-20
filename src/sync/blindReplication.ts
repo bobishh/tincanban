@@ -155,12 +155,13 @@ export class BlindReplica {
   }
 
   /** Maintenance retries saved ciphertext without preparing attachments or serializing a fresh snapshot. */
-  drainPending(): Promise<boolean> { return this.schedule(() => this.engine.drainPending()) }
+  drainPending(): Promise<boolean> { return this.schedule(() => { this.requireWriter(); return this.engine.drainPending() }) }
 
   /** The frozen history transition owns the original storage fence and durable replacement request. */
   checkpointHistoryBaseline(owner: string, transitionId: string, baselineId: string,
     candidate?: WasmVerifiedReceivedHistoryBaseline, history?: unknown): Promise<void> {
     return this.schedule(async () => {
+      this.requireWriter()
       if ((await this.readProgress()).pending) throw new Error("Drain the original outbox before history checkpoint")
       const { publishHistoryStorageCheckpoint } = await import("./blindHistoryCheckpoint")
       const result = await publishHistoryStorageCheckpoint(owner, this.config, transitionId, baselineId, {
@@ -377,6 +378,7 @@ export class BlindReplica {
   sync(): Promise<boolean> {
     return this.schedule(async () => {
       const caughtUp = await this.pullNow()
+      if (this.config.boardAccess?.mode === "read") return caughtUp
       await this.store.prepareAttachments?.()
       if (caughtUp) {
         const result = await this.checkpoint()

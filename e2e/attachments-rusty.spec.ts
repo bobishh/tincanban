@@ -72,7 +72,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await expect(savedSourceDetail.getByRole("group", { name: "Private transfer fixture" })).toBeVisible({ timeout: 30_000 })
     await savedSourceDetail.getByRole("button", { name: "Close detail", exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
-    await source.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     const rustyPanel = source.getByRole("region", { name: "Rusty", exact: true })
     await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await rustyPanel.getByLabel("Address", { exact: true }).fill(service.origin)
@@ -86,8 +86,8 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
       .toHaveText("Complete on Rusty", { timeout: 30_000 })
 
     await recipient.getByRole("button", { name: "Menu", exact: true }).click()
-    await recipient.getByRole("button", { name: "Sync & backups", exact: true }).click()
-    await recipient.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await recipient.getByRole("button", { name: "Sync", exact: true }).click()
+
     const recipientRusty = recipient.getByRole("region", { name: "Rusty", exact: true })
     await expect(recipientRusty.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await recipient.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
@@ -173,7 +173,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
     await form.getByRole("button", { name: "Attach", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     const panel = page.getByRole("region", { name: "Rusty", exact: true })
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
@@ -185,6 +185,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
     await expect(status).toContainText("Rusty unavailable", { timeout: 30_000 })
     await expect(status).not.toContainText("Complete on Rusty")
     const before = metadataUploads
+    await detail.locator("summary").filter({ hasText: /^Quick note$/ }).click()
     await detail.getByRole("textbox", { name: "Quick note", exact: true }).fill("Card saves while file upload waits")
     await detail.getByRole("button", { name: "Add note", exact: true }).click()
     await expect(detail.getByRole("textbox", { name: "Quick note", exact: true })).toHaveValue("")

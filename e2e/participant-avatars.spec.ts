@@ -58,7 +58,7 @@ for (const width of [1280, 390]) {
     await profile.getByRole("button", { name: "Dismiss", exact: true }).click()
     if (width < 768) {
       await page.getByRole("button", { name: "Menu", exact: true }).click()
-      await page.getByRole("button", { name: "Sync & backups", exact: true }).click()
+      await page.getByRole("button", { name: "Sync", exact: true }).click()
     } else await page.getByRole("button", { name: "Sync", exact: true }).click()
     const participants = page.getByRole("dialog", { name: "Device sync" })
     await expect(participants.locator(".participant-avatar").first()).toBeVisible()

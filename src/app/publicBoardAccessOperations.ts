@@ -1,7 +1,8 @@
 import type { Ref } from "vue"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import type { PublicBoardDeliveryPolicyEvidence } from "../public/publicDeliveryPolicy"
+import type { PublicBoardDeliveryPolicyCache, PublicBoardDeliveryPolicyEvidence } from "../public/publicDeliveryPolicy"
+import { canonicalizeJson } from "../domain/identity"
 
 export interface PublicBoardAccessInput {
   origin: string
@@ -23,7 +24,8 @@ export type PublicBoardAccessOperations = {
   input: PublicBoardAccessInput
   checked: Ref<boolean>; published: Ref<boolean>; busy: Ref<boolean>; error: Ref<string>; revision: Ref<number>; withdrawn: Ref<boolean>
   state: { generation: number; syncQueued: boolean; operationRunning: boolean; refreshQueued: boolean; disposed: boolean;
-    deliveryGeneration: number | null; deliveryPolicyHash: string | null; deliveryPolicyContentHash: string | null; retryCount: number; lastHash: string }
+    deliveryGeneration: number | null; deliveryPolicyHash: string | null; deliveryPolicyContentHash: string | null; retryCount: number; lastHash: string;
+    projectionComparison?: string; policyCache: PublicBoardDeliveryPolicyCache }
   timers: { debounce?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>; status?: ReturnType<typeof setInterval> }
   capture: (options?: { requireUnchangedSource?: boolean }) => CapturedAccessSource
   scheduleSync: (delay?: number) => void
@@ -121,7 +123,7 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
     import("../public/publicDeliveryPolicy"), import("../public/publicationClient")])
   captured.ensureCurrent()
   const deliveryPolicy = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    (ctx.state.deliveryGeneration ?? 0) + 1, captured.ensureCurrent, captured.document)
+    (ctx.state.deliveryGeneration ?? 0) + 1, captured.ensureCurrent, captured.document, ctx.state.policyCache, captured.sourceVersion)
   captured.ensureCurrent()
   const result = await publishBoardSnapshot({ origin: ctx.input.origin, ...captured, action: "publish", expectedRevision, deliveryPolicy })
   captured.ensureCurrent()
@@ -190,24 +192,34 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
   }
 }
 async function hasProjectionChanged(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource) {
-  const { hasLocalPublicBoardChanges } = await import("../public/publicationClient")
+  const [{ hasLocalPublicBoardChanges }, { readChatContentRevision }] = await Promise.all([
+    import("../public/publicationClient"), import("../chat/service")])
+  const chatRevision = await readChatContentRevision(captured.workspaceId)
+  const fingerprint = canonicalizeJson([captured.workspaceId, captured.boardId, captured.sourceVersion,
+    captured.sourceHeads, chatRevision, ctx.state.lastHash, ctx.revision.value])
   captured.ensureCurrent()
-  return hasLocalPublicBoardChanges({ document: captured.document, workspaceId: captured.workspaceId,
+  if (ctx.state.projectionComparison === fingerprint) return false
+  const changed = await hasLocalPublicBoardChanges({ document: captured.document, workspaceId: captured.workspaceId,
     boardId: captured.boardId, hash: ctx.state.lastHash })
+  captured.ensureCurrent()
+  // File references contain verified content digests. A completed comparison therefore also
+  // covers attachment bytes; unavailable files fail above and never create a cache entry.
+  if (!changed) ctx.state.projectionComparison = fingerprint
+  return changed
 }
 async function policyIfChanged(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource) {
   const { buildPublicBoardDeliveryPolicy, publicBoardDeliveryPolicyHash, publicBoardDeliveryPolicyContentHash } = await import("../public/publicDeliveryPolicy")
   if (ctx.state.deliveryGeneration === null) {
-    return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId, 1, captured.ensureCurrent, captured.document)
+    return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId, 1, captured.ensureCurrent, captured.document, ctx.state.policyCache, captured.sourceVersion)
   }
   const current = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    ctx.state.deliveryGeneration, captured.ensureCurrent, captured.document)
+    ctx.state.deliveryGeneration, captured.ensureCurrent, captured.document, ctx.state.policyCache, captured.sourceVersion)
   const unchanged = ctx.state.deliveryPolicyContentHash !== null
     ? await publicBoardDeliveryPolicyContentHash(current) === ctx.state.deliveryPolicyContentHash
     : await publicBoardDeliveryPolicyHash(current) === ctx.state.deliveryPolicyHash
   if (unchanged) return undefined
   return buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
-    ctx.state.deliveryGeneration + 1, captured.ensureCurrent, captured.document)
+    ctx.state.deliveryGeneration + 1, captured.ensureCurrent, captured.document, ctx.state.policyCache, captured.sourceVersion)
 }
 async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource,
   deliveryPolicy: PublicBoardDeliveryPolicyEvidence | undefined, generation: number) {

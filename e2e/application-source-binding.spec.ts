@@ -371,7 +371,7 @@ async function inspectWorkspace(page: Page): Promise<WorkspaceBindings> {
 
 async function connectRusty(page: Page, origin: string): Promise<void> {
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
@@ -434,7 +434,7 @@ async function expectApplicationInColumn(page: Page, column: string, cardId: str
 
 async function syncFromRusty(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   const sync = panel.getByRole("button", { name: "Sync now", exact: true })
   await sync.click()

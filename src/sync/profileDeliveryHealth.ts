@@ -6,7 +6,7 @@ export type ProfileDeliveryState = { key: string; origin: string; status: string
 /** Summarizes profile delivery independently, restricted to Rusty origins configured for this board. */
 export function profileDeliveryStates(boardConfigs: BlindReplicaConfig[], identityConfigs: IdentityReplicaConfig[],
   health: Record<string, ReplicaHealth>, workspaceId: string, now: number): ProfileDeliveryState[] {
-  const origins = [...new Set(boardConfigs.filter(config => config.workspaceId === workspaceId).map(config => config.origin))]
+  const origins = [...new Set(boardConfigs.filter(config => config.workspaceId === workspaceId && !config.boardAccess).map(config => config.origin))]
   return origins.map(origin => {
     const configs = identityConfigs.filter(config => config.origin === origin)
     if (!configs.length) return { key: origin, origin, status: "Profile delivery not configured" }

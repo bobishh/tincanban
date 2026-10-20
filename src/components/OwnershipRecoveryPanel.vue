@@ -6,7 +6,6 @@ const props = defineProps<{
   members: MeshMemberView[]
   selectedPersonId?: string
   hasMesh?: boolean
-  embedded?: boolean
   succession?: SuccessionView
   currentRole?: "owner" | "editor" | "visitor"
   currentPersonId?: string
@@ -33,8 +32,7 @@ const canVote = computed(() => {
 const memberName = (id: string) => props.members.find(member => member.personId === id)?.name || "Unavailable member"
 </script>
 <template>
-  <section v-if="hasMesh" class="recovery-panel ui-stack" aria-label="Ownership succession">
-    <h3 v-if="!embedded">Ownership succession</h3>
+  <div v-if="hasMesh" class="recovery-panel ui-stack">
     <p v-if="succession?.conflicted" class="sync-error" role="alert">Conflicting recovery claims found. Workspace writes paused; inspect signed claims before transferring ownership.</p>
     <p v-if="succession" class="dialog-copy">
       <template v-if="succession.successorPersonId">Named successor: {{ memberName(succession.successorPersonId) }}.</template>
@@ -42,22 +40,17 @@ const memberName = (id: string) => props.members.find(member => member.personId 
     </p>
     <p v-if="succession && currentRole === 'editor'" class="dialog-copy">Votes for you: {{ succession.votes.filter(vote => vote.candidatePersonId === currentPersonId).length }} / {{ succession.quorum }}.</p>
     <div v-if="!succession" class="sync-recovery-note"><p>No recovery policy.</p><p class="sync-helper-text">{{ editors.length ? 'Owner: name a successor or enable editor quorum.' : 'Add an editor in Participants before setting up ownership recovery.' }}</p></div>
-    <label v-if="editors.length && (canManageMesh || currentRole === 'editor')">Recovery participant
-      <select v-model="candidateId" aria-label="Recovery participant"><option value="">Select an editor</option><option v-for="member in editors" :key="member.personId" :value="member.personId">{{ member.name }}{{ member.self ? ' · You' : '' }}</option></select>
-    </label>
     <button v-if="canManageMesh && candidate && candidate.personId !== succession?.successorPersonId" class="button" type="button" @click="emit('setSuccessor', candidate.personId)">Name successor</button>
-    <button v-if="canManageMesh && succession?.successorPersonId" class="button" type="button" @click="emit('setSuccessor', null)">Remove named successor</button>
+    <button v-if="canManageMesh && candidate?.personId === succession?.successorPersonId && succession?.successorPersonId" class="button" type="button" @click="emit('setSuccessor', null)">Remove named successor</button>
     <button v-if="canVote && candidate" class="button" type="button" @click="emit('voteSuccessor', candidate.personId)">Vote for {{ candidate.self ? 'yourself' : candidate.name }}</button>
     <p v-if="currentRole === 'editor' && currentVote" class="dialog-copy">Vote recorded for {{ memberName(currentVote.candidatePersonId) }}.</p>
     <button v-if="canManageMesh && !succession" class="button" type="button" :disabled="!editors.length" @click="emit('setSuccessor', null)">Enable editor quorum</button>
     <button v-if="canClaimSuccession && !succession?.conflicted" class="button button-danger" type="button" @click="emit('claimSuccession')">Claim ownership</button>
-  </section>
+  </div>
 </template>
 <style scoped>
 .recovery-panel { display: grid; gap: var(--space-3); padding-block: var(--space-2); }
-h3, p { margin: 0; }
-label { display: grid; gap: var(--space-1); }
-select { min-width: 0; width: 100%; }
+p { margin: 0; }
 .button { justify-self: start; }
 .sync-recovery-note { display: grid; gap: var(--space-1); }
 .sync-helper-text { color: var(--muted); font-size: .9rem; line-height: 1.4; }

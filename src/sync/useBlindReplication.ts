@@ -28,7 +28,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const deviceAccess = createDeviceAccessRefresh(tincanban, state, runtime,
     (owner, epoch) => identity === owner && session === epoch && !disposed)
   const { personId, profileBinding, replica, fetchAttachment } = runtime
-  const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value
+  const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value && !hasActiveTextEditor()
   async function maybeCompactActiveHistory(owner: string, epoch: number) {
     if (!canCompact(owner, epoch)) return
     const workspaces = [...new Set(configs.value.filter(config => !config.removalPending).map(config => config.workspaceId))]
@@ -118,7 +118,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const healthClock = setInterval(() => { now.value = Date.now() }, 1000)
   const timer = setInterval(() => { void syncNow() }, 15000)
   const stopWorkspace = tincanban.subscribeLocalChanges(() => { void syncNow() })
-  const stopChat = subscribeChat(() => { void syncNow() })
+  const stopChat = subscribeChat(event => { if (event.contentChanged !== false) void syncNow() })
   const stopPreferences = subscribeIdentityDevicePreferences(owner => {
     if (owner !== identity || disposed) return
     const epoch = session
@@ -133,4 +133,13 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
     attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
     remove, syncNow, fetchAttachment }
+}
+
+/** Automatic archive work waits while the user is editing; replica delivery keeps running. */
+function hasActiveTextEditor(): boolean {
+  const element = typeof document === "undefined" ? null : document.activeElement
+  if (!element) return false
+  if ("isContentEditable" in element && element.isContentEditable === true) return true
+  if (element.tagName === "TEXTAREA" || element.tagName === "SELECT") return true
+  return element.tagName === "INPUT" && !/^(button|checkbox|radio|range|reset|submit|file|color|hidden|image)$/.test((element as HTMLInputElement).type)
 }

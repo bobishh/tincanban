@@ -1,4 +1,5 @@
 import { createApp, h, ref } from "vue"
+import WorkspaceFileActions from "../../src/components/WorkspaceFileActions.vue"
 import SyncDialog from "../../src/components/SyncDialog.vue"
 import { replicationPresence, replicaKey } from "../../src/sync/replicationHealth"
 
@@ -19,17 +20,16 @@ export function mountMobileDeviceListDialog() {
   app.mount(root)
 }
 
-export async function mountSyncLayoutDialog(options: { exportWorkspace?: () => Promise<void> } = {}) {
+export async function mountSyncLayoutDialog() {
   const profile = await (await import("../../src/domain/identity")).bootstrapIdentity()
   const root = document.createElement("div")
   document.body.appendChild(root)
   const live = ref(true)
   createApp({ render: () => h(SyncDialog, {
     step: "members", title: "Device sync", qrCode: "", inviteUrl: "", copyNotice: "", error: "",
-    exportWorkspace: options.exportWorkspace,
     hasMesh: true, currentRole: "owner", currentPersonId: profile.identity.personId, canManageMesh: true,
     live: live.value, workspaceConnected: false, workspaceReconnecting: false, retryAt: Date.now() + 1_000,
-    onStop: () => { live.value = false }, onStart: () => { live.value = true },
+    onStop: () => { live.value = false },
     meshMembers: [{ personId: profile.identity.personId, name: "Bo", role: "owner", self: true,
       online: true, reconnecting: false, onlineDevices: 1, devices: 2,
       deviceList: ["one", "two"].map(deviceId => ({ deviceId, name: "Browser", userAgent: "Mozilla/5.0 Chrome/140.0 Linux", description: "Chrome · Linux", online: false, reconnecting: false, tabs: 1, lastSeen: "2026-10-08T12:00:00Z" })),

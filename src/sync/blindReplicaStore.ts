@@ -28,6 +28,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
   }
   const readReplicaProgress = async () => {
     guardIdentity()
+    if (config.boardAccess) await (await import("./workspaceRustyGuard")).assertParticipantStorageAccess(tincanban, config)
     const progress = await getPrivateReplicaProgress(owner, config)
     guardIdentity()
     return progress

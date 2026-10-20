@@ -204,7 +204,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
 
 async function connectBlindRusty(page: Page, origin: string): Promise<void> {
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
@@ -330,7 +330,7 @@ function actionFrom(event: Record<string, unknown>): Record<string, unknown> {
 
 async function syncFromBlindRusty(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   const syncButton = panel.getByRole("button", { name: "Sync now", exact: true })
   await syncButton.click()

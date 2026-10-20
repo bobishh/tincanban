@@ -20,7 +20,7 @@ import {
   type WorkspaceTransactionContext,
   setStorageFailureHookForTest,
 } from "./storage"
-import type { WorkspaceDocumentV2 } from "./domain/model"
+import type { ChangeProof, TransactionReceipt, WorkspaceDocumentV2 } from "./domain/model"
 import { exportWorkspaceBundleV2, readWorkspaceBundleV2 } from "./domain/workspaceBundle"
 import * as journal from "./storageJournal"
 import type { WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"

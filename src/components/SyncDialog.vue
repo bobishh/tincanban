@@ -4,8 +4,7 @@ import RustyPanel from "./RustyPanel.vue"
 import DeviceSyncProblems from "./DeviceSyncProblems.vue"
 import OwnershipRecoveryPanel from "./OwnershipRecoveryPanel.vue"
 import type { BlindReplicationController } from "../app/blindReplication"
-import RustyMark from "./RustyMark.vue"
-import { keeperDisplayName, isKeeper, type MeshMemberView } from "../ui/deviceInfo"
+import { describeUserAgent, isKeeper, type MeshMemberView } from "../ui/deviceInfo"
 import EnrollmentRequest from "./EnrollmentRequest.vue"
 import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import ModalLayer from "./ModalLayer.vue"
@@ -15,11 +14,9 @@ import { syncDialogConnectionStatus } from "./syncDialogConnectionStatus"
 import { computed, onBeforeUnmount, onMounted, ref, useId, watch } from "vue"
 import type { SyncStep, SuccessionView } from "../app/syncTypes"
 
-type PrivateRecoveryBackup = { file: Blob; words: string; coverage: "complete" | "incomplete"; missingCount: number }
-type PrivateRecoveryInspection = { workspaceId: string; personId: string; coverage: "complete" | "incomplete"; missingCount: number }
-
 const props = defineProps<{
-  initialTab?: "Participants" | "Rusty" | "Backups"
+  workspaceId?: string
+  myDeviceRemoval?: ReturnType<typeof useMyDeviceRemoval>
   memberAvatars?: Record<string, string>
   revokingPersonId?: string
   blindReplication?: BlindReplicationController
@@ -60,13 +57,7 @@ const props = defineProps<{
   retryAt?: number
   networkOnline?: boolean
   live?: boolean
-  exportWorkspace?: () => Promise<void>
-  createPrivateRecovery?: () => Promise<PrivateRecoveryBackup>
-  privateRecoveryUnavailableReason?: string
-  inspectPrivateRecovery?: (file: Blob, words: string) => Promise<PrivateRecoveryInspection>
-  restorePrivateRecovery?: (inspection: PrivateRecoveryInspection, replace: boolean) => Promise<void>
-  hasWorkspaceCopy?: (workspaceId: string) => boolean
-  workspaceTitle?: (workspaceId: string) => string
+
 }>()
 
 const emit = defineEmits<{
@@ -90,7 +81,6 @@ const emit = defineEmits<{
   (e: "declineDevice"): void
   (e: "acceptAndJoin"): void
   (e: "reconnectDevice"): void
-  (e: "start"): void
   (e: "stop"): void
 }>()
 
@@ -113,21 +103,6 @@ const invitationChoices = computed(() => (props.availableWorkspaces ?? []).map(w
 const isEnrollmentHost = computed(
   () => props.step === "enroll-host" || props.step === "enroll-host-pending",
 )
-const tabs = ["Participants", "Rusty", "Backups", "Recovery"] as const
-const activeTab = ref<typeof tabs[number]>(props.initialTab ?? "Participants")
-const successionOpen = ref(false)
-watch(() => [props.canClaimSuccession, props.succession?.conflicted], ([claim, conflict]) => { if (claim || conflict) successionOpen.value = true }, { immediate: true })
-const tabId = useId()
-function navigateTabs(event: KeyboardEvent) {
-  const index = tabs.indexOf(activeTab.value)
-  const target = event.key === "ArrowRight" ? (index + 1) % tabs.length
-    : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
-    : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1
-  if (target < 0 || props.leavingMesh) return
-  event.preventDefault()
-  activeTab.value = tabs[target]
-  ;(event.currentTarget as HTMLElement).querySelector<HTMLButtonElement>(`[data-tab="${tabs[target]}"]`)?.focus()
-}
 const selectedMemberId = ref("")
 const confirmingRemoval = ref("")
 watch(selectedMemberId, () => { confirmingRemoval.value = "" })
@@ -145,9 +120,24 @@ const visiblePendingJoins = computed(() => props.pendingJoins ?? [])
 const confirmingLeave = ref(false)
 const confirmingReconnect = ref(false)
 const reconnectCancelled = ref(false)
-watch(() => props.step, () => { reconnectCancelled.value = false; activeTab.value = props.initialTab ?? "Participants" })
-const selectedMember = computed(() => props.meshMembers?.find(member => member.personId === selectedMemberId.value))
-const peopleMembers = computed(() => (props.meshMembers ?? []).filter(member => !member.deviceList.some(device => isKeeper(device.userAgent))))
+watch(() => props.step, () => { reconnectCancelled.value = false })
+const selectedMember = computed(() => peopleMembers.value.find(member => member.personId === selectedMemberId.value))
+const peopleMembers = computed(() => (props.meshMembers ?? []).filter(member => !member.deviceList.length || !member.deviceList.every(device => isKeeper(device.userAgent))).map(member => {
+  const deviceList = member.deviceList.filter(device => !isKeeper(device.userAgent))
+  if (member.self) for (const device of props.blindReplication?.registeredDevices.value ?? []) {
+    if (!deviceList.some(known => known.deviceId === device.deviceId)) deviceList.push({ deviceId: device.deviceId, name: device.displayName,
+      online: device.deviceId === props.localDeviceId, reconnecting: false, lastSeen: "", description: describeUserAgent(), tabs: 0 })
+  }
+  const activeDevices = member.self ? deviceList.filter(device => !props.myDeviceRemoval?.jobs.value.some(job => job.deviceId === device.deviceId && myDeviceRemovalComplete(job))) : deviceList
+  return { ...member, deviceList: activeDevices, devices: activeDevices.length,
+    onlineDevices: activeDevices.filter(device => device.online).length,
+    online: activeDevices.some(device => device.online), reconnecting: activeDevices.some(device => device.reconnecting) }
+}))
+const removedDeviceRecords = computed(() => props.myDeviceRemoval?.jobs.value.filter(myDeviceRemovalComplete) ?? [])
+
+watch(peopleMembers, members => {
+  if (!members.some(member => member.personId === selectedMemberId.value)) selectedMemberId.value = members.find(member => member.self)?.personId ?? members[0]?.personId ?? ""
+}, { immediate: true })
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 onMounted(() => { clock = setInterval(() => { now.value = Date.now() }, 500) })
@@ -197,15 +187,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
 </script>
 
 <template>
-  <ModalLayer class="overlay" :busy="leavingMesh" @close="emit('dismiss')">
-    <section class="dialog sync-dialog" role="dialog" aria-modal="true" aria-label="Device sync">
-      <div class="dialog-head">
-        <div>
-          <h2>{{ title }}</h2>
-        </div>
-        <button class="icon-button" type="button" aria-label="Close" :disabled="leavingMesh" @click="emit('dismiss')">×</button>
-      </div>
-
+  <DialogWindow window-id="device-sync" :workspace-id="workspaceId ?? 'local'" :title="title" aria-label="Device sync" :busy="leavingMesh" @close="emit('dismiss')">
+    <section class="dialog dialog-window-content sync-dialog">
       <DeviceSyncProblems v-if="blindReplication" :controller="blindReplication" />
 
       <section v-for="request in visiblePendingJoins" :key="request.id" class="join-request" aria-label="Access request">
@@ -217,11 +200,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <div class="dialog-actions"><button class="button button-primary" @click="emit('decideJoin', request.id, true)">Approve access</button><button class="button" @click="emit('decideJoin', request.id, false)">Decline</button></div>
       </section>
       <template v-if="step === 'members'">
-        <div class="sync-tabs" role="tablist" aria-label="Sync tasks" @keydown="navigateTabs">
-          <button v-for="tab in tabs" :id="`${tabId}-${tab}-tab`" :key="tab" type="button" role="tab"
-            :data-tab="tab" :aria-selected="activeTab === tab" :aria-controls="`${tabId}-${tab}-panel`"
-            :tabindex="activeTab === tab ? 0 : -1" :disabled="leavingMesh" @click="activeTab = tab">{{ tab }}</button>
-        </div>
         <p v-if="meshActionError" class="sync-error" role="alert">{{ meshActionError }}</p>
         <p v-if="leavingMesh" class="dialog-copy" role="status">Leaving workspace mesh…</p>
         <div v-show="activeTab === 'Participants'" :id="`${tabId}-Participants-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Participants-tab`">
@@ -239,7 +217,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p v-else>Source device is not currently listed among known members.</p>
         </section>
         <p v-else-if="networkOnline !== false && meshDiagnostic && (meshMembers || []).some(member => !member.self)" class="sync-error" role="status">{{ workspaceConnected ? "Sync issue:" : "Reconnect:" }} {{ meshDiagnostic }}</p>
-        <p class="dialog-copy">People and their known devices trusted by {{ invitationWorkspaceTitle || "this workspace" }}.</p>
+        <p class="dialog-copy">People and device records known to {{ invitationWorkspaceTitle || "this workspace" }}.</p>
         <p class="mesh-member-help">A person can have more than one device. Select a person to see the devices known here.</p>
         <div class="mesh-member-list" role="list" aria-label="Mesh members">
           <button
@@ -251,10 +229,9 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             :aria-pressed="selectedMemberId === member.personId"
             @click="selectedMemberId = member.personId"
           >
-            <RustyMark compact v-if="member.deviceList.length && member.deviceList.every(device => isKeeper(device.userAgent))" :online="member.online" :reconnecting="member.reconnecting" />
-            <ParticipantAvatar v-else :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" /><span class="mesh-member-presence" :class="member.online ? 'is-online' : member.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-            <span class="mesh-member-name"><strong>{{ member.deviceList.some(device => isKeeper(device.userAgent)) ? keeperDisplayName(member.name) : member.name }}</strong><small>{{ member.devices }} known {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small></span>
-            <span class="mesh-member-role">{{ member.personId === succession?.successorPersonId ? 'successor' : member.role }}</span>
+            <ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" /><span class="mesh-member-presence" :class="member.online ? 'is-online' : member.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
+            <span class="mesh-member-name"><strong>{{ member.name }}</strong><small>{{ member.devices }} known {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small></span>
+            <span class="mesh-member-role">{{ member.role }}{{ member.personId === succession?.successorPersonId ? ' · Named successor' : '' }}</span>
           </button>
           <p v-if="!peopleMembers.length" class="mesh-member-empty">No people connected to this board.</p>
         </div>
@@ -264,21 +241,33 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <ul class="mesh-device-list" role="list" :aria-label="`Devices for ${selectedMember.name}`">
             <li v-for="device in selectedMember.deviceList" :key="device.deviceId" class="mesh-device">
               <div class="mesh-device-head">
-                <RustyMark compact v-if="isKeeper(device.userAgent)" :online="device.online" :reconnecting="device.reconnecting" />
-                <span v-else class="mesh-device-presence" :class="device.online ? 'is-online' : device.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-                <strong>{{ device.deviceId === localDeviceId ? 'This device' : isKeeper(device.userAgent) ? keeperDisplayName(device.name) : device.name }}</strong>
+                <span class="mesh-device-presence" :class="device.online ? 'is-online' : device.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
+                <strong>{{ device.name || 'Unnamed device' }}<small v-if="device.deviceId === localDeviceId && device.name !== 'This device'"> · <span>This device</span></small></strong>
                 <code>{{ device.deviceId.slice(0, 8) }}</code>
               </div>
-              <small class="mesh-device-platform">{{ device.description }}</small>
+              <small class="mesh-device-platform">{{ device.description || 'Browser / OS unknown' }}</small>
               <small class="mesh-device-status">{{ deviceConnectionLabel(device) }}</small>
-              <DeviceRemovalControl v-if="device.deviceId !== localDeviceId && (canManageMesh || (selectedMember.self && currentRole === 'editor'))"
+              <MyDeviceRemovalControl v-if="selectedMember.self && device.deviceId !== localDeviceId && myDeviceRemoval"
+                :device-id="device.deviceId" :name="device.name" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
+              <DeviceRemovalControl v-else-if="!selectedMember.self && device.deviceId !== localDeviceId && canManageMesh"
                 :person-id="selectedMember.personId" :device-id="device.deviceId" :name="device.name" :active-workspace-id="activeWorkspaceId"
                 :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
-              <small v-if="!isKeeper(device.userAgent)">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
-              <small v-if="!device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
+              <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
+              <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
             </li>
           </ul>
-          <p v-if="selectedMember.deviceList.some(device => !isKeeper(device.userAgent))" class="dialog-copy">Browser session counts may include closed tabs.</p>
+          <details v-if="selectedMember.self && removedDeviceRecords.length" class="removed-device-history">
+            <summary>Removed device records ({{ removedDeviceRecords.length }})</summary>
+            <p class="dialog-copy">Kept separately from active devices on this browser. Signed workspace and server revocations remain authoritative; catalog records on other devices can still contain this device.</p>
+            <div v-for="record in removedDeviceRecords" :key="record.deviceId" class="mesh-device">
+              <strong>{{ record.name || 'Unnamed device' }}</strong><code>{{ record.deviceId.slice(0, 8) }}</code>
+              <MyDeviceRemovalControl v-if="myDeviceRemoval" :device-id="record.deviceId" :name="record.name" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
+            </div>
+          </details>
+          <p class="dialog-copy">Generated device labels do not identify hardware. Browser session counts may include closed tabs.</p>
+          <OwnershipRecoveryPanel :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
+            :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
+            @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
           <button v-if="canManageMesh && selectedMember.role === 'visitor'" class="button" type="button" @click="emit('promotePeer', selectedMember.personId)">Make editor</button>
           <p v-if="canManageMesh && selectedMember.role !== 'owner' && !selectedMember.online" class="dialog-copy">This member must be online before ownership can move.</p>
           <p v-else-if="canManageMesh && selectedMember.role !== 'owner'" class="dialog-copy">They become owner. You keep editor access.</p>
@@ -299,10 +288,15 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             </div>
           </section>
         </section>
-        <div class="dialog-actions sync-primary-actions"><button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button></div>
+        <div class="dialog-actions sync-primary-actions">
+          <button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button>
+          <button class="button" type="button" @click="emit('selectSyncAll')">Add my device</button>
         </div>
-        <div v-show="activeTab === 'Recovery'" :id="`${tabId}-Recovery-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Recovery-tab`">
-        <section class="sync-advanced" aria-label="Sync controls"><h3>Sync controls</h3>
+        </section>
+        <section class="sync-storage" aria-label="Persistent storage">
+          <RustyPanel v-if="blindReplication && activeWorkspaceId" :controller="blindReplication" :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
+          <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>
+        </section>
         <section v-if="confirmingLeave && hasMesh" class="mesh-member-action" aria-label="Leave mesh confirmation">
           <strong>Leave this workspace mesh?</strong>
           <p class="dialog-copy">Your identity leaves this workspace on all its devices. Your identity and other workspaces are kept. Local data stays as a read-only copy. An owner must transfer ownership first; another workspace device must be connected.</p>
@@ -312,31 +306,9 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           </div>
         </section>
         <div class="dialog-actions sync-primary-actions">
-          <button v-if="live" class="button button-quiet" type="button" @click="emit('stop')">Stop live sync</button>
-          <button v-else class="button button-quiet" type="button" @click="emit('start')">Start live sync</button>
           <button v-if="hasMesh" class="button button-danger" type="button" :disabled="currentRole === 'owner'" @click="confirmingLeave = true">Leave mesh</button>
         </div>
         <p v-if="hasMesh && currentRole === 'owner'" class="dialog-copy">Transfer ownership in Participants before leaving this workspace.</p>
-        </section>
-        <details v-if="hasMesh" class="sync-advanced" :open="successionOpen" @toggle="successionOpen = ($event.target as HTMLDetailsElement).open"><summary>Ownership succession</summary>
-          <OwnershipRecoveryPanel embedded :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
-            :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
-            @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
-        </details>
-
-        </div>
-        <div v-show="activeTab === 'Rusty'" :id="`${tabId}-Rusty-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Rusty-tab`">
-          <RustyPanel v-if="blindReplication && activeWorkspaceId" :controller="blindReplication" :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
-          <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>
-        </div>
-        <div v-show="activeTab === 'Backups'" :id="`${tabId}-Backups-panel`" role="tabpanel" :aria-labelledby="`${tabId}-Backups-tab`">
-        <WorkspaceFileActions :export-workspace="exportWorkspace" :create-private-recovery="createPrivateRecovery"
-          :private-recovery-unavailable-reason="privateRecoveryUnavailableReason"
-          :inspect-private-recovery="inspectPrivateRecovery" :restore-private-recovery="restorePrivateRecovery"
-          :has-workspace-copy="hasWorkspaceCopy" :workspace-title="workspaceTitle" :current-person-id="currentPersonId" />
-        <WorkspaceHistoryMaintenance v-if="blindReplication && activeWorkspaceId" :controller="blindReplication"
-          :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
-        </div>
       </template>
       <!-- Step: Direct Workspace Selection (supersedes former preliminary chooser) -->
       <template v-else-if="step === 'workspace-select' || step === 'workspace-host-select' || step === 'chooser'">
@@ -385,10 +357,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           </button>
         </section>
 
-        <WorkspaceFileActions :export-workspace="exportWorkspace" :create-private-recovery="createPrivateRecovery"
-          :private-recovery-unavailable-reason="privateRecoveryUnavailableReason"
-          :inspect-private-recovery="inspectPrivateRecovery" :restore-private-recovery="restorePrivateRecovery"
-          :has-workspace-copy="hasWorkspaceCopy" :workspace-title="workspaceTitle" :current-person-id="currentPersonId" />
       </template>
 
       <template v-else-if="step === 'enroll-host-preparing'">
@@ -481,7 +449,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <p class="dialog-copy" role="status">Connection interrupted. Retrying automatically…</p>
         <div class="dialog-actions">
           <button class="button button-quiet" type="button" @click="emit('dismiss')">Keep working</button>
-          <button class="button button-quiet" type="button" @click="emit('stop')">Stop sync</button>
         </div>
       </template>
 
@@ -499,7 +466,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <p class="sync-success" role="status">Live sync is on. Changes appear in both tabs.</p>
         <div class="dialog-actions">
           <button class="button button-primary" type="button" @click="emit('selectSyncWorkspace')">Invite peers</button>
-          <button class="button button-quiet" type="button" @click="emit('stop')">Stop live sync</button>
         </div>
       </template>
 
@@ -524,7 +490,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </div>
       </template>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>
 
 <style scoped src="./SyncDialog.css"></style>

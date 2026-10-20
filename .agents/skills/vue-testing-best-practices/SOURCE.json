@@ -1,0 +1,14 @@
+{
+  "repo": "vuejs-ai/skills",
+  "ref": "b3c62deb258b62791e57917b0960420151523d39",
+  "license": "MIT",
+  "notes": [
+    "Community/experimental, not official Vue. Preserve existing project component/state boundaries. Test setup/codegen examples can modify configuration; do not bootstrap over existing test setup."
+  ],
+  "path": "skills/vue-testing-best-practices",
+  "local_patches": [
+    "Append repository safety and host integration rules to SKILL.md."
+  ],
+  "review_date": "2026-10-19",
+  "upstream_url": "https://github.com/vuejs-ai/skills/tree/b3c62deb258b62791e57917b0960420151523d39/skills/vue-testing-best-practices"
+}

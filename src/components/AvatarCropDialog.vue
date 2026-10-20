@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue"
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import { avatarCropRect, AVATAR_MAX_ZOOM, AVATAR_SIZE, encodeAvatarCrop, validateImageSize } from "../avatarCrop"
 
 const PREVIEW_SIZE = AVATAR_SIZE * 2
-const props = defineProps<{ sourceUrl: string }>()
+const props = defineProps<{ sourceUrl: string; workspaceId?: string }>()
 const emit = defineEmits<{ save: [avatarData: string]; cancel: [] }>()
 const image = ref<HTMLImageElement | null>(null)
 const loaded = ref(false)
@@ -149,9 +149,8 @@ async function saveCrop() {
 </script>
 
 <template>
-  <ModalLayer class="overlay-level-120" :busy="saving" :protect-draft="true" @close="emit('cancel')">
-    <section class="dialog avatar-crop-dialog" role="dialog" aria-modal="true" aria-label="Crop profile photo" :aria-busy="saving">
-      <div class="dialog-head"><div><span class="eyebrow">Profile photo</span><h2>Choose a crop</h2></div><button class="icon-button" type="button" aria-label="Cancel photo crop" :disabled="saving" @click="emit('cancel')">×</button></div>
+  <DialogWindow window-id="avatar-crop" :workspace-id="workspaceId ?? 'local'" title="Crop profile photo" close-label="Cancel photo crop" :busy="saving" @close="emit('cancel')">
+    <section class="dialog dialog-window-content avatar-crop-dialog" :aria-busy="saving">
       <p id="avatar-crop-help" class="dialog-copy">Drag the photo to position it. Use arrow keys after focusing the crop area. Saved photo is a 128 × 128 square.</p>
       <div class="avatar-crop-controls">
         <div ref="frame" class="avatar-crop-frame" role="group" aria-label="Photo crop position" aria-describedby="avatar-crop-help" tabindex="0"
@@ -168,7 +167,7 @@ async function saveCrop() {
       <p v-if="saving" class="dialog-copy" role="status">Preparing photo…</p>
       <div class="dialog-actions"><button class="button" type="button" :disabled="saving" @click="emit('cancel')">Cancel</button><button class="button button-primary" type="button" :disabled="!loaded || saving" @click="saveCrop">Use photo</button></div>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>
 
 <style scoped>

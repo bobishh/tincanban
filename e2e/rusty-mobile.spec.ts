@@ -31,7 +31,7 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     await join.getByRole("button", { name: "Close", exact: true }).click()
     await host.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     const panel = page.getByRole("region", { name: "Rusty", exact: true })
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
@@ -39,8 +39,8 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
-    await phone.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync", exact: true }).click()
+
     await expect(phone.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await phone.goto("about:blank")
     await host.getByRole("button", { name: "Close", exact: true }).click()
@@ -58,15 +58,15 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     const source = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
     await page.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
     await page.goto("about:blank")
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
-    await phone.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync", exact: true }).click()
+
     await expect(phone.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", source!, { timeout: 30_000 })

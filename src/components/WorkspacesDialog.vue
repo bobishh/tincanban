@@ -28,9 +28,11 @@ const emit = defineEmits<{
   (e: "close"): void
   (e: "switch", id: string): void
   (e: "import"): void
+  (e: "busy", value: boolean): void
 }>()
 
 const isCreating = ref(false)
+const creatingWorkspace = ref(false)
 const editingId = ref("")
 const editingTitle = ref("")
 const renameError = ref("")
@@ -44,6 +46,8 @@ const scope = ref<"all" | "mine" | "shared">("all")
 const ownerIds = ref<Record<string, string>>({})
 const pinnedIds = ref<string[]>([])
 const recentIds = ref<string[]>([])
+watch(() => Boolean(props.importing || creatingWorkspace.value), busy => emit("busy", busy), { immediate: true })
+onBeforeUnmount(() => emit("busy", false))
 const preferenceKey = computed(() => `tincanban:board-directory:${props.currentPersonId || "local"}`)
 function ownerLabel(id: string) {
   const ownerId = ownerIds.value[id]
@@ -190,15 +194,8 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
 </script>
 
 <template>
-  <ModalLayer protect-draft :busy="importing" class="overlay" @close="emit('close')">
-    <section v-if="!isCreating" class="dialog" role="dialog" aria-modal="true" aria-label="Workspaces">
-      <div class="dialog-head">
-        <div>
-          <h2>Your workspaces</h2>
-        </div>
-        <button class="icon-button" type="button" aria-label="Close" :disabled="importing" @click="emit('close')">×</button>
-      </div>
-
+  <DialogWindow :window-id="`workspaces:${currentPersonId || 'local'}`" :workspace-id="activeWorkspaceId" :title="isCreating ? 'Create workspace' : 'Workspaces'" :busy="importing || creatingWorkspace" @close="emit('close')">
+    <section v-if="!isCreating" class="dialog dialog-window-content">
       <section class="board-directory" aria-label="Board discovery">
         <label class="board-directory-search">Search boards<input v-model="query" type="search" aria-label="Search boards" placeholder="Title or owner" /></label>
         <div class="board-directory-filters" role="group" aria-label="Board filters">
@@ -265,8 +262,8 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
       <p v-if="importError" class="form-error" role="alert">{{ importError }}</p>
     </section>
 
-    <CreateWorkspaceDialog v-else :create-workspace="createWorkspace" @close="isCreating = false" />
-  </ModalLayer>
+    <CreateWorkspaceDialog v-else :create-workspace="createWorkspace" @busy="creatingWorkspace = $event" @close="isCreating = false; creatingWorkspace = false" />
+  </DialogWindow>
 </template>
 
 <style scoped>

@@ -53,7 +53,7 @@ test.describe.serial("production automation proof", () => {
       await createJobSearchWorkspace(page, workspaceTitle)
 
       await page.getByRole("button", { name: "Sync", exact: true }).click()
-      await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
       await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(rustyOrigin)
@@ -212,7 +212,7 @@ test.describe.serial("production automation proof", () => {
     await page.goto(appOrigin, { waitUntil: "domcontentloaded" })
     await expect(page.getByRole("region", { name: workspaceTitle, exact: true })).toBeVisible()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()

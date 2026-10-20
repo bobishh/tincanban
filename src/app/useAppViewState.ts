@@ -38,7 +38,7 @@ export function useAppViewState(app: ReturnType<typeof useAppController>, routeC
       return names
     }),
     startupCoverVisible: computed(() => !boardPainted.value && !app.ui.state.startupError.value),
-    SyncDialog: createLazySyncDialog(sync.dismiss),
+    SyncDialog: createLazySyncDialog(sync.dismiss, () => activeWorkspace.id),
     reviewCausalChange: (hash: string) => app.workspace.reviewCausalChange(hash),
     dismissCausalChange: (hash: string) => app.workspace.dismissCausalChange(hash),
     restoreCausalChange: (hash: string) => app.workspace.restoreCausalChange(hash),

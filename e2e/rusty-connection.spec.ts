@@ -30,7 +30,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
   try {
     const origin = await start()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     const panel = page.getByRole("region", { name: "Rusty", exact: true })
     await expect(panel).toHaveCount(1)
     await expect(page.getByRole("heading", { name: /Blind Rusty|Keepers/ })).toHaveCount(0)
@@ -106,7 +106,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     }, { origin, scope })
     await page.reload()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
     expect(await readdir(join(directory, "scopes", scope!, "objects"))).toHaveLength(1)
@@ -122,7 +122,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await page.screenshot({ path: testInfo.outputPath("rusty-removal-pending.png") })
     await page.reload()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Removal pending", { exact: true })).toBeVisible()
     // Given an operator reset preserving service identity, stale connections remain removable.
     const serviceKey = await readFile(join(directory, "service-key"))

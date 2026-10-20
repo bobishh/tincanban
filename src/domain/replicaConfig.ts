@@ -2,6 +2,7 @@ import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-re
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindReplicaConfig, PrivateReplicaConfig, IdentityReplicaConfig } from "../product-replica"
 import { parseReplicaContentKeys, type ReplicaContentKeys } from "./replicaContentKeys"
+import { parseBoardStorageAccess } from "./boardStorageAccess"
 
 export function parseReplicaConfig(text: string): BlindReplicaConfig {
   const value: unknown = JSON.parse(text)
@@ -20,7 +21,8 @@ export function parseReplicaConfig(text: string): BlindReplicaConfig {
     readToken: input.readToken, writeToken: input.writeToken, ...keys, policyRevision: input.policyRevision,
     cursor: input.cursor, lastUploaded: input.lastUploaded, ...(input.removalPending ? { removalPending: true } : {}),
     ...(input.minimumWriterVersion === 2 ? { minimumWriterVersion: 2 as const } : {}),
-    ...(input.preferenceRevision ? { preferenceRevision: input.preferenceRevision } : {}) }
+    ...(input.preferenceRevision ? { preferenceRevision: input.preferenceRevision } : {}),
+    ...(input.boardAccess ? { boardAccess: parseBoardStorageAccess(input.boardAccess) } : {}) }
 }
 
 /** Parse a tagged same-person preference; an expected person binding is mandatory for identity scopes. */
@@ -53,7 +55,8 @@ function validateConnectionFields(value: Record<string, unknown>, requireWorkspa
   const isToken = (item: unknown) => isId(item) && (item as string).length >= 43
   const workspaceId = value.workspaceId
   if (!isId(value.scopeId) || (requireWorkspace && (typeof workspaceId !== "string" || workspaceId.length === 0 || workspaceId.length > 256)) ||
-    !isToken(value.readToken) || !isToken(value.writeToken)) throw new Error("Invalid Rusty local settings")
+    !isToken(value.readToken) || !(isToken(value.writeToken) || (requireWorkspace && value.writeToken === "" &&
+      parseBoardStorageAccess(value.boardAccess).mode === "read"))) throw new Error("Invalid Rusty local settings")
 }
 
 function validateIdentityFields(value: Record<string, unknown>, expectedPersonId?: string): void {

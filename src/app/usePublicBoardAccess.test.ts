@@ -1,11 +1,19 @@
-import { effectScope, nextTick, ref } from "vue"
+import { effectScope, nextTick, ref, shallowRef } from "vue"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { usePublicBoardAccess } from "./usePublicBoardAccess"
+import { createWorkspaceDoc } from "../test/boardFixture"
+import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
+import { createBrowserBoardPublication } from "./publicBoardPublication"
+import type * as PublicationClient from "../public/publicationClient"
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(), compare: vi.fn(), publish: vi.fn(), withdraw: vi.fn(),
   buildPolicy: vi.fn(), policyHash: vi.fn(), policyContentHash: vi.fn(),
+  chatRevision: vi.fn(),
+  chat: vi.fn(), attachment: vi.fn(),
 }))
+vi.mock("../chat/service", () => ({ readChatContentRevision: mocks.chatRevision, getChatScope: async () => "chat-scope", loadChat: mocks.chat }))
+vi.mock("../attachments", () => ({ readAttachment: mocks.attachment }))
 vi.mock("../public/publicationClient", () => ({
   readPublicBoardManagementState: mocks.read,
   hasLocalPublicBoardChanges: mocks.compare,
@@ -24,7 +32,7 @@ describe("public board owner access", () => {
   let workspaceId = ref("workspace-a")
   let sourceVersion = ref(1)
   let isOwner = ref(true)
-  let document = ref({ entities: {} })
+  let document = shallowRef({ entities: {} })
   let profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
 
   beforeEach(() => {
@@ -34,7 +42,7 @@ describe("public board owner access", () => {
     workspaceId = ref("workspace-a")
     sourceVersion = ref(1)
     isOwner = ref(true)
-    document = ref({ entities: {} })
+    document = shallowRef({ entities: {} })
     profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
     mocks.read.mockReset().mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
     mocks.compare.mockReset().mockResolvedValue(false)
@@ -45,6 +53,9 @@ describe("public board owner access", () => {
     }))
     mocks.policyHash.mockReset().mockResolvedValue("policy-hash")
     mocks.policyContentHash.mockReset().mockResolvedValue("policy-content-hash")
+    mocks.chatRevision.mockReset().mockResolvedValue("chat-revision-1")
+    mocks.chat.mockReset().mockResolvedValue({ messages: [], profiles: [] })
+    mocks.attachment.mockReset().mockResolvedValue(new TextEncoder().encode("public file"))
   })
   afterEach(() => { scope.stop(); vi.useRealTimers() })
 
@@ -102,8 +113,50 @@ describe("public board owner access", () => {
     await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2))
     await vi.advanceTimersByTimeAsync(20)
     expect(mocks.buildPolicy).toHaveBeenCalledTimes(2)
+    expect(mocks.compare).toHaveBeenCalledOnce()
     expect(mocks.publish).not.toHaveBeenCalled()
     expect(access.revision.value).toBe(3)
+  })
+
+  it("Given unchanged board heads, when persisted chat changes or server projection changes, then compare the visitor projection again", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    expect(mocks.compare).toHaveBeenCalledOnce()
+    mocks.chatRevision.mockResolvedValue("chat-revision-2")
+    await vi.advanceTimersByTimeAsync(15_020)
+    expect(mocks.compare).toHaveBeenCalledTimes(2)
+    mocks.read.mockResolvedValue({ revision: 6, published: true, hash: "remote-projection-hash", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(mocks.compare).toHaveBeenCalledTimes(3)
+  })
+
+  it("Given a published static board with a verified attachment, when repeated owner polls run, then read attachment bytes and full chat only during the first comparison", async () => {
+    const doc = createWorkspaceDoc("workspace-a", "Published", "person-a", "blank")
+    const board = Object.values(doc.entities).find(entity => "kind" in entity && entity.kind === "board")!
+    Object.assign(doc.entities, { file: { id: "file", kind: "document", title: "Handout", documentKind: "file", format: "plain", content: null,
+      file: { type: "blob", sha256: "digest", byteLength: 11, mimeType: "text/plain", fileName: "handout.txt" },
+      placement: { parentId: board.id, rank: "1/1" }, archivedAt: null } })
+    document.value = doc as never
+    boardId.value = board.id
+    const { projection } = await createBrowserBoardPublication(doc, doc.id, board.id)
+    const hash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(projection)))
+    mocks.chat.mockClear(); mocks.attachment.mockClear()
+    const actual = await vi.importActual<typeof PublicationClient>("../public/publicationClient")
+    mocks.compare.mockImplementation(actual.hasLocalPublicBoardChanges)
+    mocks.read.mockResolvedValue({ revision: 4, published: true, hash, deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(access.busy.value).toBe(false))
+    expect(access.error.value).toBe("")
+    await vi.advanceTimersByTimeAsync(45_020)
+    expect(mocks.read).toHaveBeenCalledTimes(4)
+    expect(mocks.compare).toHaveBeenCalledOnce()
+    expect(mocks.chat).toHaveBeenCalledOnce()
+    expect(mocks.attachment).toHaveBeenCalledOnce()
+    expect(mocks.publish).not.toHaveBeenCalled()
   })
 
   it("Given changed signed policy content, when syncing, then advance its generation even if the projected board is unchanged", async () => {

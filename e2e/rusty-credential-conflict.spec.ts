@@ -17,8 +17,8 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
   const rusty = await startRustyService(owner, baseURL!)
   const openRusty = async () => {
     await page.getByRole("button", { name: "Menu", exact: true }).click()
-    await page.getByRole("button", { name: "Sync & backups", exact: true }).click()
-    await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+
   }
   try {
     await openRusty()

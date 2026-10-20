@@ -14,7 +14,7 @@ describe("public delivery workspace coordinator", () => {
   let scope = effectScope()
   let ids = ref(["workspace-a", "workspace-b"])
   let localListener: ((workspaceId?: string) => void) | undefined
-  let chatListener: ((event: { workspaceId: string }) => void) | undefined
+  let chatListener: ((event: { workspaceId: string; contentChanged?: boolean }) => void) | undefined
   let readWorkspaceDoc: ReturnType<typeof vi.fn>
   let profile = ref({ identity: { personId: "owner" }, device: { deviceId: "device" } })
 
@@ -67,6 +67,30 @@ describe("public delivery workspace coordinator", () => {
     await vi.advanceTimersByTimeAsync(1)
     await vi.waitFor(() => expect(mocks.editorHook).toHaveBeenCalledTimes(1))
     expect(mocks.ownerHook).not.toHaveBeenCalled()
+  })
+
+  it("Given a verified owner board, when chat reports only transient typing, then keep its role and delivery scope until durable content changes", async () => {
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+      workspaceIds: () => ["workspace-a"], profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
+      debounceMs: 10, subscribeLocalChanges: () => () => {},
+      subscribeChat: listener => { chatListener = listener as typeof chatListener; return () => {} },
+    }))
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(10)
+    await vi.waitFor(() => expect(mocks.ownerHook).toHaveBeenCalledOnce())
+    const access = mocks.ownerHook.mock.calls[0]![0]
+    const version = access.sourceVersion()
+    chatListener?.({ workspaceId: "workspace-a", contentChanged: false })
+    expect(access.owner()).toBe(true)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(readWorkspaceDoc).toHaveBeenCalledOnce()
+    expect(access.sourceVersion()).toBe(version)
+    chatListener?.({ workspaceId: "workspace-a", contentChanged: true })
+    expect(access.owner()).toBe(false)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(readWorkspaceDoc).toHaveBeenCalledTimes(2)
+    expect(access.owner()).toBe(true)
+    expect(access.sourceVersion()).toBeGreaterThan(version)
   })
 
   it("does not duplicate the active board and reconsiders it when it leaves the UI", async () => {

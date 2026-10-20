@@ -194,11 +194,17 @@ export async function planPrivateReplicaConflictActivation(owner: string, captur
     writes: [{ key: stateKey(owner), value: encoded }] } }
 }
 
-export async function setReplicaPreference(owner: string, config: PrivateReplicaConfig, removed = false) {
+export async function setReplicaPreference(owner: string, config: PrivateReplicaConfig, removed = false,
+  expectedBinding?: string | null) {
   const checked = parsePrivateReplicaConfig(serialize(config), owner)
   const freeze = await replicaCredentialFreezeCondition(owner, checked)
   const before = await read(owner)
   const after = await mutate(owner, state => {
+    if (expectedBinding !== undefined) {
+      const selected = effectivePrivateReplicaConfigs(state).find(value => scopeKey(value) === scopeKey(checked))
+      if ((selected ? privateReplicaBinding(owner, selected) : null) !== expectedBinding) throw new ReplicaProgressConflictError()
+      if (!selected && state.entries.some(entry => scopeKey(entry) === scopeKey(checked))) return state
+    }
     assertNoWriterUpgrade(state, checked)
     return reconcileReplicaProgress(state, changeReplicaPreference(state, checked, removed))
   }, undefined, [freeze])

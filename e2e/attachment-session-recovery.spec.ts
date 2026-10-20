@@ -1,3 +1,4 @@
+import { openSettingsFromSync } from "./support/settingsNavigation"
 import { readFile } from "node:fs/promises"
 import { expect, test, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
@@ -256,9 +257,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   }
 
   async function makeWorkspaceRecovery() {
-    await editor.getByRole("button", { name: "Sync", exact: true }).click()
-    const sync = editor.getByRole("dialog", { name: "Device sync" })
-    await sync.getByRole("tab", { name: "Backups", exact: true }).click()
+    const sync = await openSettingsFromSync(editor, "Identity")
     const backups = sync.getByRole("region", { name: "Private workspace recovery" })
     const downloadEvent = editor.waitForEvent("download", { timeout: 60_000 })
     await backups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
@@ -300,14 +299,14 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     await ownerDetail.getByRole("button", { name: "Close detail", exact: true }).click()
 
     await owner.getByRole("button", { name: "Sync", exact: true }).click()
-    const ownerSync = owner.getByRole("dialog", { name: "Device sync" })
-    await ownerSync.getByRole("tab", { name: "Rusty", exact: true }).click()
+    const ownerSync = owner.getByRole("dialog", { name: /^(Device sync|Settings)$/ })
+
     const rustyPanel = owner.getByRole("region", { name: "Rusty", exact: true })
     await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await rustyPanel.getByLabel("Address", { exact: true }).fill(rusty.origin)
     await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await ownerSync.getByRole("tab", { name: "Backups", exact: true }).click()
+    await openSettingsFromSync(owner, "Workspace")
     const maintenance = ownerSync.getByRole("region", { name: "Workspace history" })
     await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
     await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })
@@ -340,7 +339,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
         delete target.__originalClaim
       })
     }
-    await ownerSync.getByRole("button", { name: "Close", exact: true }).click()
+    await ownerSync.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
 
     // A different authorized person proves the peer path does not depend on private Rusty credentials.
     await owner.getByRole("button", { name: "Sync", exact: true }).click()
@@ -411,7 +410,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     await expect(complete.getByRole("button", { name: "Restore recovered workspace", exact: true })).toBeDisabled()
     const completeWorkspaceRecoveryBytes = workspaceRecoveryBytes!
     const completeWorkspaceRecoveryWords = workspaceRecoveryWords
-    await editor.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+    await editor.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
     await inviteDialog.getByRole("button", { name: "Close", exact: true }).click()
 
     // A second export after both sources close must report unavailable archive objects without losing baseline admission evidence.
@@ -421,7 +420,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     rusty = undefined
     const incomplete = await makeWorkspaceRecovery()
     await expect(incomplete.getByText(/Incomplete backup · [1-9][0-9]* items unavailable/)).toBeVisible({ timeout: 30_000 })
-    await editor.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+    await editor.getByRole("dialog", { name: "Settings", exact: true }).getByRole("button", { name: "Dismiss", exact: true }).click()
 
     const recovery = await browser.newContext({ acceptDownloads: true })
     const restored = await recovery.newPage()
@@ -436,9 +435,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       await identityDialog.getByRole("checkbox").check()
       await Promise.all([restored.waitForEvent("load"), identityDialog.getByRole("button", { name: "Restore identity", exact: true }).click()])
 
-      await restored.getByRole("button", { name: "Sync", exact: true }).click()
-      const sync = restored.getByRole("dialog", { name: "Device sync" })
-      await sync.getByRole("tab", { name: "Backups", exact: true }).click()
+      const sync = await openSettingsFromSync(restored, "Identity")
       const backups = sync.getByRole("region", { name: "Private workspace recovery" })
       await backups.locator('input[type="file"]').setInputFiles({ name: "complete-workspace.jsonl", mimeType: "application/x-tincanban-history-recovery+jsonl", buffer: completeWorkspaceRecoveryBytes })
       await backups.getByLabel("Recovery words to inspect").fill(completeWorkspaceRecoveryWords)
@@ -446,7 +443,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       await expect(backups.getByText("Coverage: Complete backup", { exact: true })).toBeVisible()
       await backups.getByRole("button", { name: "Restore recovered workspace", exact: true }).click()
       await expect(backups.getByRole("status")).toContainText("Workspace recovery restored", { timeout: 30_000 })
-      await sync.getByRole("button", { name: "Close", exact: true }).click()
+      await sync.getByRole("button", { name: "Dismiss", exact: true }).click()
       await restored.getByRole("button", { name: "Open workspaces", exact: true }).click()
       await restored.getByRole("dialog", { name: "Workspaces" }).locator(".workspace-item")
         .filter({ hasText: "Cold history source" }).getByRole("button", { name: /^Cold history source Owner:/ }).click()
@@ -504,34 +501,34 @@ test("Given an owner with two archived history generations, when adding my phone
     await edit.getByRole("button", { name: "Save changes", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
-    const host = source.getByRole("dialog", { name: "Device sync" })
-    await host.getByRole("tab", { name: "Rusty", exact: true }).click()
+    const host = source.getByRole("dialog", { name: /^(Device sync|Settings)$/ })
+
     const panel = host.getByRole("region", { name: "Rusty", exact: true })
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(panel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await host.getByRole("tab", { name: "Backups", exact: true }).click()
-    const maintenance = host.getByRole("region", { name: "Workspace history" })
+    await openSettingsFromSync(source, "Workspace")
+    const maintenance = source.getByRole("dialog", { name: "Settings", exact: true }).getByRole("region", { name: "Workspace history" })
     await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
     await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" }).or(maintenance.getByRole("alert")))
       .toBeVisible({ timeout: 60_000 })
     await expect(maintenance.getByRole("alert")).toHaveCount(0)
-    await host.getByRole("button", { name: "Close", exact: true }).click()
+    await host.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
     await source.getByRole("button", { name: "Open Enrolled history — Current position", exact: true }).click()
     await detail.getByRole("button", { name: "Edit", exact: true }).click()
     await edit.getByLabel("Role *").fill("Latest position")
     await edit.getByRole("button", { name: "Save changes", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
-    await host.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(panel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await host.getByRole("tab", { name: "Backups", exact: true }).click()
+    await openSettingsFromSync(source, "Workspace")
     await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
     await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" }).or(maintenance.getByRole("alert")))
       .toBeVisible({ timeout: 60_000 })
     await expect(maintenance.getByRole("alert")).toHaveCount(0)
-    await host.getByRole("button", { name: "Close", exact: true }).click()
+    await host.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
     await host.getByRole("button", { name: "Add someone", exact: true }).click()
     await host.getByRole("button", { name: "Add my device", exact: true }).click()
@@ -546,16 +543,15 @@ test("Given an owner with two archived history generations, when adding my phone
     await expect(enrollment.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
     await enrollment.getByRole("button", { name: "Close", exact: true }).click()
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
-    await phone.getByRole("button", { name: "Sync & backups", exact: true }).click()
+    await phone.getByRole("button", { name: "Sync", exact: true }).click()
     const phoneSync = phone.getByRole("dialog", { name: "Device sync" })
-    await phoneSync.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(phoneSync.getByRole("region", { name: "Rusty", exact: true }).locator(":scope > .rusty-connections")
       .getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
 
-    await host.getByRole("button", { name: "Close", exact: true }).click()
+    await host.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()
-    const ownerSync = source.getByRole("dialog", { name: "Device sync" })
-    await ownerSync.getByRole("tab", { name: "Backups", exact: true }).click()
+    const ownerSync = await openSettingsFromSync(source, "Identity")
     const ownerBackups = ownerSync.getByRole("region", { name: "Private workspace recovery" })
     // Full recovery verifies both generations before publishing the encrypted file.
     // Enrollment may finish a protected admission-checkpoint refresh during capture.
@@ -568,19 +564,19 @@ test("Given an owner with two archived history generations, when adding my phone
     await ownerBackups.getByLabel("Recovery words to inspect").fill(workspaceRecoveryWords)
     await ownerBackups.getByRole("button", { name: "Inspect recovery file", exact: true }).click()
     await expect(ownerBackups.getByText("Coverage: Complete backup", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await ownerSync.getByRole("button", { name: "Close", exact: true }).click()
+    await ownerSync.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
     await sourceContext.close()
     sourceClosed = true
 
-    await phoneSync.getByRole("tab", { name: "Backups", exact: true }).click()
-    const phoneBackups = phoneSync.getByRole("region", { name: "Private workspace recovery" })
+    const phoneSettings = await openSettingsFromSync(phone, "Identity")
+    const phoneBackups = phoneSettings.getByRole("region", { name: "Private workspace recovery" })
     await expect(phoneBackups.getByRole("button", { name: "Create private recovery backup", exact: true })).toBeDisabled()
-    await expect(phoneBackups.getByText("Create a full backup on your original device. You can inspect and restore backups here.", { exact: true })).toBeVisible()
+    await expect(phoneBackups.getByText("Identity root private key is unavailable on this device. Backup creation requires that key. You can inspect and restore existing backups here.", { exact: true })).toBeVisible()
     await phoneBackups.locator('input[type="file"]').setInputFiles({ name: "two-generations.jsonl", mimeType: "application/x-tincanban-history-recovery+jsonl", buffer: workspaceRecoveryBytes! })
     await phoneBackups.getByLabel("Recovery words to inspect").fill(workspaceRecoveryWords)
     await phoneBackups.getByRole("button", { name: "Inspect recovery file", exact: true }).click()
     await expect(phoneBackups.getByText("Coverage: Complete backup", { exact: true })).toBeVisible({ timeout: 30_000 })
-    await phoneSync.getByRole("button", { name: "Close", exact: true }).click()
+    await phoneSettings.getByRole("button", { name: "Dismiss", exact: true }).click()
     await phone.getByRole("button", { name: "Open Enrolled history — Latest position", exact: true }).click()
     const phoneDetail = phone.getByRole("dialog", { name: "Item overview" })
     await phoneDetail.getByRole("button", { name: "History", exact: true }).click()

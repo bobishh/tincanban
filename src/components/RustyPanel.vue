@@ -4,7 +4,6 @@ import type { BlindReplicationController } from "../app/blindReplication"
 import { profileDeliveryStates, replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
 import RustyMark from "./RustyMark.vue"
 import RustyCredentialConflictRecovery from "./RustyCredentialConflictRecovery.vue"
-import RustyIdentityDeviceAccess from "./RustyIdentityDeviceAccess.vue"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
 const address = ref("")
 const adding = ref(false)
@@ -38,9 +37,9 @@ async function updateDeviceAccess(origin: string) {
 </script>
 <template>
   <section class="rusty-panel" aria-label="Rusty">
-    <div class="rusty-heading"><RustyMark compact /><h3>Rusty</h3></div>
-    <p class="dialog-copy">Keeps a copy of this board while your devices are offline.</p>
-    <RustyIdentityDeviceAccess :controller="controller" :owner="owner" />
+    <div class="rusty-heading"><RustyMark compact /><h3>Persistent storage · Rusty</h3></div>
+    <p class="dialog-copy">Rusty servers keep encrypted board copies available to board participants while the owner's devices are offline. Only the owner can add servers.</p>
+    <p v-if="!owner && !records.length && !boardConflicts.length" class="dialog-copy">No Rusty connection has reached this device for this board yet. Connect to a board participant to receive shared storage access.</p>
     <div v-for="conflict in boardConflicts" :key="`board/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
       <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
@@ -48,6 +47,7 @@ async function updateDeviceAccess(origin: string) {
     <ul v-if="records.length" class="rusty-connections">
       <li v-for="config in records" :key="`${config.origin}/${config.scopeId}`">
         <div class="rusty-connection"><strong class="technical-value">{{ config.origin }}</strong><span class="reading-explanation">{{ replicaStatus(config, controller.statuses.value[replicaKey(config)], controller.now.value) }}</span>
+          <small v-if="config.boardAccess">{{ config.boardAccess.mode === 'read' ? 'Board access · read only' : 'Board access · read and write' }}</small>
           <small v-if="controller.statuses.value[replicaKey(config)]?.lastSyncedAt">Last sync: <time :datetime="new Date(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!).toISOString()">{{ syncTime(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!) }}</time></small>
           <small v-if="controller.statuses.value[replicaKey(config)]?.error" role="alert">{{ controller.statuses.value[replicaKey(config)]!.error }}</small>
         </div>

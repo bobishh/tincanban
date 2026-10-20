@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import { ref } from "vue"
 import type { Item } from "../domain/model"
 
 const props = defineProps<{
   item: Item
+  workspaceId?: string
   candidateParents: { id: string; title: string }[]
 }>()
 
@@ -22,15 +23,8 @@ function handleConfirm() {
 </script>
 
 <template>
-  <ModalLayer class="overlay overlay-level-130" @close="emit('close')">
-    <section class="dialog" role="dialog" aria-modal="true" aria-label="Move item">
-      <div class="dialog-head">
-        <div>
-          <h2>Move item</h2>
-        </div>
-        <button class="icon-button" type="button" aria-label="Close" @click="emit('close')">×</button>
-      </div>
-
+  <DialogWindow :window-id="`item-move:${item.id}`" :workspace-id="workspaceId ?? 'local'" title="Move item" @close="emit('close')">
+    <section class="dialog dialog-window-content">
       <div class="dialog-body">
         <p>Moving <strong>{{ item.title }}</strong> to a new parent.</p>
         <label>
@@ -48,5 +42,5 @@ function handleConfirm() {
         <button class="button button-primary" type="button" @click="handleConfirm">Confirm move</button>
       </div>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>

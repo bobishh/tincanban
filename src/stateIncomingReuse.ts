@@ -39,8 +39,12 @@ export function copyIncomingPacket(bytes: Uint8Array, authorization: unknown): I
 export async function rememberIncomingPacket(packet: IncomingPacket, doc: Automerge.Doc<WorkspaceDocumentV2>, storage: WorkspaceStorage,
   credentialFingerprint: string, profile?: LocalProfile) {
   let context: Context
+  let fullyVerified: boolean
   // Lack of binding disables reuse; it cannot turn a durable success into an error.
-  try { context = await localWorkspaceAdmissionAuthority(doc, profile) } catch { return }
+  try {
+    context = await localWorkspaceAdmissionAuthority(doc, profile)
+    fullyVerified = fullyVerifiedIncomingInput(packet.authorization, admission)
+  } catch { return }
   if (context.credentialFingerprint !== credentialFingerprint) return
   const revision = await storage.readWorkspaceRevision(doc.id)
   if (!revision || (await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== context.fingerprint) return

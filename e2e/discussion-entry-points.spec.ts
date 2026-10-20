@@ -127,6 +127,38 @@ test("Given board and open card details, when right clicking then discussion act
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).locator(".draft-reference")).toContainText("Reedsy")
 })
 
+test("Given an item title in its detail header, when dragged or selected then it moves without selection discussion while context Discuss still references title", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 980 })
+  const item = await board(page)
+  const title = item.locator(".spatial-heading h2")
+  const original = await item.boundingBox()
+  const titleBounds = await title.boundingBox()
+  if (!original || !titleBounds) throw new Error("Item window title bounds missing")
+  await page.mouse.move(titleBounds.x + titleBounds.width / 2, titleBounds.y + titleBounds.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(titleBounds.x + titleBounds.width / 2 + 70, titleBounds.y + titleBounds.height / 2 + 35, { steps: 5 })
+  await page.mouse.up()
+  const moved = await item.boundingBox()
+  expect(moved!.x).toBeGreaterThan(original.x + 40)
+  expect(moved!.y).toBeGreaterThan(original.y + 15)
+
+  await title.evaluate(element => {
+    const range = document.createRange()
+    range.selectNodeContents(element)
+    const selection = window.getSelection()!
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new Event("selectionchange"))
+  })
+  await expect(page.getByRole("button", { name: "Discuss selection", exact: true })).toHaveCount(0)
+  await title.click({ button: "right" })
+  const menu = page.getByRole("menu", { name: "Discussion actions" })
+  await expect(menu).toBeVisible()
+  await menu.getByRole("menuitem", { name: "Discuss", exact: true }).click()
+  const discussion = page.getByRole("dialog", { name: /^Discussion/ })
+  await expect(discussion.locator(".draft-reference")).toContainText("Reedsy")
+})
+
 test("Given window controls, when maximize restore and cycle then fixed SVG controls keep header reachable", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 })
   const item = await board(page)

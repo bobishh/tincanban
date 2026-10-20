@@ -32,7 +32,7 @@ test("Markdown descriptions and templates render consistently without executing 
   await expect(detail.getByRole("checkbox").last()).toBeChecked()
   await expect(detail.locator("script")).toHaveCount(0)
   await expect(page.evaluate(() => (window as any).markdownExecuted)).resolves.toBeUndefined()
-  await page.locator(".overlay").evaluateAll(elements => Promise.all(elements.flatMap(element => element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})))))
+  await page.locator(".spatial-window").evaluateAll(elements => Promise.all(elements.flatMap(element => element.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})))))
   await page.screenshot({ path: testInfo.outputPath("markdown-description.png"), fullPage: true })
   await detail.getByRole("button", { name: "Close detail", exact: true }).click()
   await page.getByRole("button", { name: "Settings", exact: true }).click()

@@ -1,3 +1,4 @@
+import type * as irohRuntime from "../iroh"
 import { expect, it, vi } from "vitest"
 import { connectWorkspaceJoin, type WorkspaceJoinBrowserContext } from "./workspaceJoinBrowserFlow"
 import { createDeviceSyncState } from "./deviceSyncState"

@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 
 for (const width of [1280, 390]) {
-  test(`Given sync management at ${width}px, when offline and then paused, then status and actions remain readable`, async ({ page }, info) => {
+  test(`Given sync management at ${width}px, when offline, then status and actions remain readable`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 900 })
     await page.goto("/")
     await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
@@ -15,9 +15,9 @@ for (const width of [1280, 390]) {
     await expect(summary).toContainText("Devices offline")
     await expect(summary).toHaveCSS("background-color", "rgb(255, 212, 59)")
     await expect(dialog.getByRole("button", { name: "Add someone", exact: true })).not.toHaveClass(/button-primary/)
-    await dialog.getByText("Recovery", { exact: true }).click()
+
     await expect(dialog.getByRole("button", { name: "Leave mesh", exact: true })).toHaveClass(/button-danger/)
-    await dialog.getByRole("tab", { name: "Participants", exact: true }).click()
+
     const member = dialog.getByRole("button").filter({ hasText: "Bo" }).first()
     const centers = await member.evaluate(el => {
       const dot = el.querySelector(".mesh-member-presence")!.getBoundingClientRect()
@@ -25,18 +25,16 @@ for (const width of [1280, 390]) {
       return { dot: dot.y + dot.height / 2, badge: badge.y + badge.height / 2 }
     })
     expect(Math.abs(centers.dot - centers.badge)).toBeLessThan(1)
-    await dialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await dialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    const succession = dialog.getByRole("region", { name: "Ownership succession" })
-    await dialog.getByText("Ownership succession", { exact: true }).click()
+
+
+    const succession = dialog.locator(".recovery-panel")
+
     await expect(dialog.getByRole("heading", { name: "Ownership succession", exact: true })).toHaveCount(0)
     await expect(dialog.getByLabel("Recovery participant", { exact: true })).toHaveCount(0)
     await expect(succession.getByText("No recovery policy.", { exact: true })).toBeVisible()
     await expect(succession.locator(".sync-helper-text")).toHaveText("Add an editor in Participants before setting up ownership recovery.")
-    await dialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await dialog.getByRole("button", { name: "Stop live sync", exact: true }).click()
-    await expect(dialog.getByRole("button", { name: "Start live sync", exact: true })).toBeVisible()
-    await expect(summary).not.toHaveClass(/is-warning/)
+
+    await expect(dialog.getByRole("button", { name: /(?:Start|Stop) live sync/ })).toHaveCount(0)
     expect(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: info.outputPath(`sync-${width}.png`), fullPage: true })
     const colors = await page.locator(".topbar").evaluate(el => ({ header: getComputedStyle(el).backgroundColor, body: getComputedStyle(document.body).backgroundColor }))

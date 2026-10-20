@@ -10,9 +10,13 @@ import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplicati
 import { getReplicaConfigurations, setReplicaPreference } from "./privateReplicaRepository"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { replicaKey, replicaStatus } from "./replicationHealth"
+import { defaultStorage } from "../storage"
+import type { ChatChange } from "../chat/service"
+import type * as ChatService from "../chat/service"
 
 const runtime = vi.hoisted(() => ({
   cleanup: [] as Array<() => void>,
+  chatListeners: new Set<(event: ChatChange) => void>(),
   calls: [] as Array<{ purpose: string; config: unknown; profile?: LocalProfile; guard: () => void }>,
   identitySync: vi.fn(async () => true),
   workspaceSync: vi.fn(async () => true),
@@ -26,6 +30,13 @@ const runtime = vi.hoisted(() => ({
   writer: vi.fn(async (_app: unknown, config: BlindReplicaConfig, guard: () => void) => { guard(); return config }),
   fetchAttachment: vi.fn<(app: unknown, workspaceId: string, descriptor: BlobDescriptor,
     ensureCurrent: () => void, fallback?: (descriptor: BlobDescriptor) => Promise<Uint8Array | undefined>) => Promise<Uint8Array | undefined>>(),
+}))
+vi.mock("../chat/service", async original => ({
+  ...await original<typeof ChatService>(),
+  subscribeChat: (listener: (event: ChatChange) => void) => {
+    runtime.chatListeners.add(listener)
+    return () => { runtime.chatListeners.delete(listener) }
+  },
 }))
 vi.mock("./rustyAttachmentDelivery", async original => {
   const module = await original<typeof RustyAttachmentDelivery>()
@@ -60,6 +71,25 @@ vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runti
 
 import { useBlindReplication } from "./useBlindReplication"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
+
+it("Given an idle Rusty connection, when only typing presence changes, then skip storage sync but retain durable and legacy chat triggers", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await controller.syncNow()
+  const passes = runtime.workspaceSync.mock.calls.length
+  const change = { workspaceId: f.workspace.workspaceId, added: [], remote: false, history: false }
+  for (const listener of runtime.chatListeners) listener({ ...change, contentChanged: false })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes)
+  for (const listener of runtime.chatListeners) listener({ ...change, contentChanged: true })
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes + 1))
+  await controller.syncNow()
+  const afterDurable = runtime.workspaceSync.mock.calls.length
+  for (const listener of runtime.chatListeners) listener(change)
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledTimes(afterDurable + 1))
+})
 
 afterEach(() => {
   for (const cleanup of runtime.cleanup.splice(0)) cleanup()
@@ -101,6 +131,25 @@ async function fixture() {
 
 const file: BlobDescriptor = { kind: "blob", version: 1, blobId: `sha256:${"A".repeat(43)}`,
   name: "private.txt", mediaType: "text/plain", size: 2 }
+
+it.each(["textarea", "input", "contenteditable"])("Given a focused %s editor, when background sync completes, then postpone automatic history maintenance until focus leaves editing", async editor => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let active: { tagName: string; type?: string; isContentEditable?: boolean } | null = editor === "contenteditable"
+    ? { tagName: "DIV", isContentEditable: true } : { tagName: editor.toUpperCase(), type: "text" }
+  vi.stubGlobal("document", { get activeElement() { return active } })
+  const progress = vi.spyOn(defaultStorage, "ensureHistoryProgress").mockResolvedValue({ admittedChanges: 0, encodedBytes: 0 } as Awaited<ReturnType<typeof defaultStorage.ensureHistoryProgress>>)
+  try {
+    const controller = f.start()
+    await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+    await controller.syncNow()
+    expect(progress).not.toHaveBeenCalled()
+    expect(runtime.workspaceSync).toHaveBeenCalled()
+    active = null
+    await controller.syncNow()
+    await vi.waitFor(() => expect(progress).toHaveBeenCalled())
+  } finally { progress.mockRestore(); vi.unstubAllGlobals() }
+})
 
 it("Given confirmed history completion, when background synchronization starts and finishes, then retain its workspace notice", async () => {
   const f = await fixture()

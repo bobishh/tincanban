@@ -76,10 +76,9 @@ function projectBoardFields(board: Board | null): FieldDefinition[] {
   void stateRuntime.docVersion.value;
   const doc = stateRuntime.activeDoc;
   if (!doc || !board) return [];
-  return Object.values(doc.entities).filter(
+  return indexedChildren(childrenIndex(doc.entities), board.id).filter(
     (entity): entity is FieldDefinition =>
       hasEntityKind(entity, "field") &&
-      entity.placement.parentId === board.id &&
       !entity.archivedAt,
   );
 }

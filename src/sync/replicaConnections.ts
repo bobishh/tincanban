@@ -37,6 +37,7 @@ export async function connectWorkspaceReplica(app: ReturnType<typeof useTincanba
 export async function revokeWorkspaceReplicaConnection(config: BlindReplicaConfig, profile: LocalProfile,
   ensureCurrent: () => void): Promise<BlindReplicaConfig[]> {
   ensureCurrent()
+  if (config.boardAccess) throw new Error("Only the board owner can remove its Rusty connection")
   await approveRustyScope(config, profile, true)
   ensureCurrent()
   await recordReplicaPreference(profile.identity.personId, config, true)

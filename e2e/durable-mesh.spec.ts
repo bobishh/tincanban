@@ -186,7 +186,7 @@ test("Given a joined workspace with local data, when an editor leaves the mesh, 
 
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerDialog = page.getByRole("dialog", { name: "Device sync" })
-    await ownerDialog.getByText("Recovery", { exact: true }).click()
+
     await expect(ownerDialog.getByRole("button", { name: "Leave mesh" })).toBeDisabled()
     await expect(ownerDialog.getByText("Transfer ownership in Participants before leaving this workspace.", { exact: true })).toBeVisible()
     await expect(ownerDialog.getByRole("button", { name: "Close", exact: true }).first()).toBeEnabled()
@@ -194,7 +194,7 @@ test("Given a joined workspace with local data, when an editor leaves the mesh, 
 
     await guest.getByRole("button", { name: "Sync", exact: true }).click()
     const guestDialog = guest.getByRole("dialog", { name: "Device sync" })
-    await guestDialog.getByText("Recovery", { exact: true }).click()
+
     await guestDialog.getByRole("button", { name: "Leave mesh" }).click()
     await expect(guestDialog.getByText(/Your identity leaves this workspace on all its devices/)).toBeVisible()
     await guestDialog.getByRole("button", { name: "Leave mesh, keep copy" }).click()
@@ -202,7 +202,7 @@ test("Given a joined workspace with local data, when an editor leaves the mesh, 
     await expect(guestDialog.getByText(/^Reconnect:/)).toHaveCount(0)
     await expect(guestDialog.getByRole("alert")).toHaveCount(0)
     await expect(guestDialog.getByRole("button", { name: "Leave mesh" })).toHaveCount(0)
-    await guestDialog.getByRole("tab", { name: "Participants" }).click()
+
     const localMembers = guestDialog.getByRole("list", { name: "Mesh members" }).getByRole("button")
     await expect(localMembers).toHaveCount(1)
     await expect(localMembers).toContainText("You")
@@ -671,12 +671,12 @@ test("Given two tabs for one editor device, when their real Iroh nodes disconnec
     const dialog = host.getByRole("dialog", { name: "Device sync" })
     await dialog.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: "editor" }).click()
     await expect(dialog.getByRole("list", { name: /Devices for/ })).toContainText("2 known browser sessions")
-    await dialog.getByText("Recovery", { exact: true }).click()
-    await dialog.getByRole("button", { name: "Stop live sync" }).click()
+
+    await host.evaluate(() => (document.querySelector("#app") as any).__vue_app__._instance.setupState.sync.stopLiveSync())
     for (const page of [editor, secondEditor]) {
       await page.getByRole("button", { name: "Sync", exact: true }).click()
-      await page.getByRole("dialog", { name: "Device sync" }).getByText("Recovery", { exact: true }).click()
-      await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Stop live sync" }).click()
+
+      await page.evaluate(() => (document.querySelector("#app") as any).__vue_app__._instance.setupState.sync.stopLiveSync())
     }
     await expect.poll(async () => (await Promise.all([host, editor, secondEditor].map(meshResourceCounts))).every(counts => counts.heartbeats === 0 && counts.retryWaits === 0), { timeout: 30_000 }).toBe(true)
     await expect.poll(async () => (await Promise.all([host, editor, secondEditor].map(realIrohNodeOwnership))).every(ownership => ownership.active === 0), { timeout: 30_000 }).toBe(true)
@@ -1106,8 +1106,7 @@ test("Given an online editor, when owner selects them in mesh members and transf
     await expect(guest.getByRole("button", { name: "Edit board", exact: true })).toBeVisible()
     await expect(dialog.getByRole("button", { name: "Add someone" })).toHaveCount(0)
     await expect(dialog.getByRole("button", { name: /^Vote for/ })).toHaveCount(0)
-    await dialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await dialog.getByText("Ownership succession", { exact: true }).click()
+
     await expect(dialog.getByText("No recovery policy.", { exact: false })).toBeVisible()
     await guest.getByRole("button", { name: "Sync", exact: true }).click()
     const newOwnerDialog = guest.getByRole("dialog", { name: "Device sync" })
@@ -1116,7 +1115,7 @@ test("Given an online editor, when owner selects them in mesh members and transf
     await expect(knownDevices).toContainText(/Likely Chrome ·/)
     await expect(knownDevices).not.toContainText("User agent available in Advanced.")
     await expect(newOwnerDialog.getByText("Technical details", { exact: true })).toHaveCount(0)
-    await newOwnerDialog.getByRole("tab", { name: "Participants", exact: true }).click()
+
     await newOwnerDialog.getByRole("button", { name: "Add someone" }).click()
     await expect(newOwnerDialog.getByRole("button", { name: "Generate link" })).toBeEnabled()
     await newOwnerDialog.getByRole("button", { name: "Generate link" }).click()

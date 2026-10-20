@@ -9,7 +9,7 @@ export function createDeviceAccessRefresh(tincanban: ReturnType<typeof useTincan
   let loadedDeviceAccessOrigins = new Set<string>()
   async function refreshRevocations(profile: NonNullable<ReturnType<typeof tincanban.getCurrentProfile>>, owner: string, epoch: number) {
     const pinsByOrigin = new Map<string, Set<string>>()
-    for (const config of [...configs.value, ...identityConfigs.value]) {
+    for (const config of [...configs.value.filter(config => !config.boardAccess), ...identityConfigs.value]) {
       if (!pinsByOrigin.has(config.origin)) pinsByOrigin.set(config.origin, new Set())
       pinsByOrigin.get(config.origin)!.add(config.servicePublicKey)
     }
@@ -38,7 +38,7 @@ export function createDeviceAccessRefresh(tincanban: ReturnType<typeof useTincan
     const root = await defaultStorage.loadPersonalRoot()
     if (!isCurrent(owner, epoch)) return
     registeredDevices.value = root?.identity.personId === owner ? Object.values(root.devices).map(value => structuredClone(value)) : []
-    const origins = [...new Set([...configs.value, ...identityConfigs.value].map(config => config.origin))]
+    const origins = [...new Set([...configs.value.filter(config => !config.boardAccess), ...identityConfigs.value].map(config => config.origin))]
     const pending = await Promise.all(origins.map(async origin => {
       const { readCredentialTransitionJournal } = await import("./replicaCredentialTransitionJournal")
       if (!isCurrent(owner, epoch)) return undefined

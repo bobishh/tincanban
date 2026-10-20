@@ -8,7 +8,11 @@ describe("local window layouts", () => {
   })
   it("keeps minimum-size windows inside the viewport", () => {
     expect(clampWindowGeometry({ x: 10, y: 800, width: 20, height: 20 }, { width: 1000, height: 700 }))
-      .toEqual({ x: 12, y: 488, width: 280, height: 200 })
+      .toEqual({ x: 12, y: 488, width: 480, height: 200 })
+  })
+  it("upgrades saved narrow geometry while allowing the available mobile width", () => {
+    expect(clampWindowGeometry({ x: 4, y: 4, width: 280, height: 460 }, { width: 1000, height: 700 }).width).toBe(480)
+    expect(clampWindowGeometry({ x: 4, y: 4, width: 280, height: 460 }, { width: 320, height: 700 }).width).toBe(296)
   })
   it("reduces margins when viewport height becomes tiny", () => {
     const geometry = clampWindowGeometry({ x: 50, y: 50, width: 400, height: 400 }, { width: 390, height: 10 })

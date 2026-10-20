@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useId, useSlots, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, toRaw, useId, useSlots, watch } from "vue";
 import "./SchemaEditorDialog.css";
-import ModalLayer from "./ModalLayer.vue";
+import DialogWindow from "./DialogWindow.vue";
 import SettingsIdentitySection from "./SettingsIdentitySection.vue";
 import SchemaEntitySection from "./schema-editor/SchemaEntitySection.vue";
 import SchemaPreviewDialog from "./schema-editor/SchemaPreviewDialog.vue";
@@ -33,6 +33,7 @@ import {
 import type { Template } from "../types";
 
 const props = defineProps<{
+  workspaceId?: string;
   readOnly?: boolean;
   doc: WorkspaceDocumentV2;
   board: Board;
@@ -105,6 +106,8 @@ const draft = ref<BoardSchemaDraft>(
 const validationErrors = ref<SchemaValidationError[]>([]);
 const showPreview = ref(false);
 const schemaDiff = ref<SchemaDiff | null>(null);
+const reviewedSchema = ref<BoardSchemaDraft | null>(null);
+const reviewedHeads = ref<Heads | undefined>();
 const workspaceSettings = ref<WorkspaceSettingsDraft>(
   projectWorkspaceSettings(props.doc, props.board.id),
 );
@@ -155,13 +158,22 @@ function reviewEntityChanges() {
   validateCurrentDraft();
   if (validationErrors.value.length) return;
 
-  schemaDiff.value = diffBoardSchema(props.doc, props.board.id, draft.value);
+  reviewedSchema.value = structuredClone(toRaw(draft.value));
+  reviewedHeads.value = props.heads ? structuredClone(props.heads) : undefined;
+  schemaDiff.value = diffBoardSchema(props.doc, props.board.id, reviewedSchema.value);
   showPreview.value = true;
 }
 
 function confirmEntityChanges() {
-  emit("apply", { schema: draft.value, expectedHeads: props.heads });
+  if (!reviewedSchema.value) return;
+  emit("apply", { schema: reviewedSchema.value, expectedHeads: reviewedHeads.value });
+  cancelEntityReview();
+}
+
+function cancelEntityReview() {
   showPreview.value = false;
+  reviewedSchema.value = null;
+  reviewedHeads.value = undefined;
 }
 
 function updateWorkspaceJson(value: string) {
@@ -267,40 +279,12 @@ function invalidJsonError(error: unknown): SchemaValidationError {
 </script>
 
 <template>
-  <ModalLayer
-    protect-draft
-    class="overlay overlay-level-100"
-    @close="emit('close')"
-  >
+  <DialogWindow :window-id="mode === 'entity' ? 'entity-settings' : 'workspace-settings'" :workspace-id="workspaceId ?? 'local'" :title="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" :aria-label="mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'" close-label="Dismiss" :busy="saving || showPreview" @close="emit('close')">
     <section
-      class="dialog schema-editor-dialog"
+      class="dialog dialog-window-content schema-editor-dialog"
       :class="{ 'schema-entity-dialog': mode === 'entity', 'settings-dialog': mode === 'templates' }"
-      role="dialog"
-      aria-modal="true"
-      :aria-label="
-        mode === 'entity' ? `Edit ${editorEntityName}` : 'Settings'
-      "
+      :inert="showPreview"
     >
-      <header class="dialog-head">
-        <div>
-          <h2>
-            {{
-              mode === "entity"
-                ? `Edit ${editorEntityName}`
-                : "Settings"
-            }}
-          </h2>
-        </div>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="Dismiss"
-          @click="emit('close')"
-        >
-          ×
-        </button>
-      </header>
-
       <div
         v-if="validationErrors.length"
         class="schema-error-banner"
@@ -379,9 +363,10 @@ function invalidJsonError(error: unknown): SchemaValidationError {
       <SchemaPreviewDialog
         v-if="showPreview && schemaDiff"
         :diff="schemaDiff"
-        @close="showPreview = false"
+        :workspace-id="workspaceId ?? 'local'"
+        @close="cancelEntityReview"
         @confirm="confirmEntityChanges"
       />
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>

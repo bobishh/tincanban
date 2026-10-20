@@ -16,11 +16,6 @@ async function inviteEditor(host: Page, guest: Page) {
   await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
 }
 
-async function openSuccession(dialog: ReturnType<Page["getByRole"]>) {
-  const section = dialog.locator("details").filter({ hasText: "Ownership succession" })
-  if (await section.getAttribute("open") === null) await section.locator("summary").click()
-}
-
 async function selectMember(dialog: ReturnType<Page["getByRole"]>, text: string) {
   const member = dialog.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: text }).first()
   await expect(member).toBeVisible({ timeout: 30_000 })
@@ -49,17 +44,13 @@ test("Given an owner names an editor successor, when the editor claims successio
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerDialog = page.getByRole("dialog", { name: "Device sync" })
     await selectMember(ownerDialog, "editor")
-    await ownerDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await ownerDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(ownerDialog)
+
     await ownerDialog.getByRole("button", { name: "Name successor" }).click()
     await expect(ownerDialog.getByText(/Named successor:/)).toBeVisible()
 
     await successor.getByRole("button", { name: "Sync", exact: true }).click()
     const successorDialog = successor.getByRole("dialog", { name: "Device sync" })
-    await successorDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await successorDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(successorDialog)
+
     await expect(successorDialog.getByRole("button", { name: "Claim ownership" })).toBeVisible({ timeout: 30_000 })
     await page.close()
     await successorDialog.getByRole("button", { name: "Claim ownership" }).click()
@@ -86,26 +77,20 @@ test("Given editor quorum recovery, when a majority votes, then one vote stays p
 
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerDialog = page.getByRole("dialog", { name: "Device sync" })
-    await ownerDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await ownerDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(ownerDialog)
+
     await ownerDialog.getByRole("button", { name: "Enable editor quorum" }).click()
     await expect(ownerDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible()
 
     await first.getByRole("button", { name: "Sync", exact: true }).click()
     const firstDialog = first.getByRole("dialog", { name: "Device sync" })
-    await firstDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await firstDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(firstDialog)
+
     await expect(firstDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible({ timeout: 30_000 })
     await second.getByRole("button", { name: "Sync", exact: true }).click()
     const secondDialog = second.getByRole("dialog", { name: "Device sync" })
-    await secondDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await secondDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(secondDialog)
+
     await expect(secondDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible({ timeout: 30_000 })
     for (const dialog of [firstDialog, secondDialog]) {
-      await dialog.getByRole("tab", { name: "Participants", exact: true }).click()
+
       const otherEditor = dialog.getByRole("list", { name: "Mesh members" }).getByRole("button")
         .filter({ hasText: "editor", hasNotText: "You" }).first()
       await expect(otherEditor).toBeVisible({ timeout: 30_000 })
@@ -115,9 +100,7 @@ test("Given editor quorum recovery, when a majority votes, then one vote stays p
     await page.close()
 
     await selectMember(firstDialog, "You")
-    await firstDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await firstDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(firstDialog)
+
     await firstDialog.getByRole("button", { name: "Vote for yourself" }).click()
     await expect(firstDialog.getByRole("button", { name: "Claim ownership" })).toHaveCount(0)
     await expect(firstDialog.getByText(/^Vote recorded for /)).toBeVisible()
@@ -127,9 +110,7 @@ test("Given editor quorum recovery, when a majority votes, then one vote stays p
       .filter({ hasText: "editor", hasNotText: "You" }).first()
     await expect(candidate).toBeVisible({ timeout: 30_000 })
     await candidate.click()
-    await secondDialog.getByRole("tab", { name: "Participants", exact: true }).click()
-    await secondDialog.getByRole("tab", { name: "Recovery", exact: true }).click()
-    await openSuccession(secondDialog)
+
     await secondDialog.getByRole("button", { name: /^Vote for / }).click()
 
     await expect(firstDialog.getByRole("button", { name: "Claim ownership" })).toBeVisible({ timeout: 30_000 })

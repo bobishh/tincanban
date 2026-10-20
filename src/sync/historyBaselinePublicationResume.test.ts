@@ -1,3 +1,4 @@
+import type * as storageJournal from "../storageJournal"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
 import { beforeAll, beforeEach, expect, it, vi } from "vitest"

@@ -276,6 +276,53 @@ export class WorkspaceStorage extends StorageTransactionAccess {
       ensureContextCurrent, (transaction, id) => this.clearDeltaRows(transaction, id), onPhase)
   }
 
+  private async assertWorkspaceBasisCurrent(workspaceId: string, expected: WorkspaceRevisionBasis): Promise<void> {
+    const [revision, frontier, snapshot] = await Promise.all([
+      this.readWorkspaceRevision(workspaceId), this.readDeltaFrontier(workspaceId), readWorkspaceSnapshot(workspaceId),
+    ])
+    const changed = (revision ?? null) !== expected.revision ||
+      canonicalizeJson(frontier ?? null) !== canonicalizeJson(expected.frontier) ||
+      (snapshot?.receivedHistory?.baselineId ?? null) !== expected.baselineId
+    if (changed) throw new WorkspaceRevisionConflict()
+  }
+
+  private assertWorkspaceTransition(previous: StoredWorkspaceSnapshot | undefined, doc: Automerge.Doc<WorkspaceDocumentV2>): void {
+    if (!previous || doc.archivedAt || previous.archivedAt === null) return
+    const previousDoc = Automerge.load<WorkspaceDocumentV2>(previous.bytes)
+    try {
+      if (previousDoc.archivedAt && !includesWorkspaceHeads(doc, Automerge.getHeads(previousDoc)))
+        throw new Error("Workspace was archived in another tab")
+    } finally { Automerge.free(previousDoc) }
+  }
+
+  private async pendingWorkspaceCommand(workspaceId: string, command: WorkspaceCommitCommand | undefined) {
+    if (!command) return undefined
+    const saved = await this.getReceipt(workspaceId, command.receipt.transactionId)
+    if (saved && saved.changeHash !== command.receipt.changeHash)
+      throw new Error("Transaction ID conflicts with a committed change")
+    return saved ? undefined : command
+  }
+
+  private workspaceCommitUnchanged(committed: StoredWorkspaceSnapshot | undefined, snapshot: StoredWorkspaceSnapshot,
+    command: WorkspaceCommitCommand | undefined, compactHashes: string[], causalChanged: boolean,
+    checkpointChanged: boolean, incomingProofChanged: boolean): committed is StoredWorkspaceSnapshot {
+    return Boolean(committed && !command && compactHashes.length === 0 && !causalChanged && !checkpointChanged &&
+      !incomingProofChanged && committed.heads.join() === snapshot.heads.join())
+  }
+
+  private persistWorkspaceState(workspaceId: string, snapshot: StoredWorkspaceSnapshot,
+    previous: StoredWorkspaceSnapshot | undefined, previousProofs: WorkspaceChangeAuthorization[],
+    authorizations: WorkspaceChangeAuthorization[], command: WorkspaceCommitCommand | undefined,
+    causalChanged: boolean, checkpointChanged: boolean, activeTailChanges: number, activeTailBytes: number,
+    expectedBasis: WorkspaceRevisionBasis, compactChangeHashes: string[],
+    ensureContextCurrent: () => void, onPhase?: (phase: string) => void): Promise<boolean> {
+    if (typeof indexedDB === "undefined") return persistWorkspaceLocally(workspaceId, snapshot, previous, previousProofs,
+      authorizations, command, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes, ensureContextCurrent)
+    return persistWorkspaceInIndexedDb(workspaceId, snapshot, previous, previousProofs, authorizations, command,
+      causalChanged, checkpointChanged, activeTailChanges, activeTailBytes, expectedBasis, compactChangeHashes,
+      ensureContextCurrent, (transaction, id) => this.clearDeltaRows(transaction, id), onPhase)
+  }
+
   private rememberCommittedSnapshot(workspaceId: string, snapshot: StoredWorkspaceSnapshot, doc: Automerge.Doc<WorkspaceDocumentV2>) {
     this.delta.forget(workspaceId)
     this.inMemory.snapshots.set(workspaceId, snapshot)

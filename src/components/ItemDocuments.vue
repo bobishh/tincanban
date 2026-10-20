@@ -6,7 +6,7 @@ import type { FileReference } from "../domain/entitySchemas"
 import { attachmentMediaType, attachmentName, attachmentSize } from "../domain/filePresentation"
 import type { Document, DocumentInput } from "../types"
 import { isInlineNarrativeNote } from "../domain/narrative"
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import { attachmentCoveragePresentation, type AttachmentCoverageStatus } from "./attachmentCoveragePresentation"
 
 type DocumentDraft = Omit<DocumentInput, "itemId">
@@ -267,14 +267,13 @@ onBeforeUnmount(closePreview)
       </div>
     </div>
 
-    <ModalLayer v-if="preview" @close="closePreview">
-      <section class="dialog document-preview-dialog" role="dialog" aria-modal="true" aria-label="Document preview">
+    <DialogWindow v-if="preview" :window-id="`document-preview:${preview.id}`" :workspace-id="workspaceId ?? 'local'" title="Document preview" @close="closePreview">
+      <section class="dialog dialog-window-content document-preview-dialog">
         <div class="detail-head">
           <div>
             <span class="eyebrow">Preview</span>
             <h2>{{ preview.title }}</h2>
           </div>
-          <button class="icon-button" type="button" aria-label="Close" @click="closePreview">×</button>
         </div>
         <p v-if="previewError" class="document-preview-message">{{ previewError }}</p>
         <p v-if="previewTruncated" class="document-preview-message">Showing the beginning of this file. Download to read the full text.</p>
@@ -296,7 +295,7 @@ onBeforeUnmount(closePreview)
         />
         <iframe v-else-if="previewUrl" class="document-preview-frame" title="File preview" :src="previewUrl"></iframe>
       </section>
-    </ModalLayer>
+    </DialogWindow>
   </section>
 </template>
 

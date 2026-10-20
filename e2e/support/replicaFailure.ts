@@ -28,6 +28,6 @@ export async function mountReplicaFailure(mode: "local" | "network") {
   const root = document.createElement("div")
   document.body.appendChild(root)
   createApp({ render: () => h(SyncDialog, { step: "members", title: "Device sync", qrCode: "", inviteUrl: "", copyNotice: "", error: "",
-    initialTab: "Rusty", hasMesh: true, currentRole: "owner", currentPersonId: "fixture-person", canManageMesh: true,
+    hasMesh: true, currentRole: "owner", currentPersonId: "fixture-person", canManageMesh: true,
     activeWorkspaceId: "board", blindReplication: controller, meshMembers: [] }) }).mount(root)
 }

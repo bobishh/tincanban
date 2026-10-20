@@ -105,7 +105,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
     <Transition name="window" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
     <section v-if="!duplicate" ref="root" class="dialog spatial-window" :class="{ 'spatial-geometry-motion': geometryAnimating }" role="dialog" :aria-label="ariaLabel ?? title" tabindex="-1"
       :data-window-id="windowId" :style="style" @pointerdown.capture="raise" @focusin="raise" @keydown="keydown">
-      <header class="spatial-titlebar" tabindex="0" :aria-label="`Move ${title}: arrow keys`"
+      <header class="spatial-titlebar" tabindex="0" :aria-label="`Move ${title}: arrow keys`" :title="title"
         @pointerdown="start($event)" @pointermove="move" @pointerup="end" @pointercancel="end" @lostpointercapture="end" @keydown="arrow($event)">
         <div class="spatial-heading"><slot name="header"><strong>{{ title }}</strong></slot></div>
         <div class="spatial-controls">
@@ -130,9 +130,9 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-geometry-motion { transition: left var(--motion-panel) var(--motion-ease), top var(--motion-panel) var(--motion-ease), width var(--motion-panel) var(--motion-ease), height var(--motion-panel) var(--motion-ease); }
 .window-leave-active { transition: opacity var(--motion-fast) ease, transform var(--motion-panel) var(--motion-ease); pointer-events: none; }
 .window-leave-to { opacity: 0; transform: translateY(6px) scale(.985); }
-.spatial-titlebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex: none; padding: var(--space-2) var(--space-3); min-height: 52px; border-bottom: 2px solid var(--line, #171717); background: var(--soft, #eee); touch-action: none; user-select: none; cursor: grab; }
+.spatial-titlebar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex: none; box-sizing: border-box; height: 64px; min-height: 64px; max-height: 64px; padding: var(--space-2) var(--space-3); border-bottom: 2px solid var(--line, #171717); background: var(--soft, #eee); touch-action: none; user-select: none; cursor: grab; }
 .spatial-titlebar :deep([data-discussion-text]) { user-select: text; -webkit-user-select: text; cursor: text; }
-.spatial-heading { flex: 1; min-width: 0; padding-block: var(--space-1); line-height: 1.5; overflow-wrap: anywhere; }
+.spatial-heading { flex: 1; min-width: 0; padding-block: var(--space-1); line-height: 1.5; overflow: hidden; }
 .spatial-controls { display: flex; flex: none; gap: var(--space-1); }
 .spatial-controls button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: var(--space-2); }
 .spatial-controls svg, .spatial-resize svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -162,15 +162,21 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .status-strip { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-5); }.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }.detail-grid div { display: grid; gap: var(--space-1); }.detail-grid strong { font-size: 1rem; text-transform: capitalize; }.detail-grid small { color: var(--muted); font-size: .8rem; }.source-link { display: inline-block; margin: var(--space-4) 0 var(--space-1); color: var(--blue); font-weight: 700; text-decoration-thickness: 2px; text-underline-offset: 3px; }.detail-section { margin-top: var(--space-5); }.detail-copy { margin-top: var(--space-2); color: var(--ink); white-space: pre-wrap; }.section-heading { justify-content: space-between; align-items: end; }.section-heading h3 { margin-top: var(--space-1); font-size: 1rem; }.document-form { display: grid; gap: var(--space-3); margin-top: var(--space-3); padding: var(--space-3) 0 0; border: 0; }.document-row { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); padding: var(--space-2) 0; border: 0; }.document-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 2px solid var(--line); color: var(--blue); font: 700 .8rem/1 var(--site-font-sans); }.document-row div { display: grid; gap: var(--space-1); flex: 1; }.document-row strong { font-size: .8rem; }.document-row span { color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); }.open-path { color: var(--blue); font: 700 .8rem/1 var(--site-font-sans); }
 
 .spatial-window .spatial-detail { width: 100%; height: 100%; max-height: none; padding: var(--space-4); box-sizing: border-box; }
-.spatial-heading .detail-head { margin: 0; align-items: center; gap: var(--space-2); }
+.spatial-heading .detail-head { margin: 0; align-items: center; flex-wrap: nowrap; gap: var(--space-2); min-width: 0; }
 .spatial-heading .detail-head > :first-child { flex: 1; min-width: 0; }
-.spatial-heading .detail-head-actions { flex-shrink: 0; }
+.spatial-heading .detail-head-actions { flex: none; flex-shrink: 0; flex-wrap: nowrap; }
 .spatial-heading .detail-head-actions .button { white-space: nowrap; min-width: 44px; }
-.spatial-heading .detail-head h2 { margin: 0; font-size: var(--site-font-detail-heading-size, 1.5rem); }
+.spatial-heading .detail-head h2 { margin: 0; font-size: var(--site-font-detail-heading-size, 1.5rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spatial-heading > strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spatial-heading .detail-head p { margin: var(--space-1) 0 0; font-size: .85rem; line-height: 1.2; }
 .spatial-window .status-strip-shell { min-width: 0; flex: none; margin-bottom: var(--space-2); }
 .spatial-window .status-strip { flex: none; flex-wrap: wrap; margin-bottom: 0; padding: var(--space-1) var(--space-1) var(--space-1); }
 .spatial-window .status-strip button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease; }
+.detail-actions-row { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-4) var(--space-6); min-width: 0; margin-bottom: var(--space-5); }
+.detail-stages-row { min-width: 0; }
+.detail-stages-row .status-strip-shell { min-width: 0; }
+.detail-actions-row .quick-note-form { min-width: 0; }
+.detail-configured-fields { min-width: 0; }
 .scroll-frame .detail-section:first-child { margin-top: 0; }
 @media (max-width: 600px) {
   .spatial-titlebar { padding: var(--space-1) var(--space-2); gap: var(--space-1); }
@@ -182,11 +188,8 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 }
 .spatial-window .spatial-detail > .detail-layout { flex: 1; }
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); min-width: 0; }
-.detail-primary, .detail-inspector { min-width: 0; }
-.detail-inspector { display: grid; align-content: start; gap: var(--space-5); }
+.detail-primary { min-width: 0; }
 @container detail-window (min-width: 920px) {
-  .detail-layout { grid-template-columns: minmax(0, 1.8fr) minmax(270px, .9fr); gap: var(--space-6); align-items: start; }
-  .detail-primary { grid-column: 1; grid-row: 1; }
-  .detail-inspector { grid-column: 2; grid-row: 1; }
+  .detail-actions-row { grid-template-columns: minmax(0, 1.55fr) minmax(260px, .75fr); }
 }
 </style>

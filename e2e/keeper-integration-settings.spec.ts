@@ -132,7 +132,7 @@ test("Given a saved active keeper, when verified removal succeeds, then row stay
   await page.reload()
   await page.getByRole("button", { name: "Sync", exact: true }).click()
   const sync = page.getByRole("dialog", { name: "Device sync" })
-  await sync.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   await expect(sync.getByRole("button", { name: /Rusty keeper/ })).toHaveCount(0)
   await expect(sync.getByRole("button", { name: "Add Rusty", exact: true })).toBeVisible()
 })
@@ -148,10 +148,10 @@ for (const scenario of [
     await page.evaluate(async mode => (await import("/e2e/support/keeperSettings.ts")).mountKeeperSettings(mode, false), scenario.mode)
     if (scenario.width <= 768) {
       await page.getByRole("button", { name: "Menu" }).click()
-      await page.getByRole("button", { name: "Sync & backups" }).click()
+      await page.getByRole("button", { name: "Sync" }).click()
     } else await page.getByRole("button", { name: "Sync", exact: true }).click()
     const dialog = page.getByRole("dialog", { name: "Device sync" })
-    await dialog.getByRole("tab", { name: "Rusty", exact: true }).click()
+
     await expect(dialog.getByRole("button", { name: "Add Rusty", exact: true })).toBeVisible()
     await expect(dialog.getByRole("list", { name: "Keeper services" })).toHaveCount(0)
     await dialog.screenshot({ path: test.info().outputPath(`rusty-settings-${scenario.width}-${scenario.mode}.png`) })

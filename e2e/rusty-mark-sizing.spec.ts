@@ -3,7 +3,7 @@ import { expect, test } from "./support/coverage"
 test("Given the Rusty connection panel, when Rusty appears on desktop and narrow mobile, then Rusty keeps TinCanBan visual size without horizontal overflow", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-  await page.getByRole("tab", { name: "Rusty", exact: true }).click()
+
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
   const rusty = panel.getByRole("img", { name: "Rusty", exact: true })
   await expect(rusty).toBeVisible()

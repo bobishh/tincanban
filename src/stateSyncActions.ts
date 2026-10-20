@@ -198,7 +198,23 @@ function traceNewRemoteChanges(id: string, merged: Automerge.Doc<WorkspaceDocume
  * snapshot, proof record, or mesh credential. Invitation flows use this to
  * reject the whole set before any durable state becomes visible.
  */
-async function validateAuthorizedWorkspace(
+async function validateAuthorizedWorkspace(id: string, bytes: Uint8Array, authorization: unknown,
+  storage = defaultStorage, receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<void> {
+  await storage.withWorkspaceTransaction(id, async transaction => {
+    const { reuseIncomingPacket } = await import("./stateIncomingReuse")
+    if (!receivedBasis && await reuseIncomingPacket(id, { bytes, authorization }, transaction, stateRuntime.currentProfile ?? undefined)) return
+    const { remote, local } = await prepareAuthorizedWorkspace(id, bytes, authorization, storage, receivedBasis, transaction)
+    // Preflight only checks the candidate; ownership never escapes this boundary.
+    releaseAdmissionDocuments(remote, local)
+  })
+}
+
+function releaseAdmissionDocuments(remote: Automerge.Doc<WorkspaceDocumentV2>, local?: Automerge.Doc<WorkspaceDocumentV2>) {
+  Automerge.free(remote)
+  if (local) Automerge.free(local)
+}
+
+async function prepareAuthorizedWorkspace(
   id: string,
   bytes: Uint8Array,
   authorization: unknown,

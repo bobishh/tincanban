@@ -1,5 +1,5 @@
 import { canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelope } from "../domain/identity"
-import { compareAndSwapLocal, readLocal } from "../localDb"
+import { compareAndSwapLocal, readLocal, listLocalKeys } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { verifyAutomationInstanceIdentity, type AutomationInstanceIdentityProof } from "../domain/automationInstanceIdentity"
 import type { AutomationInstanceDescription } from "../domain/automationInstanceData"
@@ -359,4 +359,26 @@ export async function completeCredentialTransitionJournal(profile: LocalProfile,
       { key: privateReplicaStateStorageKey(owner), value: stateRaw }, { key: freezeKey, value: null }, { key: archiveKey, value: archived }],
       writes: [{ key, value: null }, { key: archiveKey, value: raw }] }, guard)) throw new Error("Fresh-epoch acknowledgment changed before completion; retry required")
   })
+}
+
+/** Completed signed audit is the retry receipt after an outer workflow loses its final local reply. */
+export async function readCompletedDeviceRevocation(profile: LocalProfile, origin: string, deviceId: string,
+  guard: () => void): Promise<string | undefined> {
+  origin = blindOrigin(origin)
+  const prefix = `${await credentialTransitionJournalKey(profile.identity.personId, origin)}.completed.`
+  guard()
+  const keys = (await listLocalKeys()).filter(key => key.startsWith(prefix))
+  guard()
+  for (const key of keys) {
+    const raw = await readLocal(key)
+    guard()
+    if (!raw || encoder.encode(raw).length > 32 * 1024 * 1024) throw new Error("Completed credential audit is unavailable or too large")
+    const captured = captureTransitionJournal(JSON.parse(raw))
+    if (captured.freeze.revokedDeviceId !== deviceId) continue
+    const journal = await validateJournal(captured, profile)
+    guard()
+    if (journal.freeze.origin === origin && journal.freeze.revokedDeviceId === deviceId &&
+        journal.activated && journal.person?.payload.revokedDeviceIds.includes(deviceId)) return journal.freeze.servicePublicKey
+  }
+  return undefined
 }

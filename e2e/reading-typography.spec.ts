@@ -75,7 +75,7 @@ test("Given 74 long bilingual cards, when board is viewed on desktop and mobile,
   await page.setViewportSize({ width: 1440, height: 1000 })
   await makeLongBoard(page)
   await expect(page.locator(".lead-card strong").first()).toHaveCSS("font-family", /Caveat/)
-  await expect(page.locator(".card-notes").first()).toHaveCSS("font-family", /Caveat/)
+  await expect(page.locator(".card-notes").first()).toHaveCSS("font-family", /Fira Sans/)
   await expect(page.locator(".card-notes").first()).toContainText("Старший инженер платформы")
   await expect(page.locator(".brand-name")).toHaveCSS("font-family", /Caveat/)
   await expect(page.locator(".column-title h2").first()).toHaveCSS("font-family", /Caveat/)

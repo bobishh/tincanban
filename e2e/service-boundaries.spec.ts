@@ -22,9 +22,9 @@ for (const width of [390, 1440]) {
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     if (width < 640) {
       await page.getByRole("button", { name: "Menu", exact: true }).click()
-      await page.getByRole("button", { name: "Sync & backups", exact: true }).click()
+      await page.getByRole("button", { name: "Sync", exact: true }).click()
     } else await page.getByRole("button", { name: "Sync", exact: true }).click()
     const sync = page.getByRole("dialog", { name: "Device sync" })
-    await expect(sync.getByRole("tab", { name: "Rusty", exact: true })).toBeVisible()
+    await expect(sync.getByRole("region", { name: "Rusty", exact: true })).toBeVisible()
   })
 }

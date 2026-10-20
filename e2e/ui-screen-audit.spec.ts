@@ -80,15 +80,15 @@ test("Given a recovery backup is generated, When restoration words or the next b
   await expect(recovery.locator(".recovery-words")).toHaveText(generated!)
 })
 
-test("Given Device sync, When Recovery opens, Then recovery controls stay visible without a technical device dump", async ({ page }) => {
+test("Given Device sync, When participants open, Then succession actions stay beside participants without a technical device dump", async ({ page }) => {
   await page.goto("/")
   await page.evaluate(async () => { await (await import("/e2e/support/keeperDialog.ts")).mountSyncLayoutDialog() })
   const sync = page.getByRole("dialog", { name: "Device sync" })
-  await sync.getByRole("tab", { name: "Recovery", exact: true }).click()
-  await expect(sync.getByRole("region", { name: "Sync controls" })).toBeVisible()
+
+  await expect(sync.getByRole("button", { name: "Leave mesh", exact: true })).toBeVisible()
   await expect(sync.getByText("Technical details", { exact: true })).toHaveCount(0)
   await expect(sync.locator(".mesh-device-ua")).toHaveCount(0)
-  await sync.getByText("Ownership succession", { exact: true }).click()
+
   await expect(sync.getByRole("button", { name: "Enable editor quorum" })).toBeDisabled()
 })
 
@@ -97,13 +97,12 @@ test("Given backup creation is pending or fails, When Export is selected, Then d
   await page.goto("/")
   await page.evaluate(async () => {
     let attempts = 0
-    await (await import("/e2e/support/keeperDialog.ts")).mountSyncLayoutDialog({ exportWorkspace: async () => {
+    await (await import("/e2e/support/keeperDialog.ts")).mountWorkspaceFileActions(async () => {
       await new Promise(resolve => setTimeout(resolve, 300))
       if (++attempts === 1) throw new Error("Backup storage unavailable")
-    } })
+    })
   })
-  const sync = page.getByRole("dialog", { name: "Device sync" })
-  await sync.getByRole("tab", { name: "Backups", exact: true }).click()
+  const sync = page.getByRole("region", { name: "Workspace files", exact: true })
   await sync.getByRole("button", { name: "Export .tincanban", exact: true }).click()
   await expect(sync.getByRole("button", { name: "Exporting…", exact: true })).toBeDisabled()
   await expect(sync.getByRole("alert")).toHaveText("Backup storage unavailable")

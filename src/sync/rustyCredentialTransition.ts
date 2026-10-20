@@ -15,7 +15,7 @@ import { discoverWorkspaceReplicaWorkers } from "./workspaceReplicaWorkers"
 import { assertAutomationStorageRotationSupported, prepareAutomationStorageRotation, readAutomationInstance,
   rotateAutomationStorageCredentials } from "../app/automationInstanceClient"
 import { activateCredentialTransitionJournal, beginCredentialTransitionJournal, captureCredentialTransitionWorkers,
-  completeCredentialTransitionJournal, confirmCredentialTransitionPerson, confirmCredentialTransitionScope,
+  completeCredentialTransitionJournal, readCompletedDeviceRevocation, confirmCredentialTransitionPerson, confirmCredentialTransitionScope,
   confirmCredentialTransitionWorker, readCredentialTransitionJournal, type CredentialTransitionJournal } from "./replicaCredentialTransitionJournal"
 import { withLocalStateWriteLock } from "../localStateLock"
 import type { PrivateReplicaConfig } from "./blindReplication"
@@ -54,6 +54,16 @@ async function revokeLockedIdentityDevice(seed: TransitionSeed) {
   guardIdentity()
   let journal = await readCredentialTransitionJournal(profile, origin)
   if (journal && journal.freeze.revokedDeviceId !== deviceId) throw new Error("Resume the already pending device-access transition first")
+  if (!journal) {
+    const completedPin = await readCompletedDeviceRevocation(profile, origin, deviceId, guardIdentity)
+    guardIdentity()
+    if (completedPin) {
+      const current = (await getPrivateReplicaConfigurations(profile.identity.personId)).filter(config => config.origin === origin)
+      guardIdentity()
+      if (current.some(config => config.servicePublicKey !== completedPin)) throw new Error("Rusty service pin changed after recorded device removal")
+      return
+    }
+  }
   if (journal?.activated) return finishActivatedTransition(app, profile, origin, journal, guardIdentity)
   const phase = await prepareTransitionPhase(seed, journal)
   journal ??= await beginCredentialTransitionJournal(phase.pending, profile, guardIdentity)

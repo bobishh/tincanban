@@ -21,19 +21,12 @@ test("Given Device sync members are open, when the user wants to dismiss it, the
   await expect(dialog).toBeHidden()
 })
 
-test("Given live sync is enabled without a connected peer, when Sync opens, then Stop remains available until explicitly stopped", async ({ page }) => {
+test("Given automatic live sync, when Sync opens, then participants and storage are visible without public transport switches", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Sync", exact: true }).click()
-
   const dialog = page.getByRole("dialog", { name: "Device sync" })
-  await dialog.getByText("Recovery", { exact: true }).click()
-  await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
-
-  await dialog.getByRole("button", { name: "Stop live sync", exact: true }).click()
-  await expect(dialog.getByRole("button", { name: "Start live sync", exact: true })).toBeVisible()
-
-  await dialog.getByRole("button", { name: "Start live sync", exact: true }).click()
-  await expect(dialog.getByRole("button", { name: "Stop live sync", exact: true })).toBeVisible()
+  await expect(dialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
+  await expect(dialog.getByRole("button", { name: /(?:Start|Stop) live sync/ })).toHaveCount(0)
 })
 
 test("Given Rusty is current and no other browser is online, when Device sync opens, then show idle peer status and keep peer errors visible", async ({ page }) => {

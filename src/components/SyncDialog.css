@@ -1,3 +1,4 @@
+.dialog.sync-dialog.dialog-window-content { max-width: none; padding: var(--space-4); box-sizing: border-box; }
 .sync-workspace-list { display: grid; gap: var(--space-2); max-height: 220px; margin: var(--space-4) 0; overflow-y: auto; }
 .mesh-member-list { display: grid; gap: var(--space-2); max-height: 300px; margin: var(--space-4) 0; padding: var(--space-1) var(--space-1) var(--space-1) var(--space-1); overflow-y: auto; overscroll-behavior-y: contain; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
 .mesh-member { width: 100%; min-width: 0; min-height: 58px; display: grid; grid-template-columns: 32px 10px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border: 2px solid var(--line); color: var(--ink); text-align: left; }
@@ -46,14 +47,7 @@
 .sync-recovery-note { display: grid; gap: var(--space-1); }
 .sync-recovery-note p { margin: 0; }
 .sync-helper-text { color: var(--muted); font-size: .9rem; line-height: 1.4; }
-.sync-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); margin-bottom: var(--space-4); border-bottom: 2px solid var(--line); }
-.sync-tabs button { min-width: 0; min-height: var(--icon-size); padding: var(--space-2) var(--space-1); font-size: 1rem; border: 2px solid transparent; border-bottom: 0; }
-.sync-tabs button[aria-selected="true"] { background: var(--yellow); border-color: var(--line); font-weight: 700; }
-.sync-tabs button:focus-visible { outline: 3px dotted var(--ink); outline-offset: -3px; }
-.sync-advanced { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--line); }
-.sync-advanced .mesh-member-action { margin-top: var(--space-3); }
-
-@media (max-width: 640px) {
-  .sync-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 0; }
-  .sync-tabs button { border-bottom: 2px solid var(--line); }
-}
+.sync-participants { display: grid; gap: var(--space-2); }
+.sync-participants h3 { margin: 0; }
+.sync-storage { margin-top: var(--space-5); padding: var(--space-4); border: 2px solid var(--line); background: var(--paper); }
+.sync-participants > .dialog-copy, .sync-participants > .mesh-member-help, .sync-participants > .mesh-member-list, .sync-participants > .mesh-connection-summary { margin: 0; }

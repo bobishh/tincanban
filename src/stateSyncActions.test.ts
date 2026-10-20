@@ -11,6 +11,10 @@ import { bootstrapIdentity, resetIdentityStorageForTest } from "./domain/identit
 import { createPersonalRoot } from "./domain/personalRoot"
 import { clearMeshTrace, meshTraceSnapshot } from "./sync/meshTrace"
 
+beforeAll(async () => {
+  await Automerge.initializeWasm(new Uint8Array(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")))
+})
+
 const originalDoc = stateRuntime.activeDoc
 const originalProfile = stateRuntime.currentProfile
 

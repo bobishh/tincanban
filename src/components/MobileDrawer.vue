@@ -107,7 +107,7 @@ function handleAction(event: () => void) {
               type="button"
               @click="handleAction(() => emit('openSync'))"
             >
-              <span>Sync & backups</span>
+              <span>Sync</span>
               <span class="drawer-item-arrow" aria-hidden="true">→</span>
             </button>
           </div>

@@ -1,0 +1,79 @@
+import { afterEach, expect, it, vi } from "vitest"
+import { effectScope, ref } from "vue"
+import { IDBFactory } from "fake-indexeddb"
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+async function fixture() {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.resetModules()
+  const { useMyDeviceRemoval } = await import("./useMyDeviceRemoval")
+  const { readLocal } = await import("../localDb")
+  let personId = "test-owner"
+  const profile = () => ({ identity: { personId }, device: { deviceId: "current" }, certificate: { signature: "original" } })
+  const calls: string[] = []
+  let offline = true
+  const replication = { configs: ref([{ origin: "https://online.example" }, { origin: "https://offline.example" }]), identityConfigs: ref([]), currentDeviceId: ref("current"), registeredDevices: ref([{ deviceId: "current", displayName: "Here" }, { deviceId: "old", displayName: "JoyfulPapaya" }]), revokeIdentityDevice: async (origin: string, id: string) => { calls.push(`${origin}|${id}`); if (origin.includes("offline") && offline) throw new Error("Server offline") } }
+  const core = { tincanban: { getCurrentProfile: profile, ready: ref(true) }, blindReplication: replication, sync: {
+    removableDeviceWorkspaces: vi.fn(async () => [{ id: "board", title: "Board" }]),
+    removeDevice: async (person: string, id: string, ids: string[]) => {
+      const persisted = await readLocal(`tincanban.my-device-removals.v1.${person}`)
+      expect(persisted).toContain('"deviceId":"old"')
+      expect(persisted).toContain("https://offline.example")
+      calls.push(`${ids.join(",")}|${id}`)
+    },
+  } }
+  const scope = effectScope()
+  const controller = scope.run(() => useMyDeviceRemoval(core as never))!
+  return { controller, core, calls, useMyDeviceRemoval, scope, online: () => { offline = false }, changeIdentity: () => { personId = "other-owner" } }
+}
+
+it("Given owner-shared board storage, when reviewing identity device removal, then do not request management of another owner's Rusty", async () => {
+  const f = await fixture()
+  f.core.blindReplication.configs.value.push({ origin: "https://shared.example", boardAccess: { mode: "read" } } as never)
+  expect(f.controller.origins.value).not.toContain("https://shared.example")
+  f.scope.stop()
+})
+
+it("Given a persisted exact device removal with one offline origin, when reloaded after configuration changes, then retry only original unfinished scope and retain completed records", async () => {
+  const f = await fixture()
+  await f.controller.remove(await f.controller.prepare("old"))
+  expect(f.controller.jobs.value[0]?.origins["https://offline.example"].error).toBe("Server offline")
+  f.scope.stop()
+  f.core.blindReplication.configs.value.push({ origin: "https://new.example" })
+  f.core.sync.removableDeviceWorkspaces.mockResolvedValue([{ id: "other-board", title: "Other" }])
+  f.online()
+  const scope = effectScope(), reloaded = scope.run(() => f.useMyDeviceRemoval(f.core as never))!
+  await reloaded.refresh()
+  await reloaded.remove(await reloaded.prepare("old"))
+  expect(f.calls).toEqual(["board|old", "https://online.example|old", "https://offline.example|old", "https://offline.example|old"])
+  expect(f.core.sync.removableDeviceWorkspaces).toHaveBeenCalledTimes(1)
+  expect(reloaded.jobs.value[0]?.origins["https://new.example"]).toBeUndefined()
+  await reloaded.remove(await reloaded.prepare("old", true))
+  expect(f.calls.at(-1)).toBe("https://new.example|old")
+  expect(reloaded.jobs.value[0]?.workspaces).toEqual({ board: "removed" })
+  expect(f.core.blindReplication.registeredDevices.value).toHaveLength(2)
+  scope.stop()
+})
+
+it("Given the current device or another identity, when requesting removal, then refuse without changing device access", async () => {
+  const f = await fixture()
+  await expect(f.controller.prepare("current")).rejects.toThrow("another device")
+  await expect(f.controller.prepare("stranger")).rejects.toThrow("registered device")
+  expect(f.calls).toEqual([])
+  f.core.sync.removableDeviceWorkspaces.mockImplementation(async () => { f.changeIdentity(); return [{ id: "board", title: "Board" }] })
+  await expect(f.controller.prepare("old")).rejects.toThrow("Identity changed")
+  expect(f.calls).toEqual([])
+  f.scope.stop()
+})
+
+it("Given exact scopes were reviewed, when another server is configured behind the confirmation, then execution keeps the reviewed snapshot", async () => {
+  const f = await fixture()
+  const prepared = await f.controller.prepare("old")
+  expect(f.calls).toEqual([])
+  expect(prepared.job.workspaceTitles).toEqual({ board: "Board" })
+  f.core.blindReplication.configs.value.push({ origin: "https://late.example" })
+  await f.controller.remove(prepared)
+  expect(f.calls).not.toContain("https://late.example|old")
+  expect(f.controller.jobs.value[0]?.origins["https://late.example"]).toBeUndefined()
+  f.scope.stop()
+})

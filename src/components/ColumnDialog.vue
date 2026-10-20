@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import ModalLayer from "./ModalLayer.vue"
+import DialogWindow from "./DialogWindow.vue"
 import { ref } from "vue"
 
 const props = defineProps<{
   columnId: string
+  workspaceId?: string
   initialTitle: string
   initialCollapsible?: boolean
   initialArchive?: boolean
@@ -28,16 +29,9 @@ function handleSave() {
 </script>
 
 <template>
-  <ModalLayer protect-draft class="overlay" @close="emit('close')">
-    <section class="dialog" role="dialog" aria-modal="true" aria-label="Edit column">
+  <DialogWindow :window-id="`column-edit:${columnId}`" :workspace-id="workspaceId ?? 'local'" title="Edit column" @close="emit('close')">
+    <section class="dialog dialog-window-content">
       <form novalidate @submit.prevent="handleSave">
-        <div class="dialog-head">
-          <div>
-            <h2>Edit column</h2>
-          </div>
-          <button class="icon-button" type="button" aria-label="Close" @click="emit('close')">×</button>
-        </div>
-
         <div class="dialog-body">
           <label>
             <span>Column title</span>
@@ -63,5 +57,5 @@ function handleSave() {
         </div>
       </form>
     </section>
-  </ModalLayer>
+  </DialogWindow>
 </template>

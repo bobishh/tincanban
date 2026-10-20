@@ -10,34 +10,20 @@ async function safeInsets(page: Page) {
   })
 }
 
-async function coveredBackdrop(page: Page) {
-  const overlay = page.locator(".overlay").last()
-  await expect(overlay).toBeVisible()
-  await expect.poll(() => overlay.evaluate(element => getComputedStyle(element).opacity)).toBe("1")
-  const paint = await overlay.evaluate(element => {
-    const box = element.getBoundingClientRect()
-    const backdrop = getComputedStyle(element, "::before")
-    return { bottom: box.bottom, viewport: innerHeight, extraBottom: backdrop.bottom, color: backdrop.backgroundColor, paddingBottom: getComputedStyle(element).paddingBottom }
-  })
-  expect(paint.bottom).toBe(paint.viewport)
-  expect(paint.extraBottom).toBe("-34px")
-  expect(paint.color).toBe("rgba(23, 23, 23, 0.72)")
-  expect(paint.paddingBottom).toBe("34px")
-}
-
-test("Given mobile board with safe insets, when Sync opens and viewport changes, then backdrop reaches bottom and closing restores board", async ({ page }, info) => {
+test("Given mobile board with safe insets, when Sync opens and viewport changes, then its window stays inside safe bounds and the board remains visible", async ({ page }, info) => {
   await page.goto("/")
   await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/)
   await expect(page.getByRole("button", { name: "Menu", exact: true })).toBeVisible()
   await safeInsets(page)
   await page.getByRole("button", { name: "Menu", exact: true }).tap()
-  await page.getByRole("button", { name: "Sync & backups", exact: true }).tap()
+  await page.getByRole("button", { name: "Sync", exact: true }).tap()
   const dialog = page.getByRole("dialog", { name: "Device sync", exact: true })
   await expect(dialog).toBeVisible()
+  await expect(dialog).toHaveClass(/spatial-window/)
   await expect(page.locator(".mobile-drawer-root")).toHaveCount(0)
   for (const height of [844, 620, 844]) {
     await page.setViewportSize({ width: 390, height })
-    await coveredBackdrop(page)
+    await expect(page.locator(".overlay")).toHaveCount(0)
     await expect.poll(async () => {
       const bounds = (await dialog.boundingBox())!
       return bounds.y >= 20 && bounds.y + bounds.height <= height - 34 + .1
@@ -49,8 +35,9 @@ test("Given mobile board with safe insets, when Sync opens and viewport changes,
   await expect(page.getByRole("button", { name: "Workspace chat", exact: true })).toBeVisible()
 })
 
-test("Given scrolled mobile board, when a visible Add item opens and closes, then scroll position returns", async ({ page }) => {
+test("Given scrolled mobile board, when a visible Add item opens and closes, then its window keeps the board visible and restores scroll", async ({ page }, info) => {
   await page.goto("/")
+  await expect(page.getByLabel("Workspace role: owner")).toBeVisible({ timeout: 25_000 })
   await safeInsets(page)
   const add = page.getByRole("button", { name: "Add item to To do", exact: true })
   await expect(add).toBeVisible()
@@ -60,18 +47,22 @@ test("Given scrolled mobile board, when a visible Add item opens and closes, the
   await add.tap()
   const dialog = page.getByRole("dialog", { name: "Item details", exact: true })
   await expect(dialog).toBeVisible()
-  await coveredBackdrop(page)
+  await expect(dialog).toHaveClass(/spatial-window/)
+  await expect(page.locator(".overlay")).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "To do", exact: true })).toBeVisible()
+  await page.screenshot({ path: info.outputPath("mobile-item-window-scrolled-board.png") })
   await dialog.getByRole("button", { name: "Cancel", exact: true }).tap()
   await expect(dialog).toBeHidden()
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scroll)
 })
 
-test("Given invalid mobile pairing link, when error opens, then backdrop covers safe area and Dismiss returns to board", async ({ page }, info) => {
+test("Given invalid mobile pairing link, when error opens, then failure stays in its window and can be dismissed", async ({ page }, info) => {
   await page.goto("/pair#invalid")
   await safeInsets(page)
   const dialog = page.getByRole("dialog", { name: "Device sync", exact: true })
   await expect(dialog.getByRole("alert")).toBeVisible({ timeout: 25_000 })
-  await coveredBackdrop(page)
+  await expect(dialog).toHaveClass(/spatial-window/)
+  await expect(page.locator(".overlay")).toHaveCount(0)
   await page.screenshot({ path: info.outputPath("mobile-pairing-failure-bottom.png") })
   await dialog.getByRole("button", { name: "Dismiss", exact: true }).tap()
   await expect(dialog).toBeHidden()

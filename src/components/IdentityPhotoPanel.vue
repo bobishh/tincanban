@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref, shallowRef, type Component } from "vue"
 import { AVATAR_MAX_SOURCE_BYTES } from "../avatarCrop"
 const AvatarCropDialog = shallowRef<Component>()
-const props = defineProps<{ avatarData?: string; disabled?: boolean }>()
+const props = defineProps<{ workspaceId?: string; avatarData?: string; disabled?: boolean }>()
 const emit = defineEmits<{ "update:avatar": [value: string | null] }>()
 const avatarError = ref("")
 const avatarSourceUrl = ref("")
@@ -78,7 +78,7 @@ onBeforeUnmount(() => { disposed = true; discardSource() })
       </div>
       <p v-if="avatarError" class="sync-error" role="alert">{{ avatarError }}</p>
       <p v-if="editorLoading" role="status">Opening photo editor…</p>
-      <component :is="AvatarCropDialog" v-if="cropping && avatarSourceUrl && AvatarCropDialog" :source-url="avatarSourceUrl" @save="cropped" @cancel="cancelCrop" />
+      <component :is="AvatarCropDialog" v-if="cropping && avatarSourceUrl && AvatarCropDialog" :workspace-id="workspaceId" :source-url="avatarSourceUrl" @save="cropped" @cancel="cancelCrop" />
     </section>
 </template>
 <style scoped>

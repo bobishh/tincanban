@@ -1,17 +1,10 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import WorkspacePrivateRecoveryPanel from "./WorkspacePrivateRecoveryPanel.vue"
-type RecoveryBackup = { file: Blob; words: string; coverage: "complete" | "incomplete"; missingCount: number }
-type RecoveryInspection = { workspaceId: string; personId: string; coverage: "complete" | "incomplete"; missingCount: number }
 const props = defineProps<{
   exportWorkspace?: () => Promise<void>
-  createPrivateRecovery?: () => Promise<RecoveryBackup>
-  privateRecoveryUnavailableReason?: string
-  inspectPrivateRecovery?: (file: Blob, words: string) => Promise<RecoveryInspection>
-  restorePrivateRecovery?: (inspection: RecoveryInspection, replace: boolean) => Promise<void>
-  hasWorkspaceCopy?: (workspaceId: string) => boolean
-  workspaceTitle?: (workspaceId: string) => string
-  currentPersonId?: string
+  importWorkspace?: () => void
+  importBusy?: boolean
+  importError?: string
 }>()
 const busy = ref(false)
 const error = ref("")
@@ -26,23 +19,18 @@ async function createBackup() {
 </script>
 
 <template>
-  <section class="sync-section">
-    <p class="sync-section-copy">Back up this workspace:</p>
+  <section class="sync-section" aria-label="Workspace files">
+    <p class="sync-section-copy">Workspace files</p>
     <div class="dialog-actions sync-data-actions">
       <button class="button button-quiet" type="button" :disabled="busy || !exportWorkspace" @click="createBackup">{{ busy ? 'Exporting…' : error ? 'Retry export' : 'Export .tincanban' }}</button>
+      <button class="button button-quiet" type="button" :disabled="importBusy || !importWorkspace" @click="importWorkspace?.()">{{ importBusy ? 'Importing…' : 'Import as new board' }}</button>
     </div>
+    <p class="dialog-copy">Export this board as .tincanban. Import creates a new board and keeps existing boards.</p>
+    <p v-if="importError" class="form-error" role="alert">{{ importError }}</p>
     <p v-if="busy" role="status">Creating workspace backup…</p>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   </section>
-  <WorkspacePrivateRecoveryPanel
-    :create-backup="props.createPrivateRecovery"
-    :create-unavailable-reason="props.privateRecoveryUnavailableReason"
-    :inspect-file="props.inspectPrivateRecovery"
-    :restore="props.restorePrivateRecovery"
-    :has-workspace-copy="props.hasWorkspaceCopy"
-    :workspace-title="props.workspaceTitle"
-    :current-person-id="props.currentPersonId"
-  />
+
 </template>
 
 <style scoped>

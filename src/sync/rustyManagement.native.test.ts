@@ -410,6 +410,34 @@ function deriveCurrentNativeCatalogue(scope: { scopeId: string; keyEpoch: number
 
 test("Given a Native-derived original-history catalogue, when data and locator coverage survive Rusty restart, then Native binds the admitted basis to real receipts and a cold HTTP reader recovers originals without the sender journal", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory()); vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  await initializeNativeAutomerge()
+  const productHistory = structuredClone(capturedHistory)
+  const originalSigner = JSON.parse(new TextDecoder().decode(decodeBlindBytes(productHistory.originals.authorizations[0])))
+  // Generated public fixture seed; never send a signing key to the Native adapter.
+  const fixtureKey = new Uint8Array(48)
+  fixtureKey.set([48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112, 4, 34, 4, 32])
+  fixtureKey.fill(152, 16)
+  const signer = await crypto.subtle.importKey("pkcs8", fixtureKey, { name: "Ed25519" }, false, ["sign"])
+  // Add the product routing ID on an admitted branch; retain the generic SDK history verbatim.
+  const originalDocument = Automerge.load<{ id?: string; title: string }>(decodeBlindBytes(productHistory.originals.document))
+  const originalChanges = Automerge.getAllChanges(originalDocument)
+  const admittedBranch = Automerge.clone(Automerge.view(originalDocument, [productHistory.expected.admittedHash]), { actor: "9a".repeat(16) })
+  const routedBranch = Automerge.change(admittedBranch, draft => { draft.id = productHistory.catalogue.context.workspaceId })
+  const routedChange = Automerge.getLastLocalChange(routedBranch)!
+  const routedHash = Automerge.decodeChange(routedChange).hash
+  const routedAuthorization = { signed: await signEnvelope(signer, { kind: "workspace-changes", version: 1,
+    workspaceId: productHistory.catalogue.context.workspaceId, personId: productHistory.expected.personId,
+    deviceId: originalSigner.signed.signerKeyId, hashes: [routedHash] }, originalSigner.signed.signerKeyId),
+    publicKey: productHistory.expected.publicKey, certificates: originalSigner.certificates }
+  const routedDocument = Automerge.merge(originalDocument, routedBranch)
+  try {
+    const retained = Automerge.getAllChanges(routedDocument)
+    for (const original of originalChanges) expect(retained.some(change => Buffer.from(change).equals(Buffer.from(original)))).toBe(true)
+    productHistory.originals.document = encodeBlindBytes(Automerge.save(routedDocument))
+    productHistory.originals.authorizations.push(encodeBlindBytes(new TextEncoder().encode(canonicalBlindJson(routedAuthorization))))
+  } finally { Automerge.free(routedDocument); Automerge.free(routedBranch) }
+  expect(productHistory.originals.pending).toEqual(capturedHistory.originals.pending)
+  expect(productHistory.originals.authorizations.slice(0, 2)).toEqual(capturedHistory.originals.authorizations)
   const profile = await bootstrapIdentity("Native catalogue storage owner")
   let service = await startRusty(profile)
   let releaseCurrent = () => {}
@@ -470,7 +498,8 @@ test("Given a Native-derived original-history catalogue, when data and locator c
       basis: { historyEpoch: context.historyEpoch, transitionId: identity.transitionId, nodeCount: historyFixture.expected.nodeCount, changeCount: 1,
         stateDigest: current.rebase.stateDigest(), documentDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
         genesisHash: expect.stringMatching(/^[0-9a-f]{64}$/), byteLength: expect.any(Number) },
-      ownerProposal: expect.objectContaining({ kind: "workspace-history-baseline", version: 1,
+      ownerProposal: expect.objectContaining({ kind: "workspace-history-baseline", version: 2,
+        scopeAuthority: scopeAuthoritySnapshot, scopeControlEpoch: 1, currentControl: expect.objectContaining({ workspaceId: context.workspaceId }),
         historyEpoch: 1, previousBaselineId: null, authorityRevision: current.catalogue.authorityRevision,
         archive: current.catalogue, locatorRoot: prepared.root }), ownerAttestation: null })
     expect(verified.basis.byteLength).toBeLessThan(2048)
@@ -624,6 +653,8 @@ test("Given a Native-derived original-history catalogue, when data and locator c
         expect((await browserRepository.readArchiveRecord())?.wire).toEqual(wire)
       } finally { Automerge.free(originalDoc) }
     } finally { received.free() }
+    await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: undefined })).rejects.toThrow(/requires signed scope authority/)
+    await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: unrelatedScopeAuthority })).rejects.toThrow(/controller does not match/)
     const wrongDomain = await signEnvelope(signer, verified.ownerProposal, nativeInput.signer.deviceId, "MATCH/1")
     await expect(verifyNativeArchive({ ...nativeInput, signedBaseline: JSON.stringify(wrongDomain) })).rejects.toThrow(/signature/)
     await expect(verifyNativeArchive({ ...nativeInput, directoryReceipt: nativeInput.dataReceipt })).rejects.toThrow(/exact Native set and preparation/)
@@ -708,6 +739,8 @@ test("Given an admitted file and a private Rusty connection, when ordinary repli
 }, 30_000)
 
 test("Given encrypted attachment chunks and a lost response, when Rusty and the transfer restart, then a cold recipient reads verified bytes without source access or plaintext server storage", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity("Native attachment owner")
   let service = await startRusty(profile)

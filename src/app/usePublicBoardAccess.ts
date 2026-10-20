@@ -9,7 +9,7 @@ export type { PublicBoardAccessInput } from "./publicBoardAccessOperations"
 export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   const checked = ref(false), published = ref(false), busy = ref(false), error = ref(""), revision = ref(0), withdrawn = ref(false)
   const state: PublicBoardAccessOperations["state"] = { generation: 0, syncQueued: false, operationRunning: false,
-    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "" }
+    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "", policyCache: {} }
   const timers: PublicBoardAccessOperations["timers"] = {}
   const currentBoardId = () => input.boardId() ?? ""
   const link = computed(() => published.value && currentBoardId() ? boardRouteUrl(currentBoardId(), input.boardTitle()) : "")
@@ -85,6 +85,7 @@ function resetAccess(ctx: PublicBoardAccessOperations) {
   ctx.state.deliveryGeneration = null; ctx.state.deliveryPolicyHash = null; ctx.withdrawn.value = false
   ctx.state.deliveryPolicyContentHash = null
   ctx.state.syncQueued = false; ctx.state.lastHash = ""
+  ctx.state.projectionComparison = undefined; ctx.state.policyCache = {}
   clearTimer(ctx.timers.debounce); clearTimer(ctx.timers.retry)
   ctx.timers.debounce = undefined; ctx.timers.retry = undefined
 }

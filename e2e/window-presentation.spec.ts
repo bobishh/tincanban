@@ -52,13 +52,13 @@ for (const width of [390, 1280]) test(`Given a detailed lead at ${width}px, When
   expect(await dialog.evaluate(element => Number.parseFloat(getComputedStyle(element).animationDuration))).toBeLessThan(.01)
 })
 
-test("Given sync settings, When tabs change, Then panels fade in and reduced motion remains available", async ({ page }) => {
+test("Given workspace settings, When tabs change, Then panels fade in and reduced motion remains available", async ({ page }) => {
   await page.goto("/")
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
-  await page.getByRole("button", { name: "Sync", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "Device sync" })
-  await dialog.getByRole("tab", { name: "Backups", exact: true }).click()
-  const panel = dialog.getByRole("tabpanel", { name: "Backups", exact: true })
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Settings", exact: true })
+  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
+  const panel = dialog.getByRole("tabpanel", { name: "Workspace", exact: true })
   await expect(panel).toHaveCSS("animation-name", "panel-appear")
   await expect(panel.getByRole("button", { name: "Export .tincanban", exact: true })).toBeVisible()
   await page.emulateMedia({ reducedMotion: "reduce" })
@@ -94,4 +94,81 @@ for (const width of [320, 390, 1280]) test(`Given a ${width}px card window with 
   await page.screenshot({ path: info.outputPath(`wrapped-stages-${width}.png`) })
   await edit.click()
   await expect(page.getByRole("dialog", { name: "Edit item", exact: true })).toBeVisible()
+})
+
+test("Given a card with a legacy narrow saved width, When it is resized and reopened, Then the panel stays at least 480px and keeps one compact button row", async ({ page }, info) => {
+  const longTitle = "A deliberately long item title that must wrap without stacking each character vertically"
+  await populatedBoard(page)
+  await page.evaluate(async title => {
+    const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+    await app.executeCommandAsync({ kind: "patchItem", entityId: "performance-card-0", title })
+    const { windowLayoutKey } = await import("/src/ui/windowManager.ts")
+    localStorage.setItem(windowLayoutKey(app.activeWorkspace.id, "item:performance-card-0"), JSON.stringify({ x: 20, y: 80, width: 280, height: 460 }))
+  }, longTitle)
+  const card = page.getByRole("button", { name: `Open ${longTitle}`, exact: true })
+  await expect(card).toBeVisible()
+  await card.click()
+
+  const dialog = page.getByRole("dialog", { name: "Item overview", exact: true })
+  const resize = dialog.locator(".spatial-resize")
+  let bounds = (await dialog.boundingBox())!
+  const handle = (await resize.boundingBox())!
+  const attemptedWidth = 380
+  const targetHeight = 460
+  await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(handle.x + handle.width / 2 - (bounds.width - attemptedWidth), handle.y + handle.height / 2 - (bounds.height - targetHeight), { steps: 12 })
+  await page.mouse.up()
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480)
+  await resize.focus()
+  await resize.press("Shift+ArrowLeft")
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480)
+  await resize.press("Shift+ArrowRight")
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(520)
+  await resize.press("Shift+ArrowLeft")
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480)
+
+  const title = dialog.locator(".spatial-titlebar .detail-head h2")
+  await expect(title).toHaveText(longTitle)
+  await expect(title).toHaveCSS("white-space", "nowrap")
+  await expect(title).toHaveCSS("text-overflow", "ellipsis")
+  bounds = (await dialog.locator(".spatial-titlebar").boundingBox())!
+  expect(bounds.height).toBe(64)
+  const actions = (await dialog.locator(".detail-head-actions").boundingBox())!
+  expect(actions.y).toBeGreaterThanOrEqual(bounds.y)
+  expect(actions.y + actions.height).toBeLessThanOrEqual(bounds.y + bounds.height)
+  const actionButtons = await dialog.locator(".detail-head-actions .button").evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().y))
+  expect(new Set(actionButtons).size).toBe(1)
+  const outerButtonRows = await dialog.locator(".spatial-controls button").evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().y))
+  expect(new Set(outerButtonRows).size).toBe(1)
+  const scroll = dialog.locator(".scroll-frame-viewport")
+  await expect(scroll).toBeVisible()
+  expect(await scroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
+  await page.screenshot({ path: info.outputPath("minimum-width-card-title.png") })
+
+  await dialog.getByRole("button", { name: "Dismiss", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await card.click()
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480)
+  await expect(title).toBeVisible()
+
+  await page.setViewportSize({ width: 320, height: 260 })
+  bounds = (await dialog.boundingBox())!
+  expect(bounds.x).toBeGreaterThanOrEqual(0)
+  expect(bounds.y).toBeGreaterThanOrEqual(0)
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(320)
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(260)
+  const shortTitle = (await title.boundingBox())!
+  expect(shortTitle.width).toBeGreaterThan(40)
+  expect(shortTitle.height).toBeLessThan(50)
+  const shortBar = (await dialog.locator(".spatial-titlebar").boundingBox())!
+  expect(shortBar.height).toBe(64)
+  const shortActionRows = await dialog.locator(".detail-head-actions .button").evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().y))
+  expect(new Set(shortActionRows).size).toBe(1)
+  const closeBounds = (await dialog.getByRole("button", { name: "Dismiss", exact: true }).boundingBox())!
+  expect(closeBounds.y).toBeGreaterThanOrEqual(shortBar.y)
+  expect(closeBounds.y + closeBounds.height).toBeLessThanOrEqual(shortBar.y + shortBar.height)
+  expect(await scroll.evaluate(element => element.clientHeight)).toBeGreaterThan(64)
+  await scroll.evaluate(element => { element.scrollTop = element.scrollHeight })
+  await expect(dialog.getByRole("button", { name: "Close detail", exact: true })).toBeVisible()
 })

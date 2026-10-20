@@ -60,6 +60,7 @@ class PublicDeliveryCoordinator {
       this.queue.enqueue(id)
     })
     this.stopChat = (this.input.subscribeChat ?? subscribeChat)(event => {
+      if (event.contentChanged === false) return
       this.invalidateRole(event.workspaceId)
       this.queue.enqueue(event.workspaceId)
     })

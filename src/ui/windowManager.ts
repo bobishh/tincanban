@@ -14,7 +14,7 @@ const windows: WindowDescriptor[] = reactive([])
 
 export function clampWindowGeometry(value: WindowGeometry, viewport: { width: number; height: number }): WindowGeometry {
   const margin = Math.min(12, viewport.width / 20, viewport.height / 20)
-  const width = Math.min(Math.max(280, value.width), Math.max(1, viewport.width - margin * 2))
+  const width = Math.min(Math.max(480, value.width), Math.max(1, viewport.width - margin * 2))
   const height = Math.min(Math.max(200, value.height), Math.max(1, viewport.height - margin * 2))
   return {
     width, height,
