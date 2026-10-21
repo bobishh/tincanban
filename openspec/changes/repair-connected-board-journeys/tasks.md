@@ -34,7 +34,7 @@
 - [x] 3.2 Delete obsolete artifacts; retain exact current deployment and necessary rollback/reader assets.
 - [x] 3.3 Add automatic cleanup and short diagnostic retention, preserving release dependencies.
 - [x] 3.4 Structurally verify and publish only reviewed storage workflow changes; record actual reclaimed bytes.
-- [ ] 3.5 Add Rusty to guarded cleanup: retain active and distinct compatible rollback source/deployment pairs, protect in-flight releases, keep source seals 90 days and diagnostic artifacts one day. Read-only audit found 52 artifacts / 144,583,189 bytes; its current source expires before its retained deployment copy.
+- [ ] 3.5 Activate Rusty's guarded automatic cleanup and 90-day source / one-day diagnostic retention. da05887 passed branch CI 39632982897; reviewed entry point actually deleted 44 obsolete artifacts / 124,284,016 bytes. Nine artifacts / 20,306,006 bytes remain, including exact live and rollback source/deployment pairs and five fresh diagnostics. Production a910b70 is unchanged and healthy. Publish this branch with status inspection after the frontend confirmation support is live.
 
 ## 4. Verify and deliver
 
@@ -73,3 +73,12 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 ### Actions cleanup evidence (2026-10-21)
 
 Deleted 840 obsolete artifacts, 11,299,821,020 bytes (10.5238 GiB). Preserved eight current/rollback release artifacts (223,218,463 bytes). Cleanup published in tincanban `076915e`, gonzo-yuppie `1f66337`, cultiwars `a58f3cc`. Dry-run and real runs succeeded in all three repositories. Actual runs: [tincanban](https://github.com/bobishh/tincanban/actions/runs/39581820965), [gonzo](https://github.com/bobishh/gonzo-yuppie/actions/runs/39581825746), [cultiwars](https://github.com/bobishh/cultiwars/actions/runs/39581829717). Diagnostic retention one day; sealed release retention 90 days with live/current/rollback protection. Already uploaded source artifacts retain their previous November 3 expiry; next complete release creates new cohorts with 90-day retention. No application deployment was performed by cleanup.
+
+Rusty follow-up: audited da05887 deleted 44 artifacts / 124,284,016 bytes using
+fresh health and active-run checks before every delete. Exact before-minus-after
+IDs equal the successful deletion receipts. Current a910b70 source/deployment
+12355281096 / 12354269049 and compatible ded16d6 rollback source/deployment
+12345546680 / 12345961648 remain nonexpired. New inventory: nine artifacts /
+20,306,006 bytes. Live binary 05bf3ea0 and SDK 9d92a47 remain unchanged; health
+is `ok`. This raises actual cleanup across the four repositories to 884 artifacts
+and 11,424,105,036 bytes. Rusty automatic workflow activation remains pending.

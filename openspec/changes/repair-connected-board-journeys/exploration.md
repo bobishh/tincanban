@@ -703,3 +703,22 @@ invalidation from access/identity/transport failure and schedule the current
 admitted source normally. The regression is red before, green after; 67 related
 checks and the complete unchanged native WebKit edit/update/file/restart/withdraw
 journey pass (35.8 seconds). Authority and receipt checks remain unchanged.
+
+### Workflow retry acceptance must wait for the current durable source
+
+Verify 39631192572 failed the retained application workflow scenario because its
+helper equated an enabled Sync now button with confirmation of the current board
+snapshot. Decrypting only the synthetic fixture upload proves the last PUT before
+retry still held Applied at 16:08:33.773; the local browser already showed
+Interview. The Worker therefore correctly checked its admitted older source.
+The proposed Worker pending-upload bug was an unconfirmed hypothesis and is
+rejected by this evidence; no Worker or protocol change is justified here.
+
+The source-binding helper now uses the production guarded adapter to pull and
+flush the current snapshot with an exact signed receipt, including draining any
+older retained request first. Person/workspace and scope-authority guards remain;
+all original workflow rejection, retry and revoked-grant assertions/timeouts are
+preserved. The exact case passes in 19.2 seconds, and all five scenarios using
+that helper pass against native Rusty 359d998 in 1.1 minutes. A completed bounded
+sync pass is not itself evidence of a current snapshot; the production health
+model separately represents that condition as catching up.

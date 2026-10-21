@@ -433,13 +433,26 @@ async function expectApplicationInColumn(page: Page, column: string, cardId: str
 }
 
 async function syncFromRusty(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Sync", exact: true }).click()
-
-  const panel = page.getByRole("region", { name: "Rusty", exact: true })
-  const sync = panel.getByRole("button", { name: "Sync now", exact: true })
-  await sync.click()
-  await expect(sync).toBeEnabled({ timeout: 20_000 })
-  await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+  await page.evaluate(async () => {
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
+    const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+    const { createBlindReplica } = await import("/src/sync/blindReplicaStore.ts")
+    const workspace = useTincanban()
+    const personId = workspace.getCurrentProfile()!.identity.personId
+    const config = (await getReplicaConfigurations(personId)).find(value =>
+      value.workspaceId === workspace.getActiveDoc()!.id && !value.removalPending)
+    if (!config) throw new Error("Application workspace Rusty connection unavailable")
+    const guard = () => {
+      if (workspace.getCurrentProfile()?.identity.personId !== personId || workspace.getActiveDoc()?.id !== config.workspaceId) {
+        throw new Error("Application workspace changed during synchronization")
+      }
+    }
+    const replica = createBlindReplica(config, workspace, guard, async () => {})
+    if (!await replica.pull()) throw new Error("Application workspace still receiving Rusty changes")
+    // A completed sync pass can only confirm older pending bytes. Bind/retry needs
+    // the current board snapshot confirmed by Rusty, including newer owner moves.
+    await replica.flushCurrentSnapshot()
+  })
 }
 
 async function submitForwardedMail(fixture: ApplicationFixture, messageId: string, subject: string, text: string,
