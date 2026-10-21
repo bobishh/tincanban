@@ -12,6 +12,7 @@ const failure = ref("")
 const pending = ref(false)
 const updatingOrigin = ref("")
 const forgettingOrigin = ref("")
+const busy = computed(() => pending.value || (props.controller.actionBusy?.value ?? props.controller.busy.value))
 const savedOperations = computed(() => props.controller.pendingRustyOperations?.value ?? [])
 const removalSteps: Record<RustyRemovalProgress["phase"], string> = {
   "checking-automations": "Check automations connected to this server",
@@ -64,7 +65,7 @@ async function forget() {
     <p v-if="!owner && !records.length && !boardConflicts.length" class="dialog-copy">No Rusty connection has reached this device for this board yet. Connect to a board participant to receive shared storage access.</p>
     <div v-for="conflict in boardConflicts" :key="`board/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
       <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
-      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
+      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
     </div>
     <section v-for="operation in owner ? savedOperations : []" :key="`operation/${operation.origin}`" class="rusty-conflict" aria-label="Saved Rusty operation">
       <p>{{ operation.origin }}: {{ operation.kind === 'device-revocation' ? 'Device removal is unfinished. Board and profile sync are paused on this server.' : 'Connection recovery is unfinished.' }} Saved data and the original operation are retained.</p>
@@ -72,7 +73,7 @@ async function forget() {
       <p v-if="operation.progress">Next step: {{ removalSteps[operation.progress.phase] }}.</p>
       <details v-if="operation.progress"><summary>Recovery details</summary><p>{{ operation.progress.confirmedScopes }} / {{ operation.progress.scopeCount }} storage updates confirmed. {{ operation.progress.frozenWorkers }} / {{ operation.progress.workerCount }} automations paused; {{ operation.progress.rotatedWorkers }} updated. Device revocation confirmed: {{ operation.progress.personConfirmed ? 'yes' : 'no' }}.</p></details>
       <p v-if="operation.signerDeviceId !== controller.currentDeviceId.value">Continue on the device that started this operation.</p>
-      <button class="button" type="button" :disabled="pending || controller.busy.value || operation.signerDeviceId !== controller.currentDeviceId.value" @click="run(() => controller.resumeRustyOperation(operation.origin))">Resume Rusty operation</button>
+      <button class="button" type="button" :disabled="busy || operation.signerDeviceId !== controller.currentDeviceId.value" @click="run(() => controller.resumeRustyOperation(operation.origin))">Resume Rusty operation</button>
     </section>
     <ul v-if="records.length" class="rusty-connections">
       <li v-for="config in records" :key="`${config.origin}/${config.scopeId}`">
@@ -81,7 +82,7 @@ async function forget() {
           <small v-if="controller.statuses.value[replicaKey(config)]?.lastSyncedAt">Last sync: <time :datetime="new Date(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!).toISOString()">{{ syncTime(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!) }}</time></small>
           <small v-if="controller.statuses.value[replicaKey(config)]?.error" role="alert">{{ controller.statuses.value[replicaKey(config)]!.error }}</small>
         </div>
-        <button v-if="owner" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(() => controller.remove(config))">{{ config.removalPending ? 'Retry removal' : 'Remove' }}</button>
+        <button v-if="owner" class="button button-quiet" type="button" :disabled="busy" @click="run(() => controller.remove(config))">{{ config.removalPending ? 'Retry removal' : 'Remove' }}</button>
       </li>
     </ul>
     <div v-if="profileRecords.length" class="rusty-profile-status" aria-label="Profile delivery">
@@ -96,30 +97,30 @@ async function forget() {
           </div>
           <div v-if="owner && controller.profilePermissionUpdates?.value.includes(profile.origin)" class="rusty-access-update">
             <p class="dialog-copy">Allow your approved devices to manage this Rusty connection. Your boards and saved files stay unchanged.</p>
-            <button class="button" type="button" :disabled="pending || controller.busy.value" @click="updateDeviceAccess(profile.origin)">{{ updatingOrigin === profile.origin ? 'Updating device access…' : 'Update device access' }}</button>
+            <button class="button" type="button" :disabled="busy" @click="updateDeviceAccess(profile.origin)">{{ updatingOrigin === profile.origin ? 'Updating device access…' : 'Update device access' }}</button>
           </div>
         </li>
       </ul>
     </div>
     <div v-for="conflict in profileConflicts" :key="`profile/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty profile settings conflict">
       <p>Profile delivery is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
-      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
+      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
     </div>
     <section v-for="origin in resetOrigins" :key="`forget/${origin}`" class="rusty-conflict" aria-label="Forget local Rusty access">
-      <button v-if="forgettingOrigin !== origin" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="forgettingOrigin = origin">Forget Rusty on this device</button>
+      <button v-if="forgettingOrigin !== origin" class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = origin">Forget Rusty on this device</button>
       <template v-else>
         <p>Forget {{ origin }} for all your boards and profile on this device? This abandons unfinished Rusty operations. Board data, profile, files, and an audit copy of old settings stay saved. Server data and other participants are unchanged.</p>
-        <button class="button button-danger" type="button" :disabled="pending || controller.busy.value" @click="forget">Confirm forget Rusty</button>
-        <button class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="forgettingOrigin = ''">Cancel</button>
+        <button class="button button-danger" type="button" :disabled="busy" @click="forget">Confirm forget Rusty</button>
+        <button class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = ''">Cancel</button>
       </template>
     </section>
-    <button v-if="owner && !adding" class="button" type="button" :disabled="pending || controller.busy.value" @click="adding = true">Add Rusty</button>
+    <button v-if="owner && !adding" class="button" type="button" :disabled="busy" @click="adding = true">Add Rusty</button>
     <form v-if="owner && adding" @submit.prevent="connect">
       <label for="rusty-address">Address</label>
-      <div class="rusty-connect"><input id="rusty-address" v-model="address" aria-label="Address" placeholder="rusty.example" autocomplete="url" required /><button class="button" type="submit" :disabled="pending || controller.busy.value">Connect</button></div>
-      <button class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="adding = false">Cancel</button>
+      <div class="rusty-connect"><input id="rusty-address" v-model="address" aria-label="Address" placeholder="rusty.example" autocomplete="url" required /><button class="button" type="submit" :disabled="busy">Connect</button></div>
+      <button class="button button-quiet" type="button" :disabled="busy" @click="adding = false">Cancel</button>
     </form>
-    <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="run(controller.syncNow)">Sync now</button>
+    <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="busy" @click="run(controller.syncNow)">Sync now</button>
     <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
 
   </section>

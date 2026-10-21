@@ -547,3 +547,62 @@ failed before this cancellation guard; all 51 relevant units now pass. All ten
 browser telemetry journeys pass, including a fifty-error burst through a 64 KiB
 intake, chat reload, outage, access rejection and opt-out. Types and targeted lint
 pass. This exporter change is not deployed at this checkpoint.
+
+### Recovery tap lost during background synchronization
+
+The exporter candidate ad0a6ee passed fifteen CI jobs; its remaining failed
+automation job contains a mobile Chromium recovery trace. The conflict remained
+visible, no recovery management/upload request occurred after the tap, and no
+failure message appeared. Playwright observed Recover disabled, then enabled
+while waiting for actionability; it dispatched the touch immediately afterward.
+The app disables this button with the same `busy` flag used by ordinary background
+sync and guards its click handler with that changing flag. A background pass can
+therefore disable/cancel an already-targeted mobile click. The live owner Forget
+button also needed a second press during ordinary sync. A local Chromium replay
+passed in 13.5 seconds; the CI trace, not a repeat-pass claim, establishes the
+missed-action case to repair.
+
+Manual mutations must reserve one user action, retain the identity/device/active
+workspace guard captured at request time, wait for any existing background pass,
+then run the existing guarded operation exactly once. Background triggers must
+not start another pass while that action waits. Only the stable manual-operation
+flag disables its controls; background `busy` remains available for health/status.
+No signing, ownership, journal, scope or storage precondition is relaxed.
+
+The corrected browser scenario now deliberately holds an ordinary profile GET,
+requests recovery while that background pass remains pending, observes the
+reserved action, and confirms no recovery upload starts before releasing the GET.
+It then exercises the existing snapshot 503, reload and successful retry with the
+original board and key retained. Native WebKit passed in 15.0 seconds; Chromium
+passed in 13.5 seconds. The four native Rusty journeys passed in 1.6 minutes.
+The six relevant logic suites passed all 58 tests, including rejection when the
+identity or active workspace changes while a request waits.
+
+### Forgotten Rusty origin retained in device-removal progress
+
+The real fresh owner connection and editor board delivery both reached Synced on
+494d at 14:37 UTC. The remaining device-removal warning was a different local job:
+explicit Forget archived Rusty credentials and management journals but omitted
+the per-identity device-removal job's selected-origin phase. That stale phase did
+not prove a failure of the new connection.
+
+Explicit Forget now archives the exact saved job alongside the other reset
+records and removes only the selected server phase. Other servers and workspace
+removal intent remain. No access is reported revoked by this reset. The job lock
+precedes the existing origin/freeze locks; the same atomic comparison checks the
+saved job before committing. A newer job aborts the entire reset. Preferences
+notification refreshes the displayed progress without reloading the board. The
+native reset journey checks cancel preservation, archived exact intent, fresh
+scopes and retained browser data. Past resets are not silently reinterpreted;
+already-stale jobs still require an explicit reset after the fix is deployed.
+
+### TinSink persistence and Rusty build cache checkpoint
+
+Infrastructure a3c8251 persists the metric-log vertical-merge setting. Rusty
+a910b70 passed verification and deployment, pins that infrastructure revision and
+reports the expected build SHA through health. Its release build successfully
+exported the Linux amd64 intermediate build cache. This first cold build took
+162.9 seconds for dependencies, 18.4 seconds for the application and 142.9 seconds
+for cache export. A source-only warm build has not been measured; no speedup is
+claimed yet. The frontend exporter byte-budget correction remains pending its
+next successful CI/deployment, so full-chain diagnostic reliability remains open.

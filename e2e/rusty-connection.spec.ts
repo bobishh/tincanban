@@ -10,16 +10,11 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
   test.setTimeout(90000)
   await page.goto("/")
   await createJobSearchWorkspace(page, "Preserved Jobs")
-  const trustedOwner = await page.evaluate(async () => {
-    const module = await import("/src/domain/identity.ts")
-    const profile = await module.bootstrapIdentity()
-    return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
-  })
   const directory = await mkdtemp(join(tmpdir(), "rusty-connect-"))
   let child: ChildProcess | undefined
   const start = async (bind = "127.0.0.1:0") => new Promise<string>((resolveOrigin, reject) => {
     child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, bind], {
-      env: { RUSTY_TRUSTED_OWNER: JSON.stringify(trustedOwner), RUSTY_CORS_ORIGINS: baseURL! },
+      env: { RUSTY_CORS_ORIGINS: baseURL! },
     })
     const timer = setTimeout(() => reject(new Error("Rusty did not start")), 10000)
     child.stdout?.on("data", chunk => { const address = String(chunk).match(/listening on (127\.0\.0\.1:\d+)/)?.[1]; if (address) { clearTimeout(timer); resolveOrigin(`http://${address}`) } })
@@ -148,10 +143,15 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
       const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
       const { prepareReplicaCredentialFreeze } = await import("/src/sync/replicaCredentialFreeze.ts")
+      const { writeLocal } = await import("/src/localDb.ts")
       const profile = await bootstrapIdentity()
       const configs = (await getPrivateReplicaConfigurations(profile.identity.personId)).filter(config => config.origin === origin)
       await prepareReplicaCredentialFreeze(profile, origin, configs[0]!.servicePublicKey, "retired-test-device", () => {})
-      return { personId: profile.identity.personId, deviceId: profile.device.deviceId, scopes: configs.map(config => config.scopeId) }
+      const removalKey = `tincanban.my-device-removals.v1.${profile.identity.personId}`
+      const removalRaw = JSON.stringify([{ version: 1, personId: profile.identity.personId, signerDeviceId: profile.device.deviceId,
+        deviceId: "retired-test-device", name: "Retired test device", workspaces: {}, origins: { [origin]: { status: "pending", error: "Old epoch" } } }])
+      await writeLocal(removalKey, removalRaw)
+      return { personId: profile.identity.personId, deviceId: profile.device.deviceId, scopes: configs.map(config => config.scopeId), removalKey, removalRaw }
     }, origin)
     await stop()
     for (const entry of await readdir(directory)) if (entry !== "service-key") await rm(join(directory, entry), { recursive: true, force: true })
@@ -162,10 +162,20 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
       const { readReplicaCredentialFreeze } = await import("/src/sync/replicaCredentialFreeze.ts")
       return Boolean(await readReplicaCredentialFreeze((await bootstrapIdentity()).identity.personId, origin))
     }, origin)).toBe(true)
+    expect(await page.evaluate(async key => (await import("/src/localDb.ts")).readLocal(key), beforeReset.removalKey)).toBe(beforeReset.removalRaw)
     await panel.getByRole("button", { name: "Forget Rusty on this device", exact: true }).click()
     await panel.getByRole("button", { name: "Confirm forget Rusty", exact: true }).click()
     await expect(panel.getByLabel("Address", { exact: true })).toHaveValue(origin)
     await expect(panel.getByRole("button", { name: "Resume Rusty operation", exact: true })).toHaveCount(0)
+    expect(await page.evaluate(async key => JSON.parse((await (await import("/src/localDb.ts")).readLocal(key))!), beforeReset.removalKey)).toEqual([])
+    expect(await page.evaluate(async ({ key, raw }) => {
+      const { listLocalKeys, readLocal } = await import("/src/localDb.ts")
+      for (const archive of (await listLocalKeys()).filter(value => value.startsWith("tincanban.rusty-local-reset.v1."))) {
+        const saved = JSON.parse((await readLocal(archive))!) as { records: Array<{ key: string; value: string | null }> }
+        if (saved.records.some(record => record.key === key && record.value === raw)) return true
+      }
+      return false
+    }, { key: beforeReset.removalKey, raw: beforeReset.removalRaw })).toBe(true)
     await start(new URL(origin).host)
     expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
     await panel.getByRole("button", { name: "Connect", exact: true }).click()

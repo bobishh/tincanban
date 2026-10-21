@@ -15,6 +15,39 @@ import { forgetRustyOrigin } from "./rustyLocalReset"
 
 afterEach(() => { resetIdentityStorageForTest(); vi.restoreAllMocks(); membership.role.mockReset().mockResolvedValue("owner"); membership.admission.mockReset().mockResolvedValue({}) })
 
+async function resetArchiveKeys(owner: string): Promise<string[]> {
+  const keys = (await local.listLocalKeys()).filter(key => key.startsWith("tincanban.rusty-local-reset.v1."))
+  const records = await Promise.all(keys.map(async key => ({ key, owner: JSON.parse((await local.readLocal(key))!).personId as string })))
+  return records.filter(record => record.owner === owner).map(record => record.key)
+}
+
+it("Given a device removal spanning two servers, when one Rusty origin is forgotten, then archive its exact job and retain only the other server and workspace intent", async () => {
+  const f = await fixture()
+  const key = `tincanban.my-device-removals.v1.${f.owner}`
+  const job = { version: 1, personId: f.owner, signerDeviceId: f.profile.device.deviceId, deviceId: "former-device", name: "Old device",
+    workspaces: { "other-board": "pending" }, origins: { [f.config.origin]: { status: "pending", error: "Old storage epoch" }, [f.other.origin]: { status: "pending" } } }
+  const raw = JSON.stringify([job])
+  await local.writeLocal(key, raw)
+  await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
+  expect(JSON.parse((await local.readLocal(key))!)).toEqual([{ ...job, origins: { [f.other.origin]: { status: "pending" } } }])
+  const archives = await resetArchiveKeys(f.owner)
+  const audit = JSON.parse((await local.readLocal(archives.at(-1)!))!) as { records: Array<{ key: string; value: string | null }> }
+  expect(audit.records).toContainEqual({ key, value: raw })
+})
+
+it("Given a newer device removal is saved during reset, when its CAS commits, then retain the newer job and reject the entire reset", async () => {
+  const f = await fixture()
+  const key = `tincanban.my-device-removals.v1.${f.owner}`
+  const native = local.compareAndSwapLocal
+  vi.spyOn(local, "compareAndSwapLocal").mockImplementationOnce(async (plan, guard) => {
+    await local.writeLocal(key, "newer removal evidence")
+    return native(plan, guard)
+  })
+  await expect(forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})).rejects.toThrow(/changed|retry/i)
+  expect(await local.readLocal(key)).toBe("newer removal evidence")
+  expect(await readReplicaCredentialFreeze(f.owner, f.config.origin)).toEqual(f.frozen)
+})
+
 async function fixture() {
   const profile = await bootstrapIdentity("Reset owner")
   const config: BlindReplicaConfig = { purpose: "workspace", workspaceId: "board-reset", origin: "https://rusty.example",
@@ -49,7 +82,7 @@ it("Given a frozen server and another origin, When its owner explicitly forgets 
   expect(await getPrivateReplicaConfigurations(f.owner)).toMatchObject([f.other])
   expect(await readReplicaCredentialFreeze(f.owner, f.config.origin)).toBeUndefined()
   for (const key of [f.journalKey, f.boardSetupKey, f.profileSetupKey]) expect(await local.readLocal(key)).toBeNull()
-  const archives = (await local.listLocalKeys()).filter(key => key.startsWith("tincanban.rusty-local-reset.v1."))
+  const archives = await resetArchiveKeys(f.owner)
   expect(archives).toHaveLength(1)
   const audit = JSON.parse((await local.readLocal(archives[0]!))!) as { records: Array<{ key: string; value: string | null }> }
   expect(audit.records).toContainEqual({ key: f.journalKey, value: f.journalRaw })
@@ -99,7 +132,7 @@ it.each(["other-origin-only", "missing-v2"])('Given origin-bound frozen intent w
   await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
   expect(await readReplicaCredentialFreeze(f.owner, f.config.origin)).toBeUndefined()
   expect(await local.readLocal(f.journalKey)).toBeNull()
-  const archives = (await local.listLocalKeys()).filter(value => value.startsWith("tincanban.rusty-local-reset.v1."))
+  const archives = await resetArchiveKeys(f.owner)
   const audit = JSON.parse((await local.readLocal(archives.at(-1)!))!) as { records: Array<{ key: string; value: string | null }> }
   expect(audit.records).toContainEqual({ key: f.freezeKey, value: JSON.stringify(f.frozen) })
   expect(audit.records).toContainEqual({ key: f.journalKey, value: f.journalRaw })
@@ -126,7 +159,7 @@ it("Given only bound board and profile setup intents and no v2 state, When forge
   await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
   expect(await local.readLocal(f.boardSetupKey)).toBeNull()
   expect(await local.readLocal(f.profileSetupKey)).toBeNull()
-  const archives = (await local.listLocalKeys()).filter(key => key.startsWith("tincanban.rusty-local-reset.v1."))
+  const archives = await resetArchiveKeys(f.owner)
   const audit = JSON.parse((await local.readLocal(archives.at(-1)!))!) as { records: Array<{ key: string; value: string | null }> }
   expect(audit.records).toContainEqual({ key: f.boardSetupKey, value: boardSetup })
   await receivePrivateReplicaState(f.owner, f.old)

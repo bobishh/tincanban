@@ -72,6 +72,43 @@ vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runti
 import { useBlindReplication } from "./useBlindReplication"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 
+it("Given background Rusty sync is pending, when an owner requests recovery, then keep controls actionable and run recovery once after that pass", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let release!: () => void
+  runtime.workspaceSync.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    expect(controller.actionBusy?.value ?? controller.busy.value).toBe(false)
+    const requested = controller.recoverCredentialConflict(f.workspace.origin, f.workspace.scopeId, f.workspace.workspaceId)
+    expect(controller.actionBusy.value).toBe(true)
+    expect(runtime.recoverConflict).not.toHaveBeenCalled()
+    for (const changed of f.localChanges) changed()
+    release()
+    await requested
+    expect(runtime.recoverConflict).toHaveBeenCalledOnce()
+    expect(controller.actionBusy.value).toBe(false)
+  } finally { release?.() }
+})
+
+it.each(["workspace", "identity"] as const)("Given recovery is queued behind sync, when the %s changes, then reject the old request without a recovery write", async changed => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let release!: () => void
+  runtime.workspaceSync.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    const requested = controller.recoverCredentialConflict(f.workspace.origin, f.workspace.scopeId, f.workspace.workspaceId).catch(cause => cause)
+    if (changed === "workspace") f.activeWorkspace.id = "other-workspace"
+    else f.current.value = { ...f.profile, device: { ...f.profile.device, publicKey: "changed-device-key" } }
+    release()
+    expect(await requested).toMatchObject({ message: expect.stringMatching(/identity changed|workspace switched/i) })
+    expect(runtime.recoverConflict).not.toHaveBeenCalled()
+  } finally { release?.() }
+})
+
 it("Given an idle Rusty connection, when only typing presence changes, then skip storage sync but retain durable and legacy chat triggers", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)

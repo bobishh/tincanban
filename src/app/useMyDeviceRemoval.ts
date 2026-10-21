@@ -1,8 +1,9 @@
-import { computed, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, watch } from "vue"
 import type { useAppCore } from "./useAppCore"
 import { readLocal, updateLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
-import { continueMyDeviceRemoval, myDeviceRemovalComplete, type MyDeviceRemoval } from "../sync/myDeviceRemoval"
+import { continueMyDeviceRemoval, myDeviceRemovalComplete, myDeviceRemovalsKey, type MyDeviceRemoval } from "../sync/myDeviceRemoval"
+import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
 export { myDeviceRemovalComplete } from "../sync/myDeviceRemoval"
 
 
@@ -17,7 +18,8 @@ export type PreparedDeviceRemoval = { job: MyDeviceRemoval; certificateSignature
 export function useMyDeviceRemoval(core: ReturnType<typeof useAppCore>) {
   const jobs = ref<MyDeviceRemoval[]>([]), pending = ref("")
   const replication = core.blindReplication
-  const key = (personId: string) => `tincanban.my-device-removals.v1.${personId}`
+  const key = myDeviceRemovalsKey
+  let refreshVersion = 0
   const parse = (raw: string | null): MyDeviceRemoval[] => raw ? JSON.parse(raw) as MyDeviceRemoval[] : []
   function guard(prepared: PreparedDeviceRemoval) {
     const current = core.tincanban.getCurrentProfile(), job = prepared.job
@@ -25,13 +27,18 @@ export function useMyDeviceRemoval(core: ReturnType<typeof useAppCore>) {
       throw new Error("Identity changed during device removal")
   }
   async function refresh() {
+    const version = ++refreshVersion
     if (typeof core.tincanban.getCurrentProfile !== "function") return
     const profile = core.tincanban.getCurrentProfile()
     if (!profile) { jobs.value = []; return }
     const value = parse(await readLocal(key(profile.identity.personId)))
-    if (core.tincanban.getCurrentProfile()?.identity.personId === profile.identity.personId) jobs.value = value
+    if (version === refreshVersion && core.tincanban.getCurrentProfile()?.identity.personId === profile.identity.personId) jobs.value = value
   }
   watch(() => [core.tincanban.ready?.value, replication?.currentDeviceId?.value], () => { void refresh() }, { immediate: true })
+  const stopPreferences = subscribeIdentityDevicePreferences(owner => {
+    if (owner === core.tincanban.getCurrentProfile()?.identity.personId) void refresh()
+  })
+  onScopeDispose(() => { refreshVersion++; stopPreferences() })
   const origins = computed(() => [...new Set([...replication.configs.value.filter(config => !config.boardAccess),
     ...replication.identityConfigs.value].map(config => config.origin))])
   async function prepare(deviceId: string, includeNewOrigins = false): Promise<PreparedDeviceRemoval> {

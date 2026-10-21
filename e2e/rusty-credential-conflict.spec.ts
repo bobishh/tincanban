@@ -15,6 +15,7 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
     return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
   })
   const rusty = await startRustyService(owner, baseURL!)
+  let releaseProfileRead: (() => void) | undefined
   const openRusty = async () => {
     await page.getByRole("button", { name: "Menu", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -35,21 +36,34 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
       const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
       const personId = (await bootstrapIdentity()).identity.personId
       const config = (await repository.getReplicaConfigurations(personId)).find(value => value.origin === origin)!
+      const profileScope = (await repository.getPrivateReplicaConfigurations(personId)).find(value => value.origin === origin && value.purpose === "identity")!.scopeId
       const competing = changeReplicaPreference(emptyPrivateReplicaState(personId, "offline-device"), {
         ...config, contentKey: "B".repeat(42) + "A",
       })
       await repository.receivePrivateReplicaState(personId, portableReplicaState(competing))
       identityDevicePreferencesChanged(personId)
-      return { keyEpoch: config.keyEpoch, contentKey: config.contentKey, scopeId: config.scopeId }
+      return { personId, profileScope, keyEpoch: config.keyEpoch, contentKey: config.contentKey, scopeId: config.scopeId }
     }, rusty.origin)
     const conflict = page.getByRole("alert", { name: "Rusty settings conflict", exact: true })
     await expect(conflict).toBeVisible()
     const uploads = `${rusty.origin}/v2/scopes/${original.scopeId}/objects/**`
+    let blockedUploads = 0
     await page.route(uploads, async route => {
-      if (route.request().method() === "PUT") await route.fulfill({ status: 503, body: JSON.stringify({ message: "Snapshot confirmation unavailable" }) })
+      if (route.request().method() === "PUT") { blockedUploads++; await route.fulfill({ status: 503, body: JSON.stringify({ message: "Snapshot confirmation unavailable" }) }) }
       else await route.continue()
     })
+    const profileRead = new Promise<void>(resolve => { releaseProfileRead = resolve })
+    let profileReadHeld = false
+    await page.route(url => url.origin === rusty.origin && url.pathname === `/v2/scopes/${original.profileScope}/objects`, async route => {
+      if (!profileReadHeld && route.request().method() === "GET") { profileReadHeld = true; await profileRead }
+      await route.continue()
+    })
+    await page.evaluate(async personId => (await import("/src/sync/identityDevicePreferenceEvents.ts")).identityDevicePreferencesChanged(personId), original.personId)
+    await expect.poll(() => profileReadHeld).toBe(true)
     await conflict.getByRole("button", { name: "Recover connection", exact: true }).tap()
+    await expect(conflict.getByRole("button", { name: "Recovering connection…", exact: true })).toBeVisible()
+    expect(blockedUploads).toBe(0)
+    releaseProfileRead!()
     await expect(conflict.getByRole("alert")).toContainText("Snapshot confirmation unavailable", { timeout: 30_000 })
     await expect(conflict.getByRole("button", { name: "Recover connection", exact: true })).toBeEnabled()
     await page.reload()
@@ -69,5 +83,5 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
     expect(JSON.stringify(restored)).toContain(original.contentKey)
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await expect(page.getByRole("region", { name: "Retained phone board", exact: true })).toBeVisible()
-  } finally { await rusty.close() }
+  } finally { releaseProfileRead?.(); await rusty.close() }
 })

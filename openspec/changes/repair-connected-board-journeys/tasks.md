@@ -26,6 +26,7 @@
 - [x] 2.10 Remove deployment-wide `RUSTY_TRUSTED_OWNER` and controller-device admission pins; keep per-resource ownership, signatures and revocation. Verify unrelated owners, restart isolation and scoped editor delivery; deploy through Rusty CI.
 
 - [ ] 2.11 Diagnose intermittent TinSink ClickHouse code 241 memory pressure delaying queued log/trace inserts; preserve queued evidence and verify stable durable delivery before claiming full-chain reliability.
+- [ ] 2.12 Preserve manual Rusty actions across background-sync busy transitions. Failed CI trace shows a lost recovery tap with no recovery request; queue one action with its original session/workspace guard instead of disabling controls during automatic passes.
 
 ## 3. GitHub Actions storage (delegated, explicitly authorized)
 

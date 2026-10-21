@@ -3,6 +3,18 @@ export type MyDeviceRemoval = { version: 1; personId: string; signerDeviceId: st
   origins: Record<string, { status: "pending" | "removed"; error?: string }> }
 type RemovalPorts = { ensureCurrent: () => void; save: (job: MyDeviceRemoval) => Promise<void>;
   removeWorkspaces: (ids: string[]) => Promise<void>; revokeOrigin: (origin: string) => Promise<void> }
+export const myDeviceRemovalsKey = (personId: string) => `tincanban.my-device-removals.v1.${personId}`
+
+/** Explicit reset abandons only this server phase; no access is marked revoked. */
+export function withoutDeviceRemovalOrigin(jobs: MyDeviceRemoval[], personId: string, origin: string): MyDeviceRemoval[] {
+  return jobs.flatMap(job => {
+    if (job.personId !== personId || !Object.hasOwn(job.origins, origin)) return [job]
+    const next = structuredClone(job)
+    delete next.origins[origin]
+    return Object.keys(next.workspaces).length || Object.keys(next.origins).length ? [next] : []
+  })
+}
+
 export async function continueMyDeviceRemoval(initial: MyDeviceRemoval, ports: RemovalPorts): Promise<void> {
   ports.ensureCurrent()
   const job = structuredClone(initial)

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest"
-import { effectScope, ref } from "vue"
+import { effectScope, ref, toRaw } from "vue"
 import { IDBFactory } from "fake-indexeddb"
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -26,6 +26,21 @@ async function fixture() {
   const controller = scope.run(() => useMyDeviceRemoval(core as never))!
   return { controller, core, calls, useMyDeviceRemoval, scope, online: () => { offline = false }, changeIdentity: () => { personId = "other-owner" } }
 }
+
+it("Given a saved device removal is changed by explicit local reset, when preferences notify, then refresh the displayed job without reloading the board", async () => {
+  const f = await fixture()
+  await f.controller.remove(await f.controller.prepare("old"))
+  expect(f.controller.jobs.value[0]?.origins["https://offline.example"]).toBeDefined()
+  const { writeLocal } = await import("../localDb")
+  const { identityDevicePreferencesChanged } = await import("../sync/identityDevicePreferenceEvents")
+  const job = structuredClone(toRaw(f.controller.jobs.value[0]!))
+  delete job.origins["https://offline.example"]
+  await writeLocal("tincanban.my-device-removals.v1.test-owner", JSON.stringify([job]))
+  identityDevicePreferencesChanged("test-owner")
+  await vi.waitFor(() => expect(f.controller.jobs.value[0]?.origins["https://offline.example"]).toBeUndefined())
+  expect(f.controller.jobs.value[0]?.origins["https://online.example"].status).toBe("removed")
+  f.scope.stop()
+})
 
 it("Given owner-shared board storage, when reviewing identity device removal, then do not request management of another owner's Rusty", async () => {
   const f = await fixture()

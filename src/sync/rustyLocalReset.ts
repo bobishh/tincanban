@@ -12,6 +12,7 @@ import { workspaceReplicaSetupKey } from "./workspaceReplicaConnection"
 import { scopeEnrollmentJournalKey } from "./rustyEnrollmentJournal"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { localWorkspaceAdmissionAuthority, workspaceRole } from "./changeAuthorization"
+import { myDeviceRemovalsKey, withoutDeviceRemovalOrigin, type MyDeviceRemoval } from "./myDeviceRemoval"
 
 type App = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
 const profileKey = "tincanban.local_profile.v1"
@@ -62,11 +63,15 @@ async function resetPlan(profile: LocalProfile, origin: string, freezeKey: strin
   const encoded = JSON.stringify(next)
   parseState(encoded, owner)
   const archiveKey = `tincanban.rusty-local-reset.v1.${crypto.randomUUID()}`
+  const removalKey = myDeviceRemovalsKey(owner), removalRaw = await readLocal(removalKey)
+  const removal = { key: removalKey, value: removalRaw }
+  const removalWrites = removalRaw === null ? [] : [{ key: removalKey,
+    value: JSON.stringify(withoutDeviceRemovalOrigin(JSON.parse(removalRaw) as MyDeviceRemoval[], owner, origin)) }]
   const audit = JSON.stringify({ version: 1, personId: owner, deviceId: profile.device.deviceId, origin,
-    records: [{ key, value: raw }, ...records, ...management.conditions] })
-  return { conditions: [{ key, value: raw }, { key: profileKey, value: profileRaw }, ...records, ...management.conditions,
+    records: [{ key, value: raw }, ...records, ...management.conditions, removal] })
+  return { conditions: [{ key, value: raw }, { key: profileKey, value: profileRaw }, ...records, ...management.conditions, removal,
     { key: archiveKey, value: null }], writes: [{ key, value: encoded }, ...records.map(record => ({ key: record.key, value: null })),
-    ...management.writes, { key: archiveKey, value: audit }] }
+    ...management.writes, ...removalWrites, { key: archiveKey, value: audit }] }
 }
 
 function hasOriginManagement(records: RecordSnapshot[], origin: string): boolean {
@@ -111,11 +116,11 @@ export async function forgetRustyOrigin(app: App, origin: string, workspaceId: s
   if (await workspaceRole(document, profile) === "automation") throw new Error("Board participant access required")
   guard()
   const freezeKey = await replicaCredentialFreezeKey(owner, origin)
-  await withLocalStateWriteLock(`rusty-device-revocation:${owner}:${origin}`, () => withLocalStateWriteLock(freezeKey, async () => {
+  await withLocalStateWriteLock(`my-device-removal:${owner}`, () => withLocalStateWriteLock(`rusty-device-revocation:${owner}:${origin}`, () => withLocalStateWriteLock(freezeKey, async () => {
     const plan = await resetPlan(profile, origin, freezeKey)
     guard()
     if (!await compareAndSwapLocal(plan, guard)) throw new Error("Rusty settings or pending operation changed; retry reset")
-  }))
+  })))
   guard()
   identityDevicePreferencesChanged(owner)
 }

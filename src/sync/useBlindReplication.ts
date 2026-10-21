@@ -1,10 +1,11 @@
 import { createDeviceAccessRefresh } from "./privateDeviceAccessRefresh"
 import { createReplicationState,clearReplicationSessionState,reportDeviceSyncProblem } from "./privateReplicationState"
 import { createPrivateReplicationActions } from "./privateReplicationActions"
+import { createPrivateReplicaUserActions } from "./privateReplicaUserActions"
+import { startPrivateReplicationTriggers } from "./privateReplicationTriggers"
 import { onBeforeUnmount,watch } from "vue"
 import type { useTincanban } from "../state"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
-import { subscribeChat } from "../chat/service"
 import { createPrivateReplicaRuntime } from "./privateReplicaLoop"
 import { defaultStorage } from "../storage"
 import { requiresRustyPermissionMigration } from "./rustyPermissionMigration"
@@ -17,9 +18,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const state = createReplicationState()
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
-  let identity = ""
-  let session = 0
+  let identity = "", session = 0
   let running: Promise<void> | undefined
+  let automaticCompaction: Promise<void> | undefined
   let disposed = false
   const automaticHistoryCompactions = new Set<string>()
   const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, deviceSyncIssues, attachmentCoverage }, {
@@ -28,7 +29,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const deviceAccess = createDeviceAccessRefresh(tincanban, state, runtime,
     (owner, epoch) => identity === owner && session === epoch && !disposed)
   const { personId, profileBinding, replica, fetchAttachment } = runtime
-  const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value && !hasActiveTextEditor()
+  const { busy: actionBusy, protect } = createPrivateReplicaUserActions(() => Promise.all([running, automaticCompaction]),
+    () => runtime.captureSession(tincanban.activeWorkspace.id))
+  const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value && !actionBusy.value && !automaticCompaction && !hasActiveTextEditor()
   async function maybeCompactActiveHistory(owner: string, epoch: number) {
     if (!canCompact(owner, epoch)) return
     const workspaces = [...new Set(configs.value.filter(config => !config.removalPending).map(config => config.workspaceId))]
@@ -41,7 +44,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       if (!progress.transitionId && (progress.admittedChanges < HISTORY_ACTIVE_CHANGE_LIMIT &&
           progress.encodedBytes < HISTORY_ACTIVE_BYTE_LIMIT)) continue
       automaticHistoryCompactions.add(workspaceId)
-      void compactWorkspaceHistory(workspaceId).catch(() => undefined).finally(() => automaticHistoryCompactions.delete(workspaceId))
+      automaticCompaction = compactWorkspaceHistory(workspaceId).catch(() => undefined).finally(() => {
+        automaticHistoryCompactions.delete(workspaceId); automaticCompaction = undefined
+      })
       return
     }
   }
@@ -49,9 +54,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     await runtime.reload(owner, epoch)
     await deviceAccess.refresh(owner, epoch)
   }
-  function syncNow(): Promise<void> {
+  function syncNow(duringAction = false): Promise<void> {
     if (running) return running
-    if (busy.value || !identity || disposed || (configs.value.length + identityConfigs.value.length === 0 && !deviceSyncIssues.value.session)) return Promise.resolve()
+    if (busy.value || (actionBusy.value && !duringAction) || !identity || disposed || (configs.value.length + identityConfigs.value.length === 0 && !deviceSyncIssues.value.session)) return Promise.resolve()
     busy.value = true
     error.value = ""
     deviceSyncIssues.value = Object.fromEntries(Object.entries(deviceSyncIssues.value).filter(([key]) => key !== "session"))
@@ -96,10 +101,10 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     })
     return running
   }
-  const { attach, resumeRustyOperation, forgetRusty, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
-    exportAutomationAccess, compactWorkspaceHistory } = createPrivateReplicationActions(tincanban, state, runtime, {
-      identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow,
+  const actions = createPrivateReplicationActions(tincanban, state, runtime, {
+      identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow: () => syncNow(true),
     }, automaticHistoryCompactions)
+  const { revoke, compactWorkspaceHistory, exportAutomationAccess } = actions
   const stop = watch(profileBinding, async () => {
     const owner = tincanban.ready.value ? personId() : ""
     const epoch = ++session
@@ -115,10 +120,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       await syncNow()
     } catch (cause) { if (identity === owner && session === epoch && !disposed) reportDeviceSyncProblem(state, cause) }
   }, { immediate: true })
-  const healthClock = setInterval(() => { now.value = Date.now() }, 1000)
-  const timer = setInterval(() => { void syncNow() }, 15000)
-  const stopWorkspace = tincanban.subscribeLocalChanges(() => { void syncNow() })
-  const stopChat = subscribeChat(event => { if (event.contentChanged !== false) void syncNow() })
+  const stopTriggers = startPrivateReplicationTriggers(tincanban, now, syncNow)
   const stopPreferences = subscribeIdentityDevicePreferences(owner => {
     if (owner !== identity || disposed) return
     const epoch = session
@@ -128,11 +130,10 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       if (owner === identity && session === epoch && !disposed) await syncNow()
     })().catch(cause => { if (owner === identity && session === epoch && !disposed) reportDeviceSyncProblem(state, cause) })
   })
-  onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
+  onBeforeUnmount(() => { disposed = true; stop(); stopTriggers(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
-    attach, resumeRustyOperation, forgetRusty, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
-    remove, syncNow, fetchAttachment }
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, actionBusy, error, notice, historyNotices,
+    ...protect(actions), exportAutomationAccess, syncNow: () => syncNow(), fetchAttachment }
 }
 
 /** Automatic archive work waits while the user is editing; replica delivery keeps running. */
