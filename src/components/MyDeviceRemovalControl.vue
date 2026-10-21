@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef } from "vue"
+import { deviceDisplayName } from "../ui/deviceInfo"
 import DialogWindow from "./DialogWindow.vue"
 import { myDeviceRemovalComplete } from "../app/useMyDeviceRemoval"
 import type { useMyDeviceRemoval, PreparedDeviceRemoval } from "../app/useMyDeviceRemoval"
@@ -42,7 +43,7 @@ async function remove() {
     </template>
     <p v-if="additionalOrigins.length" class="sync-error" role="status">New servers are outside this recorded removal: {{ additionalOrigins.join(', ') }}. {{ complete ? 'Confirm additional removal to include them.' : 'Finish the recorded removal first.' }}</p>
     <button v-if="!complete || additionalOrigins.length" class="button button-danger" type="button" :disabled="!!controller.pending.value" @click="review">{{ controller.pending.value === deviceId ? 'Removing my device…' : complete && additionalOrigins.length ? 'Remove additional device access' : job ? 'Retry device removal' : 'Remove my device' }}</button>
-    <DialogWindow v-if="confirming" :window-id="`my-device-removal:${deviceId}`" :workspace-id="workspaceId ?? 'local'" :title="`Remove ${name}?`" aria-label="Remove my device confirmation" :busy="!!controller.pending.value" @close="confirming = false">
+    <DialogWindow v-if="confirming" :window-id="`my-device-removal:${deviceId}`" :workspace-id="workspaceId ?? 'local'" :title="`Remove ${deviceDisplayName({ deviceId, name })}?`" aria-label="Remove my device confirmation" :busy="!!controller.pending.value" @close="confirming = false">
       <section class="dialog dialog-window-content">
         <p>The listed workspace and server scopes are frozen for this confirmation. This device loses access in those scopes. Rusty revocation requires ownership of its connected boards. Owner, key, or offline-server failures remain visible for action and retry.</p>
         <p>Your identity, other devices, and boards stay saved. Existing copies cannot be erased. Signed revocations and this device record are retained. Access outside the listed scopes is not confirmed revoked.</p>

@@ -5,9 +5,10 @@ const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("./Ident
 
 type ProfileDraft = { name: string; avatarData?: string | null; revision?: string }
 type PhotoOption = { avatarData: string | null; changedAt: string }
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   workspaceId?: string
   displayName: string
+  nameProvided?: boolean
   saveName: (value: string) => Promise<void>
   avatarData?: string
   saveAvatar: (value: string | null) => Promise<void>
@@ -15,9 +16,9 @@ const props = defineProps<{
   photoOptions?: PhotoOption[]
   profileRevision?: string
   saveProfile?: (draft: ProfileDraft) => Promise<void>
-}>()
+}>(), { nameProvided: true })
 const emit = defineEmits<{ recovery: [] }>()
-const name = ref(props.displayName)
+const name = ref(props.nameProvided ? props.displayName : "")
 const nameDirty = ref(false)
 const saving = ref(false)
 const avatarDraft = ref<string | null | undefined>(undefined)
@@ -27,7 +28,7 @@ const revisionCaptured = ref(false)
 const saved = ref(false)
 const error = ref("")
 const profilePending = () => Boolean(props.saveProfile && !props.profileRevision)
-watch(() => props.displayName, value => { if (!nameDirty.value) name.value = value })
+watch(() => [props.displayName, props.nameProvided] as const, ([value, provided]) => { if (!nameDirty.value) name.value = provided ? value : "" })
 
 function captureCurrentRevision() {
   draftRevision.value = props.profileRevision
@@ -79,7 +80,7 @@ async function save() {
         ...(revision !== undefined ? { revision } : {}) }
       await props.saveProfile(draft)
     } else {
-      if (value !== props.displayName) await props.saveName(value)
+      if (value !== props.displayName || !props.nameProvided) await props.saveName(value)
       if (avatarDraft.value !== undefined) await props.saveAvatar(avatarDraft.value)
     }
     avatarDraft.value = undefined
@@ -102,7 +103,7 @@ async function save() {
     <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
       <IdentityPhotoPanel :workspace-id="workspaceId" :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
       <div class="identity-profile-fields">
-        <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending()" @input="editName" /></label>
+        <label>Name<input v-model="name" maxlength="48" required :disabled="saving || profilePending()" @input="editName" /></label>
       </div>
       <div class="identity-profile-actions">
         <button class="button button-primary" type="submit" :disabled="saving || profilePending() || !name.trim() || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>

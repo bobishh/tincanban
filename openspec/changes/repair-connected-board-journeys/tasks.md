@@ -15,7 +15,7 @@
 
 - [ ] 2.1 Repair directory spacing, compact actions, active badge and responsive window layout.
 - [ ] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state.
-- [ ] 2.3 Repair pending Rusty transition and connection retry using exact saved evidence; preserve board, keys and outbox.
+- [ ] 2.3 Complete the user-requested fresh Rusty setup: server reset is backed up and complete; explicitly forget frozen local Rusty bindings, preserve browser boards/profile/files and retained reset evidence, then reconnect from owner and verify editor delivery. This replaces further attempts to resume the old transition.
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
 - [ ] 2.6 Fix live public intake routing/outcome and verify authorized end-to-end submission.
@@ -44,6 +44,8 @@
 - [ ] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage.
 - [x] 4.8 Repair duplicate image pull after Rusty writer shutdown; verify prepared image before handoff and restore previous writer on activation failure. Record blue/green constraints and options before a storage architecture change.
 
+- [ ] 4.10 Select the sealed automation cohort from its actual packaging attempt after a partial CI rerun; preserve SHA/run/reader validation.
+
 ## New reports
 
 Append new user reports here or to the relevant section. Do not discard earlier unfinished scope when new reports arrive.
@@ -54,6 +56,10 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 - [ ] Stop unconfirmed deletion of legacy Rusty connection records on first read/mutation; cover skipped-release startup and late legacy writes. Establish whether the real missing board record can be recovered from retained operation evidence or another owner device, without importing obsolete credentials automatically.
 - [ ] Red CI: repair real same-identity Rusty credential transfer under multi-workspace contention; preserve its functional acceptance scenario.
 - [ ] Fix the public-delivery owner-identity regression exposed by testing the deployed Rusty revision; preserve per-board authority across editor delivery and restart without a global owner pin.
+- [ ] Remove automatic identity-name prefill and random device labels, including old pending-removal presentation; preserve intentional names and signed identity data.
+
+- [ ] Verify readable mobile named-successor selection and device scrolling on the deployed client; isolated WebKit proof passed.
+- [x] Find current Swift best-practice skills and lint/format/concurrency tools from primary sources; installation was not requested.
 
 ### Actions cleanup evidence (2026-10-21)
 

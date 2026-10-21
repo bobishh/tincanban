@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { deviceDisplayName } from "../ui/deviceInfo"
 import DialogWindow from "./DialogWindow.vue"
 import { computed, ref } from "vue"
 const props = defineProps<{
@@ -15,7 +16,7 @@ async function prepareDeviceRemoval(personId: string, deviceId: string, name: st
   deviceRemovalError.value = ""
   try {
     const workspaces = await props.removableDeviceWorkspaces?.(personId, deviceId) ?? []
-    deviceRemoval.value = { personId, deviceId, name, workspaceId: props.activeWorkspaceId, workspaces }
+    deviceRemoval.value = { personId, deviceId, name: deviceDisplayName({ deviceId, name }), workspaceId: props.activeWorkspaceId, workspaces }
     removalScope.value = "current"
   } catch (error) { deviceRemovalError.value = error instanceof Error ? error.message : String(error) }
 }

@@ -51,7 +51,7 @@ test("Given Device sync shows an invalid-link failure, when it renders recovery 
   await expect(dialog.getByRole("button", { name: "Dismiss", exact: true })).toBeVisible()
 })
 
-test("Given many devices in a mobile sync window, when their list is scrolled, then the list moves without scrolling or locking the board", async ({ page }) => {
+test("Given many devices in a mobile sync window, when their list is scrolled, then the list moves without scrolling or locking the board", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 640 })
   await page.goto("/")
   const backgroundScroll = await page.evaluate(() => window.scrollY)
@@ -59,7 +59,7 @@ test("Given many devices in a mobile sync window, when their list is scrolled, t
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
   await page.evaluate(async () => {
     const { mountMobileDeviceListDialog } = await import("/e2e/support/keeperDialog.ts")
-    mountMobileDeviceListDialog()
+    mountMobileDeviceListDialog({ includeOwner: true, namedSuccessor: true })
   })
   const dialog = page.getByRole("dialog", { name: "Device sync" })
   await dialog.getByRole("button").filter({ hasText: "Mobile test participant" }).click()
@@ -72,6 +72,11 @@ test("Given many devices in a mobile sync window, when their list is scrolled, t
   await expect.poll(() => devices.evaluate(list => list.scrollTop)).toBeGreaterThan(0)
   await expect(dialog).not.toHaveAttribute("aria-modal", "true")
   expect(await page.locator(".board").evaluate(board => board.getBoundingClientRect().top)).toBe(boardTop)
+  await dialog.getByRole("button").filter({ hasText: "Workspace owner" }).click()
+  await expect(dialog.getByRole("list", { name: "Devices for Workspace owner" }).getByRole("listitem")).toHaveCount(1)
+  await dialog.getByRole("button").filter({ hasText: "Mobile test participant" }).click()
+  await expect(devices.getByRole("listitem")).toHaveCount(20)
+  await dialog.screenshot({ path: testInfo.outputPath("mobile-named-successor-devices.png") })
 
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(backgroundScroll)

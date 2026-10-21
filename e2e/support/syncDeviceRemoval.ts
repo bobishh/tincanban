@@ -7,7 +7,7 @@ declare global { interface Window { syncRemovalCalls?: string[] } }
 export function mountSyncDeviceRemoval(offline = true) {
   const calls: string[] = []
   window.syncRemovalCalls = calls
-  const registeredDevices = ref([{ deviceId: "current-device", displayName: "Current label", addedAt: "2026-01-01" }, { deviceId: "old-device", displayName: "JoyfulPapaya", addedAt: "2026-02-01" }])
+  const registeredDevices = ref([{ deviceId: "current-device", displayName: "Current label", addedAt: "2026-01-01" }, { deviceId: "old-device", displayName: "Valiant Squirrel's device", addedAt: "2026-02-01" }])
   const replication = {
     configs: ref([{ origin: "https://online.example", workspaceId: "board", scopeId: "scope" }, { origin: "https://offline.example", workspaceId: "board", scopeId: "scope2" }]),
     identityConfigs: ref([]), preferenceConflicts: ref([]), profileSetupErrors: ref({}), profilePermissionUpdates: ref([]), statuses: ref({}), now: ref(Date.now()),

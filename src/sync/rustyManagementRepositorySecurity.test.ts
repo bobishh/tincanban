@@ -16,11 +16,12 @@ it("Given a pending policy request, When imported signed evidence revokes this d
   }
   const owner = profile.identity.personId
   const repository = new RustyManagementRepository(owner)
+  const issuedAt = Date.now()
   const authPayload = {
     kind: "rusty-management-policy-update" as const, version: 1 as const, serviceId, origin: binding.origin,
     personId: owner, deviceId: profile.device.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId,
     expectedRevision: 0, operations: ["management.update", "scope.policy"], revokedDeviceIds: [],
-    requestId: "bootstrap-update", issuedAt: Date.now(), expiresAt: Date.now() + 120_000,
+    requestId: "bootstrap-update", issuedAt, expiresAt: issuedAt + 120_000,
   }
   const request: ManagementUpdateRequest = {
     version: 1, identity: profile.identity, deviceId: profile.device.deviceId, certificates: [profile.certificate],

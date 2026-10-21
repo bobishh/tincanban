@@ -96,7 +96,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     })
     return running
   }
-  const { attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
+  const { attach, resumeRustyOperation, forgetRusty, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
     exportAutomationAccess, compactWorkspaceHistory } = createPrivateReplicationActions(tincanban, state, runtime, {
       identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow,
     }, automaticHistoryCompactions)
@@ -131,7 +131,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
-    attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
+    attach, resumeRustyOperation, forgetRusty, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
     remove, syncNow, fetchAttachment }
 }
 

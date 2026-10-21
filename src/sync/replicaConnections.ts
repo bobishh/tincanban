@@ -31,6 +31,9 @@ export async function connectWorkspaceReplica(app: ReturnType<typeof useTincanba
       ensureCurrent()
     } })
   ensureCurrent()
+  const { ensureIdentityReplicaConnection } = await import("./identityReplicaConnection")
+  await ensureIdentityReplicaConnection(service, current, ensureCurrent, { allowNewScopeAfterRemoval: true })
+  ensureCurrent()
 }
 
 /** Retain a pending connection until Rusty confirms revocation; private identity scopes are independent. */

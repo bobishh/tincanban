@@ -2,6 +2,7 @@
 import { computed, ref } from "vue"
 import type { BlindReplicationController, RustyRemovalProgress } from "../app/blindReplication"
 import { profileDeliveryStates, replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
+import { deviceDisplayName } from "../ui/deviceInfo"
 import RustyMark from "./RustyMark.vue"
 import RustyCredentialConflictRecovery from "./RustyCredentialConflictRecovery.vue"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
@@ -10,6 +11,7 @@ const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)
 const updatingOrigin = ref("")
+const forgettingOrigin = ref("")
 const savedOperations = computed(() => props.controller.pendingRustyOperations?.value ?? [])
 const removalSteps: Record<RustyRemovalProgress["phase"], string> = {
   "checking-automations": "Check automations connected to this server",
@@ -30,6 +32,8 @@ const profileConflicts = computed(() => {
 })
 const profileRecords = computed(() => profileDeliveryStates(props.controller.configs.value, props.controller.identityConfigs.value,
   props.controller.statuses.value, props.workspaceId, props.controller.now.value))
+const resetOrigins = computed(() => [...new Set([...records.value, ...boardConflicts.value, ...profileConflicts.value,
+  ...profileRecords.value, ...savedOperations.value].map(value => value.origin))])
 async function run(action: () => Promise<void>) {
   pending.value = true
   failure.value = ""
@@ -44,6 +48,14 @@ async function updateDeviceAccess(origin: string) {
   try { await run(() => props.controller.updateDeviceAccess(origin, props.workspaceId)) }
   finally { updatingOrigin.value = "" }
 }
+async function forget() {
+  const origin = forgettingOrigin.value
+  await run(async () => {
+    await props.controller.forgetRusty(origin, props.workspaceId)
+    forgettingOrigin.value = ""
+    if (props.owner) { address.value = origin; adding.value = true }
+  })
+}
 </script>
 <template>
   <section class="rusty-panel" aria-label="Rusty">
@@ -56,7 +68,7 @@ async function updateDeviceAccess(origin: string) {
     </div>
     <section v-for="operation in owner ? savedOperations : []" :key="`operation/${operation.origin}`" class="rusty-conflict" aria-label="Saved Rusty operation">
       <p>{{ operation.origin }}: {{ operation.kind === 'device-revocation' ? 'Device removal is unfinished. Board and profile sync are paused on this server.' : 'Connection recovery is unfinished.' }} Saved data and the original operation are retained.</p>
-      <p v-if="operation.kind === 'device-revocation'">Device: {{ controller.registeredDevices?.value.find(device => device.deviceId === operation.deviceId)?.displayName || 'Previously registered device' }}</p>
+      <p v-if="operation.kind === 'device-revocation'">Device: {{ deviceDisplayName({ deviceId: operation.deviceId, name: controller.registeredDevices?.value.find(device => device.deviceId === operation.deviceId)?.displayName }) }}</p>
       <p v-if="operation.progress">Next step: {{ removalSteps[operation.progress.phase] }}.</p>
       <details v-if="operation.progress"><summary>Recovery details</summary><p>{{ operation.progress.confirmedScopes }} / {{ operation.progress.scopeCount }} storage updates confirmed. {{ operation.progress.frozenWorkers }} / {{ operation.progress.workerCount }} automations paused; {{ operation.progress.rotatedWorkers }} updated. Device revocation confirmed: {{ operation.progress.personConfirmed ? 'yes' : 'no' }}.</p></details>
       <p v-if="operation.signerDeviceId !== controller.currentDeviceId.value">Continue on the device that started this operation.</p>
@@ -93,6 +105,14 @@ async function updateDeviceAccess(origin: string) {
       <p>Profile delivery is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
     </div>
+    <section v-for="origin in resetOrigins" :key="`forget/${origin}`" class="rusty-conflict" aria-label="Forget local Rusty access">
+      <button v-if="forgettingOrigin !== origin" class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="forgettingOrigin = origin">Forget Rusty on this device</button>
+      <template v-else>
+        <p>Forget {{ origin }} for all your boards and profile on this device? This abandons unfinished Rusty operations. Board data, profile, files, and an audit copy of old settings stay saved. Server data and other participants are unchanged.</p>
+        <button class="button button-danger" type="button" :disabled="pending || controller.busy.value" @click="forget">Confirm forget Rusty</button>
+        <button class="button button-quiet" type="button" :disabled="pending || controller.busy.value" @click="forgettingOrigin = ''">Cancel</button>
+      </template>
+    </section>
     <button v-if="owner && !adding" class="button" type="button" :disabled="pending || controller.busy.value" @click="adding = true">Add Rusty</button>
     <form v-if="owner && adding" @submit.prevent="connect">
       <label for="rusty-address">Address</label>

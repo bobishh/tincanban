@@ -47,16 +47,27 @@ describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
     expect(JSON.stringify(profile.certificate)).not.toContain("privateKey")
   })
 
-  it("uses the shared word list for a fresh identity name and replaces the old placeholder", async () => {
+  it("Given a fresh identity without a chosen name, when bootstrapped and reloaded, then retain neutral protocol metadata and no chosen name", async () => {
     const fresh = await bootstrapIdentity()
-    expect(fresh.identity.displayName).toMatch(/^[A-Za-z]+ [A-Za-z]+$/)
-    resetIdentityStorageForTest()
-    const unnamed = await bootstrapIdentity("")
-    expect(unnamed.identity.displayName).toMatch(/^[A-Za-z]+ [A-Za-z]+$/)
-    resetIdentityStorageForTest()
-    const old = await bootstrapIdentity("tincanban User")
-    expect(old.identity.displayName).toMatch(/^[A-Za-z]+ [A-Za-z]+$/)
-    expect(old.identity.displayName).not.toBe("tincanban User")
+    expect(fresh.identity.displayName).toBe("Participant")
+    const { identityNameIsProvided } = await import("./identityNameChoice")
+    expect(await identityNameIsProvided(fresh.identity)).toBe(false)
+    clearInMemoryProfileForReloadTest()
+    const loaded = await bootstrapIdentity()
+    expect(loaded.identity).toEqual(fresh.identity)
+    expect(loaded.certificate).toEqual(fresh.certificate)
+    expect(await identityNameIsProvided(loaded.identity)).toBe(false)
+    await renameIdentity("Participant")
+    clearInMemoryProfileForReloadTest()
+    expect(await identityNameIsProvided((await bootstrapIdentity()).identity)).toBe(true)
+  })
+
+  it.each(["tincanban User", "Match User", "Valiant Squirrel", "Participant"])("Given deliberate name %s, when bootstrapped again, then preserve it as explicitly chosen", async name => {
+    const { identityNameIsProvided } = await import("./identityNameChoice")
+    const profile = await bootstrapIdentity(name)
+    clearInMemoryProfileForReloadTest()
+    expect((await bootstrapIdentity()).identity.displayName).toBe(name)
+    expect(await identityNameIsProvided(profile.identity)).toBe(true)
   })
 
   it("simultaneous first-open tabs create one profile atomically", async () => {

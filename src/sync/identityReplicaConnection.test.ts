@@ -27,6 +27,17 @@ afterEach(() => {
   remote.approve.mockReset().mockResolvedValue(1)
 })
 
+it("Given a forgotten profile scope, When the owner explicitly adds Rusty again, Then generate a distinct scope while retaining its tombstone", async () => {
+  const profile = await bootstrapIdentity("Fresh Rusty profile")
+  const old = await ensureIdentityReplicaConnection(service, profile, () => {})
+  await setReplicaPreference(profile.identity.personId, old, true)
+  await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow(/removed/i)
+  const fresh = await ensureIdentityReplicaConnection(service, profile, () => {}, { allowNewScopeAfterRemoval: true })
+  expect(fresh.scopeId).not.toBe(old.scopeId)
+  expect(fresh.contentKey).not.toBe(old.contentKey)
+  expect(await getIdentityReplicaConfigurations(profile.identity.personId)).toEqual([fresh])
+})
+
 it("Given a Rusty connection, when private profile setup succeeds, then register a separate identity scope without a workspace credential", async () => {
   const profile = await bootstrapIdentity("Profile setup")
   const compareAndSwap = localDb.compareAndSwapLocal.bind(localDb)

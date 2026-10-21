@@ -1,3 +1,5 @@
+import { isGeneratedDeviceName, unprovidedDisplayName } from "../chat/names"
+
 export function keeperDisplayName(name: string): string {
   if (!name.trim() || name === "Lighthouse" || name === "mesh-lighthouse") return "Rusty keeper"
   return name.replace(/^Participant(?= · |$)/, "Rusty keeper")
@@ -52,3 +54,12 @@ export type MeshMemberView = {
       tabs: number
     }>
   }
+
+/** Historical generated labels are presentation-only; never rewrite certificates or saved operations. */
+export function deviceDisplayName(device: { deviceId: string; name?: string; userAgent?: string; description?: string }): string {
+  const name = device.name?.trim() ?? ""
+  if (name && !isGeneratedDeviceName(name) && name !== `${unprovidedDisplayName}'s device`) return name
+  const description = device.description || describeUserAgent(device.userAgent)
+  const shortId = device.deviceId.slice(0, 8)
+  return description !== "Browser / OS unknown" ? `${description} · ${shortId}` : `Device ${shortId}`
+}

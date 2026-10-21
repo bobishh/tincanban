@@ -182,3 +182,26 @@ it("Given a foreign owner's preference event or a disposed view, then do not rec
   await nextTick()
   expect(storage.loadPersonalRoot).toHaveBeenCalledTimes(1)
 })
+
+it("Given fresh unnamed provenance, when profile preferences load and explicit choice arrives, then keep the form blank until a choice is committed", async () => {
+  const { writeLocal, deleteLocal } = await import("../localDb")
+  const { identityNameChoiceKey } = await import("../domain/identityNameChoice")
+  const identity = { ...ownerIdentity, displayName: "Participant" }
+  const key = identityNameChoiceKey(identity.personId)
+  await writeLocal(key, "Participant")
+  storage.loadPersonalRoot.mockImplementation(async () => ({ identity }))
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
+    getCurrentProfile: () => ({ identity }), getActiveDoc: () => ({ id: "workspace", entities: {} }),
+    readWorkspaceDoc: async () => ({ id: "workspace", entities: {} }), executeWorkspaceCommandAsync: vi.fn(async () => {}),
+  } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
+  try {
+    expect(avatars.identityNameProvided.value).toBe(false)
+    await vi.waitFor(() => expect(avatars.profileRevision.value).not.toBe(""))
+    expect(avatars.identityNameProvided.value).toBe(false)
+    await deleteLocal(key)
+    identityDevicePreferencesChanged(identity.personId)
+    await vi.waitFor(() => expect(avatars.identityNameProvided.value).toBe(true))
+  } finally { scope.stop(); await deleteLocal(key) }
+})

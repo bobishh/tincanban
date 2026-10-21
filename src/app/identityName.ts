@@ -4,6 +4,7 @@ import { compareAndSwapLocal } from "../localDb"
 import { planPersonalRootUpdate } from "../storagePersonalRoot"
 import { defaultStorage } from "../storage"
 import { identityDevicePreferencesChanged } from "../sync/identityDevicePreferenceEvents"
+import { planIdentityNameChoice } from "../domain/identityNameChoice"
 import { isAvatarDataUrl } from "../domain/avatarData"
 
 const maxRenameAttempts = 32
@@ -25,9 +26,10 @@ export async function saveIdentityName(name: string, workspaceId: string, refres
           { avatarData: draft.avatarData, changedAt: new Date().toISOString() }, ensureCurrent)
         return next
       })
+      const choice = await planIdentityNameChoice(personId)
       const committed = await compareAndSwapLocal({
-        conditions: [...rootPlan.conditions, { key: rename.storageKey, value: rename.previousProfile }],
-        writes: [...rootPlan.writes, { key: rename.storageKey, value: rename.candidateProfile }],
+        conditions: [...choice.conditions, ...rootPlan.conditions, { key: rename.storageKey, value: rename.previousProfile }],
+        writes: [...choice.writes, ...rootPlan.writes, { key: rename.storageKey, value: rename.candidateProfile }],
       }, ensureCurrent)
       if (committed) return
     }

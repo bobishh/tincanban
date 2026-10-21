@@ -4,6 +4,7 @@ import type { AutomationConfiguration } from "../app/automation"
 import type { PrivateReplicationState } from "./privateReplicationState"
 import type { createPrivateReplicaRuntime } from "./privateReplicaLoop"
 import { createHistoryCompactionAction } from "./privateHistoryCompactionAction"
+import { createRustyResetAction } from "./privateRustyResetAction"
 
 type Runtime = ReturnType<typeof createPrivateReplicaRuntime>
 export type ReplicationLifecycle = { identity: () => string; epoch: () => number; disposed: () => boolean;
@@ -25,6 +26,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     await lifecycle.reload(owner, epoch)
   }
   const resumeRustyOperation = createSavedRustyOperationAction(tincanban, state, runtime, lifecycle)
+  const forgetRusty = createRustyResetAction(tincanban, state, runtime, lifecycle)
   async function updateDeviceAccess(origin: string, workspaceId: string) {
     if (busy.value) throw new Error("Wait for current Rusty sync to finish")
     const guard = runtime.captureSession(workspaceId)
@@ -116,7 +118,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     return exportApprovedAutomation(tincanban, config, workerIdentity, configuration)
   }
   const compactWorkspaceHistory = createHistoryCompactionAction(tincanban, state, runtime, lifecycle, automaticHistoryCompactions)
-  return { attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
+  return { attach, resumeRustyOperation, forgetRusty, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
     exportAutomationAccess, compactWorkspaceHistory }
 }
 

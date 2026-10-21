@@ -34,6 +34,20 @@ async function fixture() {
   return { profile, owner, binding, repository, request, capability }
 }
 
+it("Given a forgotten server with a retained signing key, When old peer authority is replayed, Then require direct server observation and allow fresh revision one", async () => {
+  const f = await fixture()
+  await f.repository.observe(f.binding, await f.capability({ revision: 4 }))
+  const old = await f.repository.export()
+  const plan = await f.repository.planForgetOrigin(f.binding.origin)
+  expect(await local.compareAndSwapLocal(plan)).toBe(true)
+  await f.repository.import(old)
+  expect(await f.repository.read(f.binding)).toBeUndefined()
+  const fresh = await f.capability({ revision: 1, requestId: "fresh-after-server-reset" })
+  await f.repository.observe(f.binding, fresh)
+  await f.repository.import(old)
+  expect((await f.repository.read(f.binding))?.capability).toEqual(fresh)
+})
+
 it("Given a policy request saved before sending, When the process restarts, Then exact signed bytes remain pending and are excluded from portable state", async () => {
   const f = await fixture()
   await f.repository.prepare(f.binding, f.request)

@@ -40,14 +40,15 @@ function parseSetup(raw: string, service: Service, personId: string): Setup {
   return { version: 1, personId, config, stage: value.stage }
 }
 
-async function selectedConnection(service: Service, personId: string) {
+async function selectedConnection(service: Service, personId: string, allowNewScopeAfterRemoval = false) {
   const configs = (await getIdentityReplicaConfigurations(personId)).filter(config => config.origin === service.origin)
   if (configs.length > 1) throw new Error("Multiple private profile scopes require owner review")
   if (configs[0]?.servicePublicKey !== undefined && configs[0].servicePublicKey !== service.servicePublicKey) throw new Error("Private profile service pin changed")
   if (configs[0]?.removalPending) throw new Error("Private profile connection removal is pending")
   if (configs[0]) return configs[0]
   const state = await exportPrivateReplicaState(personId)
-  if (state.entries.some(entry => entry.origin === service.origin && entry.operations.some(operation => operation.purpose === "identity"))) {
+  if (state.entries.some(entry => entry.origin === service.origin && entry.operations.some(operation => operation.purpose === "identity") &&
+      (!allowNewScopeAfterRemoval || entry.operations.some(operation => operation.config !== null)))) {
     throw new Error("Private profile connection was removed or conflicted; explicit recovery is required")
   }
 }
@@ -83,7 +84,7 @@ async function activateSetup(key: string, raw: string, setup: Setup, profileRaw:
 
 /** Durable credentials precede enrollment. A lost response cannot generate a different key or scope on retry. */
 export async function ensureIdentityReplicaConnection(service: Service, profile: LocalProfile,
-  ensureCurrent: () => void): Promise<IdentityReplicaConfig> {
+  ensureCurrent: () => void, options: { allowNewScopeAfterRemoval?: boolean } = {}): Promise<IdentityReplicaConfig> {
   service = { ...service, origin: blindOrigin(service.origin) }
   profile = structuredClone(profile)
   ensureCurrent()
@@ -98,7 +99,7 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
     assertStoredProfile(profileRaw, profile)
     return withLocalStateWriteLock(key, async () => {
     ensureCurrent()
-    const existing = await selectedConnection(service, personId)
+    const existing = await selectedConnection(service, personId, options.allowNewScopeAfterRemoval)
     ensureCurrent()
     if (existing) return existing
     if (service.scopeManagement !== 1) throw new Error("Rusty upgrade required for private profile delivery")
@@ -134,7 +135,7 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
     }
     ensureCurrent()
     await assertReplicaCredentialsUnfrozen(personId, service)
-    const selected = await selectedConnection(service, personId)
+    const selected = await selectedConnection(service, personId, options.allowNewScopeAfterRemoval)
     if (selected && selected.scopeId !== setup.config.scopeId) throw new Error("Another private scope was activated; owner review required")
     await activateSetup(key, activationRaw, setup, profileRaw, ensureCurrent)
     identityDevicePreferencesChanged(personId)

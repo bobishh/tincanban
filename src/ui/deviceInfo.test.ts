@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { describeUserAgent, isKeeper } from "./deviceInfo"
+import { describeUserAgent, deviceDisplayName, isKeeper } from "./deviceInfo"
 
 describe("device user-agent description", () => {
   it("Given a reported Chrome UA, when described, then browser and OS are explicitly best-effort", () => {
@@ -18,3 +18,15 @@ describe("device user-agent description", () => {
    expect(isKeeper("Lighthouse")).toBe(false)
    expect(isKeeper(undefined)).toBe(false)
  })
+
+it("Given historical generated labels, when rendering devices or saved removal records, then use reported browser/OS and short ID", () => {
+  const device = { deviceId: "old-device-123", name: "Valiant Squirrel's device" }
+  expect(deviceDisplayName(device)).toBe("Device old-devi")
+  expect(deviceDisplayName({ ...device, userAgent: "Mozilla/5.0 Macintosh Chrome/140.0 Safari/537.36" })).toBe("Likely Chrome · macOS · old-devi")
+  expect(deviceDisplayName({ ...device, name: "Participant's device" })).toBe("Device old-devi")
+  expect(deviceDisplayName({ ...device, name: "Joyful Papaya's device" })).toBe("Device old-devi")
+})
+
+it.each(["Squirrel workstation", "Valiant Squirrel", "Alice's device", "Valiant Robot's device"])("Given deliberate device name %s, when displayed, then keep it", name => {
+  expect(deviceDisplayName({ deviceId: "old-device-123", name })).toBe(name)
+})

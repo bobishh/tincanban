@@ -19,7 +19,7 @@ export type ManagementUpdateRequest = { version: 1; identity: PublicIdentity; de
   authorization: SignedEnvelope<ManagementUpdateAuthorization> }
 export type PortableManagementRecord = { binding: ManagementBinding; capability: SignedEnvelope<RustyManagementCapability> }
 export type ManagementRecord = { binding: ManagementBinding; capability?: SignedEnvelope<RustyManagementCapability>; pending?: ManagementUpdateRequest }
-type State = { version: 1; personId: string; records: ManagementRecord[] }
+type State = { version: 1; personId: string; records: ManagementRecord[]; resetOrigins?: string[] }
 const encoder = new TextEncoder()
 const stateKey = (owner: string) => `tincanban.rusty-management.v1.${owner}`
 const same = (a: unknown, b: unknown) => canonicalizeJson(a) === canonicalizeJson(b)
@@ -54,8 +54,9 @@ async function verifiedState(raw: string | null, owner: string): Promise<State> 
   if (raw === null) return { version: 1, personId: owner, records: [] }
   if (encoder.encode(raw).length > 8 * 1024 * 1024) throw new Error("Management repository exceeds storage bound")
   const state = JSON.parse(raw) as State
-  fields(state, ["version", "personId", "records"])
+  fields(state, ["version", "personId", "records"], ["resetOrigins"])
   if (state.version !== 1 || state.personId !== owner || !Array.isArray(state.records) || state.records.length > 256) throw new Error("Invalid management repository")
+  validateResetOrigins(state.resetOrigins)
   const seen = new Set<string>()
   for (const record of state.records) {
     fields(record, ["binding"], ["capability", "pending"])
@@ -69,6 +70,17 @@ async function verifiedState(raw: string | null, owner: string): Promise<State> 
     if (record.pending) await verifyManagementUpdateRequest(record.binding, owner, record.pending)
   }
   return state
+}
+
+function validateResetOrigins(origins: unknown): void {
+  if (origins !== undefined && (!Array.isArray(origins) || origins.length > 128 ||
+    origins.some((origin: unknown) => typeof origin !== "string" || blindOrigin(origin) !== origin) ||
+    new Set(origins).size !== origins.length)) throw new Error("Invalid management reset origins")
+}
+
+function acceptsPeerCapability(state: State, value: PortableManagementRecord): boolean {
+  return !state.resetOrigins?.includes(value.binding.origin) ||
+    same(locate(state, value.binding)?.capability ?? null, value.capability)
 }
 
 /** Verify durable intent without requiring an unexpired request: completed retries may outlive the original deadline. */
@@ -153,6 +165,17 @@ export function validatePolicy(payload: Pick<ManagementUpdateAuthorization, "res
 export class RustyManagementRepository {
   constructor(private readonly owner: string) { if (!validId(owner)) throw new Error("Invalid management repository owner") }
 
+  /** Explicit local reset: old signatures remain valid after a server erases its policy revisions. */
+  async planForgetOrigin(origin: string): Promise<LocalStatePlan> {
+    origin = blindOrigin(origin)
+    const key = stateKey(this.owner), raw = await readLocal(key)
+    const state = await verifiedState(raw, this.owner)
+    state.records = state.records.filter(record => record.binding.origin !== origin)
+    state.resetOrigins = [...new Set([...(state.resetOrigins ?? []), origin])].sort()
+    if (state.resetOrigins.length > 128) throw new Error("Too many management reset origins")
+    return { conditions: [{ key, value: raw }], writes: [{ key, value: canonicalizeJson(state) }] }
+  }
+
   async read(binding: ManagementBinding): Promise<ManagementRecord | undefined> {
     binding = bindingSnapshot(binding)
     return structuredClone(locate(await verifiedState(await readLocal(stateKey(this.owner)), this.owner), binding))
@@ -211,7 +234,11 @@ export class RustyManagementRepository {
     const key = stateKey(this.owner)
     const raw = await readLocal(key)
     const state = await verifiedState(raw, this.owner)
-    for (const value of verified) await mergeCapability(state, value.binding, value.capability, value.incoming, true)
+    for (const value of verified) {
+      // A reset origin requires direct server evidence on this device, even for a higher old revision.
+      if (!acceptsPeerCapability(state, value)) continue
+      await mergeCapability(state, value.binding, value.capability, value.incoming, true)
+    }
     if (state.records.length > 256) throw new Error("Management repository exceeds storage bound")
     const next = canonicalizeJson(state)
     if (encoder.encode(next).length > 8 * 1024 * 1024) throw new Error("Management repository exceeds storage bound")

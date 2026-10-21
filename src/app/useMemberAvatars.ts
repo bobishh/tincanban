@@ -1,4 +1,5 @@
 import { computed, onScopeDispose, ref, watch } from "vue"
+import { identityNameIsProvided } from "../domain/identityNameChoice"
 import { memberAvatarData, memberProfileEntityId } from "../domain/avatarData"
 import { defaultStorage } from "../storage"
 import { parseIdentityPhoto, saveIdentityPhoto, type IdentityPhoto } from "./identityPhoto"
@@ -6,12 +7,24 @@ import type { PersonalRootDocumentV1 } from "../domain/model"
 import type { useTincanban } from "../state"
 import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
 
+async function readProfileChoices(root: PersonalRootDocumentV1) {
+  const { rootIdentityProfileState } = await import("../domain/identityProfileRoot")
+  const { identityProfileValue } = await import("../domain/identityProfileState")
+  const { identityProfileRevision } = await import("../domain/identityProfileRevision")
+  const state = await rootIdentityProfileState(root)
+  const name = identityProfileValue(state, "name"), picture = identityProfileValue(state, "photo")
+  const revision = await identityProfileRevision(state)
+  const nameProvided = state.operations.some(operation => operation.signed.payload.field === "name") || await identityNameIsProvided(root.identity)
+  return { name, picture, revision, nameProvided }
+}
+
 /** One identity preference; signed workspace profiles carry its public projection. */
 export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
   const photo = ref<IdentityPhoto>()
   const avatarNotice = ref("")
   const profileConflicts = ref<{ names: string[]; photos: IdentityPhoto[] }>({ names: [], photos: [] })
   const profileRevision = ref("")
+  const identityNameProvided = ref(false)
   let disposed = false
   let queue = Promise.resolve()
   let photoOwner = ""
@@ -63,14 +76,10 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     }
     avatarNotice.value = failed ? "Photo saved. Sharing to some workspaces is pending; reopen them to retry." : ""
   }
-  async function readProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
-    const { rootIdentityProfileState } = await import("../domain/identityProfileRoot")
-    const { identityProfileValue } = await import("../domain/identityProfileState")
-    const { identityProfileRevision } = await import("../domain/identityProfileRevision")
-    const state = await rootIdentityProfileState(root)
-    const name = identityProfileValue(state, "name"), picture = identityProfileValue(state, "photo")
-    const revision = await identityProfileRevision(state)
+  async function updateProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
+    const { name, picture, revision, nameProvided } = await readProfileChoices(root)
     if (!ownerIsCurrent(ownerId)) return false
+    identityNameProvided.value = nameProvided
     profileRevision.value = revision
     profileConflicts.value = { names: name.status === "conflict" ? name.values.filter((value): value is string => typeof value === "string") : [],
       photos: picture.status === "conflict" ? picture.values.filter((value): value is IdentityPhoto => typeof value !== "string") : [] }
@@ -78,6 +87,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
   }
   function clearProfileChoices(): void {
     profileRevision.value = ""
+    identityNameProvided.value = false
     profileConflicts.value = { names: [], photos: [] }
   }
   async function reconcilePhoto() {
@@ -96,7 +106,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     const stored = parseIdentityPhoto(root.photo)
     const entity = workspace.getActiveDoc()?.entities[memberProfileEntityId(id)]
     const incoming = entity?.kind === "member_profile" ? parseIdentityPhoto(JSON.parse(entity.data)) : undefined
-    const conflicted = await readProfileChoices(root, id)
+    const conflicted = await updateProfileChoices(root, id)
     const chosen = stored ?? incoming
     if (!chosen) return
     if (!ownerIsCurrent(id)) return
@@ -125,5 +135,5 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     void serial(reconcilePhoto).catch(() => { avatarNotice.value = "Profile photo could not load. Reload to retry." })
   })
   onScopeDispose(() => { disposed = true; stop(); unsubscribe() })
-  return { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision }
+  return { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision, identityNameProvided }
 }

@@ -3,7 +3,7 @@ import {
   normalizeDisplayName,
   validateDisplayName,
   nameKey,
-  randomDisplayName,
+  isGeneratedDeviceName,
   resolveDisplayNames,
   resolveDisplayNamesWithIdentity,
 } from "./names"
@@ -104,29 +104,12 @@ describe("nameKey", () => {
   })
 })
 
-describe("randomDisplayName", () => {
-  it("generates an English title-cased adjective + noun", () => {
-    for (let i = 0; i < 20; i++) {
-      const name = randomDisplayName()
-      expect(name).toMatch(/^[A-Z][a-z]+ [A-Z][a-z]+$/)
-      const parts = name.split(" ")
-      expect(parts).toHaveLength(2)
-      // Adjective and noun are title-cased.
-      expect(parts[0][0]).toBe(parts[0][0].toUpperCase())
-      expect(parts[1][0]).toBe(parts[1][0].toUpperCase())
-      // Must be a valid display name
-      expect(validateDisplayName(name)).toBeNull()
-      expect(normalizeDisplayName(name)).toBe(name)
+describe("historical generated device labels", () => {
+  it("matches the old exact dictionaries and SDK suffix only", () => {
+    expect(isGeneratedDeviceName("Valiant Squirrel's device")).toBe(true)
+    for (const value of ["Valiant Squirrel", "Valiant Robot's device", "Squirrel workstation", "Alice's device"]) {
+      expect(isGeneratedDeviceName(value)).toBe(false)
     }
-  })
-
-  it("produces reasonably broad random combinations", () => {
-    const sampleSet = new Set<string>()
-    for (let i = 0; i < 50; i++) {
-      sampleSet.add(randomDisplayName())
-    }
-    // With ~24*24 = 576 possibilities, 50 samples should have high variety
-    expect(sampleSet.size).toBeGreaterThan(15)
   })
 })
 

@@ -9,11 +9,13 @@ export function mountWorkspaceFileActions(exportWorkspace: () => Promise<void>) 
   createApp(WorkspaceFileActions, { exportWorkspace }).mount(root)
 }
 
-export function mountMobileDeviceListDialog(options: { includeOwner?: boolean } = {}) {
+export function mountMobileDeviceListDialog(options: { includeOwner?: boolean; namedSuccessor?: boolean } = {}) {
   const root = document.createElement("div")
   document.body.appendChild(root)
   const app = createApp(SyncDialog, {
     step: "members", title: "Device sync", qrCode: "", inviteUrl: "", copyNotice: "", error: "", hasMesh: true,
+    ...(options.namedSuccessor ? { succession: { successorPersonId: "mobile-fixture", eligibleEditorPersonIds: ["mobile-fixture"],
+      votes: [], quorum: 1, conflicted: false } } : {}),
     meshMembers: [{ personId: "mobile-fixture", name: "Mobile test participant", role: "editor", self: false,
       online: true, reconnecting: false, onlineDevices: 20, devices: 20,
       deviceList: Array.from({ length: 20 }, (_, index) => ({

@@ -4,7 +4,7 @@ import RustyPanel from "./RustyPanel.vue"
 import DeviceSyncProblems from "./DeviceSyncProblems.vue"
 import OwnershipRecoveryPanel from "./OwnershipRecoveryPanel.vue"
 import type { BlindReplicationController } from "../app/blindReplication"
-import { describeUserAgent, isKeeper, type MeshMemberView } from "../ui/deviceInfo"
+import { describeUserAgent, deviceDisplayName, isKeeper, type MeshMemberView } from "../ui/deviceInfo"
 import EnrollmentRequest from "./EnrollmentRequest.vue"
 import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import MyDeviceRemovalControl from "./MyDeviceRemovalControl.vue"
@@ -211,7 +211,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </p>
         <section v-if="networkOnline !== false && rejectedSource" class="sync-error" role="status" aria-label="Changes rejected">
           <p><strong>Changes rejected by this board.</strong>
-            <template v-if="rejectedSource.device"> Source: {{ rejectedSource.device.name }} ({{ rejectedSource.source }}).</template>
+            <template v-if="rejectedSource.device"> Source: {{ deviceDisplayName(rejectedSource.device) }} ({{ rejectedSource.source }}).</template>
             <template v-else> Source device {{ rejectedSource.source }}.</template>
           </p>
           <p>This board kept its accepted data. The source still has rejected changes. Removing its access stops attempts for this workspace; review its local copy first if needed.</p>
@@ -246,15 +246,15 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             <li v-for="device in selectedMember.deviceList" :key="device.deviceId" class="mesh-device">
               <div class="mesh-device-head">
                 <span class="mesh-device-presence" :class="device.online ? 'is-online' : device.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-                <strong>{{ device.name || 'Unnamed device' }}<small v-if="device.deviceId === localDeviceId && device.name !== 'This device'"> · <span>This device</span></small></strong>
+                <strong>{{ deviceDisplayName(device) }}<small v-if="device.deviceId === localDeviceId && device.name !== 'This device'"> · <span>This device</span></small></strong>
                 <code>{{ device.deviceId.slice(0, 8) }}</code>
               </div>
               <small class="mesh-device-platform">{{ device.description || 'Browser / OS unknown' }}</small>
               <small class="mesh-device-status">{{ deviceConnectionLabel(device) }}</small>
               <MyDeviceRemovalControl v-if="selectedMember.self && device.deviceId !== localDeviceId && myDeviceRemoval"
-                :device-id="device.deviceId" :name="device.name" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
+                :device-id="device.deviceId" :name="deviceDisplayName(device)" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
               <DeviceRemovalControl v-else-if="!selectedMember.self && device.deviceId !== localDeviceId && canManageMesh"
-                :person-id="selectedMember.personId" :device-id="device.deviceId" :name="device.name" :active-workspace-id="activeWorkspaceId"
+                :person-id="selectedMember.personId" :device-id="device.deviceId" :name="deviceDisplayName(device)" :active-workspace-id="activeWorkspaceId"
                 :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
               <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
               <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
@@ -264,11 +264,11 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             <summary>Removed device records ({{ removedDeviceRecords.length }})</summary>
             <p class="dialog-copy">Kept separately from active devices on this browser. Signed workspace and server revocations remain authoritative; catalog records on other devices can still contain this device.</p>
             <div v-for="record in removedDeviceRecords" :key="record.deviceId" class="mesh-device">
-              <strong>{{ record.name || 'Unnamed device' }}</strong><code>{{ record.deviceId.slice(0, 8) }}</code>
-              <MyDeviceRemovalControl v-if="myDeviceRemoval" :device-id="record.deviceId" :name="record.name" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
+              <strong>{{ deviceDisplayName(record) }}</strong><code>{{ record.deviceId.slice(0, 8) }}</code>
+              <MyDeviceRemovalControl v-if="myDeviceRemoval" :device-id="record.deviceId" :name="deviceDisplayName(record)" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
             </div>
           </details>
-          <p class="dialog-copy">Generated device labels do not identify hardware. Browser session counts may include closed tabs.</p>
+          <p class="dialog-copy">Browser and OS details are reported by browsers. Browser session counts may include closed tabs.</p>
           <OwnershipRecoveryPanel :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
             :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
             @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />

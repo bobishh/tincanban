@@ -6,6 +6,24 @@ Date: 2026-10-21. Status: explore. No application change in this investigation h
 
 Keep one tracked list; add subsequent reports. Understand the real scenarios before implementing more migrations or recovery UI. Deliver fixes through CI. Never move tickets to Done until the user personally verifies the deployed browser behavior.
 
+Latest steering: the user explicitly requested clearing Rusty and adding it from
+scratch, replacing further attempts to resume the old credential transition.
+Server reset completed at 2026-10-21 13:11:57 UTC: stopped the single writer,
+backed up its complete state to
+`/root/rusty-reset-backups/20261021T131157Z/state-before-reset.tar.gz`
+(11,167,103 bytes), cleared stored scopes/publications/management state, retained
+only the service identity, and restarted the same verified binary. Health is ok
+at `ded16d6b…`; the signed discovery identity remains unchanged. Browser boards
+were not cleared. Local frozen connections still require explicit forgetting
+before a fresh owner setup; that reset must preserve board/profile/attachment
+data and prevent replay of the removed configuration.
+
+The user also reiterated removal of prefilled identity names and random device
+labels such as Squirrel. Implement neutral unnamed presentation and an empty
+initial name field, preserving explicit user names and existing signed identity
+records. Form investigation was stopped after the user redirected focus to
+Rusty; no test submission or human-check answer was sent.
+
 Rusty is configured by the owner, visible to an editor as a board service/participant, and must exchange board changes for every authorized participant while owner browsers are closed. The user explicitly permits clicking to perform the eventual real owner-to-editor acceptance. Merely showing “Connected” is not acceptance.
 
 ## Current evidence
@@ -354,3 +372,49 @@ regressions fail before this repair. All 54 focused repository/conflict/transiti
 tests pass afterward, covering skipped-release reads and saves, late older-tab
 records, retained removal tombstones and recovery activation. This prevents
 further deletion; it does not recreate records already removed by a prior client.
+
+### Fresh reset and reviewed client follow-up (2026-10-21)
+
+The requested server reset completed at 13:11:57 UTC. A full pre-reset archive
+was retained outside the active volume; only the service identity key remained
+in active storage. The unchanged service key means old service-signed management
+capabilities remain cryptographically valid even though their revisions no
+longer exist on the server. Explicit local Forget therefore archives exact old
+settings/journals and removes their active authority atomically. A device-local
+reset-origin marker prevents peer replay of old capabilities; fresh direct server
+evidence is required. It does not revoke another participant or erase browser
+boards, profile, attachments, or other origins. Owners and admitted participants
+may forget their own access; only owners can configure fresh board storage.
+
+The existing native Rusty journey now covers a real server reset with its key
+retained, frozen local intent, Cancel, Confirm, fresh Add, new board/profile
+scope IDs, uploads to both scopes, unchanged person/device IDs, and preserved
+board data. It passes in 32.8 seconds. Seventy-two focused logic tests cover
+atomic journal conflicts, profile/admission guards, other origins, editor-only
+local reset, stale peer replay and fresh server authority. New connections are
+not a claim that the real owner/editor setup has been completed yet.
+
+Fresh profiles no longer generate adjective/noun names. Neutral internal metadata
+keeps the protocol compatible; an atomically persisted provenance marker leaves
+the actual Name field blank until the user chooses a name. Explicit profile saves
+clear that marker in the same transaction. Existing chosen names and signed
+identity/certificate data are retained. Historical generated device labels are
+replaced only in presentation. Sixty-two focused tests and three existing browser
+journeys cover failed persistence, reload, explicit choice, and pending device
+removal at desktop/mobile sizes.
+
+The reported mobile one-letter member name comes from the old four-column layout:
+the long role consumed the remaining name column. The deployed c4 layout places
+the role below the name. The existing WebKit mobile selection/scroll journey with
+a named successor and twenty devices passes in 4.4 seconds; its inspected image
+shows readable names and role without horizontal compression.
+
+Application CI 39603430548 passed all jobs after rerunning its failed verification
+job. Frontend deployment 39607136695 activated c4dc4d1 with MetaMesh 5b02ed1.
+Automation deployment 39607136580 failed before activation: it requested an
+attempt-two cohort although packaging had already succeeded in attempt one.
+This requires explicit artifact-attempt selection with the original seal checks.
+The production Quick note keyboard/save/reload journey and its failed-save draft
+retention/retry journey also passed in isolated production contexts (8.2 seconds).
+The real issues-card note was saved and observed after reload; ITEM is absent
+from that card header. Tickets remain Doing pending the user's browser review.

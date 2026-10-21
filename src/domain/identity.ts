@@ -24,8 +24,9 @@ import type {
   DeviceCertificate,
   PublicIdentity,
 } from "./model"
-import { readLocal, writeLocal, deleteLocal } from "../localDb"
-import { normalizeDisplayName, randomDisplayName, validateDisplayName } from "../chat/names"
+import { readLocal, writeLocal, deleteLocal, compareAndSwapLocal } from "../localDb"
+import { normalizeDisplayName, unprovidedDisplayName, validateDisplayName } from "../chat/names"
+import { identityNameChoiceKey, planIdentityNameChoice } from "./identityNameChoice"
 import { requestWebLock } from "../webLock"
 
 export { canonicalizeJson, fromBase64Url, publicKeyId, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope }
@@ -37,11 +38,24 @@ export type LocalProfile = MeshLocalProfile & {
   certificate: DeviceCertificate
 }
 
+const profileStorageKey = "tincanban.local_profile.v1"
+let creatingUnprovidedName = false
+async function persistIdentityProfile(key: string, value: string): Promise<void> {
+  if (key !== profileStorageKey || !creatingUnprovidedName || identityInitialized) return writeLocal(key, value)
+  const profile = JSON.parse(value) as { identity: PublicIdentity }
+  const markerKey = identityNameChoiceKey(profile.identity.personId)
+  const committed = await compareAndSwapLocal({
+    conditions: [{ key, value: null }, { key: markerKey, value: null }],
+    writes: [{ key, value }, { key: markerKey, value: unprovidedDisplayName }],
+  })
+  if (!committed) throw new Error("Identity changed while creating this profile")
+}
+
 const identityStore = new BrowserIdentityStore({
-  storageKey: "tincanban.local_profile.v1",
+  storageKey: profileStorageKey,
   signatureDomain: "MATCH/1",
-  asyncStorage: { getItem: readLocal, setItem: writeLocal, removeItem: deleteLocal },
-  requirePersistence: typeof indexedDB !== "undefined",
+  asyncStorage: { getItem: readLocal, setItem: persistIdentityProfile, removeItem: deleteLocal },
+  requirePersistence: true,
 })
 const recoveryStorageKey = "tincanban.identity_recovery.v1"
 let identityInitialized = false
@@ -61,10 +75,10 @@ export function resetIdentityStorageForTest(): void {
 
 export async function bootstrapIdentity(displayName?: string): Promise<LocalProfile> {
   const bootstrap = async () => {
-    const profile = await identityStore.bootstrap(normalizeDisplayName(displayName ?? "") || randomDisplayName())
-    return !normalizeDisplayName(profile.identity.displayName) || ["Match User", "tincanban User"].includes(profile.identity.displayName)
-      ? await identityStore.rename(randomDisplayName())
-      : profile
+    const name = normalizeDisplayName(displayName ?? "")
+    creatingUnprovidedName = !name
+    try { return await identityStore.bootstrap(name || unprovidedDisplayName) }
+    finally { creatingUnprovidedName = false }
   }
   // Cross-tab exclusion protects creation/restoration. Cached reads must not
   // wait for another tab's scheduler on every scope/catalog operation.
@@ -83,7 +97,14 @@ export async function renameIdentity(displayName: string, commit?: IdentityAdopt
   const normalized = normalizeDisplayName(displayName)
   const error = validateDisplayName(normalized)
   if (error) throw new Error(error)
-  return await identityStore.rename(normalized, commit)
+  return await identityStore.rename(normalized, commit ?? (async (rename, ensureCurrent) => {
+    const choice = await planIdentityNameChoice(rename.publicProfile.identity.personId)
+    const committed = await compareAndSwapLocal({
+      conditions: [...choice.conditions, { key: rename.storageKey, value: rename.previousProfile }],
+      writes: [...choice.writes, { key: rename.storageKey, value: rename.candidateProfile }],
+    }, ensureCurrent)
+    if (!committed) throw new Error("Identity changed while saving this name")
+  }))
 }
 
 export async function refreshIdentityPresentation(expectedRaw?: string): Promise<LocalProfile> {

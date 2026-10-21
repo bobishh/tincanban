@@ -47,6 +47,28 @@ A pending credential transition SHALL preserve its exact signed intent, keys and
 - **THEN** it identifies that device removal and resumes its existing coordination path
 - **AND** a failed or foreign-signer attempt preserves the retained evidence
 
+#### Scenario: Owner explicitly starts again after resetting the server
+- **GIVEN** the owner explicitly requested clearing Rusty and starting again, and server state is backed up and reset
+- **WHEN** the owner confirms forgetting this device's connections at that origin
+- **THEN** frozen connection state and old configuration are retired with guarded local state changes
+- **AND** browser board content, profile, identity and attached files remain available
+- **AND** retained reset evidence is preserved and removed connections cannot be reactivated by replaying their older observed preferences
+- **AND** fresh owner setup creates new scoped access that reaches admitted editors and visitors
+
+### Requirement: Unnamed identities and devices do not acquire invented names
+Fresh identity name entry SHALL start empty. The system SHALL NOT generate random human-readable names for identities or devices. Existing intentional names and signed identity records SHALL remain unchanged; old generated device labels SHALL be replaced only in presentation with useful device information.
+
+#### Scenario: Fresh identity without an explicit name
+- **GIVEN** a fresh browser identity whose user has not chosen a name
+- **WHEN** Identity settings open or reload
+- **THEN** the name entry is empty until the user explicitly saves a name
+
+#### Scenario: Historical generated device label
+- **GIVEN** an old device certificate or pending removal containing a generated name
+- **WHEN** its device or recovery UI is shown
+- **THEN** useful browser/system information and a short device ID identify it
+- **AND** the underlying signed record is not rewritten and deliberate user names remain visible
+
 #### Scenario: Automation inspection fails before a new removal
 - **GIVEN** unchanged Rusty credentials and an incompatible or unreachable automation
 - **WHEN** the owner starts device removal

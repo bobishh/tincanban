@@ -113,23 +113,13 @@ export function nameKey(name: string): string {
   return normalizeDisplayName(name).toLowerCase()
 }
 
-function getRandomIndex(length: number): number {
-  const max = Math.floor(0x100000000 / length) * length
-  const buffer = new Uint32Array(1)
-  do {
-    crypto.getRandomValues(buffer)
-  } while (buffer[0] >= max)
-  return buffer[0] % length
-}
+/** Neutral protocol metadata until the user explicitly chooses a name. */
+export const unprovidedDisplayName = "Participant"
 
-/**
- * Generates a friendly English adjective + noun.
- * Cryptographically random from broad dictionaries (~28 each).
- */
-export function randomDisplayName(): string {
-  const adj = ADJECTIVES[getRandomIndex(ADJECTIVES.length)]
-  const noun = NOUNS[getRandomIndex(NOUNS.length)]
-  return `${adj} ${noun}`
+/** Match only labels emitted by the retired adjective/noun generator and SDK. */
+export function isGeneratedDeviceName(value: string): boolean {
+  const match = /^([A-Za-z]+) ([A-Za-z]+)'s device$/.exec(value)
+  return Boolean(match && ADJECTIVES.some(word => word === match[1]) && NOUNS.some(word => word === match[2]))
 }
 
 /**

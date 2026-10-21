@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest"
-import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { bootstrapIdentity, resetIdentityStorageForTest, clearInMemoryProfileForReloadTest } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { deleteLocal, readLocal } from "../localDb"
 import * as localDb from "../localDb"
@@ -86,4 +86,35 @@ it("Given another root update wins the first CAS, when rename retries, then reta
   const rawRoot = await readLocal(rootsKey)
   expect(rawRoot).not.toContain("privateKey")
   expect(rawRoot).not.toContain("Pkcs8")
+})
+
+it("Given fresh unnamed profile creation fails atomically, when retried, then no partial profile or choice marker survives", async () => {
+  const cas = vi.spyOn(localDb, "compareAndSwapLocal").mockRejectedValueOnce(new Error("atomic creation failed"))
+  await expect(bootstrapIdentity()).rejects.toThrow("atomic creation failed")
+  const creation = cas.mock.calls[0][0]
+  expect(creation.writes).toHaveLength(2)
+  for (const write of creation.writes) expect(await readLocal(write.key)).toBeNull()
+  const { identityNameIsProvided } = await import("../domain/identityNameChoice")
+  const profile = await bootstrapIdentity()
+  expect(await identityNameIsProvided(profile.identity)).toBe(false)
+})
+
+it("Given no chosen name, when the explicit neutral-name save fails then succeeds, then atomically preserve or clear provenance across reload", async () => {
+  const { identityNameIsProvided, identityNameChoiceKey } = await import("../domain/identityNameChoice")
+  const profile = await bootstrapIdentity()
+  await defaultStorage.savePersonalRoot(createPersonalRoot(profile, "certificate", "00000000-0000-4000-8000-000000000083"))
+  const profileBefore = await readLocal(profileKey), rootBefore = await readLocal(rootsKey)
+  const cas = vi.spyOn(localDb, "compareAndSwapLocal").mockRejectedValueOnce(new Error("explicit save failed"))
+  await expect(saveIdentityName("Participant", "active", async () => {})).rejects.toThrow("explicit save failed")
+  expect(cas.mock.calls[0][0].writes.map(write => write.key)).toContain(identityNameChoiceKey(profile.identity.personId))
+  expect(await readLocal(profileKey)).toBe(profileBefore)
+  expect(await readLocal(rootsKey)).toBe(rootBefore)
+  clearInMemoryProfileForReloadTest()
+  expect(await identityNameIsProvided((await bootstrapIdentity()).identity)).toBe(false)
+  await saveIdentityName("Participant", "active", async () => {})
+  clearInMemoryProfileForReloadTest()
+  const reloaded = await bootstrapIdentity()
+  expect(await identityNameIsProvided(reloaded.identity)).toBe(true)
+  expect(reloaded.identity.personId).toBe(profile.identity.personId)
+  expect(reloaded.certificate).toEqual(profile.certificate)
 })

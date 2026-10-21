@@ -59,7 +59,8 @@ async function harness(options: HarnessOptions = {}) {
     const body = String(init.body)
     if (url.endsWith("/v2/enrollment/challenge")) {
       challengeCount++
-      const timing = options.challenge?.(challengeCount) ?? { expectedRevision: 0, issuedAt: Date.now(), expiresAt: Date.now() + 120_000 }
+      const issuedAt = Date.now()
+      const timing = options.challenge?.(challengeCount) ?? { expectedRevision: 0, issuedAt, expiresAt: issuedAt + 120_000 }
       return Response.json({ challenge: await signEnvelope(service.privateKey, {
         kind: "rusty-enrollment-challenge", version: 1, challengeId: `challenge-${challengeCount}`, nonce: `nonce-${challengeCount}`,
         serviceId, publicOrigin: access.origin, scopeId: access.scopeId, personId: profile.identity.personId,
@@ -105,8 +106,10 @@ test("Given a stale or replaced service pin, when reading scope revision, then r
 })
 
 test("Given a frozen scope revision, When the signed challenge reports a concurrent policy, Then refuse token replacement before saving or uploading the new request", async () => {
-  const h = await harness({ retryCapability: true, challenge: () => ({ expectedRevision: 3,
-    issuedAt: Date.now(), expiresAt: Date.now() + 120_000 }) })
+  const h = await harness({ retryCapability: true, challenge: () => {
+    const issuedAt = Date.now()
+    return { expectedRevision: 3, issuedAt, expiresAt: issuedAt + 120_000 }
+  } })
   await expect(approveRustyScope(h.access, h.profile, false, { requireExactRetry: true, expectedPolicyRevision: 0 }))
     .rejects.toThrow(/revision|concurrent/i)
   expect(h.putCount).toBe(0)
@@ -253,9 +256,10 @@ test("Given an expired pending request was never committed, when Rusty proves th
   vi.useFakeTimers({ toFake: ["Date"] })
   vi.setSystemTime(baseTime)
   let replacementWasDurableBeforePut = false
-  const h = await harness({ retryCapability: true, challenge: count => count === 1
-    ? { expectedRevision: 0, issuedAt: baseTime, expiresAt: baseTime + 120_000 }
-    : { expectedRevision: 0, issuedAt: Date.now(), expiresAt: Date.now() + 120_000 },
+  const h = await harness({ retryCapability: true, challenge: count => {
+    const issuedAt = count === 1 ? baseTime : Date.now()
+    return { expectedRevision: 0, issuedAt, expiresAt: issuedAt + 120_000 }
+  },
   onPut: async (body, count, context) => {
     if (count === 1) throw new Error("Reply lost after server decision")
     if (count === 2) return Response.json({ error: "challenge expired" }, { status: 410 })

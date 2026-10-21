@@ -10,7 +10,7 @@ vi.mock("../domain/identityProfileRoot", () => ({ assertIdentityProfileRevision:
 } }))
 vi.mock("../storage", () => ({ defaultStorage: { listWorkspaces: effects.list } }))
 vi.mock("../storagePersonalRoot", () => ({ planPersonalRootUpdate: effects.planRoot }))
-vi.mock("../localDb", () => ({ compareAndSwapLocal: effects.compareAndSwap }))
+vi.mock("../localDb", () => ({ compareAndSwapLocal: effects.compareAndSwap, readLocal: async () => null }))
 vi.mock("../sync/identityDevicePreferenceEvents", () => ({ identityDevicePreferencesChanged: effects.changed }))
 vi.mock("../chat/service", () => ({ ensureChatProfile: effects.profile }))
 import { saveIdentityName } from "./identityName"
