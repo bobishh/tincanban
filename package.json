@@ -84,6 +84,7 @@
     "istanbul-reports": "3.2.0",
     "jscpd": "5.3.0",
     "knip": "6.37.0",
+    "lightningcss": "1.33.0",
     "postcss": "^8.5.30",
     "size-limit": "14.0.0",
     "terser": "^5.51.2",

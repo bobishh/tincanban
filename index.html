@@ -12,8 +12,8 @@
     <style>
       .startup-screen { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: #f3f0e8; color: #6b675f; font: 600 18px/1.4 system-ui, sans-serif; }
       /* Shared by the HTML placeholder and Vue status at every startup stage. */
-      .startup-status-mark { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 4px; min-width: 26px; min-height: 20px; color: var(--blue, #1f6feb); border: 0; border-image: none !important; }
-      .startup-status-dot { display: block; width: 6px; height: 6px; background: currentColor; border: 0; border-image: none !important; border-radius: 50%; animation: startup-dot-one 1.8s steps(1, end) infinite; }
+      .startup-status-mark { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: 4px; min-width: 26px; min-height: 20px; color: var(--blue, #1f6feb); border: 0; border-image-source: none !important; }
+      .startup-status-dot { display: block; width: 6px; height: 6px; background: currentColor; border: 0; border-image-source: none !important; border-radius: 50%; animation: startup-dot-one 1.8s steps(1, end) infinite; }
       .startup-status-dot:nth-child(2) { animation-name: startup-dot-two; }
       .startup-status-dot:nth-child(3) { animation-name: startup-dot-three; }
       @keyframes startup-dot-one { 0% { opacity: 1; } 75%, 100% { opacity: 0; } }

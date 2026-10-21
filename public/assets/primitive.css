@@ -19,7 +19,7 @@
 :where(.detail-inspector, .detail-grid, .detail-subsection, .quick-note-form,
 .source-snapshot, .document-form, .document-row, .item-history-entry,
 .subitem-row, .card-context) {
-  border-image: none !important;
+  border-image-source: none !important;
 }
 
 /* Stable identity chooses paint once; moving changes neither outline nor hit box. */
@@ -68,7 +68,9 @@
   --ink-focus: var(--ink-focus-2);
 }
 
+/* Longhand avoids Lightning CSS dropping the `none` shorthand value. */
 :where(.count,
+.card-discussion-count,
 .column-dot,
 .mesh-member-presence,
 .mesh-device-presence,
@@ -80,7 +82,7 @@ input[type="checkbox"],
 input[type="radio"],
 .pairing-qr,
 .sr-only) {
-  border-image: none !important;
+  border-image-source: none !important;
 }
 
 /* Hatch meets the divider; count paint hides stripes behind digits. */
@@ -306,7 +308,7 @@ textarea) {
 }
 
 .settings-nav-button:not(.active):not(:focus-visible) {
-  border-image: none !important;
+  border-image-source: none !important;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -334,12 +336,12 @@ textarea) {
 }
 
 .search-field input:focus-visible {
-  border-image: none !important;
+  border-image-source: none !important;
 }
 
 input[type="checkbox"]:focus-visible,
 input[type="radio"]:focus-visible {
-  border-image: none !important;
+  border-image-source: none !important;
   background: revert !important;
 }
 

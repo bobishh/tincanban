@@ -37,6 +37,7 @@ test("Given a fresh desktop board, when filtering, searching, and moving a card,
     await page.getByRole("group", { name: "Filters" }).getByRole("combobox", { name: "Status", exact: true }).selectOption({ label: "Doing" })
     await expect(page.locator(".board > .column")).toHaveCount(1)
     const column = page.getByRole("region", { name: "Doing", exact: true })
+    await expect(column.locator(".column-header .count")).toHaveText("1")
     expect((await column.boundingBox())!.width).toBeGreaterThan(1250)
     const openCard = column.getByRole("button", { name: "Open Launch review", exact: true })
     const card = openCard.locator("..")
@@ -107,6 +108,7 @@ test("Given a fresh desktop board, when filtering, searching, and moving a card,
 
   await test.step("Moved card leaves filtered source, hidden card survives reset and reload", async () => {
     await expect(page.locator(".board > .column")).toHaveCount(1)
+    await expect(page.getByRole("region", { name: "Doing", exact: true }).locator(".column-header .count")).toHaveText("2")
     await expect(page.getByRole("region", { name: "Doing", exact: true }).getByRole("button", { name: "Open Launch design", exact: true })).toBeVisible()
     await page.getByRole("button", { name: "Clear search and filters" }).click()
     await expect(page.getByRole("region", { name: "Done", exact: true }).getByRole("button", { name: "Open Housekeeping", exact: true })).toBeVisible()

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { readFile } from "node:fs/promises"
+import { transform } from "lightningcss"
 import { lintStyles } from "./check-css.mjs"
 
 test("Given CSS with an unknown property, when linted, then validation fails", async () => {
@@ -21,4 +23,11 @@ test("Given duplicate declarations and empty blocks, when linted, then both are 
   const messages = await lintStyles("fixture.css", 'a { color: red; color: red; } b {}')
   assert.ok(messages.some(message => message.ruleId === "css/no-duplicate-declarations"))
   assert.ok(messages.some(message => message.ruleId === "css/no-empty-blocks"))
+})
+
+// Check the shipped serialization, since the browser discards empty declarations.
+test("Given shared ink exclusions, when production CSS is minified, then declarations remain valid", async () => {
+  const source = await readFile(new URL("../public/assets/primitive.css", import.meta.url))
+  const compiled = transform({ filename: "primitive.css", code: source, minify: true }).code.toString()
+  assert.deepEqual(await lintStyles("primitive.css", compiled), [])
 })

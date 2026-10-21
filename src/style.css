@@ -66,7 +66,7 @@
 .bin-column-open { background: var(--panel); }
 .bin-column .column-header { transition: transform .25s ease, opacity .2s ease; }
 .bin-close { width: 26px; height: 26px; padding: 0; border: 2px solid var(--line); color: var(--ink); background: white; font: 700 1rem/1 var(--site-font-sans); }.bin-close:hover { color: white; background: var(--red); }
-.column-collapsed { position: relative; flex: 0 0 64px; min-width: 64px; border-width: 2px; border-image: none !important; background: var(--panel); }
+.column-collapsed { position: relative; flex: 0 0 64px; min-width: 64px; border-width: 2px; border-image-source: none !important; background: var(--panel); }
 .bin-column, .column-archived { --column-hatch-color: var(--green); }
 .column-closed { position: relative; flex: 1; width: 100%; min-height: 516px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: var(--space-4); padding: var(--space-5) var(--space-1); border: 0; color: var(--ink); background: transparent; }
 .column-closed strong { writing-mode: vertical-rl; font: 700 .9rem/1 var(--site-font-sans); text-transform: uppercase; letter-spacing: .12em; }
