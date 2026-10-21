@@ -99,7 +99,15 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(rustyPanel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await syncDialog.getByRole("button", { name: "Close", exact: true }).click()
     let panel = await openPublication()
-    await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
+    // Rusty starts after private board setup, so recover any earlier offline or
+    // policy-initialization check through the visible owner action.
+    const publicSwitch = panel.getByRole("switch", { name: "Public board", exact: true })
+    await expect(async () => {
+      if (await publicSwitch.isEnabled()) return
+      const retry = panel.getByRole("button", { name: "Retry", exact: true })
+      if (await retry.isVisible()) await retry.click({ timeout: 1_000 })
+      await expect(publicSwitch).toBeEnabled({ timeout: 1_000 })
+    }).toPass({ timeout: 30_000, intervals: [250, 500, 1_000] })
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()

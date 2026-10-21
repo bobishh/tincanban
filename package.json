@@ -7,6 +7,7 @@
     "vendor/meta-mesh/packages/*"
   ],
   "scripts": {
+    "postinstall": "node scripts/patch-otel-response-drain.mjs",
     "quality": "npm run quality:types && npm run quality:lint && npm run quality:css && npm run quality:layout && npm run quality:dead && npm run quality:deps && npm run quality:dup && npm run quality:patterns",
     "dev": "vite",
     "build": "vue-tsc -p tsconfig.app.json --noEmit && vite build",
@@ -52,6 +53,7 @@
     "@opentelemetry/core": "^2.12.0",
     "@opentelemetry/exporter-logs-otlp-http": "^0.223.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.223.0",
+    "@opentelemetry/otlp-exporter-base": "0.223.0",
     "@opentelemetry/otlp-transformer": "^0.223.0",
     "@opentelemetry/resources": "^2.12.0",
     "@opentelemetry/sdk-logs": "^0.223.0",

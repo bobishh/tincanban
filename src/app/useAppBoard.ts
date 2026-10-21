@@ -13,6 +13,7 @@ import { itemNarrative } from "../domain/narrative"
 import type { PeerHistoryRemoteRead } from "../sync/workspacePeerHistoryRecoverySources"
 import type { PeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
 import { useArchivedItemHistory } from "./useArchivedItemHistory"
+import { useBoardSearch } from "./useBoardSearch"
 
 export type AppBoardContext = Pick<ReturnType<typeof useAppCore>,
   | "tincanban"
@@ -65,7 +66,7 @@ function useBoardPresentation(core: AppBoardContext) {
       textNotesFieldId(),
     )
   })
-  const normalizedSearch = computed(() => search.value.trim().toLowerCase())
+  const normalizedSearch = useBoardSearch(search, () => tincanban.activeWorkspace.id, filters)
   const textNotesFieldId = () => narrativeFieldId(tincanban.activeBoard.value, tincanban.boardFields.value)
   const narrativeForCard = computed(() => {
     void tincanban.docVersion.value
@@ -100,7 +101,7 @@ function useBoardPresentation(core: AppBoardContext) {
   const itemsForColumn = (column: { id: string; items: Item[] }) => itemsByColumn.value.get(column.id) ?? []
   const totalItems = computed(() => tincanban.genericColumns.value.reduce((total, column) => total + column.items.length, 0))
   const visibleItems = computed(() => tincanban.genericColumns.value.reduce((total, column) => total + itemsForColumn(column).length, 0))
-  const hasFilters = computed(() => Boolean(search.value.trim()) || activeFilterCount(filters.value) > 0)
+  const hasFilters = computed(() => Boolean(normalizedSearch.value) || activeFilterCount(filters.value) > 0)
   const filteredResultsChanged = computed(() => filteredBoardResultsChanged(
     tincanban.genericColumns.value, orderedItemsByColumn.value, itemsByColumn.value,
   ))

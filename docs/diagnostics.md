@@ -20,6 +20,16 @@ browser across workspaces and survives reload. Legacy local collector URLs and
 keys are ignored; an explicit legacy opt-out remains effective. **Diagnostic
 delivery** shows queued or dropped events, the last confirmed send, and errors.
 
+The browser transport consumes `no-store` response bodies without buffering
+their contents so completed requests release the browser's keepalive budget.
+The installed OTel release receives a narrow upstream backport during `npm ci`;
+see the [patch rationale and removal condition](../patches/README.md).
+Independent log and trace failures remain visible while another request is
+pending; a successful delivery clears the failure for that signal. A processor
+flush is best effort and can finish before all split requests settle. Confirm
+delivery using queued/sending counts and the last confirmed send, not the flush
+call alone. Discarded batches are not replayed by Resume.
+
 ## Connection incidents
 
 With configured export and device consent, connection warnings and node/session

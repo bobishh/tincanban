@@ -1,4 +1,6 @@
 import { expect, test, type Page } from "./support/coverage"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
 
 type Attribute = { key: string; value: Record<string, unknown> }
 type LogRecord = { body?: Record<string, unknown>; attributes?: Attribute[] }
@@ -8,6 +10,76 @@ type OtlpTraces = { resourceSpans?: Array<{ scopeSpans?: Array<{ spans?: Span[] 
 const endpoint = "https://telemetry.invalid/v1/logs"
 const tracesEndpoint = "https://telemetry.invalid/v1/traces"
 const browserKey = "public-browser-fixture-key-0123456789"
+
+test("Given a real no-store intake, when repeated error batches cross the keepalive budget and a batch is rejected, then later diagnostics still arrive", async ({ page, baseURL }) => {
+  const received: LogRecord[] = []
+  const requestBytes: number[] = []
+  const server = createServer((request, response) => {
+    const headers = { "Access-Control-Allow-Origin": baseURL!, "Access-Control-Allow-Headers": "authorization,content-type,x-tinsink-project,x-tinsink-source",
+      "Access-Control-Allow-Methods": "POST,OPTIONS", "Content-Type": "application/json", "Cache-Control": "no-store" }
+    if (request.method === "OPTIONS") { response.writeHead(204, headers); response.end(); return }
+    const chunks: Buffer[] = []
+    request.on("data", chunk => chunks.push(Buffer.from(chunk)))
+    request.on("end", () => {
+      const data = Buffer.concat(chunks)
+      requestBytes.push(data.byteLength)
+      const records = logRecords(JSON.parse(data.toString("utf8")) as OtlpLogs)
+      const rejected = records.some(record => body(record) === "diagnostic.intake.reject")
+      if (!rejected && data.byteLength <= 65_536) received.push(...records)
+      response.writeHead(data.byteLength > 65_536 ? 413 : rejected ? 400 : 200, headers)
+      response.end('{"partialSuccess":{}}')
+    })
+  })
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+  try {
+    await interceptOtlp(page, 200)
+    await page.goto("/")
+    await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const result = await page.evaluate(async ({ origin, browserKey }) => {
+      const { BrowserOtelSdk } = await import("/src/sync/otelBrowserSdk.ts")
+      let onIdle: (() => void) | undefined
+      const sdk = new BrowserOtelSdk({ enabled: true, endpoint: origin, logsEndpoint: `${origin}/v1/logs`, tracesEndpoint: `${origin}/v1/traces`,
+        project: "tincanban", browserKey, level: "all", sampleRate: 1 }, () => {
+        if (sdk.exportState.sending === 0 && sdk.exportState.queued === 0) onIdle?.()
+      })
+      // The processor's best-effort flush can time out before every split body
+      // finishes. Observe actual delivery before introducing the next outcome.
+      const flush = async () => {
+        const idle = new Promise<void>(resolve => { onIdle = resolve })
+        await sdk.forceFlush()
+        if (sdk.exportState.sending || sdk.exportState.queued) await idle
+        onIdle = undefined
+        return { ...sdk.exportState }
+      }
+      const wave = async (name: string) => {
+        for (let index = 0; index < 50; index++) {
+          const error = new Error("Synthetic keepalive failure")
+          error.stack = `Error: synthetic failure\n${"at syntheticFrame (fixture.ts:1:1)\n".repeat(500)}`
+          sdk.emit({ event: "diagnostic.keepalive.failed", detail: { entityId: `${name}-${index}` }, exception: error, level: "error", timestamp: Date.now() })
+        }
+        return flush()
+      }
+      try {
+        const first = await wave("first")
+        sdk.emit({ event: "diagnostic.intake.reject", detail: {}, level: "warn", timestamp: Date.now() })
+        const rejected = await flush()
+        const recovered = await wave("recovered")
+        return { first, rejected, recovered }
+      } finally { await sdk.shutdown() }
+    }, { origin, browserKey })
+    expect(result.first.dropped).toBe(0)
+    expect(result.rejected.error).toContain("HTTP 400")
+    expect(result.recovered.dropped).toBe(1)
+    expect(result.recovered.error).toBe("")
+    expect(received).toHaveLength(100)
+    expect(new Set(received.map(record => attribute(record, "entity.id"))).size).toBe(100)
+    expect(Math.max(...requestBytes)).toBeLessThanOrEqual(65_536)
+  } finally {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => server.close(() => resolve()))
+  }
+})
 
 test("Given a burst of long sync failures, when diagnostics flush through a 64 KiB intake, then every failure arrives and chat remains usable", async ({ page }) => {
   const received: LogRecord[] = []

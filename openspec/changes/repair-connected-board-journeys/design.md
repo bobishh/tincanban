@@ -102,6 +102,22 @@ an additional explicit scope review.
 
 Board-level connection access comes from an owner-attested record delivered across participant identities; identity replication remains private. Editor/visitor views show the same configured service and truthful local durable-copy status. A visitor can read updates but cannot publish edits or configure storage. Only the owner changes board storage. Operator domain/CORS configuration remains separate from board permissions. Useful Rusty status must distinguish configured, waiting, reachable, current, blocked and unavailable from human peer presence.
 
+### Browser response lifetime and search presentation
+
+Keep the existing OTel serializers and exporters. Backport upstream response
+draining into the pinned 0.223.0 transport: discard streamed chunks, keep the
+request deadline alive until consumption ends, and release keepalive accounting
+exactly once. Export status still follows response headers. This repairs browser
+quota lifetime without buffering collector bodies, changing intake caching or
+raising request limits. Apply the version-guarded patch during installation and
+remove it when a compatible official release passes the real HTTP regression.
+Mocked responses cannot prove the browser has released its keepalive quota.
+
+Keep the search textbox synchronous. Coalesce only presentation (matching,
+revealed fields and excerpts) after 60 quiet milliseconds. Clear immediately;
+apply a nontext filter with the current query immediately. Cancel pending work
+on workspace change/disposal. Preserve the existing browser latency budget.
+
 ### Activation and artifacts
 
 Retain a single writer for the existing filesystem format. Pull and verify the exact sealed public image before stopping the previous writer; activate that prepared image without another registry login/pull. Preparation failure leaves the old writer running; activation failure restores the captured previous writer. Full blue/green needs a storage concurrency design because the current process holds an exclusive volume lock. Do not bypass it.

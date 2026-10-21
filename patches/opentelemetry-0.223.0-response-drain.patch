@@ -1,0 +1,189 @@
+diff --git a/node_modules/@opentelemetry/otlp-exporter-base/build/esm/transport/fetch-transport.js b/node_modules/@opentelemetry/otlp-exporter-base/build/esm/transport/fetch-transport.js
+--- a/node_modules/@opentelemetry/otlp-exporter-base/build/esm/transport/fetch-transport.js
++++ b/node_modules/@opentelemetry/otlp-exporter-base/build/esm/transport/fetch-transport.js
+@@ -62,6 +62,17 @@
+             const reason = wouldExceedSize ? 'size limit' : 'count limit';
+             diag.debug(`keepalive disabled: ${(requestSize / 1024).toFixed(1)}KB payload, ${pendingKeepaliveCount} pending (${reason})`);
+         }
++        let released = false;
++        const release = () => {
++            if (released) return;
++            released = true;
++            clearTimeout(timeout);
++            if (useKeepalive) {
++                pendingBodySize -= requestSize;
++                pendingKeepaliveCount--;
++            }
++        };
++        let drainOwnsCleanup = false;
+         try {
+             const url = new URL(this._parameters.url);
+             const response = await fetchApi(url.href, {
+@@ -76,6 +87,8 @@
+                         : 'cors'
+                     : 'no-cors',
+             });
++            drainResponseBody(response).then(release, release);
++            drainOwnsCleanup = true;
+             if (response.status >= 200 && response.status <= 299) {
+                 diag.debug(`export response success (status: ${response.status})`);
+                 return { status: 'success' };
+@@ -109,15 +122,27 @@
+             };
+         }
+         finally {
+-            clearTimeout(timeout);
+-            if (useKeepalive) {
+-                pendingBodySize -= requestSize;
+-                pendingKeepaliveCount--;
+-            }
++            if (!drainOwnsCleanup) release();
+         }
+     }
+     shutdown() {
+         // Intentionally left empty, nothing to do.
++    }
++}
++/** Backport the upstream response drain: keep quota charged until the body ends. */
++async function drainResponseBody(response) {
++    try {
++        const body = response.body;
++        if (body == null) return;
++        const reader = body.getReader();
++        try {
++            let chunk = await reader.read();
++            while (!chunk.done) chunk = await reader.read();
++        } finally {
++            reader.releaseLock();
++        }
++    } catch {
++        // Response headers already determined the export outcome.
+     }
+ }
+ /**
+diff --git a/node_modules/@opentelemetry/otlp-exporter-base/build/esnext/transport/fetch-transport.js b/node_modules/@opentelemetry/otlp-exporter-base/build/esnext/transport/fetch-transport.js
+--- a/node_modules/@opentelemetry/otlp-exporter-base/build/esnext/transport/fetch-transport.js
++++ b/node_modules/@opentelemetry/otlp-exporter-base/build/esnext/transport/fetch-transport.js
+@@ -62,6 +62,17 @@
+             const reason = wouldExceedSize ? 'size limit' : 'count limit';
+             diag.debug(`keepalive disabled: ${(requestSize / 1024).toFixed(1)}KB payload, ${pendingKeepaliveCount} pending (${reason})`);
+         }
++        let released = false;
++        const release = () => {
++            if (released) return;
++            released = true;
++            clearTimeout(timeout);
++            if (useKeepalive) {
++                pendingBodySize -= requestSize;
++                pendingKeepaliveCount--;
++            }
++        };
++        let drainOwnsCleanup = false;
+         try {
+             const url = new URL(this._parameters.url);
+             const response = await fetchApi(url.href, {
+@@ -76,6 +87,8 @@
+                         : 'cors'
+                     : 'no-cors',
+             });
++            drainResponseBody(response).then(release, release);
++            drainOwnsCleanup = true;
+             if (response.status >= 200 && response.status <= 299) {
+                 diag.debug(`export response success (status: ${response.status})`);
+                 return { status: 'success' };
+@@ -109,15 +122,27 @@
+             };
+         }
+         finally {
+-            clearTimeout(timeout);
+-            if (useKeepalive) {
+-                pendingBodySize -= requestSize;
+-                pendingKeepaliveCount--;
+-            }
++            if (!drainOwnsCleanup) release();
+         }
+     }
+     shutdown() {
+         // Intentionally left empty, nothing to do.
++    }
++}
++/** Backport the upstream response drain: keep quota charged until the body ends. */
++async function drainResponseBody(response) {
++    try {
++        const body = response.body;
++        if (body == null) return;
++        const reader = body.getReader();
++        try {
++            let chunk = await reader.read();
++            while (!chunk.done) chunk = await reader.read();
++        } finally {
++            reader.releaseLock();
++        }
++    } catch {
++        // Response headers already determined the export outcome.
+     }
+ }
+ /**
+diff --git a/node_modules/@opentelemetry/otlp-exporter-base/build/src/transport/fetch-transport.js b/node_modules/@opentelemetry/otlp-exporter-base/build/src/transport/fetch-transport.js
+--- a/node_modules/@opentelemetry/otlp-exporter-base/build/src/transport/fetch-transport.js
++++ b/node_modules/@opentelemetry/otlp-exporter-base/build/src/transport/fetch-transport.js
+@@ -65,6 +65,17 @@
+             const reason = wouldExceedSize ? 'size limit' : 'count limit';
+             api_1.diag.debug(`keepalive disabled: ${(requestSize / 1024).toFixed(1)}KB payload, ${pendingKeepaliveCount} pending (${reason})`);
+         }
++        let released = false;
++        const release = () => {
++            if (released) return;
++            released = true;
++            clearTimeout(timeout);
++            if (useKeepalive) {
++                pendingBodySize -= requestSize;
++                pendingKeepaliveCount--;
++            }
++        };
++        let drainOwnsCleanup = false;
+         try {
+             const url = new URL(this._parameters.url);
+             const response = await fetchApi(url.href, {
+@@ -79,6 +90,8 @@
+                         : 'cors'
+                     : 'no-cors',
+             });
++            drainResponseBody(response).then(release, release);
++            drainOwnsCleanup = true;
+             if (response.status >= 200 && response.status <= 299) {
+                 api_1.diag.debug(`export response success (status: ${response.status})`);
+                 return { status: 'success' };
+@@ -112,15 +125,27 @@
+             };
+         }
+         finally {
+-            clearTimeout(timeout);
+-            if (useKeepalive) {
+-                pendingBodySize -= requestSize;
+-                pendingKeepaliveCount--;
+-            }
++            if (!drainOwnsCleanup) release();
+         }
+     }
+     shutdown() {
+         // Intentionally left empty, nothing to do.
++    }
++}
++/** Backport the upstream response drain: keep quota charged until the body ends. */
++async function drainResponseBody(response) {
++    try {
++        const body = response.body;
++        if (body == null) return;
++        const reader = body.getReader();
++        try {
++            let chunk = await reader.read();
++            while (!chunk.done) chunk = await reader.read();
++        } finally {
++            reader.releaseLock();
++        }
++    } catch {
++        // Response headers already determined the export outcome.
+     }
+ }
+ /**

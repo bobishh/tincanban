@@ -49,3 +49,10 @@ remain independent of board/chat durability.
 - **WHEN** the device opts out
 - **THEN** no unsent body starts and only unsent records count as dropped
 - **AND** a transport failure releases the unsent tail without counting previously successful requests as dropped
+
+#### Scenario: Intake responses disable caching
+- **GIVEN** an available intake returning `Cache-Control: no-store`
+- **WHEN** repeated split error batches exceed the cumulative browser keepalive budget
+- **THEN** the transport consumes each response body without accumulating it and releases its keepalive reservation exactly once after body completion
+- **AND** the request deadline still bounds stalled body consumption
+- **AND** all accepted records arrive, a permanent rejection remains observable, and later successful delivery can recover without reloading the board

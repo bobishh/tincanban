@@ -781,3 +781,60 @@ system.metric_log merges since the targeted 14:10:07 configuration repair, zero
 merge failures, and peak memory 124806697 bytes. This extends evidence that the
 merge memory fault is repaired; it does not explain the separate browser export
 rejection.
+
+### Confirmed browser quota leak and CI recovery — 2026-10-21 17:22 UTC
+
+Main c4547f1 Verify 39638999633 failed in two browser cases; it was not deployed.
+The actual frontend remains b581df7, with Rusty 7a54051. The search keyboard
+budget failed at 200–208 ms; the quiet-peer case had one 680-ms first-key spike
+but passed its retry. No admission run or document-version change accompanied
+that spike. Do not attribute it to a proven protocol regression or remove its
+functional assertions. The publication WebKit trace instead showed a visible
+Person policy update is pending state: its fixture started Rusty after earlier
+private-board setup. The same unchanged local scenario passed, establishing a
+readiness race. The repaired outer scenario uses the owner's real Retry action
+when shown and retains publication, file isolation, restart and withdrawal
+checks. Full native WebKit proof passed in 59.5 seconds.
+
+Search profiling identified synchronous card field revelation/layout on the
+first key. A discarded hidden-field experiment did not improve the result and
+was removed. Coalescing the current normalized query after 60 quiet milliseconds
+passed five new red/green unit cases and the original unchanged browser budgets:
+40-ms keyboard / 34-ms paint for search; 48-ms keyboard / 59-ms paint for quiet
+peers, zero errors/admissions and unchanged document version. Clear, filter
+changes and workspace disposal are covered independently.
+
+The missing production diagnostics now have a separate concrete reproduction.
+The published browser SDK, loaded in an isolated synthetic page against the real
+TinSink endpoint, lost 46 of 50 long-error records. Requests that reached HTTP
+returned 200; later keepalive fetches failed before HTTP with Failed to fetch.
+Reading response bodies in the isolated probe delivered all fifty records.
+TinSink explicitly returns Cache-Control: no-store. Installed OTel 0.223.0
+returns from response headers without consuming the body and frees its local
+keepalive reservation before Chromium frees the corresponding browser quota.
+This explains successful startup followed by failures under larger bursts;
+successful small Python requests could not reproduce the browser lifetime.
+
+Primary upstream evidence: OpenTelemetry issue
+[7001](https://github.com/open-telemetry/opentelemetry-js/issues/7001), response
+drain [7002](https://github.com/open-telemetry/opentelemetry-js/pull/7002), and
+quota lifetime [7070](https://github.com/open-telemetry/opentelemetry-js/pull/7070).
+The actual 0.223.0 and 0.222.0 packages lack this repair despite the older
+changelog entry. Official 0.300.0 includes it but also changes the core SDK major
+version and runtime requirements. A narrow version-guarded upstream backport
+therefore retains the current dependency graph, body budget and transport API.
+No new dependency package is installed; the already resolved exporter base is
+declared directly at its reviewed exact version. npm ci applied the patch;
+second application was idempotent; audit found zero vulnerabilities.
+
+A new browser regression uses a real loopback HTTP receiver with no-store,
+fifty long errors, an HTTP 400 rejection and fifty later errors. It failed before
+implementation with 43 dropped records. After the bounded streaming drain,
+Chromium passed in 21.2 seconds and WebKit in 5.6 seconds: 100 unique accepted
+records, exactly one rejected record, observable HTTP 400, later recovery, no
+body above 65536 bytes. The test observes actual queued/sending completion
+between outcomes: the SDK processor's best-effort forceFlush can time out while
+split requests continue. Its return alone was an invalid delivery observation.
+All ten existing telemetry browser journeys and twenty focused SDK/body/reply/
+search unit checks pass. Actual continued production export remains pending
+deployment and cannot be inferred from the synthetic proof.
