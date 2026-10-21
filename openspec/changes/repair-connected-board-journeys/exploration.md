@@ -642,3 +642,29 @@ and unsafe IDs; a Rust unit verifies embedded config cannot close the JSON scrip
 359d998 is published on codex/rusty-storage-status with its own verification run;
 Tincanban CI pins that exact revision for the existing native acceptance project.
 Activate the service UI only after Tincanban confirmation support is deployed.
+
+### CI receive-observation race, 2026-10-21
+
+Verify 39628988046 failed the existing durable-storage rejection scenario twice
+at its all-attempts-failed assertion. The retained Playwright traces distinguish
+an unfinished persistence attempt from an invalid saved-state acknowledgement:
+both runs observed two failed attempts followed by a third with `failed=false`,
+`persisted=false`, `responseSent=false`. A later observation also caught a fourth
+pending attempt. Every final attached attempt had failed with neither persistence
+nor a response. There is no saved-state acknowledgement in this evidence.
+
+The test already waits for one storage rejection, but parallel streams can start
+another receive before its immediate all-attempts assertion. Await that same
+strong condition instead: at least one matching receive, every observed receive
+rejected, none persisted or acknowledged. Keep injection active during the wait,
+then restart the actual node, recover storage and require replay plus a persisted
+response. The corrected full scenario passes locally in 33.7 seconds against the
+real Iroh transport; no production protocol/storage code changed for this race.
+
+The Actions audit also found Rusty outside the previously deployed cleanup scope:
+52 artifacts occupy 144,583,189 bytes, mostly repeated sealed source/deployment
+copies. Its source retention is 14 days while deployment retention is 90 days;
+the currently active source seal expires on November 4. Extend guarded cleanup
+to Rusty's actual seals/health and retain the active plus distinct compatible
+rollback source/deployment pairs. This is a separate release-recovery gap from
+the already reclaimed 11.30 GB in the other three repositories.

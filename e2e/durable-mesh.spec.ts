@@ -582,9 +582,13 @@ test("Given a paired editor, when live receive persistence fails, then no saved 
     await expect(guest.getByRole("button", { name: "Open Replay after receive failure — Engineer" })).toHaveCount(0)
     expect(await journalChangeIds(guest, workspaceId)).toEqual(journalBefore)
     expect(await persistedLeadExists(guest, workspaceId, "Replay after receive failure — Engineer")).toBe(false)
-    const failedAttempts = await targetDocumentReceives(guest, "Replay after receive failure — Engineer")
-    expect(failedAttempts.length).toBeGreaterThan(0)
-    expect(failedAttempts.every(attempt => attempt.failed && !attempt.persisted && !attempt.responseSent)).toBe(true)
+    // Another stream can start receiving while the first storage failure is
+    // observed. Wait for those persistence attempts to reject too; a pending
+    // attempt has not acknowledged anything and is not a completed failure.
+    await expect.poll(async () => {
+      const attempts = await targetDocumentReceives(guest, "Replay after receive failure — Engineer")
+      return attempts.length > 0 && attempts.every(attempt => attempt.failed && !attempt.persisted && !attempt.responseSent)
+    }, { timeout: 20_000 }).toBe(true)
 
     await closeLatestRealIrohNode(guest)
     await guest.evaluate(() => { window.__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })

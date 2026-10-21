@@ -34,6 +34,7 @@
 - [x] 3.2 Delete obsolete artifacts; retain exact current deployment and necessary rollback/reader assets.
 - [x] 3.3 Add automatic cleanup and short diagnostic retention, preserving release dependencies.
 - [x] 3.4 Structurally verify and publish only reviewed storage workflow changes; record actual reclaimed bytes.
+- [ ] 3.5 Add Rusty to guarded cleanup: retain active and distinct compatible rollback source/deployment pairs, protect in-flight releases, keep source seals 90 days and diagnostic artifacts one day. Read-only audit found 52 artifacts / 144,583,189 bytes; its current source expires before its retained deployment copy.
 
 ## 4. Verify and deliver
 
@@ -67,7 +68,7 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 - [ ] Fix unnamed photo-only profile save without requiring a name or changing name-choice provenance; caught by the complete Rusty phone photo-delivery scenario.
 
 - [ ] Old per-device Rusty-removal badge remains after explicit local Forget even though fresh board/profile replication now works. Retain its audit evidence but show the abandoned server phase truthfully.
-- [ ] Fit OTLP batches to the deployed 64 KiB body contract. Live probe: single record 200, 869147-byte long-error batch 413; focused SDK regression generated a 917693-byte request. Byte splitting, bounded concurrency, multibyte exception limits and in-flight opt-out are implemented; 51 focused tests and all ten browser telemetry journeys pass. Deployment still pending.
+- [ ] Fit OTLP batches to the deployed 64 KiB body contract. Live probe: single record 200, 869147-byte long-error batch 413; focused SDK regression generated a 917693-byte request. Byte splitting, bounded concurrency, multibyte exception limits and in-flight opt-out are deployed in verified 4cc7139; 51 focused tests and all ten browser telemetry journeys pass. Sustained production failure export still needs proof; startup records alone do not establish it.
 
 ### Actions cleanup evidence (2026-10-21)
 
