@@ -148,6 +148,7 @@ test("Given no network before accepting, when the connection returns, then the s
     await guest.goto(invite)
     const dialog = guest.getByRole("dialog", { name: "Device sync" })
     await expect(dialog.getByRole("button", { name: "Accept and join" })).toBeVisible()
+    await guest.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().whenReady())
     await context.setOffline(true)
     await dialog.getByRole("button", { name: "Accept and join" }).click()
     await expect(dialog.getByRole("status")).toContainText("Retrying automatically")

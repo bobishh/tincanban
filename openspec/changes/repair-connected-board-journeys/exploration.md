@@ -912,3 +912,55 @@ seconds (`/tmp/tincanban-e87-public-webkit-final-recovery.log`). No app source
 guard or authorization check changed. The product guide's obsolete instruction
 to configure a deployment-wide trusted owner was also corrected to match the
 already deployed per-resource authority model.
+
+### Cold board-link guidance
+
+The public reader still renders the screenshot's generic unavailable state on
+HTTP 404. That state establishes no public projection; it cannot distinguish a
+private board from an incorrect or withdrawn link. Replace the unsupported
+unpublished/no-longer-available diagnosis with an actionable request to ask the
+owner for an invitation or a new link. Keep the unavailable state, retry, and
+all authorization checks. This is prose-only UI content; no new app launch or
+test exists solely to check wording. Existing public-reader 404, withdrawal and
+private-route behavior scenarios remain the runtime proof. This copy repair
+does not establish the original visitor's network or permission failure cause.
+
+### a3460ce verification and remaining invitation fixture — 2026-10-21
+
+The next Verify 39646666032 passed the production budget/build/seal and the
+repaired native WebKit publication lifecycle. Its network-replication job
+119383924042 instead failed the offline-before-Accept invitation case twice:
+data arrived after approval, but the URL remained `/` instead of the admitted
+board route. Both retained traces show the guest's first storage hydration
+failing to download workspaceAccess.ts after the fixture cut network. That
+leaves app.ready false; the route guard deliberately does not navigate before
+readiness. The scenario intended a loaded app losing connectivity, not an
+interrupted first module download. Await the existing whenReady promise before
+setOffline; keep the original single Accept, automatic reconnect, approval,
+received card and exact stable route assertions. The original focused case now
+passes in 15.5 seconds with no timeout, routing or protocol changes. Evidence:
+`/tmp/tincanban-a346-replication-job.log` and
+`/tmp/tincanban-a346-offline-invitation-fixed.log`.
+
+An independent synthetic page loaded the actual minified local SDK asset
+otelBrowserSdk-DRPDVjAW.js against the real TinSink intake without wrapping fetch.
+The SDK reports zero queued/sending/dropped records and no export error; eighteen
+requests received HTTP 200 within the byte budget. ClickHouse independently
+confirms fifty records and fifty unique IDs for probe run
+3a4a89cb-c326-44d8-be82-f72f661270b0 at 17:50:59. Four ERR_ABORTED notifications
+also occur; this probe did not retain per-request correlation, so their exact
+stage is unproven. Its blanket no-abort assertion failed. The bounded drain can
+outlive a successful header result; durable record counts separately prove
+delivery, without a claim of zero network notifications. This is synthetic
+built-artifact evidence, not a
+claim that the current b581df7 live user page is repaired. Its read-only 73-second
+trace window still reports 10599 dropped diagnostics, while 73 Mac receives
+complete with zero failed/closed Mac channels. Offline-phone dials and stale
+other-board Rusty403s remain. Receipt:
+`/tmp/tincanban-built-otel-intake-probe.json`; live trace:
+`/tmp/tincanban-b581-await-a346-stability.json`.
+
+Run 39646666032 completed with fifteen successful jobs and only the identified
+offline-invitation fixture failure. Production artifact sealing, native WebKit
+publication and automation's complete owner/intake lifecycle all passed. The
+overall failed run did not activate either component.

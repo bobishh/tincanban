@@ -135,7 +135,7 @@ onBeforeUnmount(() => {
   <p v-if="state === 'loading'" class="board-state" role="status">Loading board…</p>
   <section v-else-if="state !== 'ready'" class="board-state ui-stack" role="alert">
     <h1>{{ state === 'unavailable' ? 'Board unavailable' : state === 'malformed' ? 'Publication invalid' : 'Could not load board' }}</h1>
-    <p>{{ state === 'unavailable' ? 'This board is unpublished or no longer available.' : errorText }}</p>
+    <p>{{ state === 'unavailable' ? 'This link cannot open the board. Ask its owner for an invitation or a new link.' : errorText }}</p>
     <button class="button button-small" type="button" @click="refresh">Try again</button>
   </section>
   <template v-else-if="projection">
