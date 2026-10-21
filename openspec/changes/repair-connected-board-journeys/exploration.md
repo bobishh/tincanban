@@ -268,3 +268,33 @@ only the recipient displayed completion. It now waits for both actual terminal
 confirmations. The functional credential/capability/progress assertions remain;
 no timeout increase or test removal was used. Production mesh stability and
 owner-offline participant replication still require deployed verification.
+
+The separate three-identity board-storage scenario also passes after staged
+admission (38.2 seconds): close the owner, cold-start editor/visitor with relay
+WebSockets blocked, publish an editor change, observe it on the visitor through
+Rusty, verify zero visitor PUTs, then stop Rusty and observe Unavailable. This is
+isolated acceptance evidence, not recovery of the real owner browser.
+
+Pinning app CI to the actual live Rusty source 4cce540 exposes another regression:
+the public-delivery native scenario fails with `Publication owner management
+policy required`, while all eight native storage/management/archive scenarios
+pass. A publication created without a board management record does not retain
+the owner's public identity for later editor delivery after the global owner pin
+was removed. The requesting editor must never become that owner. Correct
+per-board owner identity retention and safe treatment of existing records are
+required before the public-delivery path can be considered repaired.
+
+Rusty repair `ded16d6b8f74cc0ebcc566154a0430e5c85a6f67` retains the verified
+per-board root identity in service-signed auxiliary evidence without changing
+publication schemas. Legacy signed board/person management evidence remains a
+valid source of that identity. It rejects editor self-promotion, foreign claims
+after an interrupted commit, copied/tampered evidence and conflicting owners.
+Review caught a retry durability gap; retries now reconfirm all parent directories
+even when the owner file is already visible. All 109 server tests pass, and the
+previously failing application public-delivery native scenario passes unchanged
+against the repaired binary. See `rusty-owner-review.md` for scope and limits.
+Rusty CI 39598858224 is pending; this is not an activation claim.
+
+MetaMesh PR 5 merged preserving candidate `5b02ed1…`; its formal, complete
+Rust/WASM/TypeScript verification, Apple/mobile and consumer checks all passed
+(CI 39596778353). The application pins that exact published commit.

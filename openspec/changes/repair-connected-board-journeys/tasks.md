@@ -51,6 +51,7 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 - [ ] Round badges render with square ink frames in production; verify count/presence circles after CSS minification.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.
 - [ ] Red CI: repair real same-identity Rusty credential transfer under multi-workspace contention; preserve its functional acceptance scenario.
+- [ ] Fix the public-delivery owner-identity regression exposed by testing the deployed Rusty revision; preserve per-board authority across editor delivery and restart without a global owner pin.
 
 ### Actions cleanup evidence (2026-10-21)
 

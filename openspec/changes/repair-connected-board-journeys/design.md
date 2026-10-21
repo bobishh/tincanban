@@ -33,7 +33,15 @@ Directory content owns padding, spacing and compact row actions. Active state si
 
 ### Resume the exact retained Rusty operation
 
-The two retained operations differ: conflict recovery for one scope (which may be identity scope) and identity-device revocation across an origin. Read the valid freeze/journal, signer and scope/device references without exposing keys. Explain what is pending and offer the matching existing resume action; do not create another credential epoch from a generic Connect click. Preserve incompatible/missing/foreign-signer evidence and surface a useful failure. Inspect the premature local helper against current journal types and actual owner evidence before accepting it.
+The two retained operations differ: conflict recovery for one scope (which may be identity scope) and identity-device revocation across an origin. Read the valid freeze/journal, signer and scope/device references without exposing keys. Explain what is pending and offer the matching existing resume action; do not create another credential epoch from a generic Connect click. Preserve incompatible/missing/foreign-signer evidence and surface a useful failure. Report journal-confirmed progress separately from unconfirmed remote state.
+
+For a new device removal, inspect every automation cohort before installing the local origin freeze. Recheck exact credential bindings when committing; retain normal replication progress made while inspection runs. Capture the inspected proofs into the saved journal before any automation freeze or revocation. A retained transition resumes its own captured intent. Different worker epochs and different service identities need distinct errors; neither permits silently skipping the worker or replacing keys.
+
+### Admit headers before payload reservations
+
+An idle response wait must reserve only the bounded header, not an entire maximum-size payload. The native reader inspects frame kind and wire limit before requesting payload admission from the shared peer budget. Header reservations and payload reservations share the existing 32-MiB limit; at most two payload frames and a finite 32 header waits are admitted per peer. Small heartbeats can proceed while other scopes await data. Cancellation, deadlines and transport close release reservations only after underlying read cancellation; older WASM without staged admission retains conservative full-frame accounting.
+
+Preserve the actual multi-workspace credential-transfer acceptance test. Require both successful transfer and no concurrency/empty-header warnings. Enrollment helpers must await terminal confirmation on both participating devices before closing their windows. This establishes the repaired admission mechanism; sustained production operation and owner-offline participant exchange remain separate verification.
 
 ### Rusty configuration and runtime status
 
@@ -58,4 +66,4 @@ Actions diagnostics expire after one day; retain only current/rollback release c
 
 ## Remaining questions for investigation
 
-The actual owner's saved operation/failed phase and the precise failed intake POST remain unestablished. Current mesh evidence proves churn and stream rejection, but does not yet distinguish queued read contention, route/session lifetime interactions and stale routes. Resolve from runtime evidence and focused reproduction, not by selecting a convenient hypothesis.
+The owner's saved operation is confirmed as Valiant Squirrel device removal; its automation discovery fails before completing recovery. The precise live journal confirmations and failed intake POST remain unestablished. Idle full-frame reservations reproduce legitimate cross-workspace rejection, and staged admission passes the real credential-transfer scenario without its warnings. Other route/session interactions and sustained production stability are not established by that focused proof.

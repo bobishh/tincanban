@@ -29,6 +29,18 @@ A pending credential transition SHALL preserve its exact signed intent, keys and
 - **THEN** it identifies that device removal and resumes its existing coordination path
 - **AND** a failed or foreign-signer attempt preserves the retained evidence
 
+#### Scenario: Automation inspection fails before a new removal
+- **GIVEN** unchanged Rusty credentials and an incompatible or unreachable automation
+- **WHEN** the owner starts device removal
+- **THEN** inspection fails before the local origin freeze is created
+- **AND** original credentials and ordinary replication remain available
+
+#### Scenario: Replication advances during inspection
+- **GIVEN** successful automation inspection while ordinary replication advances its cursor
+- **WHEN** the unchanged credential bindings are frozen for removal
+- **THEN** the newest progress is retained
+- **AND** a concurrent credential change instead rejects stale preparation without freezing it
+
 ### Requirement: Public delivery follows confirmed visibility and current access
 The client SHALL establish public board visibility before resolving editor publication credentials. A private board SHALL have no public-delivery error or retry action. Public delivery SHALL require current scoped authority and retain signature/frontier checks throughout the operation.
 
@@ -57,6 +69,12 @@ The system SHALL distinguish peer presence, local persistence and durable Rusty 
 - **GIVEN** distinct admitted browser sessions on one computer and several workspaces
 - **WHEN** they remain idle, exchange edits, and one tab closes/reopens
 - **THEN** data exchange and heartbeats remain healthy without repeated connection churn or stream-budget rejection
+
+#### Scenario: Idle responses do not occupy payload slots
+- **GIVEN** two scopes await response headers and another scope receives a heartbeat
+- **WHEN** the heartbeat is read
+- **THEN** it completes without waiting for those responses
+- **AND** header waits, payload frames and total reserved bytes remain bounded
 
 ### Requirement: Intake and service status have complete journeys
 The deployed public form SHALL use its current integration contract and report the actual accepted/rejected outcome. Authorized users SHALL be able to inspect meaningful board/storage state and applicable recovery actions without interpreting internal protocol exceptions.
