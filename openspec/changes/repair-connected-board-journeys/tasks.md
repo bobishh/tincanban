@@ -6,7 +6,7 @@
 - [x] 1.4 Capture current same-computer channel failure/reconnect/stream-limit sequence through read-only WebMCP.
 - [x] 1.5 Trace private-board publication error ordering and inappropriate retry UI.
 - [x] 1.6 Establish live form script/config/endpoint; verify challenge without submitting user data.
-- [ ] 1.7 Correlate reported form 404 with its exact POST/request outcome.
+- [ ] 1.7 Correlate reported form 404 with its exact POST/request outcome. Current deployed Reflux source verified as 7eced2c; a no-side-effect validation POST returns 400 with correct CORS. Retained 48-hour application logs contain only GET probes returning 404, successful challenge requests and that validation POST. Original failed POST and full human-check submission remain unverified.
 - [x] 1.8 Identify the owner's pending removal and failed automation phase; record the user's subsequent explicit decision to reset and reconnect instead of resuming it.
 - [x] 1.9 Reproduce multi-workspace stream contention and establish full-frame idle reservations as one confirmed cause; keep remaining production route churn under 2.5.
 - [x] 1.10 Complete proposal/design after exploration, review pending-operation/reset changes against evidence, and incorporate the explicit reset decision.
@@ -25,7 +25,7 @@
 
 - [x] 2.10 Remove deployment-wide `RUSTY_TRUSTED_OWNER` and controller-device admission pins; keep per-resource ownership, signatures and revocation. Verify unrelated owners, restart isolation and scoped editor delivery; deploy through Rusty CI.
 
-- [ ] 2.11 Diagnose intermittent TinSink ClickHouse code 241 memory pressure delaying queued log/trace inserts; preserve queued evidence and verify stable durable delivery before claiming full-chain reliability.
+- [x] 2.11 Repair the confirmed TinSink ClickHouse metric-log merge memory failure. The targeted vertical-merge setting is live and persisted in infrastructure; 321 merges since 14:10:07 have zero errors and 124806697-byte peak memory at 17:36 UTC. ClickHouse durably received 1319 live Rusty records in the preceding fifteen minutes. No queued evidence was deleted and the container memory limit was not raised. This closes the merge fault; separate browser keepalive losses and sustained browser delivery remain tracked below.
 - [x] 2.12 Preserve manual Rusty actions across background-sync busy transitions. Controlled pending-GET recovery passes Chromium/WebKit; 58 logic tests pass. 4cc7139 Verify and both deployments succeeded; live health confirms the exact SHA. User browser acceptance remains pending.
 
 ## 3. GitHub Actions storage (delegated, explicitly authorized)
@@ -84,4 +84,4 @@ is `ok`. This raises actual cleanup across the four repositories to 884 artifact
 and 11,424,105,036 bytes. Rusty automatic workflow activation completed in b70aac4; main retention and subsequent automatic runs succeeded. The quoted inventory records the manual cleanup checkpoint, not a claim that later release artifacts cannot replace the selected rollback.
 
 - [ ] Preserve useful OTLP failure evidence while the next export is pending: live b581df7 exported startup records, then discarded hundreds of records while clearing the last error at each new request. Independent bounded log/trace failure state is implemented in c4547f1, whose CI failed and did not deploy. The actual quota leak is reproduced: installed OTel leaves no-store response bodies unread. Narrow upstream drain backport passes real HTTP Chromium/WebKit delivery, rejection and recovery; verify sustained production export after deployment.
-- [ ] Repair c4547f1 CI failures without weakening behavior checks: coalesced search passes the original 200-ms budget at 40-ms keyboard / 34-ms paint; five unit cases cover clear/filter/workspace/disposal. Publication readiness now uses the real Retry action and full native WebKit lifecycle passes. Combined CI and deployment remain pending; isolated quiet-peer spike has no established protocol cause.
+- [ ] Repair c4547f1 CI failures without weakening behavior checks: coalesced search passes the original 200-ms budget at 40-ms keyboard / 34-ms paint; five unit cases cover clear/filter/workspace/disposal. e87f647 CI finished fourteen jobs green, including 3980 units, core-4 and all eleven diagnostic browser scenarios. Its two failures are addressed locally: simpler Vue cleanup restores 274.61 kB under the unchanged 275-kB startup budget; deterministic source-change rejection/private404/fresh confirmation and the full native publication WebKit lifecycle pass in 36.3 seconds. Corrected CI and deployment remain pending; no source/authority guard was weakened and the isolated quiet-peer spike has no established protocol cause.

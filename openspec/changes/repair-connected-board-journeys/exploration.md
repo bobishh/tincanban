@@ -838,3 +838,77 @@ split requests continue. Its return alone was an invalid delivery observation.
 All ten existing telemetry browser journeys and twenty focused SDK/body/reply/
 search unit checks pass. Actual continued production export remains pending
 deployment and cannot be inferred from the synthetic proof.
+
+### Actual form route validation — 2026-10-21 17:30 UTC
+
+The live homepage config still selects Reflux integration
+97697bb3-3c06-4ab7-bb6a-69450b281a88. Reflux `/api/health` confirms source
+7eced2ca5859bfcce34b00d90c149df5c26be6bc and a ready database. The primary
+Acidreflux checkout contains unrelated uncommitted work; it was not modified.
+The intake controller was read from the exact deployed Git revision instead.
+It resolves active website integration and allowed origin before parsing the
+submission; only the later valid challenge/idempotency transaction persists an
+event.
+
+A bounded POST `{}` to the configured `/v1/intake/{integrationId}` with the
+actual homepage Origin returned HTTP 400 / Invalid submission, with matching
+CORS and no-store headers. It created no intake event and solved no human check.
+This establishes that the current POST route and integration reach validation;
+it does not prove full form acceptance or explain the original reported 404.
+Receipts: `/tmp/tincanban-form-post-validation.headers` and
+`/tmp/tincanban-form-post-validation.json`.
+
+Read-only current-container logs for the retained last 48 hours contain six
+matched intake/challenge requests: two GET probes at 09:46 returned 404; two
+challenge POSTs returned 200; challenge OPTIONS returned 204; the new validation
+POST returned 400 at 17:30:42. No failed intake POST is present in those retained
+application logs. This cannot exclude an earlier request, another destination
+or rejection before Reflux. A complete synthetic form submission still requires
+the explicit action-time human-check confirmation; no route or authorization
+was weakened to bypass it.
+
+### Production build budget follow-up — 2026-10-21
+
+Verify 39643482318 for e87f647 passed all 3980 unit checks, quality gates and
+the original core-4 search/quiet-peer browser scenarios. Its production build
+then exceeded the unchanged initial-JavaScript budget by 100 bytes: 275.10 kB
+against 275 kB. This is a packaging failure, not evidence that the preceding
+browser fixes were deployed. Replace the coalescer's three independent watches,
+manual disposal and duplicated workspace guards with one synchronous Vue watch
+whose cleanup owns the pending timer. The original five lifecycle cases still
+pass. Actual production quality:size now passes at 274.61 kB, with all other
+budgets unchanged; types/build/lint pass. Evidence:
+`/tmp/tincanban-e87-size-repair.log` and
+`/tmp/tincanban-e87-search-lifecycle-tests.log`.
+
+The independent collector check at 17:36 UTC confirms 321 metric-log merges
+since 14:10:07, zero errors, maximum peak 124806697 bytes, and a latest merge at
+17:36:19. ClickHouse holds 1319 live mesh-lighthouse records from the preceding
+fifteen minutes, latest 17:36:37. These establish the repaired merge path and
+continued durable server insertion; the old browser session has only six
+records in that interval. Browser export reliability therefore remains a
+separate unfinished acceptance condition. The collector's default metrics port
+was unavailable from its container IP, so no queue-size claim is made from it.
+
+The completed e87f647 run has fourteen successful jobs and two failures: the
+100-byte startup budget excess and public-board native WebKit. All eleven
+diagnostic browser cases passed on CI, including the real no-store receiver
+(19.8-second case). The second publication failure was after initial readiness:
+the captured source changed during preparation, so no publication occurred.
+The trace retained Private, an enabled switch and the component's action error;
+the shared refresh error and Retry had disappeared. The test waited for revision
+one, then assumed Retry must still exist and that it would reopen confirmation.
+Neither assumption matched the UI. The trace does not record the natural source
+mutation, so its exact origin remains unproven.
+
+The corrected lifecycle accepts only this exact source-guard rejection, remains
+bounded to three total confirmed attempts, and explicitly reopens disclosure
+before each fresh Enable. A once-only admitted member-avatar update during file
+staging deterministically changes heads: the guard rejects, revision stays zero
+and an anonymous backend board GET returns 404. Only then does a new owner
+confirmation publish. All original anonymous isolation, file bytes, later update,
+restart and withdrawal assertions remain. Final native WebKit passed in 36.3
+seconds (`/tmp/tincanban-e87-public-webkit-final-recovery.log`). No app source
+guard or authorization check changed. The product guide's obsolete instruction
+to configure a deployment-wide trusted owner was also corrected to match the
+already deployed per-resource authority model.

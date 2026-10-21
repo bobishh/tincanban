@@ -224,9 +224,11 @@ acceptance and production release remain pending; source changes and focused uni
 tests do not establish production behavior. Public data remains in Rusty's
 publication namespace, separate from encrypted workspace records.
 
-Set `VITE_PUBLIC_BOARD_ORIGIN` to the Rusty HTTPS origin. Configure Rusty with its
-existing `RUSTY_TRUSTED_OWNER` root and controller-device allowlist, plus the exact
-frontend CORS origin. Missing config or publication capability disables public
+Set `VITE_PUBLIC_BOARD_ORIGIN` to the Rusty HTTPS origin and configure Rusty's
+exact frontend CORS origin. Rusty no longer uses a deployment-wide
+`RUSTY_TRUSTED_OWNER` root or controller-device allowlist. Each board's signed
+owner policy controls its storage and publication; unrelated owners can use the
+same server. Missing frontend config or publication capability disables public
 access with a clear error. Public read storage
 contains a board-scoped readable representation and file copies; private keys,
 storage tokens, local paths and other boards stay outside that scope. Rusty cannot

@@ -116,18 +116,54 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("group", { name: "Confirm public board change" })).toContainText("discussion")
+    // An admitted profile change during staging must abort the captured source,
+    // then a fresh owner confirmation may publish the current snapshot.
+    let injectedSourceChange: { before: string[]; after: string[] } | undefined
+    let injectionStarted = false
+    await page.route(`${origin}/v1/public/boards/${fixture.boardId}/files`, async route => {
+      if (!injectionStarted && route.request().method() === "PUT") {
+        injectionStarted = true
+        injectedSourceChange = await page.evaluate(async () => {
+          const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+          const { workspaceHeads } = await import("/src/crdt.ts")
+          const before = workspaceHeads(app.getActiveDoc()!)
+          await app.executeCommandAsync({ kind: "setMemberAvatar", avatarData: null, changedAt: new Date().toISOString() })
+          return { before, after: workspaceHeads(app.getActiveDoc()!) }
+        })
+      }
+      await route.continue()
+    })
     await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
     const revision = async () => await panel.getAttribute("data-public-revision")
-    try {
-      await expect.poll(revision, { timeout: 5_000 }).toBe("1")
-    } catch (error) {
+    const sourceChangedMessage = "Board source changed during publication preparation"
+    let injectedGuardAborted = false
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect.poll(async () => {
+        if (await revision() === "1") return "published"
+        return await panel.getByRole("alert").count() ? "failed" : "pending"
+      }, { timeout: 30_000 }).not.toBe("pending")
+      if (await revision() === "1") break
+      const errors = await panel.getByRole("alert").allTextContents()
+      expect(errors.length).toBeGreaterThan(0)
+      expect(errors.every(error => error === sourceChangedMessage)).toBe(true)
+      if (injectedSourceChange && !injectedGuardAborted) {
+        expect(injectedSourceChange.after).not.toEqual(injectedSourceChange.before)
+        expect(await revision()).toBe("0")
+        expect((await page.request.get(`${origin}/v1/public/boards/${fixture.boardId}`)).status()).toBe(404)
+        injectedGuardAborted = true
+      }
+      if (attempt === 2) throw new Error("Board source kept changing across three confirmed publication attempts")
       const retry = panel.getByRole("button", { name: "Retry", exact: true })
-      if (await retry.count() === 0) throw error
-      await retry.click()
-      await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
-      await expect(panel.getByRole("alert")).toHaveCount(0)
+      if (await retry.isVisible()) await retry.click()
+      if (await revision() === "1") break
+      await expect(publicSwitch).toBeEnabled()
+      await expect(publicSwitch).not.toBeChecked()
+      await expect(panel.getByRole("status")).toHaveText("Private · Access requires an invitation.")
+      await publicSwitch.click()
+      await expect(panel.getByRole("group", { name: "Confirm public board change" })).toContainText("discussion")
       await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
     }
+    expect(injectedGuardAborted).toBe(true)
     await expect.poll(revision, { timeout: 30_000 }).toBe("1")
     await expect(panel).toContainText("Changes sync automatically.")
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
