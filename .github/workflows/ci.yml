@@ -43,12 +43,6 @@ jobs:
         run: npm run quality:replica
       - run: npm run test:coverage
         if: ${{ !cancelled() }}
-      - uses: actions/upload-artifact@v6
-        if: always()
-        with:
-          name: unit-coverage
-          path: coverage/
-          retention-days: 14
       - name: Verify frontend deployment adapter
         run: node --test workers/frontend/*.test.mjs
       - name: Install pinned frontend Wrangler for package regression
@@ -84,7 +78,7 @@ jobs:
           path: .release/frontend/
           include-hidden-files: true
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
 
   formal-models:
     name: Tincanban formal models
@@ -110,12 +104,12 @@ jobs:
           TLC_LOGS: ${{ runner.temp }}/match-tlc
         run: python3 verification/tla/run_models.py --logs "$TLC_LOGS"
       - uses: actions/upload-artifact@v6
-        if: always()
+        if: failure()
         with:
           name: tincanban-tlc-${{ github.sha }}
           path: ${{ runner.temp }}/match-tlc/
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 1
 
   browser-core:
     name: Browser (core ${{ matrix.shard }})
@@ -148,7 +142,7 @@ jobs:
         with:
           name: core-failure-${{ strategy.job-index }}
           path: test-results/
-          retention-days: 3
+          retention-days: 1
 
   browser-network:
     name: Browser (network ${{ matrix.group }})
@@ -202,7 +196,7 @@ jobs:
         with:
           name: browser-network-${{ matrix.group }}-failure
           path: test-results/
-          retention-days: 3
+          retention-days: 1
 
   browser-policy:
     name: Browser (production policy/transport packaging)
@@ -233,7 +227,7 @@ jobs:
         with:
           name: policy-packaging-failure
           path: test-results/
-          retention-days: 3
+          retention-days: 1
 
   browser-native:
     name: Browser (native Rust peer)
@@ -269,7 +263,7 @@ jobs:
         with:
           name: browser-native-failure
           path: test-results/
-          retention-days: 3
+          retention-days: 1
 
   native-management:
     name: Native Rusty management and archive interoperability
@@ -375,7 +369,7 @@ jobs:
           path: .release/automation/
           include-hidden-files: true
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium webkit
@@ -403,7 +397,7 @@ jobs:
           path: |
             test-results-automation-worker/
             test-results/
-          retention-days: 3
+          retention-days: 1
 
   browser-archives:
     name: Browser (archives and attachments ${{ matrix.group }})
@@ -475,4 +469,4 @@ jobs:
         with:
           name: archives-${{ matrix.group }}-failure
           path: test-results/
-          retention-days: 3
+          retention-days: 1
