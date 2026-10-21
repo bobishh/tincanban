@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { clearMeshTrace, meshTrace, meshTraceSnapshot, setMeshTraceVerboseLogging } from "./meshTrace"
 
-const { record } = vi.hoisted(() => ({ record: vi.fn() }))
+const { record, consent } = vi.hoisted(() => ({ record: vi.fn(), consent: { enabled: true } }))
 vi.mock("./telemetry", () => ({ record }))
+vi.mock("./telemetryConfig", () => ({ telemetryConfig: () => consent }))
 
 describe("mesh trace", () => {
   beforeEach(() => {
     clearMeshTrace()
     setMeshTraceVerboseLogging(false)
     record.mockReset()
+    consent.enabled = true
   })
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -75,6 +77,47 @@ describe("mesh trace", () => {
     meshTrace("workspace.replica.failed", { error: detailError }, "warn", explicitError)
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2))
     expect(record.mock.calls[1]?.[1]).toMatchObject({ error: explicitError })
+  })
+
+  it("Given ordinary consenting browsing, when a session fails and reconnects, then export correlated incidents without packet detail", async () => {
+    vi.stubGlobal("window", {})
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const correlation = { workspaceId: "workspace-a", peerId: "peer-b", tabId: "tab-a", runId: 3, instanceId: "slot-0" }
+    meshTrace("gossip.packet", correlation)
+    meshTrace("session.heartbeat.failed", { ...correlation, connectionId: "out-7", reason: "connection lost" }, "warn")
+    meshTrace("session.closed", { ...correlation, connectionId: "out-7", cause: "heartbeat failed" })
+    meshTrace("session.started", { ...correlation, connectionId: "in-8", direction: "incoming" })
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(3))
+    expect(record.mock.calls.map(call => call[0])).toEqual(["session.heartbeat.failed", "session.closed", "session.started"])
+    expect(record.mock.calls[0]?.[1]).toMatchObject({ ...correlation, connectionId: "out-7", error: expect.objectContaining({ message: "connection lost" }) })
+  })
+
+  it("Given a repeated failure storm, when the minute budget fills, then preserve local events and export suppression evidence in the next window", async () => {
+    vi.stubGlobal("window", {})
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000)
+    for (let index = 0; index < 160; index++) meshTrace("dial.failed", { connectionId: `out-${index}` }, "warn")
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(120))
+    expect(record).toHaveBeenCalledTimes(120)
+    expect(meshTraceSnapshot()).toHaveLength(160)
+    now.mockReturnValue(61_001)
+    meshTrace("session.started", { connectionId: "in-recovered" })
+    await vi.dynamicImportSettled()
+    expect(record.mock.calls.slice(-2).map(call => call[0])).toEqual(["mesh.diagnostics.suppressed", "session.started"])
+    expect(record.mock.calls.at(-2)?.[1]).toMatchObject({ suppressedCount: 40 })
+  })
+
+  it("Given device opt-out, when incidents occur, then do not load/export diagnostics or consume the next consenting budget", async () => {
+    vi.stubGlobal("window", {})
+    vi.spyOn(console, "warn").mockImplementation(() => {})
+    consent.enabled = false
+    for (let index = 0; index < 160; index++) meshTrace("dial.failed", {}, "warn")
+    await vi.dynamicImportSettled()
+    expect(record).not.toHaveBeenCalled()
+    consent.enabled = true
+    meshTrace("session.started")
+    await vi.dynamicImportSettled()
+    expect(record).toHaveBeenCalledTimes(1)
   })
 })
 

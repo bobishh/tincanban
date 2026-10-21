@@ -150,18 +150,6 @@
   .card-context:has(.card-notes):has(.card-fields) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); }
 }
 .form-error-spaced { margin-bottom: var(--space-4); }
-.workspace-list { display: grid; gap: var(--space-2); margin: var(--space-5) 0; }
-.workspace-item { width: 100%; min-height: 72px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 2px solid var(--line); color: var(--ink); }
-.workspace-switch { min-width: 0; min-height: 68px; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 0; background: transparent; text-align: left; }
-.workspace-switch:hover { background: var(--yellow); }
-.workspace-label { min-width: 0; padding: var(--space-3) var(--space-4); }
-.workspace-switch strong, .workspace-label strong { overflow: hidden; padding-inline-end: .25em; font-size: 1rem; letter-spacing: -.03em; text-overflow: ellipsis; }
-.workspace-item-actions { align-self: stretch; display: flex; border-left: 2px solid var(--line); }
-.workspace-rename-form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--space-2); padding: var(--space-3); border-top: 2px solid var(--line); }
-.workspace-rename-form .form-error { grid-column: 1 / -1; }
-.workspace-delete-confirm { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); border-top: 2px solid var(--line); background: #e9e9e7; }
-.workspace-delete-confirm p { flex: 1; margin: 0; font-size: .8rem; font-weight: 700; }
-.workspace-active-badge { margin-left: auto; padding: var(--space-1) var(--space-2); border: 1px solid var(--line); color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }
 .workspace-create-form { display: grid; gap: var(--space-4); margin: var(--space-5) 0; }
 .workspace-preset { min-inline-size: 0; display: grid; gap: var(--space-3); margin: 0; padding: var(--space-3); border: 2px solid var(--line); }
 .workspace-preset legend { padding: 0 var(--space-1); color: var(--muted); font: 700 .8rem/1 var(--site-font-sans); letter-spacing: .08em; text-transform: uppercase; }
@@ -373,21 +361,6 @@
   .filters-panel .lead-filters {
     grid-template-columns: 1fr;
   }
-}
-@media (max-width: 500px) {
-  .workspace-item { grid-template-columns: minmax(0, 1fr); }
-}
-@media (max-width: 500px) {
-  .workspace-item-actions { border-top: 1px solid var(--line); border-left: 0; }
-}
-@media (max-width: 500px) {
-  .workspace-rename-form { grid-template-columns: 1fr 1fr; }
-}
-@media (max-width: 500px) {
-  .workspace-rename-form label, .workspace-rename-form .form-error { grid-column: 1 / -1; }
-}
-@media (max-width: 500px) {
-  .workspace-delete-confirm { align-items: stretch; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

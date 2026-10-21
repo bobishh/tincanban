@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-test("Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear", async ({ page }) => {
+test("Given several boards, when searching discovery, then title, owner, filters, and empty state stay clear", async ({ page }, testInfo) => {
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await expect(page.locator(".active-board-owner")).toHaveCount(0)
@@ -39,10 +39,20 @@ test("Given several boards, when searching discovery, then title, owner, filters
   await updatedDialog.getByRole("button", { name: "Pin Reading list" }).click()
   const pinned = updatedDialog.getByRole("region", { name: "Pinned boards" })
   await expect(pinned.locator(".workspace-item")).toHaveCount(2)
+  await updatedDialog.getByRole("button", { name: "Maximize window", exact: true }).click()
+  await pinned.locator(".workspace-item").first().getByRole("button", { name: "Rename", exact: true }).click()
+  await updatedDialog.getByRole("textbox", { name: "Workspace name", exact: true }).fill("")
+  await updatedDialog.getByRole("button", { name: "Save name", exact: true }).click()
+  await expect(updatedDialog.getByRole("alert")).toContainText("Workspace name is required")
+  await updatedDialog.screenshot({ path: testInfo.outputPath("board-directory-validation.png") })
+  await updatedDialog.getByRole("button", { name: "Cancel", exact: true }).click()
   await pinned.getByRole("button", { name: "Move Reading list up" }).click()
   await expect(pinned.locator(".workspace-switch").first()).toContainText("Reading list")
   await expect(pinned.locator(".workspace-item").allTextContents()).resolves.toHaveLength(2)
   await expect(updatedDialog.locator(".board-directory h3").first()).toHaveText("Pinned")
+  await updatedDialog.screenshot({ path: testInfo.outputPath("board-directory-maximized.png") })
+  await updatedDialog.getByRole("button", { name: "Restore window size", exact: true }).click()
+  await updatedDialog.screenshot({ path: testInfo.outputPath("board-directory-window.png") })
   await updatedDialog.locator(".workspace-switch").filter({ hasText: "Job search" }).click()
   await page.getByRole("button", { name: "Open workspaces" }).click()
   const returnedDialog = page.getByRole("dialog", { name: "Workspaces" })

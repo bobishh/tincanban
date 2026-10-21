@@ -221,6 +221,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <p v-else-if="networkOnline !== false && meshDiagnostic && (meshMembers || []).some(member => !member.self)" class="sync-error" role="status">{{ workspaceConnected ? "Sync issue:" : "Reconnect:" }} {{ meshDiagnostic }}</p>
         <p class="dialog-copy">People and device records known to {{ invitationWorkspaceTitle || "this workspace" }}.</p>
         <p class="mesh-member-help">A person can have more than one device. Select a person to see the devices known here.</p>
+        <div class="sync-participant-browser">
         <div class="mesh-member-list" role="list" aria-label="Mesh members">
           <button
             v-for="member in peopleMembers"
@@ -232,8 +233,9 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             @click="selectedMemberId = member.personId"
           >
             <ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" /><span class="mesh-member-presence" :class="member.online ? 'is-online' : member.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-            <span class="mesh-member-name"><strong>{{ member.name }}</strong><small>{{ member.devices }} known {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small></span>
-            <span class="mesh-member-role">{{ member.role }}{{ member.personId === succession?.successorPersonId ? ' · Named successor' : '' }}</span>
+            <span class="mesh-member-name"><strong>{{ member.name }}</strong><small>{{ member.devices }} known {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small>
+              <span class="mesh-member-role">{{ member.role }}{{ member.personId === succession?.successorPersonId ? ' · Named successor' : '' }}</span>
+            </span>
           </button>
           <p v-if="!peopleMembers.length" class="mesh-member-empty">No people connected to this board.</p>
         </div>
@@ -290,6 +292,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             </div>
           </section>
         </section>
+        </div>
         <div class="dialog-actions sync-primary-actions">
           <button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button>
           <button class="button" type="button" @click="emit('selectSyncAll')">Add my device</button>

@@ -5,7 +5,10 @@ import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "../sync/
 import type { PublicBoardProjection } from "../public/publicSchema"
 import type { PublicDeliveryCommand } from "../public/publicDelivery"
 
-type DeliveryStatus = "idle" | "waiting" | "sending" | "delivered" | "private" | "retry" | "blocked"
+type DeliveryStatus = "idle" | "waiting" | "checking" | "sending" | "delivered" | "private" | "retry" | "blocked"
+class PublicDeliveryAccessError extends Error {
+  constructor(cause?: unknown) { super("Editor access could not be verified on this device. Open Sync to reconnect and check board access.", { cause }) }
+}
 type DeliveryMarker = { version: 1; workspaceId: string; boardId: string; sourceHeads: string[]; status: DeliveryStatus; attempts: number; updatedAt: number }
 type DeliveryCapture = { workspaceId: string; boardId: string; document: WorkspaceDocumentV2; profile: LocalProfile; sourceHeads: string[]; sourceVersion: number }
 export interface PublicBoardDeliveryInput {
@@ -17,6 +20,7 @@ export interface PublicBoardDeliveryInput {
   sourceHeads: () => string[]
   role: () => string | null | undefined
   profile: () => LocalProfile | null | undefined
+  recoveryActive?: () => boolean
   debounceMs?: number
 }
 
@@ -31,7 +35,7 @@ function parseMarker(raw: string | null): DeliveryMarker | undefined {
     const value = JSON.parse(raw) as Partial<DeliveryMarker>
     if (value.version !== 1 || typeof value.workspaceId !== "string" || typeof value.boardId !== "string" ||
         !Array.isArray(value.sourceHeads) || !value.sourceHeads.every(head => typeof head === "string") ||
-        !["idle", "waiting", "sending", "delivered", "private", "retry", "blocked"].includes(String(value.status)) ||
+        !["idle", "waiting", "checking", "sending", "delivered", "private", "retry", "blocked"].includes(String(value.status)) ||
         !Number.isSafeInteger(value.attempts) || !Number.isSafeInteger(value.updatedAt)) return undefined
     return value as DeliveryMarker
   } catch { return undefined }
@@ -56,9 +60,11 @@ async function readEditorCredential(captured: DeliveryCapture) {
   assertEditorCredential(credential, authority, grant, captured, revoked)
   const owner = { personId: credential!.ownerPersonId, publicKey: credential!.ownerPublicKey,
     certificates: [...credential!.ownerCertificates, ...authority!.ownerCertificates] as LocalProfile["certificate"][] }
-  const role = await meshRecords.verifyWorkspaceGrant(grant!, { workspaceId: captured.workspaceId, personId: captured.profile.identity.personId,
-    ownerPersonId: owner.personId, ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates })
-  if (role !== "editor") throw new Error("Public delivery requires an active editor grant")
+  try {
+    const role = await meshRecords.verifyWorkspaceGrant(grant!, { workspaceId: captured.workspaceId, personId: captured.profile.identity.personId,
+      ownerPersonId: owner.personId, ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates })
+    if (role !== "editor") throw new PublicDeliveryAccessError()
+  } catch (cause) { throw new PublicDeliveryAccessError(cause) }
   const writerCertificates = meshBase.uniqueCertificates(captured.profile, [captured.profile.certificate, ...await proofs.defaultProofStore.listCertificates()])
   return { credential: credential!, authority: authority!, grant: grant!, ownerCertificates: owner.certificates, writerCertificates }
 }
@@ -66,7 +72,7 @@ function assertEditorCredential(credential: WorkspaceMeshCredential | null, auth
   captured: DeliveryCapture, revoked: boolean) {
   if (!credential || !authority || credential.workspaceId !== captured.workspaceId || authority.workspaceId !== captured.workspaceId || !grant ||
       grant.payload.workspaceId !== captured.workspaceId || grant.payload.personId !== captured.profile.identity.personId || grant.payload.role !== "editor" ||
-      (grant.payload.accessEpoch ?? 1) !== credential.epoch || revoked) throw new Error("Editor workspace grant is no longer active")
+      (grant.payload.accessEpoch ?? 1) !== credential.epoch || revoked) throw new PublicDeliveryAccessError()
 }
 function deliveryMarker(capture: DeliveryCapture, status: DeliveryStatus, attempts: number): DeliveryMarker {
   return { version: 1, workspaceId: capture.workspaceId, boardId: capture.boardId, sourceHeads: capture.sourceHeads,
@@ -92,16 +98,26 @@ function scheduleDeliveryRetry(current: ReturnType<typeof setTimeout> | undefine
   return setTimeout(schedule, retryDelays[Math.min(attempts - 1, retryDelays.length - 1)] ?? retryDelays.at(-1))
 }
 
-async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryCapture, disposed: boolean) {
-  const sameSource = (value: DeliveryCapture) => sameDeliverySource(input, value, disposed)
-  const before = await currentEditorCredential(captured, sameSource)
+async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryCapture, disposed: () => boolean, discoveredPublic: () => void) {
+  const sameSource = (value: DeliveryCapture) => sameDeliverySource(input, value, disposed())
+  let writerResolved = false
   const [{ deliverPublicBoard }, { fetchBlind, readBlindJson }] = await Promise.all([
     import("../public/publicDelivery"), import("../sync/rustyHttp"),
   ])
-  const ensureCurrent = async () => { await currentEditorCredential(captured, sameSource) }
+  const ensureCurrent = async () => {
+    if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
+    if (writerResolved) await currentEditorCredential(captured, sameSource)
+  }
   return await deliverPublicBoard({ origin: input.origin, boardId: captured.boardId, workspaceId: captured.workspaceId,
-    identity: captured.profile.identity, deviceId: captured.profile.device.deviceId, certificates: before.writerCertificates,
-    grant: before.grant, sourceHeads: captured.sourceHeads, ensureCurrent,
+    identity: captured.profile.identity, deviceId: captured.profile.device.deviceId,
+    sourceHeads: captured.sourceHeads, ensureCurrent,
+    resolveWriter: async () => {
+      if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
+      discoveredPublic()
+      const current = await currentEditorCredential(captured, sameSource)
+      writerResolved = true
+      return { certificates: current.writerCertificates, grant: current.grant }
+    },
     http: { request: (url, init, diagnosticContext) => fetchBlind(url, { ...init, diagnosticContext }), readJson: readBlindJson },
     ensureSourceCovers: async heads => {
       const { includesWorkspaceHeads } = await import("../storageCatalog")
@@ -140,7 +156,8 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
   const status = ref<DeliveryStatus>("idle")
   const error = ref("")
   const deliveredHeads = ref<string[]>([])
-  const busy = computed(() => status.value === "sending")
+  const busy = computed(() => status.value === "checking" || status.value === "sending")
+  let publicAvailable = false
   let timer: ReturnType<typeof setTimeout> | undefined
   let retryTimer: ReturnType<typeof setTimeout> | undefined
   let running = false
@@ -165,33 +182,38 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
   function scheduleRetry() {
     retryTimer = scheduleDeliveryRetry(retryTimer, lastAttempts, () => { retryTimer = undefined; schedule(0) })
   }
+  async function handleDeliveryFailure(captured: DeliveryCapture | undefined, cause: unknown) {
+    if (captured && !sameDeliverySource(input, captured, disposed)) return
+    error.value = publicAvailable ? cause instanceof Error ? cause.message : "Could not send changes to the public board." : ""
+    lastAttempts++
+    status.value = input.role() === "editor" && !(cause instanceof PublicDeliveryAccessError) ? "retry" : "blocked"
+    if (captured) await persistDeliveryMarker(captured, deliveryMarker(captured, status.value, lastAttempts)).catch(() => {})
+    if (status.value === "retry") scheduleRetry()
+  }
   async function deliver() {
     if (!canStartDelivery(running, disposed, input.role())) { queued = true; return }
     queued = false
     running = true
-    status.value = "sending"
+    status.value = "checking"
     error.value = ""
     let captured: ReturnType<typeof capture> | undefined
     try {
       captured = capture()
       const key = markerKey(captured.workspaceId, captured.boardId, captured.profile.identity.personId, captured.profile.device.deviceId)
-        const { readLocal } = await import("../localDb")
-        const previous = parseMarker(await readLocal(key))
+      const { readLocal } = await import("../localDb")
+      const previous = parseMarker(await readLocal(key))
       lastAttempts = previous?.status === "retry" ? previous.attempts : 0
       const marker = deliveryMarker(captured, "sending", lastAttempts)
       await persistDeliveryMarker(captured, marker)
-      const result = await deliverBoard(input, captured, disposed)
+      const result = await deliverBoard(input, captured, () => disposed, () => { publicAvailable = true; status.value = "sending" })
       if (!sameDeliverySource(input, captured, disposed)) throw new Error("Editor source changed before delivery was confirmed")
       status.value = result ? "delivered" : "private"
+      publicAvailable = Boolean(result)
       deliveredHeads.value = result ? captured.sourceHeads : []
       lastAttempts = 0
       await persistDeliveryMarker(captured, deliveryMarker(captured, status.value, 0))
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : "Public delivery failed"
-      lastAttempts++
-      status.value = input.role() === "editor" ? "retry" : "blocked"
-      if (captured) await persistDeliveryMarker(captured, deliveryMarker(captured, status.value, lastAttempts)).catch(() => {})
-      if (status.value === "retry") scheduleRetry()
+      await handleDeliveryFailure(captured, cause)
     } finally {
       running = false
       if (queued && input.role() === "editor") schedule(0)
@@ -202,6 +224,7 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
     if (timer) clearTimeout(timer)
     if (retryTimer) clearTimeout(retryTimer)
     queued = false
+    publicAvailable = false
     error.value = ""
     deliveredHeads.value = []
     status.value = input.role() === "editor" ? "waiting" : "idle"
@@ -226,7 +249,11 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
       if (retryTimer) clearTimeout(retryTimer)
       queued = false
       status.value = "idle"
+      error.value = ""
     } else schedule(0)
+  })
+  watch(() => input.recoveryActive?.() ?? false, (active, wasActive) => {
+    if (wasActive && !active && status.value === "blocked") schedule(0)
   })
   onScopeDispose(() => { disposed = true; if (timer) clearTimeout(timer); if (retryTimer) clearTimeout(retryTimer) })
   return { status, busy, error, deliveredHeads, retry: () => schedule(0) }

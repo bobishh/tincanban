@@ -49,14 +49,16 @@ it.each([false, true])("Given an admitted editor with forged challenge=%s, when 
     }
     return Response.json({ boardId: "board", revision: 1, projection: current, hash: await hash(current) })
   }))
+  const resolveWriter = vi.fn(async () => ({ certificates: [],
+    grant: { payload: { kind: "workspace-grant" as const, version: 1 as const, grantId: "grant", workspaceId: "workspace", personId: "person", role: "editor" as const }, signerKeyId: "owner", signature: "signed" } }))
   const operation = deliverPublicBoard({ origin, workspaceId: "workspace", boardId: "board", identity: { personId: "person", publicKey: serviceKey, displayName: "Editor" },
-    deviceId: "device", certificates: [], sourceHeads, ensureCurrent: () => {}, ensureSourceCovers: heads => { expect(heads).toEqual(sourceHeads) },
-    grant: { payload: { kind: "workspace-grant", version: 1, grantId: "grant", workspaceId: "workspace", personId: "person", role: "editor" }, signerKeyId: "owner", signature: "signed" },
+    deviceId: "device", resolveWriter, sourceHeads, ensureCurrent: () => {}, ensureSourceCovers: heads => { expect(heads).toEqual(sourceHeads) },
     sign: payload => signEnvelope(pair.privateKey, payload, "device"),
     buildProjection: async (_current, stage) => { const bytes = new Uint8Array([1, 2, 3]); await stage({ bytes, sha256: await sha256Base64Url(bytes) }); return { ...current, board: { id: "board", title: "After" } } },
   })
   if (forged) { await expect(operation).rejects.toThrow(/challenge/); expect(writes).toBe(0) }
   else { await expect(operation).resolves.toMatchObject({ revision: 2 }); expect(writes).toBe(2) }
+  expect(resolveWriter).toHaveBeenCalledOnce()
 })
 
 it("Given untrusted origin or empty source frontier, when writer queues delivery, then fail before any network call", async () => {

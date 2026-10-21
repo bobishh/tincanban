@@ -1,0 +1,61 @@
+## Context and evidence
+
+`exploration.md` records source/history, live TinSink exception events, read-only WebMCP mesh traces, deployed form routes, and completed server/CI proofs. Confirmed faults are distinct: a pending credential operation freezes ordinary writers; several admitted workspaces exhaust shared stream budgets while sessions close/reopen; a missing editor credential is checked before a private board can return 404; mesh diagnostics remain local unless verbose logging is enabled; window content lost padding and desktop information layout wastes width.
+
+A live form challenge succeeds at the deployed Reflux integration endpoint. This is not proof that the reported form submission succeeds. A service-global Rusty owner pin contradicted the intended multi-controller service; removal is now deployed and independently authenticated status reads are proven.
+
+## Goals
+
+1. Board changes remain durable and reachable to authorized participants while owner devices are offline.
+2. Recovery identifies the retained operation and preserves its exact evidence until signed confirmation.
+3. Users see applicable actions and accurate distinctions between local persistence, live peers, durable storage and public publication.
+4. Incident evidence reaches TinSink with bounded volume and useful correlation under existing consent.
+5. Useful desktop/narrow-window layouts retain normal board and device actions.
+6. Completed fixes reach production through CI with exact running-version proof.
+
+## Decisions
+
+### Deliver known fixes while investigating unresolved causes
+
+Apply the confirmed UI, publication-ordering and diagnostic corrections first. Retain unresolved intake POST, current owner journal phase and sustained mesh contention as explicit investigation tasks; no claim that a changed indicator or successful challenge repairs them. No blanket freeze removal, credential regeneration or arbitrary stream-budget increase.
+
+### Publication is optional; discovery precedes writer authorization
+
+A read of public board visibility requires only the currently selected board/source identity to remain unchanged. A confirmed private/404 result ends quietly without resolving editor publication credentials. For a public projection, resolve current editor grant/certificates lazily, then retain current authority checks before challenges, signing, staging and final confirmation. Missing or revoked authority blocks delivery with an applicable Sync action; it does not enter an endless network retry loop. Network failures remain retryable. A result for an obsolete selected board or source must not become the current board's error.
+
+### Diagnostics have separate incident and verbose policies
+
+Keep the bounded local trace and opt-in per-packet console/export detail. Ordinary consenting clients automatically export warning/failure records and selected session/node lifecycle events with workspace, peer, connection, tab, run and instance correlation. Bound repeated incident export per time window and report suppressed counts; do not record board content, keys or bearer credentials. Existing telemetry disabled/errors-only/sampling settings remain authoritative. Transport failure causes supplied as Error objects retain stack/type; plain reason strings receive a safe error code rather than being discarded.
+
+### Windows respond to their own width
+
+Directory content owns padding, spacing and compact row actions. Active state sits beside board identity rather than adding a large action row. Desktop Sync uses a compact participant list beside selected devices/details; narrow windows stack without hiding storage/recovery actions. Both use existing ink surfaces/focus and scrolling primitives. Browser acceptance exercises actual actions and pending/failure states, with screenshot inspection; do not boot an app solely to assert CSS or button labels.
+
+### Resume the exact retained Rusty operation
+
+The two retained operations differ: conflict recovery for one scope (which may be identity scope) and identity-device revocation across an origin. Read the valid freeze/journal, signer and scope/device references without exposing keys. Explain what is pending and offer the matching existing resume action; do not create another credential epoch from a generic Connect click. Preserve incompatible/missing/foreign-signer evidence and surface a useful failure. Inspect the premature local helper against current journal types and actual owner evidence before accepting it.
+
+### Rusty configuration and runtime status
+
+Board-level connection access comes from an owner-attested record delivered across participant identities; identity replication remains private. Editor/visitor views show the same configured service and truthful local durable-copy status. A visitor can read updates but cannot publish edits or configure storage. Only the owner changes board storage. Operator domain/CORS configuration remains separate from board permissions. Useful Rusty status must distinguish configured, waiting, reachable, current, blocked and unavailable from human peer presence.
+
+### Activation and artifacts
+
+Retain a single writer for the existing filesystem format. Pull and verify the exact sealed public image before stopping the previous writer; activate that prepared image without another registry login/pull. Preparation failure leaves the old writer running; activation failure restores the captured previous writer. Full blue/green needs a storage concurrency design because the current process holds an exclusive volume lock. Do not bypass it.
+
+Actions diagnostics expire after one day; retain only current/rollback release cohorts and in-flight release dependencies, with automated fail-closed checks. Build-layer cache optimization is separate from retaining uploaded diagnostic artifacts.
+
+## Verification and rollout
+
+- Begin each logic change with a failing focused Given/When/Then test; UI outer scenario first, browser execution after implementation.
+- Verify private visibility before missing editor authority, active public delivery, revoked authority, temporary server failure, obsolete-source completion and retry cancellation.
+- Verify ordinary diagnostic export, bounded suppression/reset, opt-out enforcement and verbose disable races.
+- Verify directory actions/rename failure and desktop/narrow Sync selection/scrolling on isolated real routes.
+- Reproduce multi-workspace same-computer channel contention before an SDK fix; verify sustained edits, idle heartbeats and close/reopen, not only status text.
+- Complete owner configuration in the real board, confirm a distinct Codex editor sees Rusty, close owner sessions and prove editor-to-visitor exchange. Keep this separate from synthetic protocol proofs.
+- Correlate the real form submission outcome and retained event with its actual deployed integration.
+- Deploy via appropriate component CI, inspect live source/receipts, keep tickets Doing until user browser verification.
+
+## Remaining questions for investigation
+
+The actual owner's saved operation/failed phase and the precise failed intake POST remain unestablished. Current mesh evidence proves churn and stream rejection, but does not yet distinguish queued read contention, route/session lifetime interactions and stale routes. Resolve from runtime evidence and focused reproduction, not by selecting a convenient hypothesis.

@@ -100,7 +100,7 @@ const {
   handleArchiveItem, handleRestoreItem, undoArchive, handleOpenItemEdit, handleAddSubitem,
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
-const { publicAccess, publicDelivery, backgroundPublicDeliveryError } = useAppPublicBoards(app, uiReady)
+const { publicAccess, publicDelivery } = useAppPublicBoards(app, uiReady)
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
@@ -251,11 +251,11 @@ function saveProfile(draft: { name: string; avatarData?: string | null; revision
           <WorkspaceFileActions :export-workspace="exportWorkspace" :import-workspace="openImport" :import-busy="workspaceImportState.busy" :import-error="workspaceImportState.error" />
           <WorkspaceHistoryMaintenance :controller="app.collaboration.device.blindReplication" :workspace-id="activeWorkspace.id" :owner="currentRole === 'owner'" />
           <PublicBoardControls v-if="uiReady" :access="publicAccess" />
-          <p v-if="backgroundPublicDeliveryError" class="form-error reading-explanation" role="alert">Public board delivery: {{ backgroundPublicDeliveryError }}</p>
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'sending'" class="reading-explanation" role="status">Sending public board changes…</p>
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'delivered'" class="reading-explanation" role="status">Public board changes delivered.</p>
           <p v-if="publicDelivery.error.value" class="form-error reading-explanation" role="alert">Public board delivery: {{ publicDelivery.error.value }}</p>
-          <button v-if="publicDelivery.error.value" class="button button-small" type="button" :disabled="publicDelivery.busy.value" @click="publicDelivery.retry">Retry public delivery</button>
+          <button v-if="publicDelivery.error.value && publicDelivery.status.value === 'retry'" class="button button-small" type="button" :disabled="publicDelivery.busy.value" @click="publicDelivery.retry">Retry public delivery</button>
+          <button v-if="publicDelivery.error.value && publicDelivery.status.value === 'blocked'" class="button button-small" type="button" @click="openConnections">Open Sync</button>
         </WorkspaceSettingsPanel>
       </template>
     </SchemaEditorDialog>

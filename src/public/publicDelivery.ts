@@ -16,9 +16,9 @@ export type PublicDeliveryCommand = {
   expectedRevision: number; expiresAt: number; deliveryGeneration: number; deliveryGrantId: string
   sourceHeadsHash: string; byteLength?: number
 }
-export type PublicDeliveryInput = {
+type PublicDeliverySource = {
   origin: string; boardId: string; workspaceId: string; identity: PublicIdentity; deviceId: string
-  certificates: DeviceCertificate[]; grant: WorkspaceGrant; sourceHeads: string[]
+  sourceHeads: string[]
   client?: "tincanban" | "automation"
   diagnosticContext?: Context
   http?: PublicDeliveryHttpPort
@@ -27,6 +27,12 @@ export type PublicDeliveryInput = {
   sign: (payload: PublicDeliveryCommand) => Promise<SignedEnvelope<PublicDeliveryCommand>>
   buildProjection: (current: PublicBoardProjection, stageAsset: (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>) => Promise<PublicBoardProjection>
 }
+type PublicDeliveryProof = { certificates: DeviceCertificate[]; grant: WorkspaceGrant }
+export type PublicDeliveryInput = PublicDeliverySource & (
+  (PublicDeliveryProof & { resolveWriter?: never }) |
+  { resolveWriter: () => Promise<PublicDeliveryProof>; certificates?: never; grant?: never }
+)
+type AuthorizedDeliveryInput = PublicDeliverySource & PublicDeliveryProof
 type Challenge = {
   kind: "rusty-publication-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string
   publicOrigin: string; boardId: string; personId: string; deviceId: string; deviceKeyId: string
@@ -39,22 +45,25 @@ const hash = (value: unknown) => sha256Base64Url(encoder.encode(canonicalizeJson
 const hashPattern = /^[A-Za-z0-9_-]{43}$/
 
 /** Retry from durable admitted source in either a browser writer or an automation Worker. */
-export async function deliverPublicBoard(input: PublicDeliveryInput): Promise<{ revision: number; hash: string } | null> {
-  const origin = blindOrigin(input.origin)
-  const sourceHeads = admittedSourceHeads(input.sourceHeads)
-  await input.ensureCurrent()
-  const endpoint = `${origin}/v1/public/boards/${encodeURIComponent(input.boardId)}`
-  const http = input.http ?? {
+export async function deliverPublicBoard(source: PublicDeliveryInput): Promise<{ revision: number; hash: string } | null> {
+  const origin = blindOrigin(source.origin)
+  const sourceHeads = admittedSourceHeads(source.sourceHeads)
+  await source.ensureCurrent()
+  const endpoint = `${origin}/v1/public/boards/${encodeURIComponent(source.boardId)}`
+  const http = source.http ?? {
     request: (url: string, init: RequestInit) => fetchRusty(url, init),
     readJson: async <T>(response: Response, maximumBytes: number) => await readRustyJson(response, maximumBytes) as T,
   }
   const request: PublicDeliveryHttpPort["request"] = (url, init, diagnosticContext) => {
     const headers = new Headers(init.headers)
-    headers.set("X-Rusty-Client", input.client ?? "tincanban")
-    return http.request(url, { ...init, headers }, diagnosticContext ?? input.diagnosticContext)
+    headers.set("X-Rusty-Client", source.client ?? "tincanban")
+    return http.request(url, { ...init, headers }, diagnosticContext ?? source.diagnosticContext)
   }
-  const current = await readCurrentBoard(request, endpoint, input, http.readJson)
+  const current = await readCurrentBoard(request, endpoint, source, http.readJson)
   if (!current) return null
+  const proof: PublicDeliveryProof = source.resolveWriter ? await source.resolveWriter() : source
+  const input: AuthorizedDeliveryInput = { ...source, ...proof }
+  await input.ensureCurrent()
   const service = await readDeliveryService(origin, request, http.readJson)
   const writer = deliveryWriter(input, sourceHeads)
   const sourceHeadsHash = await hash(sourceHeads)
@@ -98,7 +107,7 @@ export async function deliverPublicBoard(input: PublicDeliveryInput): Promise<{ 
 type CurrentPublicBoard = { revision: number; hash: string; projection: PublicBoardProjection }
 type PublicDeliveryService = { serviceId: string; publicKey: string }
 type PublicDeliveryWriter = { identity: PublicIdentity; deviceId: string; certificates: DeviceCertificate[]; deliveryGrant: WorkspaceGrant; sourceHeads: string[] }
-type DeliveryContext = { input: PublicDeliveryInput; origin: string; endpoint: string; request: PublicDeliveryHttpPort["request"];
+type DeliveryContext = { input: AuthorizedDeliveryInput; origin: string; endpoint: string; request: PublicDeliveryHttpPort["request"];
   http: PublicDeliveryHttpPort;
   current: CurrentPublicBoard; service: PublicDeliveryService; writer: PublicDeliveryWriter; sourceHeadsHash: string }
 type DeliveryAsset = { sha256: string; bytes: Uint8Array }
@@ -111,7 +120,7 @@ function admittedSourceHeads(value: string[] | undefined): string[] {
   return heads
 }
 
-async function readCurrentBoard(request: PublicDeliveryHttpPort["request"], endpoint: string, input: PublicDeliveryInput,
+async function readCurrentBoard(request: PublicDeliveryHttpPort["request"], endpoint: string, input: PublicDeliverySource,
   readJson: PublicDeliveryHttpPort["readJson"]): Promise<CurrentPublicBoard | null> {
   const response = await request(endpoint, { cache: "no-store", signal: AbortSignal.timeout(15000) })
   if (response.status === 404) { await response.body?.cancel(); await input.ensureCurrent(); return null }
@@ -133,7 +142,7 @@ async function readDeliveryService(origin: string, request: PublicDeliveryHttpPo
   return service
 }
 
-function deliveryWriter(input: PublicDeliveryInput, sourceHeads: string[]): PublicDeliveryWriter {
+function deliveryWriter(input: AuthorizedDeliveryInput, sourceHeads: string[]): PublicDeliveryWriter {
   const identity = structuredClone(input.identity)
   const grant = structuredClone(input.grant)
   if (grant.payload.workspaceId !== input.workspaceId || grant.payload.personId !== identity.personId ||

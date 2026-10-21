@@ -214,6 +214,7 @@ class PublicDeliveryCoordinator {
 
   private async handleWorkspaceError(workspaceId: string, error: unknown) {
     this.errors.value[workspaceId] = error instanceof Error ? error.message : "Could not check public board delivery"
+    void import("../sync/meshTrace").then(({ meshTrace }) => meshTrace("public.delivery.background.failed", { workspaceId }, "warn", error)).catch(() => {})
     this.scheduleRetry(workspaceId)
   }
 

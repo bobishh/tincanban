@@ -195,7 +195,7 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
 
 <template>
   <DialogWindow :window-id="`workspaces:${currentPersonId || 'local'}`" :workspace-id="activeWorkspaceId" :title="isCreating ? 'Create workspace' : 'Workspaces'" :busy="importing || creatingWorkspace" @close="emit('close')">
-    <section v-if="!isCreating" class="dialog dialog-window-content">
+    <section v-if="!isCreating" class="dialog dialog-window-content workspace-directory-content">
       <section class="board-directory" aria-label="Board discovery">
         <label class="board-directory-search">Search boards<input v-model="query" type="search" aria-label="Search boards" placeholder="Title or owner" /></label>
         <div class="board-directory-filters" role="group" aria-label="Board filters">
@@ -212,16 +212,15 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
           :class="{ 'workspace-item-active': ws.id === activeWorkspaceId }"
         >
           <button class="workspace-switch" type="button" @click="handleSwitch(ws.id)">
-            <strong>{{ displayTitle(ws.title) }}</strong>
+            <span class="workspace-identity"><strong>{{ displayTitle(ws.title) }}</strong><span v-if="ws.id === activeWorkspaceId" class="workspace-active-badge">Active</span></span>
             <small>Owner: {{ ownerLabel(ws.id) }}</small>
-            <span v-if="ws.id === activeWorkspaceId" class="workspace-active-badge">Active</span>
           </button>
           <div class="workspace-item-actions">
-            <button v-if="group.key === 'pinned'" type="button" :aria-label="`Move ${ws.title} up`" :disabled="index === 0" @click="movePin(ws.id, -1)">↑</button>
-            <button v-if="group.key === 'pinned'" type="button" :aria-label="`Move ${ws.title} down`" :disabled="index === group.rows.length - 1" @click="movePin(ws.id, 1)">↓</button>
-            <button type="button" :aria-label="pinnedIds.includes(ws.id) ? `Unpin ${ws.title}` : `Pin ${ws.title}`" @click="togglePin(ws.id)">{{ pinnedIds.includes(ws.id) ? '★' : '☆' }}</button>
-            <button v-if="canRenameWorkspace(ws.id)" type="button" aria-label="Rename" @click="startRename(ws)">Rename</button>
-            <button type="button" aria-label="Archive" :disabled="archiveBusy" @click="startArchive(ws.id)">Archive</button>
+            <button v-if="group.key === 'pinned'" class="button button-quiet button-small" type="button" :aria-label="`Move ${ws.title} up`" :disabled="index === 0" @click="movePin(ws.id, -1)">↑</button>
+            <button v-if="group.key === 'pinned'" class="button button-quiet button-small" type="button" :aria-label="`Move ${ws.title} down`" :disabled="index === group.rows.length - 1" @click="movePin(ws.id, 1)">↓</button>
+            <button class="button button-quiet button-small" type="button" :aria-label="pinnedIds.includes(ws.id) ? `Unpin ${ws.title}` : `Pin ${ws.title}`" @click="togglePin(ws.id)">{{ pinnedIds.includes(ws.id) ? '★' : '☆' }}</button>
+            <button v-if="canRenameWorkspace(ws.id)" class="button button-quiet button-small" type="button" aria-label="Rename" @click="startRename(ws)">Rename</button>
+            <button class="button button-quiet button-small" type="button" aria-label="Archive" :disabled="archiveBusy" @click="startArchive(ws.id)">Archive</button>
           </div>
           <form v-if="editingId === ws.id" class="workspace-rename-form" :aria-busy="renaming" @submit.prevent="handleRename">
             <label>
@@ -249,7 +248,7 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
       <div v-if="showArchived" class="workspace-list" aria-label="Archived workspaces">
         <div v-for="ws in archivedWorkspaces" :key="ws.id" class="workspace-item">
           <div class="workspace-label"><strong>{{ displayTitle(ws.title) }}</strong></div>
-          <div class="workspace-item-actions"><button type="button" :disabled="archiveBusy" @click="restoreArchived(ws.id)">{{ archiveBusy ? 'Restoring…' : 'Restore workspace' }}</button></div>
+          <div class="workspace-item-actions"><button class="button button-quiet button-small" type="button" :disabled="archiveBusy" @click="restoreArchived(ws.id)">{{ archiveBusy ? 'Restoring…' : 'Restore workspace' }}</button></div>
         </div>
         <p v-if="archiveError" class="form-error" role="alert">{{ archiveError }}</p>
       </div>
@@ -267,13 +266,36 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
 </template>
 
 <style scoped>
-.board-directory { display: grid; gap: var(--space-3); margin: 0 0 var(--space-4); }
+.dialog.workspace-directory-content.dialog-window-content { padding: var(--space-4); box-sizing: border-box; container: board-directory / inline-size; }
+.board-directory { display: grid; gap: var(--space-3); }
 .board-directory-search { display: grid; gap: var(--space-1); font-weight: 650; }
-.board-directory-search input { min-height: var(--control-size-compact); padding: var(--space-2) var(--space-2); }
+.board-directory-search input { min-height: var(--control-size-compact); padding: var(--space-2); }
 .board-directory-filters { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .board-directory-filters button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.board-directory section { display: grid; gap: var(--space-1); }
+.board-directory section { display: grid; gap: var(--space-2); }
 .board-directory h3 { margin: var(--space-1) 0; font-size: .84rem; }
-.workspace-switch small { color: var(--muted); font-size: .76rem; font-weight: 500; }
-.workspace-switch { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
+.workspace-list { display: grid; gap: var(--space-3); margin: 0; }
+.workspace-item { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 2px solid var(--line); color: var(--ink); }
+.workspace-switch { min-width: 0; min-height: 64px; display: grid; gap: var(--space-1); align-content: center; justify-items: stretch; padding: var(--space-3); border: 0; background: transparent; text-align: left; }
+.workspace-switch:hover { background: var(--yellow); }
+.workspace-identity { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.workspace-identity strong, .workspace-label strong { min-width: 0; overflow-wrap: anywhere; font-size: 1rem; line-height: 1.25; }
+.workspace-switch small { color: var(--muted); font-size: .76rem; font-weight: 500; overflow-wrap: anywhere; }
+.workspace-active-badge { flex: 0 0 auto; padding: var(--space-1); color: var(--muted); font-size: .7rem; }
+.workspace-label { min-width: 0; padding: var(--space-3); }
+.workspace-item-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-1); max-width: 18rem; padding: var(--space-2); }
+.workspace-item-actions .button { flex: 0 0 auto; }
+.workspace-rename-form { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--space-2); padding: var(--space-3); border-top: 1px solid var(--soft); }
+.workspace-rename-form input { width: 100%; min-width: 0; min-height: var(--control-size-compact); padding: var(--space-2); }
+.workspace-rename-form .form-error { grid-column: 1 / -1; }
+.workspace-delete-confirm { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3); border-top: 1px solid var(--soft); }
+.workspace-delete-confirm p { flex-basis: 100%; margin: 0; }
+.workspace-directory-content > .dialog-actions { flex-wrap: wrap; margin-top: var(--space-4); }
+.workspace-directory-content > .workspace-list { margin-top: var(--space-3); }
+@container board-directory (max-width: 34rem) {
+  .workspace-item { grid-template-columns: minmax(0, 1fr); }
+  .workspace-item-actions { justify-content: flex-start; max-width: none; padding: 0 var(--space-3) var(--space-3); }
+  .workspace-rename-form { grid-template-columns: 1fr 1fr; }
+  .workspace-rename-form label, .workspace-rename-form .form-error { grid-column: 1 / -1; }
+}
 </style>

@@ -1,4 +1,4 @@
-import { computed, type Ref } from "vue"
+import type { Ref } from "vue"
 import type { useAppController } from "./useAppController"
 import { usePublicBoardAccess } from "./usePublicBoardAccess"
 import { usePublicBoardDelivery } from "./usePublicBoardDelivery"
@@ -27,6 +27,7 @@ export function useAppPublicBoards(app: ReturnType<typeof useAppController>, uiR
     sourceVersion: () => docVersion.value,
     sourceHeads: () => currentDocHeads.value,
     role: () => uiReady.value ? confirmedRole.value : null,
+    recoveryActive: () => app.collaboration.device.sync.isOpen.value,
     profile: app.workspace.getCurrentProfile,
   })
   const backgroundPublicDelivery = usePublicBoardDeliveryCoordinator({
@@ -38,8 +39,5 @@ export function useAppPublicBoards(app: ReturnType<typeof useAppController>, uiR
     readWorkspaceDoc: app.workspace.readWorkspaceDoc,
     subscribeLocalChanges: app.workspace.subscribeLocalChanges,
   })
-  const backgroundPublicDeliveryError = computed(() => backgroundPublicDelivery.errors.value[activeWorkspace.id] ||
-    backgroundPublicDelivery.status.value.find(delivery => delivery.workspaceId === activeWorkspace.id && delivery.error)?.error || "")
-
-  return { publicAccess, publicDelivery, backgroundPublicDeliveryError }
+  return { publicAccess, publicDelivery, backgroundPublicDelivery }
 }

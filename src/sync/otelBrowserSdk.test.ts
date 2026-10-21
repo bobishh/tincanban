@@ -23,6 +23,7 @@ describe("browser OTel SDK", () => {
     const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })
     const root = new Error("Failed with Bearer sensitive-token-value", { cause: new TypeError("inner cause") })
     sdk.emit({ event: "workspace.replica.failed", detail: { workspaceId: "workspace-safe-id", error: root,
+      tabId: "tab-safe-id", runId: 3, runtimeId: "runtime-safe-id", instanceId: "slot-0", cause: "heartbeat failed", direction: "incoming", suppressedCount: 40,
       "startup.source.version": "previous-build", "recovery.transition_id": "recovery-safe-id" }, level: "error", timestamp: Date.now(), exception: root })
     const startedAt = performance.now()
     const active = sdk.startOperation("replica.admission", { "workspace.id": "workspace-safe-id" }, startedAt)
@@ -41,6 +42,8 @@ describe("browser OTel SDK", () => {
       "exception.message": "Failed with Bearer [REDACTED]",
       "exception.stacktrace": expect.stringContaining("Caused by TypeError: inner cause"),
       "workspace.id": "workspace-safe-id",
+      "browser.tab.id": "tab-safe-id", "sync.run.id": 3, "sync.runtime.id": "runtime-safe-id", "network.peer.instance.id": "slot-0",
+      "sync.cause": "heartbeat_failed", "network.connection.direction": "incoming", "sync.suppressed.count": 40,
       "startup.source.version": "previous-build",
       "recovery.transition.id": "recovery-safe-id",
     })

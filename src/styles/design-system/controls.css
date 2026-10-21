@@ -80,11 +80,6 @@ select { min-height: var(--control-size); padding: var(--space-2) var(--space-5)
 .dialog input:not([type="checkbox"]):not([type="radio"]), .dialog select, .dialog textarea { color: var(--ink); font: 400 1rem/1.4 var(--site-font-sans); letter-spacing: 0; text-transform: none; }
 .dialog .technical-text, .dialog .pairing-paste textarea { font: 400 .75rem/1.5 var(--site-font-mono); font-variant-ligatures: none; }
 .dialog-body input, .dialog-body select, .dialog-body textarea { width: 100%; padding: var(--space-2) var(--space-3); }
-.workspace-item-actions button { padding: var(--space-2) var(--space-3); border: 0; background: transparent; font: 700 .8rem/1 var(--site-font-sans); text-transform: uppercase; }
-.workspace-item-actions button + button { border-left: 1px solid var(--line); }
-.workspace-item-actions button:disabled { opacity: .5; cursor: wait; }
-.workspace-item-actions button:hover:not(:disabled) { background: var(--yellow); }
-.workspace-rename-form input { width: 100%; height: 100%; min-height: var(--control-size); padding: var(--space-2) var(--space-2); }
 .workspace-create-form > label input { width: 100%; padding: var(--space-2) var(--space-3); }
 .workspace-preset-options input { flex: 0 0 18px; width: 18px; height: 18px; margin: 0; padding: 0; accent-color: var(--ink); }
 .template-editor input, .template-editor select, .template-editor textarea { width: 100%; padding: var(--space-2) var(--space-3); }
@@ -99,9 +94,6 @@ select { min-height: var(--control-size); padding: var(--space-2) var(--space-5)
 
 @media (max-width: 560px) {
   .mobile-column-switcher .button { min-width: var(--control-size-compact); padding-inline: var(--space-2); }
-}
-@media (max-width: 500px) {
-  .workspace-item-actions button { flex: 1; }
 }
 
 /* Presence marks share one shape and state palette across pairing surfaces. */

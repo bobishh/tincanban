@@ -56,10 +56,12 @@ function mappedAttributes(detail: Record<string, unknown>, mapping: Array<[strin
   return result
 }
 function identifierAttributes(detail: Record<string, unknown>): SafeAttributes {
-  return mappedAttributes(detail, [["workspaceId", "workspace.id"], ["entityId", "entity.id"], ["recordId", "entity.id"], ["connectionId", "network.connection.id"], ["peerId", "network.peer.id"], ["changeId", "document.change.id"]], safeIdentifier)
+  return mappedAttributes(detail, [["workspaceId", "workspace.id"], ["entityId", "entity.id"], ["recordId", "entity.id"], ["connectionId", "network.connection.id"], ["peerId", "network.peer.id"], ["changeId", "document.change.id"],
+    ["tabId", "browser.tab.id"], ["runtimeId", "sync.runtime.id"], ["runId", "sync.run.id"], ["instanceId", "network.peer.instance.id"]], safeIdentifier)
 }
 function labelAttributes(detail: Record<string, unknown>): SafeAttributes {
-  const labels: Array<[string, string]> = [["phase", "sync.phase"], ["component", "code.component"], ["operation", "code.operation"], ["transport", "network.transport"], ["kind", "sync.frame.kind"], ["mode", "sync.mode"], ["stage", "startup.stage"], ["browser", "browser.name"], ["platform", "os.name"], ["errorCode", "error.code"]]
+  const labels: Array<[string, string]> = [["phase", "sync.phase"], ["component", "code.component"], ["operation", "code.operation"], ["transport", "network.transport"], ["kind", "sync.frame.kind"], ["mode", "sync.mode"], ["stage", "startup.stage"], ["browser", "browser.name"], ["platform", "os.name"], ["errorCode", "error.code"],
+    ["cause", "sync.cause"], ["direction", "network.connection.direction"]]
   return mappedAttributes(detail, labels, safeText)
 }
 function semanticAttributes(detail: Record<string, unknown>): SafeAttributes {
@@ -85,7 +87,7 @@ function semanticAttributes(detail: Record<string, unknown>): SafeAttributes {
 }
 function numericAttributes(detail: Record<string, unknown>): SafeAttributes {
   const attributes: SafeAttributes = {}
-  for (const key of ["attempt", "bytes", "peerCount", "changeCount", "previousEpoch", "currentEpoch", "admitted", "pending", "quarantined", "operationCount", "elapsedMs"] as const) {
+  for (const key of ["attempt", "bytes", "peerCount", "changeCount", "previousEpoch", "currentEpoch", "admitted", "pending", "quarantined", "operationCount", "elapsedMs", "runId", "suppressedCount"] as const) {
     const value = detail[key]
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) attributes[`sync.${key.replace(/[A-Z]/g, letter => `.${letter.toLowerCase()}`)}`] = Math.min(value, 86_400_000)
   }

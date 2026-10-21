@@ -9,7 +9,7 @@ export function mountWorkspaceFileActions(exportWorkspace: () => Promise<void>) 
   createApp(WorkspaceFileActions, { exportWorkspace }).mount(root)
 }
 
-export function mountMobileDeviceListDialog() {
+export function mountMobileDeviceListDialog(options: { includeOwner?: boolean } = {}) {
   const root = document.createElement("div")
   document.body.appendChild(root)
   const app = createApp(SyncDialog, {
@@ -20,7 +20,11 @@ export function mountMobileDeviceListDialog() {
         deviceId: `phone-${index}`, name: `Phone ${index + 1}`, userAgent: "Mozilla/5.0 Chrome/140.0 Linux",
         description: "Likely Chrome · Linux", online: true, reconnecting: false, tabs: 1, lastSeen: "2026-10-02T12:00:00Z",
       })),
-    }],
+    }, ...(options.includeOwner ? [{ personId: "desktop-owner", name: "Workspace owner", role: "owner" as const, self: true,
+      online: false, reconnecting: false, onlineDevices: 0, devices: 1,
+      deviceList: [{ deviceId: "owner-browser", name: "Owner browser", userAgent: "Mozilla/5.0 Chrome/140.0 Linux",
+        description: "Likely Chrome · Linux", online: false, reconnecting: false, tabs: 1, lastSeen: "2026-10-02T12:00:00Z" }],
+    }] : [])],
     onClose: () => { app.unmount(); root.remove() },
   })
   app.mount(root)
