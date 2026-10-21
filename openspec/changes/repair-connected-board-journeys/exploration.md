@@ -164,3 +164,42 @@ This release does not establish repair of the separate owner credential freeze, 
   submitted POST and owner saved transition phase remain unresolved.
 - These changes do not include the earlier unfinished generic pending-operation
   UI patch; that patch remains uncommitted pending owner-operation evidence.
+
+
+### Owner session and bounded contention evidence (2026-10-21)
+
+The user explicitly allowed inspecting the owner Chrome tab for Rusty. The live
+Job search tab runs 07c9768, is owner, and reports both profile and board sync
+paused. Its retained device-removal entry is for Valiant Squirrel
+(`kNWC3ygQVcavZzs3cXe5GM6cRf3GNanGl-_M8p5VQSM`); progress reports
+`Automation instance Rusty storage epoch or service pin does not match this scope`.
+Reviewing its saved confirmation listed only `https://ingest.meta-uber-engineer.dev`
+and no workspace-removal entries. Review was cancelled without confirming a new
+removal. This establishes a device-revocation operation, not a generic credentials
+conflict. Its exact transition-journal confirmations still require inspection;
+the combined epoch/pin error does not distinguish those two mismatches.
+
+Source maps that error to `inspectAutomationRoute`, called during complete Worker
+cohort discovery before `confirmTransitionPerson` begins Worker freeze/drain and
+person revocation. A local origin freeze and journal are currently created before
+that discovery. Thus a discovery failure can leave ordinary replication paused;
+this ordering is a confirmed design flaw. It is not proof of the live journal's
+remote mutation phase, and does not authorize deleting it or its captured keys.
+
+A deterministic mechanism probe used the pinned SDK unchanged: three separate
+raw connections sharing one synthetic browser endpoint, each with a document
+response and heartbeat acknowledgement read. All responses finish in 25 ms;
+maximum active reads stays two. Four reads succeed, two are immediately rejected
+with `Mesh stream concurrency limit exceeded`. No offline transport or leaked
+connection is needed. This reproduces legitimate cross-workspace burst rejection
+under the shared peer budget, not the complete browser reconnection loop.
+The peer-wide two-frame/32-MiB bound is intentional in core ingress policy;
+removing it or arbitrarily raising it is not the selected repair. Idle response
+reads also reserve the entire frame slot before bytes arrive; scheduler/admission
+and liveness must be evaluated together.
+
+CI 39591271795 passed the receive mutation contract, application quality, unit
+coverage, adapters and production build before npm audit rejected markdown-it
+15.0.2 (GHSA-gfr2-rv44-r23c and GHSA-vfgh-jcmw-g37q). Patch 15.0.3 is the published
+fix; nine rendering tests pass and the updated lockfile audit reports zero
+vulnerabilities. A new CI release is required; this is not a deployed fix yet.

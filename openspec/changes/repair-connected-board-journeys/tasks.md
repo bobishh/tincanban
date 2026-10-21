@@ -40,6 +40,7 @@
 - [ ] 4.4 Add Rusty to the real issues board from the user's owner identity (clicks authorized); confirm distinct Codex editor visibility.
 - [ ] 4.5 Verify real participant data exchange via Rusty with owner sessions closed; include read-only visitor behavior.
 - [ ] 4.6 User personally verifies deployed browser behavior before any ticket moves to Done.
+- [ ] 4.9 Update the vulnerable Markdown parser blocking CI, verify rendering and deliver the audited release.
 - [ ] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage.
 - [x] 4.8 Repair duplicate image pull after Rusty writer shutdown; verify prepared image before handoff and restore previous writer on activation failure. Record blue/green constraints and options before a storage architecture change.
 
