@@ -37,8 +37,11 @@ stays steady during an ordinary poll; failed, paused or overdue sync does not co
 as a connected board. Profile delivery and direct device links remain separate.
 Private Rusty connections and device-local cursor/outbox state use one authoritative
 record per identity, `tincanban.private-replica-state.v2.<personId>`. Retired connection
-arrays, preference registries and their fingerprint are deleted after validating
-the current record; they are never read, merged or included in transaction conditions.
+arrays, preference registries and their fingerprint remain intact: a valid current
+record does not prove those older sources were migrated. Ordinary reads, writes
+and recovery activation never read, import, delete or include them in transaction
+conditions. They cannot override current tombstones or become active credentials.
+Recovering older access requires separate verified owner/service confirmation.
 An older causal settings revision cannot reset the physical progress generation.
 Unchanged access retains its cursor and exact outbox; changed access requires fresh
 confirmation and cannot silently replace a pending upload. The retired untagged v2

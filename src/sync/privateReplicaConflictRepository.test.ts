@@ -160,6 +160,7 @@ it("Given a retained recovery capture with retired storage dependencies, when re
   const { owner, config, capture, freeze, next } = await fixture()
   const retiredKeys = ["tincanban.blind-replicas.v1.", "tincanban.device-replica-preferences.v1.",
     "tincanban.private-replica-legacy-snapshot.v1."].map(prefix => prefix + owner)
+  for (const key of retiredKeys) await writeLocal(key, "retained older source bytes")
   const retained = { ...capture, sourceConditions: [...capture.sourceConditions,
     ...retiredKeys.map(key => ({ key, value: "retired evidence is not a credential input" }))] }
   expect(privateReplicaConflictSourceDifference(await capturePrivateReplicaConflict(owner, config.origin, config.scopeId, freeze), retained)).toBeUndefined()
@@ -167,7 +168,8 @@ it("Given a retained recovery capture with retired storage dependencies, when re
   expect(activation.plan.conditions.map(condition => condition.key)).toEqual([privateReplicaStateStorageKey(owner),
     await replicaCredentialFreezeKey(owner, config.origin)])
   expect(await compareAndSwapLocal(activation.plan)).toBe(true)
-  for (const key of retiredKeys) expect(await readLocal(key)).toBeNull()
+  await getReplicaConfigurations(owner)
+  for (const key of retiredKeys) expect(await readLocal(key)).toBe("retained older source bytes")
 })
 
 it("Given a saved recovery capture, when an unknown or duplicate dependency appears, then reject without relaxing source validation", async () => {

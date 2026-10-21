@@ -25,6 +25,17 @@ The system SHALL make owner-configured Rusty board storage available to authoriz
 ### Requirement: Retained recovery intent selects the operation
 A pending credential transition SHALL preserve its exact signed intent, keys and pending uploads. Connect/recovery UI SHALL identify the operation and offer its matching existing resume path without silently clearing the freeze or generating unrelated replacement credentials.
 
+#### Scenario: A browser skips an intermediate settings migration
+- **GIVEN** retained legacy Rusty settings and no authoritative v2 repository
+- **WHEN** ordinary reads or new connection mutations initialize the current repository
+- **THEN** the legacy source records remain available for explicit recovery
+- **AND** they do not automatically supply credentials, override current removals or change the authoritative v2 state
+
+#### Scenario: A legacy tab writes after a current tab starts
+- **GIVEN** an authoritative v2 repository and retained settings written by a legacy tab
+- **WHEN** the current tab reads or changes its connection settings
+- **THEN** it retains those source records without merging stale credentials into its current connections
+
 #### Scenario: Interrupted conflict recovery
 - **GIVEN** a retained conflict recovery for a board or identity scope
 - **WHEN** the initiating device resumes it

@@ -334,3 +334,23 @@ stale completion deterministically. Hide that completion while the current
 archive is busy; the same complete two-generation phone enrollment, backup and
 owner-offline restore scenario then passes in 48.3 seconds. Native ancestry
 verification and existing timeouts remain unchanged.
+
+Owner-record absence alone does not establish that configuration never completed.
+Historical review identifies a separate data-loss path in
+`afd592f34b665b26a309c7ed7995d51710bf36e1`: it replaced v1-to-v2 migration with
+deletion of retired records. With no v2 state, `read` creates an empty v2 state
+and then deletes the legacy keys without a migrated marker or evidence that
+all source connections were retained. A client skipping the intermediate release
+can therefore lose old connection records. Late legacy-tab writes can also be
+deleted after v2 exists. This is a source-confirmed regression; the real missing
+app-issues record's provenance is not yet established. Preserve legacy source
+records rather than automatically importing obsolete credentials or discarding
+their removal evidence.
+
+The repair removes the automatic purge from ordinary repository reads/mutations.
+The names-only compatibility predicate for old recovery journals remains; legacy
+bytes still cannot become credentials or transaction dependencies. Four deletion
+regressions fail before this repair. All 54 focused repository/conflict/transition
+tests pass afterward, covering skipped-release reads and saves, late older-tab
+records, retained removal tombstones and recovery activation. This prevents
+further deletion; it does not recreate records already removed by a prior client.

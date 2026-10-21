@@ -80,7 +80,7 @@ it("Given the current repository is authoritative, when an obsolete writer chang
   expect(await exportPrivateReplicaState(owner)).toEqual(before)
 })
 
-it("Given a validated current repository and retired storage records, when opening this identity, then delete the obsolete keys without importing their data or changing current progress", async () => {
+it("Given a validated current repository and records from an older tab, when opening and saving this identity, then preserve those records without importing them or changing current progress", async () => {
   const owner = crypto.randomUUID()
   const state = changeReplicaPreference(emptyPrivateReplicaState(owner, "current"), config)
   const key = privateReplicaStateStorageKey(owner), raw = JSON.stringify(state)
@@ -89,6 +89,39 @@ it("Given a validated current repository and retired storage records, when openi
     `tincanban.private-replica-legacy-snapshot.v1.${owner}`]
   for (const obsolete of retired) await local.writeLocal(obsolete, "invalid retired data")
   expect(await getReplicaConfigurations(owner)).toHaveLength(1)
-  expect(await Promise.all(retired.map(obsolete => local.readLocal(obsolete)))).toEqual([null, null, null])
+  expect(await Promise.all(retired.map(obsolete => local.readLocal(obsolete)))).toEqual(retired.map(() => "invalid retired data"))
   expect(await local.readLocal(key)).toBe(raw)
+  await setReplicaPreference(owner, { ...config, policyRevision: 2 })
+  expect(await Promise.all(retired.map(obsolete => local.readLocal(obsolete)))).toEqual(retired.map(() => "invalid retired data"))
+})
+
+it.each(["read", "save"] as const)("Given older private access without a current repository, when performing a current %s, then preserve exact older sources without activating them", async action => {
+  const owner = crypto.randomUUID()
+  const records = [
+    { key: `tincanban.blind-replicas.v1.${owner}`, value: JSON.stringify([config]) },
+    { key: `tincanban.device-replica-preferences.v1.${owner}`, value: JSON.stringify([
+      { origin: config.origin, scopeId: config.scopeId, changedAt: 9999999999999, config: null },
+    ]) },
+    { key: `tincanban.private-replica-legacy-snapshot.v1.${owner}`, value: "original-migration-fingerprint" },
+  ]
+  for (const { key, value } of records) await local.writeLocal(key, value)
+  const added = { ...config, scopeId: encodeBlindBytes(new Uint8Array(32).fill(3)), workspaceId: "new-board" }
+  if (action === "save") await setReplicaPreference(owner, added)
+  const selected = await getReplicaConfigurations(owner)
+  expect(selected.map(value => value.workspaceId)).toEqual(action === "save" ? ["new-board"] : [])
+  expect(await Promise.all(records.map(({ key }) => local.readLocal(key)))).toEqual(records.map(({ value }) => value))
+  expect(await local.readLocal(privateReplicaStateStorageKey(owner))).not.toBeNull()
+})
+
+it("Given an authoritative removal and older credentials, when reopening, then retain the older evidence without resurrecting the removed scope", async () => {
+  const owner = crypto.randomUUID()
+  const active = changeReplicaPreference(emptyPrivateReplicaState(owner, "current"), config)
+  const removed = changeReplicaPreference(active, config, true)
+  const raw = JSON.stringify(removed)
+  await local.writeLocal(privateReplicaStateStorageKey(owner), raw)
+  const legacyKey = `tincanban.blind-replicas.v1.${owner}`, legacy = JSON.stringify([config])
+  await local.writeLocal(legacyKey, legacy)
+  expect(await getReplicaConfigurations(owner)).toEqual([])
+  expect(await local.readLocal(privateReplicaStateStorageKey(owner))).toBe(raw)
+  expect(await local.readLocal(legacyKey)).toBe(legacy)
 })

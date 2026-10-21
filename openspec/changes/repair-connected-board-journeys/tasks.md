@@ -51,6 +51,7 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 - [ ] Round badges render with square ink frames in production; verify count/presence circles after CSS minification.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.
 - [ ] Verify the same editor on two separately owner-configured boards after switching/reopening and with owner sessions closed. Live comparison: Ecky issues has read/write access; app issues has no owner-configured entry and retained device removal is pending.
+- [ ] Stop unconfirmed deletion of legacy Rusty connection records on first read/mutation; cover skipped-release startup and late legacy writes. Establish whether the real missing board record can be recovered from retained operation evidence or another owner device, without importing obsolete credentials automatically.
 - [ ] Red CI: repair real same-identity Rusty credential transfer under multi-workspace contention; preserve its functional acceptance scenario.
 - [ ] Fix the public-delivery owner-identity regression exposed by testing the deployed Rusty revision; preserve per-board authority across editor delivery and restart without a global owner pin.
 

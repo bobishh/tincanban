@@ -19,18 +19,10 @@ export const stateKey = (owner: string) => `tincanban.private-replica-state.v2.$
 export const scopeKey = (value: { origin: string; scopeId: string }) => `${value.origin}/${value.scopeId}`
 const retiredReplicaPrefixes = ["tincanban.blind-replicas.v1.", "tincanban.device-replica-preferences.v1.",
   "tincanban.private-replica-legacy-snapshot.v1."]
-const cleanedOwners = new Set<string>()
 
-/** Names only: retired stores must never supply credentials or transaction dependencies. */
+/** Names only: recognize old journal dependencies without reading or deleting their source records. */
 export function retiredReplicaStateKeys(owner: string): string[] {
   return retiredReplicaPrefixes.map(prefix => prefix + owner)
-}
-
-/** Retired records are deletion targets only, never input or transaction dependencies. */
-async function discardRetiredRecords(owner: string, raw: string): Promise<void> {
-  if (cleanedOwners.has(owner)) return
-  if (await compareAndSwapLocal({ conditions: [{ key: stateKey(owner), value: raw }],
-    writes: retiredReplicaStateKeys(owner).map(key => ({ key, value: null })) })) cleanedOwners.add(owner)
 }
 
 export function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -189,7 +181,6 @@ export async function mutate(owner: string, change: (current: PrivateReplicaStat
       ensureIdentity()
       if (await compareAndSwapLocal({ conditions: [{ key, value: raw }, ...preconditions, ...freezes],
         writes: encoded === raw ? [] : [{ key, value: encoded }] }, ensureIdentity)) {
-        await discardRetiredRecords(owner, encoded)
         return parseState(encoded, owner)
       }
     }
@@ -200,7 +191,5 @@ export async function mutate(owner: string, change: (current: PrivateReplicaStat
 export async function read(owner: string): Promise<PrivateReplicaState> {
   const raw = await readLocal(stateKey(owner))
   if (!raw) return mutate(owner, state => state)
-  const parsed = parseState(raw, owner)
-  await discardRetiredRecords(owner, raw)
-  return parsed
+  return parseState(raw, owner)
 }
