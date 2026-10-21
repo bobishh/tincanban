@@ -224,11 +224,12 @@ test('app production workflows select one exact artifact component without Rusty
   const frontend = readFileSync(new URL('../.github/workflows/deploy-frontend.yml', import.meta.url), 'utf8');
   const automation = readFileSync(new URL('../.github/workflows/deploy-automation.yml', import.meta.url), 'utf8');
   for (const [component, workflow] of [['frontend', frontend], ['automation', automation]]) {
-    assert.match(workflow, new RegExp(`tincanban-${component}-cohort-`));
+    assert.match(workflow, new RegExp(`select-release-artifact\\.mjs ${component}`));
+    assert.match(workflow, /name: \$\{\{ steps\.artifact\.outputs\.name \}\}/);
+    assert.match(workflow, /ARTIFACT_ATTEMPT: \$\{\{ steps\.artifact\.outputs\.attempt \}\}/);
+    assert.match(workflow, /"\$VERIFIED_RUN_ID" "\$ARTIFACT_ATTEMPT"/);
     assert.match(workflow, new RegExp(`prepare ${component}`));
     assert.doesNotMatch(workflow, /release-product|releaseId|RELEASE_ID|RUSTY_DEPLOY|RUSTY_TRUSTED_OWNER|deploy-rusty-cohort/);
-    const artifactNames = workflow.match(/tincanban-(?:frontend|automation)-cohort-/g) ?? [];
-    assert.equal(artifactNames.length, 1);
   }
   assert.doesNotMatch(frontend, /AUTOMATION_TELEMETRY_TOKEN/);
   const recovery = readFileSync(new URL('../.github/workflows/recover-release.yml', import.meta.url), 'utf8');

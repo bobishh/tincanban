@@ -41,14 +41,19 @@ jobs:
           cache: npm
           cache-dependency-path: workers/frontend/package-lock.json
       - run: npm ci --prefix workers/frontend
+      - name: Select artifact from the successful frontend producer execution
+        id: artifact
+        run: node scripts/select-release-artifact.mjs frontend "$GITHUB_REPOSITORY" "$VERIFIED_RUN_ID" "$VERIFIED_RUN_ATTEMPT" "$RELEASE_SHA"
       - uses: actions/download-artifact@v7
         with:
-          name: tincanban-frontend-cohort-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          name: ${{ steps.artifact.outputs.name }}
           path: .release/frontend/
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Verify artifact seal and prepare frontend-only deployment
-        run: node scripts/component-release.mjs prepare frontend .release/frontend .release/deploy/frontend "$RELEASE_SHA" "$VERIFIED_RUN_ID" "$VERIFIED_RUN_ATTEMPT"
+        env:
+          ARTIFACT_ATTEMPT: ${{ steps.artifact.outputs.attempt }}
+        run: node scripts/component-release.mjs prepare frontend .release/frontend .release/deploy/frontend "$RELEASE_SHA" "$VERIFIED_RUN_ID" "$ARTIFACT_ATTEMPT"
       - name: Preserve active frontend reader floors
         run: node scripts/component-release.mjs compatibility frontend .release/frontend
       - name: Require current main before frontend activation

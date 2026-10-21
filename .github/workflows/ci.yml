@@ -48,7 +48,7 @@ jobs:
       - name: Install pinned frontend Wrangler for package regression
         run: npm ci --prefix workers/frontend
       - name: Verify cohort artifact and deployment contracts
-        run: node --test scripts/release-cohort.test.mjs scripts/component-release.test.mjs scripts/automation-secrets.test.mjs
+        run: node --test scripts/release-cohort.test.mjs scripts/component-release.test.mjs scripts/select-release-artifact.test.mjs scripts/automation-secrets.test.mjs
       - name: Build checked production frontend
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}

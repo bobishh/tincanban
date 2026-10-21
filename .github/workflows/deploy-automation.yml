@@ -43,14 +43,19 @@ jobs:
           cache: npm
           cache-dependency-path: workers/frontend/package-lock.json
       - run: npm ci --prefix workers/frontend
+      - name: Select artifact from the successful automation producer execution
+        id: artifact
+        run: node scripts/select-release-artifact.mjs automation "$GITHUB_REPOSITORY" "$VERIFIED_RUN_ID" "$VERIFIED_RUN_ATTEMPT" "$RELEASE_SHA"
       - uses: actions/download-artifact@v7
         with:
-          name: tincanban-automation-cohort-${{ github.event.workflow_run.head_sha }}-${{ github.event.workflow_run.run_attempt }}
+          name: ${{ steps.artifact.outputs.name }}
           path: .release/automation/
           github-token: ${{ github.token }}
           run-id: ${{ github.event.workflow_run.id }}
       - name: Verify artifact seal and prepare automation-only deployment
-        run: node scripts/component-release.mjs prepare automation .release/automation .release/deploy/automation "$RELEASE_SHA" "$VERIFIED_RUN_ID" "$VERIFIED_RUN_ATTEMPT"
+        env:
+          ARTIFACT_ATTEMPT: ${{ steps.artifact.outputs.attempt }}
+        run: node scripts/component-release.mjs prepare automation .release/automation .release/deploy/automation "$RELEASE_SHA" "$VERIFIED_RUN_ID" "$ARTIFACT_ATTEMPT"
       - name: Preserve active automation reader floors
         run: node scripts/component-release.mjs compatibility automation .release/automation
       - name: Require current main before automation activation

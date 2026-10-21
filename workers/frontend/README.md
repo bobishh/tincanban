@@ -9,7 +9,10 @@ activate automation or Rusty.
 
 The `Verify` workflow builds and seals frontend and automation artifacts from the
 same successful main-branch run. Each artifact records its component, source
-commit, run attempt, reader floors, writer version and file digests. The
+commit, run attempt, reader floors, writer version and file digests. A component's
+upload attempt can precede the overall successful run attempt when only failed
+jobs were rerun. Deployment selects the artifact uploaded during that component's
+successful producer execution, then verifies its exact seal. The
 `Deploy tincanban frontend` workflow downloads the exact frontend artifact,
 checks its seal and current frontend compatibility floors, then stages and
 activates that frontend version. It confirms the active version, frontend
