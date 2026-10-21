@@ -23,7 +23,7 @@ async function join(owner: Page, guest: Page, role: "editor" | "visitor", storag
   await expect(storage.getByText(role === "editor" ? "Board access · read and write" : "Board access · read only", { exact: true }))
     .toBeVisible({ timeout: 30_000 })
   await expect(storage.getByRole("button", { name: "Add Rusty", exact: true })).toHaveCount(0)
-  await expect(storage.getByRole("heading", { name: "Profile delivery", exact: true })).toHaveCount(0)
+  await expect(storage.locator(".rusty-profile-status")).toHaveCount(0)
 }
 
 test("Given three distinct identities and owner-configured Rusty, when owner closes and peer routes are disabled, then editor publishes and visitor reads via Rusty only", async ({ page, browser, baseURL }, testInfo) => {
