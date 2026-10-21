@@ -31,6 +31,16 @@ Keep the bounded local trace and opt-in per-packet console/export detail. Ordina
 
 Directory content owns padding, spacing and compact row actions. Active state sits beside board identity rather than adding a large action row. Desktop Sync uses a compact participant list beside selected devices/details; narrow windows stack without hiding storage/recovery actions. Both use existing ink surfaces/focus and scrolling primitives. Browser acceptance exercises actual actions and pending/failure states, with screenshot inspection; do not boot an app solely to assert CSS or button labels.
 
+The user's 20:55 desktop screenshot reopens Sync's visual acceptance. Bound the
+content width even in a maximized window. Keep device cards aligned at their
+content height, with one device label, its connection state and a compact removal
+action. Full device identifiers, browser-session counts and last-seen timestamps
+remain available under Connection details. Keep errors and pending removal
+progress visible. Storage rows show server, state and confirmation time together;
+profile synchronization remains independent. Group routine Rusty actions and keep
+forget/removal confirmations intact. The participant browser owns selection and
+device presentation; RustyPanel retains all storage state and action ownership.
+
 ### Inspect configured board storage from Rusty
 
 The removed readable keeper admin UI cannot be restored by exposing blind-store

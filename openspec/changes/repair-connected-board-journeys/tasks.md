@@ -14,7 +14,7 @@
 ## 2. Repair board and service journeys
 
 - [x] 2.1 Repair directory spacing, compact actions, active badge and responsive window layout; existing functional browser cases passed and live c4 directory screenshot inspected.
-- [x] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state; live 494d owner/editor views show participant/detail columns and independent Synced board/profile storage states.
+- [ ] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state. Reopened after the user's 20:55 desktop screenshot: stretched device cards, repeated labels and excessive Rusty spacing remain unacceptable. Compact cards, bounded content width, expandable connection diagnostics, compact storage rows and grouped actions are implemented locally; deployment and personal browser acceptance remain pending.
 - [x] 2.3 Complete the user-requested fresh Rusty setup: server reset backed up; owner local Forget archived old bindings/intent, fresh Connect succeeded, board/profile Synced, and distinct Codex/editor automatically received read/write access. Owner-offline exchange remains under 2.4/4.5.
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
@@ -54,6 +54,9 @@
 ## New reports
 
 Append new user reports here or to the relevant section. Do not discard earlier unfinished scope when new reports arrive.
+
+- [ ] Rusty Check server appears to do nothing after a fast successful response. Preserve a visible checked result and useful pending/failure feedback; source currently restores the identical Storage available text. Replication remains the priority.
+- [ ] Release blocker in 8224d06 CI 39654435024: public-board lifecycle aborts all three confirmed attempts with Board source changed during publication preparation. Identify the changed source evidence before changing guards or retries; do not raise retries/timeouts or bypass publication confirmation.
 
 - [x] Round badges render with square ink frames in production: longhand CSS repair passed minification and functional proofs; live c4 directory/board screenshot shows round column counts.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.

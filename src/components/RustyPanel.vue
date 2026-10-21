@@ -60,8 +60,8 @@ async function forget() {
 </script>
 <template>
   <section class="rusty-panel" aria-label="Rusty">
-    <div class="rusty-heading"><RustyMark compact /><h3>Persistent storage · Rusty</h3></div>
-    <p class="dialog-copy">Rusty servers keep encrypted board copies available to board participants while the owner's devices are offline. Only the owner can add servers.</p>
+    <div class="rusty-heading"><RustyMark compact /><h3>Rusty</h3></div>
+    <p class="dialog-copy">Keeps an encrypted copy available when other participants are offline. Only the owner can add servers.</p>
     <p v-if="!owner && !records.length && !boardConflicts.length" class="dialog-copy">No Rusty connection has reached this device for this board yet. Connect to a board participant to receive shared storage access.</p>
     <div v-for="conflict in boardConflicts" :key="`board/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
       <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
@@ -86,8 +86,7 @@ async function forget() {
       </li>
     </ul>
     <div v-if="profileRecords.length" class="rusty-profile-status" aria-label="Profile delivery">
-      <h4>Profile delivery</h4>
-      <p class="dialog-copy">Profile photo and private settings sync independently from board data.</p>
+      <h4>Profile photo and settings</h4>
       <ul class="rusty-connections">
         <li v-for="profile in profileRecords" :key="profile.key" class="rusty-profile-connection">
           <div class="rusty-connection"><strong class="technical-value">{{ profile.origin }}</strong><span class="reading-explanation">{{ profile.status }}</span>
@@ -106,7 +105,8 @@ async function forget() {
       <p>Profile delivery is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
     </div>
-    <section v-for="origin in resetOrigins" :key="`forget/${origin}`" class="rusty-conflict" aria-label="Forget local Rusty access">
+    <div class="rusty-actions">
+    <section v-for="origin in resetOrigins" :key="`forget/${origin}`" class="rusty-local-access" aria-label="Forget local Rusty access">
       <button v-if="forgettingOrigin !== origin" class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = origin">Forget Rusty on this device</button>
       <template v-else>
         <p>Forget {{ origin }} for all your boards and profile on this device? This abandons unfinished Rusty operations. Board data, profile, files, and an audit copy of old settings stay saved. Server data and other participants are unchanged.</p>
@@ -121,27 +121,33 @@ async function forget() {
       <button class="button button-quiet" type="button" :disabled="busy" @click="adding = false">Cancel</button>
     </form>
     <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="busy" @click="run(controller.syncNow)">Sync now</button>
+    </div>
     <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
 
   </section>
 </template>
 <style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
-.rusty-panel { display: grid; gap: var(--space-3); padding-block: var(--space-2); }
-.rusty-panel > .button, form > .button { justify-self: start; }
+.rusty-panel { display: grid; align-content: start; gap: var(--space-2); }
+form > .button { justify-self: start; }
+.rusty-actions { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-2); }
+.rusty-actions > form, .rusty-local-access:has(> p) { flex-basis: 100%; }
 .rusty-heading { display: flex; align-items: center; gap: var(--space-2); }
-h3, p { margin: 0; }
+h3, h4, p { margin: 0; }
 form { display: grid; gap: var(--space-1); }
 .rusty-connect { display: flex; gap: var(--space-2); }
 input, textarea { min-width: 0; width: 100%; box-sizing: border-box; }
 .rusty-connect input { flex: 1; }
 textarea { min-height: 5rem; }
 .rusty-connections { padding: 0; margin: 0; list-style: none; }
-li { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; padding-block: var(--space-2); }
-.rusty-connection { display: grid; gap: var(--space-1); min-width: 0; }
+li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; padding-block: var(--space-2); }
+.rusty-connection { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-3); row-gap: var(--space-1); min-width: 0; }
 .rusty-connection strong { overflow-wrap: anywhere; }
 .rusty-connection span { color: var(--muted); font-size: .85rem; }
-.rusty-profile-connection, .rusty-access-update { display: grid; gap: var(--space-2); }
+.rusty-profile-status { display: grid; gap: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--soft); }
+.rusty-profile-connection, .rusty-access-update, .rusty-local-access { display: grid; gap: var(--space-2); }
+.rusty-local-access > .button { justify-self: start; }
+.rusty-panel .button { min-height: var(--control-size-compact); padding: var(--space-1) var(--space-3); font-size: .85rem; }
 .rusty-conflict { border: 1px solid var(--warning, #b45309); border-radius: 8px; padding: var(--space-2); }
 .rusty-conflict p { margin: 0; }
 .rusty-access-update > .button { justify-self: start; }

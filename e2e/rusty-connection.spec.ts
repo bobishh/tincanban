@@ -103,6 +103,10 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await expect(page.locator(".brand-mark")).toHaveAttribute("title", /Rusty synced at/)
     await expectFaviconColor(page, "#69db7c")
     await expect(panel.getByLabel("Address", { exact: true })).toBeHidden()
+    await page.setViewportSize({ width: 1600, height: 1100 })
+    const syncWindow = page.getByRole("dialog", { name: "Device sync" })
+    await syncWindow.getByRole("button", { name: "Maximize window", exact: true }).click()
+    await expect.poll(async () => (await syncWindow.boundingBox())!.width).toBeGreaterThan(1500)
     await page.screenshot({ path: testInfo.outputPath("rusty-connected.png") })
     const scope = await page.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")

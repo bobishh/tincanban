@@ -219,8 +219,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p v-else>Source device is not currently listed among known members.</p>
         </section>
         <p v-else-if="networkOnline !== false && meshDiagnostic && (meshMembers || []).some(member => !member.self)" class="sync-error" role="status">{{ workspaceConnected ? "Sync issue:" : "Reconnect:" }} {{ meshDiagnostic }}</p>
-        <p class="dialog-copy">People and device records known to {{ invitationWorkspaceTitle || "this workspace" }}.</p>
-        <p class="mesh-member-help">A person can have more than one device. Select a person to see the devices known here.</p>
+        <p class="mesh-member-help">Select a person to see their devices.</p>
         <div class="sync-participant-browser">
         <div class="mesh-member-list" role="list" aria-label="Mesh members">
           <button
@@ -246,18 +245,24 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             <li v-for="device in selectedMember.deviceList" :key="device.deviceId" class="mesh-device">
               <div class="mesh-device-head">
                 <span class="mesh-device-presence" :class="device.online ? 'is-online' : device.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-                <strong>{{ deviceDisplayName(device) }}<small v-if="device.deviceId === localDeviceId && device.name !== 'This device'"> · <span>This device</span></small></strong>
-                <code>{{ device.deviceId.slice(0, 8) }}</code>
+                <strong>{{ deviceDisplayName(device) }}</strong>
               </div>
-              <small class="mesh-device-platform">{{ device.description || 'Browser / OS unknown' }}</small>
-              <small class="mesh-device-status">{{ deviceConnectionLabel(device) }}</small>
-              <MyDeviceRemovalControl v-if="selectedMember.self && device.deviceId !== localDeviceId && myDeviceRemoval"
-                :device-id="device.deviceId" :name="deviceDisplayName(device)" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
-              <DeviceRemovalControl v-else-if="!selectedMember.self && device.deviceId !== localDeviceId && canManageMesh"
-                :person-id="selectedMember.personId" :device-id="device.deviceId" :name="deviceDisplayName(device)" :active-workspace-id="activeWorkspaceId"
-                :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
-              <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
-              <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
+              <small v-if="!deviceDisplayName(device).includes(device.description || 'Browser / OS unknown')" class="mesh-device-platform">{{ device.description || 'Browser / OS unknown' }}</small>
+              <div class="mesh-device-actions">
+                <small class="mesh-device-status">{{ deviceConnectionLabel(device) }}</small>
+                <MyDeviceRemovalControl v-if="selectedMember.self && device.deviceId !== localDeviceId && myDeviceRemoval"
+                  :device-id="device.deviceId" :name="deviceDisplayName(device)" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
+                <DeviceRemovalControl v-else-if="!selectedMember.self && device.deviceId !== localDeviceId && canManageMesh"
+                  :person-id="selectedMember.personId" :device-id="device.deviceId" :name="deviceDisplayName(device)" :active-workspace-id="activeWorkspaceId"
+                  :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
+              </div>
+              <details class="mesh-device-details">
+                <summary>Connection details</summary>
+                <code>{{ device.deviceId }}</code>
+                <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
+                <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
+                <small v-if="device.tabs">Session counts may include closed tabs.</small>
+              </details>
             </li>
           </ul>
           <details v-if="selectedMember.self && removedDeviceRecords.length" class="removed-device-history">
@@ -268,7 +273,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
               <MyDeviceRemovalControl v-if="myDeviceRemoval" :device-id="record.deviceId" :name="deviceDisplayName(record)" :workspace-id="activeWorkspaceId" :controller="myDeviceRemoval" />
             </div>
           </details>
-          <p class="dialog-copy">Browser and OS details are reported by browsers. Browser session counts may include closed tabs.</p>
           <OwnershipRecoveryPanel :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
             :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
             @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
