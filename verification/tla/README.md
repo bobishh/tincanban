@@ -117,8 +117,7 @@ ignore a race, accept remote checkpoint trust or publish local marker renewal.
 `ScopeShutdown` distinguishes callback self-drain from drain under a mutation lock.
 Under weak fairness for serviceable callbacks, closing eventually frees the scope;
 its two unsafe variants must violate this temporal property. Neither model provides
-a wall-clock bound or proves JavaScript refinement. Production mapping and actual
-entry-point regression tests: [architecture fitness](../../docs/architecture-fitness.md).
+a wall-clock bound or proves JavaScript refinement.
 
 `GossipTimerShutdown` checks a timer tick queued behind a pending send, followed
 by driver closure before execution. Cancellation produces no uncaught rejection;
