@@ -97,14 +97,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await rustyPanel.getByLabel("Address", { exact: true }).fill(origin)
     await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(rustyPanel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
-    const syncNow = rustyPanel.getByRole("button", { name: "Sync now", exact: true })
-    if (await syncNow.count()) {
-      await syncNow.click()
-      await expect(syncNow).toBeDisabled()
-      await expect(syncNow).toBeEnabled()
-    }
     await syncDialog.getByRole("button", { name: "Close", exact: true }).click()
-    await page.waitForTimeout(500)
     let panel = await openPublication()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()

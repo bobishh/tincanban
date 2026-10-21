@@ -21,13 +21,17 @@ import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/histo
 import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
-import { isNativeKeeperRoute } from "./nativeKeeperRoute"
+import { MeshDialRouteSelector, routeLeaseFields } from "./durableMeshDialRoutes"
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
   private readonly dirtyWorkspacePublishes = new Set<string>()
   private authorityReadFailure = 0
+  private readonly dialRoutes = new MeshDialRouteSelector({
+    connected: (workspaceId, deviceId) => this.hasDeviceSession(workspaceId, deviceId),
+    trace: (event, detail) => this.trace(event, detail),
+  })
 
   private clearWorkspaceDiagnostic(workspaceId: string, deviceId: string) {
     const stage = `Workspace ${workspaceId.slice(0, 8)} from ${deviceId.slice(0, 8)}`
@@ -36,7 +40,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     this.options.onDiagnostic?.("")
   }
   private readonly dialScheduler = new BrowserMeshDialScheduler<WorkspacePeerRecord>({
-    peers: async () => (await this.peerInstances()).filter(peer => !isNativeKeeperRoute(peer)),
+    peers: async () => this.dialRoutes.select(await this.peerInstances()),
     hasSession: (workspaceId, deviceId, instanceId) => this.hasPeerSession(workspaceId, deviceId, instanceId),
     peerKey: (workspaceId, deviceId, instanceId) => this.peerKey(workspaceId, deviceId, instanceId),
     routeFailures: key => this.routeFailures(key),
@@ -125,7 +129,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         routes: routeEntries.map(value => value.route),
         fallbackDelayMs: 250,
         routeHealth: route => -this.routeFailures(this.peerKey(route.scopeId, route.deviceId, route.instanceId)),
-        trace: (event, fields) => this.trace(event, { ...fields }),
+        trace: (event, fields) => this.trace(event, { workspaceId: peer.workspaceId, ...fields,
+          ...routeLeaseFields(peers.find(value => value.instanceId === fields.instanceId) ?? peer) }),
         signal,
         connect: async (route, routeSignal) => {
           const entry = routeEntries.find(value => value.route.instanceId === route.instanceId)!

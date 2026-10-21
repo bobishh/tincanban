@@ -3,7 +3,7 @@ import { defineAsyncComponent, ref, watch, type Component } from "vue"
 
 const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("./IdentityPhotoPanel.vue"))
 
-type ProfileDraft = { name: string; avatarData?: string | null; revision?: string }
+type ProfileDraft = { name?: string; avatarData?: string | null; revision?: string }
 type PhotoOption = { avatarData: string | null; changedAt: string }
 const props = withDefaults(defineProps<{
   workspaceId?: string
@@ -66,23 +66,28 @@ function choosePhoto(option: PhotoOption) {
   saved.value = false
 }
 
+async function persistDraft(value: string) {
+  if (props.saveProfile) {
+    const revision = revisionCaptured.value ? draftRevision.value : props.profileRevision
+    const draft: ProfileDraft = { ...(value ? { name: value } : {}),
+      ...(avatarDraft.value !== undefined ? { avatarData: avatarDraft.value } : {}),
+      ...(revision !== undefined ? { revision } : {}) }
+    await props.saveProfile(draft)
+  } else {
+    if (value && (value !== props.displayName || !props.nameProvided)) await props.saveName(value)
+    if (avatarDraft.value !== undefined) await props.saveAvatar(avatarDraft.value)
+  }
+}
+
 async function save() {
   const value = name.value.trim()
-  if (!value || saving.value || profilePending()) return
+  if ((!value && avatarDraft.value === undefined) || saving.value || profilePending()) return
   saving.value = true
   error.value = ""
   saved.value = false
   try {
-    if (props.saveProfile) {
-      const revision = revisionCaptured.value ? draftRevision.value : props.profileRevision
-      const draft: ProfileDraft = { name: value,
-        ...(avatarDraft.value !== undefined ? { avatarData: avatarDraft.value } : {}),
-        ...(revision !== undefined ? { revision } : {}) }
-      await props.saveProfile(draft)
-    } else {
-      if (value !== props.displayName || !props.nameProvided) await props.saveName(value)
-      if (avatarDraft.value !== undefined) await props.saveAvatar(avatarDraft.value)
-    }
+    await persistDraft(value)
+    if (!value) name.value = props.nameProvided ? props.displayName : ""
     avatarDraft.value = undefined
     selectedPhotoKey.value = ""
     nameDirty.value = false
@@ -103,10 +108,10 @@ async function save() {
     <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
       <IdentityPhotoPanel :workspace-id="workspaceId" :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
       <div class="identity-profile-fields">
-        <label>Name<input v-model="name" maxlength="48" required :disabled="saving || profilePending()" @input="editName" /></label>
+        <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending()" @input="editName" /></label>
       </div>
       <div class="identity-profile-actions">
-        <button class="button button-primary" type="submit" :disabled="saving || profilePending() || !name.trim() || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>
+        <button class="button button-primary" type="submit" :disabled="saving || profilePending() || (!name.trim() && avatarDraft === undefined) || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>
         <p v-if="profilePending()" class="dialog-copy" role="status">Loading saved profile…</p>
         <p v-if="saved && !profilePending()" class="dialog-copy" role="status">Profile saved.</p>
       </div>

@@ -123,7 +123,11 @@ function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Pa
     ageLevel: age?.level, ageLabel: age?.label }
 }
 const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision, identityNameProvided } = useMemberAvatars(app.workspace)
-function saveProfile(draft: { name: string; avatarData?: string | null; revision?: string }) { return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity, { avatarData: draft.avatarData, expectedRevision: draft.revision }) }
+function saveProfile(draft: { name?: string; avatarData?: string | null; revision?: string }) {
+  if (draft.name !== undefined) return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity, { avatarData: draft.avatarData, expectedRevision: draft.revision })
+  if (draft.avatarData !== undefined) return saveAvatar(draft.avatarData, draft.revision)
+  return Promise.resolve()
+}
 </script>
 
 <template>

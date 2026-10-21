@@ -4,7 +4,7 @@ Reported failures cross several boundaries that the current UI conflates: peer p
 
 ## What Changes
 
-- Preserve saved boards, encrypted objects, keys, exact pending uploads, and durable recovery intent while restoring the appropriate existing operation.
+- Preserve browser boards, profile, attachments and exact recovery evidence. For the user-requested fresh start after the backed-up server reset, explicitly forget old local origin bindings and create fresh owner-configured scopes; archive abandoned intent instead of automatically resuming it.
 - Make owner-configured Rusty available to editors and visitors across identities; only the owner configures board storage. Remove deployment-wide owner/controller pins while preserving scoped ownership and signed authorization.
 - Diagnose and repair same-computer multi-workspace/session channel churn from a reproducible trace; keep truthful status while fixing the transport cause.
 - Separate public visibility discovery from editor publication authority. Private boards have no publication error/action; public boards retain verified delivery and targeted recovery.
@@ -26,4 +26,4 @@ Reported failures cross several boundaries that the current UI conflates: peer p
 
 ## Impact
 
-Tincanban Vue windows, publication delivery, private replication and diagnostics; MetaMesh transport/runtime where a reproduced shared cause belongs; Rusty scoped authorization and activation; Reflux/website intake as established by real request evidence; GitHub workflow retention. Existing service keys, ciphertext and policy formats remain intact for the initial fixes. Larger storage architecture changes, including full blue/green concurrency, require their own evaluated design. Tickets stay Doing until the user personally checks deployed browser behavior.
+Tincanban Vue windows, publication delivery, private replication and diagnostics; MetaMesh transport/runtime where a reproduced shared cause belongs; Rusty scoped authorization and activation; Reflux/website intake as established by real request evidence; GitHub workflow retention. The service key and storage/policy formats remain intact; the explicitly requested server reset retained a pre-reset archive before clearing active server data. Larger storage architecture changes, including full blue/green concurrency, require their own evaluated design. Tickets stay Doing until the user personally checks deployed browser behavior.

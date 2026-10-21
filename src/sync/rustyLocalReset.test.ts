@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest"
-import { bootstrapIdentity, resetIdentityStorageForTest, toBase64Url } from "../domain/identity"
+import { bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
 import * as local from "../localDb"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { exportPrivateReplicaState, getPrivateReplicaConfigurations, receivePrivateReplicaState, setReplicaPreference } from "./privateReplicaRepository"
@@ -7,6 +7,8 @@ import { prepareReplicaCredentialFreeze, readReplicaCredentialFreeze, replicaCre
 import { identityReplicaSetupKey } from "./identityReplicaConnection"
 import { workspaceReplicaSetupKey } from "./workspaceReplicaConnection"
 import { connectWorkspaceReplica } from "./replicaConnections"
+import { stateKey } from "./privateReplicaRepositoryState"
+import { RustyManagementRepository } from "./rustyManagementRepository"
 const membership = vi.hoisted(() => ({ role: vi.fn(async () => "owner"), admission: vi.fn(async () => ({})) }))
 vi.mock("./changeAuthorization", () => ({ workspaceRole: membership.role, localWorkspaceAdmissionAuthority: membership.admission }))
 import { forgetRustyOrigin } from "./rustyLocalReset"
@@ -34,7 +36,7 @@ async function fixture() {
   const boardSetupKey = await workspaceReplicaSetupKey(owner, config.origin, config.workspaceId)
   const profileSetupKey = await identityReplicaSetupKey(owner, config.origin)
   await local.writeLocal(boardSetupKey, JSON.stringify({ personId: owner, config }))
-  await local.writeLocal(profileSetupKey, JSON.stringify({ personId: owner, config: { ...config, purpose: "identity" } }))
+  await local.writeLocal(profileSetupKey, JSON.stringify({ personId: owner, config: { ...privateConfig, purpose: "identity", personId: owner, scopeId: "old-profile" } }))
   const app = { getCurrentProfile: () => profile, readWorkspaceDoc: vi.fn(async () => ({ id: config.workspaceId, ownerPersonId: owner })) }
   return { profile, config, owner, other, old, frozen, freezeKey, journalKey, journalRaw, boardSetupKey, profileSetupKey, app }
 }
@@ -85,4 +87,67 @@ it("Given an admitted editor, When forgetting its own local bindings, Then clear
   expect(await getPrivateReplicaConfigurations(f.owner)).toMatchObject([f.other])
   f.app.readWorkspaceDoc.mockResolvedValue({ id: f.config.workspaceId, ownerPersonId: "different-board-owner" })
   await expect(connectWorkspaceReplica(f.app as never, f.config.origin, f.config.workspaceId, () => {})).rejects.toThrow(/owner/i)
+})
+
+it.each(["other-origin-only", "missing-v2"])('Given origin-bound frozen intent with %s private state, When forgetting Rusty, Then archive exact intent and prevent stale peer resurrection', async state => {
+  const f = await fixture()
+  const key = stateKey(f.owner), raw = (await local.readLocal(key))!
+  if (state === "missing-v2") await local.deleteLocal(key)
+  else await local.writeLocal(key, JSON.stringify({ ...JSON.parse(raw), entries: JSON.parse(raw).entries.filter((entry: { origin: string }) => entry.origin !== f.config.origin) }))
+  for (const setup of [f.boardSetupKey, f.profileSetupKey]) await local.deleteLocal(setup)
+  const profileRaw = await local.readLocal("tincanban.local_profile.v1")
+  await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
+  expect(await readReplicaCredentialFreeze(f.owner, f.config.origin)).toBeUndefined()
+  expect(await local.readLocal(f.journalKey)).toBeNull()
+  const archives = (await local.listLocalKeys()).filter(value => value.startsWith("tincanban.rusty-local-reset.v1."))
+  const audit = JSON.parse((await local.readLocal(archives.at(-1)!))!) as { records: Array<{ key: string; value: string | null }> }
+  expect(audit.records).toContainEqual({ key: f.freezeKey, value: JSON.stringify(f.frozen) })
+  expect(audit.records).toContainEqual({ key: f.journalKey, value: f.journalRaw })
+  expect(await local.readLocal("tincanban.local_profile.v1")).toBe(profileRaw)
+  expect(await getPrivateReplicaConfigurations(f.owner)).toMatchObject(state === "missing-v2" ? [] : [f.other])
+  await receivePrivateReplicaState(f.owner, f.old)
+  expect((await getPrivateReplicaConfigurations(f.owner)).some(config => config.origin === f.config.origin)).toBe(false)
+})
+
+it("Given neither connection nor origin-bound intent, When forgetting an unknown server, Then reject without writing an audit or changing other origins", async () => {
+  const f = await fixture()
+  const before = await local.readLocal(stateKey(f.owner))
+  const keys = await local.listLocalKeys()
+  await expect(forgetRustyOrigin(f.app as never, "https://unknown.example", f.config.workspaceId, () => {})).rejects.toThrow(/no saved/i)
+  expect(await local.readLocal(stateKey(f.owner))).toBe(before)
+  expect(await local.listLocalKeys()).toEqual(keys)
+})
+
+it("Given only bound board and profile setup intents and no v2 state, When forgetting Rusty, Then tombstone both scopes and retain exact setup evidence", async () => {
+  const f = await fixture()
+  await local.deleteLocal(stateKey(f.owner))
+  for (const key of [f.freezeKey, f.journalKey]) await local.deleteLocal(key)
+  const boardSetup = await local.readLocal(f.boardSetupKey)
+  await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
+  expect(await local.readLocal(f.boardSetupKey)).toBeNull()
+  expect(await local.readLocal(f.profileSetupKey)).toBeNull()
+  const archives = (await local.listLocalKeys()).filter(key => key.startsWith("tincanban.rusty-local-reset.v1."))
+  const audit = JSON.parse((await local.readLocal(archives.at(-1)!))!) as { records: Array<{ key: string; value: string | null }> }
+  expect(audit.records).toContainEqual({ key: f.boardSetupKey, value: boardSetup })
+  await receivePrivateReplicaState(f.owner, f.old)
+  expect((await getPrivateReplicaConfigurations(f.owner)).filter(config => config.origin === f.config.origin)).toEqual([])
+})
+
+it("Given only signed origin management evidence and no active scopes, When forgetting Rusty, Then archive authority and require direct observation before replay", async () => {
+  const f = await fixture()
+  for (const key of [stateKey(f.owner), f.freezeKey, f.journalKey, f.boardSetupKey, f.profileSetupKey]) await local.deleteLocal(key)
+  const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+  const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey))
+  const serviceId = await sha256Base64Url(publicKey)
+  const binding = { origin: f.config.origin, servicePublicKey: toBase64Url(publicKey), resourceKind: "person" as const, resourceId: f.owner }
+  const capability = await signEnvelope(keys.privateKey, { kind: "rusty-person-management-capability" as const, version: 1 as const,
+    serviceId, origin: binding.origin, personId: f.owner, resourceKind: binding.resourceKind, resourceId: f.owner,
+    revision: 4, operations: ["management.update"], revokedDeviceIds: [], requestId: "old-policy",
+    authorizationHash: "A".repeat(43), issuedAt: Date.now() }, serviceId, "RUSTY/2")
+  const repository = new RustyManagementRepository(f.owner)
+  await repository.observe(binding, capability)
+  await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
+  await repository.import([{ binding, capability }])
+  expect(await repository.read(binding)).toBeUndefined()
+  expect(await getPrivateReplicaConfigurations(f.owner)).toEqual([])
 })

@@ -45,6 +45,8 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     await phone.goto("about:blank")
     await host.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue("")
+    await expect(page.getByRole("button", { name: "Save profile", exact: true })).toBeDisabled()
     const data = await page.evaluate(() => {
       const canvas = document.createElement("canvas")
       canvas.width = canvas.height = 128
@@ -53,9 +55,17 @@ test("Given an already enrolled phone, when desktop connects Rusty and later cha
     })
     await page.getByLabel("Choose photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: Buffer.from(data, "base64") })
     await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
+    await expect(page.getByRole("button", { name: "Save profile", exact: true })).toBeEnabled()
     await page.getByRole("button", { name: "Save profile", exact: true }).click()
     await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
     const source = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue("")
+    await page.reload()
+    await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await expect(page.getByLabel("Name", { exact: true })).toHaveValue("")
+    await expect(page.getByRole("img", { name: "Your profile photo" })).toHaveAttribute("src", source!)
+    await expect(page.getByRole("button", { name: "Save profile", exact: true })).toBeDisabled()
     await page.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
 

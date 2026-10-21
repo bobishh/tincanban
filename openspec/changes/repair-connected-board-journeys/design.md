@@ -17,7 +17,7 @@ A live form challenge succeeds at the deployed Reflux integration endpoint. This
 
 ### Deliver known fixes while investigating unresolved causes
 
-Apply the confirmed UI, publication-ordering and diagnostic corrections first. Retain unresolved intake POST, current owner journal phase and sustained mesh contention as explicit investigation tasks; no claim that a changed indicator or successful challenge repairs them. No blanket freeze removal, credential regeneration or arbitrary stream-budget increase.
+Apply the confirmed UI, publication-ordering and diagnostic corrections first. Retain unresolved intake POST, current owner journal phase and sustained mesh contention as explicit investigation tasks; no claim that a changed indicator or successful challenge repairs them. No automatic freeze removal or credential regeneration; the explicit user-requested reset below is a separate confirmed action. Keep existing stream limits.
 
 ### Publication is optional; discovery precedes writer authorization
 
@@ -31,11 +31,36 @@ Keep the bounded local trace and opt-in per-packet console/export detail. Ordina
 
 Directory content owns padding, spacing and compact row actions. Active state sits beside board identity rather than adding a large action row. Desktop Sync uses a compact participant list beside selected devices/details; narrow windows stack without hiding storage/recovery actions. Both use existing ink surfaces/focus and scrolling primitives. Browser acceptance exercises actual actions and pending/failure states, with screenshot inspection; do not boot an app solely to assert CSS or button labels.
 
-### Resume the exact retained Rusty operation
+### Preserve exact recovery, allow the requested fresh start
 
 The two retained operations differ: conflict recovery for one scope (which may be identity scope) and identity-device revocation across an origin. Read the valid freeze/journal, signer and scope/device references without exposing keys. Explain what is pending and offer the matching existing resume action; do not create another credential epoch from a generic Connect click. Preserve incompatible/missing/foreign-signer evidence and surface a useful failure. Report journal-confirmed progress separately from unconfirmed remote state.
 
 For a new device removal, inspect every automation cohort before installing the local origin freeze. Recheck exact credential bindings when committing; retain normal replication progress made while inspection runs. Capture the inspected proofs into the saved journal before any automation freeze or revocation. A retained transition resumes its own captured intent. Different worker epochs and different service identities need distinct errors; neither permits silently skipping the worker or replacing keys.
+
+The user subsequently requested erasing Rusty storage and starting afresh. The
+server reset is complete with an external pre-reset archive and unchanged service
+key. This supersedes further attempts to resume the original removal on that
+origin. Explicit local Forget must archive exact settings, freeze, transition,
+conflict, enrollment and completed-operation evidence in the same guarded
+transaction that removes active local delivery access. Missing active settings
+do not invalidate an otherwise origin-bound pending journal. Other origins and
+browser board/profile/files remain untouched. The participant may forget only
+their own device-local access; fresh board configuration remains owner-only.
+
+Keeping the service key leaves old signed management revisions cryptographically
+valid. A local reset-origin marker therefore refuses peer-imported authority
+until directly observed fresh server evidence exists. The marker is local and
+not shared as board authority. Fresh explicit Add creates new board and identity
+scopes; automatic provisioning cannot resurrect removed scopes.
+
+### Unnamed identity and photo updates
+
+New identities have no automatically chosen user-facing name. Neutral protocol
+metadata plus a local provenance marker keeps Name empty until explicitly chosen;
+existing deliberate names and signed certificates remain unchanged. Saving only
+a photo must preserve that empty-name state. A combined explicit name/photo save
+retains the atomic profile/root operation; photo-only edits retain revision guards
+and must not silently convert neutral metadata into a user-chosen name.
 
 ### Admit headers before payload reservations
 
@@ -66,4 +91,4 @@ Actions diagnostics expire after one day; retain only current/rollback release c
 
 ## Remaining questions for investigation
 
-The owner's saved operation is confirmed as Valiant Squirrel device removal; its automation discovery fails before completing recovery. The precise live journal confirmations and failed intake POST remain unestablished. Idle full-frame reservations reproduce legitimate cross-workspace rejection, and staged admission passes the real credential-transfer scenario without its warnings. Other route/session interactions and sustained production stability are not established by that focused proof.
+The owner's saved operation is confirmed as Valiant Squirrel device removal; its automation discovery fails before completing recovery. The user has replaced old-journal recovery with an explicit fresh reset; failed intake POST remains unestablished. Server reset alone does not clear browser bindings or prove fresh participant delivery. Idle full-frame reservations reproduce legitimate cross-workspace rejection, and staged admission passes the real credential-transfer scenario without its warnings. Other route/session interactions and sustained production stability are not established by that focused proof.

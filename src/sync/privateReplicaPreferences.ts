@@ -314,6 +314,14 @@ export function changeReplicaPreference(state: PrivateReplicaState, config: Priv
   return applyPreferenceOperation(state, portable, removed ? null : portable, purpose)
 }
 
+/** A retained local intent can name a removed scope even when its active credentials no longer exist. */
+export function removeReplicaScopePreference(state: PrivateReplicaState, scope: { origin: string; scopeId: string },
+  purpose: ReplicaPurpose): PrivateReplicaState {
+  if (blindOrigin(scope.origin) !== scope.origin || !/^[A-Za-z0-9_-]{1,128}$/.test(scope.scopeId) ||
+    !["workspace", "identity"].includes(purpose)) throw new Error("Invalid removed Rusty scope")
+  return applyPreferenceOperation(state, scope, null, purpose)
+}
+
 function assertPreviousKeysRetained(previous: Entry | undefined, config: PrivateReplicaConfig | null): void {
   if (!config) return
   for (const operation of previous?.operations ?? []) {

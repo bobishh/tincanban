@@ -7,23 +7,25 @@
 - [x] 1.5 Trace private-board publication error ordering and inappropriate retry UI.
 - [x] 1.6 Establish live form script/config/endpoint; verify challenge without submitting user data.
 - [ ] 1.7 Correlate reported form 404 with its exact POST/request outcome.
-- [ ] 1.8 Establish current owner's exact saved credential operation and failed phase before choosing recovery.
-- [ ] 1.9 Reproduce sustained multi-workspace/tab stream contention and establish its cause.
-- [ ] 1.10 Complete proposal/design after exploration; review started pending-operation patch against actual findings.
+- [x] 1.8 Identify the owner's pending removal and failed automation phase; record the user's subsequent explicit decision to reset and reconnect instead of resuming it.
+- [x] 1.9 Reproduce multi-workspace stream contention and establish full-frame idle reservations as one confirmed cause; keep remaining production route churn under 2.5.
+- [x] 1.10 Complete proposal/design after exploration, review pending-operation/reset changes against evidence, and incorporate the explicit reset decision.
 
 ## 2. Repair board and service journeys
 
-- [ ] 2.1 Repair directory spacing, compact actions, active badge and responsive window layout.
+- [x] 2.1 Repair directory spacing, compact actions, active badge and responsive window layout; existing functional browser cases passed and live c4 directory screenshot inspected.
 - [ ] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state.
 - [ ] 2.3 Complete the user-requested fresh Rusty setup: server reset is backed up and complete; explicitly forget frozen local Rusty bindings, preserve browser boards/profile/files and retained reset evidence, then reconnect from owner and verify editor delivery. This replaces further attempts to resume the old transition.
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
 - [ ] 2.6 Fix live public intake routing/outcome and verify authorized end-to-end submission.
 - [ ] 2.7 Provide useful Rusty board/status inspection; clarify which controls belong to owner UI versus operator config.
-- [ ] 2.8 Gate publishing errors/actions on real publication state; report private access failures with an applicable action.
-- [ ] 2.9 Export bounded useful failure/lifecycle diagnostics to TinSink independently of verbose packet logging.
+- [x] 2.8 Gate publishing errors/actions on real publication state; focused behavior tests and deployed c4 private-board Settings confirm no public-delivery error/action.
+- [x] 2.9 Export bounded useful failure/lifecycle diagnostics to TinSink independently of verbose packet logging; actual c4 dial/session failures with runtime/workspace/peer correlation observed in ClickHouse after 13:36 UTC.
 
 - [x] 2.10 Remove deployment-wide `RUSTY_TRUSTED_OWNER` and controller-device admission pins; keep per-resource ownership, signatures and revocation. Verify unrelated owners, restart isolation and scoped editor delivery; deploy through Rusty CI.
+
+- [ ] 2.11 Diagnose intermittent TinSink ClickHouse code 241 memory pressure delaying queued log/trace inserts; preserve queued evidence and verify stable durable delivery before claiming full-chain reliability.
 
 ## 3. GitHub Actions storage (delegated, explicitly authorized)
 
@@ -40,7 +42,7 @@
 - [ ] 4.4 Add Rusty to the real issues board from the user's owner identity (clicks authorized); confirm distinct Codex editor visibility.
 - [ ] 4.5 Verify real participant data exchange via Rusty with owner sessions closed; include read-only visitor behavior.
 - [ ] 4.6 User personally verifies deployed browser behavior before any ticket moves to Done.
-- [ ] 4.9 Update the vulnerable Markdown parser blocking CI, verify rendering and deliver the audited release.
+- [x] 4.9 Update the vulnerable Markdown parser blocking CI; rendering/audit checks passed and c4 containing markdown-it 15.0.3 is deployed.
 - [ ] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage.
 - [x] 4.8 Repair duplicate image pull after Rusty writer shutdown; verify prepared image before handoff and restore previous writer on activation failure. Record blue/green constraints and options before a storage architecture change.
 
@@ -50,7 +52,7 @@
 
 Append new user reports here or to the relevant section. Do not discard earlier unfinished scope when new reports arrive.
 
-- [ ] Round badges render with square ink frames in production; verify count/presence circles after CSS minification.
+- [x] Round badges render with square ink frames in production: longhand CSS repair passed minification and functional proofs; live c4 directory/board screenshot shows round column counts.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.
 - [ ] Verify the same editor on two separately owner-configured boards after switching/reopening and with owner sessions closed. Live comparison: Ecky issues has read/write access; app issues has no owner-configured entry and retained device removal is pending.
 - [ ] Stop unconfirmed deletion of legacy Rusty connection records on first read/mutation; cover skipped-release startup and late legacy writes. Establish whether the real missing board record can be recovered from retained operation evidence or another owner device, without importing obsolete credentials automatically.
@@ -60,6 +62,8 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 
 - [ ] Verify readable mobile named-successor selection and device scrolling on the deployed client; isolated WebKit proof passed.
 - [x] Find current Swift best-practice skills and lint/format/concurrency tools from primary sources; installation was not requested.
+
+- [ ] Fix unnamed photo-only profile save without requiring a name or changing name-choice provenance; caught by the complete Rusty phone photo-delivery scenario.
 
 ### Actions cleanup evidence (2026-10-21)
 

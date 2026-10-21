@@ -1,8 +1,6 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-type AvatarFailureWindow = Window & { __TINCANBAN_INJECT_STORAGE_FAILURE__?: boolean }
-
 async function portraitFixture(page: import("@playwright/test").Page) {
   const dataUrl = await page.evaluate(() => {
     const canvas = document.createElement("canvas")
@@ -123,14 +121,16 @@ test("Given a photo draft, when workspace projection fails, then profile stays s
 
   await input.setInputFiles({ name: "portrait.png", mimeType: "image/png", buffer: await portraitFixture(page) })
   const crop = page.getByRole("dialog", { name: "Crop profile photo" })
-  await page.evaluate(() => { (window as AvatarFailureWindow).__TINCANBAN_INJECT_STORAGE_FAILURE__ = true })
+  await page.evaluate(async () => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    defaultStorage.withWorkspaceTransaction = async () => { throw new Error("Workspace projection failure injected") }
+  })
   await crop.getByRole("button", { name: "Use photo" }).first().click()
   await page.getByRole("button", { name: "Save profile", exact: true }).click()
   await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
   await expect(page.getByRole("status").filter({ hasText: "Sharing to some workspaces is pending" })).toBeVisible()
   await expect(page.getByRole("img", { name: "Your profile photo" })).toBeVisible()
 
-  await page.evaluate(() => { (window as AvatarFailureWindow).__TINCANBAN_INJECT_STORAGE_FAILURE__ = false })
   await page.reload()
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Identity", exact: true }).click()

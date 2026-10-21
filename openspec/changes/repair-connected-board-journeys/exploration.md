@@ -418,3 +418,46 @@ The production Quick note keyboard/save/reload journey and its failed-save draft
 retention/retry journey also passed in isolated production contexts (8.2 seconds).
 The real issues-card note was saved and observed after reload; ITEM is absent
 from that card header. Tickets remain Doing pending the user's browser review.
+
+### Follow-up verification and remaining delivery faults (2026-10-21)
+
+All known Chrome/IAB sessions were updated to c4 without discarding drafts. The
+new local traces contain no stream-budget/empty-header errors in the inspected
+windows, but retained instance slots still produce repeated Iroh dial failures
+while another authenticated session exchanges workspace frames. The scheduler
+was missing signed lease expiry when deciding which retained sibling to probe.
+A focused regression proves that expired sibling routes are skipped only while
+the same board/device has a working session; unexpired siblings and expired
+offline bootstrap remain available. Safe local route attempt/suppression fields
+will establish whether the particular production slots have expired; that exact
+causal attribution remains unverified. Seventy-nine session/startup/credential
+tests pass. No stored routes, stream limits or admission checks were removed.
+
+The first names/reset CI exposed a real blank-name photo-save regression and an
+ambiguous roster assertion. Photo-only saves now preserve unnamed provenance and
+use the signed photo transaction with a captured revision guard; combined chosen
+name/photo saves retain the atomic profile/root commit. The complete Rusty phone
+photo journey passes in 32.9 seconds; all four avatar journeys, large-history
+mobile cold reopen, profile pending/conflict handling and sixteen focused units
+pass. Roster verification now proves exactly one self/owner remains after signed
+revocation, without comparing potentially identical display names.
+
+Reset review also found the reported legacy-deletion case could retain a freeze
+without any current connection. Explicit Forget now accepts origin-bound freeze,
+setup or signed management evidence without active v2 credentials; it archives
+those sources and writes removal tombstones for known scope references. Unknown
+origins without any connection/intent still reject. Seventy-three related reset/
+management/preference tests pass. The full native WebKit publication/file/restart/
+withdrawal journey passes in 27.3 seconds after dropping its redundant manual
+sync-button timing check and fixed sleep; publication proofs are retained.
+
+Actual c4 browser warning records are now confirmed in TinSink/ClickHouse, with
+workspace, peer and runtime correlation and captured failure stack. The collector
+logs expose a separate delivery problem: ClickHouse intermittently rejects log
+and trace insertion with code 241 at its 1.80 GiB total memory limit while the
+collector retries its persistent queue. Read-only inspection showed about 547 MiB
+RSS and small failed inserts, so the source of tracked memory pressure needs
+investigation before changing limits. HTTP 200 alone is not durable row proof.
+The new private-board Settings view contains no public-delivery failure/retry;
+the live c4 directory has compact separate actions, content padding and an inline
+Active badge. Screenshots were inspected. Board tickets remain Doing.

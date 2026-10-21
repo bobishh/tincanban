@@ -69,7 +69,8 @@ type MeshTestHooks = {
     reconnectState: (key: string) => { failures: number; retryAtMs: number } | null
     beginRouteAttempt: (key: string, at: number) => void
     scheduleReconnect: (key: string, at: number, delay: number, maximum: number) => void
-    admitSession: (session: unknown, connectionId: string) => void
+    admitSession: (session: unknown, preferredDirection: string) => { generation?: number }
+    removeSession: (key: unknown, generation: number) => string | null
   }
   peerKey: (workspaceId: string, deviceId: string, instanceId: string) => string
   routeFailures: (key: string) => number
@@ -98,6 +99,7 @@ type MeshTestHooks = {
   installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>,
     boolean?, string?, boolean?, string?, boolean?, ("mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1")?, boolean?, string?]) => Promise<boolean>
   dialLoop: (signal: AbortSignal) => Promise<void>
+  scheduleDials: (localDeviceId: string, signal: AbortSignal) => Promise<void>
   mergeOwnershipTransfers: (credential: TestCredential, transfers: WorkspaceOwnershipTransfer[]) => Promise<TestCredential>
   pruneInvalidStoredPeers: (credential: TestCredential, localDeviceId: string) => Promise<void>
   refreshOwnBundle: (credential: TestCredential, profile: LocalProfile, endpoint: string, certificates: unknown[]) => Promise<void>
@@ -906,6 +908,45 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(internal.dialDevice).toHaveBeenCalledWith([peer], controller.signal)
     expect(internal.peerInstances).toHaveBeenCalled()
     await mesh.dispose()
+  })
+
+  it("Given a working instance and an expired sibling on the same board, When reconnect scans retained routes, Then skip the stale sibling but retain live siblings and other board bootstrap", async () => {
+    const now = Date.now()
+    const route = (workspaceId: string, instanceId: string, expiry: number) => ({
+      workspaceId, personId: "remote-person", deviceId: "remote-device", instanceId,
+      endpoint: `endpoint-${instanceId}`, transportSecret: "mesh-secret", role: "editor" as const,
+      lastSeen: new Date(now - 120_000).toISOString(),
+      advertisement: { advertisement: { payload: { issuedAt: new Date(now - 120_000).toISOString(),
+        expiresAt: new Date(expiry).toISOString() } } },
+    })
+    const peers = [route("connected-board", "working", now + 60_000), route("connected-board", "expired", now - 1),
+      route("connected-board", "live-sibling", now + 60_000), route("offline-board", "bootstrap", now - 1)]
+    const mesh = new DurableMesh({ transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
+      getProfile: async () => ({ device: { deviceId: "local-device" } } as never), store: {} as never })
+    const internal = meshHooks(mesh)
+    internal.instanceId = "local-slot"
+    internal.peerInstances = vi.fn(async () => peers)
+    internal.dialDevice = vi.fn(async () => {})
+    internal.trace = vi.fn()
+    const key = { workspaceId: "connected-board", deviceId: "remote-device", instanceId: "working" }
+    const admitted = internal.runtime().admitSession({ key,
+      connectionId: "working", remoteIssuedAt: new Date(now).toISOString(), direction: "incoming" }, "incoming")
+    try {
+      await internal.scheduleDials("local-device", new AbortController().signal)
+      expect(internal.dialDevice).toHaveBeenCalledTimes(2)
+      expect(internal.dialDevice).toHaveBeenCalledWith([peers[2]], expect.any(AbortSignal))
+      expect(internal.dialDevice).toHaveBeenCalledWith([peers[3]], expect.any(AbortSignal))
+      expect(internal.trace).toHaveBeenCalledWith("route.suppressed.expired", expect.objectContaining({
+        workspaceId: "connected-board", targetDeviceId: "remote-device", instanceId: "expired",
+        expiresAt: new Date(now - 1).toISOString(), expired: true,
+      }))
+      await internal.scheduleDials("local-device", new AbortController().signal)
+      expect(internal.trace).toHaveBeenCalledOnce()
+      if (!admitted.generation) throw new Error("Expected admitted working session")
+      internal.runtime().removeSession(key, admitted.generation)
+      await internal.scheduleDials("local-device", new AbortController().signal)
+      expect(internal.dialDevice).toHaveBeenCalledWith([peers[1]], expect.any(AbortSignal))
+    } finally { await mesh.dispose() }
   })
 
   it("Given two different same-epoch recovery claims, when projected, then conflict pauses automatic recovery", async () => {

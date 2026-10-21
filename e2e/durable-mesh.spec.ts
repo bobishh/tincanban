@@ -314,11 +314,10 @@ test("Given a current-owner revocation bound to quarantined history, when repair
     await Promise.all([page.goto("/"), guest.goto("/")])
     await pairWorkspace(page, guest)
     const workspaceId = await page.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.active_workspace_id"))
-    const keeperIdentity = await guest.evaluate(async () => {
+    const keeperPersonId = await guest.evaluate(async () => {
       const profile = JSON.parse((await (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!)
-      return { personId: profile.identity.personId as string, displayName: profile.identity.displayName as string }
+      return profile.identity.personId as string
     })
-    const keeperPersonId = keeperIdentity.personId
     if (!workspaceId) throw new Error("Active workspace missing")
     const ownerEvidence = await page.evaluate(async id => {
       const { WorkspaceStorage } = await import("/src/storage.ts")
@@ -427,8 +426,10 @@ test("Given a current-owner revocation bound to quarantined history, when repair
     ]))
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const members = page.getByRole("list", { name: "Mesh members" })
-    await expect(members).toContainText("You", { timeout: 15_000 })
-    await expect(members).not.toContainText(keeperIdentity.displayName)
+    const remainingMembers = members.getByRole("button")
+    await expect(remainingMembers).toHaveCount(1, { timeout: 15_000 })
+    await expect(remainingMembers).toContainText("You")
+    await expect(remainingMembers.locator(".mesh-member-role")).toHaveText("owner")
   } finally { await context.close() }
 })
 

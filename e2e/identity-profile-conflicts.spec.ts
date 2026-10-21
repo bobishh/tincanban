@@ -223,5 +223,7 @@ test("Given private profile revision loading, when Identity settings opens, then
   })
   await expect(name).toBeEnabled()
   await expect(photo).toBeEnabled()
+  await expect(save).toBeDisabled()
+  await name.fill("Chosen after profile loads")
   await expect(save).toBeEnabled()
 })

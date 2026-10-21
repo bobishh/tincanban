@@ -114,11 +114,11 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     if (conflicted) { avatarNotice.value = "Photo changes need a choice in Settings → Identity."; return }
     if (stored) await projectPhoto(stored, false, id)
   }
-  async function saveAvatar(avatarData: string | null): Promise<void> {
+  async function saveAvatar(avatarData: string | null, expectedRevision?: string): Promise<void> {
     await serial(async () => {
       const profile = workspace.getCurrentProfile()
       if (!profile) throw new Error("Identity is unavailable")
-      const saved = await saveIdentityPhoto(profile, avatarData)
+      const saved = await saveIdentityPhoto(profile, avatarData, undefined, expectedRevision)
       if (personId() !== profile.identity.personId) throw new Error("Identity changed while saving photo")
       photoOwner = profile.identity.personId; photo.value = saved
       await projectPhoto(saved, true, profile.identity.personId)

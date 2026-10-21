@@ -10,11 +10,12 @@ export function parseIdentityPhoto(value: unknown): IdentityPhoto | undefined {
   return value as IdentityPhoto
 }
 export async function saveIdentityPhoto(profile: LocalProfile, avatarData: string | null,
-  storage: Pick<typeof defaultStorage, "updatePersonalRootForIdentity"> = defaultStorage): Promise<IdentityPhoto> {
+  storage: Pick<typeof defaultStorage, "updatePersonalRootForIdentity"> = defaultStorage, expectedRevision?: string): Promise<IdentityPhoto> {
   if (avatarData !== null && !isAvatarDataUrl(avatarData)) throw new Error("Profile photo must be a small WebP or JPEG image")
-  const { editIdentityProfileRoot } = await import("../domain/identityProfileRoot")
+  const { editIdentityProfileRoot, assertIdentityProfileRevision } = await import("../domain/identityProfileRoot")
   const root = await storage.updatePersonalRootForIdentity(profile.identity.personId, async current => {
     if (current?.identity.personId !== profile.identity.personId) throw new Error("Identity catalog is unavailable")
+    if (expectedRevision !== undefined) await assertIdentityProfileRevision(current, expectedRevision)
     return editIdentityProfileRoot(current, profile, "photo", { avatarData, changedAt: new Date().toISOString() })
   })
   if (!root?.photo) throw new Error("Identity catalog is unavailable")
