@@ -1,16 +1,18 @@
 import { computed, onScopeDispose, ref, watch } from "vue"
 import type { useAppCore } from "./useAppCore"
-import { readLocal, updateLocal } from "../localDb"
+import { compareAndSwapLocal, readLocal, updateLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { continueMyDeviceRemoval, myDeviceRemovalComplete, myDeviceRemovalsKey, type MyDeviceRemoval } from "../sync/myDeviceRemoval"
-import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
+import { identityDevicePreferencesChanged, subscribeIdentityDevicePreferences } from "../sync/identityDevicePreferenceEvents"
 export { myDeviceRemovalComplete } from "../sync/myDeviceRemoval"
 
 
 function captureReviewedOrigins(job: MyDeviceRemoval, previous: MyDeviceRemoval | undefined, includeNewOrigins: boolean, origins: string[]) {
   if (previous && !includeNewOrigins) return
   if (previous && !myDeviceRemovalComplete(previous)) throw new Error("Finish the recorded device removal before confirming additional servers")
-  for (const origin of origins) job.origins[origin] ??= { status: "pending" }
+  for (const origin of origins) {
+    job.origins[origin] ??= { status: "pending" }
+  }
 }
 
 export type PreparedDeviceRemoval = { job: MyDeviceRemoval; certificateSignature: string }
@@ -80,10 +82,14 @@ export function useMyDeviceRemoval(core: ReturnType<typeof useAppCore>) {
         if (previous) {
           if (previous.signerDeviceId !== job.signerDeviceId || Object.keys(previous.workspaces).some(id => !Object.hasOwn(job.workspaces, id)) ||
               Object.keys(previous.origins).some(origin => !Object.hasOwn(job.origins, origin))) throw new Error("Recorded removal scope changed; review it again")
+          if (previous.abandonedOrigins?.some(origin => Object.hasOwn(job.origins, origin) && !job.abandonedOrigins?.includes(origin)))
+            throw new Error("Server removal was stopped after this review; review it again")
           for (const [id, state] of Object.entries(previous.workspaces)) job.workspaces[id] = state
           for (const [origin, state] of Object.entries(previous.origins)) job.origins[origin] = state
           job.workspaceErrors = previous.workspaceErrors
+          job.abandonedOrigins = previous.abandonedOrigins
         }
+        if (job.abandonedOrigins) job.abandonedOrigins = job.abandonedOrigins.filter(origin => !Object.hasOwn(job.origins, origin))
         const save = async (changed: MyDeviceRemoval) => {
           guard(prepared)
           await updateLocal(key(job.personId), raw => { guard(prepared); return JSON.stringify([...parse(raw).filter(value => value.deviceId !== job.deviceId), changed]) })
@@ -98,5 +104,32 @@ export function useMyDeviceRemoval(core: ReturnType<typeof useAppCore>) {
       })
     } finally { pending.value = "" }
   }
-  return { jobs, pending, origins, prepare, remove, refresh }
+  async function abandonOrigin(input: PreparedDeviceRemoval, origin: string) {
+    if (pending.value) throw new Error("Another device removal action is pending")
+    const prepared = structuredClone(input), job = prepared.job
+    guard(prepared)
+    if (job.origins[origin]?.status !== "pending") throw new Error("Choose a pending server removal")
+    pending.value = job.deviceId
+    try {
+      await withLocalStateWriteLock(`my-device-removal:${job.personId}`, async () => {
+        guard(prepared)
+        const recordKey = key(job.personId), raw = await readLocal(recordKey)
+        const saved = parse(raw), current = saved.find(value => value.deviceId === job.deviceId)
+        if (JSON.stringify(current) !== JSON.stringify(job)) throw new Error("Recorded removal changed; review it again")
+        const next = structuredClone(job)
+        delete next.origins[origin]
+        next.abandonedOrigins = [...new Set([...(next.abandonedOrigins ?? []), origin])]
+        const archiveKey = `tincanban.device-removal-abandonment.v1.${crypto.randomUUID()}`
+        const audit = JSON.stringify({ personId: job.personId, signerDeviceId: job.signerDeviceId,
+          deviceId: job.deviceId, origin, previous: raw })
+        if (!await compareAndSwapLocal({ conditions: [{ key: recordKey, value: raw }, { key: archiveKey, value: null }],
+          writes: [{ key: recordKey, value: JSON.stringify(saved.map(value => value.deviceId === job.deviceId ? next : value)) },
+            { key: archiveKey, value: audit }] }, () => guard(prepared))) throw new Error("Recorded removal changed; review it again")
+      })
+      guard(prepared)
+      identityDevicePreferencesChanged(job.personId)
+      await refresh()
+    } finally { pending.value = "" }
+  }
+  return { jobs, pending, origins, prepare, remove, abandonOrigin, refresh }
 }

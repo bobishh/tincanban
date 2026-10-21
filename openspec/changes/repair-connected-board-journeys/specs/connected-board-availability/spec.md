@@ -55,6 +55,15 @@ A pending credential transition SHALL preserve its exact signed intent, keys and
 - **AND** retained reset evidence is preserved and removed connections cannot be reactivated by replaying their older observed preferences
 - **AND** fresh owner setup creates new scoped access that reaches admitted editors and visitors
 
+#### Scenario: Stop an abandoned server-removal attempt after reconnecting
+- **GIVEN** a retained failed server-removal phase and a current working Rusty connection
+- **WHEN** its initiating identity/device explicitly reviews and stops that exact phase
+- **THEN** its prior job is archived atomically and that origin is excluded from further retries
+- **AND** the current credentials, other origins and workspace revocation progress remain unchanged
+- **AND** history says server access is not confirmed revoked
+- **AND** a stale confirmation or changed identity cannot stop or resume a newer attempt
+- **AND** another server revocation requires a new explicit scope review
+
 ### Requirement: Unnamed identities and devices do not acquire invented names
 Fresh identity name entry SHALL start empty. The system SHALL NOT generate random human-readable names for identities or devices. Existing intentional names and signed identity records SHALL remain unchanged; old generated device labels SHALL be replaced only in presentation with useful device information.
 
@@ -101,6 +110,13 @@ The client SHALL establish public board visibility before resolving editor publi
 - **WHEN** the service temporarily fails and later recovers
 - **THEN** admitted changes retry and are confirmed by a verified scoped receipt
 - **AND** an obsolete board/source result cannot become the newly selected board's state
+
+#### Scenario: Admitted content changes while publication is being prepared
+- **GIVEN** a public board whose old-source comparison is pending
+- **WHEN** newer admitted content arrives and its debounce expires before that comparison finishes
+- **THEN** the stale preparation cannot publish and current content is scheduled with the normal debounce
+- **AND** source invalidation does not install a network-failure backoff or discard the queued update
+- **AND** ownership, identity, signature and receipt checks remain required
 
 ### Requirement: Connection status reflects working data exchange
 The system SHALL distinguish peer presence, local persistence and durable Rusty availability. It SHALL repair underlying channel churn rather than hide it with display debounce.

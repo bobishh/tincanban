@@ -2,6 +2,7 @@ import { computed, onScopeDispose, ref, watch } from "vue"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { boardRouteUrl } from "./boardRoute"
 import { changePublicAccess, deliverLatestPublicSnapshot, refreshPublicAccess, retryPublicAccess,
+  PublicBoardSourceChangedError,
   type PublicBoardAccessInput, type PublicBoardAccessOperations } from "./publicBoardAccessOperations"
 
 export type { PublicBoardAccessInput } from "./publicBoardAccessOperations"
@@ -70,9 +71,11 @@ function assertCurrent(input: PublicBoardAccessInput, boardId: string, workspace
   source?: { version: number; heads: string[] }) {
   const currentProfile = input.profile()
   if (!input.owner() || input.workspaceId() !== workspaceId || (input.boardId() ?? "") !== boardId ||
-      currentProfile?.identity.personId !== profile.identity.personId || currentProfile.device.deviceId !== profile.device.deviceId ||
-      source && (input.sourceVersion() !== source.version || canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(source.heads))) {
+      currentProfile?.identity.personId !== profile.identity.personId || currentProfile.device.deviceId !== profile.device.deviceId) {
     throw new Error("Board access or owner identity changed; retry the action")
+  }
+  if (source && (input.sourceVersion() !== source.version || canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(source.heads))) {
+    throw new PublicBoardSourceChangedError()
   }
 }
 function sourceIdentity(input: PublicBoardAccessInput) {

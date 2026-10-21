@@ -165,7 +165,13 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await editor.getByLabel("Body").fill("Second published description")
     await editor.getByRole("button", { name: "Save changes" }).click()
     if (await editDetail.count()) await editDetail.getByRole("button", { name: "Close detail" }).click()
-    await expect(reader.getByText("Second published description", { exact: true })).toBeVisible({ timeout: 30_000 })
+    try {
+      await expect(reader.getByText("Second published description", { exact: true })).toBeVisible({ timeout: 30_000 })
+    } catch (cause) {
+      const ownerPublication = await openPublication()
+      console.error("Owner publication after stalled update:", await ownerPublication.innerText())
+      throw cause
+    }
     await page.setViewportSize({ width: 390, height: 844 })
     panel = await openPublication()
     await expect(panel).toHaveAttribute("data-public-revision", "2", { timeout: 30_000 })

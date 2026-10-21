@@ -31,6 +31,7 @@ describe("public board owner access", () => {
   let boardId = ref("board-a")
   let workspaceId = ref("workspace-a")
   let sourceVersion = ref(1)
+  let sourceHeads = ref(["head-a"])
   let isOwner = ref(true)
   let document = shallowRef({ entities: {} })
   let profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
@@ -41,6 +42,7 @@ describe("public board owner access", () => {
     boardId = ref("board-a")
     workspaceId = ref("workspace-a")
     sourceVersion = ref(1)
+    sourceHeads = ref(["head-a"])
     isOwner = ref(true)
     document = shallowRef({ entities: {} })
     profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
@@ -63,7 +65,7 @@ describe("public board owner access", () => {
     return scope.run(() => usePublicBoardAccess({
       origin: "https://rusty.test", boardId: () => boardId.value, boardTitle: () => "Board A", workspaceId: () => workspaceId.value,
       sourceVersion: () => sourceVersion.value, document: () => document.value as never,
-      sourceHeads: () => ["head-a"],
+      sourceHeads: () => sourceHeads.value,
       owner: () => isOwner.value, profile: () => profile.value as never, debounceMs: 20,
     }))!
   }
@@ -87,6 +89,31 @@ describe("public board owner access", () => {
     await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
     expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ action: "update", expectedRevision: 4 })
     expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy).toBeUndefined()
+  })
+
+  it("Given publication preparation is pending, When a newer admitted source replaces it, Then discard stale preparation and publish current heads without delivery-failure backoff", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledOnce())
+    let finishComparison!: (changed: boolean) => void
+    mocks.compare.mockImplementationOnce(() => new Promise(resolve => { finishComparison = resolve })).mockResolvedValue(true)
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(mocks.compare).toHaveBeenCalledTimes(2))
+    const current = { entities: { body: "Current admitted content" } }
+    document.value = current
+    sourceHeads.value = ["head-b"]
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(20)
+    finishComparison(true)
+    await vi.advanceTimersByTimeAsync(20)
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ document: current, sourceHeads: ["head-b"], action: "update", expectedRevision: 4 })
+    expect(access.error.value).toBe("")
+    expect(access.revision.value).toBe(5)
   })
 
   it("advances policy generation only when the verified grant fingerprint changes", async () => {

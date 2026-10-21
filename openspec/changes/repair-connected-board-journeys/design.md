@@ -90,6 +90,16 @@ Preserve the actual multi-workspace credential-transfer acceptance test. Require
 
 ### Rusty configuration and runtime status
 
+The earlier explicit local reset preceded the deployed fix that also retires
+the per-device server-removal phase. Do not repeat Forget against a now working
+connection to remove that stale badge. Offer a separate reviewed local stop of
+the exact pending origin: archive the captured job, remove only that origin from
+retry scope, and retain an explicit unconfirmed-removal history entry. The same
+job lock and transactional comparison prevent a newer attempt or other identity
+from being overwritten. No server request or connection preference changes.
+An older open confirmation cannot revive the stopped origin; resuming it needs
+an additional explicit scope review.
+
 Board-level connection access comes from an owner-attested record delivered across participant identities; identity replication remains private. Editor/visitor views show the same configured service and truthful local durable-copy status. A visitor can read updates but cannot publish edits or configure storage. Only the owner changes board storage. Operator domain/CORS configuration remains separate from board permissions. Useful Rusty status must distinguish configured, waiting, reachable, current, blocked and unavailable from human peer presence.
 
 ### Activation and artifacts

@@ -1,6 +1,6 @@
 export type MyDeviceRemoval = { version: 1; personId: string; signerDeviceId: string; deviceId: string; name: string;
   workspaces: Record<string, "pending" | "removed">; workspaceTitles?: Record<string, string>; workspaceErrors?: Record<string, string>;
-  origins: Record<string, { status: "pending" | "removed"; error?: string }> }
+  origins: Record<string, { status: "pending" | "removed"; error?: string }>; abandonedOrigins?: string[] }
 type RemovalPorts = { ensureCurrent: () => void; save: (job: MyDeviceRemoval) => Promise<void>;
   removeWorkspaces: (ids: string[]) => Promise<void>; revokeOrigin: (origin: string) => Promise<void> }
 export const myDeviceRemovalsKey = (personId: string) => `tincanban.my-device-removals.v1.${personId}`

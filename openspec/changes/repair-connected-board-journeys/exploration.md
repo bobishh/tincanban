@@ -668,3 +668,38 @@ the currently active source seal expires on November 4. Extend guarded cleanup
 to Rusty's actual seals/health and retain the active plus distinct compatible
 rollback source/deployment pairs. This is a separate release-recovery gap from
 the already reclaimed 11.30 GB in the other three repositories.
+
+### Stop the superseded device-removal phase without resetting healthy access
+
+The old live badge belongs to `MyDeviceRemovalControl`'s identity-local job,
+not current board/profile replication. `forgetRustyOrigin` now atomically
+retires that origin from the job, but the user's earlier confirmed Forget ran
+before that correction. Repeating it would unnecessarily remove the healthy
+fresh connection. Reading a job supplies no authority to infer it was abandoned.
+
+Add an explicit reviewed stop of the selected pending server phase. Archive its
+exact prior record and remove only that origin from retry scope in one guarded
+local transaction; retain other scopes and the current connection. History must
+say remote access is unconfirmed. An already-open removal confirmation from
+before this stop must fail instead of reviving that origin. A later explicit
+additional-scope review can request removal again. Two regressions first failed
+on the missing action, then the stale-confirmation case failed when the old
+review resumed a stopped phase. All 21 focused logic checks now pass. Browser
+cancel/stop/reload plus the existing desktop/mobile retry journeys pass; the
+last focused stop journey takes 5.5 seconds. Actual owner action remains pending
+deployment, not a reason to alter working credentials now.
+
+### Publication source invalidation can consume a queued update
+
+CI 39628988046's WebKit trace shows the editor edit saved and visible in the
+owner, anonymous reader polls repeatedly receiving revision 1, and no update PUT.
+Owner management reads still succeed. A source change during owner preparation
+is a supported cause inference, not a directly recorded exception in that trace.
+The independently reproduced deterministic sequence is: hold comparison for
+source A, admit B, let B's debounce expire while A is running, then finish A.
+The stale-source guard correctly rejects A but its generic failure handler
+installs retry backoff, consuming B's queued normal delivery. Distinguish source
+invalidation from access/identity/transport failure and schedule the current
+admitted source normally. The regression is red before, green after; 67 related
+checks and the complete unchanged native WebKit edit/update/file/restart/withdraw
+journey pass (35.8 seconds). Authority and receipt checks remain unchanged.

@@ -146,6 +146,12 @@ credentials unchanged. Background setup reports the required action; it does not
 silently migrate permissions. Afterward an online Rusty can deliver board and
 photo changes with the other device closed.
 
+A failed device removal stays visible with its unfinished servers. If you have
+abandoned that removal, **Stop retrying this server** reviews and stops just that
+saved attempt on this device. Its history remains; server access is not claimed
+revoked, and the current Rusty connection is kept. Trying that server removal
+again requires a new review of the additional scope.
+
 The header and tab icon follow the active board's confirmed connections. Green
 means a live device channel or a successful Rusty replication pass within 45
 seconds. Yellow means checking, catching up, or no configured connections; red

@@ -4,6 +4,10 @@ import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { PublicBoardDeliveryPolicyCache, PublicBoardDeliveryPolicyEvidence } from "../public/publicDeliveryPolicy"
 import { canonicalizeJson } from "../domain/identity"
 
+export class PublicBoardSourceChangedError extends Error {
+  constructor() { super("Board source changed during publication preparation") }
+}
+
 export interface PublicBoardAccessInput {
   origin: string
   boardId: () => string | null | undefined
@@ -180,16 +184,18 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
     if (changed || policy) await publishUpdatedSnapshot(ctx, captured, policy, generation)
     if (sourceVersion !== ctx.input.sourceVersion()) ctx.state.syncQueued = true
   } catch (cause) {
-    if (generation === ctx.state.generation) {
-      ctx.error.value = cause instanceof Error ? cause.message : "Public delivery failed"
-      ctx.state.syncQueued = true
-      ctx.scheduleRetry()
-    }
+    if (generation === ctx.state.generation) retainPublicDeliveryForRetry(ctx, cause)
   } finally {
     ctx.state.operationRunning = false
     if (generation === ctx.state.generation) ctx.busy.value = false
     if (ctx.state.syncQueued && !ctx.withdrawn.value && !ctx.error.value) ctx.scheduleSync()
   }
+}
+function retainPublicDeliveryForRetry(ctx: PublicBoardAccessOperations, cause: unknown) {
+  ctx.state.syncQueued = true
+  if (cause instanceof PublicBoardSourceChangedError) return
+  ctx.error.value = cause instanceof Error ? cause.message : "Public delivery failed"
+  ctx.scheduleRetry()
 }
 async function hasProjectionChanged(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource) {
   const [{ hasLocalPublicBoardChanges }, { readChatContentRevision }] = await Promise.all([
