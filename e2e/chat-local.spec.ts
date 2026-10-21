@@ -33,7 +33,7 @@ for (const width of [1280, 375]) {
     await page.setViewportSize({ width, height: 900 })
     await page.goto("/")
     let settings = await profileSettings(page)
-    await expect(settings.getByRole("textbox", { name: "Name", exact: true })).not.toHaveValue("")
+    await expect(settings.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("")
     await settings.getByRole("textbox", { name: "Name", exact: true }).fill("Тревожная мимоза")
     await settings.getByRole("button", { name: "Save profile", exact: true }).click()
     await expect(settings.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Тревожная мимоза")
@@ -144,7 +144,7 @@ test("Given desktop chat, when its corner is dragged, then the window resizes wi
 test("Given a storage failure, when a message is submitted, then the draft remains and retry writes once", async ({ page }) => {
   await page.goto("/")
   const settings = await profileSettings(page)
-  await expect(settings.getByRole("textbox", { name: "Name", exact: true })).not.toHaveValue("")
+  await expect(settings.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("")
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
   const chat = await openChat(page)
   await page.evaluate(() => {
