@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs"
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base"
 import { ExportResultCode } from "@opentelemetry/core"
@@ -17,6 +17,68 @@ function config() {
 }
 
 describe("browser OTel SDK", () => {
+  it("Given split exports in flight, when the device opts out, then no remaining split body starts and only unsent records count as dropped", async () => {
+    const deliveries: Array<{ count: number; complete: (result: { code: ExportResultCode }) => void }> = []
+    const logs = {
+      export: (records: unknown[], complete: (result: { code: ExportResultCode }) => void) => { deliveries.push({ count: records.length, complete }) },
+      forceFlush: async () => {}, shutdown: async () => {},
+    }
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces: new InMemorySpanExporter() })
+    for (let index = 0; index < 8; index++) {
+      const error = new Error(`Failure ${index}`)
+      error.stack = `Error: Failure ${index}\n${"x".repeat(16300)}`
+      sdk.emit({ event: "sync.failed", detail: {}, level: "error", timestamp: Date.now(), exception: error })
+    }
+    const flushing = sdk.forceFlush()
+    await vi.waitFor(() => expect(deliveries).toHaveLength(2))
+    const sent = deliveries.reduce((count, delivery) => count + delivery.count, 0)
+    const closing = sdk.shutdown()
+    // Complete the already-started requests; opting out cannot retract them.
+    for (const delivery of deliveries.slice()) delivery.complete({ code: ExportResultCode.SUCCESS })
+    // Settle any mistakenly started bodies so a regression cannot strand the test.
+    for (const delivery of deliveries.slice(2)) delivery.complete({ code: ExportResultCode.SUCCESS })
+    await Promise.all([flushing, closing])
+    expect(deliveries).toHaveLength(2)
+    expect(sdk.exportState.dropped).toBe(8 - sent)
+    expect(sdk.exportState.queued).toBe(0)
+    expect(sdk.exportState.sending).toBe(0)
+  })
+
+  it("Given long multibyte errors, when logs and spans flush, then each OTLP body fits intake and all correlated failures arrive", async () => {
+    const requests: Array<{ bytes: number; path: string; payload: Record<string, unknown> }> = []
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on("data", chunk => chunks.push(Buffer.from(chunk)))
+      request.on("end", () => {
+        const data = Buffer.concat(chunks)
+        requests.push({ bytes: data.byteLength, path: request.url ?? "", payload: JSON.parse(data.toString("utf8")) as Record<string, unknown> })
+        response.writeHead(data.byteLength > 65_536 ? 413 : 200, { "Content-Type": "application/json" })
+        response.end("{}")
+      })
+    })
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
+    pendingServers.push(server)
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+    const sdk = new BrowserOtelSdk({ ...config(), logsEndpoint: `${endpoint}/v1/logs`, tracesEndpoint: `${endpoint}/v1/traces` }, () => {})
+    try {
+      for (let index = 0; index < 50; index++) {
+        const error = new Error(`Connection failed ${index}`)
+        error.stack = `Error: Connection failed ${index}\n${"🔥 at syntheticFrame (transport.ts:1:1)\n".repeat(470)}`
+        const startedAt = performance.now()
+        sdk.operation({ name: "sync.burst", attributes: { workspaceId: "board-test", entityId: `failure-${index}` }, startedAt, endedAt: startedAt + 1, exception: error })
+      }
+      await sdk.forceFlush()
+      expect(Math.max(...requests.map(request => request.bytes))).toBeLessThanOrEqual(65_536)
+      const logs = requests.filter(request => request.path.endsWith("logs")).flatMap(request => (request.payload.resourceLogs as Array<{ scopeLogs: Array<{ logRecords: unknown[] }> }>).flatMap(resource => resource.scopeLogs.flatMap(scope => scope.logRecords)))
+      const spans = requests.filter(request => request.path.endsWith("traces")).flatMap(request => (request.payload.resourceSpans as Array<{ scopeSpans: Array<{ spans: unknown[] }> }>).flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans)))
+      expect(logs).toHaveLength(50)
+      expect(spans).toHaveLength(50)
+      expect(sdk.exportState.dropped).toBe(0)
+      expect(sdk.exportState.queued).toBe(0)
+      expect(sdk.exportState.sending).toBe(0)
+    } finally { await sdk.shutdown() }
+  })
+
   it("Given a real exception and operation, when SDK records flush, then OTel resources, exception causes and generated trace IDs survive", async () => {
     const logs = new InMemoryLogRecordExporter()
     const traces = new InMemorySpanExporter()

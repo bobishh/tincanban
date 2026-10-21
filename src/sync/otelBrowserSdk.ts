@@ -5,6 +5,7 @@ import { ExportResultCode } from "@opentelemetry/core"
 import type { SpanExporter } from "@opentelemetry/sdk-trace-base"
 import { OTLPLogExporter } from "@opentelemetry/exporter-logs-otlp-http"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
+import { JsonLogsSerializer, JsonTraceSerializer } from "@opentelemetry/otlp-transformer"
 import { resourceFromAttributes } from "@opentelemetry/resources"
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions"
 import { BatchLogRecordProcessor, LoggerProvider, type LogRecordExporter } from "@opentelemetry/sdk-logs"
@@ -14,6 +15,7 @@ import type { TelemetryConfig } from "./telemetryConfig"
 import { capturedException } from "../domain/exceptionCapture"
 import { diagnosticErrorCode } from "./failureDiagnostic"
 import type { HttpDiagnosticSpan } from "../domain/httpDiagnostics"
+import { exportOtlpBatches } from "./otlpBodyBudget"
 
 export type DiagnosticInput = {
   event: string
@@ -105,6 +107,7 @@ function exporterConfig(config: TelemetryConfig, endpoint: string) {
   return {
     url: endpoint,
     timeoutMillis: 5000,
+    concurrencyLimit: 2,
     headers: {
       Authorization: `Bearer ${config.browserKey ?? ""}`,
       "X-TinSink-Project": config.project,
@@ -143,8 +146,8 @@ export class BrowserOtelSdk {
     const trackedLogs = {
       export: (records: Parameters<typeof logs.export>[0], callback: Parameters<typeof logs.export>[1]) => {
         if (this.closing) { callback({ code: ExportResultCode.SUCCESS }); this.onState(); return }
-        this.exportStarted(records.length)
-        logs.export(records, result => { this.exportFinished(records.length, result, "log"); callback(result) })
+        exportOtlpBatches(records, { serialize: group => JsonLogsSerializer.serializeRequest(group), exporter: logs, active: () => !this.closing,
+          started: count => this.exportStarted(count), finished: (count, result) => this.exportFinished(count, result, "log") }, callback)
       },
       forceFlush: () => logs.forceFlush(),
       shutdown: () => logs.shutdown(),
@@ -152,14 +155,15 @@ export class BrowserOtelSdk {
     const trackedTraces = {
       export: (spans: Parameters<typeof traces.export>[0], callback: Parameters<typeof traces.export>[1]) => {
         if (this.closing) { callback({ code: ExportResultCode.SUCCESS }); this.onState(); return }
-        this.exportStarted(spans.length)
-        traces.export(spans, result => { this.exportFinished(spans.length, result, "trace"); callback(result) })
+        exportOtlpBatches(spans, { serialize: group => JsonTraceSerializer.serializeRequest(group), exporter: traces, active: () => !this.closing,
+          started: count => this.exportStarted(count), finished: (count, result) => this.exportFinished(count, result, "trace") }, callback)
       },
       forceFlush: () => traces.forceFlush?.() ?? Promise.resolve(),
       shutdown: () => traces.shutdown(),
     }
-    this.loggerProvider = new LoggerProvider({ resource, processors: [new BatchLogRecordProcessor({ exporter: trackedLogs, scheduledDelayMillis: 2000, exportTimeoutMillis: 5000, maxExportBatchSize: 50, maxQueueSize: 512 })] })
-    this.tracerProvider = new WebTracerProvider({ resource, spanProcessors: [new BatchSpanProcessor(trackedTraces, { scheduledDelayMillis: 2000, exportTimeoutMillis: 5000, maxExportBatchSize: 50, maxQueueSize: 512 })] })
+    const batchOptions = { scheduledDelayMillis: 2000, exportTimeoutMillis: 5000, maxExportBatchSize: 50, maxQueueSize: 512 }
+    this.loggerProvider = new LoggerProvider({ resource, processors: [new BatchLogRecordProcessor({ exporter: trackedLogs, ...batchOptions })] })
+    this.tracerProvider = new WebTracerProvider({ resource, spanProcessors: [new BatchSpanProcessor(trackedTraces, batchOptions)] })
     this.logger = this.loggerProvider.getLogger("tincanban.browser")
     this.tracer = this.tracerProvider.getTracer("tincanban.browser", buildVersion)
   }

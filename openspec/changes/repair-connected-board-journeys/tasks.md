@@ -14,8 +14,8 @@
 ## 2. Repair board and service journeys
 
 - [x] 2.1 Repair directory spacing, compact actions, active badge and responsive window layout; existing functional browser cases passed and live c4 directory screenshot inspected.
-- [ ] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state.
-- [ ] 2.3 Complete the user-requested fresh Rusty setup: server reset is backed up and complete; explicitly forget frozen local Rusty bindings, preserve browser boards/profile/files and retained reset evidence, then reconnect from owner and verify editor delivery. This replaces further attempts to resume the old transition.
+- [x] 2.2 Give desktop Sync a useful participant/detail layout and distinct Rusty board state; live 494d owner/editor views show participant/detail columns and independent Synced board/profile storage states.
+- [x] 2.3 Complete the user-requested fresh Rusty setup: server reset backed up; owner local Forget archived old bindings/intent, fresh Connect succeeded, board/profile Synced, and distinct Codex/editor automatically received read/write access. Owner-offline exchange remains under 2.4/4.5.
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
 - [ ] 2.6 Fix live public intake routing/outcome and verify authorized end-to-end submission.
@@ -37,16 +37,16 @@
 ## 4. Verify and deliver
 
 - [ ] 4.1 Retain meaningful behavior scenarios/units; no app launches solely for labels, icons or styles.
-- [ ] 4.2 Complete production follow-up for previously deployed Quick note keyboard/save/retry, ITEM removal and shared ink focus.
+- [x] 4.2 Complete production follow-up for previously deployed Quick note keyboard/save/retry, ITEM removal and shared ink focus; isolated production save/reload and failed-save draft/retry passed, live 494d typing/shared contour inspected and probe cleared without saving, card header has no ITEM.
 - [ ] 4.3 Deploy completed app/service fixes through their appropriate CI pipelines; verify actual running versions.
-- [ ] 4.4 Add Rusty to the real issues board from the user's owner identity (clicks authorized); confirm distinct Codex editor visibility.
+- [x] 4.4 Add Rusty to the real issues board from the user's owner identity (clicks authorized); Bo/owner and Codex/editor confirmed Synced on deployed 494d at 14:37 UTC.
 - [ ] 4.5 Verify real participant data exchange via Rusty with owner sessions closed; include read-only visitor behavior.
 - [ ] 4.6 User personally verifies deployed browser behavior before any ticket moves to Done.
 - [x] 4.9 Update the vulnerable Markdown parser blocking CI; rendering/audit checks passed and c4 containing markdown-it 15.0.3 is deployed.
 - [ ] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage.
 - [x] 4.8 Repair duplicate image pull after Rusty writer shutdown; verify prepared image before handoff and restore previous writer on activation failure. Record blue/green constraints and options before a storage architecture change.
 
-- [ ] 4.10 Select the sealed automation cohort from its actual packaging attempt after a partial CI rerun; preserve SHA/run/reader validation.
+- [x] 4.10 Select the sealed automation cohort from its actual packaging attempt after a partial CI rerun; actual c4 producer attempts covered by eighteen focused checks; 494d frontend and automation both deployed with SHA/run/reader validation intact.
 
 ## New reports
 
@@ -64,6 +64,9 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 - [x] Find current Swift best-practice skills and lint/format/concurrency tools from primary sources; installation was not requested.
 
 - [ ] Fix unnamed photo-only profile save without requiring a name or changing name-choice provenance; caught by the complete Rusty phone photo-delivery scenario.
+
+- [ ] Old per-device Rusty-removal badge remains after explicit local Forget even though fresh board/profile replication now works. Retain its audit evidence but show the abandoned server phase truthfully.
+- [ ] Fit OTLP batches to the deployed 64 KiB body contract. Live probe: single record 200, 869147-byte long-error batch 413; focused SDK regression generated a 917693-byte request. Byte splitting, bounded concurrency, multibyte exception limits and in-flight opt-out are implemented; 51 focused tests and all ten browser telemetry journeys pass. Deployment still pending.
 
 ### Actions cleanup evidence (2026-10-21)
 

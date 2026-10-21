@@ -9,6 +9,39 @@ const endpoint = "https://telemetry.invalid/v1/logs"
 const tracesEndpoint = "https://telemetry.invalid/v1/traces"
 const browserKey = "public-browser-fixture-key-0123456789"
 
+test("Given a burst of long sync failures, when diagnostics flush through a 64 KiB intake, then every failure arrives and chat remains usable", async ({ page }) => {
+  const received: LogRecord[] = []
+  const requestBytes: number[] = []
+  await page.route(endpoint, async route => {
+    const bytes = route.request().postDataBuffer()!.byteLength
+    requestBytes.push(bytes)
+    if (bytes > 65_536) return route.fulfill({ status: 413, body: "Request body exceeds the 65536-byte limit" })
+    received.push(...logRecords(route.request().postDataJSON() as OtlpLogs))
+    await route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+  })
+  await page.route(tracesEndpoint, route => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }))
+  await page.route("https://telemetry.invalid/events", route => route.fulfill({ status: 200, contentType: "application/json", body: '{"accepted":1}' }))
+  await page.goto("/")
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+  await expect.poll(() => received.length).toBeGreaterThan(0)
+  await page.evaluate(async () => {
+    const { record, retryTelemetry } = await import("/src/sync/telemetry.ts")
+    for (let index = 0; index < 50; index++) {
+      const error = new Error(`Connection failed ${index}`)
+      error.stack = `Error: Connection failed ${index}\n${"at syntheticFrame (transport.ts:1:1)\n".repeat(470)}`
+      record("sync.burst.failed", { error, entityId: `failure-${index}` }, "error")
+    }
+    retryTelemetry()
+  })
+  await expect.poll(() => received.filter(item => body(item) === "sync.burst.failed").length, { timeout: 15_000 }).toBe(50)
+  expect(Math.max(...requestBytes)).toBeLessThanOrEqual(65_536)
+  expect(new Set(received.filter(item => body(item) === "sync.burst.failed").map(item => attribute(item, "entity.id"))).size).toBe(50)
+  await send(page, "chat-survives-error-burst")
+  await page.reload()
+  const chat = await send(page, "after-error-burst-reload")
+  await expect(chat.getByText("chat-survives-error-burst", { exact: true })).toBeVisible()
+})
+
 function logRecords(payload: OtlpLogs): LogRecord[] {
   return (payload.resourceLogs ?? []).flatMap(resource => (resource.scopeLogs ?? []).flatMap(scope => scope.logRecords ?? []))
 }

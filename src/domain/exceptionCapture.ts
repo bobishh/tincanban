@@ -8,6 +8,22 @@ const maxCauseDepth = 8
 const maxMessageLength = 2_048
 const maxStackLength = 16_384
 const safeType = /^[A-Za-z_$][A-Za-z0-9_$.:]{0,127}$/
+const encoder = new TextEncoder()
+
+function boundedUtf8(value: string, limit: number): string {
+  if (encoder.encode(value).byteLength <= limit) return value
+  const budget = limit - encoder.encode("…").byteLength
+  if (budget < 0) return ""
+  let bytes = 0
+  let end = 0
+  for (const character of value) {
+    const size = encoder.encode(character).byteLength
+    if (bytes + size > budget) break
+    bytes += size
+    end += character.length
+  }
+  return `${value.slice(0, end)}…`
+}
 
 function property(value: object, key: string): unknown {
   try { return Reflect.get(value, key) } catch { return undefined }
@@ -63,7 +79,7 @@ function boundedText(value: string | undefined, limit: number): string | undefin
     const code = character.charCodeAt(0)
     return code === 9 || code === 10 || code === 13 || code >= 32 && code !== 127
   }).join("")
-  return sanitized.length <= limit ? sanitized : `${sanitized.slice(0, limit - 1)}…`
+  return boundedUtf8(sanitized, limit)
 }
 
 function causeValues(value: unknown): unknown[] {
@@ -86,11 +102,13 @@ export function capturedException(error: unknown): CapturedException {
   let size = 0
 
   const append = (text: string) => {
-    if (size >= maxStackLength) return
-    const remaining = maxStackLength - size
-    const chunk = text.length <= remaining ? text : `${text.slice(0, Math.max(0, remaining - 1))}…`
+    const separatorBytes = lines.length ? 1 : 0
+    const remaining = maxStackLength - size - separatorBytes
+    if (remaining <= 0) return
+    const chunk = boundedUtf8(text, remaining)
+    if (!chunk) return
     lines.push(chunk)
-    size += chunk.length
+    size += encoder.encode(chunk).byteLength + separatorBytes
   }
   const visit = (value: unknown, depth: number, root: boolean): void => {
     if (depth >= maxCauseDepth || size >= maxStackLength) return
@@ -115,6 +133,6 @@ export function capturedException(error: unknown): CapturedException {
   return {
     "exception.type": rootType,
     ...(rootMessage === undefined ? {} : { "exception.message": rootMessage }),
-    ...(lines.length ? { "exception.stacktrace": lines.join("\n").slice(0, maxStackLength) } : {}),
+    ...(lines.length ? { "exception.stacktrace": boundedUtf8(lines.join("\n"), maxStackLength) } : {}),
   }
 }

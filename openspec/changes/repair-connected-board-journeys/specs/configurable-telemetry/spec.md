@@ -18,3 +18,22 @@ Under existing deployment configuration, device consent, level and sampling, the
 - **GIVEN** diagnostics consent is disabled or a queued verbose-only export is disabled before dispatch
 - **WHEN** further mesh events occur
 - **THEN** disabled collection/detail is not exported and local application writes remain independent
+
+### Requirement: Diagnostic requests fit the intake contract
+The client SHALL split standard OTLP log and trace batches using their serialized
+UTF-8 body size so each request fits TinSink's 65536-byte limit. Record count
+alone SHALL NOT be treated as a byte limit. Exception text SHALL retain bounded,
+redacted context without breaking multibyte characters. Diagnostic delivery SHALL
+remain independent of board/chat durability.
+
+#### Scenario: Burst of long connection failures
+- **GIVEN** fifty failures with long exception stacks and correlated spans
+- **WHEN** diagnostics flush through an intake enforcing the deployed byte limit
+- **THEN** each body fits the limit and all records/spans reach an available intake
+- **AND** chat still saves and survives reload
+
+#### Scenario: Failed delivery and opt-out during a split export
+- **GIVEN** a bounded number of split requests are already in flight
+- **WHEN** the device opts out
+- **THEN** no unsent body starts and only unsent records count as dropped
+- **AND** a transport failure releases the unsent tail without counting previously successful requests as dropped

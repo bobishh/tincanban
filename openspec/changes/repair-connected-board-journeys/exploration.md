@@ -461,3 +461,89 @@ investigation before changing limits. HTTP 200 alone is not durable row proof.
 The new private-board Settings view contains no public-delivery failure/retry;
 the live c4 directory has compact separate actions, content padding and an inline
 Active badge. Screenshots were inspected. Board tickets remain Doing.
+
+### TinSink memory pressure: confirmed cause and live repair
+
+ClickHouse 26.8.11.7-lts runs with 2 GiB / one CPU. `system.metric_log`
+contains 2109 columns. `system.part_log` identified repeated horizontal metric
+merges peaking near 1.54 GiB with code 241, while failed OTel inserts required
+only about 1.6 MiB. A live 33-part merge contained only 110536723 uncompressed
+bytes; this was per-column pipeline overhead rather than a large telemetry
+payload. Reducing merge block rows did not help. Aligning Compact/vertical byte
+thresholds at 128 MiB also left this merge horizontal; capping its fan-in at four
+still reached 1.27 GiB. All those trial overrides were reset.
+
+The deployed version's `MergeTask.cpp::chooseMergeAlgorithm` requires a Wide
+result, at least eleven ordinary columns, and both row and byte thresholds.
+Its default 131072-row gate keeps smaller Wide metric merges horizontal. At
+14:10:07 UTC the operator set only this table's
+`vertical_merge_algorithm_min_rows_to_activate = 0`, retaining the normal part
+format, collection, data, retention, and container memory limit. The first
+successful vertical merges peaked at 14–25 MiB. Over the first five minutes,
+eleven metric merges completed with zero errors; small Compact horizontal
+merges peaked below 76 MiB. No other table reported a failed merge in that window.
+The collector emitted no errors after the change. Fifty actual c4 browser
+warnings at 14:11:18 UTC reached `otel.otel_logs`, with workspace/peer/source
+revision correlation, in addition to continued live Rusty records.
+
+The existing table metadata is 310 KiB. The targeted ALTER requires a 512 KiB
+query-size limit for that operator session only; the global/user limit remains
+unchanged. `operations/metric-log-merge-budget.sql` records the exact change and
+rollback. Published infrastructure `a3c8251` declares the matching metric-log-only
+XML setting and accessory config mount. The current container also has that XML;
+`extract-from-config` confirms it. A future accessory recreation needs the new
+infrastructure pin; that delivery remains to be completed with the pending Rusty
+pipeline change. No server restart, table deletion, collection disablement, or
+telemetry filter was used.
+
+### Latest client CI precondition repair
+
+Verify 39611380824 finished with fifteen successful jobs. Its only failed job
+was core 1/4: three chat scenarios asserted an automatic nonempty Name before
+the user's requested explicit-name flow. Both shared preconditions now expect
+blank; chosen-name/message reload persistence and failed-write draft/retry
+scenarios remain. The full nine-case chat suite passed in 28.2 seconds. An AST
+and text audit covered all e2e Name/value assertions; no further automatic-name
+preconditions remain. Commit `494d566` starts Verify 39614133884. Live owner
+reset/reconnect still waits for this verified client release.
+
+### Live fresh Rusty reconnect and the diagnostic body contract
+
+All sixteen 494d566 Verify jobs passed. Frontend 39617669841 and automation
+39617669938 succeeded; `/health` reports source 494d566, SDK 5b02ed1 and cohort
+87787e4e63bb50700915ab5e36521fb9596158dbf581491fad291157f44579c9.
+After checking there were no drafts, the authorized Bo/owner issues-board tab
+loaded that release. Explicit Forget archived its old origin-bound settings and
+operation, then fresh Connect to the existing ingest origin succeeded. Board and
+profile show Synced with advancing receipts. The distinct Codex/editor IAB tab
+automatically received the connection and shows Synced / Board access · read and
+write. Screenshots of both views were inspected. Old per-device removal progress
+still displays the abandoned server phase; this is separate stale presentation.
+Owner-offline/visitor exchange and the second real board remain unproven. The
+existing Chrome permission covers only Rusty on this board; expanded permission
+for the remaining test was requested. The board ticket was updated and stays Doing.
+
+ClickHouse repair continued without merge errors: thirty-four successful metric
+merges through 14:30 UTC, peak under 93 MiB. A tagged single-record production
+diagnostic returned HTTP 200 and was found in `otel.otel_logs`. However, actual
+browser incidents continued locally without regular collector rows. SQLite
+admission showed only fifty records against a 50000-record hourly budget, so
+project quota was not the cause. TinSink's source enforces a 65536-byte request
+body. A synthetic fifty-record long-stack batch produced 869147 bytes and the
+live route returned 413; an existing-SDK focused regression produced 917693 bytes.
+This proves an additional export-contract defect. It does not establish the
+exact payload of every earlier missing browser request.
+
+The client now sizes batches with the official OTLP JSON serializers, splits
+oversized bodies, and retains the official authenticated HTTP exporters. Each
+signal has at most two export requests; after a transport failure the unsent tail
+is counted as dropped, while completed successes are preserved. Later SDK batches
+can try again. Existing per-request timeout, processor timeout, record budget,
+record-count batching, incident sampling and server limits stay unchanged.
+Exception message/stack limits now count UTF-8 bytes, retaining whole characters
+and existing redaction. Opt-out stops unsent split bodies, with no double counting
+of the queued records already abandoned by shutdown. A focused opt-out regression
+failed before this cancellation guard; all 51 relevant units now pass. All ten
+browser telemetry journeys pass, including a fifty-error burst through a 64 KiB
+intake, chat reload, outage, access rejection and opt-out. Types and targeted lint
+pass. This exporter change is not deployed at this checkpoint.

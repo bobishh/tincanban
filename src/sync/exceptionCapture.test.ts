@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest"
 import { capturedException } from "../domain/exceptionCapture"
 
 describe("OpenTelemetry exception capture", () => {
+  it("Given multibyte exception text, when captured, then message and combined cause stack obey byte budgets without broken characters", () => {
+    const error = new Error("Ошибка🔥".repeat(2000), { cause: new Error("Причина🔥".repeat(2000)) })
+    error.stack = "Ошибка🔥\n".repeat(4000)
+    const captured = capturedException(error)
+    expect(new TextEncoder().encode(captured["exception.message"]).byteLength).toBeLessThanOrEqual(2048)
+    expect(new TextEncoder().encode(captured["exception.stacktrace"]).byteLength).toBeLessThanOrEqual(16384)
+    expect(captured["exception.stacktrace"]).toMatch(/^Ошибка🔥/)
+    expect(JSON.stringify(captured)).not.toContain("�")
+  })
+
   it("Given an Error with a cause, When captured, Then type, readable message, stack, and bounded cause details use standard keys", () => {
     const cause = new TypeError("inner parse failed at field company")
     const outer = new Error("workspace restore failed after 3 attempts", { cause })
