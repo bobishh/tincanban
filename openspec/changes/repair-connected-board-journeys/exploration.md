@@ -6,6 +6,43 @@ Date: 2026-10-21. Status: explore. No application change in this investigation h
 
 Keep one tracked list; add subsequent reports. Understand the real scenarios before implementing more migrations or recovery UI. Deliver fixes through CI. Never move tickets to Done until the user personally verifies the deployed browser behavior.
 
+## Publication preparation: presentation invalidation versus admitted contents
+
+Follow-up, 2026-10-21 19:15 UTC. Verify 39654435024 failed its publication
+lifecycle after three confirmed attempts. Its trace retains the error but not
+the differing source counters/heads; the exact triggering field is unproven.
+An isolated diagnostic run of that unchanged scenario succeeds; its deliberately
+injected avatar command changes both heads and the projection counter, correctly
+aborting the first attempt.
+
+A separate deterministic failure is confirmed: `refreshIdentity` in
+`stateActions.ts` increments `docVersion` without changing the admitted workspace
+document. `usePublicBoardAccess` treated that presentation invalidation as a
+different publication source. A pending-publication test fails before the fix
+with unchanged heads. The repaired guard binds the actual admitted heads and a
+captured owner-authority fingerprint (person/device IDs, public keys and device
+certificate), instead of using the presentation counter as content authority.
+The counter still drives reactive updates and comparison/policy caches. Capturing
+the fingerprint before awaits also rejects in-place authority changes; three
+new identity-key/device-key/certificate cases fail before that check is added.
+
+Evidence: 34 owner/delivery/coordinator cases plus five delivery-policy cases
+pass. The complete publication/file/update/restart/withdrawal browser journey
+passes Chromium and WebKit against the actual local Rusty binary, with an added
+identity refresh during file staging. It verifies unchanged heads despite an
+advanced presentation counter, while retaining the intentional content-change
+abort and anonymous 404 before publication. Existing confirmation, signature,
+management authority, retry count and timeout checks remain intact. This is a
+verified independent false-positive repair, not proof of the original CI event's
+exact cause or of real private-board owner-offline replication.
+
+Fresh production diagnostics at 19:06 UTC: this editor receives valid Mac
+heartbeats and admitted history; the phone times out. Rusty inventory for Ecky
+issues and Job search returns HTTP 403 / Scope unavailable, consistent with the
+post-reset bindings still requiring fresh owner setup. The actual issues board
+shows Rusty synced. Export queue/preparing/dropped are zero, with advancing send
+time. These observations do not close the owner-offline or sustained-churn gates.
+
 Latest steering: the user explicitly requested clearing Rusty and adding it from
 scratch, replacing further attempts to resume the old credential transition.
 Server reset completed at 2026-10-21 13:11:57 UTC: stopped the single writer,

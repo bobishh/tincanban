@@ -56,7 +56,7 @@
 Append new user reports here or to the relevant section. Do not discard earlier unfinished scope when new reports arrive.
 
 - [ ] Rusty Check server appears to do nothing after a fast successful response. Preserve a visible checked result and useful pending/failure feedback; source currently restores the identical Storage available text. Replication remains the priority.
-- [ ] Release blocker in 8224d06 CI 39654435024: public-board lifecycle aborts all three confirmed attempts with Board source changed during publication preparation. Identify the changed source evidence before changing guards or retries; do not raise retries/timeouts or bypass publication confirmation.
+- [ ] Release blocker in 8224d06 CI 39654435024: public-board lifecycle aborts all three confirmed attempts with Board source changed during publication preparation. Exact original source mismatch remains unrecorded. A deterministic presentation-only invalidation false positive is repaired separately: actual admitted heads plus a captured owner key/certificate binding govern source validity. Thirty-nine logic/policy cases and Chromium/WebKit native Rusty publication lifecycles pass, including both a real content-change abort and an unchanged-head identity refresh. Deploy and observe CI before closing; no retry/timeout increase or confirmation bypass.
 
 - [x] Round badges render with square ink frames in production: longhand CSS repair passed minification and functional proofs; live c4 directory/board screenshot shows round column counts.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.

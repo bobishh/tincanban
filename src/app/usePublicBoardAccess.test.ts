@@ -27,6 +27,7 @@ vi.mock("../public/publicDeliveryPolicy", () => ({
 }))
 
 describe("public board owner access", () => {
+  type ProfileFixture = { identity: { personId: string; publicKey?: string; name?: string }; device: { deviceId: string; publicKey?: string }; certificate?: { signature: string } }
   let scope = effectScope()
   let boardId = ref("board-a")
   let workspaceId = ref("workspace-a")
@@ -34,7 +35,7 @@ describe("public board owner access", () => {
   let sourceHeads = ref(["head-a"])
   let isOwner = ref(true)
   let document = shallowRef({ entities: {} })
-  let profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
+  let profile = ref<ProfileFixture>({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -45,7 +46,7 @@ describe("public board owner access", () => {
     sourceHeads = ref(["head-a"])
     isOwner = ref(true)
     document = shallowRef({ entities: {} })
-    profile = ref({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
+    profile = ref<ProfileFixture>({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
     mocks.read.mockReset().mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
     mocks.compare.mockReset().mockResolvedValue(false)
     mocks.publish.mockReset().mockResolvedValue({ revision: 5, hash: "next-hash", url: "https://app.test/boards/board-a" })
@@ -262,10 +263,60 @@ describe("public board owner access", () => {
     await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
     const operation = access.setPublic(true)
     await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    sourceHeads.value = ["head-b"]
     sourceVersion.value++
     await nextTick()
     finishPublish({ revision: 1, hash: "stale", url: "https://app.test/boards/board-a" })
     await expect(operation).rejects.toThrow(/changed/)
+    expect(access.published.value).toBe(false)
+  })
+
+  it("Given publication in flight, when identity presentation refreshes without changing board heads, then keep the current publication", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementationOnce(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    // refreshIdentity invalidates state projections even when the admitted CRDT is unchanged.
+    profile.value.identity.name = "Updated display name"
+    sourceVersion.value++
+    await nextTick()
+    finishPublish({ revision: 1, hash: "current", url: "https://app.test/boards/board-a" })
+    await expect(operation).resolves.toBeUndefined()
+    expect(access.published.value).toBe(true)
+    expect(access.revision.value).toBe(1)
+    expect(access.error.value).toBe("")
+  })
+
+  it.each(["identity key", "device key", "certificate"])("Given publication in flight, when the same owner's %s changes, then reject captured authority even without a projection invalidation", async field => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementationOnce(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    if (field === "identity key") profile.value.identity.publicKey = "replacement-identity-key"
+    else if (field === "device key") profile.value.device.publicKey = "replacement-device-key"
+    else profile.value.certificate = { signature: "replacement-certificate" }
+    finishPublish({ revision: 1, hash: "stale", url: "https://app.test/boards/board-a" })
+    await expect(operation).rejects.toThrow(/owner identity changed/)
+    expect(access.published.value).toBe(false)
+  })
+
+  it("Given publication in flight, when admitted heads change without a projection invalidation, then reject the stale snapshot", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false })
+    let finishPublish!: (value: { revision: number; hash: string; url: string }) => void
+    mocks.publish.mockImplementationOnce(() => new Promise(resolve => { finishPublish = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const operation = access.setPublic(true)
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
+    sourceHeads.value = ["head-b"]
+    finishPublish({ revision: 1, hash: "stale", url: "https://app.test/boards/board-a" })
+    await expect(operation).rejects.toThrow("Board source changed during publication preparation")
     expect(access.published.value).toBe(false)
   })
 

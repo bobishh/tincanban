@@ -120,6 +120,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     // then a fresh owner confirmation may publish the current snapshot.
     let injectedSourceChange: { before: string[]; after: string[] } | undefined
     let injectionStarted = false
+    let presentationRefresh: { before: string[]; after: string[]; beforeVersion: number; afterVersion: number } | undefined
     await page.route(`${origin}/v1/public/boards/${fixture.boardId}/files`, async route => {
       if (!injectionStarted && route.request().method() === "PUT") {
         injectionStarted = true
@@ -129,6 +130,14 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
           const before = workspaceHeads(app.getActiveDoc()!)
           await app.executeCommandAsync({ kind: "setMemberAvatar", avatarData: null, changedAt: new Date().toISOString() })
           return { before, after: workspaceHeads(app.getActiveDoc()!) }
+        })
+      } else if (route.request().method() === "PUT" && !presentationRefresh) {
+        presentationRefresh = await page.evaluate(async () => {
+          const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+          const { workspaceHeads } = await import("/src/crdt.ts")
+          const before = workspaceHeads(app.getActiveDoc()!), beforeVersion = app.docVersion.value
+          await app.refreshIdentity()
+          return { before, after: workspaceHeads(app.getActiveDoc()!), beforeVersion, afterVersion: app.docVersion.value }
         })
       }
       await route.continue()
@@ -144,6 +153,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       }, { timeout: 30_000 }).not.toBe("pending")
       if (await revision() === "1") break
       const errors = await panel.getByRole("alert").allTextContents()
+      if (presentationRefresh) throw new Error("Identity presentation refresh invalidated an unchanged board snapshot")
       expect(errors.length).toBeGreaterThan(0)
       expect(errors.every(error => error === sourceChangedMessage)).toBe(true)
       if (injectedSourceChange && !injectedGuardAborted) {
@@ -164,6 +174,9 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
     }
     expect(injectedGuardAborted).toBe(true)
+    expect(presentationRefresh).toBeDefined()
+    expect(presentationRefresh!.afterVersion).toBeGreaterThan(presentationRefresh!.beforeVersion)
+    expect(presentationRefresh!.after).toEqual(presentationRefresh!.before)
     await expect.poll(revision, { timeout: 30_000 }).toBe("1")
     await expect(panel).toContainText("Changes sync automatically.")
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")

@@ -18,12 +18,13 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
     const boardId = currentBoardId(), workspaceId = input.workspaceId(), profile = input.profile(), document = input.document()
     if (!input.owner() || !boardId || !workspaceId || !profile || !document) throw new Error("Current owner, board, or workspace data is unavailable")
     const generation = state.generation
+    const ownerBinding = ownerAuthorityBinding(profile)
     const sourceVersion = input.sourceVersion(), sourceHeads = [...input.sourceHeads()].sort()
     return { boardId, workspaceId, profile, document, sourceVersion, sourceHeads,
       ensureCurrent: () => {
         if (state.disposed || state.generation !== generation) throw new Error("Owner board operation is no longer current")
-        assertCurrent(input, boardId, workspaceId, profile,
-          options.requireUnchangedSource === false ? undefined : { version: sourceVersion, heads: sourceHeads })
+        assertCurrent(input, boardId, workspaceId, ownerBinding,
+          options.requireUnchangedSource === false ? undefined : sourceHeads)
       } }
   }
   const scheduleSync = (delay = input.debounceMs ?? 350) => {
@@ -67,14 +68,19 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
     refresh: ctx.refresh, retry: () => retryPublicAccess(ctx), setPublic: (enabled: boolean) => changePublicAccess(ctx, enabled) }
 }
 
-function assertCurrent(input: PublicBoardAccessInput, boardId: string, workspaceId: string, profile: LocalProfile,
-  source?: { version: number; heads: string[] }) {
+function ownerAuthorityBinding(profile: LocalProfile) {
+  return canonicalizeJson([profile.identity.personId, profile.identity.publicKey ?? null,
+    profile.device.deviceId, profile.device.publicKey ?? null, profile.certificate ?? null])
+}
+function assertCurrent(input: PublicBoardAccessInput, boardId: string, workspaceId: string, ownerBinding: string,
+  sourceHeads?: string[]) {
   const currentProfile = input.profile()
   if (!input.owner() || input.workspaceId() !== workspaceId || (input.boardId() ?? "") !== boardId ||
-      currentProfile?.identity.personId !== profile.identity.personId || currentProfile.device.deviceId !== profile.device.deviceId) {
+      !currentProfile || ownerAuthorityBinding(currentProfile) !== ownerBinding) {
     throw new Error("Board access or owner identity changed; retry the action")
   }
-  if (source && (input.sourceVersion() !== source.version || canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(source.heads))) {
+  // Projection invalidation also covers identity presentation; admitted heads bind workspace contents.
+  if (sourceHeads && canonicalizeJson([...input.sourceHeads()].sort()) !== canonicalizeJson(sourceHeads)) {
     throw new PublicBoardSourceChangedError()
   }
 }
