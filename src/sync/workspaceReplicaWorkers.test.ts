@@ -130,10 +130,10 @@ describe("workspace Rusty writer refresh cohort helper", () => {
   it("Given a same Rusty scope with a different epoch or service pin, When discovering, Then reject rather than skip it", async () => {
     descriptions["changed-pin"] = { storage: { ...rusty, keyEpoch: 3 } }
     await expect(discoverWorkspaceReplicaWorkers({ readWorkspaceDoc: () => document(automation("changed-pin", "executor-changed-pin")),
-      getCurrentProfile: () => profile }, config, async () => {})).rejects.toThrow(/epoch|pin|storage/i)
+      getCurrentProfile: () => profile }, config, async () => {})).rejects.toThrow(/epoch 3.*expects 2/i)
     descriptions["changed-pin"] = { storage: { ...rusty, servicePublicKey: "B".repeat(43) } }
     await expect(discoverWorkspaceReplicaWorkers({ readWorkspaceDoc: () => document(automation("changed-pin", "executor-changed-pin")),
-      getCurrentProfile: () => profile }, config, async () => {})).rejects.toThrow(/epoch|pin|storage/i)
+      getCurrentProfile: () => profile }, config, async () => {})).rejects.toThrow(/different Rusty service identity/i)
   })
 
   it("Given unsupported instance refresh, When discovering targets, Then fail before refreshing any worker", async () => {

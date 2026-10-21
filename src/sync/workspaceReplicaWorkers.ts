@@ -116,12 +116,20 @@ async function inspectAutomationRoute(profile: LocalProfile, route: AutomationRo
   const storage = inspected.description.storage
   if (!storage) throw new Error("Automation instance does not expose its authenticated Rusty storage pin")
   if (storage.origin !== config.origin || storage.scopeId !== config.scopeId) return undefined
-  if (!accepted.some(candidate => candidate.workspaceId === workspaceId && candidate.origin === config.origin && candidate.scopeId === config.scopeId &&
-    storage.keyEpoch === candidate.keyEpoch && storage.servicePublicKey === candidate.servicePublicKey)) {
-    throw new Error("Automation instance Rusty storage epoch or service pin does not match this scope")
-  }
+  assertWorkerStorageVersion(storage, config, accepted)
   return { origin: identity.origin, workspaceId, definitionId: route.definition.id,
     executorPersonId: identity.personId, integrationId: identity.integrationId }
+}
+
+function assertWorkerStorageVersion(storage: NonNullable<AutomationInstanceDescription["storage"]>, config: BlindReplicaConfig,
+  accepted: readonly BlindReplicaConfig[]) {
+  const candidates = accepted.filter(candidate => candidate.workspaceId === config.workspaceId &&
+    candidate.origin === config.origin && candidate.scopeId === config.scopeId)
+  if (candidates.some(candidate => storage.keyEpoch === candidate.keyEpoch && storage.servicePublicKey === candidate.servicePublicKey)) return
+  const sameService = candidates.filter(candidate => candidate.servicePublicKey === storage.servicePublicKey)
+  if (!sameService.length) throw new Error("Automation is connected to a different Rusty service identity. Verify its server before retrying.")
+  const epochs = [...new Set(sameService.map(candidate => candidate.keyEpoch))].sort((left, right) => left - right)
+  throw new Error(`Automation uses Rusty key epoch ${storage.keyEpoch}; this connection expects ${epochs.join(" or ")}. Update automation storage access before retrying.`)
 }
 
 async function rejectUnroutedAutomationGrants(workspaceId: string, typedGrantIds: Set<string>, executorIds: Set<string>, guard: GuardAsync) {

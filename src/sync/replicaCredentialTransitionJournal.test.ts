@@ -254,3 +254,23 @@ it("Given signed device removal completed before its outer job saved, when retry
   expect(discovery).not.toHaveBeenCalled()
   expect(await f.repository.getReplicaConfigurations(f.profile.identity.personId)).toEqual(before)
 })
+
+
+it("Given a validated retained removal journal, when inspecting recovery progress, then preserve the freeze and credentials while reporting confirmed phases", async () => {
+  const f = await fixture()
+  const { readPendingRustyOperation } = await import("./pendingRustyOperation")
+  await f.journalModule.beginCredentialTransitionJournal(f.pending, f.profile, () => {})
+  const checking = await readPendingRustyOperation(f.profile, f.pending.origin)
+  expect(checking).toMatchObject({ kind: "device-revocation", deviceId: "removed-device",
+    progress: { phase: "checking-automations", scopeCount: 1, confirmedScopes: 0, personConfirmed: false } })
+  await beginAndCaptureWorkspace(f)
+  expect(await readPendingRustyOperation(f.profile, f.pending.origin)).toMatchObject({ progress: { phase: "revoking-device" } })
+  await f.journalModule.confirmCredentialTransitionPerson(f.pending, f.profile,
+    await personCapability(f, ["removed-device"]), () => {})
+  const updating = await readPendingRustyOperation(f.profile, f.pending.origin)
+  expect(updating).toMatchObject({ progress: { phase: "updating-storage", personConfirmed: true } })
+  const { readReplicaCredentialFreeze } = await import("./replicaCredentialFreeze")
+  expect(await readReplicaCredentialFreeze(f.profile.identity.personId, f.pending.origin)).toEqual(f.pending)
+  expect(JSON.stringify(updating)).not.toContain(f.pending.resources[0]!.next.readToken)
+  expect(JSON.stringify(updating)).not.toContain(f.pending.resources[0]!.next.contentKey)
+})

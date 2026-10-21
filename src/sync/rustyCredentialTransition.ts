@@ -20,6 +20,7 @@ import { activateCredentialTransitionJournal, beginCredentialTransitionJournal, 
 import { withLocalStateWriteLock } from "../localStateLock"
 import type { PrivateReplicaConfig } from "./blindReplication"
 import { completeScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
+import { traceDiagnosticOperation } from "./telemetry"
 
 type TransitionApp = ReturnType<typeof useTincanban>
 function pin(config: PrivateReplicaConfig) {
@@ -41,13 +42,15 @@ export async function revokeRustyIdentityDevice(app: TransitionApp, origin: stri
     const active = app.getCurrentProfile()
     if (!active || identityBinding(active) !== identityBinding(profile)) throw new Error("Identity changed during Rusty access removal")
   }
-  return withLocalStateWriteLock(`rusty-device-revocation:${owner}:${origin}`,
-    () => revokeLockedIdentityDevice({ app, origin, profile, deviceId, guardIdentity }))
+  return traceDiagnosticOperation("rusty.device-removal", { "server.address": new URL(origin).host },
+    () => withLocalStateWriteLock(`rusty-device-revocation:${owner}:${origin}`,
+      () => revokeLockedIdentityDevice({ app, origin, profile, deviceId, guardIdentity })))
 }
 
 type TransitionSeed = { app: TransitionApp; origin: string; profile: LocalProfile; deviceId: string; guardIdentity: () => void }
+type WorkerCohort = { scopeId: string; workers: Parameters<typeof captureCredentialTransitionWorkers>[3] }
 type TransitionPhase = TransitionSeed & { pending: ReplicaCredentialFreeze;
-  service: Awaited<ReturnType<typeof discoverBlindKeeper>>; guard: () => Promise<void> }
+  service: Awaited<ReturnType<typeof discoverBlindKeeper>>; guard: () => Promise<void>; preparedCohorts?: WorkerCohort[] }
 
 async function revokeLockedIdentityDevice(seed: TransitionSeed) {
   const { app, profile, origin, deviceId, guardIdentity } = seed
@@ -112,9 +115,11 @@ async function prepareTransitionPhase(seed: TransitionSeed, journal: CredentialT
     await upgradeTransitionWriters(seed, configurations)
     await guard()
   }
-  const pending = journal?.freeze ?? await prepareReplicaCredentialFreeze(profile, origin, service.servicePublicKey, deviceId, guardIdentity)
+  let preparedCohorts: WorkerCohort[] | undefined
+  const pending = journal?.freeze ?? await prepareReplicaCredentialFreeze(profile, origin, service.servicePublicKey, deviceId, guardIdentity,
+    async configurations => { preparedCohorts = await inspectTransitionWorkers(seed, configurations, guard) })
   if (pending.servicePublicKey !== service.servicePublicKey) throw new Error("Rusty service pin changed during access removal")
-  return { ...seed, service, guard, pending }
+  return { ...seed, service, guard, pending, ...(preparedCohorts ? { preparedCohorts } : {}) }
 }
 
 function assertTransitionService(service: Awaited<ReturnType<typeof discoverBlindKeeper>>) {
@@ -132,20 +137,31 @@ async function upgradeTransitionWriters(seed: TransitionSeed, configurations: Pr
   }
 }
 
-async function captureTransitionWorkers(phase: TransitionPhase, initial: CredentialTransitionJournal) {
-  const { app, pending, profile, guard, guardIdentity } = phase
-  let journal = initial
-  // Discover the complete cohort before freezing any Worker or changing policy.
-  for (const { previous: config } of pending.resources) {
-    if (config.purpose === "identity") continue
-    const routes = await discoverWorkspaceReplicaWorkers(app, config, guard)
-    const captured = []
-    for (const route of routes) {
-      await assertAutomationStorageRotationSupported(route.origin)
-      const before = await readAutomationInstance(profile, route, { ensureCurrent: guard })
-      captured.push({ route, before: before.proof })
+async function inspectTransitionWorkers(seed: TransitionSeed, configurations: readonly PrivateReplicaConfig[], guard: () => Promise<void>) {
+  return traceDiagnosticOperation("rusty.device-removal.preflight", { "server.address": new URL(seed.origin).host }, async () => {
+    const cohorts: WorkerCohort[] = []
+    for (const config of configurations) {
+      if (config.purpose === "identity") continue
+      const routes = await discoverWorkspaceReplicaWorkers(seed.app, config, guard)
+      const workers: WorkerCohort["workers"] = []
+      for (const route of routes) {
+        await assertAutomationStorageRotationSupported(route.origin)
+        await guard()
+        const before = await readAutomationInstance(seed.profile, route, { ensureCurrent: guard })
+        workers.push({ route, before: before.proof })
+      }
+      cohorts.push({ scopeId: config.scopeId, workers })
     }
-    journal = await captureCredentialTransitionWorkers(pending, profile, config.scopeId, captured, guardIdentity)
+    return cohorts
+  })
+}
+
+async function captureTransitionWorkers(phase: TransitionPhase, initial: CredentialTransitionJournal) {
+  const { pending, profile, guard, guardIdentity } = phase
+  let journal = initial
+  const cohorts = phase.preparedCohorts ?? await inspectTransitionWorkers(phase, pending.resources.map(resource => resource.previous), guard)
+  for (const cohort of cohorts) {
+    journal = await captureCredentialTransitionWorkers(pending, profile, cohort.scopeId, cohort.workers, guardIdentity)
   }
   return journal
 }

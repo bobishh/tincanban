@@ -24,6 +24,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     await connectWorkspaceReplica(tincanban, originInput, workspaceId, guard)
     await lifecycle.reload(owner, epoch)
   }
+  const resumeRustyOperation = createSavedRustyOperationAction(tincanban, state, runtime, lifecycle)
   async function updateDeviceAccess(origin: string, workspaceId: string) {
     if (busy.value) throw new Error("Wait for current Rusty sync to finish")
     const guard = runtime.captureSession(workspaceId)
@@ -115,8 +116,33 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     return exportApprovedAutomation(tincanban, config, workerIdentity, configuration)
   }
   const compactWorkspaceHistory = createHistoryCompactionAction(tincanban, state, runtime, lifecycle, automaticHistoryCompactions)
-  return { attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
+  return { attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
     exportAutomationAccess, compactWorkspaceHistory }
+}
+
+function createSavedRustyOperationAction(tincanban: ReturnType<typeof useTincanban>, state: PrivateReplicationState,
+  runtime: Runtime, lifecycle: ReplicationLifecycle) {
+  const { busy, error, notice } = state
+  return async function resumeRustyOperation(origin: string) {
+    if (busy.value) throw new Error("Wait for current Rusty sync to finish")
+    const owner = lifecycle.identity(), epoch = lifecycle.epoch(), guard = runtime.captureSession()
+    busy.value = true
+    error.value = ""
+    notice.value = ""
+    try {
+      const { resumePendingRustyOperation } = await import("./pendingRustyOperation")
+      await resumePendingRustyOperation(tincanban, origin, guard)
+      guard()
+      notice.value = "Saved Rusty operation completed."
+    } catch (cause) {
+      error.value = cause instanceof Error ? cause.message : "Rusty recovery remains pending"
+      throw cause
+    } finally {
+      busy.value = false
+      await lifecycle.reload(owner, epoch)
+    }
+    await lifecycle.syncNow()
+  }
 }
 
 async function recordReplicaPreference(owner: string, config: BlindReplicaConfig, removed = false) {

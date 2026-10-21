@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
-import type { BlindReplicationController } from "../app/blindReplication"
+import type { BlindReplicationController, RustyRemovalProgress } from "../app/blindReplication"
 import { profileDeliveryStates, replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
 import RustyMark from "./RustyMark.vue"
 import RustyCredentialConflictRecovery from "./RustyCredentialConflictRecovery.vue"
@@ -10,6 +10,16 @@ const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)
 const updatingOrigin = ref("")
+const savedOperations = computed(() => props.controller.pendingRustyOperations?.value ?? [])
+const removalSteps: Record<RustyRemovalProgress["phase"], string> = {
+  "checking-automations": "Check automations connected to this server",
+  "pausing-automations": "Pause automation writes",
+  "revoking-device": "Confirm removal of this device from the server",
+  "updating-storage": "Update access for the saved boards and profile",
+  "updating-automations": "Update automation access",
+  "activating": "Activate the confirmed connection settings",
+  "confirming-snapshots": "Confirm fresh board and profile copies",
+}
 const records = computed(() => props.controller.configs.value.filter(config => config.workspaceId === props.workspaceId))
 const boardConflicts = computed(() => props.controller.preferenceConflicts.value.filter(conflict =>
   conflict.workspaceIds.includes(props.workspaceId)))
@@ -44,6 +54,14 @@ async function updateDeviceAccess(origin: string) {
       <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
       <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="pending || controller.busy.value" :recover="controller.recoverCredentialConflict" />
     </div>
+    <section v-for="operation in owner ? savedOperations : []" :key="`operation/${operation.origin}`" class="rusty-conflict" aria-label="Saved Rusty operation">
+      <p>{{ operation.origin }}: {{ operation.kind === 'device-revocation' ? 'Device removal is unfinished. Board and profile sync are paused on this server.' : 'Connection recovery is unfinished.' }} Saved data and the original operation are retained.</p>
+      <p v-if="operation.kind === 'device-revocation'">Device: {{ controller.registeredDevices?.value.find(device => device.deviceId === operation.deviceId)?.displayName || 'Previously registered device' }}</p>
+      <p v-if="operation.progress">Next step: {{ removalSteps[operation.progress.phase] }}.</p>
+      <details v-if="operation.progress"><summary>Recovery details</summary><p>{{ operation.progress.confirmedScopes }} / {{ operation.progress.scopeCount }} storage updates confirmed. {{ operation.progress.frozenWorkers }} / {{ operation.progress.workerCount }} automations paused; {{ operation.progress.rotatedWorkers }} updated. Device revocation confirmed: {{ operation.progress.personConfirmed ? 'yes' : 'no' }}.</p></details>
+      <p v-if="operation.signerDeviceId !== controller.currentDeviceId.value">Continue on the device that started this operation.</p>
+      <button class="button" type="button" :disabled="pending || controller.busy.value || operation.signerDeviceId !== controller.currentDeviceId.value" @click="run(() => controller.resumeRustyOperation(operation.origin))">Resume Rusty operation</button>
+    </section>
     <ul v-if="records.length" class="rusty-connections">
       <li v-for="config in records" :key="`${config.origin}/${config.scopeId}`">
         <div class="rusty-connection"><strong class="technical-value">{{ config.origin }}</strong><span class="reading-explanation">{{ replicaStatus(config, controller.statuses.value[replicaKey(config)], controller.now.value) }}</span>

@@ -173,7 +173,7 @@ export async function readPendingRustyCredentialConflict(profile: LocalProfile, 
   if (new TextEncoder().encode(raw).byteLength > 32 * 1024 * 1024) throw new Error('Conflict recovery journal exceeds storage bound')
   const journal = await validateJournal(JSON.parse(raw), profile)
   const next = journal.freeze.proposal.next
-  return { origin, scopeId: next.scopeId, workspaceIds: next.purpose === 'identity' ? [] : [next.workspaceId],
+  return { origin, signerDeviceId: journal.freeze.signerDeviceId, scopeId: next.scopeId, workspaceIds: next.purpose === 'identity' ? [] : [next.workspaceId],
     identityState: next.purpose === 'identity', activated: Boolean(journal.activated) }
 }
 

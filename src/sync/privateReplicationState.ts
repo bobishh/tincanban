@@ -3,6 +3,7 @@ import type { BlindReplicaConfig,IdentityReplicaConfig,PrivateReplicaConflictSum
 import type { ReplicaHealth } from "./replicationHealth"
 import type { RegisteredDevice } from "../domain/model"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
+import type { PendingRustyOperation } from "./pendingRustyOperation"
 
 export function createReplicationState() {
   return {
@@ -12,6 +13,7 @@ export function createReplicationState() {
     profilePermissionUpdates: ref<string[]>([]),
     registeredDevices: ref<RegisteredDevice[]>([]), pendingDeviceRevocations: ref<string[]>([]), revokedDeviceAccess: ref<string[]>([]),
     currentDeviceId: ref(""),
+    pendingRustyOperations: ref<PendingRustyOperation[]>([]),
     deviceSyncIssues: ref<Record<string, string>>({}),
     statuses: ref<Record<string, ReplicaHealth>>({}), now: ref(Date.now()),
     attachmentCoverage: ref<Record<string, AttachmentCoverageStatus[]>>({}),
@@ -29,6 +31,7 @@ export function clearReplicationSessionState(state: ReturnType<typeof createRepl
   state.pendingDeviceRevocations.value = []
   state.revokedDeviceAccess.value = []
   state.currentDeviceId.value = ""
+  state.pendingRustyOperations.value = []
   state.statuses.value = {}
   state.deviceSyncIssues.value = {}
   state.attachmentCoverage.value = {}

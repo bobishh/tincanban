@@ -203,3 +203,45 @@ coverage, adapters and production build before npm audit rejected markdown-it
 15.0.2 (GHSA-gfr2-rv44-r23c and GHSA-vfgh-jcmw-g37q). Patch 15.0.3 is the published
 fix; nine rendering tests pass and the updated lockfile audit reports zero
 vulnerabilities. A new CI release is required; this is not a deployed fix yet.
+
+### Continued recovery and CI evidence (2026-10-21)
+
+Owner retried the original saved removal on the issues board. It failed again
+with the same combined automation storage epoch/service-pin error; its saved
+intent remained pending. No successful unfreeze or participant replication is
+established. The recovery view now describes the validated journal's phase and
+offers resuming that original operation on its original signing device. It does
+not expose captured keys or delete the journal. Detailed worker errors distinguish
+an epoch mismatch from a different service identity.
+
+New removal preparation performs read-only automation inspection before creating
+the origin freeze. The inspected credential bindings must still match at commit;
+normal replication progress during inspection is retained. Regression tests
+confirmed the old ordering froze replication on inspection failure. Focused
+recovery/freeze/journal/worker/controller checks pass (74 tests). Existing retained
+operations still resume their original journal; this preventive ordering repair
+alone does not recover the live owner's transition.
+
+CI 39592370531 fails the real same-identity credential-transfer scenario in
+`complete-device-state.spec.ts`. Both attempts fail to receive private Rusty
+settings; traces also contain stream-concurrency rejections. A local rerun can
+pass while still logging those rejections, so the defect is intermittent. At
+11:45:29.656 UTC the owner browser logs three workspace stream-limit rejections
+for peer qz0YtH; one millisecond later its heartbeat reports an empty pairing
+header. The stream rejection handler closes its send side without an ACK. The
+empty header is therefore an observed consequence of that rejection sequence,
+not evidence of a corrupt saved board.
+
+The deployed stylesheet contains invalid `border-image:!important` declarations:
+Lightning CSS 1.33.0 drops `none` from the shorthand. That leaves global square
+ink active on count and presence circles. The source longhand
+`border-image-source:none` survives production minification. Compiler validation,
+production build and existing desktop/mobile board filtering/moving scenarios
+pass; a production screenshot confirms circular count and presence outlines.
+
+Current connection setup takes a single workspace ID and enrolls only that
+board. Authenticated mesh metadata carries board-specific access to authorized
+participants, independently of private identity settings. A report that Rusty
+appears on only one of two boards requires checking owner configuration on both
+against received editor access; automatic enrollment of all owner boards is not
+implemented or established as the cause of this particular report.

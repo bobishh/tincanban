@@ -139,3 +139,36 @@ it("Given an obsolete writer changes retired storage during a freeze, When readi
   expect(await f.local.readLocal(legacyKey)).toBe(legacy)
   expect(await f.local.readLocal(stateKey)).toBe(before)
 })
+
+it("Given automation preflight fails before revocation, when preparing a new transition, then keep ordinary replication available and retain original credentials", async () => {
+  const f = await fixture(), owner = f.profile.identity.personId
+  const preflight = vi.fn(async (configs: readonly unknown[]) => {
+    expect(configs).toEqual([f.config])
+    await expect(f.freeze.assertReplicaCredentialsUnfrozen(owner, f.config)).resolves.toBeUndefined()
+    throw new Error("Automation storage does not match")
+  })
+  await expect(f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey,
+    "removed-device", () => {}, preflight)).rejects.toThrow("Automation storage does not match")
+  expect(preflight).toHaveBeenCalledOnce()
+  await expect(f.freeze.assertReplicaCredentialsUnfrozen(owner, f.config)).resolves.toBeUndefined()
+  expect(await f.repository.getReplicaConfigurations(owner)).toEqual([f.config])
+})
+
+it("Given credentials change during automation preflight, when freezing would commit, then reject stale preparation and retain the concurrent settings", async () => {
+  const f = await fixture(), owner = f.profile.identity.personId
+  const changed = { ...f.config, writeToken: f.config.readToken }
+  await expect(f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey,
+    "removed-device", () => {}, async () => { await f.repository.setReplicaPreference(owner, changed) })).rejects.toThrow(/changed|retry/i)
+  await expect(f.freeze.assertReplicaCredentialsUnfrozen(owner, changed)).resolves.toBeUndefined()
+  expect((await f.repository.getReplicaConfigurations(owner))[0]?.writeToken).toBe(changed.writeToken)
+})
+
+it("Given ordinary replication advances during preflight, when freezing after successful checks, then retain its newest progress without rejecting unchanged credentials", async () => {
+  const f = await fixture(), owner = f.profile.identity.personId
+  const original = await f.repository.getPrivateReplicaProgress(owner, f.config)
+  const advanced = { ...original, cursor: 9, generation: original.generation + 1 }
+  const pending = await f.freeze.prepareReplicaCredentialFreeze(f.profile, f.config.origin, f.config.servicePublicKey,
+    "removed-device", () => {}, async () => { await f.repository.persistPrivateReplicaState(owner, f.config, original.generation, advanced) })
+  expect(pending.resources[0]!.previous.cursor).toBe(9)
+  expect(await f.repository.getPrivateReplicaProgress(owner, f.config, pending)).toEqual(advanced)
+})

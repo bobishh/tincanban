@@ -38,15 +38,14 @@ export function createDeviceAccessRefresh(tincanban: ReturnType<typeof useTincan
     const root = await defaultStorage.loadPersonalRoot()
     if (!isCurrent(owner, epoch)) return
     registeredDevices.value = root?.identity.personId === owner ? Object.values(root.devices).map(value => structuredClone(value)) : []
-    const origins = [...new Set([...configs.value.filter(config => !config.boardAccess), ...identityConfigs.value].map(config => config.origin))]
-    const pending = await Promise.all(origins.map(async origin => {
-      const { readCredentialTransitionJournal } = await import("./replicaCredentialTransitionJournal")
-      if (!isCurrent(owner, epoch)) return undefined
-      const journal = await readCredentialTransitionJournal(profile, origin)
-      return journal?.freeze.revokedDeviceId ? `${origin}|${journal.freeze.revokedDeviceId}` : undefined
-    }))
+    const origins = [...new Set([...configs.value.filter(config => !config.boardAccess), ...identityConfigs.value,
+      ...state.preferenceConflicts.value].map(config => config.origin))]
+    const { readPendingRustyOperation } = await import("./pendingRustyOperation")
+    const operations = await Promise.all(origins.map(origin => readPendingRustyOperation(profile, origin)))
     if (!isCurrent(owner, epoch)) return
-    pendingDeviceRevocations.value = pending.filter((value): value is string => !!value)
+    state.pendingRustyOperations.value = operations.filter(operation => operation !== undefined)
+    pendingDeviceRevocations.value = operations.flatMap(operation => operation?.kind === "device-revocation"
+      ? [`${operation.origin}|${operation.deviceId}`] : [])
     await refreshRevocations(profile, owner, epoch)
   }
   return { refresh: refreshDeviceAccess, reset: () => { loadedDeviceAccessOrigins = new Set() } }

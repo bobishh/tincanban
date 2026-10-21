@@ -16,7 +16,7 @@ export type BlindReplicationController = ReturnType<typeof useBlindReplication>
 export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) {
   const state = createReplicationState()
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
   let identity = ""
   let session = 0
   let running: Promise<void> | undefined
@@ -96,7 +96,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     })
     return running
   }
-  const { attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
+  const { attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, revoke, remove,
     exportAutomationAccess, compactWorkspaceHistory } = createPrivateReplicationActions(tincanban, state, runtime, {
       identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow,
     }, automaticHistoryCompactions)
@@ -130,8 +130,8 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   })
   onBeforeUnmount(() => { disposed = true; stop(); clearInterval(timer); clearInterval(healthClock); stopWorkspace(); stopChat(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
-    attach, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices,
+    attach, resumeRustyOperation, updateDeviceAccess, revokeIdentityDevice, recoverCredentialConflict, exportAutomationAccess, compactWorkspaceHistory,
     remove, syncNow, fetchAttachment }
 }
 

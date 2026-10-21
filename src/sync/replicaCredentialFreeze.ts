@@ -22,7 +22,8 @@ function assertFreezeProfile(raw: string | null, profile: LocalProfile) {
 
 /** Freeze every known scope before person-wide revocation. Existing queues and original credentials remain intact. */
 export async function prepareReplicaCredentialFreeze(profile: LocalProfile, origin: string, servicePublicKey: string,
-  revokedDeviceId: string, guard: () => void): Promise<ReplicaCredentialFreeze> {
+  revokedDeviceId: string, guard: () => void,
+  preflight?: (configurations: readonly PrivateReplicaConfig[]) => Promise<void>): Promise<ReplicaCredentialFreeze> {
   profile = structuredClone(profile)
   origin = blindOrigin(origin)
   const personId = profile.identity.personId
@@ -45,11 +46,7 @@ export async function prepareReplicaCredentialFreeze(profile: LocalProfile, orig
     const transitionKey = key.replace("tincanban.replica-credential-freeze.v1.", "tincanban.replica-credential-transition.v1.")
     const transition = await readLocal(transitionKey)
     if (transition !== null) throw new Error("Finish fresh-epoch confirmation for the previous credential transition first")
-    // Capture the authoritative source before deriving the candidate set; CAS rejects even a concurrent progress write.
-    const sourceRaw = await readLocal(privateReplicaStateStorageKey(personId))
-    const wire = await exportPrivateReplicaState(personId)
-    const plan = await planPrivateReplicaImport(personId, wire)
-    const configurations = (await getPrivateReplicaConfigurations(personId)).filter(config => config.origin === origin)
+    let configurations = (await getPrivateReplicaConfigurations(personId)).filter(config => config.origin === origin)
     if ((await getPrivateReplicaConflictSummaries(personId)).some(conflict => conflict.origin === origin)) {
       throw new Error("Resolve conflicting Rusty credentials before revoking a device")
     }
@@ -58,6 +55,18 @@ export async function prepareReplicaCredentialFreeze(profile: LocalProfile, orig
     }
     for (const config of configurations) {
       if (config.purpose !== "identity" && await readReplicaWriterUpgrade(personId, config)) throw new Error("Finish the pending writer policy transition first")
+    }
+    const bindings = (configs: readonly PrivateReplicaConfig[]) => configs.map(config => privateReplicaBinding(personId, config)).sort()
+    const preparedBindings = bindings(configurations)
+    await preflight?.(structuredClone(configurations))
+    guard()
+    // Normal replication can advance while remote checks run. Capture progress only after those checks.
+    const sourceRaw = await readLocal(privateReplicaStateStorageKey(personId))
+    const wire = await exportPrivateReplicaState(personId)
+    const plan = await planPrivateReplicaImport(personId, wire)
+    configurations = (await getPrivateReplicaConfigurations(personId)).filter(config => config.origin === origin)
+    if (canonicalizeJson(preparedBindings) !== canonicalizeJson(bindings(configurations))) {
+      throw new Error("Private credentials changed before freeze; retry required")
     }
     const random = () => encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32)))
     const resources = configurations.map(previous => {

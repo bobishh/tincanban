@@ -48,6 +48,10 @@
 
 Append new user reports here or to the relevant section. Do not discard earlier unfinished scope when new reports arrive.
 
+- [ ] Round badges render with square ink frames in production; verify count/presence circles after CSS minification.
+- [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.
+- [ ] Red CI: repair real same-identity Rusty credential transfer under multi-workspace contention; preserve its functional acceptance scenario.
+
 ### Actions cleanup evidence (2026-10-21)
 
 Deleted 840 obsolete artifacts, 11,299,821,020 bytes (10.5238 GiB). Preserved eight current/rollback release artifacts (223,218,463 bytes). Cleanup published in tincanban `076915e`, gonzo-yuppie `1f66337`, cultiwars `a58f3cc`. Dry-run and real runs succeeded in all three repositories. Actual runs: [tincanban](https://github.com/bobishh/tincanban/actions/runs/39581820965), [gonzo](https://github.com/bobishh/gonzo-yuppie/actions/runs/39581825746), [cultiwars](https://github.com/bobishh/cultiwars/actions/runs/39581829717). Diagnostic retention one day; sealed release retention 90 days with live/current/rollback protection. Already uploaded source artifacts retain their previous November 3 expiry; next complete release creates new cohorts with 90-day retention. No application deployment was performed by cleanup.
