@@ -26,6 +26,7 @@ async function enrollDevice(hostPage: Page, recipient: Page) {
   await join.getByRole("button", { name: "Add this device", exact: true }).click()
   await host.getByRole("button", { name: "Approve device", exact: true }).click()
   await expect(join.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(host.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
   await join.getByRole("button", { name: "Close", exact: true }).click()
   await host.getByRole("button", { name: "Close", exact: true }).click()
 }
@@ -48,6 +49,10 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
   const browser = await (process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const phone = await context.newPage()
+  const ingressFailures: string[] = []
+  for (const browserPage of [page, phone]) browserPage.on("console", message => {
+    if (/Mesh stream concurrency limit exceeded|Pairing header missing or too large/.test(message.text())) ingressFailures.push(message.text())
+  })
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   const hostProfile = await profile(page)
@@ -106,6 +111,7 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
     expect(received.count).toBe(1)
     expect(received).toMatchObject({ hasConfig: true, hasPrivateCredentials: true, cursor: 0, lastUploaded: "" })
     expect(received.capability).toEqual(issuedCapability)
+    expect(ingressFailures).toEqual([])
     await expect(hostPanel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
   } finally {
     await context.close(); await browser.close(); await rusty.close()

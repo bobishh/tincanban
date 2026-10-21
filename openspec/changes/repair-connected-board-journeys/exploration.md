@@ -245,3 +245,26 @@ participants, independently of private identity settings. A report that Rusty
 appears on only one of two boards requires checking owner configuration on both
 against received editor access; automatic enrollment of all owner boards is not
 implemented or established as the cause of this particular report.
+
+Owner issues-board inspection confirms no configured Rusty entry, only Add
+Rusty, while the retained Valiant Squirrel removal is still pending. Thus the
+absence on this board precedes editor delivery; a new setup is blocked by the
+same origin-wide freeze. This does not establish configuration on every other
+board, nor successful recovery of this one.
+
+The transport candidate separates bounded header waits from payload admission.
+Native WASM inspects the bounded pairing header before requesting a payload
+reservation; header bytes share the existing 32-MiB peer budget and two payload
+frames remain the cap. A separate finite header-wait allowance prevents idle
+responses from occupying both payload slots. Legacy WASM retains conservative
+full-frame accounting. Two regressions fail before the change and pass after;
+44 transport tests, three native ingress tests and app types pass. The real
+Chromium/mobile WebKit private-credential scenario completes in 18.3 seconds
+with zero concurrency/header-missing warnings on either page; its baseline
+passed while emitting 13 matching warnings.
+
+That scenario also exposed an enrollment helper race: it closed the host after
+only the recipient displayed completion. It now waits for both actual terminal
+confirmations. The functional credential/capability/progress assertions remain;
+no timeout increase or test removal was used. Production mesh stability and
+owner-offline participant replication still require deployed verification.
