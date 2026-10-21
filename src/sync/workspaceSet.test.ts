@@ -434,9 +434,11 @@ describe("incremental workspace control plane", () => {
 
 
 describe("rejected document isolation", () => {
-  it("Given sync debugging and an interrupted incoming stream, When the frame fails, Then its trace identifies a network failure", async () => {
+  it("Given consented sync diagnostics and an interrupted incoming stream, When the frame fails, Then its trace identifies a network failure", async () => {
     clearMeshTrace()
     const record = vi.spyOn(await import("./telemetry"), "record").mockImplementation(() => {})
+    const configModule = await import("./telemetryConfig")
+    const config = vi.spyOn(configModule, "telemetryConfig").mockReturnValue({ ...configModule.telemetryConfig(), enabled: true })
     const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window")
     const stream = { read: async () => { throw new MeshNetworkError("private peer endpoint") },
       send: vi.fn(), closeSend: vi.fn(async () => {}) }
@@ -459,6 +461,7 @@ describe("rejected document isolation", () => {
       await session.close()
       setMeshTraceVerboseLogging(false)
       record.mockRestore()
+      config.mockRestore()
       if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow)
       else Reflect.deleteProperty(globalThis, "window")
     }
