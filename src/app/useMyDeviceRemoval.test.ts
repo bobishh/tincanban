@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { effectScope, ref, toRaw } from "vue"
 import { IDBFactory } from "fake-indexeddb"
+import type * as DeviceRemovalActions from "./myDeviceRemovalActions"
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
-async function fixture() {
+async function fixture(loadActions?: () => Promise<typeof DeviceRemovalActions>) {
   vi.stubGlobal("indexedDB", new IDBFactory())
   vi.resetModules()
   const { useMyDeviceRemoval } = await import("./useMyDeviceRemoval")
@@ -23,9 +24,77 @@ async function fixture() {
     },
   } }
   const scope = effectScope()
-  const controller = scope.run(() => useMyDeviceRemoval(core as never))!
+  const controller = scope.run(() => useMyDeviceRemoval(core as never, loadActions))!
   return { controller, core, calls, useMyDeviceRemoval, scope, online: () => { offline = false }, changeIdentity: () => { personId = "other-owner" } }
 }
+
+it("Given a saved pending removal, when startup restores its record, then show its exact scope without loading the optional action executor", async () => {
+  const load = vi.fn(async () => { throw new Error("Action module unavailable") })
+  const f = await fixture(load)
+  const { writeLocal } = await import("../localDb")
+  await writeLocal("tincanban.my-device-removals.v1.test-owner", JSON.stringify([{ version: 1, personId: "test-owner",
+    signerDeviceId: "current", deviceId: "old", name: "Old device", workspaces: { board: "pending" },
+    origins: { "https://offline.example": { status: "pending", error: "Server offline" } } }]))
+  await f.controller.refresh()
+  expect(f.controller.jobs.value[0]?.origins["https://offline.example"]?.error).toBe("Server offline")
+  expect(load).not.toHaveBeenCalled()
+  expect(f.calls).toEqual([])
+  f.scope.stop()
+})
+
+it("Given an explicit removal review waiting for its action module, when identity changes, then reject before reading a new identity's removal scope", async () => {
+  let release!: () => void
+  const gated = new Promise<void>(resolve => { release = resolve })
+  const load = vi.fn(async () => { await gated; return import("./myDeviceRemovalActions") })
+  const f = await fixture(load)
+  const preparing = f.controller.prepare("old")
+  try {
+    expect(load).toHaveBeenCalledOnce()
+    f.changeIdentity()
+    release()
+    await expect(preparing).rejects.toThrow("Identity changed")
+    expect(f.core.sync.removableDeviceWorkspaces).not.toHaveBeenCalled()
+    expect(f.calls).toEqual([])
+  } finally { release(); await preparing.catch(() => {}); f.scope.stop() }
+})
+
+it("Given removal actions still loading, when their owning view is disposed, then reject without starting the reviewed operation", async () => {
+  let release!: () => void
+  const gated = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture(async () => { await gated; return import("./myDeviceRemovalActions") })
+  const preparing = f.controller.prepare("old")
+  f.scope.stop()
+  release()
+  await expect(preparing).rejects.toThrow("Identity changed")
+  expect(f.core.sync.removableDeviceWorkspaces).not.toHaveBeenCalled()
+  expect(f.calls).toEqual([])
+})
+
+it("Given the action module is ready, when identity changes in the next microtask, then review cannot capture that new identity after its lazy-load guard", async () => {
+  const f = await fixture(() => Promise.resolve(module))
+  const module = await import("./myDeviceRemovalActions")
+  const preparing = f.controller.prepare("old")
+  queueMicrotask(f.changeIdentity)
+  await expect(preparing).rejects.toThrow("Identity changed")
+  expect(f.core.sync.removableDeviceWorkspaces).not.toHaveBeenCalled()
+  expect(f.calls).toEqual([])
+  f.scope.stop()
+})
+
+it("Given reviewed removal input waiting for its action module, when the caller mutates that input, then execute only the original copied scope", async () => {
+  let release!: () => void, hold = false
+  const gated = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture(async () => { if (hold) await gated; return import("./myDeviceRemovalActions") })
+  const prepared = await f.controller.prepare("old")
+  hold = true
+  const removing = f.controller.remove(prepared)
+  prepared.job.origins["https://unreviewed.example"] = { status: "pending" }
+  release()
+  await removing
+  expect(f.calls).toEqual(["board|old", "https://online.example|old", "https://offline.example|old"])
+  expect(f.controller.jobs.value[0]?.origins["https://unreviewed.example"]).toBeUndefined()
+  f.scope.stop()
+})
 
 it("Given a saved device removal is changed by explicit local reset, when preferences notify, then refresh the displayed job without reloading the board", async () => {
   const f = await fixture()

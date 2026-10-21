@@ -1,9 +1,8 @@
-export type MyDeviceRemoval = { version: 1; personId: string; signerDeviceId: string; deviceId: string; name: string;
-  workspaces: Record<string, "pending" | "removed">; workspaceTitles?: Record<string, string>; workspaceErrors?: Record<string, string>;
-  origins: Record<string, { status: "pending" | "removed"; error?: string }>; abandonedOrigins?: string[] }
+import type { MyDeviceRemoval } from "./myDeviceRemovalState"
+export { myDeviceRemovalComplete, myDeviceRemovalsKey, type MyDeviceRemoval } from "./myDeviceRemovalState"
+
 type RemovalPorts = { ensureCurrent: () => void; save: (job: MyDeviceRemoval) => Promise<void>;
   removeWorkspaces: (ids: string[]) => Promise<void>; revokeOrigin: (origin: string) => Promise<void> }
-export const myDeviceRemovalsKey = (personId: string) => `tincanban.my-device-removals.v1.${personId}`
 
 /** Explicit reset abandons only this server phase; no access is marked revoked. */
 export function withoutDeviceRemovalOrigin(jobs: MyDeviceRemoval[], personId: string, origin: string): MyDeviceRemoval[] {
@@ -33,9 +32,4 @@ export async function continueMyDeviceRemoval(initial: MyDeviceRemoval, ports: R
     catch (cause) { ports.ensureCurrent(); job.origins[origin] = { status: "pending", error: cause instanceof Error ? cause.message : "Rusty removal pending" } }
     await save()
   }
-}
-
-export function myDeviceRemovalComplete(job: MyDeviceRemoval): boolean {
-  return !Object.keys(job.workspaceErrors ?? {}).length && Object.values(job.workspaces).every(state => state === "removed") &&
-    Object.values(job.origins).every(state => state.status === "removed")
 }

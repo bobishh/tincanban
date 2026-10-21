@@ -118,6 +118,16 @@ revealed fields and excerpts) after 60 quiet milliseconds. Clear immediately;
 apply a nontext filter with the current query immediately. Cancel pending work
 on workspace change/disposal. Preserve the existing browser latency budget.
 
+Restore saved device-removal records and preference subscriptions eagerly.
+Load only the reviewed prepare/remove/stop executor when the user requests an
+action. Keep record/key/completion helpers independent from that executor and
+retain existing imports through reexports. Bind identity, device and certificate
+before loading; after loading, check the binding and invoke the action in the
+same continuation. Copy reviewed input before waiting. Preserve existing locks,
+transactional comparisons, retained scope and retry guards. Disposing the owning
+scope while loading prevents execution. This changes startup packaging, not the
+removal journal or automatic recovery initialization.
+
 ### Activation and artifacts
 
 Retain a single writer for the existing filesystem format. Pull and verify the exact sealed public image before stopping the previous writer; activate that prepared image without another registry login/pull. Preparation failure leaves the old writer running; activation failure restores the captured previous writer. Full blue/green needs a storage concurrency design because the current process holds an exclusive volume lock. Do not bypass it.

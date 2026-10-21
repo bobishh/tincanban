@@ -964,3 +964,54 @@ Run 39646666032 completed with fifteen successful jobs and only the identified
 offline-invitation fixture failure. Production artifact sealing, native WebKit
 publication and automation's complete owner/intake lifecycle all passed. The
 overall failed run did not activate either component.
+
+### Name/photo checklist reconciliation — 2026-10-21
+
+Two unchecked implementation reports already have source, deployment ancestry
+and behavioral evidence. Deployed b581df7 contains ddb1a3d and 1e63839. Fresh
+identities use neutral protocol metadata with explicit unprovided provenance;
+the Name form remains empty until chosen. Existing deliberate names are retained.
+Historical generated device labels are hidden only in presentation, including
+removal confirmation, without rewriting certificates or captured operations.
+Photo-only updates preserve the local signed identity and name provenance and
+retain the stale-draft revision guard.
+
+Automation job 119383924355 in a3460ce Verify 39646666032 passed
+e2e/rusty-mobile.spec.ts in 34.6 seconds. It starts unnamed, saves only a photo,
+checks blank Name and persisted photo after reload, then closes the source and
+receives that photo on the enrolled phone through real Rusty. The a91164c unit
+job also passes the identity, photo and device-label cases (3980 total units).
+Receipts: /tmp/tincanban-a346-automation-job.log and
+/tmp/tincanban-a911-verify-job.log. Mark implementation reports checked; retain
+deployed mobile layout and personal user acceptance as separate open items.
+
+### a91164c completion and optional-action boundary
+
+Verify 39648748474 finished fifteen jobs successfully. The corrected loaded-guest
+offline invitation, native WebKit publication, all Rusty connection scenarios
+and the full automation lifecycle passed. Only the production startup budget
+failed: 275.10 kB against the unchanged 275-kB limit. Earlier local 274.61-kB
+measurement used different build settings; a3460ce's actual CI result was
+274.90 kB. Do not treat that small or mismatched local margin as a durable repair.
+
+The removal action executor was entering startup through useMyDeviceRemoval.
+Move only explicit prepare/remove/stop actions behind a dynamic import. Eager
+record restoration, subscriptions, origin selection and completion state remain.
+Pure record helpers now live separately; original sync imports remain supported.
+The original executor's identity checks, scope review, locks and transactional
+comparisons are retained. A review found that returning the loaded executor to
+another await creates a microtask gap: preparation can capture a replacement
+identity after the load guard. A deterministic failing case reproduces that
+gap. Invoke the action synchronously in the guarded continuation instead, copy
+reviewed input before waiting and refuse execution after scope disposal.
+
+All 26 removal/reset logic checks and the three existing desktop/mobile
+remove/offline/reload/stop browser scenarios pass (15.9 seconds). The build
+manifest confirms the record helpers remain initial while both executors are
+excluded from the initial closure. With the actual CI configuration, local
+startup measures 273.59 kB (baseline 274.75), a 1.16-kB reduction and 1.41-kB
+margin; every other size budget is unchanged and passes. This is local packaging
+proof, not successful new CI or deployment. Receipts:
+/tmp/tincanban-a911-exact-lazy-removal-final-size.log,
+/tmp/tincanban-a911-lazy-removal-graph.json and
+/tmp/tincanban-a911-lazy-removal-final-browser.log.
