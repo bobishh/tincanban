@@ -9,6 +9,7 @@ import { bootstrapIdentity, resetIdentityStorageForTest } from "./domain/identit
 import { useTincanban, hydrate, resetStateForTest } from "./state"
 import { isItem } from "./domain/model"
 import { clearMeshTrace, meshTrace } from "./sync/meshTrace"
+import { telemetryStatus } from "./sync/telemetry"
 import { itemLifecycle } from "./domain/archive"
 import type { WorkspaceSettingsDraft } from "./domain/workspaceSettings"
 
@@ -135,10 +136,11 @@ describe("generic WebMCP tools", () => {
     clearMeshTrace()
     meshTrace("session.closed", { connectionId: "in-7", cause: "heartbeat failed" })
     await registerWebMcp({ getActiveDoc: tincanban.getActiveDoc }, mockContext)
-    const trace = requiredSyncTool<{ events: { event: string; connectionId?: string; cause?: string }[] }>("get_sync_trace")
+    const trace = requiredSyncTool<{ diagnostics: unknown; events: { event: string; connectionId?: string; cause?: string }[] }>("get_sync_trace")
     const before = tincanban.getActiveDoc()
     expect(trace.annotations?.readOnlyHint).toBe(true)
     const result = trace.execute({})
+    expect(result.diagnostics).toEqual(telemetryStatus())
     expect(result.events).toEqual([expect.objectContaining({
       event: "session.closed", connectionId: "in-7", cause: "heartbeat failed",
     })])

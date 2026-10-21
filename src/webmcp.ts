@@ -1,6 +1,7 @@
 import { registerWebMcpTools } from "./ui/webmcpTools";
 import type { ModelContext, ToolStore } from "./webmcpContract";
 import { meshTraceSnapshot } from "./sync/meshTrace";
+import { telemetryStatus } from "./sync/telemetry";
 
 export {
   type ModelContext,
@@ -36,7 +37,7 @@ export async function registerWebMcp(
   const context = explicitContext ?? (await waitForModelContext());
   if (!context?.registerTool) return undefined;
   const lifecycle = new AbortController();
-  await registerWebMcpTools({ ...store, getSyncTrace: meshTraceSnapshot }, (tool) =>
+  await registerWebMcpTools({ ...store, getSyncTrace: meshTraceSnapshot, getSyncDiagnostics: telemetryStatus }, (tool) =>
     context.registerTool(tool, { signal: lifecycle.signal }),
   );
   return () => lifecycle.abort();

@@ -19,14 +19,14 @@
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
 - [ ] 2.6 Fix live public intake routing/outcome and verify authorized end-to-end submission.
-- [ ] 2.7 Provide useful Rusty board/status inspection; clarify which controls belong to owner UI versus operator config.
+- [ ] 2.7 Provide useful Rusty board/status inspection; explicit browser status handoff, confirmed timestamp and actionable access failure pass Chromium and WebKit against native Rusty. Service 359d998 is published on its integration branch; deploy Tincanban confirmation support before activating the service UI.
 - [x] 2.8 Gate publishing errors/actions on real publication state; focused behavior tests and deployed c4 private-board Settings confirm no public-delivery error/action.
 - [x] 2.9 Export bounded useful failure/lifecycle diagnostics to TinSink independently of verbose packet logging; actual c4 dial/session failures with runtime/workspace/peer correlation observed in ClickHouse after 13:36 UTC.
 
 - [x] 2.10 Remove deployment-wide `RUSTY_TRUSTED_OWNER` and controller-device admission pins; keep per-resource ownership, signatures and revocation. Verify unrelated owners, restart isolation and scoped editor delivery; deploy through Rusty CI.
 
 - [ ] 2.11 Diagnose intermittent TinSink ClickHouse code 241 memory pressure delaying queued log/trace inserts; preserve queued evidence and verify stable durable delivery before claiming full-chain reliability.
-- [ ] 2.12 Preserve manual Rusty actions across background-sync busy transitions. Failed CI trace shows a lost recovery tap with no recovery request; queue one action with its original session/workspace guard instead of disabling controls during automatic passes.
+- [x] 2.12 Preserve manual Rusty actions across background-sync busy transitions. Controlled pending-GET recovery passes Chromium/WebKit; 58 logic tests pass. 4cc7139 Verify and both deployments succeeded; live health confirms the exact SHA. User browser acceptance remains pending.
 
 ## 3. GitHub Actions storage (delegated, explicitly authorized)
 

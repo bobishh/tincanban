@@ -32,6 +32,17 @@ import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
+const showRustyStatus = ref(new URLSearchParams(window.location.hash.slice(1)).has("rusty-status"))
+function closeRustyStatus() {
+  showRustyStatus.value = false
+  if (window.opener) window.close()
+  const url = new URL(window.location.href)
+  const hash = new URLSearchParams(url.hash.slice(1))
+  hash.delete("rusty-status")
+  url.hash = hash.toString()
+  window.history.replaceState(window.history.state, "", url)
+}
 const boardAddress = useBoardAddress(app.workspace)
 const routeContent = ref<HTMLElement | null>(null)
 type IdentityNameSaver = typeof identityNameSaverType
@@ -275,6 +286,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </DialogWindow>
+    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
     <IdentityRecoveryDialog v-if="showIdentityRecovery" :workspace-id="activeWorkspace.id" :before-restore="stopSyncForIdentityRestore" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" @close="showIdentityRecovery = false" @restored="restoredIdentity" />
 
     <template v-if="boardVisible">

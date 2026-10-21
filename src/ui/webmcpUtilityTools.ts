@@ -7,12 +7,12 @@ export async function registerUtilityTools(store: ToolStore, register: RegisterT
   await register({
     name: "get_sync_trace",
     title: "Read sync trace",
-    description: "Read this browser's bounded sync event trace, including session lifecycle and failures. Does not change connections or workspace data.",
+    description: "Read this browser's bounded sync event trace and diagnostic export queue/failure status. Does not change connections or workspace data; no collector credentials are returned.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
     execute(input) {
       noUnknown(objectInput(input), [])
-      return { capturedAt: new Date().toISOString(), events: store.getSyncTrace?.() ?? [] }
+      return { capturedAt: new Date().toISOString(), events: store.getSyncTrace?.() ?? [], diagnostics: store.getSyncDiagnostics?.() }
     },
   })
 

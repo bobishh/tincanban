@@ -31,6 +31,26 @@ Keep the bounded local trace and opt-in per-packet console/export detail. Ordina
 
 Directory content owns padding, spacing and compact row actions. Active state sits beside board identity rather than adding a large action row. Desktop Sync uses a compact participant list beside selected devices/details; narrow windows stack without hiding storage/recovery actions. Both use existing ink surfaces/focus and scrolling primitives. Browser acceptance exercises actual actions and pending/failure states, with screenshot inspection; do not boot an app solely to assert CSS or button labels.
 
+### Inspect configured board storage from Rusty
+
+The removed readable keeper admin UI cannot be restored by exposing blind-store
+scope inventory anonymously. Restore a read-only browser status handoff instead:
+Rusty's page opens an allowed Tincanban frontend in the same browser, with a fresh
+request ID and two-minute deadline. Tincanban asks explicitly before sending names
+and current sync outcomes for boards configured on that exact Rusty origin. The
+original opener, exact target origin, deadline and identity/device remain bound
+through confirmation. No keys, tokens, scope credentials, board contents or
+management capability are transferred. Other Rusty origins remain excluded.
+
+Rusty accepts a response only from its original popup at the selected frontend
+origin and matching request ID. Board results remain in that page's memory and
+carry their check time; refresh starts another explicit request. This is a view
+of the approving browser's confirmed exchanges, not a claim about all offline
+devices. Service availability is checked separately through existing health.
+No backend login session, public private-board listing, global owner pin, storage
+migration or new write authority is introduced. With no configured frontend,
+Rusty explains the missing operator setting rather than guessing a domain.
+
 ### Preserve exact recovery, allow the requested fresh start
 
 The two retained operations differ: conflict recovery for one scope (which may be identity scope) and identity-device revocation across an origin. Read the valid freeze/journal, signer and scope/device references without exposing keys. Explain what is pending and offer the matching existing resume action; do not create another credential epoch from a generic Connect click. Preserve incompatible/missing/foreign-signer evidence and surface a useful failure. Report journal-confirmed progress separately from unconfirmed remote state.

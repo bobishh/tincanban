@@ -154,6 +154,16 @@ The header tooltip reports devices and Rusty separately. **Sync → Rusty** show
 each server's actual state and last successful sync in this tab. Saved settings
 alone never count as connected. Reduced motion disables reconnecting animation.
 
+The Rusty website also offers **View my boards**. Open it in a browser holding
+your Tincanban identity and confirm sharing the connected board names and checked
+sync results. Keys, storage credentials and board contents stay in Tincanban.
+Results describe that browser's exchanges, display their check time and stay only
+in the Rusty page until it closes. **Refresh board status** asks again. An access
+failure directs the board owner to reconnect through Sync; a saved settings
+conflict remains visibly paused. Website choices come from the server operator's
+allowed frontend origins; this view does not change those settings or grant
+storage management permission.
+
 Standalone Rusty now uses **Sync → Rusty** and protocol 2 encrypted object
 storage. Its service key signs storage receipts; it receives no readable board
 invitation, content key, or Editor/Visitor application grant. Board history and

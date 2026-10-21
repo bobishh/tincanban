@@ -32,6 +32,7 @@ export type ToolStore = {
   placementIssues?: { value: PlacementIssue[] } | PlacementIssue[];
   sendChatMessage?: (body: string) => Promise<void>;
   getSyncTrace?: () => unknown[];
+  getSyncDiagnostics?: () => unknown;
 };
 
 type WorkspaceSummary = {

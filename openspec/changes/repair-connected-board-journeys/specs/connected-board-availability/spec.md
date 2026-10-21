@@ -128,3 +128,20 @@ The deployed public form SHALL use its current integration contract and report t
 - **GIVEN** a configured Rusty service that is unavailable or has a pending operation
 - **WHEN** an authorized participant opens Sync
 - **THEN** the board's storage state and applicable action remain visible alongside truthful peer state
+
+#### Scenario: Inspect configured private boards from Rusty
+- **GIVEN** an allowed Tincanban frontend and private boards configured at this exact Rusty origin
+- **WHEN** the user opens board inspection from Rusty and explicitly confirms in Tincanban
+- **THEN** Rusty shows only that browser's configured-board names, checked sync outcomes and check time
+- **AND** no keys, tokens, board contents or management capabilities enter the cross-origin response
+- **AND** results remain in page memory and refresh requires another confirmation
+
+#### Scenario: Expired, substituted or cancelled inspection
+- **GIVEN** a pending inspection bound to its original opener, exact origins, nonce and deadline
+- **WHEN** its binding changes, expires or is cancelled
+- **THEN** no new board status is shared or accepted and any earlier results retain their earlier check time
+
+#### Scenario: Access failure or conflicting storage settings during inspection
+- **GIVEN** a configured board whose server rejects access or whose credentials conflict
+- **WHEN** its status is inspected
+- **THEN** it shows an actionable access failure or paused connection rather than disappearing or claiming current read/write permission

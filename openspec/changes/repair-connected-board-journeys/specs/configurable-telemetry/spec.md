@@ -14,6 +14,12 @@ Under existing deployment configuration, device consent, level and sampling, the
 - **THEN** local bounded snapshots retain events and external export stays bounded with suppression evidence
 - **AND** a later time window admits fresh incident evidence
 
+#### Scenario: Read export status without changing collection
+- **GIVEN** the local trace contains incidents whose durable export is uncertain
+- **WHEN** the agent reads the existing WebMCP sync trace
+- **THEN** the response includes export state, queued/dropped counts and the last confirmed send time
+- **AND** the read changes neither connection state nor consent and exposes no collector credentials
+
 #### Scenario: Device opts out or disables verbose detail
 - **GIVEN** diagnostics consent is disabled or a queued verbose-only export is disabled before dispatch
 - **WHEN** further mesh events occur

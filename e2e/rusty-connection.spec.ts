@@ -5,6 +5,62 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { expectFaviconColor } from "./support/favicon"
 import { createJobSearchWorkspace } from "./support/workspaces"
+import { startRustyService } from "./support/rustyService"
+
+test("Given connected private board storage, when approving inspection from Rusty, then show its checked status without credentials and retain an actionable access failure", async ({ page, context, baseURL }, info) => {
+  test.setTimeout(90_000)
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Storage inspection board")
+  const rusty = await startRustyService({}, baseURL!)
+  const service = await context.newPage()
+  try {
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const panel = page.getByRole("region", { name: "Rusty", exact: true })
+    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
+    await panel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const secrets = await page.evaluate(async () => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      return (await getPrivateReplicaConfigurations((await bootstrapIdentity()).identity.personId))
+        .flatMap(config => [config.readToken, config.writeToken, config.contentKey]).filter(Boolean)
+    })
+    await service.goto(rusty.origin)
+    await service.evaluate(() => {
+      const replies: unknown[] = []
+      Object.assign(window, { statusReplies: replies })
+      window.addEventListener("message", event => { if (event.data?.type === "rusty-status@1") replies.push(event.data) })
+    })
+    await expect(service.getByText("Storage available", { exact: true })).toBeVisible()
+    const approvalEvent = service.waitForEvent("popup")
+    await service.getByRole("button", { name: "View my boards", exact: true }).click()
+    const approval = await approvalEvent
+    const confirmation = approval.getByRole("dialog", { name: "View board storage status" })
+    await expect(confirmation.getByText("Storage inspection board", { exact: true })).toBeVisible()
+    await expect(service.getByRole("article", { name: "Storage inspection board" })).toHaveCount(0)
+    await confirmation.getByRole("button", { name: "Share board status", exact: true }).click()
+    const board = service.getByRole("article", { name: "Storage inspection board" })
+    await expect(board.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(service.getByText(/Checked from this browser/)).toBeVisible()
+    await service.screenshot({ path: info.outputPath("rusty-board-status.png"), fullPage: true })
+    await context.route(`${rusty.origin}/v2/scopes/**`, async route => {
+      if (route.request().method() === "GET") await route.fulfill({ status: 403, body: JSON.stringify({ message: "Access revoked for this test" }) })
+      else await route.continue()
+    })
+    const retryEvent = service.waitForEvent("popup")
+    await service.getByRole("button", { name: "Refresh board status", exact: true }).click()
+    const retry = await retryEvent
+    await retry.getByRole("button", { name: "Share board status", exact: true }).click()
+    await expect(board.getByText("Access required", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(board.getByText(/owner.*Sync/i)).toBeVisible()
+    await service.screenshot({ path: info.outputPath("rusty-board-status-access-required.png"), fullPage: true })
+    const replies = await service.evaluate(() => JSON.stringify((window as unknown as { statusReplies: unknown[] }).statusReplies))
+    expect(JSON.parse(replies)).toHaveLength(2)
+    expect(replies).not.toMatch(/readToken|writeToken|contentKey/)
+    for (const secret of secrets) expect(replies).not.toContain(secret)
+  } finally { await service.close(); await rusty.close() }
+})
 
 test("Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work", async ({ page, baseURL }, testInfo) => {
   test.setTimeout(90000)

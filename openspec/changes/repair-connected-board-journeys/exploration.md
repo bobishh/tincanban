@@ -606,3 +606,39 @@ exported the Linux amd64 intermediate build cache. This first cold build took
 for cache export. A source-only warm build has not been measured; no speedup is
 claimed yet. The frontend exporter byte-budget correction remains pending its
 next successful CI/deployment, so full-chain diagnostic reliability remains open.
+
+### 4cc rollout and read-only Rusty inspection
+
+4cc7139 Verify 39624989598 and frontend/automation deployments 39626963174 /
+39626963166 succeeded. Live health returns that exact SHA, artifact 90f3bad3 and
+SDK 5b02ed1. The Codex editor tab loaded the new version. Its startup records are
+durable in ClickHouse with service.version 4cc7139, but subsequent local warning
+events are not yet confirmed there; add diagnostic export state to the existing
+read-only WebMCP trace so this gap can be investigated without private browser
+storage inspection or changing device consent. Do not treat startup-only rows as
+proof of continued connection-failure delivery. Metric-log evidence now contains
+141 completed merges since 14:10:07 UTC with zero errors and peak tracked memory
+112712071 bytes; the configured ClickHouse memory ceiling remains unchanged.
+
+Old commit 4c0d15d documents the removed admin surface: owner sign-in, board names,
+replication state and operator origin/reset controls. d811e9d removed that whole
+readable keeper with the blind-store replacement. The current status restoration
+does not reinstate its plaintext storage or broad admin authority: the Rusty page
+requests an explicit, nonce/deadline/opener/origin-bound snapshot of the approving
+Tincanban browser's configured-board statuses. The client output is an explicit
+field allowlist; no keys, storage tokens, scope credentials or board contents
+cross the browser window boundary. Conflicting credentials remain visible as
+Sync paused even when no active configuration can be selected.
+
+Native Rusty browser inspection passed Chromium and WebKit in 15.8 seconds each:
+no board names appear before approval, a confirmed board reaches Synced, a later
+HTTP 403 becomes Access required with an owner action, and both captured message
+payloads contain none of the fixture's actual secret values. Screenshots of both
+outcomes were inspected. Four focused client checks cover request validation,
+exact-origin filtering, expired/changed opener and paused credentials. Service
+message validation rejects foreign source/origin/nonces, replay, oversized data
+and unsafe IDs; a Rust unit verifies embedded config cannot close the JSON script.
+109 existing service tests and the extra config unit pass. Service revision
+359d998 is published on codex/rusty-storage-status with its own verification run;
+Tincanban CI pins that exact revision for the existing native acceptance project.
+Activate the service UI only after Tincanban confirmation support is deployed.
