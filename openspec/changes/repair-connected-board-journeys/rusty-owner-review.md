@@ -6,7 +6,8 @@ Scope: Rusty `8530151…` to `ded16d6b8f74cc0ebcc566154a0430e5c85a6f67`, followi
 `4cce540…`. Risk: high, because this chooses the root identity used to authorize
 public-board writes. Recommendation: approve the reviewed candidate for CI and
 controlled activation. Local durable retry tests and the formerly failing full
-native application delivery scenario pass; production activation is pending.
+native application delivery scenario pass. Production activation subsequently
+completed in Rusty deployment 39599470611; health identifies this exact candidate.
 
 | Severity | Open | Corrected before publication |
 | --- | --- | --- |
@@ -84,10 +85,14 @@ passing tests, including the signed management/sidecar conflict case.
 The previously failing application public-delivery native scenario now passes
 unchanged against the repaired binary (3.29 seconds), including lost-response
 retry, automation delivery, revocation and withdrawal. Existing eight native
-application storage/management/archive scenarios also pass against `4cce540…`;
-their full CI rerun against the new source is still required.
+application storage/management/archive scenarios also pass against `4cce540…`.
+Their subsequent application CI rerun against `ded16d6b…` passed, including the
+public-delivery case (39599019212); the unrelated WebKit enrollment failure kept
+the application frontend release from activating.
 
-Production activation, old-binary rollback execution and the live owner's saved
-device-removal operation are not established by this source review. Directory
+Live health reports build `ded16d6b8f74cc0ebcc566154a0430e5c85a6f67`, artifact
+`36ccd5a726449a72060043f2c079b4076be86364d9aaaceee07a65c73e794e38`,
+and the unchanged service identity. Old-binary rollback execution and the live
+owner's saved device-removal operation remain unverified. Directory
 placement preserves the existing reader schema by inspection; it is not a claim
 that an older binary was executed against the new evidence yet.

@@ -534,7 +534,27 @@ test("Given an owner with two archived history generations, when adding my phone
 
     await expect(panel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     await openSettingsFromSync(source, "Workspace")
+    // The previous generation's notice must not mark this new archive complete
+    // while its prerequisite Rusty synchronization is still waiting for a reply.
+    let releaseSync!: () => void
+    const pendingSync = new Promise<void>(resolve => { releaseSync = resolve })
+    let heldSync = false
+    const requests = `${rusty.origin}/**`
+    await source.route(requests, async route => {
+      if (!heldSync && route.request().method() !== "OPTIONS") {
+        heldSync = true
+        await pendingSync
+      }
+      await route.continue()
+    })
     await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
+    try {
+      await expect.poll(() => heldSync).toBe(true)
+      await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })).toHaveCount(0)
+    } finally {
+      releaseSync()
+      await source.unroute(requests)
+    }
     await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" }).or(maintenance.getByRole("alert")))
       .toBeVisible({ timeout: 60_000 })
     await expect(maintenance.getByRole("alert")).toHaveCount(0)

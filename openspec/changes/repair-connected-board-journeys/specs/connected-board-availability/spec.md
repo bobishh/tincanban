@@ -15,6 +15,13 @@ The system SHALL make owner-configured Rusty board storage available to authoriz
 - **THEN** both remain authorized for their resources
 - **AND** neither can read management rights or replace policies on the other's established resources
 
+#### Scenario: Two separately configured boards of one owner
+- **GIVEN** the same owner configured Rusty on two boards and admitted the same distinct editor to both
+- **WHEN** the editor switches between boards, reopens them, and the owner's sessions close
+- **THEN** each board retains its own authenticated Rusty connection and exchanges its authorized changes
+- **AND** credentials and content from one board cannot be used for the other
+- **AND** a failed owner setup remains visibly incomplete rather than being represented as a successful connection
+
 ### Requirement: Retained recovery intent selects the operation
 A pending credential transition SHALL preserve its exact signed intent, keys and pending uploads. Connect/recovery UI SHALL identify the operation and offer its matching existing resume path without silently clearing the freeze or generating unrelated replacement credentials.
 

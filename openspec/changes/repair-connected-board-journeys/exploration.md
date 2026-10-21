@@ -298,3 +298,39 @@ Rusty CI 39598858224 is pending; this is not an activation claim.
 MetaMesh PR 5 merged preserving candidate `5b02ed1…`; its formal, complete
 Rust/WASM/TypeScript verification, Apple/mobile and consumer checks all passed
 (CI 39596778353). The application pins that exact published commit.
+
+### Two-board live comparison (2026-10-21)
+
+The same Codex/editor browser identity shows `ingest.meta-uber-engineer.dev`
+on Ecky issues (`6c5432fe-9361-46ad-9c2f-31977c94a609`), with Board access,
+read and write, and a confirmed last sync. On app issues
+(`5962c240-cc49-4841-8353-5d172a48724e`) the editor has no received connection.
+The owner's Chrome view of app issues also has no configured Rusty record,
+only Add Rusty; it still reports Valiant Squirrel removal pending with the
+automation storage epoch/service-pin mismatch. Both app clients remain on
+07c9768. The discrepancy is therefore visible before participant exchange on
+this particular board, not proof that editor access is generally unsupported.
+
+`connectWorkspaceReplica` enrolls exactly its workspace argument.
+`withWorkspaceRustyAccess` selects configurations for that workspace and sends
+role-limited access to authenticated participants. Configuring one board does
+not configure every board owned by that identity. Verify two separately
+owner-configured boards through the same editor, including switching/reopening
+and owner-offline edits; never infer that a server visible on one board was
+successfully added on another.
+
+Rusty deployment 39599470611 has since completed successfully; live health
+reports ded16d6b8f74cc0ebcc566154a0430e5c85a6f67 with the unchanged service
+identity. Application CI 39599019212 passed native public delivery and Chromium
+credential transfer, but its WebKit archives/attachments enrollment scenario
+failed. The application frontend has not activated the new source yet.
+
+The WebKit trace shows the first history archive waiting 9.54 seconds, while
+the repeated action appears successful after only 16 milliseconds: its previous
+success notice remains visible during the prerequisite sync. Enrollment then
+starts while the second generation is being published, and correctly rejects a
+changed history descriptor. A controlled pending HTTP request reproduces the
+stale completion deterministically. Hide that completion while the current
+archive is busy; the same complete two-generation phone enrollment, backup and
+owner-offline restore scenario then passes in 48.3 seconds. Native ancestry
+verification and existing timeouts remain unchanged.
