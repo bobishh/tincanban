@@ -286,7 +286,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </DialogWindow>
-    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
+    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
     <IdentityRecoveryDialog v-if="showIdentityRecovery" :workspace-id="activeWorkspace.id" :before-restore="stopSyncForIdentityRestore" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" @close="showIdentityRecovery = false" @restored="restoredIdentity" />
 
     <template v-if="boardVisible">

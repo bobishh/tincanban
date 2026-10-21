@@ -20,6 +20,12 @@ Under existing deployment configuration, device consent, level and sampling, the
 - **THEN** the response includes export state, queued/dropped counts and the last confirmed send time
 - **AND** the read changes neither connection state nor consent and exposes no collector credentials
 
+#### Scenario: An export fails while another batch starts
+- **GIVEN** a log or trace batch was rejected
+- **WHEN** a later request starts or the other signal succeeds
+- **THEN** the rejected signal's bounded failure category remains readable until that signal confirms a later delivery
+- **AND** available HTTP status is retained without copying transport messages, response bodies or credentials
+
 #### Scenario: Device opts out or disables verbose detail
 - **GIVEN** diagnostics consent is disabled or a queued verbose-only export is disabled before dispatch
 - **WHEN** further mesh events occur

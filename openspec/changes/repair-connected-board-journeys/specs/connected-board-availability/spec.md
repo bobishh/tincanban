@@ -151,6 +151,7 @@ The deployed public form SHALL use its current integration contract and report t
 - **THEN** Rusty shows only that browser's configured-board names, checked sync outcomes and check time
 - **AND** no keys, tokens, board contents or management capabilities enter the cross-origin response
 - **AND** results remain in page memory and refresh requires another confirmation
+- **AND** Open board uses the admitted board's route identifier, independently of the workspace identifier, and opens the existing private board in the same browser identity
 
 #### Scenario: Expired, substituted or cancelled inspection
 - **GIVEN** a pending inspection bound to its original opener, exact origins, nonce and deadline

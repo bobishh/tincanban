@@ -19,7 +19,7 @@ it("Given several private board connections, when sharing status, then reveal on
     { origin: request.origin, workspaceId: "board-one", scopeId: "scope-one", readToken: "secret read", writeToken: "secret write", contentKey: "secret key" },
     { origin: "https://other.example", workspaceId: "board-two", scopeId: "scope-two" },
   ]
-  const reply = createRustyStatusReply(request, configs as never, [{ id: "board-one", title: "Private board" }, { id: "board-two", title: "Other board" }],
+  const reply = createRustyStatusReply(request, configs as never, [{ id: "board-one", boardId: "board-one", title: "Private board" }, { id: "board-two", boardId: "board-two", title: "Other board" }],
     { [`${request.origin}/scope-one`]: { phase: "synced", lastSyncedAt: now - 1000, error: "never copy" } }, now)
   expect(reply).toEqual({ type: "rusty-status@1", requestId: request.requestId, origin: request.origin, checkedAt: now,
     boards: [{ id: "board-one", title: "Private board", status: "Synced", access: "read-write", lastSyncedAt: now - 1000 }] })
@@ -35,7 +35,14 @@ it("Given an approval is pending, when its deadline, opener or request changes, 
 })
 
 it("Given conflicting saved credentials have no active connection, when inspecting that board, then report paused access instead of omitting it", () => {
-  const reply = createRustyStatusReply(request, [], [{ id: "board-one", title: "Paused board" }], {}, now,
+  const reply = createRustyStatusReply(request, [], [{ id: "board-one", boardId: "board-one", title: "Paused board" }], {}, now,
     [{ origin: request.origin, workspaceIds: ["board-one"] }] as never)
   expect(reply.boards).toEqual([{ id: "board-one", title: "Paused board", status: "Sync paused", access: "not-confirmed" }])
+})
+
+it("Given a board and its workspace have distinct IDs, when sharing storage status, then its link identifier selects the board", () => {
+  const catalog = [{ id: "workspace-one", boardId: "actual-board-one", title: "Private board" }]
+  const configs = [{ origin: request.origin, workspaceId: "workspace-one", scopeId: "scope-one", writeToken: "secret write" }]
+  const reply = createRustyStatusReply(request, configs as never, catalog, {}, now)
+  expect(reply.boards).toEqual([{ id: "actual-board-one", title: "Private board", status: "Not checked", access: "read-write" }])
 })

@@ -19,7 +19,7 @@
 - [ ] 2.4 Make owner-configured Rusty visible and usable to authorized editors/visitors while owner is offline.
 - [ ] 2.5 Fix actual same-computer multi-session channel churn without hiding failures or raising arbitrary limits.
 - [ ] 2.6 Fix live public intake routing/outcome and verify authorized end-to-end submission.
-- [ ] 2.7 Provide useful Rusty board/status inspection; explicit browser status handoff, confirmed timestamp and actionable access failure pass Chromium and WebKit against native Rusty. Service 359d998 is published on its integration branch; deploy Tincanban confirmation support before activating the service UI.
+- [ ] 2.7 Provide useful Rusty board/status inspection. Service 7a54051 is live after CI 39637244954 and deployment 39637637822; frontend b581df7 is live. Actual editor inspection shows app issues Synced/read-write and the two other boards Access required. Live verification found Open board using a workspace ID; repair its admitted board-ID mapping and verify the actual deployed link before completion.
 - [x] 2.8 Gate publishing errors/actions on real publication state; focused behavior tests and deployed c4 private-board Settings confirm no public-delivery error/action.
 - [x] 2.9 Export bounded useful failure/lifecycle diagnostics to TinSink independently of verbose packet logging; actual c4 dial/session failures with runtime/workspace/peer correlation observed in ClickHouse after 13:36 UTC.
 
@@ -34,7 +34,7 @@
 - [x] 3.2 Delete obsolete artifacts; retain exact current deployment and necessary rollback/reader assets.
 - [x] 3.3 Add automatic cleanup and short diagnostic retention, preserving release dependencies.
 - [x] 3.4 Structurally verify and publish only reviewed storage workflow changes; record actual reclaimed bytes.
-- [ ] 3.5 Activate Rusty's guarded automatic cleanup and 90-day source / one-day diagnostic retention. da05887 passed branch CI 39632982897; reviewed entry point actually deleted 44 obsolete artifacts / 124,284,016 bytes. Nine artifacts / 20,306,006 bytes remain, including exact live and rollback source/deployment pairs and five fresh diagnostics. Production a910b70 is unchanged and healthy. Publish this branch with status inspection after the frontend confirmation support is live.
+- [x] 3.5 Activate Rusty's guarded automatic cleanup and 90-day source / one-day diagnostic retention. Cleanup-only b70aac4 passed main CI 39635698505 and deployment 39636057327. Automatic runs 39636057319, 39636256827, 39637637753 and 39637812506 succeeded; live 7a54051 retains this cleanup. Reviewed manual deletion removed 44 obsolete artifacts / 124,284,016 bytes with exact before/after receipts and preserved live/rollback release pairs.
 
 ## 4. Verify and deliver
 
@@ -45,7 +45,7 @@
 - [ ] 4.5 Verify real participant data exchange via Rusty with owner sessions closed; include read-only visitor behavior.
 - [ ] 4.6 User personally verifies deployed browser behavior before any ticket moves to Done.
 - [x] 4.9 Update the vulnerable Markdown parser blocking CI; rendering/audit checks passed and c4 containing markdown-it 15.0.3 is deployed.
-- [ ] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage.
+- [x] 4.7 Repair redundant cold Docker dependency compilation in Rusty CI; retain behavior/release proofs and bound cache storage. Real warm main CI 39635698505 reused the dependency layer; root service compile took 17.22 seconds and cache export 3.7 seconds. Prior cold dependency compilation took 162.9 seconds; no behavior tests or release checks were removed.
 - [x] 4.8 Repair duplicate image pull after Rusty writer shutdown; verify prepared image before handoff and restore previous writer on activation failure. Record blue/green constraints and options before a storage architecture change.
 
 - [x] 4.10 Select the sealed automation cohort from its actual packaging attempt after a partial CI rerun; actual c4 producer attempts covered by eighteen focused checks; 494d frontend and automation both deployed with SHA/run/reader validation intact.
@@ -56,7 +56,7 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 
 - [x] Round badges render with square ink frames in production: longhand CSS repair passed minification and functional proofs; live c4 directory/board screenshot shows round column counts.
 - [ ] Rusty visible on one board but missing on another: distinguish owner board setup from participant access delivery; verify both actual boards.
-- [ ] Verify the same editor on two separately owner-configured boards after switching/reopening and with owner sessions closed. Live comparison: Ecky issues has read/write access; app issues has no owner-configured entry and retained device removal is pending.
+- [ ] Verify the same editor on two separately owner-configured boards after switching/reopening and with owner sessions closed. Current live comparison: app issues is owner-configured and Synced/read-write for Codex/editor; Ecky issues and Job search retain access rejected after the server reset. Broader owner-tab permission is still pending.
 - [ ] Stop unconfirmed deletion of legacy Rusty connection records on first read/mutation; cover skipped-release startup and late legacy writes. Establish whether the real missing board record can be recovered from retained operation evidence or another owner device, without importing obsolete credentials automatically.
 - [ ] Red CI: repair real same-identity Rusty credential transfer under multi-workspace contention; preserve its functional acceptance scenario.
 - [ ] Fix the public-delivery owner-identity regression exposed by testing the deployed Rusty revision; preserve per-board authority across editor delivery and restart without a global owner pin.
@@ -67,7 +67,7 @@ Append new user reports here or to the relevant section. Do not discard earlier 
 
 - [ ] Fix unnamed photo-only profile save without requiring a name or changing name-choice provenance; caught by the complete Rusty phone photo-delivery scenario.
 
-- [ ] Old per-device Rusty-removal badge remains after explicit local Forget even though fresh board/profile replication now works. Reviewed local stop now archives the exact job, excludes only the selected origin and retains unconfirmed history without touching connections; stale-confirmation/identity guards and 21 logic checks plus the browser cancel/stop/reload scenario pass. Deploy and apply the explicit action in the authorized owner tab.
+- [x] Old per-device Rusty-removal badge remains after explicit local Forget even though fresh board/profile replication now works. Reviewed local stop deployed in b581df7 and applied to the exact ingest origin in the authorized Bo/owner tab at 16:49 UTC. Active pending badge disappeared; retained history says Removal stopped and remote revocation unconfirmed. Current board/profile connections remain. Stale-confirmation/identity guards and 21 logic checks plus browser cancel/stop/reload scenarios pass.
 - [ ] Fit OTLP batches to the deployed 64 KiB body contract. Live probe: single record 200, 869147-byte long-error batch 413; focused SDK regression generated a 917693-byte request. Byte splitting, bounded concurrency, multibyte exception limits and in-flight opt-out are deployed in verified 4cc7139; 51 focused tests and all ten browser telemetry journeys pass. Sustained production failure export still needs proof; startup records alone do not establish it.
 
 ### Actions cleanup evidence (2026-10-21)
@@ -81,4 +81,6 @@ IDs equal the successful deletion receipts. Current a910b70 source/deployment
 12345546680 / 12345961648 remain nonexpired. New inventory: nine artifacts /
 20,306,006 bytes. Live binary 05bf3ea0 and SDK 9d92a47 remain unchanged; health
 is `ok`. This raises actual cleanup across the four repositories to 884 artifacts
-and 11,424,105,036 bytes. Rusty automatic workflow activation remains pending.
+and 11,424,105,036 bytes. Rusty automatic workflow activation completed in b70aac4; main retention and subsequent automatic runs succeeded. The quoted inventory records the manual cleanup checkpoint, not a claim that later release artifacts cannot replace the selected rollback.
+
+- [ ] Preserve useful OTLP failure evidence while the next export is pending: live b581df7 exported startup records, then discarded hundreds of records while clearing the last error at each new request. Keep independent log/trace failures until that signal confirms a later delivery; expose only bounded status/category, never raw transport details. Investigate the actual production failure after this diagnostic repair deploys.

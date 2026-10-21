@@ -42,6 +42,8 @@ test("Given connected private board storage, when approving inspection from Rust
     await confirmation.getByRole("button", { name: "Share board status", exact: true }).click()
     const board = service.getByRole("article", { name: "Storage inspection board" })
     await expect(board.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    const boardId = new URL(page.url()).pathname.split("/")[2]!
+    await expect(board.getByRole("link", { name: "Open board", exact: true })).toHaveAttribute("href", `${baseURL}/boards/${boardId}`)
     await expect(service.getByText(/Checked from this browser/)).toBeVisible()
     await service.screenshot({ path: info.outputPath("rusty-board-status.png"), fullPage: true })
     await context.route(`${rusty.origin}/v2/scopes/**`, async route => {
@@ -59,6 +61,11 @@ test("Given connected private board storage, when approving inspection from Rust
     expect(JSON.parse(replies)).toHaveLength(2)
     expect(replies).not.toMatch(/readToken|writeToken|contentKey/)
     for (const secret of secrets) expect(replies).not.toContain(secret)
+    const reopened = await context.newPage()
+    await reopened.goto((await board.getByRole("link", { name: "Open board", exact: true }).getAttribute("href"))!)
+    await expect(reopened.getByRole("heading", { name: /TINCANBAN.*Storage inspection board/ })).toBeVisible()
+    await expect(reopened.getByRole("heading", { name: "Board unavailable", exact: true })).toHaveCount(0)
+    await reopened.close()
   } finally { await service.close(); await rusty.close() }
 })
 

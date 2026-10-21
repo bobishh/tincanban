@@ -164,6 +164,7 @@ describe("browser OTel SDK", () => {
       expect(JSON.parse(request.body)).toHaveProperty(request.path.endsWith("logs") ? "resourceLogs" : "resourceSpans")
     }
     expect(sdk.exportState.error).toContain("OTLP trace export failed")
+    expect(sdk.exportState.error).toContain("HTTP 400")
     await sdk.shutdown()
   })
 
@@ -213,6 +214,30 @@ describe("browser OTel SDK", () => {
     expect(sdk.exportState.sending).toBe(0)
     expect(sdk.exportState.dropped).toBe(1)
     expect(sdk.exportState.error).toContain("OTLP log export failed")
+    await sdk.shutdown()
+  })
+
+  it("Given a rejected export, when the next batch is pending, then the failure remains available without exposing transport details", async () => {
+    const deliveries: Array<(result: { code: ExportResultCode; error?: Error }) => void> = []
+    const logs = {
+      export: (_records: unknown[], complete: (result: { code: ExportResultCode; error?: Error }) => void) => deliveries.push(complete),
+      forceFlush: async () => {}, shutdown: async () => {},
+    }
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces: new InMemorySpanExporter() })
+    sdk.emit({ event: "sync.failed", detail: {}, level: "error", timestamp: Date.now() })
+    const first = sdk.forceFlush()
+    await vi.waitFor(() => expect(deliveries).toHaveLength(1))
+    deliveries[0]!({ code: ExportResultCode.FAILED, error: new Error("Fetch request failed with non-retryable status 413; Bearer collector-private-token") })
+    await first
+    expect(sdk.exportState.error).toContain("HTTP 413")
+    sdk.emit({ event: "sync.failed", detail: {}, level: "error", timestamp: Date.now() })
+    const next = sdk.forceFlush()
+    await vi.waitFor(() => expect(deliveries).toHaveLength(2))
+    expect(sdk.exportState.error).toContain("HTTP 413")
+    expect(sdk.exportState.error).not.toContain("collector-private-token")
+    deliveries[1]!({ code: ExportResultCode.SUCCESS })
+    await next
+    expect(sdk.exportState.error).toBe("")
     await sdk.shutdown()
   })
 })

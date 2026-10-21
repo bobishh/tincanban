@@ -722,3 +722,62 @@ preserved. The exact case passes in 19.2 seconds, and all five scenarios using
 that helper pass against native Rusty 359d998 in 1.1 minutes. A completed bounded
 sync pass is not itself evidence of a current snapshot; the production health
 model separately represents that condition as catching up.
+
+
+### Live status and export follow-up — 2026-10-21 16:49 UTC
+
+Tincanban b581df7 passed all sixteen Verify jobs (39634739450), frontend
+39636279182 and automation 39636279189. Both live health endpoints confirm the
+exact source. Rusty status/retention merge 7a54051 passed CI 39637244954 and
+deployment 39637637822; live health confirms it. The editor's actual confirmed
+status exchange shows app issues Synced/read-write, while Ecky issues and Job
+search show Access required after the earlier reset. No connection or key was
+changed by inspection. Screenshot: `/tmp/rusty-status-7a-editor-live.png`.
+
+The website's Open board link exposed a separate mapping defect: status reply
+`id` contained workspace ID 93c9d040… instead of board ID 5962c240…. The route
+resolver accepts board IDs, so a green status did not prove a usable link. The
+repair resolves each approved catalog workspace to its admitted local board
+after checking storage, retains the identity/deadline guards across the read,
+and sends only that board ID as the route identifier. A unit reproduced the
+distinct-ID failure before implementation; the outer browser scenario now
+follows the returned link and requires the actual board after the access-error
+case as well as checking status and credential exclusion.
+
+In the authorized Bo/owner issues-board tab, reviewed Stop retrying applied only
+to the old ingest removal. The active pending row disappeared; history retains
+Removal stopped and says remote revocation is unconfirmed. Fresh board/profile
+connections were retained. No server reset or remote revocation was attempted.
+Screenshot: `/tmp/tincanban-owner-stopped-removal-b581.png`.
+
+The new read-only diagnostic status exposed an unresolved export failure.
+At 16:43:38 the editor reported 168 dropped records; at 16:44:02 it reported
+300, with last successful send 16:43:20. ClickHouse had only main-session
+a64477fc… startup/pairing records and worker-session 852228f7… startup records.
+Synthetic 460-byte single-record and 13690-byte fifty-record OTLP requests both
+returned 200, so this is not proof of a general intake outage, quota failure or
+continued body-limit rejection. No request status for the actual failed page
+batch has yet been established. Production diagnostic status currently discards
+transport reason and clears its error at the start of every request. Focused
+red tests reproduce both missing HTTP status and the erased pending failure.
+Keep failure reasons allowlisted and independent per signal so successful log
+export cannot hide rejected traces or vice versa; do not export raw error text,
+collector response bodies or credentials. This diagnostic change is not a claim
+that continuous production delivery is repaired.
+
+Rusty cleanup-only main b70aac4 and its automatic runs succeeded. Its real warm
+image build reused the cached dependency compilation: root build 17.22 seconds,
+cache export 3.7 seconds; cold dependency compilation previously took 162.9
+seconds. Evidence: `/tmp/rusty-b70-warm-build.log`. Status merge 7a54051 retains
+the cleanup unchanged. No timing-only commit or removed behavior proof was used.
+
+The repaired link/status/access-failure journey passed Chromium (14.0 seconds)
+and WebKit (15.7 seconds) against native Rusty; both reopen the exact existing
+private board. All seventeen focused reply/export tests passed after their
+confirmed red failures. Full quality checks and strict OpenSpec validation pass.
+
+A fresh administrative ClickHouse query at 16:53:32 UTC confirms 257 successful
+system.metric_log merges since the targeted 14:10:07 configuration repair, zero
+merge failures, and peak memory 124806697 bytes. This extends evidence that the
+merge memory fault is repaired; it does not explain the separate browser export
+rejection.

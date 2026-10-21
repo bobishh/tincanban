@@ -26,7 +26,7 @@ export function assertRustyStatusRequest(current: RustyStatusRequest | undefined
 
 /** Explicit output fields prevent private replica credentials entering a cross-origin message. */
 export function createRustyStatusReply(request: RustyStatusRequest, configs: BlindReplicaConfig[],
-  catalog: readonly { id: string; title: string }[], health: Record<string, ReplicaHealth>, now: number,
+  catalog: readonly { id: string; title: string; boardId: string }[], health: Record<string, ReplicaHealth>, now: number,
   conflicts: PrivateReplicaConflictSummary[] = []) {
   const selected = configs.filter(config => config.origin === request.origin)
   const paused = new Set(conflicts.filter(conflict => conflict.origin === request.origin).flatMap(conflict => conflict.workspaceIds))
@@ -35,7 +35,7 @@ export function createRustyStatusReply(request: RustyStatusRequest, configs: Bli
   return { type: "rusty-status@1" as const, requestId: request.requestId, origin: request.origin, checkedAt: now,
     boards: boards.map(board => {
       const matches = selected.filter(config => config.workspaceId === board.id)
-      const base = { id: board.id, title: board.title.slice(0, 512) }
+      const base = { id: board.boardId, title: board.title.slice(0, 512) }
       if (paused.has(board.id) || matches.length !== 1) return { ...base, status: "Sync paused", access: "not-confirmed" }
       const config = matches[0]!
       const state = health[replicaKey(config)]

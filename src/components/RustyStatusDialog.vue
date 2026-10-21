@@ -2,11 +2,12 @@
 import { computed, ref } from "vue"
 import DialogWindow from "./DialogWindow.vue"
 import type { LocalProfile } from "../domain/identity"
+import { hasEntityKind, type WorkspaceDocumentV2 } from "../domain/model"
 import type { BlindReplicationController } from "../app/blindReplication"
 import { parseRustyStatusRequest, assertRustyStatusRequest, createRustyStatusReply, type RustyStatusRequest } from "../app/rustyStatusHandoff"
 
 const props = defineProps<{ workspaceId: string; ready: boolean; profile: () => LocalProfile | null;
-  boards: { id: string; title: string }[]; controller: BlindReplicationController }>()
+  boards: { id: string; title: string }[]; readWorkspaceDoc: (id: string) => Promise<WorkspaceDocumentV2>; controller: BlindReplicationController }>()
 const emit = defineEmits<{ close: [] }>()
 const request = ref<RustyStatusRequest>()
 const error = ref("")
@@ -37,9 +38,15 @@ async function approve() {
   try {
     ensureCurrent()
     await props.controller.syncNow()
+    const boards = await Promise.all(props.boards.filter(board => selectedIds.has(board.id)).map(async entry => {
+      const doc = await props.readWorkspaceDoc(entry.id)
+      const board = Object.values(doc.entities).find(entity => hasEntityKind(entity, "board"))
+      if (doc.id !== entry.id || !board) throw new Error("The board address is unavailable. Open this board in Tincanban and retry.")
+      return { ...entry, boardId: board.id }
+    }))
     ensureCurrent()
     const reply = createRustyStatusReply(expected, props.controller.configs.value,
-      props.boards.filter(board => selectedIds.has(board.id)), props.controller.statuses.value, Date.now(), props.controller.preferenceConflicts.value)
+      boards.filter(board => props.boards.some(entry => entry.id === board.id)), props.controller.statuses.value, Date.now(), props.controller.preferenceConflicts.value)
     originalOpener!.postMessage(reply, expected.origin)
     sent.value = true
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "Could not share Rusty status" }

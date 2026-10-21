@@ -123,6 +123,19 @@ function wallTimeFromMonotonic(milliseconds: number): number {
   return (typeof performance === "undefined" ? Date.now() : performance.timeOrigin) + milliseconds
 }
 
+function exportFailureReason(error: Error | undefined): string {
+  if (!error) return "Unclassified export failure"
+  const code = (error as Error & { code?: unknown }).code
+  if (typeof code === "number" && Number.isInteger(code) && code >= 100 && code <= 599) return `HTTP ${code}`
+  const status = /non-retryable status ([1-5][0-9]{2})\b/.exec(error.message)?.[1]
+  if (status) return `HTTP ${status}`
+  if (/Concurrent export limit reached/.test(error.message)) return "Export concurrency limit"
+  if (/Diagnostic record exceeds the OTLP body limit/.test(error.message)) return "Record exceeds 64 KiB"
+  if (/network error|Fetch request errored/.test(error.message)) return "Network request failed"
+  if (/timeout|timed out|aborted/i.test(error.message) || error.name === "AbortError") return "Export timed out"
+  return ["TypeError", "RangeError", "SyntaxError"].includes(error.name) ? error.name : "Unclassified export failure"
+}
+
 export class BrowserOtelSdk {
   private loggerProvider: LoggerProvider
   private tracerProvider: WebTracerProvider
@@ -133,6 +146,7 @@ export class BrowserOtelSdk {
   private outstanding = 0
   private inFlightRecords = 0
   private onState: () => void
+  private exportErrors = { log: "", trace: "" }
 
   constructor(config: TelemetryConfig, onState: () => void, providedExporters?: BrowserSdkExporters) {
     this.onState = onState
@@ -290,7 +304,6 @@ export class BrowserOtelSdk {
     this.exportState.sending++
     this.inFlightRecords += count
     this.exportState.queued = Math.max(0, this.exportState.queued - count)
-    this.exportState.error = ""
     this.onState()
   }
 
@@ -298,11 +311,15 @@ export class BrowserOtelSdk {
     this.exportState.sending = Math.max(0, this.exportState.sending - 1)
     this.inFlightRecords = Math.max(0, this.inFlightRecords - count)
     this.outstanding = Math.max(0, this.outstanding - count)
-    if (result.code === ExportResultCode.SUCCESS) this.exportState.lastSentAt = Date.now()
+    if (result.code === ExportResultCode.SUCCESS) {
+      this.exportState.lastSentAt = Date.now()
+      this.exportErrors[signal] = ""
+    }
     else {
       this.exportState.dropped += count
-      this.exportState.error = `The OTLP ${signal} export failed; its batch was discarded. Resume applies only to diagnostics still queued or recorded later.`
+      this.exportErrors[signal] = `The OTLP ${signal} export failed (${exportFailureReason(result.error)}); its batch was discarded. Resume applies only to diagnostics still queued or recorded later.`
     }
+    this.exportState.error = this.exportErrors.log || this.exportErrors.trace
     this.onState()
   }
 }
