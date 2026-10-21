@@ -1,6 +1,6 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { LocalProfile } from "../domain/identity"
-import { canonicalAuthorityJson } from "./authorityFingerprint"
+import { canonicalAuthorityJson, workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import type { DeviceCertificate } from "../domain/model"
 import type { PeerStore, WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerStore"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
@@ -24,24 +24,54 @@ export function createDurablePeerHistoryGuard(input: {
     const bundle = remote.peer.advertisement as WorkspaceMemberBundle | undefined
     if (!bundle) throw new Error("Direct peer device authorization is unavailable")
     const ownerState = authority ?? remote.credential
-    const currentPeer = await verifyWorkspaceMemberBundle(bundle, { workspaceId: input.workspaceId,
+    const verify = (selected: WorkspaceMemberBundle) => verifyWorkspaceMemberBundle(selected, { workspaceId: input.workspaceId,
       ownerPersonId: ownerState.ownerPersonId, ownerPublicKey: ownerState.ownerPublicKey,
       ownerCertificates: ownerState.ownerCertificates as DeviceCertificate[],
       ownerHistory: ownerHistory(authority, remote.credential) })
+    let currentPeer = await verify(bundle)
     input.assertSession()
     const [latestCredential, latestAuthority, latestPeer] = await Promise.all([
       input.store.getWorkspaceCredential(input.workspaceId), input.store.getWorkspaceAuthority(input.workspaceId),
       input.store.getPeer(input.workspaceId, input.deviceId),
     ])
     input.assertSession()
-    if (!latestCredential || !latestPeer || canonicalAuthorityJson({ credential, authority, peer }) !==
-      canonicalAuthorityJson({ credential: latestCredential, authority: latestAuthority, peer: latestPeer })) {
+    const latest = requireRemoteDevice(latestCredential, latestPeer, input)
+    if (authorizationState(remote.credential, authority, remote.peer) !== authorizationState(latest.credential, latestAuthority, latest.peer)) {
       throw new Error("Direct peer authorization changed during history transfer")
+    }
+    if (canonicalAuthorityJson(bundle) !== canonicalAuthorityJson(latest.peer.advertisement)) {
+      currentPeer = await verify(latest.peer.advertisement as WorkspaceMemberBundle)
+      input.assertSession()
+      const [finalCredential, finalAuthority, finalPeer] = await Promise.all([
+        input.store.getWorkspaceCredential(input.workspaceId), input.store.getWorkspaceAuthority(input.workspaceId),
+        input.store.getPeer(input.workspaceId, input.deviceId),
+      ])
+      input.assertSession()
+      const final = requireRemoteDevice(finalCredential, finalPeer, input)
+      if (authorizationState(latest.credential, latestAuthority, latest.peer) !== authorizationState(final.credential, finalAuthority, final.peer)) {
+        throw new Error("Direct peer authorization changed during history transfer")
+      }
     }
     assertPeerIdentity(currentPeer, input, remote.credential)
     assertPoliciesCurrent(remote.credential, authority, profile, currentPeer.advertisement.payload.personId, input.deviceId, bundle.grant ?? null)
     input.assertSession()
   }
+}
+
+/** Route presence is not authority. Retain every other stored security value. */
+function authorizationState(credential: WorkspaceMeshCredential, authority: WorkspaceAuthorityRecord | null,
+  peer: NonNullable<Awaited<ReturnType<PeerStore["getPeer"]>>>): string {
+  const security: Record<string, unknown> = { ...peer }
+  for (const key of ["lastSeen", "endpoint", "instanceId", "instances"]) delete security[key]
+  const bundle = peer.advertisement as WorkspaceMemberBundle | undefined
+  if (bundle) {
+    const proof: Record<string, unknown> = { ...bundle }
+    for (const key of ["advertisement", "signed", "payload", "signature", "signerKeyId"]) delete proof[key]
+    const { kind, version, workspaceId, personId, deviceId } = bundle.advertisement.payload
+    security.advertisement = { ...proof, signerKeyId: bundle.advertisement.signerKeyId,
+      identity: { kind, version, workspaceId, personId, deviceId } }
+  }
+  return canonicalAuthorityJson({ authority: workspaceAuthorityFingerprint([credential], authority ? [authority] : []), peer: security })
 }
 
 function assertLocalProfile(current: LocalProfile, expected: LocalProfile): void {

@@ -88,6 +88,15 @@ An idle response wait must reserve only the bounded header, not an entire maximu
 
 Preserve the actual multi-workspace credential-transfer acceptance test. Require both successful transfer and no concurrency/empty-header warnings. Enrollment helpers must await terminal confirmation on both participating devices before closing their windows. This establishes the repaired admission mechanism; sustained production operation and owner-offline participant exchange remain separate verification.
 
+Direct history checks compare effective authorization separately from presence:
+credential/authority timestamps, peer last-seen and instance routes do not revoke
+the current channel. Keep owner, epoch, grants, roles, certificates, keys,
+revocations and peer identity in the stable comparison. Transport-secret changes
+still reject the session. If the selected signed route changes during validation,
+verify that new bundle and reread current authorization afterward. This bounded
+second verification rejects forged route updates and policy/session changes
+during the extra wait without retrying indefinitely or accepting stale authority.
+
 ### Rusty configuration and runtime status
 
 The earlier explicit local reset preceded the deployed fix that also retires

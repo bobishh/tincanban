@@ -1015,3 +1015,78 @@ proof, not successful new CI or deployment. Receipts:
 /tmp/tincanban-a911-exact-lazy-removal-final-size.log,
 /tmp/tincanban-a911-lazy-removal-graph.json and
 /tmp/tincanban-a911-lazy-removal-final-browser.log.
+
+### Live direct-history refusal during CI — 2026-10-21 18:23 UTC
+
+Read-only WebMCP on the actual b581df7 Codex/editor tab captured a direct Mac
+peer refusal at 18:23:24.617. Workspace e3d8e416-611c-4e8f-ba20-615de0b91427
+reports `Direct peer authorization changed during history transfer`; the same
+peer's in-18 session closes at 18:23:25.518 with `publish failed`. Other scopes
+continue receiving. This contradicts a broad stability claim based on earlier
+quiet minute-long windows. The captured window also records 1608 discarded
+diagnostics and a last successful send at 18:15:41, on the old frontend.
+Receipt: /tmp/tincanban-08a62-predeployment-live-trace.json.
+
+The message originates in durablePeerHistoryGuard, introduced by dd536f4.
+It compares complete persisted credential, authority and peer objects across
+asynchronous bundle verification. Peer records include lastSeen, endpoint,
+instance routes and signed route advertisements; credentials/authority include
+updatedAt. Ordinary liveness changes can therefore invalidate this comparison
+without changing a grant or revocation. The exact differing field in this live
+refusal is not captured; establish the false-positive path with a deterministic
+interleaving test before choosing a repair. Preserve signed bundle validation,
+actual owner/grant/device/revocation changes and session/identity cancellation.
+
+Three deterministic logic cases reproduce the same refusal before the repair:
+lastSeen-only update, credential/authority timestamp-only update, and a new signed
+route with unchanged identity/grant. Six unchanged-access/real-change cases pass
+on that original guard. The repair compares stable authorization, retaining all
+credential/authority fields except their timestamps and all peer security material
+apart from route/presence metadata. Transport binding is checked separately.
+A changed signed advertisement is verified again; a final read refuses policy
+changes during that verification. No unbounded retry or permission fallback.
+
+Ninety-four focused guard/authority/storage-sharing/mesh cases pass, including
+real signed owner advertisements and a tampered replacement signature. The
+existing three-identity browser scenario passes in 39.5 seconds: source owner
+closed, cold editor/visitor with peer WebSockets blocked, editor update received
+through Rusty, zero visitor PUTs, then Unavailable on service stop. Full quality
+passes, and production build settings measure 273.61 / 275 kB with all other
+budgets unchanged. This guard repair is not yet deployed. Receipts:
+/tmp/tincanban-direct-history-presence-red.log,
+/tmp/tincanban-direct-history-final-tests.log,
+/tmp/tincanban-direct-history-shared-rusty-browser.log,
+/tmp/tincanban-direct-history-quality.log and
+/tmp/tincanban-direct-history-size.log.
+
+### 08a62e9 production activation and real diagnostic delivery
+
+Verify 39651436565 passed all sixteen jobs. Actual CI startup size is 273.85 kB;
+the remaining difference from the local 273.59-kB measurement did not exhaust
+the retained margin. Frontend deployment 39653380661 and automation deployment
+39653380852 succeeded. Served frontend metadata identifies source 08a62e9,
+candidate 39651436565-1, artifact
+34ab2a418f334cf33cb57a8e0a5bad849f97f99f28f42ee1c57eece93b515e76
+and provider version 03806b20-2387-46a7-a4cc-0e74283f97bd. Rusty remains 7a54051.
+
+The actual Codex/editor issues-board tab reloaded that client without an unsaved
+draft and shows Devices connected / Rusty synced. It has no syncTrace URL flag.
+ClickHouse confirms 562 records from actual session
+449975ed-327f-453f-954a-ff053091306b, source 08a62e9, spanning
+18:32:13.918–18:35:14.273: fifteen dial failures, fourteen device failures,
+twelve mesh inventory failures and twenty-five Rusty sync failures, with bounded
+stack/cause and workspace/peer/runtime correlation. This is real automatic
+connection-failure delivery, beyond startup or synthetic probes. The same tab's
+later snapshot has zero queued/preparing/dropped records, no error, and advancing
+lastSentAt. Longer stability and the separate history-refusal repair remain open.
+Receipts: /tmp/tincanban-08a62-actual-browser-delivery.jsonl,
+/tmp/tincanban-08a62-postdeployment-live-trace.json and
+/tmp/tincanban-08a62-postdeployment-live-trace-later.json.
+
+The live Rusty handoff now returns admitted board IDs: app issues 5962c240 is
+Synced/read-write; Ecky issues and Job search are Access required after reset.
+Clicking app issues Open board reaches the actual board with editor role and
+08a62e9, then returning restores the status page. Screenshots:
+/tmp/tincanban-rusty-status-08a62-live.png and
+/tmp/tincanban-rusty-open-board-08a62-live.png. Task 2.7 is verified deployed;
+this does not complete owner-offline/two-board acceptance.
