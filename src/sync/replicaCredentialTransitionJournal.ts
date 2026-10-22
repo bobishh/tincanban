@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { compareAndSwapLocal, readLocal, listLocalKeys } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
@@ -187,7 +188,7 @@ async function currentProfileRaw(profile: LocalProfile): Promise<string> {
 async function changeJournal(pending: ReplicaCredentialFreeze, profile: LocalProfile,
   change: (current: CredentialTransitionJournal) => CredentialTransitionJournal | Promise<CredentialTransitionJournal>, guard: () => void): Promise<CredentialTransitionJournal> {
   pending = structuredClone(pending)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const key = await credentialTransitionJournalKey(pending.personId, pending.origin)
   const freezeKey = await replicaCredentialFreezeKey(pending.personId, pending.origin)
   return withLocalStateWriteLock(key, async () => {
@@ -211,7 +212,7 @@ export function beginCredentialTransitionJournal(pending: ReplicaCredentialFreez
 }
 
 export async function readCredentialTransitionJournal(profile: LocalProfile, origin: string): Promise<CredentialTransitionJournal | undefined> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   origin = blindOrigin(origin)
   const raw = await readLocal(await credentialTransitionJournalKey(profile.identity.personId, origin))
   if (raw === null) return undefined
@@ -291,7 +292,7 @@ export function confirmCredentialTransitionWorker(pending: ReplicaCredentialFree
 /** Publish confirmed preferences, retained local cursors, journal phase and freeze removal in one transaction. */
 export async function activateCredentialTransitionJournal(profile: LocalProfile, origin: string,
   guard: () => void): Promise<CredentialTransitionJournal> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   origin = blindOrigin(origin)
   const key = await credentialTransitionJournalKey(profile.identity.personId, origin)
   return withLocalStateWriteLock(key, async () => {
@@ -333,7 +334,7 @@ export async function activateCredentialTransitionJournal(profile: LocalProfile,
 /** Credentials installed is distinct from a fresh-epoch storage receipt. Keep recovery state until every scope has one. */
 export async function completeCredentialTransitionJournal(profile: LocalProfile, origin: string,
   guard: () => void): Promise<void> {
-  profile = structuredClone(profile); origin = blindOrigin(origin)
+  profile = captureIdentityProfile(profile); origin = blindOrigin(origin)
   const owner = profile.identity.personId
   const key = await credentialTransitionJournalKey(owner, origin)
   await withLocalStateWriteLock(key, async () => {
@@ -365,6 +366,11 @@ export async function completeCredentialTransitionJournal(profile: LocalProfile,
 export async function readCompletedDeviceRevocation(profile: LocalProfile, origin: string, deviceId: string,
   guard: () => void): Promise<string | undefined> {
   origin = blindOrigin(origin)
+  const { RustyManagementRepository } = await import("./rustyManagementRepository")
+  const current = await new RustyManagementRepository(profile.identity.personId).export()
+  guard()
+  if (current.some(value => value.binding.origin === origin && value.binding.resourceKind === "person"
+      && !value.capability.payload.revokedDeviceIds.includes(deviceId))) return undefined
   const prefix = `${await credentialTransitionJournalKey(profile.identity.personId, origin)}.completed.`
   guard()
   const keys = (await listLocalKeys()).filter(key => key.startsWith(prefix))

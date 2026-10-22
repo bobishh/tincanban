@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { createWorkspaceGrant } from "../domain/proofs"
 import type { ScopedInvitation } from "@meta-uber/mesh-pairing"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
@@ -117,7 +118,7 @@ export class InvitationService {
     suppliedContext?: VerifiedSigningContext,
   ): Promise<{ ok: true; certificate: DeviceCertificate } | { ok: false; error: string }> {
     const requestedDevice = structuredClone(recipientDevice)
-    const requestedProfile = structuredClone(profile)
+    const requestedProfile = captureIdentityProfile(profile)
     const requestedInvitationId = invitationId
     const { approveEnrollmentCertificate } = await import("./enrollmentCertificate")
     return approveEnrollmentCertificate(requestedInvitationId, requestedDevice, requestedProfile, suppliedContext, {

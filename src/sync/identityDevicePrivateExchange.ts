@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { bootstrapIdentity, type LocalProfile } from "../domain/identity"
 import { getReplicaConfigurations } from "./privateReplicaRepository"
 import { readReplicaCredentialFreeze } from "./replicaCredentialFreeze"
@@ -10,7 +11,7 @@ export class PrivateIdentityExchangeDeniedError extends Error {
 /** Recheck live identity, signed Rusty revocations and in-flight transition targets before private state crosses devices. */
 export async function assertIdentityDevicePrivateExchangeAllowed(profile: LocalProfile, remoteDeviceId: string,
   ensureCurrent: () => void = () => {}): Promise<void> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   if (!remoteDeviceId || remoteDeviceId.length > 128) throw new Error("Invalid remote identity device")
   ensureCurrent()
   const current = await bootstrapIdentity()

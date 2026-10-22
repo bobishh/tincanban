@@ -12,7 +12,7 @@ export type ManagementUpdateAuthorization = {
   kind: "rusty-management-policy-update"; version: 1; serviceId: string; origin: string; personId: string; deviceId: string;
   resourceKind: "scope" | "board" | "person"; resourceId: string; expectedRevision: number; operations: string[]; revokedDeviceIds: string[];
   requestId: string; issuedAt: number; expiresAt: number;
-  personManagementRevision?: number;
+  personManagementRevision?: number; restoredDeviceIds?: string[];
 }
 export type ManagementUpdateRequest = { version: 1; identity: PublicIdentity; deviceId: string; certificates: DeviceCertificate[];
   managementCapability?: SignedEnvelope<RustyManagementCapability>; personManagementCapability?: SignedEnvelope<RustyManagementCapability>;
@@ -91,11 +91,12 @@ async function verifyManagementUpdateRequest(binding: ManagementBinding, owner: 
   fields(request.authorization, ["payload", "signerKeyId", "signature"])
   const payload = request.authorization.payload
   fields(payload, ["kind", "version", "serviceId", "origin", "personId", "deviceId", "resourceKind", "resourceId",
-    "expectedRevision", "operations", "revokedDeviceIds", "requestId", "issuedAt", "expiresAt"], ["personManagementRevision"])
+    "expectedRevision", "operations", "revokedDeviceIds", "requestId", "issuedAt", "expiresAt"], ["personManagementRevision", "restoredDeviceIds"])
   validateIdentityEvidence(request, owner)
   if (!requestMatches(payload, binding, owner, request.deviceId) ||
     payload.serviceId !== await sha256Base64Url(decodeBlindBytes(binding.servicePublicKey))) throw new Error("Invalid management request binding")
   validatePolicy(payload)
+  validateRestorationIntent(payload)
   if (!Number.isSafeInteger(payload.issuedAt) || payload.issuedAt < 0 || !Number.isSafeInteger(payload.expiresAt) ||
     payload.expiresAt <= payload.issuedAt || payload.expiresAt - payload.issuedAt > 120_000) throw new Error("Invalid management request timing")
   const publicKey = await verifyDeviceCertificateChain(request.identity, request.deviceId, request.certificates, "MATCH/1")
@@ -106,10 +107,17 @@ async function verifyManagementUpdateRequest(binding: ManagementBinding, owner: 
     if (request.personManagementCapability || payload.personManagementRevision !== undefined) throw new Error("Person creation evidence cannot replace existing resource authority")
     const cap = await verifyRustyManagementCapability(request.managementCapability, binding, { personId: owner, deviceId: request.deviceId,
       resourceKind: binding.resourceKind, resourceId: binding.resourceId, operation: "management.update", minimumRevision: payload.expectedRevision })
-    if (cap.revision !== payload.expectedRevision || cap.revokedDeviceIds.some(id => !payload.revokedDeviceIds.includes(id))) {
+    if (cap.revision !== payload.expectedRevision || cap.revokedDeviceIds.some(id =>
+      !payload.revokedDeviceIds.includes(id) && !payload.restoredDeviceIds?.includes(id))) {
       throw new Error("Management request revision or revocation conflict")
     }
   }
+}
+
+function validateRestorationIntent(payload: ManagementUpdateAuthorization): void {
+  if (payload.restoredDeviceIds && (!Array.isArray(payload.restoredDeviceIds) || payload.restoredDeviceIds.length > 512 ||
+    payload.restoredDeviceIds.some(id => !validId(id) || payload.revokedDeviceIds.includes(id)) ||
+    new Set(payload.restoredDeviceIds).size !== payload.restoredDeviceIds.length)) throw new Error("Invalid device restoration intent")
 }
 
 async function verifyCreationEvidence(binding: ManagementBinding, owner: string, request: ManagementUpdateRequest) {
@@ -292,7 +300,8 @@ async function mergeCapability(state: State, binding: ManagementBinding, capabil
       throw new Error("Management authority rollback")
     }
     if (incoming.revision === previous.revision && !same(record?.capability, capability)) throw new Error("Management policy revision conflict")
-    if (previous.revokedDeviceIds.some(id => !incoming.revokedDeviceIds.includes(id))) throw new Error("Management revocation rollback")
+    if (previous.revokedDeviceIds.some(id => !incoming.revokedDeviceIds.includes(id) &&
+        !incoming.restoredDeviceIds?.includes(id))) throw new Error("Management revocation rollback")
   }
   if (!record) { state.records.push({ binding, capability }); return }
   record.capability = capability

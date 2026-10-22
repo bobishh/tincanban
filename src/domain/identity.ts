@@ -38,6 +38,12 @@ export type LocalProfile = MeshLocalProfile & {
   certificate: DeviceCertificate
 }
 
+/** Snapshot mutable profile data without cloning browser-owned CryptoKey handles. */
+export function captureIdentityProfile(profile: LocalProfile): LocalProfile {
+  return { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
+    certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
+}
+
 const profileStorageKey = "tincanban.local_profile.v1"
 let creatingUnprovidedName = false
 async function persistIdentityProfile(key: string, value: string): Promise<void> {

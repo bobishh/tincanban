@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { assertSigningContextCurrent } from "../domain/signingContext"
@@ -33,7 +34,7 @@ export async function revokeRustyIdentityDevice(app: TransitionApp, origin: stri
   origin = blindOrigin(origin)
   const current = app.getCurrentProfile()
   if (!current) throw new Error("Current identity is unavailable")
-  const profile = structuredClone(current)
+  const profile = captureIdentityProfile(current)
   const owner = profile.identity.personId
   const identityBinding = (value: LocalProfile) => canonicalizeJson([value.identity.personId, value.identity.publicKey,
     value.device.deviceId, value.device.publicKey, value.certificate])

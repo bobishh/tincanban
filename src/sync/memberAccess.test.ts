@@ -4,12 +4,12 @@ import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
-import { bootstrapIdentity, clearInMemoryProfileForReloadTest, renewDeviceIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, renewDeviceIdentity, resetIdentityStorageForTest, signEnvelope } from "../domain/identity"
 import { createWorkspaceGrant } from "../domain/proofs"
 import { createWorkspaceDeparture, verifyWorkspaceDeparture, createPeerAdvertisement, createWorkspaceDeviceRevocation, verifyWorkspaceDeviceRevocation,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { DurableMesh } from "./durableMesh"
-import { hasLeftWorkspace, isDeviceRevoked } from "./durableMeshBase"
+import { deviceRevocations, hasLeftWorkspace, isDeviceRevoked } from "./durableMeshBase"
 import { mergePeerRecords } from "@meta-uber/mesh-peer-store"
 import type { PeerStore, WorkspaceMeshCredential } from "./peerStore"
 import type { WorkspacePeerRecord } from "@meta-uber/mesh-peer-store"
@@ -117,6 +117,22 @@ describe("member access", () => {
     for (const [credential] of write.mock.calls) expect(JSON.stringify(credential.catalog)).toBe(evidence)
     await f.mesh.dispose()
   })
+  it("Given a removed device, when enrollment is explicitly approved, then restore the same key while retaining removal evidence and allowing a later removal", async () => {
+    const f = await fixture()
+    await f.mesh.removeDevice(f.visitor.identity.personId, f.visitor.device.deviceId, ["board"])
+    const removed = structuredClone(deviceRevocations(f.credential()))
+    expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(true)
+    await f.mesh.restoreEnrolledDevice(["board"], f.visitor.identity.personId, f.visitor.device.deviceId, () => {})
+    expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(false)
+    expect(f.peer().revokedAt).toBeNull()
+    await meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)
+    await meshHooks(f.mesh).mergeDeviceRevocations(f.credential(), removed)
+    expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(false)
+    await f.mesh.removeDevice(f.visitor.identity.personId, f.visitor.device.deviceId, ["board"])
+    expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(true)
+    await expect(meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)).rejects.toThrow("Device access revoked")
+    await f.mesh.dispose()
+  })
   it("Given device revocation persisted before publication failed, when exact removal retries, then finish publication and projection without another signed record", async () => {
     const f = await fixture()
     const hooks = f.mesh as unknown as { publishAll: () => Promise<void>; notify: () => Promise<void> }
@@ -129,6 +145,20 @@ describe("member access", () => {
     expect(hooks.notify).toHaveBeenCalledOnce()
     expect(JSON.stringify(f.credential().catalog)).toBe(evidence)
     for (const [credential] of write.mock.calls) expect(JSON.stringify(credential.catalog)).toBe(evidence)
+    await f.mesh.dispose()
+  })
+  it("Given a removed device, when restoration names another target or is signed by that removed key, then reject without restoring access", async () => {
+    const f = await fixture()
+    await f.mesh.removeDevice(f.visitor.identity.personId, f.visitor.device.deviceId, ["board"])
+    const removed = deviceRevocations(f.credential())[0]!
+    const payload = { ...removed.record.payload, restores: [removed.record.signature] }
+    const self = { record: await signEnvelope(f.visitor.privateKeys.devicePrivateKey, payload, f.visitor.device.deviceId),
+      authority: { personId: f.visitor.identity.personId, publicKey: f.visitor.identity.publicKey, certificates: [f.visitor.certificate] } }
+    await expect(meshHooks(f.mesh).mergeDeviceRevocations(f.credential(), [self])).rejects.toThrow()
+    const wrong = { record: await signEnvelope(f.owner.privateKeys.devicePrivateKey,
+      { ...payload, deviceId: "another-device" }, f.owner.device.deviceId), authority: removed.authority }
+    await expect(meshHooks(f.mesh).mergeDeviceRevocations(f.credential(), [wrong])).rejects.toThrow()
+    expect(isDeviceRevoked(f.credential(), f.visitor.identity.personId, f.visitor.device.deviceId)).toBe(true)
     await f.mesh.dispose()
   })
   it("Given a removed device, when a join is checked before owner approval, then its signed key is rejected without writes", async () => {

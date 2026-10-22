@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
@@ -86,7 +87,7 @@ async function activateSetup(key: string, raw: string, setup: Setup, profileRaw:
 export async function ensureIdentityReplicaConnection(service: Service, profile: LocalProfile,
   ensureCurrent: () => void, options: { allowNewScopeAfterRemoval?: boolean } = {}): Promise<IdentityReplicaConfig> {
   service = { ...service, origin: blindOrigin(service.origin) }
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   ensureCurrent()
   const personId = profile.identity.personId, key = await identityReplicaSetupKey(personId, service.origin)
   const transitionKey = await replicaCredentialFreezeKey(personId, service.origin)

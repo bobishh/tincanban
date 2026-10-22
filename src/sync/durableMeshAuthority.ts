@@ -1,3 +1,4 @@
+import { restoreEnrolledWorkspaceDevices } from "./workspaceDeviceRestoration"
 import { type LocalProfile } from "../domain/identity"
 import { WorkspaceAuthorityClassification } from "./workspaceAuthorityClassification"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
@@ -309,6 +310,14 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
         profile.identity.publicKey, profile.device.deviceId, personId, deviceId, peer?.personId)) ids.push(credential.workspaceId)
     }
     return ids.sort()
+  }
+
+  async restoreEnrolledDevice(workspaceIds: string[], personId: string, deviceId: string, ensureCurrent: () => void): Promise<void> {
+    await restoreEnrolledWorkspaceDevices(await this.options.getProfile(), workspaceIds, personId, deviceId, ensureCurrent, {
+      store: this.store, heads: id => this.readAuthorityHeads(id),
+      merge: (credential, records) => this.mergeDeviceRevocations(credential, records, false),
+      reclassify: id => this.reclassifyWorkspaceAuthority(id),
+    })
   }
 
   async removeDevice(personId: string, deviceId: string, workspaceIds: string[]): Promise<void> {

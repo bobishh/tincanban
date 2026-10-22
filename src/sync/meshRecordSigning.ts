@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import type { WorkspaceRecordSigner } from "@meta-uber/mesh-workspace"
 import { type LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -13,7 +14,7 @@ export type { MeshRecordOperation } from "./meshRecordPolicy"
 export async function workspaceRecordSigning(profile: LocalProfile, workspaceId: string,
   currentAuthority: (payload?: Record<string, unknown>) => Promise<string>, purposes: string[],
   assertPayload?: (payload: Record<string, unknown>) => void): Promise<WorkspaceRecordSigner> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   purposes = purposes.slice()
   const revision = await currentAuthority()
   const unchanged = async (payload?: Record<string, unknown>) => {
@@ -69,7 +70,7 @@ export async function meshRecordSigning(profile: LocalProfile, expected: Workspa
         ? peers.filter(peer => peer.deviceId === operation.deviceId).map(peer => [peer.personId, peer.revokedAt ?? null]) : null })
   }
   const purposes = operation.kind === "owner" ? ownerPurposes : operation.kind === "advertisement" ? ["peer-advertisement"]
-    : operation.kind === "departure" ? ["workspace-departure"] : operation.kind === "device-revocation" ? ["workspace-device-revocation"]
+    : operation.kind === "departure" ? ["workspace-departure"] : (operation.kind === "device-revocation" || operation.kind === "device-restoration") ? ["workspace-device-revocation"]
       : operation.kind === "vote" ? ["workspace-succession-vote"] : ["workspace-succession-claim", "workspace-grant"]
   const signing = await workspaceRecordSigning(profile, workspaceId, currentAuthority, purposes, payload => {
     assertMeshRecordPayload(expected, operation, profile, payload)

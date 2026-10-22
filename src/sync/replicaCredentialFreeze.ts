@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
@@ -24,7 +25,7 @@ function assertFreezeProfile(raw: string | null, profile: LocalProfile) {
 export async function prepareReplicaCredentialFreeze(profile: LocalProfile, origin: string, servicePublicKey: string,
   revokedDeviceId: string, guard: () => void,
   preflight?: (configurations: readonly PrivateReplicaConfig[]) => Promise<void>): Promise<ReplicaCredentialFreeze> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   origin = blindOrigin(origin)
   const personId = profile.identity.personId
   if (!revokedDeviceId || revokedDeviceId.length > 128 || revokedDeviceId === profile.device.deviceId) {

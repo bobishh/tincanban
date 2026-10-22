@@ -6,7 +6,7 @@ import type { PeerStore, WorkspaceAuthorityRecord, WorkspaceMeshCredential } fro
 
 export type MeshRecordOperation = { kind: "owner" | "departure" | "advertisement" | "claim" }
   | { kind: "vote"; candidatePersonId: string }
-  | { kind: "device-revocation"; personId: string; deviceId: string }
+  | { kind: "device-revocation" | "device-restoration"; personId: string; deviceId: string }
 type Peers = Awaited<ReturnType<PeerStore["listPeers"]>>
 type Catalog = { successionPolicy?: WorkspaceSuccessionPolicy; successionVotes?: WorkspaceSuccessionVote[] }
 
@@ -35,6 +35,10 @@ export function assertMeshRecordOperation(credential: WorkspaceMeshCredential, o
   if (operation.kind === "departure" && credential.ownerPersonId === profile.identity.personId)
     throw new Error("Transfer ownership before leaving this workspace")
   if (operation.kind === "device-revocation") assertDeviceRemoval(credential, operation, peers, profile)
+  if (operation.kind === "device-restoration" && (operation.deviceId === profile.device.deviceId ||
+      (credential.ownerPersonId !== profile.identity.personId && operation.personId !== profile.identity.personId))) {
+    throw new Error("Device restoration scope is no longer authorized")
+  }
 }
 
 function assertOwnerOperation(credential: WorkspaceMeshCredential, peers: Peers, profile: LocalProfile, payload?: Record<string, unknown>) {
@@ -44,7 +48,7 @@ function assertOwnerOperation(credential: WorkspaceMeshCredential, peers: Peers,
     throw new Error("Succession policy editor membership changed before signing")
 }
 
-function assertDeviceRemoval(credential: WorkspaceMeshCredential, operation: Extract<MeshRecordOperation, { kind: "device-revocation" }>,
+function assertDeviceRemoval(credential: WorkspaceMeshCredential, operation: Extract<MeshRecordOperation, { kind: "device-revocation" | "device-restoration" }>,
   peers: Peers, profile: LocalProfile) {
   const peer = peers.find(item => item.deviceId === operation.deviceId && item.personId === operation.personId)
   if (operation.deviceId === profile.device.deviceId || !meshRustRuntime().state.canRemoveWorkspaceDevice(credential,
@@ -86,7 +90,7 @@ export function assertMeshRecordPayload(expected: WorkspaceMeshCredential, opera
   const grant = expected.localGrant as WorkspaceGrant | undefined
   if (operation.kind === "departure" && (payload.personId !== profile.identity.personId || payload.accessEpoch !== (grant?.payload.accessEpoch ?? 1)))
     throw new Error("Departure does not match current membership")
-  if (operation.kind === "device-revocation" && (payload.personId !== operation.personId || payload.deviceId !== operation.deviceId))
+  if ((operation.kind === "device-revocation" || operation.kind === "device-restoration") && (payload.personId !== operation.personId || payload.deviceId !== operation.deviceId))
     throw new Error("Device revocation does not match its authorized target")
 }
 

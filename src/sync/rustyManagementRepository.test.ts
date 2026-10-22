@@ -76,6 +76,19 @@ it("Given two different signed policies at one revision or a different service p
   await expect(f.repository.read(other)).rejects.toThrow(/pin/i)
 })
 
+it("Given a removed device, When a newer signed policy explicitly restores it, Then admit restoration and reject stale policy replay", async () => {
+  const f = await fixture()
+  const deviceId = "removed-device"
+  const removed = await f.capability({ revision: 2, revokedDeviceIds: [deviceId] })
+  await f.repository.observe(f.binding, removed)
+  const restored = await f.capability({ revision: 3, restoredDeviceIds: [deviceId] })
+  await f.repository.observe(f.binding, restored)
+  await f.repository.import([{ binding: f.binding, capability: removed }])
+  expect((await f.repository.read(f.binding))?.capability).toEqual(restored)
+  await f.repository.observe(f.binding, await f.capability({ revision: 4, revokedDeviceIds: [deviceId] }))
+  expect((await f.repository.read(f.binding))?.capability?.payload.revokedDeviceIds).toContain(deviceId)
+})
+
 it("Given an uncertain pending request, When newer unrelated policy arrives or a second request is prepared, Then retain original intent", async () => {
   const f = await fixture()
   await f.repository.prepare(f.binding, f.request)

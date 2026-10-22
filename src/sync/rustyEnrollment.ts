@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { canonicalizeJson, sha256Base64Url, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -75,7 +76,7 @@ function validateChallenge(payload: Challenge, access: ScopeAccessPin, profile: 
 export async function readRustyScopePolicyRevision(access: ScopeAccessPin, profile: LocalProfile,
   ensureCurrent: () => void | Promise<void>): Promise<number> {
   access = { ...access, origin: blindOrigin(access.origin) }
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   await ensureCurrent()
   const context = await resolveLocalSigningContext(profile, "rusty-controller-proof", { personId: profile.identity.personId }, { ensureCurrent })
   const binding = { origin: access.origin, servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
@@ -116,7 +117,7 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
   const minimumWriterVersion = options.minimumWriterVersion
   const expectedPolicyRevision = options.expectedPolicyRevision
   access = { ...access }
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   assertEnrollmentOptions(minimumWriterVersion, expectedPolicyRevision)
   await ensureCurrentOption?.()
   const controllerContext = await resolveLocalSigningContext(profile, "rusty-controller-proof", { personId: profile.identity.personId },
@@ -310,7 +311,7 @@ function receiptCoversEnrollment(receipt: PolicyReceipt, expected: { serviceId: 
 export async function verifySavedScopeEnrollmentConfirmation(access: BlindAccess, profile: LocalProfile,
   saved: ScopeEnrollmentIntent, value: unknown): Promise<RustyScopePolicyReceipt> {
   access = structuredClone(access)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   saved = structuredClone(saved)
   const receipt = parseRustyScopePolicyReceipt(value)
   const serviceId = await blindHash(decodeBlindBytes(access.servicePublicKey))

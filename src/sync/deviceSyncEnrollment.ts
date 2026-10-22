@@ -335,6 +335,10 @@ async function approveEnrollment(
   const workspaces = transfer.workspaces
   const ids = workspaces.map(item => item.id)
   const active = selectActiveWorkspace(context, ids)
+  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
+  await context.durableMesh!.restoreEnrolledDevice(ids, profile.identity.personId, guest.deviceId, ensureCurrent)
+  const { restoreEnrolledRustyAccess } = await import("./enrollmentDeviceRestoration")
+  await restoreEnrolledRustyAccess(profile, guest.deviceId, ids, ensureCurrent)
   await context.durableMesh?.forgetEnrolledDevice(ids, guest.deviceId)
   await context.durableMesh?.ensureOwnerWorkspaces(transfer.ownerIds, node.endpointId, profile)
   const store = context.meshWorkspaceStore ?? context.workspaceStore!

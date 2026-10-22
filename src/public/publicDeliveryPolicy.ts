@@ -5,7 +5,7 @@ import { automationLifecycle } from "../domain/automationLifecycle"
 import { defaultProofStore, validateCertificateChain, verifyWorkspaceGrant } from "../domain/proofs"
 import { signWithContext, signingEvidence } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "../sync/workspaceOwnerSigning"
-import { deviceRevocations, hasLeftWorkspace, isGrantRevoked } from "../sync/durableMeshBase"
+import { deviceRevocations, hasLeftWorkspace, isDeviceRevoked, isGrantRevoked } from "../sync/durableMeshBase"
 import { peerStore } from "../sync/peerStore"
 import { workspaceAuthorityFingerprint } from "../sync/authorityFingerprint"
 
@@ -145,7 +145,8 @@ export async function buildPublicBoardDeliveryPolicy(profile: LocalProfile, work
     [...credential.ownerCertificates as DeviceCertificate[], ...authority.ownerCertificates as DeviceCertificate[],
       ...storedCertificates, profile.certificate])
   const { acceptedGrants, revokedGrantIds } = await collectActiveGrants(workspaceId, boardId, allGrants, credential, ownerCerts)
-  const revokedDeviceIds = [...new Set(deviceRevocations(credential).map(item => item.record.payload.deviceId))].sort()
+  const revokedDeviceIds = [...new Set(deviceRevocations(credential).filter(item =>
+    isDeviceRevoked(credential, item.record.payload.personId, item.record.payload.deviceId)).map(item => item.record.payload.deviceId))].sort()
   const payload: PublicBoardDeliveryPolicy = { kind: "rusty-public-board-delivery-policy", version: 1, workspaceId, boardId,
     generation, accessEpoch: credential.epoch, enabled: true, acceptedGrants, revokedGrantIds, revokedDeviceIds }
   const policy = await signWithContext(context, payload)

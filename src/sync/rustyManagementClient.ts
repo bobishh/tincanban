@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { bootstrapIdentity, canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext } from "../domain/signingContext"
@@ -19,7 +20,7 @@ export function rustyManagementAuthorityRevision(binding: ManagementBinding,
   profile: { identity: { personId: string }; device: { deviceId: string } }, operation: string,
   capability?: SignedEnvelope<RustyManagementCapability>): () => Promise<string> {
   binding = structuredClone(binding)
-  profile = structuredClone(profile)
+  profile = { identity: { personId: profile.identity.personId }, device: { deviceId: profile.device.deviceId } }
   capability = structuredClone(capability)
   return async () => {
     const saved = await repo(profile).read(binding)
@@ -37,7 +38,7 @@ export function rustyManagementAuthorityRevision(binding: ManagementBinding,
 export async function resolveRustyManagementAuthority(binding: ManagementBinding, profile: LocalProfile, operation: string,
   supported: boolean, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability> | undefined> {
   binding = structuredClone(binding)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   validatePolicy({ resourceKind: binding.resourceKind, operations: [...new Set(["management.update", operation])].sort(), revokedDeviceIds: [] })
   const saved = await repo(profile).read(binding)
   if (!supported) {
@@ -128,7 +129,7 @@ export async function ensureRustyPersonPolicy(access: Pick<ManagementBinding, "o
 /** Status reads are signed and private. They never provision or migrate a resource. */
 export async function readRustyManagementStatus(binding: ManagementBinding, profile: LocalProfile, guard: ManagementClientGuard = {}) {
   binding = structuredClone(binding)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const issuedAt = Date.now()
   const signing = await context(binding, profile, "rusty-management-policy-status", issuedAt + 120_000, guard)
   const evidence = signingEvidence(signing)
@@ -151,13 +152,24 @@ export async function readRustyManagementStatus(binding: ManagementBinding, prof
   return { ...verified, capability: response.capability }
 }
 
+async function assertRestorationSupported(binding: ManagementBinding, devices: string[] | undefined, guard: ManagementClientGuard) {
+  if (!devices?.length) return
+  const { discoverBlindKeeper } = await import("./blindClient")
+  const service = await discoverBlindKeeper(binding.origin)
+  if (service.servicePublicKey !== binding.servicePublicKey || service.deviceAccessRestoration !== 1) {
+    throw new Error("Rusty upgrade required to restore removed devices")
+  }
+  await guard.ensureCurrent?.()
+}
+
 /** Explicit owner action only. Persist one exact request before the first network attempt. */
 export async function updateRustyManagementPolicy(binding: ManagementBinding, profile: LocalProfile,
-  policy: { operations: string[]; revokedDeviceIds: string[] }, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability>> {
+  policy: { operations: string[]; revokedDeviceIds: string[]; restoredDeviceIds?: string[] }, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability>> {
   binding = structuredClone(binding)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   policy = structuredClone(policy)
-  policy.operations.sort(); policy.revokedDeviceIds.sort()
+  policy.operations.sort(); policy.revokedDeviceIds.sort(); policy.restoredDeviceIds?.sort()
+  await assertRestorationSupported(binding, policy.restoredDeviceIds, guard)
   validatePolicy({ ...policy, resourceKind: binding.resourceKind })
   const repository = repo(profile)
   const saved = await repository.read(binding)
@@ -186,7 +198,7 @@ export async function updateRustyManagementPolicy(binding: ManagementBinding, pr
 /** Reuse persisted ciphertext-free signed intent, including after expiry. Rusty alone decides whether a completed retry is valid. */
 export async function retryRustyManagementUpdate(binding: ManagementBinding, profile: LocalProfile, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability>> {
   binding = structuredClone(binding)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const repository = repo(profile)
   const saved = await repository.read(binding)
   if (!saved?.pending) throw new Error("No Rusty management request is pending")

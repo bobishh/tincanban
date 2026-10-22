@@ -1,6 +1,6 @@
 export type BlindServiceCapabilities = { modes: string[]; applicationWrites: boolean; classification: boolean;
   snapshotCheckpoints?: { version: number; observedSequence?: boolean }; scopeManagement?: { version: number }; personManagement?: unknown; encryptedBlobs?: unknown;
-  writerPolicy?: unknown; scopeEnrollmentRetry?: unknown; blobCoverage?: unknown; encryptedArchives?: unknown; archiveCoverageBatches?: unknown; archiveCoverageAggregates?: unknown }
+  writerPolicy?: unknown; deviceAccessRestoration?: unknown; scopeEnrollmentRetry?: unknown; blobCoverage?: unknown; encryptedArchives?: unknown; archiveCoverageBatches?: unknown; archiveCoverageAggregates?: unknown }
 
 function supportedEncryptedBlobs(capabilities: BlindServiceCapabilities): { version: 1; maximumCiphertextBytes: number } | undefined {
   if (!Object.hasOwn(capabilities, "encryptedBlobs")) return undefined
@@ -22,20 +22,21 @@ function supportsScopeManagement(capabilities: BlindServiceCapabilities): boolea
   return true
 }
 
-function supportedSingleVersion(capabilities: BlindServiceCapabilities, name: "scopeEnrollmentRetry" | "personManagement", message: string) {
+function supportedSingleVersion(capabilities: BlindServiceCapabilities, name: "scopeEnrollmentRetry" | "personManagement" | "deviceAccessRestoration", message: string) {
   const value = capabilities[name]
   if (Object.hasOwn(capabilities, name) && (!value || typeof value !== "object" || Array.isArray(value) ||
       (value as { version?: unknown }).version !== 1 || Object.keys(value).length !== 1)) throw new Error(message)
   return value !== undefined
 }
 
-export function supportedManagementFeatures(capabilities: BlindServiceCapabilities): { snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; scopeEnrollmentRetry?: 1;
+export function supportedManagementFeatures(capabilities: BlindServiceCapabilities): { snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; deviceAccessRestoration?: 1; scopeEnrollmentRetry?: 1;
   encryptedBlobs?: { version: 1; maximumCiphertextBytes: number }; writerPolicy?: { version: 1; maximumWriterVersion: 2 };
   blobCoverage?: { version: 1; maximumObjects: 33 };
   encryptedArchives?: { version: 1; maximumCiphertextBytes: 262160 }; archiveCoverageBatches?: { version: 1; maximumObjects: 64 };
   archiveCoverageAggregates?: { version: 1; maximumChildren: 8; maximumHeight: 31 } } {
   const scopeManagement = supportsScopeManagement(capabilities)
   const scopeEnrollmentRetry = supportedSingleVersion(capabilities, "scopeEnrollmentRetry", "Rusty scope enrollment retry protocol upgrade required")
+  const deviceAccessRestoration = supportedSingleVersion(capabilities, "deviceAccessRestoration", "Rusty device restoration upgrade required")
   const personManagement = supportedSingleVersion(capabilities, "personManagement", "Rusty person management protocol upgrade required")
   const blobCapability = supportedEncryptedBlobs(capabilities)
   const blobCoverage = supportedBlobCoverage(capabilities)
@@ -44,6 +45,7 @@ export function supportedManagementFeatures(capabilities: BlindServiceCapabiliti
     ...(capabilities.snapshotCheckpoints.observedSequence === true ? { snapshotWriteFence: 1 as const } : {}) } : {}),
     ...(scopeManagement ? { scopeManagement: 1 as const } : {}),
     ...(scopeEnrollmentRetry ? { scopeEnrollmentRetry: 1 as const } : {}),
+    ...(deviceAccessRestoration ? { deviceAccessRestoration: 1 as const } : {}),
     ...(personManagement ? { personManagement: 1 as const } : {}), ...(blobCapability ? { encryptedBlobs: blobCapability } : {}),
     ...(blobCoverage ? { blobCoverage } : {}),
     ...(writerPolicy ? { writerPolicy } : {}), ...supportedArchiveFeatures(capabilities) }

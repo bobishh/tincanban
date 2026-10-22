@@ -14,6 +14,7 @@ export type RustyManagementCapability = {
   revision: number
   operations: string[]
   revokedDeviceIds: string[]
+  restoredDeviceIds?: string[]
   requestId: string
   authorizationHash: string
   issuedAt: number
@@ -77,7 +78,7 @@ export async function verifyRustyManagementEvidence(
   const envelope = record(valueSnapshot)
   exactKeys(envelope, envelopeFields, "Invalid management capability envelope")
   const payload = record(envelope.payload)
-  exactKeys(payload, capabilityFields, "Invalid management capability")
+  exactKeys(payload, [...capabilityFields, ...(Object.hasOwn(payload, "restoredDeviceIds") ? ["restoredDeviceIds"] : [])], "Invalid management capability")
 
   const cap = payload as unknown as RustyManagementCapability
   const expectedOrigin = blindOrigin(accessSnapshot.origin)
@@ -142,6 +143,8 @@ function validateRights(cap: RustyManagementCapability): void {
     !cap.operations.includes("management.update") || !isSortedUniqueIds(cap.revokedDeviceIds) || cap.revokedDeviceIds.length > 4096) {
     throw new Error("Invalid management capability rights")
   }
+  if (cap.restoredDeviceIds && (!isSortedUniqueIds(cap.restoredDeviceIds) || cap.restoredDeviceIds.length > 4096 ||
+      cap.restoredDeviceIds.some(id => cap.revokedDeviceIds.includes(id)))) throw new Error("Invalid restored device rights")
 }
 
 function isEvidenceFor(cap: RustyManagementCapability, expected: ExpectedManagementEvidence, origin: string): boolean {

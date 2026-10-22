@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { z } from "zod"
 import { adoptEnrolledIdentity, isCurrentIdentityProfile, fromBase64Url, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import type { DeviceCertificate, PersonalRootDocumentV1 } from "../domain/model"
@@ -29,7 +30,7 @@ const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value
 
 export async function createEnrollmentRequest(invite: DeviceEnrollmentInvitation, profile: LocalProfile) {
   const requestInvite = { ...invite }
-  const requestProfile = structuredClone(profile)
+  const requestProfile = captureIdentityProfile(profile)
   const binding = { invitationId: requestInvite.invitationId, deviceId: requestProfile.device.deviceId,
     publicKey: requestProfile.device.publicKey }
   const context = await resolveLocalSigningContext(requestProfile, "device-enrollment-request", binding)
@@ -53,7 +54,7 @@ export async function enrollmentPayload(invite: DeviceEnrollmentInvitation, prof
   certificate: DeviceCertificate, personalRoot: PersonalRootDocumentV1, workspaces: { id: string; title: string }[],
   activeWorkspaceId: string, meshWorkspaces: unknown[], grants: WorkspaceGrant[], snapshot: Uint8Array,
   suppliedContext?: VerifiedSigningContext) {
-  invite = structuredClone(invite); profile = structuredClone(profile); certificate = structuredClone(certificate)
+  invite = structuredClone(invite); profile = captureIdentityProfile(profile); certificate = structuredClone(certificate)
   personalRoot = structuredClone(personalRoot); workspaces = workspaces.map(({ id, title }) => ({ id, title }))
   meshWorkspaces = structuredClone(meshWorkspaces); grants = structuredClone(grants); snapshot = new Uint8Array(snapshot)
   const context = suppliedContext ?? await resolveLocalSigningContext(profile, "device-enrollment-approval", {
