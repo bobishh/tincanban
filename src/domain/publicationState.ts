@@ -68,10 +68,9 @@ function withdrawnIntent(record: PublicationRecord, availability: PublicationAva
 }
 function missingPublishedCopy(record: PublicationRecord, remoteRevision: number) {
   const next = { ...record, remoteAvailability: "missing" as const }
-  if (record.confirmedRevision === 0 && record.intent?.action === "publish" && !record.intent.confirmed) {
-    // A status read proves this first publish never created a public board.
-    // Preserve the owner's choice, but resolve the failed attempt so only a
-    // fresh explicit action can try again.
+  if (record.confirmedRevision === 0) {
+    // No public snapshot was ever confirmed. Preserve the owner's intent, but
+    // resolve any failed operation so repeated missing reads stay private.
     const resolved = { ...next }
     delete resolved.intent
     return { published: false, withdrawn: false, recoveryNeeded: false, revision: remoteRevision,

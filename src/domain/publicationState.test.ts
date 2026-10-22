@@ -25,6 +25,19 @@ describe("publication ownership state", () => {
     expect(result.record?.intent).toBeUndefined()
   })
 
+  it("does not resurrect a never-confirmed first publish on a later missing status", () => {
+    const pending = { ...record("published"), confirmedRevision: 0, confirmedHash: "", remoteAvailability: "missing" as const,
+      intent: { operationId: "op-first", action: "publish" as const, expectedRevision: 0, projection: null,
+        projectionHash: "pending-hash", sourceHeads: ["head-a"] } }
+
+    const first = reconcilePublicationRecord(pending, { revision: 0, published: false, availability: "missing" })
+    const second = reconcilePublicationRecord(first.record, { revision: 0, published: false, availability: "missing" })
+
+    expect(second).toMatchObject({ published: false, withdrawn: false, recoveryNeeded: false, revision: 0, hash: "" })
+    expect(second.record?.ownerIntent).toBe("published")
+    expect(second.record?.intent).toBeUndefined()
+  })
+
   it("records a remote tombstone without rewriting owner intent or reviving a later missing copy", () => {
     const observed = reconcilePublicationRecord(record("published"), { revision: 9, published: false, availability: "withdrawn" })
     expect(observed).toMatchObject({ published: false, withdrawn: true, recoveryNeeded: false })
