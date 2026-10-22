@@ -5,6 +5,10 @@
   "main": "frontend.mjs",
   "compatibility_date": "2026-10-09",
   "workers_dev": false,
+  "routes": [
+    { "pattern": "match.meta-uber-engineer.dev", "custom_domain": true },
+    { "pattern": "tincanban.meta-uber-engineer.dev", "custom_domain": true }
+  ],
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "preview_urls": false,
   "assets": {

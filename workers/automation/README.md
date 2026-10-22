@@ -402,8 +402,9 @@ bindings return null release identities. Source presence or a source SHA alone
 does not establish the active deployment; use this Worker's deployment artifact
 and live version confirmation. Production uses `wrangler.jsonc`;
 `wrangler.e2e.jsonc` is local-only and never published. `workers.dev` is disabled.
-Configured browser CORS permits `https://match.meta-uber-engineer.dev` and the
-public intake form at `https://meta-uber-engineer.dev`.
+Configured browser CORS permits `https://match.meta-uber-engineer.dev`,
+`https://tincanban.meta-uber-engineer.dev`, and the public intake form at
+`https://meta-uber-engineer.dev`.
 
 Operator-authenticated identity provisioning can happen before routing is configured; it returns only public identity and device-certificate data. Challenge, intake, event status, and activation remain closed until a configured scope and signed approval exist. Each integration must use the owner's exact workspace, board, columns, fields, and signed expiry. Do not add placeholder scopes.
 

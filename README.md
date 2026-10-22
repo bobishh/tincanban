@@ -5,7 +5,10 @@ in your browser. Share selected boards with other people or connect your own
 devices; offline edits synchronize when a peer or configured Rusty store becomes
 reachable. Rusty stores encrypted copies without access to their contents.
 
-Try the [web app](https://match.meta-uber-engineer.dev/).
+Try the [web app](https://tincanban.meta-uber-engineer.dev/). The previous
+[Match address](https://match.meta-uber-engineer.dev/) serves the same app. Browser
+data is stored separately for each address; existing Match boards remain at the
+Match address.
 
 ## Run locally
 

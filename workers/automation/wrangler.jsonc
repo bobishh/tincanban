@@ -39,7 +39,7 @@
     "OTEL_EXPORTER_OTLP_ENDPOINT": "https://analytics.meta-uber-engineer.dev",
     "AUTOMATION_OWNER_IDS": "QyfKlOj-8LNclXyOnPsbtudHSTEi7ecyLvFK7HZkRpY",
     "PUBLIC_ORIGIN": "https://automation.meta-uber-engineer.dev",
-    "CORS_ORIGINS": "https://match.meta-uber-engineer.dev,https://meta-uber-engineer.dev",
+    "CORS_ORIGINS": "https://match.meta-uber-engineer.dev,https://tincanban.meta-uber-engineer.dev,https://meta-uber-engineer.dev",
     "EMAIL_DOMAIN": "meta-uber-engineer.dev",
     "INTEGRATIONS_JSON": "[{\"id\":\"production-proof-20261008\",\"workspaceId\":\"c79c6696-a737-43cf-8794-a0f1c5748ffe\",\"scope\":{\"version\":1,\"boardId\":\"7fd11d7a-5f72-42cf-a972-026a04f87161\",\"columns\":{\"lead\":\"f75eb95c-361c-4774-b29b-a747d7f3060a\",\"interview\":\"6723e470-4f58-4945-8636-2ca469f57279\",\"rejected\":\"c6f68b79-b3c2-46ec-baa2-48046734c1f3\"},\"fieldIds\":{\"company\":\"1523e8e3-01e3-462b-95e1-fd085811f4ee\",\"role\":\"781a00fe-ea62-4236-871c-ec13127cb8cf\",\"jobUrl\":\"eb9724f4-1fd4-4fd5-9fa8-bd97f231c4ee\",\"notes\":\"1506596d-6074-4737-a4d9-f4fd83ffdd56\",\"sourceText\":\"5abf4108-6043-46a4-b388-8e3f160ad23e\"},\"expiresAt\":\"2026-11-07T17:36:22.420Z\"},\"allowedForwarders\":[]}]"
   },
