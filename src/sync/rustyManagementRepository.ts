@@ -298,9 +298,12 @@ export class RustyManagementRepository {
 async function reconcileImportConflict(state: State, owner: string, incoming: PortableManagementRecord,
   resolve?: ManagementConflictResolver): Promise<boolean> {
   const record = locate(state, incoming.binding)
-  if (!resolve || !record?.capability || record.capability.payload.revision !== incoming.capability.payload.revision ||
-      same(record.capability, incoming.capability)) return false
-  record.capability = await reconcileManagementConflict(owner, record.capability, incoming, resolve)
+  if (!resolve || !record?.capability || same(record.capability, incoming.capability)) return false
+  const previous = record.capability.payload, next = incoming.capability.payload
+  const needsReconciliation = next.revision <= previous.revision || previous.revokedDeviceIds.some(id =>
+    !next.revokedDeviceIds.includes(id) && !next.restoredDeviceIds?.includes(id))
+  if (!needsReconciliation) return false
+  record.capability = await reconcileManagementConflict(owner, incoming, resolve)
   await reconcilePending(record, record.capability.payload)
   return true
 }

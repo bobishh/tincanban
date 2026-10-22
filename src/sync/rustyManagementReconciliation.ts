@@ -10,14 +10,14 @@ type ManagementStatusObservation = {
 }
 export type ManagementConflictResolver = (binding: ManagementBinding) => Promise<ManagementStatusObservation>
 
-/** Explicit enrollment may reconcile equal revisions only against a fresh, pinned server response. */
-export async function reconcileManagementConflict(owner: string, previous: SignedEnvelope<RustyManagementCapability>,
-  incoming: PortableManagementRecord, resolve: ManagementConflictResolver): Promise<SignedEnvelope<RustyManagementCapability>> {
+/** Explicit enrollment can replace pre-reset local policy only with fresh, pinned server evidence. */
+export async function reconcileManagementConflict(owner: string, incoming: PortableManagementRecord,
+  resolve: ManagementConflictResolver): Promise<SignedEnvelope<RustyManagementCapability>> {
   const binding = structuredClone(incoming.binding)
   const observation = structuredClone(await resolve(binding))
   const verified = await verifyRustyManagementStatus(observation.response, binding, { personId: owner,
     deviceId: observation.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId,
-    operation: "management.update", minimumRevision: Math.max(previous.payload.revision, incoming.capability.payload.revision) },
+    operation: "management.update", minimumRevision: incoming.capability.payload.revision },
   observation.authorization)
   if (!verified.capability || verified.migrationPending || !observation.response.capability) {
     throw new Error("Rusty permissions are not ready for device enrollment")

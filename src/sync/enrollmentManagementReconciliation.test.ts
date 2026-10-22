@@ -8,7 +8,7 @@ import { enrollmentManagementConflictResolver } from "./enrollmentManagementReco
 
 afterEach(() => { resetIdentityStorageForTest(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-async function fixture() {
+async function fixture(oldRevision = 2) {
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity("Owner")
   const service = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
@@ -22,7 +22,7 @@ async function fixture() {
     resourceKind: "person", resourceId: binding.resourceId, revision: 2, operations: ["management.update", "resource.create"],
     revokedDeviceIds: [], requestId, authorizationHash: "A".repeat(43), issuedAt: Date.now(), ...overrides,
   } satisfies RustyManagementCapability, serviceId, "RUSTY/2")
-  const old = await capability("before-reset", { revokedDeviceIds: [profile.device.deviceId] })
+  const old = await capability("before-reset", { revision: oldRevision, revokedDeviceIds: [profile.device.deviceId] })
   const current = await capability("after-reset")
   await repository.observe(binding, old)
   const hash = (value: unknown) => sha256Base64Url(new TextEncoder().encode(canonicalizeJson(value)))
@@ -41,8 +41,8 @@ async function fixture() {
   return { profile, binding, repository, capability, current, old, status, fetch, resolve, incoming }
 }
 
-it("Given a returning device retained a conflicting pre-reset policy, when explicit enrollment reads current signed Rusty status, then atomically import the confirmed policy and reject stale peer replay", async () => {
-  const f = await fixture()
+it.each([1, 2, 7])("Given a returning device retained pre-reset revision %s, when explicit enrollment reads current signed Rusty status, then atomically import the confirmed policy and reject stale peer replay", async oldRevision => {
+  const f = await fixture(oldRevision)
   const key = `tincanban.rusty-management.v1.${f.profile.identity.personId}`
   const before = await local.readLocal(key)
   const plan = await f.repository.planImport(f.incoming, f.resolve)
@@ -79,6 +79,15 @@ it.each(["offline", "wrong nonce", "still revoked", "rollback"])("Given enrollme
 it("Given unchanged management policy, when enrolling offline, then need no server reconciliation", async () => {
   const f = await fixture()
   await f.repository.planImport([{ binding: f.binding, capability: f.old }], f.resolve)
+  expect(f.fetch).not.toHaveBeenCalled()
+})
+
+it("Given a newer policy explicitly restores this device, when enrollment can merge it normally, then need no conflict status request", async () => {
+  const f = await fixture()
+  const restored = await f.capability("explicit-restore", { revision: 3, restoredDeviceIds: [f.profile.device.deviceId] })
+  const plan = await f.repository.planImport([{ binding: f.binding, capability: restored }], f.resolve)
+  expect(await local.compareAndSwapLocal(plan)).toBe(true)
+  expect((await f.repository.read(f.binding))?.capability).toEqual(restored)
   expect(f.fetch).not.toHaveBeenCalled()
 })
 
