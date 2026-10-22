@@ -484,6 +484,7 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
   let replica: ReturnType<typeof workspaceSet>
   let snapshot: Uint8Array
   let historyReader: PeerHistoryObjectReader
+  let enrolled: Awaited<ReturnType<typeof installEnrollment>>
   try {
     prepared = await preflightEnrollment(response, invite, profile)
     ids = prepared.payload.workspaces.map(item => item.id)
@@ -494,11 +495,13 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
       if (!isCurrent(context, run)) throw new Error("Device enrollment was cancelled")
     }, scopes)
     await replica.validate(snapshot, historyReader)
+    enrolled = await installEnrollment(response, invite, profile, context.state.replacementPersonId.value, () => {
+      if (!isCurrent(context, run)) throw new Error("Device enrollment was cancelled")
+    })
   } catch (error) {
     await sendEnrollmentRejection(connection, invite.secret, error).catch(() => undefined)
     throw error
   }
-  const enrolled = await installEnrollment(response, invite, profile, context.state.replacementPersonId.value)
   await context.identityChanged?.()
   await context.durableMesh!.receiveInvitation(enrolled.meshWorkspaces, ids, enrolled.profile, enrolled.grants)
   await replica.receive(snapshot, true, historyReader)

@@ -13,9 +13,10 @@ import { identityDeviceActivationKey as activationKey } from "./identityDeviceAc
 import { planIdentityProfileImport } from "./identityProfileProjectionQueue"
 import { resumeIdentityProfileProjections } from "./identityProfileProjection"
 import { planIdentityProfilePresentation } from "./identityProfilePresentationPlan"
+import type { ManagementConflictResolver } from "./rustyManagementReconciliation"
 
 type Transfer = Awaited<ReturnType<typeof readIdentityDeviceTransfer>>
-type ActivationOptions = { adoption?: LocalStatePlan; deferEffects?: boolean }
+type ActivationOptions = { adoption?: LocalStatePlan; deferEffects?: boolean; resolveManagementConflict?: ManagementConflictResolver }
 
 async function mergeRoot(current: PersonalRootDocumentV1 | null, incoming: PersonalRootDocumentV1): Promise<PersonalRootDocumentV1> {
   if (!current) return mergeIdentityProfileRoots(null, incoming)
@@ -43,7 +44,7 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
   const plans = await Promise.all([
     planPersonalRootUpdate(personId, async current => { projectedRoot = await mergeRoot(current, transfer.personalRoot); return projectedRoot }),
     planPrivateReplicaImport(personId, transfer.replicas),
-    new RustyManagementRepository(personId).planImport(transfer.capabilities),
+    new RustyManagementRepository(personId).planImport(transfer.capabilities, options.resolveManagementConflict),
     planIdentityRecoveryImport(personId, transfer.recoveryEvidence),
     planIdentityDeviceExtensionsImport(transfer.manifest),
     planIdentityProfileImport(transfer.personalRoot.identity, transfer.observations),
@@ -77,7 +78,7 @@ export async function resumeIdentityDeviceActivation(personId: string, ensureCur
 /** Caller must authenticate the envelope. Never accept derived component fields independently of its manifest. */
 export async function activateIdentityDeviceTransfer(input: Transfer, ensureCurrent: () => void, options: ActivationOptions = {}): Promise<void> {
   const manifest = structuredClone(input.manifest)
-  options = structuredClone(options)
+  options = { ...options, adoption: structuredClone(options.adoption) }
   ensureCurrent()
   const transfer = await readIdentityDeviceTransfer(manifest, manifest.personId)
   for (let attempt = 0; attempt < 8; attempt++) {

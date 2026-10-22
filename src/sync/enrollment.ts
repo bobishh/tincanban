@@ -14,6 +14,7 @@ import { signingEvidence, signWithContext, type VerifiedSigningContext } from ".
 import { activateIdentityDeviceTransfer, resumeIdentityDeviceActivation } from "./identityDeviceActivation"
 import { readLocal, type LocalStatePlan } from "../localDb"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+import { enrollmentManagementConflictResolver } from "./enrollmentManagementReconciliation"
 
 const text = z.string().min(1).max(512)
 const requestPayload = z.object({ kind: z.literal("device-enrollment-request"), version: z.literal(2),
@@ -92,7 +93,8 @@ function hasMatchingEnrollmentContents(payload: EnrollmentContents,
   return matchesInvite && workspaceSetIsValid && payload.meshWorkspaces.every(item => workspaceIds.has(item.workspaceId))
 }
 
-export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollmentInvitation, profile: LocalProfile, replacePersonId?: string) {
+export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollmentInvitation, profile: LocalProfile, replacePersonId?: string,
+  ensureEnrollmentCurrent: () => void = () => {}) {
   const prepared = await preflightEnrollment(bytes, invite, profile)
   if (prepared.profile.identity.personId !== profile.identity.personId && replacePersonId !== profile.identity.personId) {
     throw new Error("Identity conflict: this device already belongs to another identity. Explicit replacement is required; identities and permissions are not merged.")
@@ -106,7 +108,8 @@ export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollm
       plan.conditions.push({ key: adoption.backup.key, value: await readLocal(adoption.backup.key) })
       plan.writes.push(adoption.backup)
     }
-    await activateIdentityDeviceTransfer(prepared.transfer, ensureCurrent, { adoption: plan, deferEffects: true })
+    const resolveManagementConflict = enrollmentManagementConflictResolver(prepared, profile, () => { ensureEnrollmentCurrent(); ensureCurrent() })
+    await activateIdentityDeviceTransfer(prepared.transfer, ensureCurrent, { adoption: plan, deferEffects: true, resolveManagementConflict })
   })
   await resumeIdentityDeviceActivation(enrolled.identity.personId, () => {
     if (!isCurrentIdentityProfile(enrolled)) throw new Error("Identity changed during enrollment recovery")

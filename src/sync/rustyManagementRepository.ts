@@ -6,6 +6,7 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { verifyRustyManagementCapability, verifyRustyManagementEvidence, type RustyManagementCapability } from "./rustyManagementCapability"
+import { reconcileManagementConflict, type ManagementConflictResolver } from "./rustyManagementReconciliation"
 
 export type ManagementBinding = { origin: string; servicePublicKey: string; resourceKind: "scope" | "board" | "person"; resourceId: string }
 export type ManagementUpdateAuthorization = {
@@ -224,8 +225,8 @@ export class RustyManagementRepository {
     await this.mutate(state => mergeCapability(state, binding, capability, incoming, false))
   }
 
-  /** Build a pure atomic import plan from a caller snapshot and the exact durable bytes verified here. */
-  async planImport(values: PortableManagementRecord[]): Promise<LocalStatePlan> {
+  /** Build an atomic import plan; local state changes only when the caller commits it. */
+  async planImport(values: PortableManagementRecord[], resolveConflict?: ManagementConflictResolver): Promise<LocalStatePlan> {
     values = structuredClone(values)
     if (!Array.isArray(values) || values.length > 256) throw new Error("Invalid management capability bundle")
     const verified: { binding: ManagementBinding; capability: SignedEnvelope<RustyManagementCapability>; incoming: RustyManagementCapability }[] = []
@@ -242,11 +243,15 @@ export class RustyManagementRepository {
     const key = stateKey(this.owner)
     const raw = await readLocal(key)
     const state = await verifiedState(raw, this.owner)
+    const reconciledOrigins = new Set<string>()
     for (const value of verified) {
       // A reset origin requires direct server evidence on this device, even for a higher old revision.
       if (!acceptsPeerCapability(state, value)) continue
-      await mergeCapability(state, value.binding, value.capability, value.incoming, true)
+      if (await reconcileImportConflict(state, this.owner, value, resolveConflict)) reconciledOrigins.add(value.binding.origin)
+      else await mergeCapability(state, value.binding, value.capability, value.incoming, true)
     }
+    if (reconciledOrigins.size) state.resetOrigins = [...new Set([...(state.resetOrigins ?? []), ...reconciledOrigins])].sort()
+    validateResetOrigins(state.resetOrigins)
     if (state.records.length > 256) throw new Error("Management repository exceeds storage bound")
     const next = canonicalizeJson(state)
     if (encoder.encode(next).length > 8 * 1024 * 1024) throw new Error("Management repository exceeds storage bound")
@@ -288,6 +293,16 @@ export class RustyManagementRepository {
       throw new Error("Management repository changed repeatedly; retry required")
     })
   }
+}
+
+async function reconcileImportConflict(state: State, owner: string, incoming: PortableManagementRecord,
+  resolve?: ManagementConflictResolver): Promise<boolean> {
+  const record = locate(state, incoming.binding)
+  if (!resolve || !record?.capability || record.capability.payload.revision !== incoming.capability.payload.revision ||
+      same(record.capability, incoming.capability)) return false
+  record.capability = await reconcileManagementConflict(owner, record.capability, incoming, resolve)
+  await reconcilePending(record, record.capability.payload)
+  return true
 }
 
 async function mergeCapability(state: State, binding: ManagementBinding, capability: SignedEnvelope<RustyManagementCapability>,
