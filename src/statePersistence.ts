@@ -27,7 +27,8 @@ import { assertWorkspaceWritesAllowed, reclassifyStoredWorkspace } from "./state
 import { applyInjectedFixture } from "./stateInjectedFixture";
 import { clearPendingItemMoves } from "./pendingItemMoves";
 import { startPendingWrite } from "./statePendingWrites";
-import { diagnoseStartupStep } from "./sync/startupDiagnostics";
+import { diagnoseStartupStep, diagnoseStartupOperation } from "./sync/startupDiagnostics";
+import type { Context } from "@opentelemetry/api";
 import { prepareLocalDeltaAdmission } from "./stateDeltaAdmission";
 import { requestWebLock } from "./webLock"
 import { commitAuthorizedCommand, persistNewLocalChange } from "./stateLocalChangePersistence";
@@ -84,15 +85,17 @@ export function updateReactiveState(
   replaceWorkspaceProjection(projected);
 }
 
-export async function prepareLocalState(storage = defaultStorage): Promise<void> {
+export async function prepareLocalState(storage = defaultStorage, diagnosticContext?: Context): Promise<void> {
+  const step = <T>(name: string, action: () => T | Promise<T>, detail: Record<string, unknown> = {}) =>
+    diagnoseStartupStep(name, action, detail, diagnosticContext);
   try {
     stateRuntime.startupStage.value = "reading";
     console.info("[tincanban.startup] prepare", "automerge")
-    await diagnoseStartupStep("automerge-wasm", initializeAutomerge);
+    await step("automerge-wasm", initializeAutomerge);
     console.info("[tincanban.startup] prepare", "identity")
-    stateRuntime.currentProfile = await diagnoseStartupStep("identity-load", bootstrapIdentity);
+    stateRuntime.currentProfile = await step("identity-load", bootstrapIdentity);
     const recoveryProfile = stateRuntime.currentProfile;
-    await diagnoseStartupStep("workspace-backup-recovery", async () => {
+    await step("workspace-backup-recovery", async () => {
       const { resumeWorkspaceHistoryRecoveryProjection } = await import("./sync/workspaceHistoryRecoveryProjection");
       await resumeWorkspaceHistoryRecoveryProjection(recoveryProfile.identity.personId, () => {
         if (stateRuntime.currentProfile?.identity.personId !== recoveryProfile.identity.personId ||
@@ -114,26 +117,28 @@ export async function hydrate(storage = defaultStorage): Promise<void> {
   await hydratePreparedState(storage);
 }
 
-export async function hydratePreparedState(storage = defaultStorage): Promise<void> {
+export async function hydratePreparedState(storage = defaultStorage, diagnosticContext?: Context): Promise<void> {
+  const step = <T>(name: string, action: () => T | Promise<T>, detail: Record<string, unknown> = {}) =>
+    diagnoseStartupStep(name, action, detail, diagnosticContext);
   try {
     const profile = stateRuntime.currentProfile;
     if (!profile) throw new Error("Local identity is unavailable");
     console.info("[tincanban.startup] hydrate", "workspace")
-    let doc = await diagnoseStartupStep("initial-workspace-load", () => loadInitialWorkspace(storage, profile));
+    let doc = await diagnoseStartupOperation("initial-workspace-load", parent => loadInitialWorkspace(storage, profile, parent), {}, diagnosticContext);
     // Publish only the saved projection, never the separate raw causal history.
     // Readiness stays false until local history checks finish.
-    if (validateWorkspaceDoc(doc).ok) await diagnoseStartupStep("workspace-preview", () => updateReactiveState(doc), { workspaceId: doc.id });
+    if (validateWorkspaceDoc(doc).ok) await step("workspace-preview", () => updateReactiveState(doc), { workspaceId: doc.id });
     stateRuntime.startupStage.value = "updating";
-    await diagnoseStartupStep("workspace-migrations", () => migrateOwnedWorkspaces(storage, profile,
+    await step("workspace-migrations", () => migrateOwnedWorkspaces(storage, profile,
       source => persistAuthorizedCommand(source, { kind: "migrateWorkspaceFormat" }, profile, storage)));
     stateRuntime.startupStage.value = "history";
-    const reclassified = await diagnoseStartupStep("history-reclassification", () => reclassifyStoredWorkspace(doc.id, storage), { workspaceId: doc.id, operationCount: Automerge.stats(doc).numOps });
+    const reclassified = await diagnoseStartupOperation("history-reclassification", parent => reclassifyStoredWorkspace(doc.id, storage, parent), { workspaceId: doc.id, operationCount: Automerge.stats(doc).numOps }, diagnosticContext);
     doc = reclassified.doc ?? (await storage.loadWorkspaceDoc(doc.id))?.doc ?? doc;
-    await diagnoseStartupStep("workspace-projection", () => updateReactiveState(doc), { workspaceId: doc.id });
-    await diagnoseStartupStep("causal-review", () => refreshCausalReview(storage, doc.id), { workspaceId: doc.id });
+    await step("workspace-projection", () => updateReactiveState(doc), { workspaceId: doc.id });
+    await step("causal-review", () => refreshCausalReview(storage, doc.id), { workspaceId: doc.id });
     console.info("[tincanban.startup] hydrate", "personal-root")
-    await diagnoseStartupStep("personal-root-load", () => initializePersonalRootCatalog(storage, profile));
-    await diagnoseStartupStep("identity-device-recovery", () => recoverPendingIdentityDeviceActivation(profile.identity.personId, () => {
+    await step("personal-root-load", () => initializePersonalRootCatalog(storage, profile));
+    await step("identity-device-recovery", () => recoverPendingIdentityDeviceActivation(profile.identity.personId, () => {
       if (stateRuntime.currentProfile?.identity.personId !== profile.identity.personId ||
         stateRuntime.currentProfile?.device.deviceId !== profile.device.deviceId) throw new Error("Identity changed during device-state recovery");
     }));
@@ -293,13 +298,14 @@ export function notifyLocalChanges(workspaceId?: string): void {
 async function loadInitialWorkspace(
   storage: WorkspaceStorage,
   profile: LocalProfile,
+  diagnosticContext?: Context,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
   const initialId = await activeWorkspaceId();
-  const loaded = await loadPreferredWorkspace(storage, initialId);
+  const loaded = await loadPreferredWorkspace(storage, initialId, diagnosticContext);
   if (loaded) return loaded.doc;
   const doc = await initializeFirstWorkspace(
     storage,
-    profile,
+    profile, diagnosticContext,
   );
   if (!doc) throw new Error("Workspace initialization failed");
   return doc;
@@ -309,31 +315,33 @@ async function activeWorkspaceId(): Promise<string> {
   return await readLocal("tincanban.active_workspace_id") ?? "default";
 }
 
-function loadStartupWorkspace(storage: WorkspaceStorage, workspaceId: string) {
+function loadStartupWorkspace(storage: WorkspaceStorage, workspaceId: string, diagnosticContext?: Context) {
   return storage.loadWorkspaceDoc(workspaceId, undefined, (stage, read, detail) =>
-    diagnoseStartupStep(`initial-workspace-${stage}`, read, { ...detail, workspaceId }));
+    diagnoseStartupStep(`initial-workspace-${stage}`, read, { ...detail, workspaceId }, diagnosticContext));
 }
 
 async function loadPreferredWorkspace(
   storage: WorkspaceStorage,
   initialId: string,
+  diagnosticContext?: Context,
 ) {
   const root = await storage.loadPersonalRoot();
   const entitledIds = root
     ? new Set(Object.values(root.workspaces ?? {}).filter(reference => !reference.forgotten).map(reference => reference.workspaceId))
     : undefined;
   const preferred = !entitledIds || entitledIds.has(initialId)
-    ? await loadStartupWorkspace(storage, initialId)
+    ? await loadStartupWorkspace(storage, initialId, diagnosticContext)
     : null;
   if (preferred && !preferred.doc.archivedAt) return preferred;
   const fallback = initialId === "default" || (entitledIds && !entitledIds.has("default"))
-    ? null : await loadStartupWorkspace(storage, "default");
+    ? null : await loadStartupWorkspace(storage, "default", diagnosticContext);
   return fallback && !fallback.doc.archivedAt ? fallback : null;
 }
 
 async function initializeFirstWorkspace(
   storage: WorkspaceStorage,
   profile: LocalProfile,
+  diagnosticContext?: Context,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2> | null> {
   const initialize = async (): Promise<Automerge.Doc<WorkspaceDocumentV2> | null> => {
     const catalogRoot = await storage.loadPersonalRoot();
@@ -342,7 +350,7 @@ async function initializeFirstWorkspace(
       : undefined;
     const existing = (await storage.listWorkspaces()).filter(workspace => !entitledIds || entitledIds.has(workspace.id));
     const first = existing[0];
-    if (first) return (await loadStartupWorkspace(storage, first.id))?.doc ?? null;
+    if (first) return (await loadStartupWorkspace(storage, first.id, diagnosticContext))?.doc ?? null;
     const workspaceId = crypto.randomUUID();
     const doc = Automerge.from<WorkspaceDocumentV2>(
       createWorkspaceDoc(workspaceId, "Untitled", profile.identity.personId, "blank"),

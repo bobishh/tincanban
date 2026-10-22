@@ -47,7 +47,7 @@ describe("optional operation diagnostics", () => {
   })
 })
 
-it("Given ordinary error reporting, when background HTTP runs, then verbose network spans require explicit sync debugging", async () => {
+it("Given enabled diagnostics on an ordinary URL, when Rusty HTTP runs, then propagate request tracing without a debug flag", async () => {
   vi.resetModules()
   vi.stubGlobal("localStorage", { getItem: () => null })
   vi.stubGlobal("window", { location: { search: "" }, addEventListener() {} })
@@ -59,8 +59,8 @@ it("Given ordinary error reporting, when background HTTP runs, then verbose netw
   await vi.dynamicImportSettled()
   const { beginDiagnosticHttpRequest } = await import("../domain/httpDiagnostics")
   beginDiagnosticHttpRequest("HTTP_GET")
-  expect(state.httpStarts).toBe(0)
+  expect(state.httpStarts).toBe(1)
   window.location.search = "?syncTrace=1"
   beginDiagnosticHttpRequest("HTTP_GET")
-  expect(state.httpStarts).toBe(1)
+  expect(state.httpStarts).toBe(2)
 })

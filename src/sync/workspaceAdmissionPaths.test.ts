@@ -4,6 +4,8 @@ import { beforeAll, describe, expect, it, vi } from "vitest"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, indexOperationParents, touchedPathsForChange, indexAdmissionOperations } from "../product-replica/workspaceAdmission"
+import { explainWorkspaceBoundaryFailure } from "../product-replica/workspaceBoundaryDiagnostic"
+import type { WorkspaceWriteAuthorityEvidence } from "../product-replica/workspaceAdmission"
 
 vi.mock("@automerge/automerge/slim", async importOriginal => {
   const original = await importOriginal<typeof Automerge>()
@@ -17,6 +19,21 @@ beforeAll(async () => {
 })
 
 describe("workspace admission operation paths", () => {
+  it("Given a missing device-removal boundary, when admission fails, then identify its device and missing hash without changing that failure or exposing document content", () => {
+    const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("boundary-diagnostic", "Private title", "owner", "blank"))
+    const authority = { ownershipTransfers: [], successionClaims: [], revocations: [], departures: [], deviceRevocations: [
+      { record: { payload: { deviceId: "removed-device", workspaceHeads: ["a".repeat(64), ...Automerge.getHeads(doc)] } } },
+    ] } as unknown as WorkspaceWriteAuthorityEvidence
+    const failure = new Error("Workspace ownership boundary is missing from the document")
+    try {
+      const reported = explainWorkspaceBoundaryFailure(failure, doc, authority) as Error
+      expect(reported.cause).toBe(failure)
+      expect(reported.message).toContain(`device-revocation device=removed-device missingHead=${"a".repeat(64)}`)
+      expect(reported.message).not.toContain(doc.title)
+      const other = new Error("Invalid signature")
+      expect(explainWorkspaceBoundaryFailure(other, doc, authority)).toBe(other)
+    } finally { Automerge.free(doc) }
+  })
   it("Given long text history, When indexing admission, Then retain distinct object targets instead of character operations and preserve exact paths", () => {
     let doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("compact-index", "Board", "owner", "blank"))
     doc = Automerge.change(doc, draft => { draft.title = "x".repeat(10_000) })

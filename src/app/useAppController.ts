@@ -89,15 +89,15 @@ function appCollaboration(core: ReturnType<typeof useAppCore>) {
 function useAppLifecycle(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>, actions: ReturnType<typeof useAppActions>) {
   onMounted(async () => {
     const startup = await runAppStartup({
-      loadRuntime: async () => {
+      loadRuntime: async diagnosticContext => {
         const { initializePolicyBrowserRuntime } = await import("../iroh")
-        await diagnoseStartupStep("policy-wasm", initializePolicyBrowserRuntime)
+        await diagnoseStartupStep("policy-wasm", initializePolicyBrowserRuntime, {}, diagnosticContext)
         if (navigator.onLine) await diagnoseStartupStep("admission-worker-init", async () =>
-          (await import("../sync/workspaceAdmissionClient")).warmWorkspaceAdmissionWorker()).catch(() => {})
+          (await import("../sync/workspaceAdmissionClient")).warmWorkspaceAdmissionWorker(), {}, diagnosticContext).catch(() => {})
       },
-      prepareLocalState,
+      prepareLocalState: diagnosticContext => prepareLocalState(undefined, diagnosticContext),
       openPairing: () => core.sync.joinFromLocation(window.location.href),
-      hydrate: hydratePreparedState,
+      hydrate: diagnosticContext => hydratePreparedState(undefined, diagnosticContext),
       setupLocalBoard: async () => {
         await board.setupBoardDrag()
         void registerWebMcpForApp(core, actions)

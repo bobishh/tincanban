@@ -7,10 +7,11 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { myDeviceRemovalsKey, type MyDeviceRemoval } from "./myDeviceRemovalState"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { assertReplicaCredentialsUnfrozen } from "./replicaCredentialFreeze"
+import type { Context } from "@opentelemetry/api"
 
 /** Enrollment approval restores only this device's access to selected local replicas. */
 export async function restoreEnrolledRustyAccess(profile: LocalProfile, deviceId: string,
-  workspaceIds: string[], ensureCurrent: () => void): Promise<void> {
+  workspaceIds: string[], ensureCurrent: () => void, diagnosticContext?: Context): Promise<void> {
   const owner = profile.identity.personId
   const savedJobs = await readLocal(myDeviceRemovalsKey(owner))
   const jobs = savedJobs ? JSON.parse(savedJobs) as MyDeviceRemoval[] : []
@@ -29,12 +30,12 @@ export async function restoreEnrolledRustyAccess(profile: LocalProfile, deviceId
   for (const { binding } of records.filter(record => reviewedOrigins.has(record.binding.origin))) {
     ensureCurrent()
     await assertReplicaCredentialsUnfrozen(profile.identity.personId, binding)
-    const status = await readRustyManagementStatus(binding, profile, { ensureCurrent })
+    const status = await readRustyManagementStatus(binding, profile, { ensureCurrent, diagnosticContext })
     ensureCurrent()
     const current = status.capability?.payload
     if (!current?.revokedDeviceIds.includes(deviceId)) continue
     await updateRustyManagementPolicy(binding, profile, { operations: current.operations,
-      revokedDeviceIds: current.revokedDeviceIds.filter(id => id !== deviceId), restoredDeviceIds: [deviceId] }, { ensureCurrent })
+      revokedDeviceIds: current.revokedDeviceIds.filter(id => id !== deviceId), restoredDeviceIds: [deviceId] }, { ensureCurrent, diagnosticContext })
     ensureCurrent()
   }
   // Retained signed evidence stays in authority stores; a new removal needs a new reviewed job.

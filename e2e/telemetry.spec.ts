@@ -3,9 +3,9 @@ import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 
 type Attribute = { key: string; value: Record<string, unknown> }
-type LogRecord = { body?: Record<string, unknown>; attributes?: Attribute[] }
+type LogRecord = { body?: Record<string, unknown>; attributes?: Attribute[]; traceId?: string; spanId?: string }
 type OtlpLogs = { resourceLogs?: Array<{ scopeLogs?: Array<{ logRecords?: LogRecord[] }> }> }
-type Span = { name?: string; traceId?: string; spanId?: string; attributes?: Attribute[] }
+type Span = { name?: string; traceId?: string; spanId?: string; parentSpanId?: string; attributes?: Attribute[] }
 type OtlpTraces = { resourceSpans?: Array<{ scopeSpans?: Array<{ spans?: Span[] }> }> }
 const endpoint = "https://telemetry.invalid/v1/logs"
 const tracesEndpoint = "https://telemetry.invalid/v1/traces"
@@ -210,7 +210,7 @@ test("Given enabled OTel, when browser sends a Rusty HTTP request, then tracepar
     requests.push({ path: new URL(route.request().url()).pathname, traceparent: route.request().headers().traceparent ?? "" })
     await route.fulfill({ status: 200, headers, contentType: "application/json", body: JSON.stringify({ status: "ok" }) })
   })
-  await page.goto("/?syncTrace=1")
+  await page.goto("/")
   await send(page, "initialize-otel-before-http")
   await page.evaluate(async () => {
     const { fetchBlind } = await import("/src/sync/rustyHttp.ts")
@@ -220,6 +220,66 @@ test("Given enabled OTel, when browser sends a Rusty HTTP request, then tracepar
   expect(healthRequest?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/)
   const parts = healthRequest!.traceparent.split("-")
   await expect.poll(() => exportedSpans.some(span => span.name === "HTTP_GET" && span.traceId === parts[1] && span.spanId === parts[2]), { timeout: 10000 }).toBe(true)
+})
+
+test("Given an owner enrolls a device without debug flags, when that device retries Rusty and reloads, then enrollment, HTTP failure and startup share one trace", async ({ page, browser }) => {
+  test.setTimeout(90000)
+  const phoneContext = await browser.newContext()
+  const phone = await phoneContext.newPage()
+  const records: LogRecord[] = [], exported: Span[] = []
+  await interceptOtlp(page, 200, records, exported)
+  await interceptOtlp(phone, 200, records, exported)
+  let requestTraceparent = ""
+  await phone.route("https://rusty.trace.invalid/**", route => {
+    requestTraceparent = route.request().headers().traceparent ?? ""
+    return route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"fixture unavailable"}' })
+  })
+  try {
+    await page.goto("/")
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const host = page.getByRole("dialog", { name: "Device sync" })
+    await host.getByRole("button", { name: "Add someone", exact: true }).click()
+    await host.getByRole("button", { name: "Add my device", exact: true }).click()
+    const link = await host.getByLabel("Pairing link").inputValue()
+    const carrier = new URLSearchParams(new URL(link).hash.slice(1)).get("traceparent")!
+    expect(carrier).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/)
+    const traceId = carrier.split("-")[1]!
+    await phone.goto(link)
+    const join = phone.getByRole("dialog", { name: "Device sync" })
+    await join.getByRole("button", { name: "Add this device", exact: true }).waitFor()
+    const replace = join.getByRole("checkbox", { name: /Replace this device.s identity/ })
+    if (await replace.count()) await replace.check()
+    await join.getByRole("button", { name: "Add this device", exact: true }).click()
+    await host.getByRole("button", { name: "Approve device", exact: true }).click()
+    await expect(join.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30000 })
+    await expect(host.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30000 })
+    await phone.evaluate(async () => {
+      const { fetchBlind, readBlindJson } = await import("/src/sync/rustyHttp.ts")
+      const { traceDiagnosticOperation } = await import("/src/sync/telemetry.ts")
+      await traceDiagnosticOperation("rusty.retry", {}, async diagnosticContext => {
+        try { await readBlindJson(await fetchBlind("https://rusty.trace.invalid/status", { diagnosticContext })) }
+        catch { /* Expected unavailable-server state. */ }
+      })
+    })
+    expect(requestTraceparent.split("-")[1]).toBe(traceId)
+    await phone.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
+    await expect.poll(() => exported.some(span => span.name === "enrollment.guest" && span.traceId === traceId), { timeout: 15000 }).toBe(true)
+    await phone.reload()
+    await expect(phone.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+    await phone.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
+    await page.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
+    await expect.poll(() => exported.some(span => span.name === "enrollment.host" && span.traceId === traceId), { timeout: 15000 }).toBe(true)
+    await expect.poll(() => exported.some(span => span.name === "enrollment.guest" && span.traceId === traceId), { timeout: 15000 }).toBe(true)
+    const guest = exported.find(span => span.name === "enrollment.guest" && span.traceId === traceId)!
+    expect(guest.parentSpanId).toBe(carrier.split("-")[2])
+    await expect.poll(() => exported.some(span => span.name === "startup.history-reclassification" && span.traceId === traceId && span.parentSpanId), { timeout: 15000 }).toBe(true)
+    const reclassification = exported.find(span => span.name === "startup.history-reclassification" && span.traceId === traceId)!
+    expect(exported.some(span => span.name === "startup.reclassify-load-document" && span.parentSpanId === reclassification.spanId)).toBe(true)
+    expect(exported.some(span => span.traceId === traceId && span.name === "HTTP_GET" &&
+      span.attributes?.some(value => value.key === "http.response.status_code" && Number(value.value.intValue) === 503))).toBe(true)
+    expect(records.some(record => body(record) === "enrollment.guest.completed" && record.traceId === traceId)).toBe(true)
+    expect(JSON.stringify({ records, exported })).not.toContain(new URLSearchParams(new URL(link).hash.slice(1)).get("secret")!)
+  } finally { await phoneContext.close() }
 })
 
 test("Given legacy collector settings, when deployment loads, then only the deployed collector receives events", async ({ page }) => {

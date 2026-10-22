@@ -32,7 +32,7 @@ it("Given startup diagnostics, when a heavy stage runs, then it is traced and ch
   const { diagnoseStartupStep } = await import("./startupDiagnostics")
   expect(await diagnoseStartupStep("history-load", async () => { order.push("compute"); return 42 }, { operationCount: 312613, bytes: 135109, body: "private-body" })).toBe(42)
   expect(order).toEqual(["compute"])
-  expect(traceDiagnosticOperation).toHaveBeenCalledWith("startup.history-load", expect.objectContaining({ "startup.stage": "history-load" }), expect.any(Function))
+  expect(traceDiagnosticOperation).toHaveBeenCalledWith("startup.history-load", expect.objectContaining({ "startup.stage": "history-load" }), expect.any(Function), undefined)
   expect(record.mock.calls.map(call => call[0])).toEqual(["startup.phase.started", "startup.phase.completed"])
 })
 
@@ -40,8 +40,8 @@ it("Given a startup failure, when the stage throws, then original error and oper
   const { diagnoseStartupStep } = await import("./startupDiagnostics")
   const error = new TypeError("private-token-in-message")
   await expect(diagnoseStartupStep("policy-wasm", () => { throw error })).rejects.toBe(error)
-  expect(traceDiagnosticOperation).toHaveBeenCalledWith("startup.policy-wasm", expect.any(Object), expect.any(Function))
-  expect(record.mock.calls.at(-1)).toMatchObject(["startup.phase.failed", expect.objectContaining({ stage: "policy-wasm", error }), "error"])
+  expect(traceDiagnosticOperation).toHaveBeenCalledWith("startup.policy-wasm", expect.any(Object), expect.any(Function), undefined)
+  expect(record.mock.calls.at(-1)).toMatchObject(["startup.phase.failed", expect.objectContaining({ stage: "policy-wasm", error }), "error", { traceId: "diagnostic-context" }])
 })
 
 it("Given OTel supplies an active context, when startup runs a zero-argument stage, then the context is not passed as its optional input", async () => {
@@ -92,5 +92,18 @@ it("Given a nested read fails before logs are delivered, when startup restarts, 
   expect(record).toHaveBeenCalledWith("startup.previous.failed", expect.objectContaining({
     stage: "initial-workspace-journal-replay", bytes: 120, changeCount: 3,
     error: expect.objectContaining({ message: "WASM failure contentKey=[REDACTED]" }),
-  }), "error")
+  }), "error", undefined)
+})
+
+it("Given an explicit parent context, when a startup operation launches a child, then preserve exact parent and correlate its phase records", async () => {
+  const { ROOT_CONTEXT } = await import("@opentelemetry/api")
+  const { diagnoseStartupOperation } = await import("./startupDiagnostics")
+  await diagnoseStartupOperation("storage", async parent => {
+    await diagnoseStartupOperation("history-reclassification", () => 42, { workspaceId: "board" }, parent)
+  }, {}, ROOT_CONTEXT)
+  expect(traceDiagnosticOperation.mock.calls).toEqual(expect.arrayContaining([
+    ["startup.storage", expect.any(Object), expect.any(Function), ROOT_CONTEXT],
+    ["startup.history-reclassification", expect.any(Object), expect.any(Function), { traceId: "diagnostic-context" }],
+  ]))
+  expect(record.mock.calls.every(call => call[3]?.traceId === "diagnostic-context")).toBe(true)
 })

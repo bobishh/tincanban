@@ -25,7 +25,7 @@ describe("device enrollment dialing", () => {
     try {
       await dialEnrollmentPeer({ currentRun: () => 21 } as never, 21, node,
         { ...invitation, secret: "private-invitation-value" })
-      expect(record).toHaveBeenCalledWith("enrollment.guest.dial.started", expect.objectContaining({ phase: "guest.dial.started" }), "info")
+      expect(record).toHaveBeenCalledWith("enrollment.guest.dial.started", expect.objectContaining({ phase: "guest.dial.started" }), "info", undefined)
       expect(JSON.stringify(record.mock.calls)).not.toContain("private-invitation-value")
     } finally { record.mockRestore() }
   })

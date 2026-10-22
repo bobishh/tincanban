@@ -3,6 +3,7 @@ import { reportPreviousRecoveryDiagnostic } from "./recoveryDiagnostics"
 import { telemetryConfig } from "./telemetryConfig"
 import { record, traceDiagnosticOperation } from "./telemetry"
 import { capturedException, type CapturedException } from "../domain/exceptionCapture"
+import type { Context } from "@opentelemetry/api"
 
 const markerKey = "tincanban.startup.checkpoint.v1"
 type Checkpoint = { stage: string; event: string; detail?: Record<string, string | number>; failure?: CapturedException; version?: string }
@@ -24,9 +25,9 @@ function browserContext(): Record<string, string> {
 }
 
 /** Diagnostics enter the standard OTel facade; no startup checkpoint waits for collector acknowledgement. */
-function startupCheckpoint(event: string, stage: string, detail: Record<string, unknown> = {}): void {
+function startupCheckpoint(event: string, stage: string, detail: Record<string, unknown> = {}, parent?: Context): void {
   if (!startupDiagnosticsEnabled()) return
-  record(event, { ...detail, stage, component: "startup", operation: stage, ...browserContext() }, event.endsWith("failed") ? "error" : "info")
+  record(event, { ...detail, stage, component: "startup", operation: stage, ...browserContext() }, event.endsWith("failed") ? "error" : "info", parent)
 }
 
 function checkpointDetail(detail: Record<string, unknown> = {}): Record<string, string | number> {
@@ -43,17 +44,26 @@ function persistCheckpoint(checkpoint: Checkpoint): void {
   try { sessionStorage.setItem(markerKey, JSON.stringify({ ...checkpoint, sessionId, version })) } catch { /* Optional crash breadcrumb. */ }
 }
 
-export async function diagnoseStartupStep<T>(stage: string, step: () => T | Promise<T>, detail: Record<string, unknown> = {}): Promise<T> {
+export function diagnoseStartupStep<T>(stage: string, step: () => T | Promise<T>, detail: Record<string, unknown> = {}, parent?: Context): Promise<T> {
+  return diagnoseStartupOperation(stage, () => step(), detail, parent)
+}
+
+export async function diagnoseStartupOperation<T>(stage: string, step: (context?: Context) => T | Promise<T>,
+  detail: Record<string, unknown> = {}, parent?: Context): Promise<T> {
   if (!startupDiagnosticsEnabled()) return await step()
   const context = { ...detail, "startup.stage": stage, "code.component": "startup", "code.operation": stage }
   const checkpoint = { stage, event: "startup.phase.started", detail: checkpointDetail(detail) }
   activeSteps.push(checkpoint)
   persistCheckpoint(firstFailure ?? checkpoint)
-  startupCheckpoint("startup.phase.started", stage, detail)
+  let spanContext: Context | undefined
   const startedAt = performance.now()
   try {
-    const result = await traceDiagnosticOperation(`startup.${stage}`, context, () => step())
-    startupCheckpoint("startup.phase.completed", stage, { ...detail, elapsedMs: performance.now() - startedAt })
+    const result = await traceDiagnosticOperation(`startup.${stage}`, context, active => {
+      spanContext = active
+      startupCheckpoint("startup.phase.started", stage, detail, active)
+      return step(active)
+    }, parent)
+    startupCheckpoint("startup.phase.completed", stage, { ...detail, elapsedMs: performance.now() - startedAt }, spanContext)
     return result
   } catch (error) {
     if (!firstFailure) {
@@ -62,7 +72,7 @@ export async function diagnoseStartupStep<T>(stage: string, step: () => T | Prom
       firstFailure = { ...checkpoint, event: "startup.phase.failed", failure }
     }
     persistCheckpoint(firstFailure)
-    startupCheckpoint("startup.phase.failed", stage, { ...detail, elapsedMs: performance.now() - startedAt, error })
+    startupCheckpoint("startup.phase.failed", stage, { ...detail, elapsedMs: performance.now() - startedAt, error }, spanContext)
     throw error
   } finally {
     const index = activeSteps.indexOf(checkpoint)

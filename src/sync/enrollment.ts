@@ -15,6 +15,7 @@ import { activateIdentityDeviceTransfer, resumeIdentityDeviceActivation } from "
 import { readLocal, type LocalStatePlan } from "../localDb"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { enrollmentManagementConflictResolver } from "./enrollmentManagementReconciliation"
+import type { Context } from "@opentelemetry/api"
 
 const text = z.string().min(1).max(512)
 const requestPayload = z.object({ kind: z.literal("device-enrollment-request"), version: z.literal(2),
@@ -94,7 +95,7 @@ function hasMatchingEnrollmentContents(payload: EnrollmentContents,
 }
 
 export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollmentInvitation, profile: LocalProfile, replacePersonId?: string,
-  ensureEnrollmentCurrent: () => void = () => {}) {
+  ensureEnrollmentCurrent: () => void = () => {}, diagnosticContext?: Context) {
   const prepared = await preflightEnrollment(bytes, invite, profile)
   if (prepared.profile.identity.personId !== profile.identity.personId && replacePersonId !== profile.identity.personId) {
     throw new Error("Identity conflict: this device already belongs to another identity. Explicit replacement is required; identities and permissions are not merged.")
@@ -108,7 +109,7 @@ export async function installEnrollment(bytes: Uint8Array, invite: DeviceEnrollm
       plan.conditions.push({ key: adoption.backup.key, value: await readLocal(adoption.backup.key) })
       plan.writes.push(adoption.backup)
     }
-    const resolveManagementConflict = enrollmentManagementConflictResolver(prepared, profile, () => { ensureEnrollmentCurrent(); ensureCurrent() })
+    const resolveManagementConflict = enrollmentManagementConflictResolver(prepared, profile, () => { ensureEnrollmentCurrent(); ensureCurrent() }, diagnosticContext)
     await activateIdentityDeviceTransfer(prepared.transfer, ensureCurrent, { adoption: plan, deferEffects: true, resolveManagementConflict })
   })
   await resumeIdentityDeviceActivation(enrolled.identity.personId, () => {

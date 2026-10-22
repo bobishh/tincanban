@@ -17,6 +17,26 @@ function config() {
 }
 
 describe("browser OTel SDK", () => {
+  it("Given a parent operation, when nested work and HTTP fail, then all spans and error logs retain the same trace and exact parent", async () => {
+    const logs = new InMemoryLogRecordExporter(), traces = new InMemorySpanExporter()
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })
+    try {
+      const root = sdk.startOperation("enrollment.host", {})!
+      const child = sdk.startOperation("enrollment.validate", {}, performance.now(), root.context)!
+      const http = sdk.beginHttp("HTTP_POST", {}, child.context)
+      expect(http.headers.traceparent?.split("-")[1]).toBe(root.span.spanContext().traceId)
+      http.end(new Error("request failed"), 503)
+      sdk.finishOperation(child.span, child.context, "enrollment.validate", {}, performance.now())
+      sdk.finishOperation(root.span, root.context, "enrollment.host", {}, performance.now())
+      await sdk.forceFlush()
+      const spans = traces.getFinishedSpans()
+      expect(spans.find(span => span.name === "enrollment.validate")?.parentSpanContext?.spanId).toBe(root.span.spanContext().spanId)
+      expect(spans.find(span => span.name === "HTTP_POST")?.parentSpanContext?.spanId).toBe(child.span.spanContext().spanId)
+      expect(new Set(spans.map(span => span.spanContext().traceId)).size).toBe(1)
+      expect(logs.getFinishedLogRecords().at(-1)?.spanContext?.traceId).toBe(root.span.spanContext().traceId)
+    } finally { await sdk.shutdown() }
+  })
+
   it("Given split exports in flight, when the device opts out, then no remaining split body starts and only unsent records count as dropped", async () => {
     const deliveries: Array<{ count: number; complete: (result: { code: ExportResultCode }) => void }> = []
     const logs = {

@@ -32,7 +32,8 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
   const personAuthority = async (deviceId: string) => {
     const saved = await repository.read(personBinding)
     if (saved?.pending) throw new Error("Person policy transition is pending")
-    if (saved?.capability?.payload.revokedDeviceIds.includes(deviceId)) throw new Error("Private identity device is revoked by person policy")
+    if (saved?.capability?.payload.revokedDeviceIds.includes(deviceId)) throw new Error(
+      `Private identity device is revoked by person policy: device=${deviceId}; localDevice=${profile.device.deviceId}; revision=${saved.capability.payload.revision}`)
     return saved?.capability ?? null
   }
   const authority = async () => {

@@ -1,4 +1,5 @@
-import { diagnoseStartupStep } from "../sync/startupDiagnostics"
+import { diagnoseStartupOperation } from "../sync/startupDiagnostics"
+import type { Context } from "@opentelemetry/api"
 
 export type AppStartupStage = "runtime" | "storage" | "local-ui"
 
@@ -8,13 +9,13 @@ export type AppStartupResult =
 
 export type AppStartupSteps = {
   /** Loads the Rust policy runtime before any workspace access. */
-  loadRuntime: () => Promise<void> | void
+  loadRuntime: (context?: Context) => Promise<void> | void
   /** Opens the local identity and workspace catalog without validating documents. */
-  prepareLocalState?: () => Promise<void> | void
+  prepareLocalState?: (context?: Context) => Promise<void> | void
   /** Shows a pairing invitation before any stored document can block it. */
   openPairing?: () => Promise<boolean> | boolean
   /** Reads and validates local documents after the recovery UI can open. */
-  hydrate: () => Promise<void> | void
+  hydrate: (context?: Context) => Promise<void> | void
   /** Makes the already-hydrated local board interactive. */
   setupLocalBoard: () => Promise<void> | void
   /** Starts optional device synchronization after the local board is usable. */
@@ -28,11 +29,15 @@ export type AppStartupSteps = {
  * evaluated by the runtime and must not be approximated in TypeScript.
  */
 export async function runAppStartup(steps: AppStartupSteps): Promise<AppStartupResult> {
-  const runtimeFailure = await runRequiredStage("runtime", steps.loadRuntime)
+  return diagnoseStartupOperation("application", parent => runStartup(steps, parent))
+}
+
+async function runStartup(steps: AppStartupSteps, parent?: Context): Promise<AppStartupResult> {
+  const runtimeFailure = await runRequiredStage("runtime", steps.loadRuntime, parent)
   if (runtimeFailure) return runtimeFailure
 
   if (steps.prepareLocalState) {
-    const preparationFailure = await runRequiredStage("storage", steps.prepareLocalState)
+    const preparationFailure = await runRequiredStage("storage", steps.prepareLocalState, parent)
     if (preparationFailure) return preparationFailure
   }
 
@@ -42,14 +47,14 @@ export async function runAppStartup(steps: AppStartupSteps): Promise<AppStartupR
     catch (error) { console.error("[tincanban.startup] pairing failed", error) }
   }
 
-  const storageFailure = await runRequiredStage("storage", steps.hydrate)
+  const storageFailure = await runRequiredStage("storage", steps.hydrate, parent)
   if (storageFailure) return storageFailure
 
-  const localUiFailure = await runRequiredStage("local-ui", steps.setupLocalBoard)
+  const localUiFailure = await runRequiredStage("local-ui", steps.setupLocalBoard, parent)
   if (localUiFailure) return localUiFailure
 
   try {
-    if (!pairingOpened) await diagnoseStartupStep("start-sync", steps.startSync)
+    if (!pairingOpened) await diagnoseStartupOperation("start-sync", () => steps.startSync(), {}, parent)
     return { status: "ready" }
   } catch (syncError) {
     return { status: "ready", syncError }
@@ -75,11 +80,11 @@ export function startupFailureDetail(error: unknown): string {
   return String(error)
 }
 
-async function runRequiredStage(stage: AppStartupStage, step: () => Promise<void> | void): Promise<Extract<AppStartupResult, { status: "fatal" }> | undefined> {
+async function runRequiredStage(stage: AppStartupStage, step: (context?: Context) => Promise<void> | void, parent?: Context): Promise<Extract<AppStartupResult, { status: "fatal" }> | undefined> {
   const started = Date.now()
   console.info("[tincanban.startup]", stage, "start")
   try {
-    await diagnoseStartupStep(stage, step)
+    await diagnoseStartupOperation(stage, step, {}, parent)
     console.info("[tincanban.startup]", stage, "done", Date.now() - started)
   } catch (error) {
     console.error("[tincanban.startup]", stage, "failed", error)

@@ -2,6 +2,7 @@ import { telemetryConfig, subscribeTelemetryConfig } from "./telemetryConfig"
 import type { BrowserOtelSdk, DiagnosticInput, OperationInput } from "./otelBrowserSdk"
 import { setHttpDiagnosticSpanFactory } from "../domain/httpDiagnostics"
 import type { Context } from "@opentelemetry/api"
+import type * as TraceContexts from "./diagnosticTraceContext"
 
 export type TelemetryStatus = {
   state: "disabled" | "ready" | "sending" | "pending" | "error"
@@ -17,6 +18,7 @@ const pending: Pending[] = []
 const listeners = new Set<() => void>()
 let sdk: BrowserOtelSdk | undefined
 let sdkPromise: Promise<BrowserOtelSdk | undefined> | undefined
+let traceContexts: typeof TraceContexts | undefined
 let generation = 0
 let dropped = 0
 let stateError = ""
@@ -26,6 +28,7 @@ let seenExceptions = new WeakSet<object>()
 let globalHandlersInstalled = false
 
 function notify() { for (const listener of listeners) listener() }
+function currentTraceContext(parent?: Context) { return parent ?? traceContexts?.diagnosticContinuation() }
 function state(): TelemetryStatus["state"] {
   if (!telemetryConfig().enabled) return "disabled"
   if (sending) return "sending"
@@ -64,8 +67,9 @@ async function initialize(): Promise<BrowserOtelSdk | undefined> {
   if (!sdkPromise) {
     const version = generation
     const config = telemetryConfig()
-    sdkPromise = import("./otelBrowserSdk").then(({ BrowserOtelSdk: Sdk }) => {
+    sdkPromise = Promise.all([import("./otelBrowserSdk"), import("./diagnosticTraceContext")]).then(([{ BrowserOtelSdk: Sdk }, contexts]) => {
       if (!telemetryConfig().enabled || version !== generation) return undefined
+      traceContexts = contexts
       const instance = new Sdk(config, () => {
         if (!sdk) return
         sending = sdk.exportState.sending
@@ -74,11 +78,10 @@ async function initialize(): Promise<BrowserOtelSdk | undefined> {
         notify()
       })
       sdk = instance
-      setHttpDiagnosticSpanFactory((name, attributes, parent) =>
-        typeof window !== "undefined" && new URLSearchParams(window.location.search).get("syncTrace") === "1"
-          ? instance.beginHttp(name, attributes, parent) : undefined)
+      setHttpDiagnosticSpanFactory((name, attributes, parent) => telemetryConfig().enabled && sampledIn()
+        ? instance.beginHttp(name, attributes, parent ?? contexts.diagnosticContinuation()) : undefined)
       for (const item of pending.splice(0)) {
-        if (item.kind === "log") instance.emit(item.value)
+        if (item.kind === "log") instance.emit({ ...item.value, context: item.value.context ?? contexts.diagnosticContinuation() })
         else instance.operation(item.value)
       }
       notify()
@@ -96,7 +99,7 @@ async function initialize(): Promise<BrowserOtelSdk | undefined> {
   return sdkPromise
 }
 
-export function record(event: string, detail: Record<string, unknown> = {}, level = "info") {
+export function record(event: string, detail: Record<string, unknown> = {}, level = "info", parent?: Context) {
   const isFailure = isFailureEvent(event)
   if (!shouldRecord(level, isFailure) || !sampledIn()) return
   const error = detail.error
@@ -104,7 +107,8 @@ export function record(event: string, detail: Record<string, unknown> = {}, leve
   const safeEvent = /^[A-Za-z0-9_.:-]{1,160}$/.test(event) ? event : "diagnostic.event"
   const effectiveLevel = isFailure && level === "warn" ? "error" : level
   const timestamp = typeof detail.timestampMs === "number" && Number.isFinite(detail.timestampMs) ? detail.timestampMs : Date.now()
-  const value: DiagnosticInput = { event: safeEvent, detail, level: effectiveLevel, timestamp, ...(error === undefined ? {} : { exception: error }) }
+  const value: DiagnosticInput = { event: safeEvent, detail, level: effectiveLevel, timestamp,
+    context: currentTraceContext(parent), ...(error === undefined ? {} : { exception: error }) }
   if (sdk) sdk.emit(value)
   else admit({ kind: "log", value })
 }
@@ -114,18 +118,16 @@ function shouldRecord(level: string, isFailure: boolean): boolean {
 }
 function sampledIn(): boolean { return Math.random() < telemetryConfig().sampleRate }
 
-export async function traceDiagnosticOperation<T>(
-  name: string,
-  attributes: Record<string, string | number>,
-  operation: (context?: Context) => Promise<T> | T,
-): Promise<T> {
+export async function beginDiagnosticOperation(name: string, attributes: Record<string, string | number>, parent?: Context) {
   const selected = telemetryConfig().enabled && sampledIn()
   const startedAt = performance.now()
-  const activeSdk = selected ? sdk : undefined
+  const activeSdk = selected ? await initialize() : undefined
   let active: ReturnType<BrowserOtelSdk["startOperation"]> | undefined
-  try { active = activeSdk?.startOperation(name, attributes, startedAt) } catch { dropped++ }
+  try { active = activeSdk?.startOperation(name, attributes, startedAt, currentTraceContext(parent)) } catch { dropped++ }
+  let ended = false
   function finish(exception?: unknown) {
-    if (!selected) return
+    if (!selected || ended) return
+    ended = true
     try {
       if (activeSdk) {
         if (active) activeSdk.finishOperation(active.span, active.context, name, attributes, performance.now(), exception)
@@ -133,12 +135,18 @@ export async function traceDiagnosticOperation<T>(
       else admit({ kind: "operation", value: { name, attributes, startedAt, endedAt: performance.now(), exception } })
     } catch { dropped++ }
   }
+  return { context: active?.context, traceparent: active?.traceparent, end: finish }
+}
+
+export async function traceDiagnosticOperation<T>(name: string, attributes: Record<string, string | number>,
+  operation: (context?: Context) => Promise<T> | T, parent?: Context): Promise<T> {
+  const diagnostic = await beginDiagnosticOperation(name, attributes, parent)
   try {
-    const result = await operation(active?.context)
-    finish()
+    const result = await operation(diagnostic.context)
+    diagnostic.end()
     return result
   } catch (exception) {
-    finish(exception)
+    diagnostic.end(exception)
     throw exception
   }
 }
@@ -162,10 +170,18 @@ function installGlobalHandlers() {
     const error: unknown = event.reason as unknown ?? new Error("Unhandled promise rejection")
     record("browser.unhandled_rejection", { error }, "error")
   })
+  window.addEventListener("pagehide", retryTelemetry)
+  if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") retryTelemetry()
+  })
 }
 installGlobalHandlers()
 
 subscribeTelemetryConfig(() => {
+  if (!telemetryConfig().enabled) {
+    if (traceContexts) traceContexts.clearDiagnosticContinuation()
+    else void import("./diagnosticTraceContext").then(contexts => contexts.clearDiagnosticContinuation()).catch(() => {})
+  }
   generation++
   const active = sdk
   sdk = undefined

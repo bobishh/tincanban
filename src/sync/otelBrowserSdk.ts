@@ -23,6 +23,7 @@ export type DiagnosticInput = {
   level: string
   timestamp: number
   exception?: unknown
+  context?: Context
 }
 export type OperationInput = {
   name: string
@@ -75,6 +76,7 @@ function semanticAttributes(detail: Record<string, unknown>): SafeAttributes {
     ["startup.source.version", "startup.source.version", "id"], ["recovery.source.version", "recovery.source.version", "id"], ["recovery.transition_id", "recovery.transition.id", "id"],
     ["code.operation", "code.operation", "label"], ["error.code", "error.code", "label"],
     ["sync.scope.id", "sync.scope.id", "id"], ["sync.scope.kind", "sync.scope.kind", "label"],
+    ["sync.enrollment.id", "sync.enrollment.id", "id"],
     ["http.request.method", "http.request.method", "label"], ["server.address", "server.address", "label"],
   ]
   const attributes: SafeAttributes = {}
@@ -200,7 +202,7 @@ export class BrowserOtelSdk {
         severityText: severityName(input.level),
         body: input.event,
         attributes,
-        ...(spanContext ? { context: spanContext } : {}),
+        ...((spanContext ?? input.context) ? { context: spanContext ?? input.context } : {}),
       })
       return true
     } catch {
@@ -215,13 +217,13 @@ export class BrowserOtelSdk {
     this.finishOperation(active.span, active.context, input.name, input.attributes, input.endedAt, input.exception)
   }
 
-  startOperation(name: string, inputAttributes: Record<string, string | number>, startedAt = performance.now()) {
+  startOperation(name: string, inputAttributes: Record<string, string | number>, startedAt = performance.now(), parent?: Context) {
     if (!this.reserve()) return undefined
     const safeName = safeText(name, 160) ?? "diagnostic.operation"
     const attributes = safeAttributes(inputAttributes)
     try {
-      const span = this.tracer.startSpan(safeName, { startTime: monotonicTime(wallTimeFromMonotonic(startedAt)), attributes })
-      const spanContext = trace.setSpan(context.active(), span)
+      const span = this.tracer.startSpan(safeName, { startTime: monotonicTime(wallTimeFromMonotonic(startedAt)), attributes }, parent)
+      const spanContext = trace.setSpan(parent ?? context.active(), span)
       const sc = span.spanContext()
       return { span, context: spanContext, traceparent: `00-${sc.traceId}-${sc.spanId}-${sc.traceFlags.toString(16).padStart(2, "0")}` }
     } catch {
@@ -247,7 +249,7 @@ export class BrowserOtelSdk {
     let span: Span
     try { span = this.tracer.startSpan(safeText(name, 160) ?? "http.request", { attributes, kind: SpanKind.CLIENT }, parent) }
     catch { this.releaseUnqueued(1); return { headers: {}, end: () => {} } }
-    const spanContext = trace.setSpan(context.active(), span)
+    const spanContext = trace.setSpan(parent ?? context.active(), span)
     const contextId = span.spanContext()
     let ended = false
     return {

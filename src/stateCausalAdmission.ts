@@ -1,3 +1,4 @@
+import type { Context } from "@opentelemetry/api"
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceDocumentV2 } from "./domain/model"
 import { validateWorkspaceDoc } from "./domain/model"
@@ -17,7 +18,7 @@ export async function assertWorkspaceWritesAllowed(workspaceId?: string): Promis
   if (await workspaceWritesBlocked(workspaceId)) throw new Error("Workspace writes paused: conflicting ownership records")
 }
 
-export async function reclassifyStoredWorkspace(workspaceId: string, storage = defaultStorage): Promise<{
+export async function reclassifyStoredWorkspace(workspaceId: string, storage = defaultStorage, diagnosticContext?: Context): Promise<{
   doc: Automerge.Doc<WorkspaceDocumentV2> | undefined
   changed: boolean
 }> {
@@ -27,7 +28,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
   const phase = async <T>(name: string, operation: () => Promise<T>): Promise<T> => {
     stage = name
     const phaseStartedAt = performance.now()
-    const result = await diagnoseStartupStep(`reclassify-${name}`, operation, { workspaceId })
+    const result = await diagnoseStartupStep(`reclassify-${name}`, operation, { workspaceId }, diagnosticContext)
     meshTrace("workspace.reclassify.phase", { workspaceId, stage: name, phase: name,
       elapsedMs: Math.round(performance.now() - phaseStartedAt) })
     return result

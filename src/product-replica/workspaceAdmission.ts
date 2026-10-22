@@ -8,6 +8,7 @@ import { assertWorkspaceEntityTransitions, assertWorkspaceRootTransition, assert
 import type { WorkspaceAuthority, WorkspaceOwnershipTransfer, WorkspaceSuccessionClaim } from "@meta-uber/mesh-workspace"
 import type { WorkspaceChangeAuthorization } from "./workspaceAuthorizationRecords"
 import { workspaceEntitiesAtHeads } from "../crdtHistory"
+import { explainWorkspaceBoundaryFailure } from "./workspaceBoundaryDiagnostic"
 
 export type WorkspaceWriteAuthorityEvidence = {
   genesisOwner: WorkspaceAuthority
@@ -114,7 +115,9 @@ function admitDocuments(input: Omit<WorkspaceAdmissionInput, "local" | "remote">
     },
     nowMs: input.now,
   }
-  const plan = (input.receivedBasis ? input.receivedBasis.admitTail(rawAdmission) : policy.evaluateCausalAdmission(rawAdmission)) as AdmissionPlan
+  let plan: AdmissionPlan
+  try { plan = (input.receivedBasis ? input.receivedBasis.admitTail(rawAdmission) : policy.evaluateCausalAdmission(rawAdmission)) as AdmissionPlan }
+  catch (error) { throw explainWorkspaceBoundaryFailure(error, merged, authority) }
   const policyMs = performance.now() - phaseStarted
   phaseStarted = performance.now()
   const changesByHash = new Map(Automerge.getChangesMetaSince(merged, []).map(change => [change.hash, change]))

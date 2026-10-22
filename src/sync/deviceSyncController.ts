@@ -406,6 +406,8 @@ export class DeviceSyncController {
       const saved = this.savedWorkspaceInvite(rawInvite)
       if (saved && await this.reopenSavedWorkspace(saved)) return
       const invite = parseInvitation(rawInvite)
+      if (invite.kind === "device-enrollment") await import("./enrollmentDiagnostics")
+        .then(module => module.captureEnrollmentDiagnosticContext(invite, rawInvite))
       this.state.parsedInvite.value = invite
       await this.showInviteStep(invite)
     } catch (err) {

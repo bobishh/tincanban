@@ -8,8 +8,9 @@ import { verifyRustyManagementCapability, verifyRustyManagementEvidence, type Ru
 import { verifyRustyManagementStatus, type ManagementStatusAuthorization, type RustyManagementStatusResponse } from "./rustyManagementStatus"
 import { RustyManagementRepository, validatePolicy, type ManagementBinding, type ManagementUpdateAuthorization, type ManagementUpdateRequest } from "./rustyManagementRepository"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
+import type { Context } from "@opentelemetry/api"
 
-export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string> }
+export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string>; diagnosticContext?: Context }
 const encoder = new TextEncoder()
 const path = (binding: ManagementBinding) => `${binding.origin}/v2/management/${binding.resourceKind}/${binding.resourceId}`
 const repo = (profile: { identity: { personId: string } }) => new RustyManagementRepository(profile.identity.personId)
@@ -141,6 +142,7 @@ export async function readRustyManagementStatus(binding: ManagementBinding, prof
   const minimumRevision = await revision(binding, profile)
   await assertDevice(profile, guard)
   const response = await readBlindJson<RustyManagementStatusResponse>(await fetchBlind(`${path(binding)}/status`, {
+    diagnosticContext: guard.diagnosticContext,
     method: "POST", cache: "no-store", signal: AbortSignal.timeout(15_000), headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ version: 1, identity: evidence.identity, deviceId: profile.device.deviceId, certificates: evidence.certificates, authorization }),
   }), 1024 * 1024)
@@ -219,6 +221,7 @@ export async function retryRustyManagementUpdate(binding: ManagementBinding, pro
   await context(binding, profile, "rusty-management-policy-update", Date.now() + 120_000, guard)
   await assertDevice(profile, guard)
   const response = await readBlindJson<{ capability: SignedEnvelope<RustyManagementCapability> }>(await fetchBlind(path(binding), {
+    diagnosticContext: guard.diagnosticContext,
     method: "PUT", signal: AbortSignal.timeout(30_000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(pending),
   }), 1024 * 1024)
   if (!response || Object.keys(response).length !== 1) throw new Error("Invalid Rusty management update response")
