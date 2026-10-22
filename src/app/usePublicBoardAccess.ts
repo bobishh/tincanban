@@ -8,9 +8,9 @@ import { changePublicAccess, deliverLatestPublicSnapshot, refreshPublicAccess, r
 export type { PublicBoardAccessInput } from "./publicBoardAccessOperations"
 
 export function usePublicBoardAccess(input: PublicBoardAccessInput) {
-  const checked = ref(false), published = ref(false), busy = ref(false), error = ref(""), revision = ref(0), withdrawn = ref(false)
+  const checked = ref(false), published = ref(false), busy = ref(false), error = ref(""), revision = ref(0), withdrawn = ref(false), recoveryNeeded = ref(false)
   const state: PublicBoardAccessOperations["state"] = { generation: 0, syncQueued: false, operationRunning: false,
-    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "", policyCache: {} }
+    refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "", policyCache: {}, remoteAvailability: "unknown" }
   const timers: PublicBoardAccessOperations["timers"] = {}
   const currentBoardId = () => input.boardId() ?? ""
   const link = computed(() => published.value && currentBoardId() ? boardRouteUrl(currentBoardId(), input.boardTitle()) : "")
@@ -29,7 +29,7 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   }
   const scheduleSync = (delay = input.debounceMs ?? 350) => {
     if (timers.debounce) clearTimeout(timers.debounce)
-    if (!published.value || withdrawn.value || !input.owner()) return
+    if (!published.value || withdrawn.value || recoveryNeeded.value || !input.owner()) return
     if (timers.retry) return
     timers.debounce = setTimeout(() => { timers.debounce = undefined; void ctx.deliverLatest() }, delay)
   }
@@ -41,7 +41,7 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
       void ctx.refresh()
     }, delay)
   }
-  const ctx: PublicBoardAccessOperations = { input, checked, published, busy, error, revision, withdrawn, state, timers, capture, scheduleSync, scheduleRetry,
+  const ctx: PublicBoardAccessOperations = { input, checked, published, busy, error, revision, withdrawn, recoveryNeeded, state, timers, capture, scheduleSync, scheduleRetry,
     refresh: () => refreshPublicAccess(ctx), deliverLatest: () => deliverLatestPublicSnapshot(ctx) }
 
   watch(() => sourceIdentity(input), () => {
@@ -61,11 +61,14 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
     } else { resetAccess(ctx); stopTimer(timers.status); timers.status = undefined }
   })
   watch(() => input.sourceVersion(), () => {
-    if (published.value && !withdrawn.value && input.owner()) { state.syncQueued = true; scheduleSync() }
+    if (published.value && !withdrawn.value && input.owner()) {
+      state.syncQueued = true
+      if (!state.operationRunning) scheduleSync()
+    }
   })
   onScopeDispose(() => { state.disposed = true; state.generation++; clearTimers(timers) })
   return { owner: computed(() => input.owner()), checked, published, busy, error, revision, link,
-    refresh: ctx.refresh, retry: () => retryPublicAccess(ctx), setPublic: (enabled: boolean) => changePublicAccess(ctx, enabled) }
+    refresh: ctx.refresh, retry: () => retryPublicAccess(ctx), setPublic: (enabled: boolean) => changePublicAccess(ctx, enabled), withdrawn, recoveryNeeded }
 }
 
 function ownerAuthorityBinding(profile: LocalProfile) {
@@ -90,9 +93,10 @@ function sourceIdentity(input: PublicBoardAccessInput) {
 }
 function resetAccess(ctx: PublicBoardAccessOperations) {
   ctx.state.generation++
-  ctx.checked.value = false; ctx.published.value = false; ctx.busy.value = false; ctx.error.value = ""; ctx.revision.value = 0
+  ctx.checked.value = false; ctx.published.value = false; ctx.busy.value = false; ctx.error.value = ""; ctx.revision.value = 0; ctx.recoveryNeeded.value = false
   ctx.state.deliveryGeneration = null; ctx.state.deliveryPolicyHash = null; ctx.withdrawn.value = false
   ctx.state.deliveryPolicyContentHash = null
+  ctx.state.remoteAvailability = "unknown"
   ctx.state.syncQueued = false; ctx.state.lastHash = ""
   ctx.state.projectionComparison = undefined; ctx.state.policyCache = {}
   clearTimer(ctx.timers.debounce); clearTimer(ctx.timers.retry)

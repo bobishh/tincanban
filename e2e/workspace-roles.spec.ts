@@ -54,7 +54,7 @@ for (const role of ["visitor", "editor"] as const) {
       await guestSettings.getByLabel("Name", { exact: true }).fill(`${role} identity`)
       await guestSettings.getByRole("button", { name: "Save profile", exact: true }).click()
       await expect(guestSettings.getByLabel("Name", { exact: true })).toHaveValue(`${role} identity`)
-      await expect(guestSettings.getByRole("button", { name: "Recovery backup", exact: true })).toBeVisible()
+      await expect(guestSettings.getByRole("button", { name: "Recovery backup", exact: true })).toHaveCount(0)
       await guestSettings.getByRole("tab", { name: "Workspace", exact: true }).click()
       await guestSettings.getByText("settings.json", { exact: true }).click()
       const workspaceJson = guestSettings.getByLabel("Workspace settings JSON", { exact: true })

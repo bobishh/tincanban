@@ -37,31 +37,14 @@ async function participantsFromSettings(page: Page, settings: Locator) {
   return page.getByRole("dialog", { name: "Device sync" })
 }
 
-test("Given Settings is open, when Recovery backup opens, then recovery stays above Settings and closes back to it", async ({ page }) => {
+test("Given Settings is open, when Identity settings opens, then identity-only backup and restore stay unavailable", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
   await settings.getByRole("tab", { name: "Identity", exact: true }).click()
-  await settings.getByRole("button", { name: "Recovery backup", exact: true }).click()
-
-  const recovery = page.getByRole("dialog", { name: "Identity recovery" })
-  await expect(recovery.getByRole("heading", { name: "Back up or restore your identity" })).toBeVisible()
-  await recovery.getByRole("button", { name: "Restore from backup", exact: true }).click()
-  await expect(recovery.getByRole("button", { name: "Restore identity" })).toBeDisabled()
-  await recovery.getByRole("textbox", { name: "Recovery words", exact: true }).fill("invalid restoration words")
-  await recovery.getByLabel("Recovery file").setInputFiles({ name: "invalid-recovery.json", mimeType: "application/json", buffer: Buffer.from("{}") })
-  await recovery.getByRole("checkbox").check()
-  await expect(recovery.getByRole("alert")).toBeVisible()
-  await expect(recovery.getByRole("button", { name: "Restore identity" })).toBeDisabled()
-  const recoveryOnTop = await page.evaluate(() => {
-    const settingsWindow = document.querySelector('[data-window-id="workspace-settings"]')!
-    const recoveryWindow = document.querySelector('[data-window-id="identity-recovery"]')!
-    return Number(getComputedStyle(recoveryWindow).zIndex) > Number(getComputedStyle(settingsWindow).zIndex)
-  })
-  expect(recoveryOnTop).toBe(true)
-  await recovery.getByRole("button", { name: "Close" }).click()
-  await expect(recovery).toHaveCount(0)
-  await expect(settings.getByRole("button", { name: "Recovery backup", exact: true })).toBeVisible()
+  await expect(settings.getByRole("region", { name: "Identity recovery" })).toHaveCount(0)
+  await expect(settings.getByRole("button", { name: "Recovery backup", exact: true })).toHaveCount(0)
+  await expect(settings.getByRole("region", { name: "Private workspace recovery" })).toBeVisible()
 })
 
 test("Settings keeps identity available while workspace controls stay role-gated", async ({ page }) => {

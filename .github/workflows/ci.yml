@@ -53,6 +53,7 @@ jobs:
         env:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           VITE_PUBLIC_BOARD_ORIGIN: ${{ vars.VITE_PUBLIC_BOARD_ORIGIN }}
+          VITE_IDENTITY_ORIGIN: ${{ vars.VITE_IDENTITY_ORIGIN || '' }}
           VITE_SYNC_TELEMETRY_URL: ${{ vars.VITE_SYNC_TELEMETRY_URL }}
           VITE_OTEL_EXPORTER_OTLP_ENDPOINT: ${{ vars.VITE_OTEL_EXPORTER_OTLP_ENDPOINT }}
           VITE_SYNC_TELEMETRY_PROJECT: ${{ vars.VITE_SYNC_TELEMETRY_PROJECT || 'tincanban' }}

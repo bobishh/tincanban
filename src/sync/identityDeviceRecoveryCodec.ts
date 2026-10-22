@@ -6,7 +6,7 @@ import { decodeIdentityDeviceState, encodeIdentityDeviceState, IdentityDeviceSta
 import { validateIdentityRecoveryEvidence } from "./identityRecoveryState"
 import { readIdentityDeviceTransfer } from "./identityDeviceTransferReader"
 
-export const maximumIdentityRecoveryFileBytes = 2 * 1024 * 1024
+const maximumIdentityRecoveryFileBytes = 2 * 1024 * 1024
 const maximumCiphertextBytes = 1024 * 1024 + 16
 const context = new TextEncoder().encode("tincanban/identity-device-recovery/v1")
 const packageSchema = z.object({ kind: z.literal("tincanban-identity-device-recovery"), version: z.literal(1),

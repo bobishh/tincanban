@@ -1,6 +1,7 @@
 import { defineConfig } from "vite"
 import vue from "@vitejs/plugin-vue"
 import { execFileSync } from "node:child_process"
+import { fileURLToPath } from "node:url"
 
 function buildCommit() {
   try {
@@ -28,6 +29,12 @@ export default defineConfig(({ command }) => ({
     },
   },
   worker: { format: "es" },
+  resolve: {
+    alias: [{
+      find: /^@automerge\/automerge$/,
+      replacement: fileURLToPath(new URL("./node_modules/@automerge/automerge/dist/mjs/entrypoints/fullfat_base64.js", import.meta.url)),
+    }],
+  },
   server: process.env.TINCANBAN_E2E_NO_HMR === "1" ? { hmr: false, watch: { ignored: ["**/*"] } } : undefined,
   define: {
     __VUE_OPTIONS_API__: false,

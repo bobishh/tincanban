@@ -3,10 +3,11 @@ import WorkspaceFileActions from "../../src/components/WorkspaceFileActions.vue"
 import SyncDialog from "../../src/components/SyncDialog.vue"
 import { replicationPresence, replicaKey } from "../../src/sync/replicationHealth"
 
-export function mountWorkspaceFileActions(exportWorkspace: () => Promise<void>) {
+export function mountWorkspaceFileActions(exportWorkspace: () => Promise<void>,
+  exportAllWorkspaces?: (onProgress: (progress: { completed: number; total: number }) => void) => Promise<void>) {
   const root = document.createElement("div")
   document.body.appendChild(root)
-  createApp(WorkspaceFileActions, { exportWorkspace }).mount(root)
+  createApp(WorkspaceFileActions, { exportWorkspace, ...(exportAllWorkspaces ? { exportAllWorkspaces } : {}) }).mount(root)
 }
 
 export function mountMobileDeviceListDialog(options: { includeOwner?: boolean; namedSuccessor?: boolean } = {}) {

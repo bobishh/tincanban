@@ -62,22 +62,11 @@ test("Given template storage fails, When Save is retried, Then the error and dra
   await expect(settings.locator(".template-item").filter({ hasText: "Retry template" })).toHaveCount(1)
 })
 
-test("Given a recovery backup is generated, When restoration words or the next backup length change, Then generated words and their count remain unchanged", async ({ page }) => {
+test("Given Identity settings is open, When its controls render, Then generic recovery backup stays out of the profile flow", async ({ page }) => {
   await page.goto("/")
   await openSettings(page)
-  await page.getByRole("button", { name: "Recovery backup", exact: true }).click()
-  const recovery = page.getByRole("dialog", { name: "Identity recovery" })
-  const download = page.waitForEvent("download")
-  await recovery.getByRole("button", { name: "Generate and download recovery file" }).click()
-  await download
-  const generated = await recovery.locator(".recovery-words").textContent()
-  await recovery.getByRole("combobox", { name: "Recovery length" }).selectOption("insane")
-  await expect(recovery.getByText("Write down these 12 words now:", { exact: true })).toBeVisible()
-  await recovery.getByRole("button", { name: "Restore from backup", exact: true }).click()
-  await recovery.getByRole("textbox", { name: "Recovery words", exact: true }).fill("Different restoration words")
-  await expect(recovery.getByRole("button", { name: "Restore identity", exact: true })).toBeDisabled()
-  await recovery.getByRole("button", { name: "Create backup", exact: true }).click()
-  await expect(recovery.locator(".recovery-words")).toHaveText(generated!)
+  await expect(page.getByRole("region", { name: "Identity recovery" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Recovery backup", exact: true })).toHaveCount(0)
 })
 
 test("Given Device sync, When participants open, Then succession actions stay beside participants without a technical device dump", async ({ page }) => {
@@ -108,5 +97,28 @@ test("Given backup creation is pending or fails, When Export is selected, Then d
   await expect(sync.getByRole("alert")).toHaveText("Backup storage unavailable")
   await sync.getByRole("button", { name: "Retry export", exact: true }).click()
   await expect(sync.getByRole("button", { name: "Export .tincanban", exact: true })).toBeEnabled()
+  await expect(sync.getByRole("alert")).toHaveCount(0)
+})
+
+test("Given all-board export is pending and fails, When retried, Then progress and failure stay visible without losing the retry", async ({ page }) => {
+  await page.goto("/")
+  await page.evaluate(async () => {
+    let attempts = 0
+    await (await import("/e2e/support/keeperDialog.ts")).mountWorkspaceFileActions(async () => undefined, async onProgress => {
+      onProgress({ completed: 1, total: 2 })
+      if (++attempts === 1) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+        throw new Error("The second board could not be read")
+      }
+      onProgress({ completed: 2, total: 2 })
+    })
+  })
+  const sync = page.getByRole("region", { name: "Workspace files", exact: true })
+  await sync.getByRole("button", { name: "Export all boards", exact: true }).click()
+  await expect(sync.getByRole("status")).toContainText("Exporting board 1 of 2")
+  await expect(sync.getByRole("button", { name: "Exporting boards…", exact: true })).toBeDisabled()
+  await expect(sync.getByRole("alert")).toHaveText("The second board could not be read")
+  await sync.getByRole("button", { name: "Retry all-board export", exact: true }).click()
+  await expect(sync.getByRole("button", { name: "Export all boards", exact: true })).toBeEnabled()
   await expect(sync.getByRole("alert")).toHaveCount(0)
 })

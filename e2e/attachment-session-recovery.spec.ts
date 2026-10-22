@@ -7,6 +7,9 @@ import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
 import { captureHistoryBackupProgress } from "./support/historyBackupProgress"
 import { downloadPrivateWorkspaceRecovery } from "./support/workspaceRecoveryDownload"
 
+// This suite passes recovery words between isolated contexts; never retain trace snapshots of them.
+test.use({ trace: "off" })
+
 const attachmentTitle = "Session recovery file"
 const attachmentName = "session-recovery.txt"
 
@@ -243,14 +246,10 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   let workspaceId = ""
 
   async function makeIdentityRecovery() {
-    await editor.getByRole("button", { name: "Settings", exact: true }).click()
-    await editor.getByRole("button", { name: "Recovery backup", exact: true }).click()
-    const dialog = editor.getByRole("dialog", { name: "Identity recovery" })
-    const downloadEvent = editor.waitForEvent("download", { timeout: 30_000 })
-    await dialog.getByRole("button", { name: "Generate and download recovery file", exact: true }).click()
-    const download = await downloadEvent
-    identityRecoveryBytes = await readFile((await download.path())!)
-    identityRecoveryWords = (await dialog.locator(".recovery-words").innerText()).trim()
+    const backup = await editor.evaluate(async () =>
+      (await import("/src/sync/identityDeviceRecovery.ts")).createIdentityDeviceRecovery("better"))
+    identityRecoveryBytes = Buffer.from(JSON.stringify(backup.file))
+    identityRecoveryWords = backup.recoveryKey
     if (!identityRecoveryWords) throw new Error("Identity recovery words were not generated")
     await editor.reload()
     await expect(editor.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
@@ -436,14 +435,14 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     const restored = await recovery.newPage()
     try {
       await restored.goto(baseURL!)
-      await restored.getByRole("button", { name: "Settings", exact: true }).click()
-      await restored.getByRole("button", { name: "Recovery backup", exact: true }).click()
-      const identityDialog = restored.getByRole("dialog", { name: "Identity recovery" })
-      await identityDialog.getByRole("button", { name: "Restore from backup", exact: true }).click()
-      await identityDialog.getByLabel("Recovery words").fill(identityRecoveryWords)
-      await identityDialog.getByLabel("Recovery file").setInputFiles({ name: "identity-recovery.json", mimeType: "application/json", buffer: identityRecoveryBytes! })
-      await identityDialog.getByRole("checkbox").check()
-      await Promise.all([restored.waitForEvent("load"), identityDialog.getByRole("button", { name: "Restore identity", exact: true }).click()])
+      const identityRecoveryFile = JSON.parse(identityRecoveryBytes!.toString("utf8"))
+      await restored.evaluate(async ({ file, words }) =>
+        (await import("/src/sync/identityDeviceRecovery.ts")).restoreIdentityDeviceRecovery(file, words, "", true),
+      { file: identityRecoveryFile, words: identityRecoveryWords })
+      await restored.reload()
+      const restoredPersonId = await restored.evaluate(async () =>
+        (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)
+      expect(restoredPersonId).toBe(identityRecoveryFile.personId)
 
       const sync = await openSettingsFromSync(restored, "Identity")
       const backups = sync.getByRole("region", { name: "Private workspace recovery" })

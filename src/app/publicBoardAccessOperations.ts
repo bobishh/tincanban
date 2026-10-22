@@ -2,7 +2,10 @@ import type { Ref } from "vue"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { PublicBoardDeliveryPolicyCache, PublicBoardDeliveryPolicyEvidence } from "../public/publicDeliveryPolicy"
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
+import { deleteLocal, readLocal, writeLocal } from "../localDb"
+import { createBrowserBoardPublication } from "./publicBoardPublication"
+import { parsePublicationRecord, publicationRecordKey, reconcilePublicationRecord, type PublicationIntentAction, type PublicationRecord } from "../domain/publicationState"
 
 export class PublicBoardSourceChangedError extends Error {
   constructor() { super("Board source changed during publication preparation") }
@@ -26,10 +29,10 @@ export type CapturedAccessSource = {
 }
 export type PublicBoardAccessOperations = {
   input: PublicBoardAccessInput
-  checked: Ref<boolean>; published: Ref<boolean>; busy: Ref<boolean>; error: Ref<string>; revision: Ref<number>; withdrawn: Ref<boolean>
+  checked: Ref<boolean>; published: Ref<boolean>; busy: Ref<boolean>; error: Ref<string>; revision: Ref<number>; withdrawn: Ref<boolean>; recoveryNeeded: Ref<boolean>
   state: { generation: number; syncQueued: boolean; operationRunning: boolean; refreshQueued: boolean; disposed: boolean;
     deliveryGeneration: number | null; deliveryPolicyHash: string | null; deliveryPolicyContentHash: string | null; retryCount: number; lastHash: string;
-    projectionComparison?: string; policyCache: PublicBoardDeliveryPolicyCache }
+    projectionComparison?: string; policyCache: PublicBoardDeliveryPolicyCache; remoteAvailability: "published" | "withdrawn" | "missing" | "unknown" }
   timers: { debounce?: ReturnType<typeof setTimeout>; retry?: ReturnType<typeof setTimeout>; status?: ReturnType<typeof setInterval> }
   capture: (options?: { requireUnchangedSource?: boolean }) => CapturedAccessSource
   scheduleSync: (delay?: number) => void
@@ -49,7 +52,7 @@ export async function refreshPublicAccess(ctx: PublicBoardAccessOperations) {
     const captured = await readOwnerStatus(ctx)
     captured.ensureCurrent()
     if (generation !== ctx.state.generation) return
-    applyOwnerStatus(ctx, captured)
+    await applyOwnerStatus(ctx, captured)
   } catch (cause) {
     if (generation === ctx.state.generation) {
       ctx.checked.value = false
@@ -76,18 +79,28 @@ async function readOwnerStatus(ctx: PublicBoardAccessOperations) {
     profile: captured.profile, ensureCurrent: captured.ensureCurrent })
   return { ...captured, status }
 }
-function applyOwnerStatus(ctx: PublicBoardAccessOperations, captured: Awaited<ReturnType<typeof readOwnerStatus>>) {
+async function applyOwnerStatus(ctx: PublicBoardAccessOperations, captured: Awaited<ReturnType<typeof readOwnerStatus>>) {
   const status = captured.status
+  const key = publicationRecordKey(ctx.input.origin, captured.workspaceId, captured.boardId, captured.profile)
+  let record = parsePublicationRecord(await readLocal(key))
+  if (!record && status.published) record = { version: 1, origin: ctx.input.origin, workspaceId: captured.workspaceId,
+    boardId: captured.boardId, ownerPersonId: captured.profile.identity.personId, ownerIntent: "published",
+    confirmedRevision: status.revision, confirmedHash: status.hash ?? "", confirmedProjection: status.projection,
+    remoteAvailability: "published" }
+  const reconciled = reconcilePublicationRecord(record, status)
+  if (reconciled.record) await writeLocal(key, JSON.stringify(reconciled.record))
   ctx.checked.value = true
-  ctx.published.value = status.published
-  ctx.revision.value = status.revision
+  ctx.published.value = reconciled.published
+  ctx.revision.value = reconciled.revision
   ctx.state.deliveryGeneration = status.deliveryGeneration ?? null
   ctx.state.deliveryPolicyHash = status.deliveryPolicyHash ?? null
   ctx.state.deliveryPolicyContentHash = status.deliveryPolicyContentHash ?? null
-  ctx.state.lastHash = status.hash ?? ""
-  ctx.withdrawn.value = !status.published && status.revision > 0
-  ctx.state.syncQueued = status.published
-  if (status.published) ctx.scheduleSync()
+  ctx.state.lastHash = reconciled.hash
+  ctx.state.remoteAvailability = status.availability ?? (status.published ? "published" : "withdrawn")
+  ctx.withdrawn.value = reconciled.withdrawn
+  ctx.recoveryNeeded.value = reconciled.recoveryNeeded
+  ctx.state.syncQueued = reconciled.published && !reconciled.recoveryNeeded
+  if (ctx.state.syncQueued) ctx.scheduleSync()
   else if (ctx.timers.debounce) { clearTimeout(ctx.timers.debounce); ctx.timers.debounce = undefined }
 }
 
@@ -129,9 +142,12 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
   const deliveryPolicy = await buildPublicBoardDeliveryPolicy(captured.profile, captured.workspaceId, captured.boardId,
     (ctx.state.deliveryGeneration ?? 0) + 1, captured.ensureCurrent, captured.document, ctx.state.policyCache, captured.sourceVersion)
   captured.ensureCurrent()
-  const result = await publishBoardSnapshot({ origin: ctx.input.origin, ...captured, action: "publish", expectedRevision, deliveryPolicy })
+  const intent = await persistPublicationIntent(ctx, captured, "publish", expectedRevision, deliveryPolicy)
+  const result = await publishBoardSnapshot({ origin: ctx.input.origin, ...captured, action: "publish", expectedRevision, deliveryPolicy,
+    preparedProjection: intent.record.intent?.projection ?? undefined })
   captured.ensureCurrent()
   if (generation !== ctx.state.generation) return
+  await confirmPublicationIntent(ctx, captured, intent, result)
   ctx.revision.value = result.revision
   ctx.state.deliveryGeneration = deliveryPolicy.policy.payload.generation
   ctx.state.deliveryPolicyHash = await publicBoardDeliveryPolicyHash(deliveryPolicy)
@@ -145,10 +161,12 @@ async function disablePublicAccess(ctx: PublicBoardAccessOperations, captured: C
   if (!ctx.published.value) return
   const { withdrawPublicBoard } = await import("../public/publicationClient")
   captured.ensureCurrent()
+  const intent = await persistPublicationIntent(ctx, captured, "unpublish", expectedRevision)
   const result = await withdrawPublicBoard({ origin: ctx.input.origin, boardId: captured.boardId,
     profile: captured.profile, expectedRevision, ensureCurrent: captured.ensureCurrent })
   captured.ensureCurrent()
   if (generation !== ctx.state.generation) return
+  await confirmPublicationIntent(ctx, captured, intent, result)
   ctx.revision.value = result.revision
   ctx.published.value = false
   ctx.withdrawn.value = true
@@ -230,10 +248,13 @@ async function policyIfChanged(ctx: PublicBoardAccessOperations, captured: Captu
 async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource,
   deliveryPolicy: PublicBoardDeliveryPolicyEvidence | undefined, generation: number) {
   const { publishBoardSnapshot } = await import("../public/publicationClient")
+  const intent = await persistPublicationIntent(ctx, captured, "update", ctx.revision.value, deliveryPolicy)
   const result = await publishBoardSnapshot({ origin: ctx.input.origin, ...captured, action: "update",
-    expectedRevision: ctx.revision.value, ensureCurrent: captured.ensureCurrent, deliveryPolicy })
+    expectedRevision: ctx.revision.value, ensureCurrent: captured.ensureCurrent, deliveryPolicy,
+    preparedProjection: intent.record.intent?.projection ?? undefined })
   captured.ensureCurrent()
   if (generation !== ctx.state.generation || ctx.withdrawn.value) return
+  await confirmPublicationIntent(ctx, captured, intent, result)
   ctx.revision.value = result.revision
   if (deliveryPolicy) {
     const { publicBoardDeliveryPolicyHash, publicBoardDeliveryPolicyContentHash } = await import("../public/publicDeliveryPolicy")
@@ -245,5 +266,49 @@ async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured
   ctx.state.lastHash = result.hash
 }
 function canStartPublicDelivery(ctx: PublicBoardAccessOperations) {
-  return ctx.state.syncQueued && !ctx.state.operationRunning && ctx.published.value && !ctx.withdrawn.value && ctx.input.owner()
+  return ctx.state.syncQueued && !ctx.state.operationRunning && ctx.published.value && !ctx.withdrawn.value &&
+    !ctx.recoveryNeeded.value && ctx.state.remoteAvailability !== "missing" && ctx.input.owner()
+}
+
+async function persistPublicationIntent(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource, action: PublicationIntentAction,
+  expectedRevision: number, deliveryPolicy?: PublicBoardDeliveryPolicyEvidence): Promise<{ key: string; record: PublicationRecord }> {
+  const key = publicationRecordKey(ctx.input.origin, captured.workspaceId, captured.boardId, captured.profile)
+  const current = parsePublicationRecord(await readLocal(key))
+  assertNoUncertainPublicationIntent(current)
+  const projection = action === "unpublish" ? null : (await createBrowserBoardPublication(captured.document, captured.workspaceId, captured.boardId)).projection
+  const projectionHash = await sha256Base64Url(new TextEncoder().encode(projection ? canonicalizeJson(projection) : "null"))
+  const intent = { operationId: crypto.randomUUID(), action, expectedRevision, projection, projectionHash,
+    sourceHeads: [...captured.sourceHeads], ...(deliveryPolicy ? { deliveryPolicy: structuredClone(deliveryPolicy) } : {}) }
+  const record = createPendingPublicationRecord(ctx, captured, action, expectedRevision, intent, current)
+  captured.ensureCurrent()
+  await writeLocal(key, JSON.stringify(record))
+  try { captured.ensureCurrent() } catch (cause) {
+    const saved = parsePublicationRecord(await readLocal(key))
+    if (saved?.intent?.operationId === intent.operationId) await deleteLocal(key)
+    throw cause
+  }
+  return { key, record }
+}
+
+function assertNoUncertainPublicationIntent(current: PublicationRecord | undefined) {
+  if (current?.intent && !current.intent.confirmed) throw new Error("A previous publication operation has uncertain outcome; refresh status before changing access")
+}
+function createPendingPublicationRecord(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource, action: PublicationIntentAction,
+  expectedRevision: number, intent: NonNullable<PublicationRecord["intent"]>, current?: PublicationRecord): PublicationRecord {
+  return { version: 1, origin: ctx.input.origin, workspaceId: captured.workspaceId, boardId: captured.boardId,
+    ownerPersonId: captured.profile.identity.personId, ownerIntent: action === "unpublish" ? "withdrawn" : "published",
+    intent, ...(current?.receipt ? { receipt: current.receipt } : {}), confirmedRevision: current?.confirmedRevision ?? expectedRevision,
+    confirmedHash: current?.confirmedHash ?? ctx.state.lastHash, remoteAvailability: ctx.state.remoteAvailability }
+}
+
+async function confirmPublicationIntent(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource,
+  pending: { key: string; record: PublicationRecord }, result: { revision: number; hash?: string; receipt?: unknown }) {
+  captured.ensureCurrent()
+  const confirmed: PublicationRecord = { ...pending.record, ownerIntent: pending.record.intent?.action === "unpublish" ? "withdrawn" : "published",
+    intent: pending.record.intent ? { ...pending.record.intent, confirmed: true } : undefined,
+    ...(result.receipt ? { receipt: result.receipt as PublicationRecord["receipt"] } : {}), confirmedRevision: result.revision,
+    confirmedHash: result.hash ?? pending.record.intent?.projectionHash ?? pending.record.confirmedHash,
+    ...(pending.record.intent?.projection ? { confirmedProjection: pending.record.intent.projection } : {}),
+    remoteAvailability: pending.record.intent?.action === "unpublish" ? "withdrawn" : "published" }
+  await writeLocal(pending.key, JSON.stringify(confirmed))
 }

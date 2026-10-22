@@ -353,6 +353,8 @@ async function addColumn(core: ReturnType<typeof useAppCore>, title: string, arc
 function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
   const myDeviceRemoval = useMyDeviceRemoval(core)
   const exportWorkspace = async () => (await import("./workspaceFiles")).exportActiveWorkspace(core)
+  const exportAllWorkspaces = async (onProgress: (progress: { completed: number; total: number }) => void) =>
+    (await import("./workspaceFiles")).exportAllAvailableWorkspaces(core, onProgress)
   const privateRecoveryUnavailableReason = computed(() => {
     void core.tincanban.docVersion.value
     return core.tincanban.getCurrentProfile()?.privateKeys.identityPrivateKey
@@ -393,7 +395,7 @@ function useWorkspaceActions(core: ReturnType<typeof useAppCore>) {
     await core.tincanban.restoreWorkspaceAsync(id)
     core.notice.value = "Workspace restored"
   }
-  return { myDeviceRemoval, exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
+  return { myDeviceRemoval, exportWorkspace, exportAllWorkspaces, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
     openImport, importWorkspace, workspaceImportState, createAndSyncWorkspace, handleCreateWorkspace, handleSwitchWorkspace,
     handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace }
 }

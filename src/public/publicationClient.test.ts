@@ -9,11 +9,10 @@ const mocks = vi.hoisted(() => ({ projection: { kind: "tincanban-public-board", 
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [] }, certHashDefault: async () => "unused" }))
 vi.mock("./publicProjection", () => ({ snapshotPublicBoardSource: (document: { entities?: Record<string, unknown> }, boardId: string) => structuredClone({ entities: document.entities?.[boardId] ? { [boardId]: document.entities[boardId] } : {} }) }))
 vi.mock("../app/publicBoardPublication", () => ({ createBrowserBoardPublication: async (
-  document: unknown, _workspaceId: string, _boardId: string, stageAsset: (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>,
+  document: unknown,
 ) => {
   mocks.capturedSource = document
-  if (mocks.includeAsset) await stageAsset({ sha256: "F".repeat(43), bytes: new Uint8Array([1, 2, 3]) })
-  return { projection: mocks.projection, assets: [] }
+  return { projection: mocks.projection, assets: mocks.includeAsset ? [{ sha256: "F".repeat(43), bytes: new Uint8Array([1, 2, 3]) }] : [] }
 } }))
 
 const origin = "https://keeper.example"

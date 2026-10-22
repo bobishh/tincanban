@@ -3,17 +3,35 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { usePublicBoardAccess } from "./usePublicBoardAccess"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
+import { parsePublicationRecord, publicationRecordKey } from "../domain/publicationState"
+import type { WorkspaceDocumentV2 } from "../domain/model"
+import type { PublicBoardPublication } from "../public/publicProjection"
 import { createBrowserBoardPublication } from "./publicBoardPublication"
 import type * as PublicationClient from "../public/publicationClient"
 
-const mocks = vi.hoisted(() => ({
+const mocks = vi.hoisted(() => {
+  const local = new Map<string, string>()
+  return {
   read: vi.fn(), compare: vi.fn(), publish: vi.fn(), withdraw: vi.fn(),
   buildPolicy: vi.fn(), policyHash: vi.fn(), policyContentHash: vi.fn(),
   chatRevision: vi.fn(),
   chat: vi.fn(), attachment: vi.fn(),
-}))
+  readLocal: vi.fn(async (key: string) => local.get(key) ?? null),
+  writeLocal: vi.fn(async (key: string, value: string) => { local.set(key, value) }),
+  clearLocal: () => local.clear(),
+  useActualPublication: false,
+  }
+})
 vi.mock("../chat/service", () => ({ readChatContentRevision: mocks.chatRevision, getChatScope: async () => "chat-scope", loadChat: mocks.chat }))
 vi.mock("../attachments", () => ({ readAttachment: mocks.attachment }))
+vi.mock("../localDb", async importOriginal => ({ ...await importOriginal(),
+  readLocal: mocks.readLocal, writeLocal: mocks.writeLocal, deleteLocal: async (key: string) => { await mocks.writeLocal(key, "") } }))
+vi.mock("./publicBoardPublication", async importOriginal => {
+  const actual = await importOriginal() as { createBrowserBoardPublication: (document: WorkspaceDocumentV2, workspaceId: string, boardId: string) => Promise<PublicBoardPublication> }
+  return { createBrowserBoardPublication: async (document: unknown, workspaceId: string, boardId: string) => mocks.useActualPublication
+    ? actual.createBrowserBoardPublication(document as never, workspaceId, boardId)
+    : { projection: { kind: "test-public-board", workspaceId, board: { id: boardId }, cards: [] }, assets: [] } }
+})
 vi.mock("../public/publicationClient", () => ({
   readPublicBoardManagementState: mocks.read,
   hasLocalPublicBoardChanges: mocks.compare,
@@ -38,6 +56,8 @@ describe("public board owner access", () => {
   let profile = ref<ProfileFixture>({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
 
   beforeEach(() => {
+    mocks.clearLocal()
+    mocks.useActualPublication = false
     vi.useFakeTimers()
     scope = effectScope()
     boardId = ref("board-a")
@@ -92,6 +112,39 @@ describe("public board owner access", () => {
     expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy).toBeUndefined()
   })
 
+  it("Given a confirmed publication, when Rusty loses its record, then retain owner intent and require recovery without republishing", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+
+    mocks.read.mockResolvedValue({ revision: 0, published: false, availability: "missing", hash: "" })
+    await access.refresh()
+
+    expect(access.published.value).toBe(true)
+    expect(access.recoveryNeeded.value).toBe(true)
+    expect(mocks.publish).not.toHaveBeenCalled()
+  })
+
+  it("Given a publish request, when effects start, then its snapshot and hash are already durable and its verified receipt is retained", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false, availability: "missing", hash: "" })
+    const receipt = { signerKeyId: "service-a", signature: "signed-receipt", payload: { kind: "rusty-publication-receipt", revision: 1 } }
+    const key = publicationRecordKey("https://rusty.test", "workspace-a", "board-a", profile.value as never)
+    mocks.publish.mockImplementationOnce(async (input: { preparedProjection: unknown }) => {
+      const beforeEffect = parsePublicationRecord(await mocks.readLocal(key))
+      expect(beforeEffect?.intent).toMatchObject({ action: "publish", expectedRevision: 0 })
+      expect(beforeEffect?.intent?.confirmed).toBeUndefined()
+      expect(beforeEffect?.intent?.projection).toEqual(input.preparedProjection)
+      expect(beforeEffect?.intent?.projectionHash).toMatch(/^[A-Za-z0-9_-]{43}$/)
+      return { revision: 1, hash: beforeEffect!.intent!.projectionHash, url: "https://app.test/boards/board-a", receipt }
+    })
+
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    await access.setPublic(true)
+
+    const saved = parsePublicationRecord(await mocks.readLocal(key))
+    expect(saved).toMatchObject({ ownerIntent: "published", confirmedRevision: 1, receipt, intent: { action: "publish", confirmed: true } })
+  })
+
   it("Given publication preparation is pending, When a newer admitted source replaces it, Then discard stale preparation and publish current heads without delivery-failure backoff", async () => {
     const access = create()
     await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
@@ -111,7 +164,8 @@ describe("public board owner access", () => {
     await vi.advanceTimersByTimeAsync(20)
     finishComparison(true)
     await vi.advanceTimersByTimeAsync(20)
-    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(access.error.value).toBe("")
+    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledOnce())
     expect(mocks.publish.mock.calls[0]?.[0]).toMatchObject({ document: current, sourceHeads: ["head-b"], action: "update", expectedRevision: 4 })
     expect(access.error.value).toBe("")
     expect(access.revision.value).toBe(5)
@@ -167,6 +221,7 @@ describe("public board owner access", () => {
       placement: { parentId: board.id, rank: "1/1" }, archivedAt: null } })
     document.value = doc as never
     boardId.value = board.id
+    mocks.useActualPublication = true
     const { projection } = await createBrowserBoardPublication(doc, doc.id, board.id)
     const hash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(projection)))
     mocks.chat.mockClear(); mocks.attachment.mockClear()
@@ -184,6 +239,7 @@ describe("public board owner access", () => {
     expect(mocks.compare).toHaveBeenCalledOnce()
     expect(mocks.chat).toHaveBeenCalledOnce()
     expect(mocks.attachment).toHaveBeenCalledOnce()
+    mocks.useActualPublication = false
     expect(mocks.publish).not.toHaveBeenCalled()
   })
 
@@ -228,6 +284,25 @@ describe("public board owner access", () => {
     expect(mocks.withdraw).toHaveBeenCalledTimes(1)
     expect(mocks.publish).not.toHaveBeenCalled()
     expect(access.published.value).toBe(false)
+    mocks.read.mockResolvedValue({ revision: 0, published: false, availability: "missing", hash: "" })
+    await access.refresh()
+    expect(access.published.value).toBe(false)
+    expect(access.withdrawn.value).toBe(true)
+    expect(access.recoveryNeeded.value).toBe(false)
+  })
+
+  it("Given an explicit withdrawal with uncertain remote outcome, when Rusty later reports a missing record, then do not restore publication intent", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    mocks.withdraw.mockRejectedValueOnce(new Error("response lost"))
+    await expect(access.setPublic(false)).rejects.toThrow("response lost")
+
+    mocks.read.mockResolvedValue({ revision: 0, published: false, availability: "missing", hash: "" })
+    await access.refresh()
+
+    expect(access.published.value).toBe(false)
+    expect(access.withdrawn.value).toBe(true)
+    expect(mocks.publish).not.toHaveBeenCalled()
   })
 
   it("shows capture failures from a public access change instead of silently dismissing confirmation", async () => {
@@ -373,7 +448,7 @@ describe("public board owner access", () => {
     await expect(operation).rejects.toThrow(/no longer current/)
   })
 
-  it("refreshes the signed management revision before retrying a failed publication", async () => {
+  it("Given a publication outcome is uncertain and status advanced, then keep its saved intent instead of replacing it", async () => {
     mocks.read.mockResolvedValueOnce({ revision: 4, published: true, hash: "old", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
       .mockResolvedValueOnce({ revision: 7, published: true, hash: "latest", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
     mocks.compare.mockResolvedValue(true)
@@ -389,7 +464,7 @@ describe("public board owner access", () => {
     await vi.advanceTimersByTimeAsync(1_900)
     await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2))
     await vi.advanceTimersByTimeAsync(20)
-    await vi.waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(2))
-    expect(mocks.publish.mock.calls[1]?.[0].expectedRevision).toBe(7)
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(access.error.value).toMatch(/uncertain outcome/i)
   })
 })

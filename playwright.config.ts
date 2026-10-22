@@ -58,6 +58,6 @@ export default defineConfig({
     reuseExistingServer: false,
     // Tests intercept diagnostic intake; never depend on a developer's .env
     // or send fixture events to a production service.
-    env: { VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "", VITE_SYNC_TELEMETRY_LEVEL: "all", VITE_SYNC_TELEMETRY_SAMPLE_RATE: "1", VITE_SYNC_TELEMETRY_BATCH_SIZE: "50", VITE_PUBLIC_BOARD_ORIGIN: "http://127.0.0.1:47839" },
+    env: { VITE_IDENTITY_ORIGIN: process.env.IDENTITY_E2E_ORIGIN ?? "", VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "", VITE_SYNC_TELEMETRY_LEVEL: "all", VITE_SYNC_TELEMETRY_SAMPLE_RATE: "1", VITE_SYNC_TELEMETRY_BATCH_SIZE: "50", VITE_PUBLIC_BOARD_ORIGIN: "http://127.0.0.1:47839" },
   },
 })

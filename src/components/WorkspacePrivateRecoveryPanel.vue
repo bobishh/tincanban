@@ -122,7 +122,7 @@ async function restorePrivateBackup() {
       <p><strong>Identity:</strong> {{ sameIdentity ? "Matches this device" : `Different identity · ${inspection.personId.slice(0, 12)}…` }}</p>
       <p><strong>Coverage:</strong> {{ coverageLabel }}</p>
       <p v-if="inspection.coverage === 'incomplete'" class="copy">Some older versions or files are missing. Connect the source device or Rusty and create another backup to include them.</p>
-      <p v-if="!sameIdentity" class="form-error" role="alert">This backup belongs to another identity. Workspace restore requires the same identity. Inspection does not replace your identity. Use Identity recovery backup only if you intend to replace it.</p>
+      <p v-if="!sameIdentity" class="form-error" role="alert">This backup belongs to another identity. Workspace restore requires the same identity. Inspection does not replace your identity.</p>
       <label v-if="hasWorkspaceCopy" class="replace-choice">
         <input v-model="replaceExisting" type="checkbox" aria-label="Replace an existing local copy of this workspace" />
         <span>Replace an existing local copy of this workspace</span>

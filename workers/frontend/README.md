@@ -32,7 +32,9 @@ The frontend deploy workflow uses the Cloudflare API token in its production
 environment. It does not need Rusty host credentials or automation deployment
 secrets. Optional GitHub variables `VITE_SYNC_TELEMETRY_URL` and
 `VITE_SYNC_TELEMETRY_BROWSER_KEY` configure browser diagnostics; these are public
-browser settings, never board keys or Rusty credentials. Project defaults to
+browser settings, never board keys or Rusty credentials. Optional GitHub variable
+`VITE_IDENTITY_ORIGIN` configures the Identity portal link at frontend build time;
+it defaults to empty. Project defaults to
 `tincanban`; level, sample rate and batch size use same-named variables.
 
 ## Existing browser tabs

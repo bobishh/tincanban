@@ -29,8 +29,6 @@ export function useAppViewState(app: ReturnType<typeof useAppController>, routeC
     requestAnimationFrame(() => requestAnimationFrame(reveal))
   }, { flush: "post" })
   return {
-    stopSyncForIdentityRestore: () => sync.shutdown(),
-    restoredIdentity: () => window.location.reload(),
     historyNames: computed(() => {
       const names = Object.fromEntries(app.collaboration.device.chat.members.value.map(member => [member.personId, member.name]))
       const identity = app.workspace.getCurrentProfile()?.identity

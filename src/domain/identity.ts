@@ -166,4 +166,59 @@ export async function adoptEnrolledIdentity(
   return await identityStore.adopt(identity, certificate, commit)
 }
 
+/** Adopt only an explicitly enrolled device for the current person; never replace local identity data. */
+export async function adoptEnrolledIdentityDevice(
+  submitted: MeshLocalProfile,
+  certificates: DeviceCertificate[],
+  expectedPersonId: string,
+  commit?: IdentityAdoptionCommit,
+  signal?: AbortSignal,
+): Promise<LocalProfile> {
+  const adopt = async () => {
+    const current = await bootstrapIdentity()
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError")
+    if (current.identity.personId !== expectedPersonId || submitted.identity.personId !== expectedPersonId ||
+        submitted.identity.publicKey !== current.identity.publicKey) {
+      throw new Error("The approved device belongs to another person")
+    }
+    if (!identityStore.isCurrentProfile(current)) throw new Error("Identity changed during device adoption")
+    if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError")
+    const adopted = await identityStore.adoptEnrolledDevice(submitted, certificates,
+      { consentToReplaceExistingIdentity: true, ...(commit ? { commit } : {}) })
+    return { ...adopted, identity: adopted.identity as PublicIdentity,
+      certificate: adopted.certificate as DeviceCertificate }
+  }
+  return typeof navigator !== "undefined" && navigator.locks
+    ? await requestWebLock("tincanban-identity-bootstrap", adopt) : await adopt()
+}
+
+/** Replace this browser's person only after the caller has obtained explicit user consent. */
+export async function replaceWithEnrolledIdentityDevice(
+  submitted: MeshLocalProfile,
+  certificates: DeviceCertificate[],
+  expectedCurrent: LocalProfile,
+  options: { consentToReplaceExistingIdentity: boolean; commit?: IdentityAdoptionCommit; signal?: AbortSignal },
+): Promise<LocalProfile> {
+  if (!options.consentToReplaceExistingIdentity) throw new Error("Confirm replacing the local Identity before continuing")
+  if (submitted.identity.personId === expectedCurrent.identity.personId) {
+    throw new Error("Identity replacement requires a different person")
+  }
+  const replace = async () => {
+    const current = await bootstrapIdentity()
+    if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError")
+    if (current.identity.personId !== expectedCurrent.identity.personId ||
+        current.identity.publicKey !== expectedCurrent.identity.publicKey ||
+        current.device.deviceId !== expectedCurrent.device.deviceId || !identityStore.isCurrentProfile(expectedCurrent)) {
+      throw new Error("Local Identity changed before replacement")
+    }
+    if (options.signal?.aborted) throw options.signal.reason instanceof Error ? options.signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError")
+    const adopted = await identityStore.adoptEnrolledDevice(submitted, certificates,
+      { consentToReplaceExistingIdentity: true, ...(options.commit ? { commit: options.commit } : {}) })
+    return { ...adopted, identity: adopted.identity as PublicIdentity,
+      certificate: adopted.certificate as DeviceCertificate }
+  }
+  return typeof navigator !== "undefined" && navigator.locks
+    ? await requestWebLock("tincanban-identity-bootstrap", replace) : await replace()
+}
+
 export function isCurrentIdentityProfile(profile: LocalProfile): boolean { return identityStore.isCurrentProfile(profile) }

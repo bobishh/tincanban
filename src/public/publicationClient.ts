@@ -136,7 +136,7 @@ function assetReceiptMatches(payload: Record<string, unknown>, serviceId: string
   return payload.kind === "rusty-public-asset-receipt" && payload.version === 1 && payload.serviceId === serviceId && payload.boardId === boardId &&
     payload.sha256 === asset.sha256 && payload.byteLength === asset.bytes.byteLength
 }
-export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence }): Promise<{ revision: number; url: string; hash: string }> {
+export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence; preparedProjection?: PublicBoardProjection }): Promise<{ revision: number; url: string; hash: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
   // Capture authority metadata independently; limit document copying to the selected board tree.
   const snapshot = { origin: input.origin, boardId: input.boardId, workspaceId: input.workspaceId,
@@ -146,25 +146,43 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   const document = snapshotPublicBoardSource(input.document, snapshot.boardId)
   const sourceHeads = documentHeads(input.document)
   const profile = snapshot.profile
-  if (snapshot.deliveryPolicy && (snapshot.deliveryPolicy.policy.payload.workspaceId !== snapshot.workspaceId ||
-      snapshot.deliveryPolicy.policy.payload.boardId !== snapshot.boardId || snapshot.deliveryPolicy.policy.payload.enabled !== true)) {
-    throw new Error("Public delivery policy does not cover the selected board")
-  }
+  assertDeliveryPolicyBinding(snapshot.deliveryPolicy, snapshot.workspaceId, snapshot.boardId)
   const server = await service(snapshot.origin)
   await ensureCurrent?.()
-  if (!server.presentation) throw new Error("Upgrade Rusty to publish the shared visitor presentation")
+  assertPresentationSupport(server)
   const operation = snapshot.action === "publish" ? "publication.publish" : "publication.update"
   const capability = await managementAuthority(server, snapshot.boardId, profile, operation)
   const certificates = await controllerCertificates(profile)
-  const publication = await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId,
-    asset => stageAsset(server, snapshot.boardId, profile, certificates, snapshot.expectedRevision, asset, capability, ensureCurrent, sourceHeads, input.document))
-  if (!server.fieldConfiguration && (publication.projection.board.presentation?.cardPresentation || publication.projection.fields.some(field => field.format))) {
-    throw new Error("Upgrade Rusty to publish configured card fields and text formats")
-  }
+  const publication = await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId, undefined)
+  assertPreparedProjection(publication.projection, input.preparedProjection)
+  assertFieldConfigurationSupport(server, publication.projection)
+  await ensureCurrent?.()
+  await stagePublicationAssets(server, snapshot.boardId, profile, certificates, snapshot.expectedRevision, capability, ensureCurrent, sourceHeads, input.document, publication.assets)
   await ensureCurrent?.()
   return commit(server, snapshot.boardId, profile, certificates, snapshot.action, publication.projection, snapshot.expectedRevision, capability, ensureCurrent, snapshot.deliveryPolicy, sourceHeads, input.document)
 }
-export async function withdrawPublicBoard(input: { origin: string; boardId: string; profile: LocalProfile; expectedRevision: number; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; url: string }> {
+function assertDeliveryPolicyBinding(policy: PublicBoardDeliveryPolicyEvidence | undefined, workspaceId: string, boardId: string) {
+  if (policy && (policy.policy.payload.workspaceId !== workspaceId || policy.policy.payload.boardId !== boardId || policy.policy.payload.enabled !== true)) {
+    throw new Error("Public delivery policy does not cover the selected board")
+  }
+}
+function assertPresentationSupport(server: PublicationService) {
+  if (!server.presentation) throw new Error("Upgrade Rusty to publish the shared visitor presentation")
+}
+function assertPreparedProjection(projection: PublicBoardProjection, prepared?: PublicBoardProjection) {
+  if (prepared && canonicalizeJson(projection) !== canonicalizeJson(prepared)) throw new Error("Public board source changed after its publication intent was saved")
+}
+function assertFieldConfigurationSupport(server: PublicationService, projection: PublicBoardProjection) {
+  if (!server.fieldConfiguration && (projection.board.presentation?.cardPresentation || projection.fields.some(field => field.format))) {
+    throw new Error("Upgrade Rusty to publish configured card fields and text formats")
+  }
+}
+async function stagePublicationAssets(server: PublicationService, boardId: string, profile: LocalProfile, certificates: DeviceCertificate[],
+  expectedRevision: number, capability: SignedEnvelope<RustyManagementCapability> | undefined, ensureCurrent: (() => void | Promise<void>) | undefined,
+  sourceHeads: string[], sourceDocument: WorkspaceDocumentV2, assets: Array<{ sha256: string; bytes: Uint8Array }>) {
+  for (const asset of assets) await stageAsset(server, boardId, profile, certificates, expectedRevision, asset, capability, ensureCurrent, sourceHeads, sourceDocument)
+}
+export async function withdrawPublicBoard(input: { origin: string; boardId: string; profile: LocalProfile; expectedRevision: number; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; url: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
   const snapshot = structuredClone({ ...input, ensureCurrent: undefined })
   await ensureCurrent?.()
@@ -175,7 +193,7 @@ export async function withdrawPublicBoard(input: { origin: string; boardId: stri
   const certificates = await controllerCertificates(profile)
   return commit(server, snapshot.boardId, profile, certificates, "unpublish", null, snapshot.expectedRevision, capability, ensureCurrent)
 }
-export async function readPublicBoardManagementState(input: { origin: string; boardId: string; profile: LocalProfile; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; published: boolean; projection?: PublicBoardProjection; hash?: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryPolicyContentHash?: string | null }> {
+export async function readPublicBoardManagementState(input: { origin: string; boardId: string; profile: LocalProfile; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; published: boolean; availability: "published" | "withdrawn" | "missing"; projection?: PublicBoardProjection; hash?: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryPolicyContentHash?: string | null }> {
   const ensureCurrent = input.ensureCurrent
   const snapshot = structuredClone({ ...input, ensureCurrent: undefined })
   await ensureCurrent?.()
@@ -193,13 +211,13 @@ export async function readPublicBoardManagementState(input: { origin: string; bo
   const response = await fetchBlind(`${origin}/v1/public/boards/${encodeURIComponent(snapshot.boardId)}`, { cache: "no-store" })
   if (response.status === 404) {
     if (challengePayload.expectedRevision > 0 && !challengePayload.withdrawn || challengePayload.expectedRevision === 0 && challengePayload.withdrawn) throw new Error("Keeper publication status does not match its public snapshot")
-    return { revision: challengePayload.expectedRevision, published: false, hash: challengePayload.projectionHash,
+    return { revision: challengePayload.expectedRevision, published: false, availability: challengePayload.expectedRevision === 0 ? "missing" : "withdrawn", hash: challengePayload.projectionHash,
       deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash, deliveryPolicyContentHash: challengePayload.deliveryPolicyContentHash }
   }
   const envelope = await readBlindJson<{ boardId: string; revision: number; projection: unknown; hash: string }>(response, 3 * 1024 * 1024)
   const projection = (await import("./publicSchema")).validatePublicBoardProjection(envelope.projection)
   if (!await validManagementSnapshot(envelope, snapshot.boardId, challengePayload, projection)) throw new Error("Keeper publication integrity check failed")
-  return { revision: envelope.revision, published: true, projection, hash: envelope.hash,
+  return { revision: envelope.revision, published: true, availability: "published", projection, hash: envelope.hash,
     deliveryGeneration: challengePayload.deliveryGeneration, deliveryPolicyHash: challengePayload.deliveryPolicyHash, deliveryPolicyContentHash: challengePayload.deliveryPolicyContentHash }
 }
 async function validManagementSnapshot(envelope: { boardId: string; revision: number; hash: string }, boardId: string,
@@ -242,7 +260,7 @@ async function commit(server: PublicationService, boardId: string, profile: Loca
   const authorizationHash = await sha256Base64Url(encoder.encode(canonicalizeJson(authorization)))
   if (!publicationReceiptMatches(payload, { serviceId, boardId, personId: profile.identity.personId, expectedRevision, action, projectionHash, challengeId: challengePayload.challengeId, authorizationHash })) throw new Error("Keeper publication receipt does not cover this snapshot")
   if (receipt.signerKeyId !== serviceId || !await verifyEnvelope(receipt, serviceKey, "RUSTY/2")) throw new Error("Keeper publication receipt signature is invalid")
-  return { revision: payload.revision, url: `${window.location.origin}/boards/${encodeURIComponent(boardId)}`, hash: projectionHash }
+  return { revision: payload.revision, url: `${window.location.origin}/boards/${encodeURIComponent(boardId)}`, hash: projectionHash, receipt }
 }
 function validPolicyGeneration(policy: PublicBoardDeliveryPolicyEvidence, action: string, boardId: string, generation?: number | null) {
   return action !== "unpublish" && policy.policy.payload.boardId === boardId && policy.policy.payload.generation === (generation ?? 0) + 1

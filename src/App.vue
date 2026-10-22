@@ -29,7 +29,10 @@ import { useAppViewState } from "./app/useAppViewState"
 import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
-import { CausalChangeReview, ColumnDialog, IdentityRecoveryDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { configuredIdentityPortalOrigin } from "./app/identityPortalConfig"
+import { createIdentityOwnerActions } from "./app/identityOwnerActions"
+import { createIdentityPortalFlow, createWorkspaceInviteAction } from "./app/identityPortalFlow"
+import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
@@ -50,12 +53,16 @@ const saveIdentityName: IdentityNameSaver = async (...args) => (await import("./
 const WorkspaceFileActions = defineAsyncComponent<Component>(() => import("./components/WorkspaceFileActions.vue"))
 const WorkspacePrivateRecoveryPanel = defineAsyncComponent<Component>(() => import("./components/WorkspacePrivateRecoveryPanel.vue"))
 const WorkspaceHistoryMaintenance = defineAsyncComponent<Component>(() => import("./components/WorkspaceHistoryMaintenance.vue"))
+const IdentityPortalEnrollmentDialog = defineAsyncComponent<Component>(() => import("./components/IdentityPortalEnrollmentDialog.vue"))
 const PublicBoardControls = defineAsyncComponent(() => import("./components/PublicBoardControls.vue") as Promise<{ default: Component }>)
-const { historyNames, stopSyncForIdentityRestore, restoredIdentity, SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible: workspaceBoardVisible, startupMessage, startupCoverVisible } = useAppViewState(app, routeContent)
+const { historyNames, SyncDialog, reviewCausalChange, dismissCausalChange, restoreCausalChange, chatCanView, uiReady, boardVisible: workspaceBoardVisible, startupMessage, startupCoverVisible } = useAppViewState(app, routeContent)
 const boardAddressResolved = computed(() => boardAddress.status.value !== "resolving" && boardAddress.status.value !== "unavailable")
 const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressResolved.value)
 const conversations = useObjectConversations(app)
-const [showIdentityRecovery, showSettings] = [ref(false), ref(false)]
+const showSettings = ref(false)
+const showIdentityPortal = ref(false), identityPortalOrigin = configuredIdentityPortalOrigin(import.meta.env.VITE_IDENTITY_ORIGIN as string | undefined)
+const currentIdentityProfile = computed(() => app.workspace.getCurrentProfile())
+const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
 const workspaceDialogBusy = ref(false)
 function openConnections() {
   showSettings.value = false
@@ -89,6 +96,7 @@ const {
   archivedHistoryNotice, archivedHistoryHasMore, loadEarlierItemHistory,
 } = app.board
 const { sync, chat } = app.collaboration.device
+const generateWorkspaceInviteWithIdentity = createWorkspaceInviteAction({ gate: identityPortalFlow.gate, getWorkspaceId: () => activeWorkspace.id, sync })
 const showConversationLayer = computed(() => chat.open.value || conversations.currentDiscussions.value.length > 0 || Boolean(
   conversations.selection.value || conversations.contextMenu.value || conversations.sourceState.value || conversations.navigationState.value,
 ))
@@ -104,7 +112,7 @@ const {
   openBoardItem,
   restoreSelectedItemVersion, saveQuickNote, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
   moveCardToColumn,
-  myDeviceRemoval, exportWorkspace, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
+  myDeviceRemoval, exportWorkspace, exportAllWorkspaces, createPrivateRecovery, privateRecoveryUnavailableReason, inspectPrivateRecovery, restorePrivateRecovery, hasWorkspaceCopy, workspaceTitle,
   openImport, importWorkspace, workspaceImportState, handleCreateWorkspace,
   handleSwitchWorkspace, handleRenameWorkspace, handleArchiveWorkspace, handleRestoreWorkspace, openAddItem,
   handleSaveItem, currentDocHeads, handleApplySchema, handleApplyWorkspaceSettings, settingsSaveError, settingsSaving,
@@ -112,10 +120,13 @@ const {
   handleStartMove, handleConfirmMove, handleRenameColumn, handleArchiveColumn, addBoardColumn, newBoardColumnArchive, newBoardColumnCollapsible, addingBoardColumn, addBoardColumnError, selectArchiveColumn,
 } = app.actions
 const { publicAccess, publicDelivery } = useAppPublicBoards(app, uiReady)
+const identityOwnerActions = createIdentityOwnerActions({ gate: identityPortalFlow.gate, portalOrigin: identityPortalOrigin, publicAccess,
+  getProfile: app.workspace.getCurrentProfile, getBoard: () => ({ boardId: activeBoard.value?.id ?? "", workspaceId: activeWorkspace.id, sourceHeads: [...currentDocHeads.value] }),
+  isOwner: () => confirmedRole.value === "owner", addMyDevice: sync.selectSyncAll, isSyncChooserOpen: () => sync.isOpen.value && (sync.step.value === "chooser" || sync.step.value === "members") })
+const publicAccessWithIdentity = { ...publicAccess, setPublic: identityOwnerActions.setPublic }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
 async function switchWorkspaceFromDirectory(workspaceId: string) { await handleSwitchWorkspace(workspaceId); boardAddress.navigateToActiveBoard() }
-
 const { saveSelectedItemDocument } = useAppItemDocumentSave(app)
 async function editItem(item: Parameters<typeof openBoardItem>[0]) {
   const { createNarrativeEditHandler } = await import("./app/narrativeEditor")
@@ -175,6 +186,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <div class="top-actions top-actions-desktop" :inert="!uiReady || undefined">
         <button class="button button-quiet" type="button" aria-label="Workspace chat" :disabled="!boardAddressResolved" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button class="button button-quiet" type="button" @click="openConnections()">Sync</button>
+        <button v-if="identityPortalOrigin" class="button button-quiet" type="button" :disabled="!app.workspace.getCurrentProfile()" @click="showIdentityPortal = true">Identity</button>
         <button class="button button-quiet" type="button" aria-label="Settings" @click="showSettings = true">Settings</button>
         <button v-if="canEditBoard" class="button button-quiet" type="button" :disabled="!boardAddressResolved" @click="isEditingBoard = !isEditingBoard">{{ isEditingBoard ? "Done" : "Edit board" }}</button>
         <button v-if="isEditingBoard" class="button button-primary" type="button" :disabled="!boardAddressResolved" @click="showEntitySettings = true">Edit {{ entityName }}</button>
@@ -254,7 +266,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     >
       <template #identity>
         <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
-          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile" @recovery="showIdentityRecovery = true">
+          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />
@@ -263,9 +275,9 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       </template>
       <template #workspace>
         <WorkspaceSettingsPanel :presence="meshPresenceLabel" :save-state="saveState" :diagnostic="sync.meshDiagnostic.value">
-          <WorkspaceFileActions :export-workspace="exportWorkspace" :import-workspace="openImport" :import-busy="workspaceImportState.busy" :import-error="workspaceImportState.error" />
+          <WorkspaceFileActions :export-workspace="exportWorkspace" :export-all-workspaces="exportAllWorkspaces" :import-workspace="openImport" :import-busy="workspaceImportState.busy" :import-error="workspaceImportState.error" />
           <WorkspaceHistoryMaintenance :controller="app.collaboration.device.blindReplication" :workspace-id="activeWorkspace.id" :owner="currentRole === 'owner'" />
-          <PublicBoardControls v-if="uiReady" :access="publicAccess" />
+          <PublicBoardControls v-if="uiReady" :access="publicAccessWithIdentity" />
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'sending'" class="reading-explanation" role="status">Sending public board changes…</p>
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'delivered'" class="reading-explanation" role="status">Public board changes delivered.</p>
           <p v-if="publicDelivery.error.value" class="form-error reading-explanation" role="alert">Public board delivery: {{ publicDelivery.error.value }}</p>
@@ -278,7 +290,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <section class="dialog dialog-window-content">
         <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
           :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
-          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile" @recovery="showIdentityRecovery = true">
+          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />
@@ -287,8 +299,6 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       </section>
     </DialogWindow>
     <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
-    <IdentityRecoveryDialog v-if="showIdentityRecovery" :workspace-id="activeWorkspace.id" :before-restore="stopSyncForIdentityRestore" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" @close="showIdentityRecovery = false" @restored="restoredIdentity" />
-
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -473,9 +483,9 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :live="sync.isEnabled.value"
       @update:selected-workspace-ids="sync.selectedWorkspaceIds.value = $event"
       @update:selected-workspace-id="sync.selectedWorkspaceId.value = $event"
-      @select-sync-all="sync.selectSyncAll"
+      @select-sync-all="identityOwnerActions.addMyDevice"
       @select-sync-workspace="sync.selectSyncWorkspace"
-      @generate-workspace-invite="sync.generateWorkspaceInvite"
+      @generate-workspace-invite="generateWorkspaceInviteWithIdentity"
       @transfer-ownership="transferWorkspaceOwnership"
       @leave-mesh="leaveWorkspaceMesh"
       @set-successor="setWorkspaceSuccessor"
@@ -494,6 +504,9 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 
   </TincanbanPageLayout>
   <BuildFooter />
+  <IdentityPortalEnrollmentDialog v-if="showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
+    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile"
+    :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" @close="identityPortalFlow.close" @completed="identityPortalFlow.complete" />
 </template>
 
 <style>

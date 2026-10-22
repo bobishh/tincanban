@@ -17,7 +17,6 @@ const props = withDefaults(defineProps<{
   profileRevision?: string
   saveProfile?: (draft: ProfileDraft) => Promise<void>
 }>(), { nameProvided: true })
-const emit = defineEmits<{ recovery: [] }>()
 const name = ref(props.nameProvided ? props.displayName : "")
 const nameDirty = ref(false)
 const saving = ref(false)
@@ -134,11 +133,6 @@ async function save() {
       </div>
     </section>
     <slot />
-    <section class="identity-recovery" aria-label="Identity recovery">
-      <h3>Identity recovery</h3>
-      <p class="dialog-copy">Identity-only backup and identity replacement on this device. Workspace recovery above keeps the current identity.</p>
-      <button class="button" type="button" @click="emit('recovery')">Recovery backup</button>
-    </section>
   </section>
 </template>
 
@@ -150,7 +144,7 @@ async function save() {
 .identity-profile-actions p { margin: 0; }
 .identity-profile-fields label { display: grid; gap: var(--space-2); min-width: 0; }
 .identity-profile input { box-sizing: border-box; width: 100%; height: var(--control-size); padding: var(--space-2) var(--space-3); }
-.identity-profile .button, .identity-recovery .button { justify-self: start; }
+.identity-profile .button { justify-self: start; }
 .identity-profile > .sync-error { grid-column: 1 / -1; margin: 0; }
 .profile-conflicts { display: grid; gap: var(--space-2); }
 .profile-conflicts > p { margin: 0; }
@@ -158,7 +152,5 @@ async function save() {
 .profile-photo-choice { display: inline-flex; align-items: center; gap: var(--space-2); }
 .profile-photo-choice img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
 .profile-photo-choice small { color: var(--muted); }
-.identity-recovery { display: grid; gap: var(--space-2); }
-.identity-recovery h3, .identity-recovery p { margin: 0; }
 @container (max-width: 460px) { .identity-profile { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); } }
 </style>

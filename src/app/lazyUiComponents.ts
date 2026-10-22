@@ -4,7 +4,6 @@ const pendingStatus = (message: string): Component => ({
   setup: () => () => h("div", { role: "status", "aria-live": "polite" }, message),
 })
 
-export const IdentityRecoveryDialog = defineAsyncComponent<Component>(() => import("../components/IdentityRecoveryDialog.vue"))
 export const IdentitySettingsPanel = defineAsyncComponent<Component>(() => import("../components/IdentitySettingsPanel.vue"))
 export const CausalChangeReview = defineAsyncComponent<Component>({
   loader: () => import("../components/CausalChangeReview.vue"),
