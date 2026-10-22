@@ -2,7 +2,7 @@ import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
 test.use({ trace: "off", video: "off", screenshot: "off" })
-const identityOrigin = process.env.IDENTITY_E2E_ORIGIN ?? "http://127.0.0.1:4177"
+const identityOrigin = process.env.IDENTITY_E2E_ORIGIN ?? ""
 
 function sanitizeUiDiagnostics(values: string[]): string[] {
   return values.map(value => value.replace(/https?:\/\/\S+/gu, "<url>")
@@ -18,18 +18,19 @@ async function clearIdentityInvitations(page: import("@playwright/test").Page): 
 }
 
 test("Given a pending Identity invitation, when sign-in is cancelled, then keep the guest profile and stop enrollment", async ({ page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
   const browserErrors: string[] = []
   page.on("pageerror", error => browserErrors.push(error.stack ?? error.message))
   page.on("console", message => { if (message.type() === "error") browserErrors.push(message.text()) })
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
-  const before = await page.evaluate(async () => {
+  const before = await page.evaluate(async (portalOrigin: string) => {
     const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
     const controller = new AbortController()
     let inviteUrl = ""
     let hostError = ""
     const host = (await import("/src/app/identityPortalEnrollment.ts")).startIdentityProfileHost({
-      profile, portalOrigin: identityOrigin, signal: controller.signal,
+      profile, portalOrigin, signal: controller.signal,
       onInvite: invite => { inviteUrl = invite }, onStatus: () => {},
       onRequest: () => new Promise<"approve" | "reject">(resolve => controller.signal.addEventListener("abort", () => resolve("reject"), { once: true })),
     })
@@ -40,7 +41,7 @@ test("Given a pending Identity invitation, when sign-in is cancelled, then keep 
     const deadline = Date.now() + 10000
     while (!inviteUrl && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))
     return { personId: profile.identity.personId, inviteUrl, hostError }
-  })
+  }, identityOrigin)
   try {
     expect(before.inviteUrl, `${before.hostError}\n${browserErrors.join("\n")}`).toContain("#")
     await page.getByRole("button", { name: "Identity", exact: true }).click()
@@ -68,6 +69,7 @@ test("Given a pending Identity invitation, when sign-in is cancelled, then keep 
 })
 
 test("Given an invalid Identity invitation, when connecting, then show an error and keep local Identity", async ({ page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   const personId = await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)
@@ -97,6 +99,7 @@ test("Given an invalid Identity invitation, when connecting, then show an error 
 })
 
 test("Given an unregistered local profile, when Add my device requests registration, then enroll same person, save recovery, and resume the device action", async ({ browser, page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
   test.setTimeout(90_000)
   const portalContext = await browser.newContext()
   const portal = await portalContext.newPage()
