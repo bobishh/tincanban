@@ -1,5 +1,5 @@
-import { restoreEnrolledWorkspaceDevices } from "./workspaceDeviceRestoration"
-import { type LocalProfile } from "../domain/identity"
+import { removableWorkspaceDevices, restoreEnrolledWorkspaceDevices } from "./workspaceDeviceRestoration"
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { WorkspaceAuthorityClassification } from "./workspaceAuthorityClassification"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
@@ -17,7 +17,6 @@ import { meshTrace } from "./meshTrace"
 import { assertKeeperGrantGeneration, emptyRevocationGeneration, reconcilePriorPersonRevocation } from "./revocationGeneration"
 import { runKeeperRevocationActions } from "./keeperRevocationActions"
 import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
-import { canonicalizeJson } from "../domain/identity"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
 import { persistVerifiedPeerBundle } from "./durableMeshPeerAdmission"
@@ -302,14 +301,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   }
 
   async removableDeviceWorkspaces(personId: string, deviceId: string): Promise<string[]> {
-    const profile = await this.options.getProfile()
-    const ids: string[] = []
-    for (const credential of await this.store.listWorkspaceCredentials()) {
-      const peer = await this.store.getPeer(credential.workspaceId, deviceId)
-      if (meshRustRuntime().state.canRemoveWorkspaceDevice(credential, profile.identity.personId,
-        profile.identity.publicKey, profile.device.deviceId, personId, deviceId, peer?.personId)) ids.push(credential.workspaceId)
-    }
-    return ids.sort()
+    return removableWorkspaceDevices(await this.options.getProfile(), this.store, personId, deviceId)
   }
 
   async restoreEnrolledDevice(workspaceIds: string[], personId: string, deviceId: string, ensureCurrent: () => void): Promise<void> {

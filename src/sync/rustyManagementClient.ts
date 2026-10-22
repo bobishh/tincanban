@@ -167,10 +167,8 @@ export async function updateRustyManagementPolicy(binding: ManagementBinding, pr
   policy: { operations: string[]; revokedDeviceIds: string[]; restoredDeviceIds?: string[] }, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability>> {
   binding = structuredClone(binding)
   profile = captureIdentityProfile(profile)
-  policy = structuredClone(policy)
-  policy.operations.sort(); policy.revokedDeviceIds.sort(); policy.restoredDeviceIds?.sort()
+  policy = policySnapshot(policy, binding.resourceKind)
   await assertRestorationSupported(binding, policy.restoredDeviceIds, guard)
-  validatePolicy({ ...policy, resourceKind: binding.resourceKind })
   const repository = repo(profile)
   const saved = await repository.read(binding)
   if (saved?.pending) throw new Error("A Rusty management request is pending; retry or review it first")
@@ -193,6 +191,14 @@ export async function updateRustyManagementPolicy(binding: ManagementBinding, pr
     ...(saved?.capability ? { managementCapability: saved.capability } : {}),
     ...(parent ? { personManagementCapability: parent } : {}), authorization })
   return retryRustyManagementUpdate(binding, profile, guard)
+}
+
+function policySnapshot(value: { operations: string[]; revokedDeviceIds: string[]; restoredDeviceIds?: string[] },
+  resourceKind: ManagementBinding["resourceKind"]) {
+  const policy = structuredClone(value)
+  policy.operations.sort(); policy.revokedDeviceIds.sort(); policy.restoredDeviceIds?.sort()
+  validatePolicy({ ...policy, resourceKind })
+  return policy
 }
 
 /** Reuse persisted ciphertext-free signed intent, including after expiry. Rusty alone decides whether a completed retry is valid. */

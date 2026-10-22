@@ -3,6 +3,17 @@ import type { PeerStore, WorkspaceMeshCredential } from "./peerStore"
 import { createWorkspaceDeviceRestoration, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { deviceRevocations, isDeviceRevoked } from "./durableMeshBase"
 import { meshRecordSigning } from "./meshRecordSigning"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+
+export async function removableWorkspaceDevices(profile: LocalProfile, store: PeerStore, personId: string, deviceId: string): Promise<string[]> {
+  const ids: string[] = []
+  for (const credential of await store.listWorkspaceCredentials()) {
+    const peer = await store.getPeer(credential.workspaceId, deviceId)
+    if (meshRustRuntime().state.canRemoveWorkspaceDevice(credential, profile.identity.personId,
+      profile.identity.publicKey, profile.device.deviceId, personId, deviceId, peer?.personId)) ids.push(credential.workspaceId)
+  }
+  return ids.sort()
+}
 
 type RestorationPorts = {
   store: PeerStore
