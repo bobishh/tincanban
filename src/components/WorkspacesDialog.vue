@@ -266,7 +266,7 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
 </template>
 
 <style scoped>
-.dialog.workspace-directory-content.dialog-window-content { padding: var(--space-4); box-sizing: border-box; container: board-directory / inline-size; }
+.dialog.workspace-directory-content.dialog-window-content { box-sizing: border-box; container: board-directory / inline-size; }
 .board-directory { display: grid; gap: var(--space-3); }
 .board-directory-search { display: grid; gap: var(--space-1); font-weight: 650; }
 .board-directory-search input { min-height: var(--control-size-compact); padding: var(--space-2); }

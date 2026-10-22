@@ -88,5 +88,5 @@ async function handleCreate() {
 .workspace-customize-toggle > span:first-child { display: grid; gap: var(--space-1); min-width: 0; }
 .workspace-customize-toggle small { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; }
 .workspace-create-content :deep(.creation-config) { padding-bottom: var(--space-1); }
-@media (max-width: 520px) { .workspace-create-dialog { padding: var(--space-4); } .workspace-create-form { margin: var(--space-3) 0; } }
+@media (max-width: 520px) { .workspace-create-form { margin: var(--space-3) 0; } }
 </style>

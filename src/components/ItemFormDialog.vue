@@ -226,7 +226,6 @@ function handleSave() {
 .item-edit-content .item-form { height: 100%; grid-template-rows: minmax(0, 1fr) auto; gap: var(--space-4); }
 .item-edit-content .item-form-content { overflow: auto; padding: var(--focus-room); scrollbar-gutter: stable; }
 .item-edit-content .item-form-footer { padding: var(--focus-room) var(--focus-room) var(--space-4); border-top: 1px solid var(--soft); }
-@media (max-width: 600px) { .item-edit-content { padding: var(--space-2); } }
 </style>
 <style>
 .item-editor-window .spatial-body { overflow: hidden; }

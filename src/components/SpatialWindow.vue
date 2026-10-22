@@ -150,6 +150,7 @@ onBeforeUnmount(() => { window.removeEventListener("resize", resizeViewport); if
 .spatial-controls svg, .spatial-resize svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .spatial-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; animation: panel-appear var(--motion-panel) var(--motion-ease); }
 .spatial-body-framed { display: flex; flex-direction: column; padding: var(--space-4); overflow: hidden; }
+@media (max-width: 768px) { .spatial-window { --surface-padding: var(--space-4); } }
 .spatial-resize { position: absolute; bottom: 0; right: 0; width: 44px; height: 44px; padding: var(--space-4) var(--space-1) var(--space-1) var(--space-4); background: transparent; border: 0; color: var(--muted, #666); cursor: nwse-resize; touch-action: none; user-select: none; }
 .spatial-resize:disabled { visibility: hidden; }
 @media (max-width: 600px) {

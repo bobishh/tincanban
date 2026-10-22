@@ -56,7 +56,7 @@ async function approve() {
 
 <template>
   <DialogWindow window-id="rusty-status-confirmation" :workspace-id="workspaceId" title="View board storage status" :busy="pending" @close="emit('close')">
-    <section class="rusty-status-confirmation ui-stack">
+    <section class="dialog dialog-window-content rusty-status-confirmation ui-stack">
       <p v-if="request">Share connected board names and their latest sync results with <strong>{{ request.origin }}</strong>?</p>
       <ul v-if="visibleBoards.length"><li v-for="board in visibleBoards" :key="board.id">{{ board.title }}</li></ul>
       <p v-else-if="ready">No boards in this browser are configured on this Rusty server.</p>
@@ -71,6 +71,6 @@ async function approve() {
 </template>
 
 <style scoped>
-.rusty-status-confirmation { padding: var(--space-4); overflow-wrap: anywhere; }
+.rusty-status-confirmation { overflow-wrap: anywhere; }
 .rusty-status-confirmation p { margin: 0; }
 </style>

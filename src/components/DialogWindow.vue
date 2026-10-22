@@ -46,7 +46,7 @@ const slots = useSlots()
   width: 100%;
   max-height: none;
   overflow: visible;
-  padding: 0;
+  padding: var(--surface-padding);
   border: 0;
   background: transparent;
 }
