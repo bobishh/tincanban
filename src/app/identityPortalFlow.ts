@@ -1,6 +1,6 @@
 import type { Ref } from "vue"
 import type { LocalProfile } from "../domain/identity"
-import { identityEnrollmentConfirmed } from "./identityPortalEnrollment"
+import { identityEnrollmentConfirmed } from "./identityEnrollmentReceipt"
 import { createIdentityRegistrationGate } from "./identityRegistrationGate"
 
 export function createIdentityPortalFlow(options: {

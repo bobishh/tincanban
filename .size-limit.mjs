@@ -8,8 +8,9 @@ const publicStartup = startupBudgetFiles(manifest, "public")
 export default [
   // Stable board routes, public-delivery scheduling and optional OTel admission add 11 kB.
   // Signing, projection, delivery transport and the OTel SDK load on demand.
-  // Workspace settings, sync controls and dialog windows add 21 kB to the initial app closure.
-  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "275 kB" },
+  // Identity registration gates and all-workspace export controls add 25 kB of app wiring;
+  // enrollment protocol code remains loaded on demand.
+  { name: "initial JavaScript (private app and static dependencies)", path: privateStartup.js, limit: "300 kB" },
   // Shared reading typography and window controls fit within 11 kB compressed.
   { name: "application CSS (private app and static dependencies)", path: privateStartup.css, limit: "13 kB" },
   { name: "public reader JavaScript", path: publicStartup.js, limit: "235 kB" },

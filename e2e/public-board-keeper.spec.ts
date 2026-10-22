@@ -153,7 +153,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       }, { timeout: 30_000 }).not.toBe("pending")
       if (await revision() === "1") break
       const errors = await panel.getByRole("alert").allTextContents()
-      if (presentationRefresh) throw new Error("Identity presentation refresh invalidated an unchanged board snapshot")
+      if (presentationRefresh) throw new Error(`Identity presentation refresh invalidated an unchanged board snapshot: ${errors.join(" | ")}`)
       expect(errors.length).toBeGreaterThan(0)
       expect(errors.every(error => error === sourceChangedMessage)).toBe(true)
       if (injectedSourceChange && !injectedGuardAborted) {

@@ -9,20 +9,9 @@ import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "../sync/identityEnrollmentProfile"
 import { readLocal, writeLocal } from "../localDb"
-
-const enrollmentPrefix = "tincanban.identity.enrollment.v1."
+import { identityEnrollmentPrefix } from "./identityEnrollmentReceipt"
 
 export type IdentityEnrollmentRequest = PendingIdentityEnrollment["request"]["payload"]
-
-export async function identityEnrollmentConfirmed(profile: LocalProfile): Promise<boolean> {
-  const raw = await readLocal(`${enrollmentPrefix}${profile.identity.personId}`)
-  if (!raw) return false
-  try {
-    const record = JSON.parse(raw) as { personId?: unknown; deviceId?: unknown; certificateHash?: unknown; completedAt?: unknown }
-    return record.personId === profile.identity.personId && record.deviceId === profile.device.deviceId &&
-      record.certificateHash === await certHashDefault(profile.certificate) && typeof record.completedAt === "string"
-  } catch { return false }
-}
 
 export async function startIdentityProfileHost(options: {
   profile: LocalProfile
@@ -88,7 +77,7 @@ async function approveIdentityDevice(options: {
   options.onStatus("Saving signed Identity profile on the new device…")
   await syncNewPeer(options.profile, options.certificates, approval.connection, approval.remoteRoute,
     options.pending.request.payload.deviceId)
-  await writeLocal(`${enrollmentPrefix}${options.profile.identity.personId}`, JSON.stringify({
+  await writeLocal(`${identityEnrollmentPrefix}${options.profile.identity.personId}`, JSON.stringify({
     personId: options.profile.identity.personId,
     deviceId: options.profile.device.deviceId,
     certificateHash: await certHashDefault(options.profile.certificate),
@@ -156,7 +145,7 @@ export async function connectIdentityProfile(options: {
     throwIfAborted(options.signal)
     const certificateHash = await certHashDefault(adopted.certificate)
     throwIfAborted(options.signal)
-    await writeLocal(`${enrollmentPrefix}${adopted.identity.personId}`, JSON.stringify({
+    await writeLocal(`${identityEnrollmentPrefix}${adopted.identity.personId}`, JSON.stringify({
       personId: adopted.identity.personId,
       deviceId: adopted.device.deviceId,
       certificateHash,

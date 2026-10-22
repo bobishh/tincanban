@@ -71,6 +71,26 @@ describe("publication boundary regressions", () => {
     expect(snapshot.id).toBeUndefined()
     expect(snapshot.ownerPersonId).toBeUndefined()
   })
+  it("Given an in-board discussion and an unrelated member profile, When comparing the published source, Then profile presentation outside the board cannot change its projection", async () => {
+    const document = fixture()
+    const avatarBytes = new Uint8Array(30)
+    avatarBytes.set(new TextEncoder().encode("RIFF"), 0)
+    avatarBytes.set(new TextEncoder().encode("WEBP"), 8)
+    avatarBytes.set(new TextEncoder().encode("VP8L"), 12)
+    avatarBytes[20] = 0x2f
+    avatarBytes[21] = 127
+    avatarBytes[22] = 0xc0
+    avatarBytes[23] = 31
+    const avatarData = `data:image/webp;base64,${btoa(String.fromCharCode(...avatarBytes))}`
+    document.entities["member-profile:private-person"] = { id: "member-profile:private-person", kind: "member_profile", title: "Member profile",
+      personId: "private-person", data: JSON.stringify({ avatarData, changedAt: "2026-10-10T10:00:00.000Z" }), placement: { parentId: null, rank: "1/1" }, archivedAt: null } as never
+    mocks.messages = [message("discussion", "card")]
+
+    const fullWorkspaceProjection = await createPublicBoardPublication(document, "private-workspace", "board")
+    const boardScopedProjection = await createPublicBoardPublication(snapshotPublicBoardSource(document, "board"), "private-workspace", "board")
+
+    expect(fullWorkspaceProjection.projection).toEqual(boardScopedProjection.projection)
+  })
   it("Given display settings in the CRDT, When publishing, Then retain visitor presentation while removing private bindings", async () => {
     const document = fixture()
     Object.assign(document.entities.board!, { entityName: "lead", preset: { key: "job-search", version: 1, bindings: {

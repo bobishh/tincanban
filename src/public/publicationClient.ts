@@ -8,7 +8,7 @@ import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-re
 import { verifyRustyManagementCapability, type RustyManagementCapability } from "../sync/rustyManagementCapability"
 import { resolveRustyManagementAuthority, rustyManagementAuthorityRevision } from "../sync/rustyManagementClient"
 import type { ManagementBinding } from "../sync/rustyManagementRepository"
-import { snapshotPublicBoardSource, type PublicBoardProjection } from "./publicProjection"
+import { snapshotPublicBoardSource, validatePublicBoardProjection, type PublicBoardProjection } from "./publicProjection"
 import { createBrowserBoardPublication as createPublicBoardPublication } from "../app/publicBoardPublication"
 import type { PublicBoardDeliveryPolicyEvidence } from "./publicDeliveryPolicy"
 import { includesWorkspaceHeads } from "../storageCatalog"
@@ -136,12 +136,16 @@ function assetReceiptMatches(payload: Record<string, unknown>, serviceId: string
   return payload.kind === "rusty-public-asset-receipt" && payload.version === 1 && payload.serviceId === serviceId && payload.boardId === boardId &&
     payload.sha256 === asset.sha256 && payload.byteLength === asset.bytes.byteLength
 }
-export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence; preparedProjection?: PublicBoardProjection }): Promise<{ revision: number; url: string; hash: string; receipt: Receipt }> {
+export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence; preparedProjection?: PublicBoardProjection; preparedProjectionHash?: string; preparedAssetManifest?: Array<{ sha256: string; byteLength: number }>; preparedAssets?: Array<{ sha256: string; bytes: Uint8Array }> }): Promise<{ revision: number; url: string; hash: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
   // Capture authority metadata independently; limit document copying to the selected board tree.
   const snapshot = { origin: input.origin, boardId: input.boardId, workspaceId: input.workspaceId,
     profile: structuredClone(input.profile), action: input.action, expectedRevision: input.expectedRevision,
-    deliveryPolicy: input.deliveryPolicy ? structuredClone(input.deliveryPolicy) : undefined }
+    deliveryPolicy: input.deliveryPolicy ? structuredClone(input.deliveryPolicy) : undefined,
+    preparedProjection: input.preparedProjection ? structuredClone(input.preparedProjection) : undefined,
+    preparedProjectionHash: input.preparedProjectionHash,
+    preparedAssetManifest: input.preparedAssetManifest ? structuredClone(input.preparedAssetManifest) : undefined,
+    preparedAssets: input.preparedAssets ? structuredClone(input.preparedAssets) : undefined }
   await ensureCurrent?.()
   const document = snapshotPublicBoardSource(input.document, snapshot.boardId)
   const sourceHeads = documentHeads(input.document)
@@ -153,8 +157,11 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   const operation = snapshot.action === "publish" ? "publication.publish" : "publication.update"
   const capability = await managementAuthority(server, snapshot.boardId, profile, operation)
   const certificates = await controllerCertificates(profile)
-  const publication = await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId, undefined)
-  assertPreparedProjection(publication.projection, input.preparedProjection)
+  const prepared = snapshot.preparedProjection
+    ? { projection: validatePublicBoardProjection(snapshot.preparedProjection), assets: snapshot.preparedAssets ?? [] }
+    : await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId, undefined)
+  const publication = { ...prepared, projection: jsonProjection(prepared.projection) }
+  if (snapshot.preparedProjection) await assertPreparedPublication(publication, snapshot.preparedProjectionHash, snapshot.preparedAssetManifest)
   assertFieldConfigurationSupport(server, publication.projection)
   await ensureCurrent?.()
   await stagePublicationAssets(server, snapshot.boardId, profile, certificates, snapshot.expectedRevision, capability, ensureCurrent, sourceHeads, input.document, publication.assets)
@@ -166,11 +173,32 @@ function assertDeliveryPolicyBinding(policy: PublicBoardDeliveryPolicyEvidence |
     throw new Error("Public delivery policy does not cover the selected board")
   }
 }
+function jsonProjection(projection: PublicBoardProjection): PublicBoardProjection {
+  return JSON.parse(JSON.stringify(projection)) as PublicBoardProjection
+}
 function assertPresentationSupport(server: PublicationService) {
   if (!server.presentation) throw new Error("Upgrade Rusty to publish the shared visitor presentation")
 }
-function assertPreparedProjection(projection: PublicBoardProjection, prepared?: PublicBoardProjection) {
-  if (prepared && canonicalizeJson(projection) !== canonicalizeJson(prepared)) throw new Error("Public board source changed after its publication intent was saved")
+async function assertPreparedPublication(publication: { projection: PublicBoardProjection; assets: Array<{ sha256: string; bytes: Uint8Array }> },
+  expectedHash?: string, manifest?: Array<{ sha256: string; byteLength: number }>) {
+  if (!expectedHash || await sha256Base64Url(encoder.encode(canonicalizeJson(publication.projection))) !== expectedHash) {
+    throw new Error("Public board source changed after its publication intent was saved")
+  }
+  if (!manifest) throw new Error("Approved public board attachment manifest is unavailable")
+  const manifestByHash = new Map(manifest.map(asset => [asset.sha256, asset.byteLength]))
+  if (manifestByHash.size !== manifest.length || manifestByHash.size !== publication.assets.length ||
+      publication.assets.some(asset => manifestByHash.get(asset.sha256) !== asset.bytes.byteLength)) {
+    throw new Error("Approved public board attachments changed after publication intent was saved")
+  }
+  const expectedAssets = new Map(publication.projection.files.map(file => [file.sha256, file.byteLength]))
+  const actualAssets = new Map<string, number>()
+  for (const asset of publication.assets) {
+    if (await sha256Base64Url(asset.bytes) !== asset.sha256 || actualAssets.has(asset.sha256)) throw new Error("Approved public board attachment is invalid")
+    actualAssets.set(asset.sha256, asset.bytes.byteLength)
+  }
+  if (expectedAssets.size !== actualAssets.size || [...expectedAssets].some(([sha256, byteLength]) => actualAssets.get(sha256) !== byteLength)) {
+    throw new Error("Approved public board attachments do not match the publication snapshot")
+  }
 }
 function assertFieldConfigurationSupport(server: PublicationService, projection: PublicBoardProjection) {
   if (!server.fieldConfiguration && (projection.board.presentation?.cardPresentation || projection.fields.some(field => field.format))) {
@@ -229,7 +257,7 @@ async function validManagementSnapshot(envelope: { boardId: string; revision: nu
 export async function hasLocalPublicBoardChanges(input: { document: WorkspaceDocumentV2; workspaceId: string; boardId: string; hash: string }): Promise<boolean> {
   const document = snapshotPublicBoardSource(input.document, input.boardId)
   const publication = await createPublicBoardPublication(document, input.workspaceId, input.boardId, async () => {})
-  return await sha256Base64Url(encoder.encode(canonicalizeJson(publication.projection))) !== input.hash
+  return await sha256Base64Url(encoder.encode(canonicalizeJson(jsonProjection(publication.projection)))) !== input.hash
 }
 async function commit(server: PublicationService, boardId: string, profile: LocalProfile, certificates: DeviceCertificate[],
   action: "publish" | "update" | "unpublish", projection: PublicBoardProjection | null, expectedRevision: number,

@@ -1,4 +1,4 @@
-import { identityEnrollmentConfirmed } from "./identityPortalEnrollment"
+import { identityEnrollmentConfirmed } from "./identityEnrollmentReceipt"
 import type { LocalProfile } from "../domain/identity"
 
 export type IdentityRegistrationCommand<Intent, Result> = {

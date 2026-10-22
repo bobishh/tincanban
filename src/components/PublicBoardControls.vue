@@ -25,7 +25,7 @@ async function retry() {
 </script>
 
 <template>
-  <section v-if="access.owner.value" class="publication-panel" aria-label="Public board access" :data-public-revision="access.revision.value">
+  <section v-if="access.owner.value" class="publication-panel" aria-label="Public board access" :data-public-revision="access.revision.value" :data-public-sync-pending="access.syncPending.value">
     <label class="publication-toggle"><input type="checkbox" role="switch" :checked="access.published.value" :disabled="!access.checked.value || pendingVisibility !== null" @click.prevent="requestVisibility" />Public board</label>
     <p v-if="access.busy.value" role="status">{{ access.published.value ? 'Syncing public board…' : 'Checking public access…' }}</p>
     <template v-else-if="access.checked.value">

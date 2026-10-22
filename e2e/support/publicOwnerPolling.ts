@@ -5,9 +5,23 @@ import { writeFile } from "node:fs/promises"
 export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, boardId: string, info: TestInfo) {
   const isOwnerPoll = (response: Response) => response.url() === `${origin}/v1/public/challenges` &&
     response.ok() && response.request().postDataJSON()?.boardId === boardId
-  // Warm the first comparison after publication; measure the following unchanged status poll.
-  await page.waitForResponse(isOwnerPoll, { timeout: 20_000 })
-  await page.waitForTimeout(1_000)
+  if (await page.getByRole("button", { name: "Menu", exact: true }).isVisible()) {
+    await page.getByRole("button", { name: "Menu", exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: "Settings", exact: true }).click()
+  } else await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
+  const accessPanel = settings.getByRole("region", { name: "Public board access", exact: true })
+  // The status request settles before its debounced comparison begins. Observe the combined
+  // queued/running state across that gap so initial attachment reads stay outside measurement.
+  await Promise.all([
+    page.waitForResponse(isOwnerPoll, { timeout: 20_000 }),
+    expect(accessPanel).toHaveAttribute("data-public-sync-pending", "true", { timeout: 20_000 }),
+  ])
+  await expect(accessPanel).toHaveAttribute("data-public-sync-pending", "false", { timeout: 20_000 })
+  const accessStatus = accessPanel.getByRole("status")
+  await expect(accessStatus).toHaveText("Public · Changes sync automatically.", { timeout: 20_000 })
+  await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Item details", exact: true })
   const body = form.getByLabel("Body", { exact: true })

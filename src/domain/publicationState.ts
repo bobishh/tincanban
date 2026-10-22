@@ -10,6 +10,7 @@ type PublicationIntent = {
   expectedRevision: number
   projection: PublicBoardProjection | null
   projectionHash: string
+  preparedAssetManifest?: Array<{ sha256: string; byteLength: number }>
   sourceHeads: string[]
   deliveryPolicy?: unknown
   confirmed?: boolean
@@ -67,6 +68,14 @@ function withdrawnIntent(record: PublicationRecord, availability: PublicationAva
 }
 function missingPublishedCopy(record: PublicationRecord, remoteRevision: number) {
   const next = { ...record, remoteAvailability: "missing" as const }
+  if (record.confirmedRevision === 0 && record.intent?.action === "publish" && !record.intent.confirmed) {
+    // A status read proves this first publish never created a public board.
+    // Preserve the owner's choice, but resolve the failed attempt so only a
+    // fresh explicit action can try again.
+    const { intent: _intent, ...resolved } = next
+    return { published: false, withdrawn: false, recoveryNeeded: false, revision: remoteRevision,
+      hash: record.confirmedHash, record: resolved }
+  }
   if (record.remoteAvailability === "withdrawn") return { published: false, withdrawn: true, recoveryNeeded: false,
     revision: remoteRevision, hash: record.confirmedHash, record: next }
   return { published: true, withdrawn: false, recoveryNeeded: true, revision: remoteRevision,
@@ -95,5 +104,6 @@ function confirmPublishedIntent(record: PublicationRecord | undefined,
   const intent = record?.intent
   if (!record || !intent || intent.confirmed || intent.action === "unpublish" || !remote.published ||
       intent.expectedRevision + 1 !== remote.revision || intent.projectionHash !== remote.hash) return record
-  return { ...record, intent: { ...intent, confirmed: true, confirmedBy: "status" } }
+  const confirmedIntent = { ...intent, confirmed: true, confirmedBy: "status" as const }
+  return { ...record, intent: confirmedIntent }
 }

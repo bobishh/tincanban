@@ -1,13 +1,14 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import { publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoard } from "./publicationClient"
+import { hasLocalPublicBoardChanges, publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoard } from "./publicationClient"
 import { RustyManagementRepository, type ManagementBinding } from "../sync/rustyManagementRepository"
 import type { RustyManagementCapability } from "../sync/rustyManagementCapability"
 
 const mocks = vi.hoisted(() => ({ projection: { kind: "tincanban-public-board", version: 1, board: { id: "public-fixture", title: "Published" }, columns: [], fields: [], cards: [], discussions: [], files: [] }, includeAsset: false, capturedSource: undefined as unknown }))
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [] }, certHashDefault: async () => "unused" }))
-vi.mock("./publicProjection", () => ({ snapshotPublicBoardSource: (document: { entities?: Record<string, unknown> }, boardId: string) => structuredClone({ entities: document.entities?.[boardId] ? { [boardId]: document.entities[boardId] } : {} }) }))
+vi.mock("./publicProjection", async importOriginal => ({ ...await importOriginal<typeof import("./publicProjection")>(),
+  snapshotPublicBoardSource: (document: { entities?: Record<string, unknown> }, boardId: string) => structuredClone({ entities: document.entities?.[boardId] ? { [boardId]: document.entities[boardId] } : {} }) }))
 vi.mock("../app/publicBoardPublication", () => ({ createBrowserBoardPublication: async (
   document: unknown,
 ) => {
@@ -133,6 +134,39 @@ async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
 const publish = () => publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2, profile: owner, action: "publish", expectedRevision: revision })
 
 describe("publication client signed state and receipts", () => {
+  it("compares the wire projection hash when optional presentation fields are undefined", async () => {
+    const original = mocks.projection
+    const projection = { ...mocks.projection, discussionAuthors: [{ id: "A".repeat(43), avatarData: undefined }] }
+    mocks.projection = projection as typeof mocks.projection
+    const wireProjection = JSON.parse(JSON.stringify(projection))
+    await expect(hasLocalPublicBoardChanges({ document: { entities: {} } as WorkspaceDocumentV2, workspaceId: "private-workspace",
+      boardId, hash: await hash(wireProjection) })).resolves.toBe(false)
+    mocks.projection = original
+  })
+  it("Given an owner-approved projection with discussion and file bytes, When publishing, Then send that exact projection and asset manifest", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4])
+    const assetHash = await sha256Base64Url(bytes)
+    const approved = {
+      kind: "tincanban-public-board" as const, version: 1 as const, board: { id: boardId, title: "Approved board", presentation: undefined },
+      columns: [{ id: "todo", title: "To do", rank: "0/1" }], fields: [],
+      cards: [{ id: "card", parentId: null, columnId: "todo", title: "Card", body: "", values: {}, rank: "0/1" }],
+      discussions: [{ id: "note", threadId: "note", replyTo: null, targets: [{ type: "board" as const, id: boardId }], author: "Owner", body: "Approved discussion", createdAt: "2026-10-22T10:00:00Z" }],
+      files: [{ id: "file", parentId: "card", title: "Attachment", fileName: "attachment.bin", mediaType: "application/octet-stream", byteLength: bytes.byteLength, sha256: assetHash }],
+    }
+    const wireApproved = JSON.parse(JSON.stringify(approved))
+    const approvedHash = await hash(wireApproved)
+    snapshotHash = approvedHash
+
+    await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2,
+      profile: owner, action: "publish", expectedRevision: revision, preparedProjection: approved,
+      preparedProjectionHash: approvedHash, preparedAssetManifest: [{ sha256: assetHash, byteLength: bytes.byteLength }],
+      preparedAssets: [{ sha256: assetHash, bytes }] })
+
+    expect(mutationBody?.projection).toEqual(wireApproved)
+    expect(((mutationBody?.authorization as SignedEnvelope<EnvelopePayload>).payload).projectionHash).toBe(approvedHash)
+    expect(assetBody).toMatchObject({ sha256: assetHash, byteLength: bytes.byteLength })
+    expect(assetCount).toBe(1)
+  })
   it("Given migrated board-management authority, When publishing, Then send exact capability and signed revision on the challenge and command", async () => {
     scopeManagement = true
     const serviceId = keeper.device.deviceId
