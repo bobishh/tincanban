@@ -29,7 +29,7 @@ test("Given a pending Identity invitation, when sign-in is cancelled, then keep 
     let inviteUrl = ""
     let hostError = ""
     const host = (await import("/src/app/identityPortalEnrollment.ts")).startIdentityProfileHost({
-      profile, portalOrigin: "http://127.0.0.1:4177", signal: controller.signal,
+      profile, portalOrigin: identityOrigin, signal: controller.signal,
       onInvite: invite => { inviteUrl = invite }, onStatus: () => {},
       onRequest: () => new Promise<"approve" | "reject">(resolve => controller.signal.addEventListener("abort", () => resolve("reject"), { once: true })),
     })
@@ -143,18 +143,17 @@ test("Given an unregistered local profile, when Add my device requests registrat
     const inviteUrl = await invitation.inputValue()
 
     mark("open Identity portal")
-    await portal.goto(`${identityOrigin}/`)
-    await portal.getByRole("button", { name: "Connect to an existing Identity", exact: true }).click()
-    const connect = portal.locator("section.dialog.ui-stack").filter({ has: portal.getByRole("heading", { name: "Connect this device", exact: true }) })
-    await connect.getByLabel("Invite link").fill(inviteUrl).catch(() => { throw new Error("Could not enter the Identity invitation") })
-    await connect.getByLabel("Device name").fill("Tincanban test device")
-    const guestRecoveryConsent = connect.getByLabel("Allow the trusted device to offer the encrypted recovery file and words. Together, they grant full recovery capability.")
+    await portal.goto(inviteUrl)
+    const connect = portal.locator("#connect-device-form")
+    await expect(portal.getByRole("heading", { name: "Connect this device", exact: true })).toBeVisible()
+    await connect.locator('input[name="deviceLabel"]').fill("Tincanban test device")
+    const guestRecoveryConsent = connect.locator('input[name="accept-recovery"]')
     await guestRecoveryConsent.check()
     expect(await guestRecoveryConsent.isChecked()).toBe(true)
-    expect(await connect.locator("form").evaluate(form => (form as HTMLFormElement).checkValidity())).toBe(true)
+    expect(await connect.evaluate(form => (form as HTMLFormElement).checkValidity())).toBe(true)
     mark("request Identity approval")
-    await connect.getByRole("button", { name: "Request approval", exact: true }).click()
-    await expect(portal.getByRole("status")).toContainText("Waiting for approval", { timeout: 30000 })
+    await connect.getByRole("button", { name: "Request connection", exact: true }).click()
+    await expect(portal.getByRole("status")).toContainText("Waiting for approval from the trusted Identity device", { timeout: 30000 })
 
     mark("approve matching device")
     const approval = enrollment.getByRole("region", { name: "Device approval" })

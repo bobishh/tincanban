@@ -189,6 +189,7 @@ function cancel() {
         <h2>Create profile</h2>
         <p class="dialog-copy">Open this one-use link in Identity. Approve only a device request you started.</p>
         <label>Identity invitation<input class="technical-text" readonly :value="inviteUrl" /></label>
+        <a v-if="inviteUrl" class="button button-primary" :href="inviteUrl" target="_blank" rel="noopener noreferrer">Open Identity</a>
         <p v-if="status" role="status">{{ status }}</p>
         <section v-if="request" class="mesh-member-action" aria-label="Device approval">
           <p><strong>{{ request.displayName }}</strong> wants to enroll. Identity person: {{ request.personId }}</p>
