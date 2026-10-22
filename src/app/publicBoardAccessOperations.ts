@@ -200,15 +200,7 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
   ctx.error.value = ""
   const generation = ctx.state.generation
   try {
-    const captured = ctx.capture()
-    const sourceVersion = captured.sourceVersion
-    const changed = await hasProjectionChanged(ctx, captured)
-    captured.ensureCurrent()
-    if (generation !== ctx.state.generation || ctx.withdrawn.value) return
-    if (sourceVersion !== ctx.input.sourceVersion()) { ctx.state.syncQueued = true; return }
-    const policy = await policyIfChanged(ctx, captured)
-    if (changed || policy) await publishUpdatedSnapshot(ctx, captured, policy, generation)
-    if (sourceVersion !== ctx.input.sourceVersion()) ctx.state.syncQueued = true
+    await compareAndDeliverLatestSnapshot(ctx, generation)
   } catch (cause) {
     if (generation === ctx.state.generation) retainPublicDeliveryForRetry(ctx, cause)
   } finally {
@@ -217,6 +209,17 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
     if (ctx.state.syncQueued && !ctx.withdrawn.value && !ctx.error.value) ctx.scheduleSync()
     else ctx.syncPending.value = false
   }
+}
+async function compareAndDeliverLatestSnapshot(ctx: PublicBoardAccessOperations, generation: number) {
+  const captured = ctx.capture()
+  const sourceVersion = captured.sourceVersion
+  const changed = await hasProjectionChanged(ctx, captured)
+  captured.ensureCurrent()
+  if (generation !== ctx.state.generation || ctx.withdrawn.value) return
+  if (sourceVersion !== ctx.input.sourceVersion()) { ctx.state.syncQueued = true; return }
+  const policy = await policyIfChanged(ctx, captured)
+  if (changed || policy) await publishUpdatedSnapshot(ctx, captured, policy, generation)
+  if (sourceVersion !== ctx.input.sourceVersion()) ctx.state.syncQueued = true
 }
 function retainPublicDeliveryForRetry(ctx: PublicBoardAccessOperations, cause: unknown) {
   ctx.state.syncQueued = true

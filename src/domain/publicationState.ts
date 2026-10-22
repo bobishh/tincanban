@@ -72,7 +72,8 @@ function missingPublishedCopy(record: PublicationRecord, remoteRevision: number)
     // A status read proves this first publish never created a public board.
     // Preserve the owner's choice, but resolve the failed attempt so only a
     // fresh explicit action can try again.
-    const { intent: _intent, ...resolved } = next
+    const resolved = { ...next }
+    delete resolved.intent
     return { published: false, withdrawn: false, recoveryNeeded: false, revision: remoteRevision,
       hash: record.confirmedHash, record: resolved }
   }

@@ -8,7 +8,7 @@ import type { PublicIdentity } from "../domain/model"
 import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "../sync/identityEnrollmentProfile"
-import { readLocal, writeLocal } from "../localDb"
+import { writeLocal } from "../localDb"
 import { identityEnrollmentPrefix } from "./identityEnrollmentReceipt"
 
 export type IdentityEnrollmentRequest = PendingIdentityEnrollment["request"]["payload"]

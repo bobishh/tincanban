@@ -1,13 +1,14 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
+import type { snapshotPublicBoardSource } from "./publicProjection"
 import { hasLocalPublicBoardChanges, publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoard } from "./publicationClient"
 import { RustyManagementRepository, type ManagementBinding } from "../sync/rustyManagementRepository"
 import type { RustyManagementCapability } from "../sync/rustyManagementCapability"
 
 const mocks = vi.hoisted(() => ({ projection: { kind: "tincanban-public-board", version: 1, board: { id: "public-fixture", title: "Published" }, columns: [], fields: [], cards: [], discussions: [], files: [] }, includeAsset: false, capturedSource: undefined as unknown }))
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [] }, certHashDefault: async () => "unused" }))
-vi.mock("./publicProjection", async importOriginal => ({ ...await importOriginal<typeof import("./publicProjection")>(),
+vi.mock("./publicProjection", async importOriginal => ({ ...await importOriginal<typeof snapshotPublicBoardSource>(),
   snapshotPublicBoardSource: (document: { entities?: Record<string, unknown> }, boardId: string) => structuredClone({ entities: document.entities?.[boardId] ? { [boardId]: document.entities[boardId] } : {} }) }))
 vi.mock("../app/publicBoardPublication", () => ({ createBrowserBoardPublication: async (
   document: unknown,
