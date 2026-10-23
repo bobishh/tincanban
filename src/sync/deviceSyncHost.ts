@@ -8,9 +8,6 @@ import {
 import { defaultInvitationService } from "./invitations"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceGrant } from "../domain/model"
-import { toBase64Url } from "../domain/identity"
-import { defaultProofStore } from "../domain/proofs"
-import { defaultStorage } from "../storage"
 import { isMeshNetworkFailure, meshNetworkConnection, startMeshHeartbeat } from "@meta-uber/mesh-transport"
 import { BrowserWorkspaceJoinHandoffHost, BrowserWorkspaceJoinHost } from "@meta-uber/mesh-runtime"
 import { WasmWorkspaceJoinHandshake, WasmWorkspaceJoinHandoff } from "../iroh"
@@ -23,12 +20,12 @@ import { showInviteQr } from "./deviceSyncInviteView"
 import type { PairingContext } from "./deviceSyncContext"
 import type { JoinDecision } from "./deviceSyncJoinApproval"
 import { keeperCommitReceiptVerifier, type KeeperCommitReceiptVerifier } from "./keeperCommitReceipt"
+import { createWorkspaceJoinApprovalCache, type JoinApprovalOwnerConnection } from "./workspaceJoinApprovalCache"
+import { approveWorkspaceAccess, prepareWorkspaceAccess, readWorkspaceRequest } from "./deviceSyncHostAdmission"
 import { meshIngressBudgetProfile } from "../iroh"
-import { nextKeeperGrantEpoch } from "./keeperGrantEpoch"
 import { traceWorkspaceJoinFailure, WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
 import { readPeerHistoryAwareAcceptStream } from "./peerHistoryTransport"
-import { z } from "zod"
 
 export { WorkspaceAdmissionFailure } from "./workspaceAdmissionFailure"
 
@@ -116,7 +113,7 @@ async function issueWorkspaceInvite(context: WorkspaceHostContext, node: SyncNod
   return invite
 }
 
-type HostInput = {
+export type HostInput = {
   context: WorkspaceHostContext
   run: number
   node: SyncNode
@@ -128,40 +125,13 @@ type HostInput = {
   keeperAdmission?: KeeperAdmission
 }
 
-type WorkspaceGuest = { personId: string; displayName?: unknown; meshPeers?: unknown; followOwner?: unknown }
-const workspaceRequestSchema = z.object({
-  personId: z.string().min(1),
-  invitationId: z.string().min(1),
-  displayName: z.unknown().optional(),
-  meshPeers: z.unknown().optional(),
-  followOwner: z.unknown().optional(),
-}).passthrough()
-type OwnerConnection = { controllerPersonId: string }
-type WorkspaceApproval = {
-  personId: string
-  deviceId?: string
-  meshPeers?: unknown
-  role: JoinDecision["role"]
-  ownerConnection?: OwnerConnection
-  grants?: WorkspaceGrant[]
-}
-type WorkspaceApprovalResult = { ok: true; value: WorkspaceApproval } | { ok: false; error: string }
-type PendingJoinApproval = {
-  personId: string
-  invitationId: string
-  expiresAt: string
-  workspaceIds: string[]
-  deviceId: string
-  role: JoinDecision["role"]
-  ownerConnection?: OwnerConnection
-  timer: ReturnType<typeof setTimeout>
-}
-type HostRuntime = HostInput & {
+export type OwnerConnection = JoinApprovalOwnerConnection
+export type HostRuntime = HostInput & {
   acceptor: SyncAcceptor
   peers: Map<string, LiveWorkspaceSync>
   connections: Set<SyncConnection>
   grants: Map<string, { ok: true; grants: WorkspaceGrant[]; ownerConnection?: { controllerPersonId: string } }>
-  approvals: Map<string, PendingJoinApproval>
+  approvals: ReturnType<typeof createWorkspaceJoinApprovalCache>
   group: LiveWorkspaceSync
   stopped: () => boolean
   disconnect: () => void
@@ -174,7 +144,7 @@ async function startWorkspaceHostController(input: HostInput) {
   const peers = new Map<string, LiveWorkspaceSync>()
   const connections = new Set<SyncConnection>()
   const grants = new Map<string, { ok: true; grants: WorkspaceGrant[] }>()
-  const approvals = new Map<string, PendingJoinApproval>()
+  const approvals = createWorkspaceJoinApprovalCache()
   let stopped = false
   let everConnected = false
   let handoffStarted = false
@@ -193,10 +163,7 @@ async function startWorkspaceHostController(input: HostInput) {
     handoffStarted = true
     void handoffDisconnectedPeer(input)
   }
-  const clearApprovals = () => {
-    for (const approval of approvals.values()) clearTimeout(approval.timer)
-    approvals.clear()
-  }
+  const clearApprovals = () => approvals.clear()
   const group = createHostGroup(done, peers, connections, acceptor, () => { stopped = true; clearApprovals() }, offline)
   const runtime = (): HostRuntime => ({ ...input, acceptor, peers, connections, grants, approvals, group, stopped: () => stopped, disconnect, handoff, fail })
   input.context.attachLiveSession(group, input.run)
@@ -383,143 +350,6 @@ async function receiveMeshPeer(runtime: HostRuntime, connection: SyncConnection,
   if (inspectPairingFrame(raw).type !== "mesh-handshake-request" || !runtime.context.durableMesh) return false
   await runtime.context.durableMesh.acceptOnInvitationNode(connection, stream, raw)
   return true
-}
-
-function readWorkspaceRequest(runtime: HostRuntime, payload: Uint8Array) {
-  const parsed = workspaceRequestSchema.safeParse(JSON.parse(new TextDecoder().decode(payload)))
-  if (!parsed.success || parsed.data.invitationId !== runtime.invite.invitationId) throw new Error("Invalid workspace join request.")
-  const guest = parsed.data
-  if (runtime.keeperAdmission && (guest.followOwner === true) !== runtime.keeperAdmission.followOwner) {
-    throw new Error("Keeper future-board policy does not match the approved pairing.")
-  }
-  return guest
-}
-
-async function approveWorkspaceAccess(runtime: HostRuntime, guest: WorkspaceGuest): Promise<WorkspaceApprovalResult> {
-  if (guest.personId === runtime.profile.identity.personId) {
-    return { ok: false as const, error: "This invite is for another person, but this browser uses the owner's identity. Use a separate identity to join as an editor." }
-  }
-  let deviceId: string | undefined
-  if (!runtime.context.durableMesh) return { ok: false as const, error: "Couldn’t verify guest device." }
-  try { deviceId = await runtime.context.durableMesh.checkGuestDevices(runtime.workspaces.map(item => item.id), guest.personId, guest.meshPeers) }
-  catch (error) { return { ok: false as const, error: userMessage(error, "Couldn’t verify guest device.") } }
-  if (!deviceId) return { ok: false as const, error: "Couldn’t verify guest device." }
-  const existing = runtime.grants.get(guest.personId)
-  if (existing) return { ok: true as const, value: { personId: guest.personId, deviceId,
-    meshPeers: guest.meshPeers, role: existing.grants[0]?.payload.role === "editor" ? "editor" as const : "visitor" as const,
-    grants: existing.grants, ownerConnection: existing.ownerConnection } }
-  if (Date.parse(runtime.invite.expiresAt) <= Date.now()) {
-    return { ok: false as const, error: "This invitation has expired." }
-  }
-  if (runtime.keeperAdmission && !matchesKeeperAdmission(runtime, guest.personId)) {
-    return { ok: false as const, error: "Keeper join does not match the approved identity and scope set." }
-  }
-  let approval = runtime.approvals.get(guest.personId)
-  const workspaceIds = runtime.workspaces.map(workspace => workspace.id).sort()
-  if (approval && (approval.personId !== guest.personId || approval.invitationId !== runtime.invite.invitationId ||
-      approval.expiresAt !== runtime.invite.expiresAt || approval.deviceId !== deviceId ||
-      approval.workspaceIds.length !== workspaceIds.length ||
-      approval.workspaceIds.some((workspaceId, index) => workspaceId !== workspaceIds[index]) ||
-      Date.parse(approval.expiresAt) <= Date.now())) {
-    clearTimeout(approval.timer)
-    runtime.approvals.delete(guest.personId)
-    approval = undefined
-  }
-  if (!approval) {
-    const decision = await decideWorkspaceJoin(runtime, guest)
-    if (!decision) {
-      return { ok: false as const, error: "The owner declined this request." }
-    }
-    const ownerConnection = decision.followOwner
-      ? { controllerPersonId: runtime.profile.identity.personId } satisfies OwnerConnection : undefined
-    let pending!: PendingJoinApproval
-    pending = { personId: guest.personId, invitationId: runtime.invite.invitationId,
-      expiresAt: runtime.invite.expiresAt, workspaceIds, deviceId, role: decision.role, ownerConnection,
-      timer: setTimeout(() => {
-        if (runtime.approvals.get(guest.personId) === pending) runtime.approvals.delete(guest.personId)
-      }, Math.max(0, Date.parse(runtime.invite.expiresAt) - Date.now())) }
-    approval = pending
-    runtime.approvals.set(guest.personId, approval)
-  }
-  return { ok: true as const, value: { personId: guest.personId, deviceId, meshPeers: guest.meshPeers,
-    role: approval.role, ownerConnection: approval.ownerConnection } }
-}
-
-async function decideWorkspaceJoin(runtime: HostRuntime, guest: WorkspaceGuest): Promise<JoinDecision | null> {
-  if (runtime.keeperAdmission) {
-    return { role: "editor", followOwner: runtime.keeperAdmission.followOwner }
-  }
-  const name = typeof guest.displayName === "string"
-    ? guest.displayName.slice(0, 80)
-    : `Participant ${guest.personId.slice(0, 6)}`
-  return runtime.context.waitForJoinDecision(guest.personId, name, guest.followOwner === true)
-}
-
-async function issueWorkspaceGrants(runtime: HostRuntime, personId: string, role: JoinDecision["role"]) {
-  const accessEpochs = new Map(await Promise.all(runtime.workspaces.map(async item => [
-    item.id,
-    nextKeeperGrantEpoch(await runtime.context.durableMesh?.nextAccessEpoch(item.id) ?? 1,
-      runtime.keeperAdmission?.serviceGrantFloors?.[item.id] ?? 0),
-  ] as const)))
-  const result = await defaultInvitationService.approveWorkspaceJoinSet(
-    runtime.invite.invitationId,
-    personId,
-    runtime.workspaces.map(item => item.id),
-    runtime.profile,
-    runtime.owners,
-    role,
-    accessEpochs,
-  )
-  if (!result.ok) throw new Error(result.error)
-  for (const grant of result.grants) {
-    await defaultStorage.withWorkspaceAuthorityMutation(grant.payload.workspaceId,
-      context => context.write(() => defaultProofStore.putGrant(grant.payload.grantId, grant)))
-  }
-  return result.grants
-}
-
-async function acceptApprovedGuest(runtime: HostRuntime, guest: { personId: string; meshPeers?: unknown },
-  grants: WorkspaceGrant[], role: JoinDecision["role"], ownerConnection?: OwnerConnection, deviceId?: string) {
-  try { await runtime.context.durableMesh?.acceptGuest(runtime.workspaces.map(item => item.id), guest.meshPeers, grants) }
-  catch (error) {
-    if (error instanceof Error && /Device access revoked/i.test(error.message)) return { ok: false as const, error: error.message }
-    throw error
-  }
-  if (ownerConnection) {
-    await runtime.context.durableMesh?.connectOwnerKeeper(guest.personId, role)
-  }
-  runtime.grants.set(guest.personId, { ok: true, grants, ownerConnection })
-  return { ok: true as const, value: { personId: guest.personId, deviceId, grants, ownerConnection } }
-}
-
-function matchesKeeperAdmission(runtime: HostRuntime, personId: string) {
-  const admission = runtime.keeperAdmission
-  if (!admission || personId !== admission.servicePersonId) return false
-  const actualScopes = runtime.workspaces.map(workspace => workspace.id).sort()
-  const approvedScopes = [...admission.workspaceIds].sort()
-  return actualScopes.length === approvedScopes.length
-    && actualScopes.every((workspaceId, index) => workspaceId === approvedScopes[index])
-}
-
-async function prepareWorkspaceAccess(runtime: HostRuntime, approval: {
-  personId: string; deviceId?: string; meshPeers?: unknown; role: JoinDecision["role"];
-  grants?: WorkspaceGrant[]; ownerConnection?: { controllerPersonId: string }
-}, keeperSnapshot?: (snapshot: Uint8Array) => Promise<void>) {
-  const injectedFailure = (window as Window & { __TINCANBAN_INJECT_SYNC_SNAPSHOT_FAILURE__?: string }).__TINCANBAN_INJECT_SYNC_SNAPSHOT_FAILURE__
-  if (injectedFailure) throw new Error(injectedFailure)
-  const snapshot = await runtime.replica.snapshot()
-  await keeperSnapshot?.(snapshot)
-  const grants = approval.grants ?? await issueWorkspaceGrants(runtime, approval.personId, approval.role)
-  const admitted = await acceptApprovedGuest(runtime, approval, grants, approval.role, approval.ownerConnection, approval.deviceId)
-  if (!admitted.ok) throw new Error(admitted.error)
-  const pendingApproval = runtime.approvals.get(approval.personId)
-  if (pendingApproval) clearTimeout(pendingApproval.timer)
-  runtime.approvals.delete(approval.personId)
-  return new TextEncoder().encode(JSON.stringify({ grants,
-    ownerConnection: approval.ownerConnection,
-    snapshot: toBase64Url(snapshot),
-    meshWorkspaces: await runtime.context.durableMesh?.invitationPayload(runtime.workspaces.map(item => item.id)),
-  }))
 }
 
 async function serveJoinAuxiliaryFrame(runtime: HostRuntime, frame: Uint8Array,
