@@ -177,15 +177,29 @@ test("Given a copied link before local workspace rekeying, when its preserved sc
   await page.evaluate(async () => {
     const storagePath = "/src/storage.ts"
     const statePath = "/src/state.ts"
+    const signingPath = "/src/sync/changeAuthorization.ts"
+    const rootPath = "/src/statePersonalRoot.ts"
+    const localPath = "/src/localDb.ts"
+    const automergePath = "/@id/@automerge/automerge/slim"
     const { defaultStorage } = await import(/* @vite-ignore */ storagePath)
     const state = await import(/* @vite-ignore */ statePath)
+    const { recordGenesisAuthority } = await import(/* @vite-ignore */ signingPath)
+    const { registerWorkspaceInCurrentRoot } = await import(/* @vite-ignore */ rootPath)
+    const { writeLocal } = await import(/* @vite-ignore */ localPath)
+    const Automerge = await import(/* @vite-ignore */ automergePath)
     const tincanban = state.useTincanban()
     const id = tincanban.activeWorkspace.id
     const source = tincanban.getActiveDoc()
     if (!source) throw new Error("Active workspace unavailable during rekey fixture")
-    const moved = await tincanban.importWorkspaceAsNew(source)
+    const profile = tincanban.getCurrentProfile()
+    if (!profile) throw new Error("Current identity unavailable during rekey fixture")
+    const moved = Automerge.from({ ...source, id: crypto.randomUUID(), title: "Rekeyed workspace" })
     if (moved.id === id) throw new Error("Workspace rekey fixture did not change the document ID")
-    await tincanban.renameWorkspaceAsync(moved.id, "Rekeyed workspace")
+    const authorizations = await recordGenesisAuthority(moved, profile)
+    await defaultStorage.withWorkspaceTransaction(moved.id, transaction =>
+      transaction.commitWorkspace(moved, Automerge.save(moved), authorizations))
+    await registerWorkspaceInCurrentRoot(defaultStorage, profile, moved.id, "genesis")
+    await writeLocal("tincanban.active_workspace_id", moved.id)
     const root = await defaultStorage.loadPersonalRoot()
     if (!root) throw new Error("Personal root unavailable during rekey fixture")
     delete root.workspaces[id]
