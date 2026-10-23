@@ -35,6 +35,11 @@ test("Given a local app device and saved board, when Identity approves browser s
   await create.getByRole("button", { name: "Create", exact: true }).click()
   const board = page.getByRole("region", { name: "Board survives browser login", exact: true })
   await board.waitFor()
+  const retainedWorkspaceId = await page.evaluate(async title => {
+    const workspaces = await (await import("/src/storage.ts")).defaultStorage.listWorkspaces()
+    return workspaces.find(workspace => workspace.title === title)?.id ?? null
+  }, "Board survives browser login")
+  expect(retainedWorkspaceId).toBeTruthy()
   await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
 
   const openSignIn = async () => {
@@ -94,6 +99,12 @@ test("Given a local app device and saved board, when Identity approves browser s
   const identitySettings = page.getByRole("group", { name: "Your profile", exact: true })
   await expect(identitySettings.getByRole("textbox", { name: "Name", exact: true })).toBeEnabled()
   await expect(identitySettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
+  await page.goto(appUrl)
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const restoredSettings = page.getByRole("group", { name: "Your profile", exact: true })
+  await expect(restoredSettings.getByRole("textbox", { name: "Name", exact: true })).toBeEnabled()
+  await expect(restoredSettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Dismiss", exact: true }).click()
   const after = await page.evaluate(async personId => {
     const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
@@ -105,6 +116,11 @@ test("Given a local app device and saved board, when Identity approves browser s
       backedUpPersonId: previous ? JSON.parse(previous).identity.personId : null,
       persistedPersonId: persisted ? JSON.parse(persisted).identity.personId : null, rootPeople }
   }, localBefore)
+  const retainedBoard = await page.evaluate(async workspaceId => {
+    const loaded = await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(workspaceId)
+    return loaded ? { owner: loaded.doc.ownerPersonId, title: loaded.doc.title } : null
+  }, retainedWorkspaceId)
+  expect(retainedBoard).toEqual({ owner: localBefore, title: "Board survives browser login" })
   expect(after.backedUpPersonId).toBe(localBefore)
   expect(after.persistedPersonId).toBe(identityId)
   expect(after.personId).toBe(identityId)
