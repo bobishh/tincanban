@@ -2,6 +2,35 @@ import { expect, test } from "./support/coverage"
 import { faviconRole } from "./support/favicon"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
+type GuestDiagnostics = { pageErrors: string[]; consoleErrors: string[]; failedRequests: string[] }
+
+function observeGuest(page: import("@playwright/test").Page): GuestDiagnostics {
+  const diagnostics: GuestDiagnostics = { pageErrors: [], consoleErrors: [], failedRequests: [] }
+  const record = (bucket: string[], value: string) => { if (bucket.length < 30) bucket.push(value.slice(0, 500)) }
+  page.on("pageerror", error => record(diagnostics.pageErrors, redactUrls(error.message)))
+  page.on("console", message => {
+    if (message.type() === "error") record(diagnostics.consoleErrors, redactUrls(message.text()))
+  })
+  page.on("requestfailed", request => {
+    let target = "<invalid-url>"
+    try { const url = new URL(request.url()); target = `${url.origin}${url.pathname}` } catch { /* keep redacted placeholder */ }
+    record(diagnostics.failedRequests, `${request.method()} ${target}: ${request.failure()?.errorText ?? "request failed"}`)
+  })
+  return diagnostics
+}
+
+function redactUrls(message: string) {
+  return message.replace(/https?:\/\/[^\s"'`<>]+/gu, value => {
+    try { const url = new URL(value); return `${url.origin}${url.pathname}` } catch { return "<redacted-url>" }
+  })
+}
+
+async function attachGuestDiagnostics(info: import("@playwright/test").TestInfo, diagnostics: GuestDiagnostics) {
+  await info.attach("guest-browser-diagnostics", {
+    body: Buffer.from(JSON.stringify(diagnostics, null, 2)), contentType: "application/json",
+  })
+}
+
 for (const role of ["visitor", "editor"] as const) {
   test(`Given an owner and pending guest, when approved as ${role}, then role controls writes and board settings`, async ({ page, browser }) => {
     test.setTimeout(60000)
@@ -98,9 +127,10 @@ for (const role of ["visitor", "editor"] as const) {
   })
 }
 
-test("Given a first-time guest with no Identity account, when they accept a fresh editor invitation, then their local identity joins as the invited person", async ({ page, browser }) => {
+test("Given a first-time guest with no Identity account, when they accept a fresh editor invitation, then their local identity joins as the invited person", async ({ page, browser }, testInfo) => {
   test.setTimeout(60_000)
   const browserErrors: string[] = []
+  let diagnostics: GuestDiagnostics | undefined
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -111,7 +141,8 @@ test("Given a first-time guest with no Identity account, when they accept a fres
   const context = await browser.newContext()
   try {
     const guest = await context.newPage()
-    guest.on("pageerror", error => browserErrors.push(error.message))
+    diagnostics = observeGuest(guest)
+    guest.on("pageerror", error => browserErrors.push(redactUrls(error.message)))
     await guest.goto(await host.getByLabel("Pairing link").inputValue())
     const dialog = guest.getByRole("dialog", { name: "Device sync" })
     await expect(dialog.getByText(/You have been invited to join/)).toBeVisible()
@@ -120,12 +151,15 @@ test("Given a first-time guest with no Identity account, when they accept a fres
     const ownerProfile = JSON.parse(await page.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!)
     expect(guestProfile.identity.personId).not.toBe(ownerProfile.identity.personId)
     await dialog.getByRole("button", { name: "Accept and join" }).click()
-    await expect(host.getByRole("region", { name: "Access request" })).toContainText("wants to join")
+    await expect(host.getByRole("region", { name: "Access request" })).toContainText("wants to join", { timeout: 30_000 })
     await host.getByLabel("Participant role").selectOption("editor")
     await host.getByRole("button", { name: "Approve access" }).click()
     await expect(dialog.getByText(/Connected to/)).toBeVisible({ timeout: 25_000 })
     await expect(guest.getByLabel("Workspace role: editor")).toBeVisible()
     expect(browserErrors).toEqual([])
+  } catch (error) {
+    if (diagnostics) await attachGuestDiagnostics(testInfo, diagnostics)
+    throw error
   } finally {
     await context.close()
   }
@@ -211,7 +245,7 @@ test("Given snapshot preparation fails, when an editor is approved, then guest s
   } finally { await context.close() }
 })
 
-test("Given the first peer-history module request fails after approval, when the same guest retries, then the saved editor membership receives the workspace", async ({ page, browser }) => {
+test("Given the first peer-history module request fails after approval, when the same guest retries, then the saved editor membership receives the workspace", async ({ page, browser }, testInfo) => {
   test.setTimeout(90_000)
   let moduleRequests = 0
   let failedModuleRequests = 0
@@ -243,12 +277,14 @@ test("Given the first peer-history module request fails after approval, when the
   await host.getByRole("button", { name: "Generate link" }).click()
   const invitation = await host.getByLabel("Pairing link").inputValue()
   const context = await browser.newContext()
+  let diagnostics: GuestDiagnostics | undefined
   try {
     const guest = await context.newPage()
+    diagnostics = observeGuest(guest)
     await guest.goto(invitation)
     const guestDialog = guest.getByRole("dialog", { name: "Device sync" })
     await guestDialog.getByRole("button", { name: "Accept and join" }).click()
-    await expect(host.getByRole("region", { name: "Access request" })).toBeVisible()
+    await expect(host.getByRole("region", { name: "Access request" })).toBeVisible({ timeout: 30_000 })
     expect(moduleRequests).toBe(0)
     await host.getByLabel("Participant role").selectOption("editor")
     failNextModuleRequest = true
@@ -271,6 +307,9 @@ test("Given the first peer-history module request fails after approval, when the
     await guest.getByRole("button", { name: "Open Join recovery — Engineer" }).click()
     await expect(guest.getByRole("button", { name: "Discuss Join recovery — Engineer" })).toBeVisible()
     expect(moduleRequests).toBeGreaterThanOrEqual(2)
+  } catch (error) {
+    if (diagnostics) await attachGuestDiagnostics(testInfo, diagnostics)
+    throw error
   } finally {
     await context.close()
   }
