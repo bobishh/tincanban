@@ -69,7 +69,6 @@ async function finishBrowserSignInReturn() {
       applicationOrigin: window.location.origin })
     if (result.kind === "cancelled") throw new DOMException("Identity sign-in was cancelled", "AbortError")
     browserApproval.value = result
-    mode.value = "connect"
     if (result.replacesIdentity) await confirmReplacement(result.approval.identity)
     await adoptApprovedApplicationDevice(result.approval, pending.request, props.profile)
     browserApproval.value = null
@@ -265,24 +264,10 @@ function cancel() {
 
       <template v-else-if="mode === 'signin'">
         <h2>Sign in</h2>
-        <p class="dialog-copy">Approve this app device in Identity. If approval did not finish, start a fresh request and try again.</p>
+        <p v-if="browserApproval" class="dialog-copy">Identity approved this app device. Review the local boards below before switching the active Identity.</p>
+        <p v-else class="dialog-copy">Approve this app device in Identity. If approval did not finish, start a fresh request and try again.</p>
         <div class="dialog-actions identity-browser-signin-actions">
           <button class="button button-primary" type="button" :disabled="busy" @click="beginBrowserSignIn">Try sign in again</button>
-        </div>
-        <p v-if="status" role="status">{{ status }}</p>
-      </template>
-
-      <template v-else>
-        <h2>Add another device</h2>
-        <p class="dialog-copy">Connect this device using an invitation created by an existing Identity device.</p>
-        <div class="identity-device-connect-form">
-          <label class="identity-device-field">Identity invitation<textarea v-model="invitationToJoin" class="technical-text" rows="3" :disabled="busy" autocomplete="off" /></label>
-          <label class="identity-device-field">Device name<input v-model="deviceLabel" :disabled="busy" maxlength="128" /></label>
-          <label class="identity-device-consent"><input v-model="allowRecoveryTransfer" type="checkbox" :disabled="busy" /><span>Allow an optional full-Identity recovery transfer. It gives full Identity authority and requires saving its file and words.</span></label>
-          <div class="identity-device-actions">
-            <button class="button button-primary" type="button" :disabled="busy || !invitationToJoin.trim() || !deviceLabel.trim()" @click="connectProfile">Connect this device</button>
-            <button class="button button-quiet" type="button" :disabled="busy" @click="mode = 'choose'">Back to Identity options</button>
-          </div>
         </div>
         <p v-if="status" role="status">{{ status }}</p>
         <section v-if="replacementIdentity" class="mesh-member-action" aria-label="Replace local Identity confirmation">
@@ -299,6 +284,21 @@ function cancel() {
             <button class="button button-quiet" type="button" @click="cancelReplacement">Cancel sign in</button>
           </div>
         </section>
+      </template>
+
+      <template v-else>
+        <h2>Add another device</h2>
+        <p class="dialog-copy">Connect this device using an invitation created by an existing Identity device.</p>
+        <div class="identity-device-connect-form">
+          <label class="identity-device-field">Identity invitation<textarea v-model="invitationToJoin" class="technical-text" rows="3" :disabled="busy" autocomplete="off" /></label>
+          <label class="identity-device-field">Device name<input v-model="deviceLabel" :disabled="busy" maxlength="128" /></label>
+          <label class="identity-device-consent"><input v-model="allowRecoveryTransfer" type="checkbox" :disabled="busy" /><span>Allow an optional full-Identity recovery transfer. It gives full Identity authority and requires saving its file and words.</span></label>
+          <div class="identity-device-actions">
+            <button class="button button-primary" type="button" :disabled="busy || !invitationToJoin.trim() || !deviceLabel.trim()" @click="connectProfile">Connect this device</button>
+            <button class="button button-quiet" type="button" :disabled="busy" @click="mode = 'choose'">Back to Identity options</button>
+          </div>
+        </div>
+        <p v-if="status" role="status">{{ status }}</p>
         <section v-if="recovery" class="mesh-member-action" aria-label="Identity recovery acknowledgment">
           <h3>Save your Identity recovery</h3>
           <p class="dialog-copy">These words and file restore full Identity authority. Once displayed, they cannot be recalled. Save the encrypted file and keep it separate from the words. This must finish before device enrollment.</p>

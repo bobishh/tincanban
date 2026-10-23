@@ -79,6 +79,9 @@ test("Given a local app device and saved board, when Identity approves browser s
 
   await page.waitForURL(new RegExp(`^${appUrl.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/identity/return`), { timeout: 30000 })
   const replacement = page.getByRole("dialog", { name: "Identity profile", exact: true })
+  await expect(replacement.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible()
+  await expect(replacement.getByRole("heading", { name: "Add another device", exact: true })).toHaveCount(0)
+  await expect(replacement.getByLabel("Identity invitation")).toHaveCount(0)
   await expect(replacement.getByRole("heading", { name: "Join Browser Login Owner?" })).toBeVisible()
   await expect(replacement.getByText("Board survives browser login")).toBeVisible()
   await replacement.getByRole("button", { name: "Download active workspace backup", exact: true }).click()
