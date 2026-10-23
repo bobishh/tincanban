@@ -19,12 +19,9 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
   await storage.updatePersonalRootForIdentity(profile.identity.personId, async current => {
     let root = initialRoot
     if (current) {
-      const { IdentityProfileConflictShadowError, reconcileIdentityProfileRootPresentation } = await import("./domain/identityProfileRoot")
+      const { reconcileIdentityProfileRootPresentation } = await import("./domain/identityProfileRoot")
       try { root = await reconcileIdentityProfileRootPresentation(current) }
-      catch (cause) {
-        if (cause instanceof IdentityProfileConflictShadowError) return current
-        throw cause
-      }
+      catch { return current }
     }
     root.workspaces ??= {}
     const created = current === null

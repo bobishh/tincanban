@@ -23,35 +23,24 @@ export async function reconcileIdentityProfileRootPresentation(root: PersonalRoo
   if (root.profileState === undefined) return structuredClone(root)
   const state = await readIdentityProfileState(root.profileState, root.identity)
   const projected = projectIdentityProfileRoot(root, state)
-  try {
-    assertPresentationShadow(projected, state)
-  } catch (cause) {
-    if (identityProfileValue(state, "name").status === "conflict" || identityProfileValue(state, "photo").status === "conflict") {
-      throw new IdentityProfileConflictShadowError({ cause })
-    }
-    throw cause
-  }
+  // Conflicting fields keep their prior shadow; strict readers still reject any shadow
+  // that is not one of the retained candidates. Unique fields can be safely repaired.
+  assertPresentationShadow(projected, state, true)
   return projected
 }
 
-export class IdentityProfileConflictShadowError extends Error {
-  constructor(options?: ErrorOptions) {
-    super("Saved identity presentation conflicts with verified profile history", options)
-    this.name = "IdentityProfileConflictShadowError"
-  }
-}
-
-function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityProfileState): void {
+function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityProfileState, allowUnresolvedConflicts = false): void {
   const name = identityProfileValue(state, "name")
-  if (!name.values.some(value => typeof value === "string" && value === root.identity.displayName)) {
+  if (!(allowUnresolvedConflicts && name.status === "conflict") &&
+      !name.values.some(value => typeof value === "string" && value === root.identity.displayName)) {
     throw new Error("Saved identity presentation does not match its profile history")
   }
   const photo = identityProfileValue(state, "photo")
-  if (root.photo !== undefined && !photo.values.some(value => typeof value !== "string" &&
+  if (!(allowUnresolvedConflicts && photo.status === "conflict") && root.photo !== undefined && !photo.values.some(value => typeof value !== "string" &&
       value.avatarData === root.photo?.avatarData)) {
     throw new Error("Saved identity presentation does not match its profile history")
   }
-  if (photo.status === "value" && root.photo === undefined) {
+  if (!(allowUnresolvedConflicts && photo.status === "conflict") && photo.status === "value" && root.photo === undefined) {
     throw new Error("Saved identity presentation does not match its profile history")
   }
 }

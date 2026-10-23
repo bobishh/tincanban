@@ -49,12 +49,16 @@ it("Given concurrent signed name and photo values, when reading the root present
   const unsignedName = structuredClone(root)
   unsignedName.identity.displayName = "Unrecorded"
   await expect(rootIdentityProfileState(unsignedName)).rejects.toThrow(/presentation.*history/i)
-  await expect(reconcileIdentityProfileRootPresentation(unsignedName)).rejects.toThrow(/presentation.*history/i)
+  const reconciledName = await reconcileIdentityProfileRootPresentation(unsignedName)
+  expect(reconciledName.identity.displayName).toBe("Unrecorded")
+  await expect(rootIdentityProfileState(reconciledName)).rejects.toThrow(/presentation.*history/i)
 
   const unsignedPhoto = structuredClone(root)
   unsignedPhoto.photo = { avatarData: null, changedAt: "2099-01-01T00:00:00.000Z" }
   await expect(rootIdentityProfileState(unsignedPhoto)).rejects.toThrow(/presentation.*history/i)
-  await expect(reconcileIdentityProfileRootPresentation(unsignedPhoto)).rejects.toThrow(/presentation.*history/i)
+  const reconciledPhoto = await reconcileIdentityProfileRootPresentation(unsignedPhoto)
+  expect(reconciledPhoto.photo).toEqual(unsignedPhoto.photo)
+  await expect(rootIdentityProfileState(reconciledPhoto)).rejects.toThrow(/presentation.*history/i)
 })
 
 it("Given a root shadow changed by device adoption, when reconciling it, then restore only uniquely signed presentation and retain all profile evidence", async () => {
@@ -84,4 +88,29 @@ it("Given a root shadow changed by device adoption, when reconciling it, then re
   expect(repaired.profileState).toEqual(originalHistory)
   await expect(rootIdentityProfileState(repaired)).resolves.toEqual(profileState)
   expect(root.profileState).toEqual(originalHistory)
+})
+
+it("Given one unique signed field and a conflicting field with an unsupported shadow, when reconciling, then repair only the unique field and leave the profile unreadable until conflict resolution", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const first = await context(owner)
+  const second = await secondContext(owner)
+  const base = emptyIdentityProfileState(owner.identity.personId)
+  const name = await createIdentityProfileOperation(first, base, owner.identity, "name", "Signed name")
+  const photoA = await createIdentityProfileOperation(first, { ...base, operations: [name] }, owner.identity, "photo", {
+    avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA", changedAt: "2001-01-01T00:00:00.000Z" })
+  const photoB = await createIdentityProfileOperation(second, { ...base, operations: [name] }, owner.identity, "photo", {
+    avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAAAA==", changedAt: "2002-01-01T00:00:00.000Z" })
+  const profileState = await mergeIdentityProfileState({ ...base, operations: [name, photoA] },
+    { ...base, operations: [name, photoB] }, owner.identity)
+  const stalePhoto = { avatarData: null, changedAt: "2099-01-01T00:00:00.000Z" }
+  const root = { ...createPersonalRoot(owner, "A".repeat(43)), profileState, photo: stalePhoto }
+  root.identity.displayName = "Portal device label"
+  const historyBefore = structuredClone(root.profileState)
+
+  const projected = await reconcileIdentityProfileRootPresentation(root)
+
+  expect(projected.identity.displayName).toBe("Signed name")
+  expect(projected.photo).toEqual(stalePhoto)
+  expect(projected.profileState).toEqual(historyBefore)
+  await expect(rootIdentityProfileState(projected)).rejects.toThrow(/presentation.*history/i)
 })
