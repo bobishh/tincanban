@@ -47,6 +47,7 @@ async function addLead(page: Page, company: string) {
   await page.getByLabel("Company *").fill(company)
   await page.getByLabel("Role *").fill("Engineer")
   await page.getByRole("button", { name: "Create item" }).click()
+  await expect(page.getByRole("button", { name: `Open ${company} — Engineer`, exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Close detail" }).click()
 }
 
@@ -114,21 +115,19 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
 
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
-    const authenticated = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
-    await authenticated
     await addLead(page, "Live lighthouse")
     await expect.poll(() => stateContains(state, "Live lighthouse"), { timeout: 25_000 }).toBe(true)
       .catch(error => { throw new Error(`${error}\nNative errors: ${serverErrors}`) })
+    await expect(page.getByRole("img", { name: "Mesh connected" })).toBeVisible()
 
     await stop(server)
     server = undefined
+    await expect(page.getByRole("img", { name: /Mesh (offline|empty)/ })).toBeVisible({ timeout: 30_000 })
     await addLead(page, "After lighthouse restart")
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
-    const reconnected = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
-    await reconnected
     await expect.poll(() => stateContains(state, "After lighthouse restart"), { timeout: 30_000 }).toBe(true)
       .catch(error => { throw new Error(`${error}\nNative errors: ${serverErrors}`) })
 
@@ -152,9 +151,7 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
     expect(nativeValidation.ok, JSON.stringify({ nativeValidation, nativeLead })).toBe(true)
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
-    const authenticatedAfterWrite = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
-    await authenticatedAfterWrite
     await expect(page.getByText("From lighthouse", { exact: false }).first()).toBeVisible({ timeout: 30_000 })
       .catch(async error => {
         await page.getByRole("button", { name: "Sync", exact: true }).click()
