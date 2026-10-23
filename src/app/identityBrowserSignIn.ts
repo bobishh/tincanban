@@ -11,8 +11,8 @@ import {
 } from "@meta-uber/mesh-identity"
 
 export const identityBrowserReturnPath = "/identity/return"
-export const identityBrowserSignInPendingKey = "tincanban.identity-browser-signin.pending.v1"
-export const identityBrowserSignInReturnKey = "tincanban.identity-browser-signin.return.v1"
+const identityBrowserSignInPendingKey = "tincanban.identity-browser-signin.pending.v1"
+const identityBrowserSignInReturnKey = "tincanban.identity-browser-signin.return.v1"
 
 export function createIdentityBrowserSignInReturn(options: {
   showPortal: Ref<boolean>
@@ -141,7 +141,7 @@ export async function verifyIdentityBrowserSignInReturn(options: {
     replacesIdentity: approval.identity.personId !== options.currentProfile.identity.personId }
 }
 
-export async function profileFingerprint(profile: LocalProfile): Promise<string> {
+async function profileFingerprint(profile: LocalProfile): Promise<string> {
   return await sha256Base64Url(new TextEncoder().encode(canonicalizeJson({
     identity: profile.identity,
     device: profile.device,
