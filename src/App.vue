@@ -507,7 +507,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   </TincanbanPageLayout>
   <BuildFooter />
   <IdentityPortalEnrollmentDialog v-if="showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
-    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" @browser-signin-completed="browserSignInReturn.complete" />
+    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
 </template>
 
 <style>

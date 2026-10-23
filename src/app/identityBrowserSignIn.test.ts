@@ -1,9 +1,73 @@
 import { describe, expect, it } from "vitest"
 import { createRecoverableIdentity, createDeviceAuthorizationApproval } from "@meta-uber/mesh-identity"
-import { createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
-  verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn } from "./identityBrowserSignIn"
+import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
+  clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
+  shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn } from "./identityBrowserSignIn"
 
 describe("Identity browser sign-in", () => {
+  it("Given a verified approval, when profile refresh is delayed, then completion stays pending until the app finishes", async () => {
+    let resolveRefresh!: () => void
+    const completion = createApprovedSignInCompletion(() => new Promise<void>(resolve => { resolveRefresh = resolve }))
+    const finished = completion.finish("/boards/current")
+
+    expect(completion.phase.value).toBe("pending")
+    expect(completion.error.value).toBeNull()
+    resolveRefresh()
+    await expect(finished).resolves.toBe(true)
+    expect(completion.phase.value).toBe("complete")
+  })
+
+  it("Given a verified approval, when parent refresh fails, then the same completion cannot retry without a fresh request", async () => {
+    const paths: string[] = []
+    const completion = createApprovedSignInCompletion(async path => {
+      paths.push(path)
+      if (paths.length === 1) throw new Error("profile refresh failed")
+    })
+
+    await expect(completion.finish("/boards/current")).resolves.toBe(false)
+    expect(completion.phase.value).toBe("failed")
+    expect(completion.error.value).toContain("Start a new sign-in")
+    await expect(completion.finish("/boards/current")).resolves.toBe(false)
+    expect(paths).toEqual(["/boards/current"])
+    completion.reset()
+    await expect(completion.finish("/boards/current")).resolves.toBe(true)
+    expect(completion.phase.value).toBe("complete")
+    expect(paths).toEqual(["/boards/current", "/boards/current"])
+  })
+
+  it("Given a cancelled sign-in, when the dialog closes, then neither pending request nor stale return can reopen it", () => {
+    const storage = new Map<string, string>()
+    const target = {
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    }
+    captureIdentityBrowserSignInReturn({ pathname: "/identity/return", hash: "#state=old&cancelled=1", storage: target })
+    storage.set("tincanban.identity-browser-signin.pending.v1", "stale-request")
+
+    clearIdentityBrowserSignIn(target)
+
+    expect(storage.size).toBe(0)
+    expect(shouldResumeIdentityBrowserSignIn("/boards/current", true, false)).toBe(false)
+    expect(shouldResumeIdentityBrowserSignIn("/identity/return", true, true)).toBe(true)
+  })
+
+  it("Given request B supersedes request A, when late callback A arrives, then B stays pending for its own state", async () => {
+    const app = (await createRecoverableIdentity("better", "App device")).profile
+    const storage = new Map<string, string>()
+    const adapter = { setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null, removeItem: (key: string) => storage.delete(key) }
+    const requestA = await createIdentityBrowserSignIn({ profile: app, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/", challenge: "a".repeat(64) })
+    writePendingIdentityBrowserSignIn(adapter, requestA.pending)
+    const requestB = await createIdentityBrowserSignIn({ profile: app, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/boards/current", challenge: "b".repeat(64) })
+    writePendingIdentityBrowserSignIn(adapter, requestB.pending)
+
+    expect(readPendingIdentityBrowserSignIn(adapter, requestA.pending.request.payload.challenge)).toBeNull()
+    expect(readPendingIdentityBrowserSignIn(adapter, requestB.pending.request.payload.challenge)?.request.payload.challenge)
+      .toBe(requestB.pending.request.payload.challenge)
+  })
+
   it("Given a guest app device and portal approval, when returning with the bound state, then verify the app key and preserve the local return path", async () => {
     const app = (await createRecoverableIdentity("better", "App device")).profile
     const owner = (await createRecoverableIdentity("better", "Portal owner")).profile
