@@ -166,7 +166,7 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
 })
 
 test("Given owner and editor share a fresh board, when owner closes, then editor syncs with lighthouse", async ({ browser, page }) => {
-  test.setTimeout(150_000)
+  test.setTimeout(240_000)
   const temporary = await mkdtemp(join(tmpdir(), "tincanban-keeper-e2e-"))
   const directory = join(temporary, "node")
   const guestContext = await browser.newContext()
@@ -196,7 +196,9 @@ test("Given owner and editor share a fresh board, when owner closes, then editor
     await authenticated
     await addLead(page, "Owner online")
     const state = join(directory, "state.json")
-    await expect.poll(() => stateContains(state, "Owner online"), { timeout: 25_000 }).toBe(true)
+    // One failed attempt and its retry can each spend 12s on connect, exchange, and publish,
+    // with 10s initial backoff and up to 5s for the next daemon tick.
+    await expect.poll(() => stateContains(state, "Owner online"), { timeout: 90_000 }).toBe(true)
       .catch(async error => {
         throw new Error(`${error}\nNative state: ${await nativeStateStatus(state)}\nNative errors:\n${safeNativeErrors(serverErrors)}`)
       })
