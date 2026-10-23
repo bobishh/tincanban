@@ -146,7 +146,7 @@ function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Pa
     discussion: conversations.cardDiscussions.value.get(item.id), moved: movedItemId.value === item.id,
     ageLevel: age?.level, ageLabel: age?.label }
 }
-const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileConflicts, profileRevision, identityNameProvided } = useMemberAvatars(app.workspace)
+const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileLoadError, retryProfileLoad, profileConflicts, profileRevision, identityNameProvided } = useMemberAvatars(app.workspace)
 function saveProfile(draft: { name?: string; avatarData?: string | null; revision?: string }) {
   if (draft.name !== undefined) return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity, { avatarData: draft.avatarData, expectedRevision: draft.revision })
   if (draft.avatarData !== undefined) return saveAvatar(draft.avatarData, draft.revision)
@@ -268,7 +268,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     >
       <template #identity>
         <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
-          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile">
+          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />
@@ -292,7 +292,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <section class="dialog dialog-window-content">
         <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
           :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
-          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :save-profile="saveProfile">
+          :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
             :workspace-title="workspaceTitle" :current-person-id="chat.personId.value" />

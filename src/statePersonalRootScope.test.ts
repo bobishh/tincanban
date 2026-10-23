@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "./domain/identity"
 import { createPersonalRoot, pruneForeignGenesisWorkspaceRefs, registerWorkspaceInRoot } from "./domain/personalRoot"
+import { resolveSigningContext } from "./domain/signingContext"
+import { createIdentityProfileOperation, emptyIdentityProfileState, observeLegacyIdentityProfile } from "./domain/identityProfileState"
+import { rootIdentityProfileState } from "./domain/identityProfileRoot"
 import type { WorkspaceStorage } from "./storage"
+import { initializePersonalRootCatalog } from "./statePersonalRoot"
 import { refreshAvailableWorkspaces, resetStateForTest } from "./statePersistence"
 import { stateRuntime } from "./stateContext"
 
@@ -64,5 +68,66 @@ describe("identity-scoped local workspace catalog", () => {
       ["stale-old-owner", "old-identity"],
     ]))).toEqual(["stale-old-owner"])
     expect(Object.keys(root.workspaces).sort()).toEqual(["not-yet-downloaded", "owned", "visitor-invite"])
+  })
+
+  it("Given a signed profile history, when initializing an existing root for an adopted device, then preserve its validated name shadow and history", async () => {
+    const owner = await bootstrapIdentity("Original name")
+    const signing = await resolveSigningContext({ profile: owner, certificates: [owner.certificate], purpose: "identity-profile-update",
+      binding: { personId: owner.identity.personId }, authorityRevision: "current", current: async () => ({
+        personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision: "current",
+      }) })
+    let profileState = await observeLegacyIdentityProfile(emptyIdentityProfileState(owner.identity.personId), owner.identity, "name", "Original name")
+    const renamed = await createIdentityProfileOperation(signing, profileState, owner.identity, "name", "Signed name")
+    profileState = { ...profileState, operations: [renamed] }
+    const picture = await createIdentityProfileOperation(signing, profileState, owner.identity, "photo", {
+      avatarData: null, changedAt: "2026-10-20T10:00:00.000Z",
+    })
+    profileState = { ...profileState, operations: [renamed, picture] }
+    const root = { ...createPersonalRoot(owner, "certificate"), profileState }
+    root.identity.displayName = "Signed name"
+    const historyBefore = structuredClone(root.profileState)
+    const adopted = { ...owner, identity: { ...owner.identity, displayName: "Portal device label" } }
+    let savedRoot = root
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
+      loadWorkspaceDoc: vi.fn(),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
+        savedRoot = (await update(savedRoot))!
+        return savedRoot
+      }),
+    } as unknown as WorkspaceStorage
+
+    await initializePersonalRootCatalog(storage, adopted)
+
+    expect(savedRoot.identity.displayName).toBe("Signed name")
+    expect(savedRoot.profileState).toEqual(historyBefore)
+  })
+
+  it("Given a conflicting profile history with an unsupported shadow, when initializing, then keep startup available without trusting or rewriting that shadow", async () => {
+    const owner = await bootstrapIdentity("Original name")
+    let profileState = await observeLegacyIdentityProfile(emptyIdentityProfileState(owner.identity.personId), owner.identity,
+      "name", "Original name")
+    profileState = await observeLegacyIdentityProfile(profileState, owner.identity, "name", "Other name")
+    const root = { ...createPersonalRoot(owner, "certificate"), profileState }
+    root.identity.displayName = "Portal device label"
+    const historyBefore = structuredClone(root.profileState)
+    const adopted = { ...owner, identity: { ...owner.identity, displayName: "Portal device label" } }
+    let savedRoot = root
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
+      loadWorkspaceDoc: vi.fn(),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
+        savedRoot = (await update(savedRoot))!
+        return savedRoot
+      }),
+    } as unknown as WorkspaceStorage
+
+    await expect(initializePersonalRootCatalog(storage, adopted)).resolves.toBeUndefined()
+
+    expect(savedRoot.identity.displayName).toBe("Portal device label")
+    expect(savedRoot.profileState).toEqual(historyBefore)
+    await expect(rootIdentityProfileState(savedRoot)).rejects.toThrow(/presentation.*history/i)
   })
 })

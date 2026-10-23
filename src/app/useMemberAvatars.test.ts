@@ -205,3 +205,34 @@ it("Given fresh unnamed provenance, when profile preferences load and explicit c
     await vi.waitFor(() => expect(avatars.identityNameProvided.value).toBe(true))
   } finally { scope.stop(); await deleteLocal(key) }
 })
+
+it("Given invalid workspace photo metadata, when Identity profile reconciliation fails, then log the phase and error class without exposing profile contents", async () => {
+  const secretFixture = '{"private-note":"must not appear in diagnostics"'
+  const errorLog = vi.spyOn(console, "error").mockImplementation(() => {})
+  const identity = { ...ownerIdentity }
+  let photoData = secretFixture
+  const doc = { id: "workspace", entities: { [`member-profile:${ownerId}`]: {
+    kind: "member_profile", personId: ownerId, get data() { return photoData },
+  } } }
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
+    getCurrentProfile: () => ({ identity }),
+    getActiveDoc: () => doc,
+    readWorkspaceDoc: async () => ({ id: "workspace", entities: {} }),
+    executeWorkspaceCommandAsync: vi.fn(async () => {}),
+  } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
+  try {
+    await vi.waitFor(() => expect(errorLog).toHaveBeenCalledWith("[tincanban.identity-profile] read failed", {
+      stage: "workspace-photo-read", errorName: "SyntaxError",
+    }))
+    expect(avatars.profileRevision.value).toBe("")
+    expect(avatars.profileLoadError.value).toMatch(/could not be verified/i)
+    expect(avatars.avatarNotice.value).toBe("")
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("must not appear in diagnostics")
+    photoData = JSON.stringify(photo)
+    await avatars.retryProfileLoad()
+    expect(avatars.profileLoadError.value).toBe("")
+    expect(avatars.profileRevision.value).not.toBe("")
+  } finally { scope.stop(); errorLog.mockRestore() }
+})

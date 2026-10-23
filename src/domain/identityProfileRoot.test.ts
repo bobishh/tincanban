@@ -4,8 +4,8 @@ import { createPersonalRoot } from "./personalRoot"
 import { resolveSigningContext } from "./signingContext"
 import { certHashDefault, createDelegatedCertificate } from "./proofs"
 import { mergeIdentityProfileState, createIdentityProfileOperation, emptyIdentityProfileState,
-  identityProfileValue } from "./identityProfileState"
-import { rootIdentityProfileState } from "./identityProfileRoot"
+  identityProfileValue, observeLegacyIdentityProfile } from "./identityProfileState"
+import { reconcileIdentityProfileRootPresentation, rootIdentityProfileState } from "./identityProfileRoot"
 
 beforeEach(resetIdentityStorageForTest)
 
@@ -49,8 +49,39 @@ it("Given concurrent signed name and photo values, when reading the root present
   const unsignedName = structuredClone(root)
   unsignedName.identity.displayName = "Unrecorded"
   await expect(rootIdentityProfileState(unsignedName)).rejects.toThrow(/presentation.*history/i)
+  await expect(reconcileIdentityProfileRootPresentation(unsignedName)).rejects.toThrow(/presentation.*history/i)
 
   const unsignedPhoto = structuredClone(root)
   unsignedPhoto.photo = { avatarData: null, changedAt: "2099-01-01T00:00:00.000Z" }
   await expect(rootIdentityProfileState(unsignedPhoto)).rejects.toThrow(/presentation.*history/i)
+  await expect(reconcileIdentityProfileRootPresentation(unsignedPhoto)).rejects.toThrow(/presentation.*history/i)
+})
+
+it("Given a root shadow changed by device adoption, when reconciling it, then restore only uniquely signed presentation and retain all profile evidence", async () => {
+  const owner = await bootstrapIdentity("Original")
+  const context = await resolveSigningContext({ profile: owner, certificates: [owner.certificate], purpose: "identity-profile-update",
+    binding: { personId: owner.identity.personId }, authorityRevision: "current", current: async () => ({
+      personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision: "current",
+    }) })
+  let profileState = await observeLegacyIdentityProfile(emptyIdentityProfileState(owner.identity.personId), owner.identity,
+    "name", "Original")
+  const renamed = await createIdentityProfileOperation(context, profileState, owner.identity, "name", "Signed name")
+  profileState = { ...profileState, operations: [renamed] }
+  const pictured = await createIdentityProfileOperation(context, profileState, owner.identity, "photo", {
+    avatarData: null, changedAt: "2026-10-20T10:00:00.000Z",
+  })
+  profileState = { ...profileState, operations: [renamed, pictured] }
+  const root = { ...createPersonalRoot(owner, "A".repeat(43)), profileState }
+  root.identity.displayName = "Portal device label"
+  const originalHistory = structuredClone(root.profileState)
+
+  const repaired = await reconcileIdentityProfileRootPresentation(root)
+
+  expect(repaired.identity.personId).toBe(owner.identity.personId)
+  expect(repaired.identity.publicKey).toBe(owner.identity.publicKey)
+  expect(repaired.identity.displayName).toBe("Signed name")
+  expect(repaired.photo).toEqual({ avatarData: null, changedAt: "2026-10-20T10:00:00.000Z" })
+  expect(repaired.profileState).toEqual(originalHistory)
+  await expect(rootIdentityProfileState(repaired)).resolves.toEqual(profileState)
+  expect(root.profileState).toEqual(originalHistory)
 })

@@ -18,6 +18,29 @@ export async function rootIdentityProfileState(root: PersonalRootDocumentV1): Pr
   return state
 }
 
+/** Rebuild derived identity/photo shadows from verified signed history without changing that history. */
+export async function reconcileIdentityProfileRootPresentation(root: PersonalRootDocumentV1): Promise<PersonalRootDocumentV1> {
+  if (root.profileState === undefined) return structuredClone(root)
+  const state = await readIdentityProfileState(root.profileState, root.identity)
+  const projected = projectIdentityProfileRoot(root, state)
+  try {
+    assertPresentationShadow(projected, state)
+  } catch (cause) {
+    if (identityProfileValue(state, "name").status === "conflict" || identityProfileValue(state, "photo").status === "conflict") {
+      throw new IdentityProfileConflictShadowError({ cause })
+    }
+    throw cause
+  }
+  return projected
+}
+
+export class IdentityProfileConflictShadowError extends Error {
+  constructor(options?: ErrorOptions) {
+    super("Saved identity presentation conflicts with verified profile history", options)
+    this.name = "IdentityProfileConflictShadowError"
+  }
+}
+
 function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityProfileState): void {
   const name = identityProfileValue(state, "name")
   if (!name.values.some(value => typeof value === "string" && value === root.identity.displayName)) {

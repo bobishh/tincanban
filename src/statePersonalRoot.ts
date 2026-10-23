@@ -16,8 +16,16 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
   }
   const certificate = new TextEncoder().encode(JSON.stringify(profile.certificate))
   const initialRoot = createPersonalRoot(profile, await sha256Base64Url(certificate))
-  await storage.updatePersonalRootForIdentity(profile.identity.personId, current => {
-    const root = current ?? initialRoot
+  await storage.updatePersonalRootForIdentity(profile.identity.personId, async current => {
+    let root = initialRoot
+    if (current) {
+      const { IdentityProfileConflictShadowError, reconcileIdentityProfileRootPresentation } = await import("./domain/identityProfileRoot")
+      try { root = await reconcileIdentityProfileRootPresentation(current) }
+      catch (cause) {
+        if (cause instanceof IdentityProfileConflictShadowError) return current
+        throw cause
+      }
+    }
     root.workspaces ??= {}
     const created = current === null
     const newlyAdded = created
@@ -26,9 +34,9 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
     const removedStaleGenesisRefs = !created && root.identity.personId === profile.identity.personId
       ? pruneForeignGenesisWorkspaceRefs(root, ownerById).length > 0
       : false
-    const nameChanged = root.identity.personId === profile.identity.personId && root.identity.displayName !== profile.identity.displayName
-    if (nameChanged) root.identity.displayName = profile.identity.displayName
-    return created || newlyAdded.length > 0 || removedStaleGenesisRefs || nameChanged ? root : current
+    const presentationRepaired = current !== null && (root.identity.displayName !== current.identity.displayName ||
+      JSON.stringify(root.photo) !== JSON.stringify(current.photo))
+    return created || newlyAdded.length > 0 || removedStaleGenesisRefs || presentationRepaired ? root : current
   })
 }
 

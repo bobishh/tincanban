@@ -15,6 +15,8 @@ const props = withDefaults(defineProps<{
   nameOptions?: string[]
   photoOptions?: PhotoOption[]
   profileRevision?: string
+  profileLoadError?: string
+  retryProfileLoad?: () => Promise<void>
   saveProfile?: (draft: ProfileDraft) => Promise<void>
 }>(), { nameProvided: true })
 const name = ref(props.nameProvided ? props.displayName : "")
@@ -26,7 +28,7 @@ const draftRevision = ref<string | undefined>(undefined)
 const revisionCaptured = ref(false)
 const saved = ref(false)
 const error = ref("")
-const profilePending = () => Boolean(props.saveProfile && !props.profileRevision)
+const profilePending = () => Boolean(props.saveProfile && !props.profileRevision && !props.profileLoadError)
 watch(() => [props.displayName, props.nameProvided] as const, ([value, provided]) => { if (!nameDirty.value) name.value = provided ? value : "" })
 
 function captureCurrentRevision() {
@@ -105,13 +107,17 @@ async function save() {
 <template>
   <section class="identity-settings ui-stack" aria-label="Identity settings">
     <form class="identity-profile" role="group" aria-label="Your profile" @submit.prevent="save">
-      <IdentityPhotoPanel :workspace-id="workspaceId" :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending()" @update:avatar="editPhoto" />
+      <IdentityPhotoPanel :workspace-id="workspaceId" :avatar-data="avatarDraft === undefined ? avatarData : avatarDraft ?? undefined" :disabled="saving || profilePending() || Boolean(profileLoadError)" @update:avatar="editPhoto" />
       <div class="identity-profile-fields">
-        <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending()" @input="editName" /></label>
+        <label>Name<input v-model="name" maxlength="48" :disabled="saving || profilePending() || Boolean(profileLoadError)" @input="editName" /></label>
       </div>
       <div class="identity-profile-actions">
-        <button class="button button-primary" type="submit" :disabled="saving || profilePending() || (!name.trim() && avatarDraft === undefined) || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>
+        <button class="button button-primary" type="submit" :disabled="saving || profilePending() || Boolean(profileLoadError) || (!name.trim() && avatarDraft === undefined) || ((nameOptions?.length ?? 0) > 1 && !nameDirty)">{{ saving ? 'Saving…' : 'Save profile' }}</button>
         <p v-if="profilePending()" class="dialog-copy" role="status">Loading saved profile…</p>
+        <div v-if="profileLoadError" class="sync-error" role="alert">
+          <p>{{ profileLoadError }}</p>
+          <button v-if="retryProfileLoad" class="button button-small" type="button" :disabled="saving" @click="retryProfileLoad">Retry profile load</button>
+        </div>
         <p v-if="saved && !profilePending()" class="dialog-copy" role="status">Profile saved.</p>
       </div>
       <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
@@ -119,12 +125,12 @@ async function save() {
     <section v-if="(nameOptions?.length ?? 0) > 1 || (photoOptions?.length ?? 0) > 1" class="profile-conflicts" aria-label="Profile conflicts">
       <p class="dialog-copy">Conflicting saved profile details. Choose which name and photo to keep.</p>
       <div v-if="nameOptions?.length" class="profile-choices" role="group" aria-label="Identity name choices">
-        <button v-for="option in nameOptions" :key="option" class="button button-quiet" type="button" :disabled="saving || profilePending()"
+        <button v-for="option in nameOptions" :key="option" class="button button-quiet" type="button" :disabled="saving || profilePending() || Boolean(profileLoadError)"
           :aria-pressed="name === option" @click="chooseName(option)">Choose name: {{ option }}</button>
       </div>
       <div v-if="photoOptions?.length" class="profile-choices" role="group" aria-label="Identity photo choices">
         <button v-for="(option, index) in photoOptions" :key="photoKey(option)" class="button button-quiet profile-photo-choice" type="button"
-          :disabled="saving || profilePending()" :aria-label="`Choose photo: ${option.avatarData ? `Photo ${index + 1}` : 'No photo'}`"
+          :disabled="saving || profilePending() || Boolean(profileLoadError)" :aria-label="`Choose photo: ${option.avatarData ? `Photo ${index + 1}` : 'No photo'}`"
           :aria-pressed="selectedPhotoKey === photoKey(option)" @click="choosePhoto(option)">
           <img v-if="option.avatarData" :src="option.avatarData" alt="Profile photo option" />
           <span v-else>No photo</span>
@@ -142,6 +148,8 @@ async function save() {
 .identity-profile-fields { display: grid; gap: var(--field-gap); width: 100%; max-width: var(--form-field-max); }
 .identity-profile-actions { grid-column: 1 / -1; display: grid; gap: var(--field-gap); justify-items: start; padding-top: var(--space-4); border-top: 1px solid var(--soft); }
 .identity-profile-actions p { margin: 0; }
+.identity-profile-actions .sync-error { display: grid; gap: var(--space-2); margin: 0; }
+.identity-profile-actions .sync-error p { margin: 0; }
 .identity-profile-fields label { display: grid; gap: var(--space-2); min-width: 0; }
 .identity-profile input { box-sizing: border-box; width: 100%; height: var(--control-size); padding: var(--space-2) var(--space-3); }
 .identity-profile .button { justify-self: start; }
