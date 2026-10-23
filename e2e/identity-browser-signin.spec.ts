@@ -90,18 +90,27 @@ test("Given a local app device and saved board, when Identity approves browser s
   await expect(replacement).toHaveCount(0)
   await expect.poll(async () => await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(identityId)
   await expect(page.getByRole("region", { name: "Board survives browser login", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  const identitySettings = page.getByRole("group", { name: "Your profile", exact: true })
+  await expect(identitySettings.getByRole("textbox", { name: "Name", exact: true })).toBeEnabled()
+  await expect(identitySettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "Dismiss", exact: true }).click()
   const after = await page.evaluate(async personId => {
     const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
     const previous = await (await import("/src/localDb.ts")).readLocal(`tincanban.local_profile.v1.backup.${personId}`)
     const persisted = await (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1")
+    const rootsRaw = await (await import("/src/localDb.ts")).readLocal("tincanban.v1.personal_roots")
+    const rootPeople = Object.values(JSON.parse(rootsRaw ?? "{}") as Record<string, { identity: { personId: string } }>).map(root => root.identity.personId)
     return { personId: profile.identity.personId, rootKey: Boolean(profile.privateKeys.identityPrivateKey), deviceId: profile.device.deviceId,
       backedUpPersonId: previous ? JSON.parse(previous).identity.personId : null,
-      persistedPersonId: persisted ? JSON.parse(persisted).identity.personId : null }
+      persistedPersonId: persisted ? JSON.parse(persisted).identity.personId : null, rootPeople }
   }, localBefore)
   expect(after.backedUpPersonId).toBe(localBefore)
   expect(after.persistedPersonId).toBe(identityId)
   expect(after.personId).toBe(identityId)
   expect(after.rootKey).toBe(false)
   expect(after.deviceId).not.toBe("")
+  expect(after.rootPeople).toContain(localBefore)
+  expect(after.rootPeople).toContain(identityId)
   await portal.close()
 })

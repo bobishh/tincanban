@@ -6,6 +6,8 @@ import type { PublicIdentity, WorkspaceDocumentV2 } from "../domain/model"
 import { connectIdentityProfile, recoveryFileJson, startIdentityProfileHost, type IdentityEnrollmentRequest } from "../app/identityPortalEnrollment"
 import { createIdentityBrowserSignIn, identityBrowserReturnPath, readIdentityBrowserSignInReturn, readPendingIdentityBrowserSignIn, verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn, type IdentityBrowserSignInResult } from "../app/identityBrowserSignIn"
 import { adoptApprovedApplicationDevice } from "../domain/identity"
+import { initializePersonalRootCatalog } from "../statePersonalRoot"
+import { defaultStorage } from "../storage"
 import type { IdentityEnrollmentRecovery } from "@meta-uber/mesh-runtime"
 
 const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
@@ -70,7 +72,8 @@ async function finishBrowserSignInReturn() {
     if (result.kind === "cancelled") throw new DOMException("Identity sign-in was cancelled", "AbortError")
     browserApproval.value = result
     if (result.replacesIdentity) await confirmReplacement(result.approval.identity)
-    await adoptApprovedApplicationDevice(result.approval, pending.request, props.profile)
+    const adopted = await adoptApprovedApplicationDevice(result.approval, pending.request, props.profile)
+    await initializePersonalRootCatalog(defaultStorage, adopted)
     browserApproval.value = null
     emit("browser-signin-completed", pending.returnPath)
   } catch (cause) {
