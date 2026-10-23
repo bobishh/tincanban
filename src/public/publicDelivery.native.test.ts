@@ -14,7 +14,8 @@ import { createAutomationWorkspaceGrant, createWorkspaceGrant } from "../domain/
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { recordGenesisAuthority } from "../sync/changeAuthorization"
-import { publishBoardSnapshot, withdrawPublicBoard } from "./publicationClient"
+import { publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoard } from "./publicationClient"
+import { forkWorkspaceDocumentV2 } from "../domain/workspaceBundle"
 import { deliverPublicBoard, type PublicDeliveryCommand } from "./publicDelivery"
 import type { PublicBoardDeliveryPolicyEvidence } from "./publicDeliveryPolicy"
 import { createBrowserBoardPublication as createPublicBoardPublication } from "../app/publicBoardPublication"
@@ -115,6 +116,39 @@ async function stopRusty(child: ChildProcess): Promise<void> {
   child.kill("SIGKILL")
   if (!await exited(2_000)) throw new Error("Rusty process did not exit; preserving its state directory")
 }
+
+test("Given a published board owned by another identity, when imported under the current identity, then management status uses the copied board resource ID", async () => {
+  await initializeNativeAutomerge()
+  stubWindow("http://localhost")
+  const sourceOwner = await bootstrapIdentity("Published board owner")
+  const service = await startRusty(sourceOwner)
+  try {
+    const workspaceId = crypto.randomUUID()
+    const workspace = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(workspaceId, "Published fixture", sourceOwner.identity.personId, "blank"))
+    const board = Object.values(workspace.entities).find(entity => entity.kind === "board")!
+    stubWindow(service.origin)
+    await publishBoardSnapshot({ origin: service.origin, boardId: board.id, workspaceId, document: workspace, profile: sourceOwner,
+      action: "publish", expectedRevision: 0 })
+
+    resetIdentityStorageForTest()
+    const importer = await bootstrapIdentity("Imported board owner")
+    await expect(readPublicBoardManagementState({ origin: service.origin, boardId: board.id, profile: importer }))
+      .rejects.toThrow(/owner|identity|confirm/i)
+
+    const imported = forkWorkspaceDocumentV2(workspace, crypto.randomUUID(), importer.identity.personId)
+    expect(imported.ok).toBe(true)
+    if (!imported.ok) return
+    const importedBoard = Object.values(imported.value.entities).find(entity => entity.kind === "board")!
+    expect(importedBoard.id).not.toBe(board.id)
+    await expect(readPublicBoardManagementState({ origin: service.origin, boardId: importedBoard.id, profile: importer }))
+      .resolves.toMatchObject({ revision: 0, published: false, availability: "missing" })
+    expect((await fetch(`${service.origin}/v1/public/boards/${board.id}`)).status).toBe(200)
+    expect((await fetch(`${service.origin}/v1/public/boards/${importedBoard.id}`)).status).toBe(404)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.directory, { recursive: true, force: true })
+  }
+}, 60_000)
 
 test("Given owner-approved editor and automation grants, when delivery runs without the owner, then content binds to the projection, retry is idempotent, revocation blocks writes, and withdrawal stays withdrawn", async () => {
   await initializeNativeAutomerge()

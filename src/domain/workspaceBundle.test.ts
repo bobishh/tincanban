@@ -3,6 +3,7 @@ import { beforeAll, expect, it } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { strToU8, unzipSync, zipSync } from "fflate"
 import { createWorkspaceDoc } from "../test/boardFixture"
+import { hasEntityKind } from "./model"
 import { exportWorkspaceBundleV2, forkWorkspaceDocumentV2, readWorkspaceBundleV2 } from "./workspaceBundle"
 import type { WorkspaceDocumentV2 } from "./model"
 import { assertWorkspaceTransition } from "./permissions"
@@ -39,7 +40,7 @@ it("imports as a fresh locally owned Automerge board without source authority or
   expect(copied.value.id).toBe("new-workspace")
   expect(copied.value.ownerPersonId).toBe("local-owner")
   expect(copied.value.migration).toBeNull()
-  expect(copied.value.entities).toEqual(source.entities)
+  expect(copied.value.entities).toEqual(importedContent(source.entities, copied.value.entities))
   expect(Automerge.getAllChanges(copied.value)).toHaveLength(1)
   expect(Automerge.getAllChanges(source).length).toBeGreaterThan(1)
 
@@ -48,6 +49,27 @@ it("imports as a fresh locally owned Automerge board without source authority or
   expect(changedCopy.title).toBe("Copy only")
   expect(source.ownerPersonId).toBe("source-owner")
   expect(forkWorkspaceDocumentV2(source, source.id, "local-owner")).toMatchObject({ ok: false })
+})
+
+it("Given a board with an existing Rusty publication, when imported as a new board, then use a fresh public resource ID and preserve source content", () => {
+  const source = Automerge.from(createWorkspaceDoc("source-workspace", "Source board", "source-owner", "blank"))
+  const sourceBoard = Object.values(source.entities).find(entity => hasEntityKind(entity, "board"))!
+  const sourceChildren = Object.values(source.entities).filter(entity => entity.placement.parentId === sourceBoard.id)
+
+  const copied = forkWorkspaceDocumentV2(source, "new-workspace", "local-owner")
+  expect(copied.ok).toBe(true)
+  if (!copied.ok) return
+
+  const importedBoard = Object.values(copied.value.entities).find(entity => hasEntityKind(entity, "board"))!
+  expect(importedBoard.id).not.toBe(sourceBoard.id)
+  expect(copied.value.entities[sourceBoard.id]).toBeUndefined()
+  expect(importedBoard).toMatchObject({ id: importedBoard.id, kind: "board", title: sourceBoard.title })
+  for (const child of sourceChildren) {
+    expect(copied.value.entities[child.id]).toMatchObject({ id: child.id, placement: { parentId: importedBoard.id } })
+  }
+  expect(source.entities[sourceBoard.id]).toEqual(sourceBoard)
+  expect(source.ownerPersonId).toBe("source-owner")
+  expect(copied.value.ownerPersonId).toBe("local-owner")
 })
 
 it("Given an exported board contains participant profiles, when imported as a new board, then its content can be admitted under the new owner", async () => {
@@ -71,8 +93,7 @@ it("Given an exported board contains participant profiles, when imported as a ne
   const restored = Automerge.load<WorkspaceDocumentV2>(Automerge.save(copied.value))
   expect(() => assertWorkspaceTransition("owner", Automerge.view(restored, []), restored, "local-owner")).not.toThrow()
   expect(Object.values(restored.entities).some(entity => entity.kind === "member_profile")).toBe(false)
-  expect(restored.entities).toEqual(Object.fromEntries(Object.entries(source.entities)
-    .filter(([, entity]) => entity.kind !== "member_profile")))
+  expect(restored.entities).toEqual(importedContent(source.entities, restored.entities))
   expect(Object.values(source.entities).filter(entity => entity.kind === "member_profile")).toHaveLength(3)
 })
 
@@ -132,4 +153,18 @@ function documentWithAttachment(): Automerge.Doc<WorkspaceDocumentV2> {
       file: { type: "blob", sha256: "attachment-hash", byteLength: 16, mimeType: "text/plain", fileName: "note.txt" },
     }
   })
+}
+
+function importedContent(source: WorkspaceDocumentV2["entities"], imported: WorkspaceDocumentV2["entities"]): WorkspaceDocumentV2["entities"] {
+  const sourceBoards = Object.values(source).filter(entity => hasEntityKind(entity, "board"))
+  const importedBoards = Object.values(imported).filter(entity => hasEntityKind(entity, "board"))
+  const boardIds = new Map(sourceBoards.map((board, index) => [board.id, importedBoards[index]!.id]))
+  return Object.fromEntries(Object.entries(source)
+    .filter(([, entity]) => !hasEntityKind(entity, "member_profile"))
+    .map(([id, entity]) => {
+      const copy = structuredClone(entity)
+      copy.id = boardIds.get(id) ?? id
+      if (copy.placement.parentId) copy.placement.parentId = boardIds.get(copy.placement.parentId) ?? copy.placement.parentId
+      return [boardIds.get(id) ?? id, copy]
+    })) as WorkspaceDocumentV2["entities"]
 }

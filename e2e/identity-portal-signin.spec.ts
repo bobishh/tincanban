@@ -42,10 +42,10 @@ test("Given local identity P and board, when replacing P with portal identity Q,
     return value
   }
 
-  async function openSignIn(invite: string) {
+  async function openAddDevice(invite: string) {
     await page.getByRole("button", { name: "Identity", exact: true }).click()
     const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
+    await dialog.getByRole("button", { name: "Add another device", exact: true }).click()
     await dialog.getByLabel("Identity invitation").fill(invite)
     const samePerson = dialog.locator('input[name="replace-same-person"]')
     if (await samePerson.count()) await samePerson.check()
@@ -169,7 +169,7 @@ test("Given local identity P and board, when replacing P with portal identity Q,
     const boardBefore = await boardStorageHash(workspaceId)
     expect(boardBefore.count).toBeGreaterThan(0)
 
-    const firstDialog = await openSignIn(await issueInvite())
+    const firstDialog = await openAddDevice(await issueInvite())
     await approveWithoutRecovery()
     const firstPrompt = await replacementPrompt(qId)
     await firstPrompt.getByRole("button", { name: "Cancel sign in", exact: true }).click()
@@ -180,7 +180,7 @@ test("Given local identity P and board, when replacing P with portal identity Q,
     expect(await boardStorageHash(workspaceId)).toEqual(boardBefore)
     await expect(page.getByRole("button", { name: "Open Guest-only private card", exact: true })).toBeVisible()
 
-    const secondDialog = await openSignIn(await issueInvite())
+    const secondDialog = await openAddDevice(await issueInvite())
     await approveWithoutRecovery()
     const prompt = await replacementPrompt(qId)
     await prompt.locator('input[type="checkbox"]').check()

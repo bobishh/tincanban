@@ -51,8 +51,30 @@ export function forkWorkspaceDocumentV2(source: WorkspaceDocumentV2, workspaceId
   if (!workspaceId || !ownerPersonId) return { ok: false, error: { code: "invalid_input", message: "A workspace id and owner are required" } }
   if (workspaceId === source.id) return { ok: false, error: { code: "conflict", message: "Imported workspaces must use a new id" } }
   const content = Object.fromEntries(Object.entries(source.entities).filter(([, entity]) => !hasEntityKind(entity, "member_profile")))
-  const copied: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId, title: source.title, archivedAt: null, ownerPersonId, entities: JSON.parse(JSON.stringify(content)) as WorkspaceDocumentV2["entities"], migration: null }
+  const reservedIds = new Set([workspaceId, ...Object.keys(content)])
+  const boardIds = new Map<string, string>()
+  for (const [id, entity] of Object.entries(content)) {
+    if (hasEntityKind(entity, "board")) {
+      const nextId = uniqueBoardId(reservedIds)
+      boardIds.set(id, nextId)
+      reservedIds.add(nextId)
+    }
+  }
+  const entities = Object.fromEntries(Object.entries(content).map(([id, entity]) => {
+    const copied = JSON.parse(JSON.stringify(entity)) as typeof entity
+    const nextId = boardIds.get(id) ?? id
+    copied.id = nextId
+    if (copied.placement.parentId) copied.placement.parentId = boardIds.get(copied.placement.parentId) ?? copied.placement.parentId
+    return [nextId, copied]
+  })) as WorkspaceDocumentV2["entities"]
+  const copied: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId, title: source.title, archivedAt: null, ownerPersonId, entities, migration: null }
   return { ok: true, value: Automerge.from(copied) }
+}
+
+function uniqueBoardId(reservedIds: Set<string>): string {
+  let id = crypto.randomUUID()
+  while (reservedIds.has(id)) id = crypto.randomUUID()
+  return id
 }
 
 async function bundleBlobs(doc: WorkspaceDocumentV2, readBlob?: ReadBundleBlob) {

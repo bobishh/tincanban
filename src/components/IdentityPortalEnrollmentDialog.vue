@@ -12,7 +12,7 @@ const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: 
   workspaces: Array<{ id: string; title: string }>; readWorkspaceDoc(id: string): Promise<WorkspaceDocumentV2>;
   exportCurrentWorkspace(): Promise<void> }>()
 const emit = defineEmits<{ close: []; completed: []; "browser-signin-completed": [returnPath: string] }>()
-const mode = ref<"choose" | "create" | "connect">("choose")
+const mode = ref<"choose" | "create" | "connect" | "signin">("choose")
 const inviteUrl = ref("")
 const invitationToJoin = ref("")
 const deviceLabel = ref("This device")
@@ -29,6 +29,7 @@ const affectedBoards = ref<string[]>([])
 const unavailableWorkspaceCount = ref(0)
 const replacementConfirmed = ref(false)
 const browserApproval = ref<Extract<IdentityBrowserSignInResult, { kind: "approved" }> | null>(null)
+const browserSignInReturnPath = ref<string | null>(null)
 let resolveRequest: ((decision: "approve" | "reject") => void) | undefined
 let resolveRecovery: (() => void) | undefined
 let rejectRecovery: ((reason: Error) => void) | undefined
@@ -41,11 +42,13 @@ onMounted(() => {
 })
 
 async function beginBrowserSignIn() {
+  mode.value = "signin"
   error.value = ""
   try {
-    const returnPath = `${window.location.pathname}${window.location.search}`
+    const returnPath = browserSignInReturnPath.value ?? `${window.location.pathname}${window.location.search}`
     const { pending, portalUrl } = await createIdentityBrowserSignIn({ profile: props.profile,
       portalOrigin: props.portalOrigin, applicationOrigin: window.location.origin, returnPath })
+    browserSignInReturnPath.value = pending.returnPath
     writePendingIdentityBrowserSignIn(window.sessionStorage, pending)
     window.location.assign(portalUrl)
   } catch (cause) {
@@ -54,27 +57,40 @@ async function beginBrowserSignIn() {
 }
 
 async function finishBrowserSignInReturn() {
-  mode.value = "connect"
+  mode.value = "signin"
   busy.value = true
   const hash = readIdentityBrowserSignInReturn(window.sessionStorage) ?? window.location.hash
   window.history.replaceState(window.history.state, "", `${identityBrowserReturnPath}${window.location.search}`)
   try {
     const pending = readPendingIdentityBrowserSignIn(window.sessionStorage)
     if (!pending) throw new Error("Identity sign-in request expired or was already used. Start again.")
+    browserSignInReturnPath.value = pending.returnPath
     const result = await verifyIdentityBrowserSignInReturn({ hash, pending, currentProfile: props.profile,
       applicationOrigin: window.location.origin })
     if (result.kind === "cancelled") throw new DOMException("Identity sign-in was cancelled", "AbortError")
     browserApproval.value = result
+    mode.value = "connect"
     if (result.replacesIdentity) await confirmReplacement(result.approval.identity)
     await adoptApprovedApplicationDevice(result.approval, pending.request, props.profile)
     browserApproval.value = null
     emit("browser-signin-completed", pending.returnPath)
   } catch (cause) {
     browserApproval.value = null
+    mode.value = "signin"
     error.value = cause instanceof Error ? cause.message : "Identity sign-in failed"
   } finally {
     busy.value = false
   }
+}
+
+function cancelBrowserSignIn() {
+  const pending = readPendingIdentityBrowserSignIn(window.sessionStorage)
+  const returnPath = browserSignInReturnPath.value ?? pending?.returnPath
+  if (returnPath) window.history.replaceState(window.history.state, "", returnPath)
+  browserSignInReturnPath.value = null
+  error.value = ""
+  status.value = ""
+  emit("close")
 }
 
 async function confirmReplacement(identity: Pick<PublicIdentity, "personId" | "displayName">) {
@@ -247,13 +263,27 @@ function cancel() {
         </section>
       </template>
 
+      <template v-else-if="mode === 'signin'">
+        <h2>Sign in</h2>
+        <p class="dialog-copy">Approve this app device in Identity. If approval did not finish, start a fresh request and try again.</p>
+        <div class="dialog-actions identity-browser-signin-actions">
+          <button class="button button-primary" type="button" :disabled="busy" @click="beginBrowserSignIn">Try sign in again</button>
+        </div>
+        <p v-if="status" role="status">{{ status }}</p>
+      </template>
+
       <template v-else>
         <h2>Add another device</h2>
-        <p class="dialog-copy">Connect this device using an invitation created by an existing Identity device. Sign in uses the separate browser authorization flow.</p>
-        <label>Identity invitation<textarea v-model="invitationToJoin" class="technical-text" rows="3" :disabled="busy" autocomplete="off" /></label>
-        <label>Device name<input v-model="deviceLabel" :disabled="busy" maxlength="128" /></label>
-        <label><input v-model="allowRecoveryTransfer" type="checkbox" :disabled="busy" /> Allow an optional full-Identity recovery transfer. It gives full Identity authority and requires saving its file and words.</label>
-        <button class="button button-primary" type="button" :disabled="busy || !invitationToJoin.trim() || !deviceLabel.trim()" @click="connectProfile">Connect this device</button>
+        <p class="dialog-copy">Connect this device using an invitation created by an existing Identity device.</p>
+        <div class="identity-device-connect-form">
+          <label class="identity-device-field">Identity invitation<textarea v-model="invitationToJoin" class="technical-text" rows="3" :disabled="busy" autocomplete="off" /></label>
+          <label class="identity-device-field">Device name<input v-model="deviceLabel" :disabled="busy" maxlength="128" /></label>
+          <label class="identity-device-consent"><input v-model="allowRecoveryTransfer" type="checkbox" :disabled="busy" /><span>Allow an optional full-Identity recovery transfer. It gives full Identity authority and requires saving its file and words.</span></label>
+          <div class="identity-device-actions">
+            <button class="button button-primary" type="button" :disabled="busy || !invitationToJoin.trim() || !deviceLabel.trim()" @click="connectProfile">Connect this device</button>
+            <button class="button button-quiet" type="button" :disabled="busy" @click="mode = 'choose'">Back to Identity options</button>
+          </div>
+        </div>
         <p v-if="status" role="status">{{ status }}</p>
         <section v-if="replacementIdentity" class="mesh-member-action" aria-label="Replace local Identity confirmation">
           <h3>Join {{ replacementIdentity.displayName }}?</h3>
@@ -282,8 +312,66 @@ function cancel() {
       <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
       <div class="dialog-actions">
         <button v-if="busy" class="button button-quiet" type="button" @click="cancel">Cancel</button>
+        <button v-else-if="mode === 'signin'" class="button button-quiet" type="button" @click="cancelBrowserSignIn">Cancel sign in</button>
         <button v-else class="button button-quiet" type="button" @click="emit('close')">Close</button>
       </div>
     </section>
   </DialogWindow>
 </template>
+
+<style scoped>
+.identity-device-connect-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.identity-device-field {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted);
+  font: 700 .8rem/1.4 var(--site-font-sans);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.identity-device-field input,
+.identity-device-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.identity-device-field textarea { resize: vertical; }
+
+.identity-device-consent {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--muted);
+  font: 400 .9rem/1.45 var(--site-font-sans);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.identity-device-consent input {
+  width: 18px;
+  height: 18px;
+  margin-block-start: var(--space-1);
+}
+
+.identity-device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.identity-browser-signin-actions { justify-content: flex-start; }
+</style>
