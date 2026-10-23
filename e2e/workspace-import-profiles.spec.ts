@@ -28,8 +28,24 @@ test("Given a board file contains old participant profiles, when imported on a n
     name: "old-board.tincanban", mimeType: "application/vnd.tincanban+zip", buffer: Buffer.from(bundle),
   })
   await expect(page.getByRole("button", { name: /^Open Retained card(?:\.|$)/ })).toBeVisible()
+  await expect(page.getByRole("status").filter({ hasText: "Imported as a new board" })).toBeVisible()
+  const saved = await page.evaluate(async () => {
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
+    await state.whenReady()
+    const doc = state.getActiveDoc()!
+    const activeId = await (await import("/src/localDb.ts")).readLocal("tincanban.active_workspace_id")
+    const root = await (await import("/src/storage.ts")).defaultStorage.loadPersonalRoot()
+    return { documentId: doc.id, activeId, registered: Boolean(root?.workspaces[doc.id]) }
+  })
+  expect(saved.documentId).toBeTruthy()
+  expect(saved.activeId).toBe(saved.documentId)
+  expect(saved.registered).toBe(true)
   await page.reload()
   await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
+  await page.evaluate(async () => {
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
+    await state.whenReady()
+  })
   await expect(page.getByRole("button", { name: /^Open Retained card(?:\.|$)/ })).toBeVisible()
   const restored = await page.evaluate(async () => {
     const state = (await import("/src/test/stateFixture.ts")).useTincanban()
