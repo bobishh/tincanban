@@ -98,6 +98,39 @@ for (const role of ["visitor", "editor"] as const) {
   })
 }
 
+test("Given a first-time guest with no Identity account, when they accept a fresh editor invitation, then their local identity joins as the invited person", async ({ page, browser }) => {
+  test.setTimeout(60_000)
+  const browserErrors: string[] = []
+  await page.goto("/")
+  await ensureJobSearchWorkspace(page)
+  await page.getByRole("button", { name: "Sync", exact: true }).click()
+  const host = page.getByRole("dialog", { name: "Device sync" })
+  await host.getByRole("button", { name: "Add someone" }).click()
+  await host.getByRole("button", { name: "Generate link" }).click()
+
+  const context = await browser.newContext()
+  try {
+    const guest = await context.newPage()
+    guest.on("pageerror", error => browserErrors.push(error.message))
+    await guest.goto(await host.getByLabel("Pairing link").inputValue())
+    const dialog = guest.getByRole("dialog", { name: "Device sync" })
+    await expect(dialog.getByText(/You have been invited to join/)).toBeVisible()
+    const guestProfile = JSON.parse(await guest.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!)
+    expect(guestProfile).toBeTruthy()
+    const ownerProfile = JSON.parse(await page.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!)
+    expect(guestProfile.identity.personId).not.toBe(ownerProfile.identity.personId)
+    await dialog.getByRole("button", { name: "Accept and join" }).click()
+    await expect(host.getByRole("region", { name: "Access request" })).toContainText("wants to join")
+    await host.getByLabel("Participant role").selectOption("editor")
+    await host.getByRole("button", { name: "Approve access" }).click()
+    await expect(dialog.getByText(/Connected to/)).toBeVisible({ timeout: 25_000 })
+    await expect(guest.getByLabel("Workspace role: editor")).toBeVisible()
+    expect(browserErrors).toEqual([])
+  } finally {
+    await context.close()
+  }
+})
+
 test("Given a pending access request, when the owner declines, then no shared workspace arrives", async ({ page, browser }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Sync", exact: true }).click()
