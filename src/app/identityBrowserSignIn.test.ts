@@ -48,6 +48,8 @@ describe("Identity browser sign-in", () => {
 
     expect(storage.size).toBe(0)
     expect(shouldResumeIdentityBrowserSignIn("/boards/current", true, false)).toBe(false)
+    expect(shouldResumeIdentityBrowserSignIn("/boards/current", true, true)).toBe(false)
+    expect(shouldResumeIdentityBrowserSignIn("/identity/return", true, false)).toBe(false)
     expect(shouldResumeIdentityBrowserSignIn("/identity/return", true, true)).toBe(true)
   })
 

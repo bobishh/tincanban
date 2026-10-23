@@ -63,7 +63,7 @@ function identifierAttributes(detail: Record<string, unknown>): SafeAttributes {
     ["tabId", "browser.tab.id"], ["runtimeId", "sync.runtime.id"], ["runId", "sync.run.id"], ["instanceId", "network.peer.instance.id"]], safeIdentifier)
 }
 function labelAttributes(detail: Record<string, unknown>): SafeAttributes {
-  const labels: Array<[string, string]> = [["phase", "sync.phase"], ["component", "code.component"], ["operation", "code.operation"], ["transport", "network.transport"], ["kind", "sync.frame.kind"], ["mode", "sync.mode"], ["stage", "startup.stage"], ["browser", "browser.name"], ["platform", "os.name"], ["errorCode", "error.code"],
+  const labels: Array<[string, string]> = [["phase", "sync.phase"], ["outcome", "identity.signin.outcome"], ["component", "code.component"], ["operation", "code.operation"], ["transport", "network.transport"], ["kind", "sync.frame.kind"], ["mode", "sync.mode"], ["stage", "startup.stage"], ["browser", "browser.name"], ["platform", "os.name"], ["errorCode", "error.code"],
     ["cause", "sync.cause"], ["direction", "network.connection.direction"]]
   return mappedAttributes(detail, labels, safeText)
 }

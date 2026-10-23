@@ -23,9 +23,9 @@ export function recordIdentityBrowserSignIn(phase: IdentityBrowserSignInPhase, o
   options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "restore_failed"; elapsedMs?: number } = {}) {
   try {
     record("identity.browser_signin", { phase, outcome,
-      ...(options.errorCode ? { error_code: options.errorCode } : {}),
+      ...(options.errorCode ? { errorCode: options.errorCode } : {}),
       ...(typeof options.elapsedMs === "number" && Number.isFinite(options.elapsedMs)
-        ? { elapsed_ms: Math.max(0, Math.round(options.elapsedMs)) } : {}) })
+        ? { elapsedMs: Math.max(0, Math.round(options.elapsedMs)) } : {}) })
   } catch { /* Diagnostics must not affect sign-in. */ }
 }
 
@@ -35,8 +35,7 @@ export function createIdentityBrowserSignInReturn(options: {
   closePortal(): void
 }) {
   const hasPendingRequest = window.sessionStorage.getItem(identityBrowserSignInPendingKey) !== null
-  const hasReturn = window.location.pathname === identityBrowserReturnPath ||
-    window.sessionStorage.getItem(identityBrowserSignInReturnKey) !== null
+  const hasReturn = window.sessionStorage.getItem(identityBrowserSignInReturnKey) !== null
   const returning = ref(shouldResumeIdentityBrowserSignIn(window.location.pathname, hasPendingRequest, hasReturn))
   options.showPortal.value = returning.value
   return {
@@ -67,7 +66,7 @@ export function createIdentityBrowserSignInReturn(options: {
 }
 
 export function shouldResumeIdentityBrowserSignIn(pathname: string, hasPendingRequest: boolean, hasReturn: boolean): boolean {
-  return hasPendingRequest && (pathname === identityBrowserReturnPath || hasReturn)
+  return hasPendingRequest && hasReturn && pathname === identityBrowserReturnPath
 }
 
 export function captureIdentityBrowserSignInReturn(options: {

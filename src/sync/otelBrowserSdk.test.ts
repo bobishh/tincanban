@@ -148,6 +148,22 @@ describe("browser OTel SDK", () => {
     await sdk.shutdown()
   })
 
+  it("Given browser sign-in lifecycle diagnostics, when logs flush, then only allowlisted phase outcome code and timing are exported", async () => {
+    const logs = new InMemoryLogRecordExporter()
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces: new InMemorySpanExporter() })
+    sdk.emit({ event: "identity.browser_signin", detail: { phase: "callback", outcome: "failed",
+      errorCode: "callback_failed", elapsedMs: 123, personId: "private-person-id", challenge: "private-challenge" },
+    level: "error", timestamp: Date.now() })
+    await sdk.forceFlush()
+
+    const record = logs.getFinishedLogRecords()[0]!
+    expect(record.attributes).toMatchObject({ "sync.phase": "callback", "identity.signin.outcome": "failed",
+      "error.code": "callback_failed", "sync.elapsed.ms": 123 })
+    expect(JSON.stringify(record.attributes)).not.toContain("private-person-id")
+    expect(JSON.stringify(record.attributes)).not.toContain("private-challenge")
+    await sdk.shutdown()
+  })
+
   it("Given the standard OTLP exporters, when they send to a mock intake, then logs and traces use signal routes and auth headers", async () => {
     const requests: Array<{ path: string; headers: Record<string, string | string[] | undefined>; body: string }> = []
     const server = createServer((request, response) => {
