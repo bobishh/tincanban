@@ -1,5 +1,7 @@
 import { createActorBinding, createChangeProof } from "./transactionProofs"
 import { describe, expect, it, beforeEach, vi } from "vitest"
+import { certificateHash, createDeviceAuthorizationApproval, createDeviceAuthorizationRequest,
+  createDelegatedCertificate, createRecoverableIdentity, verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
 import {
   bootstrapIdentity,
   verifyEnvelope,
@@ -9,7 +11,10 @@ import {
   createIdentityRecovery,
   restoreIdentityRecovery,
   renameIdentity,
+  adoptApprovedApplicationDevice,
 } from "./identity"
+import { defaultProofStore } from "./proofs"
+import { resolveLocalSigningContext } from "./localSigningContext"
 
 describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
   beforeEach(() => {
@@ -45,6 +50,47 @@ describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
     // Private keys must not be present in public structures
     expect(JSON.stringify(profile.identity)).not.toContain("privateKey")
     expect(JSON.stringify(profile.certificate)).not.toContain("privateKey")
+  })
+
+  it("Given a portal approves this app key through a delegated Identity device, when adopting, then persist the complete verified certificate chain", async () => {
+    const app = await bootstrapIdentity("Application device")
+    const root = (await createRecoverableIdentity("better", "Identity root")).profile
+    const authorizingDevice = (await createRecoverableIdentity("better", "Identity device")).profile
+    const delegatedCertificate = await createDelegatedCertificate(root.privateKeys.devicePrivateKey,
+      root.device.deviceId, root.identity.personId, authorizingDevice.device.deviceId,
+      authorizingDevice.device.publicKey, await certificateHash(root.certificate))
+    const delegatedProfile = { ...authorizingDevice, identity: root.identity, certificate: delegatedCertificate,
+      privateKeys: { devicePrivateKey: authorizingDevice.privateKeys.devicePrivateKey } }
+    const challenge = "c".repeat(64)
+    const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example",
+      challenge, expiresAt: Date.now() + 120_000 })
+    const approval = await createDeviceAuthorizationApproval(delegatedProfile, request, {
+      applicationOrigin: "https://boards.example", challenge, certificates: [root.certificate, delegatedCertificate],
+    })
+
+    const failFirstCertificateWrite = vi.spyOn(defaultProofStore, "putCertificate")
+      .mockRejectedValueOnce(new Error("Proof storage unavailable"))
+    await expect(adoptApprovedApplicationDevice(approval, request, app)).rejects.toThrow("Proof storage unavailable")
+    failFirstCertificateWrite.mockRestore()
+    expect((await bootstrapIdentity()).identity.personId).toBe(app.identity.personId)
+
+    const adopted = await adoptApprovedApplicationDevice(approval, request, app)
+    expect(adopted.device.publicKey).toBe(app.device.publicKey)
+    expect(adopted.privateKeys.devicePrivateKey).toBe(app.privateKeys.devicePrivateKey)
+    expect(adopted.privateKeys.identityPrivateKey).toBeUndefined()
+    const certificates = await defaultProofStore.listCertificates()
+    const signatures = new Set(certificates.map(certificate => certificate.signature))
+    expect(signatures).toContain(root.certificate.signature)
+    expect(signatures).toContain(delegatedCertificate.signature)
+    expect(signatures).toContain(approval.certificate.signature)
+    await expect(verifyDeviceCertificateChain(adopted.identity, adopted.device.deviceId, certificates))
+      .resolves.toBe(adopted.device.publicKey)
+    const context = await resolveLocalSigningContext(adopted, "device-authorization-test", { boardId: "board-proof" })
+    expect(context.deviceId).toBe(adopted.device.deviceId)
+    clearInMemoryProfileForReloadTest()
+    const reloaded = await bootstrapIdentity()
+    await expect(resolveLocalSigningContext(reloaded, "device-authorization-test", { boardId: "board-proof" }))
+      .resolves.toMatchObject({ personId: reloaded.identity.personId, deviceId: reloaded.device.deviceId })
   })
 
   it("Given a fresh identity without a chosen name, when bootstrapped and reloaded, then retain neutral protocol metadata and no chosen name", async () => {

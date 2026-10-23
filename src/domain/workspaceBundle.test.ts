@@ -3,10 +3,13 @@ import { beforeAll, expect, it } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import { strToU8, unzipSync, zipSync } from "fflate"
 import { createWorkspaceDoc } from "../test/boardFixture"
-import { hasEntityKind } from "./model"
+import { hasEntityKind, validateWorkspaceDoc } from "./model"
 import { exportWorkspaceBundleV2, forkWorkspaceDocumentV2, readWorkspaceBundleV2 } from "./workspaceBundle"
 import type { WorkspaceDocumentV2 } from "./model"
 import { assertWorkspaceTransition } from "./permissions"
+import { canonicalizeJson } from "./identity"
+import { automationEntityId } from "./automationLifecycle"
+import type { AutomationDefinition } from "./automationContract"
 
 beforeAll(async () => {
   await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))
@@ -70,6 +73,41 @@ it("Given a board with an existing Rusty publication, when imported as a new boa
   expect(source.entities[sourceBoard.id]).toEqual(sourceBoard)
   expect(source.ownerPersonId).toBe("source-owner")
   expect(copied.value.ownerPersonId).toBe("local-owner")
+})
+
+it("Given an application board with source evidence and an active Worker, when imported under a new owner, then rebase unsigned evidence and omit the source-signed Worker", () => {
+  const source = applicationWorkspaceWithWorker()
+  const sourceValidation = validateWorkspaceDoc(source)
+  if (!sourceValidation.ok) throw new Error(JSON.stringify(sourceValidation.error))
+  const sourceWorkspaceId = source.id
+  const sourceBoard = Object.values(source.entities).find(entity => hasEntityKind(entity, "board"))!
+  const sourceEvidence = Object.values(source.entities).filter(entity => hasEntityKind(entity, "application_source"))
+  const sourceWorker = Object.values(source.entities).find(entity => hasEntityKind(entity, "automation"))!
+  const sourceBytes = Automerge.save(source)
+
+  const copied = forkWorkspaceDocumentV2(source, "imported-applications", "local-owner")
+  expect(copied.ok).toBe(true)
+  if (!copied.ok) return
+
+  expect(validateWorkspaceDoc(copied.value)).toMatchObject({ ok: true })
+  const importedBoard = Object.values(copied.value.entities).find(entity => hasEntityKind(entity, "board"))!
+  const importedEvidence = Object.values(copied.value.entities).filter(entity => hasEntityKind(entity, "application_source"))
+  expect(copied.value.ownerPersonId).toBe("local-owner")
+  expect(importedBoard.id).not.toBe(sourceBoard.id)
+  expect(importedEvidence).toHaveLength(sourceEvidence.length)
+  for (const entity of importedEvidence) {
+    if (!hasEntityKind(entity, "application_source")) continue
+    const data = JSON.parse(entity.data) as { workspaceId: string; cardId: string; applicationId: string; messageIds?: string[]; observation: unknown }
+    const original = source.entities[entity.id]
+    if (!hasEntityKind(original, "application_source")) throw new Error("Source application evidence disappeared")
+    const sourceData = JSON.parse(original.data) as { workspaceId: string; applicationId: string; cardId: string; messageIds?: string[]; observation: unknown }
+    expect(data).toEqual({ ...sourceData, workspaceId: copied.value.id, applicationId: `${copied.value.id}:${sourceData.cardId}` })
+  }
+  expect(copied.value.entities[sourceWorker.id]).toBeUndefined()
+  expect(Automerge.save(source)).toEqual(sourceBytes)
+  expect(source.id).toBe(sourceWorkspaceId)
+  expect(source.entities[sourceWorker.id]).toEqual(sourceWorker)
+  expect(source.ownerPersonId).toBe("source-owner")
 })
 
 it("Given an exported board contains participant profiles, when imported as a new board, then its content can be admitted under the new owner", async () => {
@@ -151,6 +189,51 @@ function documentWithAttachment(): Automerge.Doc<WorkspaceDocumentV2> {
       format: "file",
       content: null,
       file: { type: "blob", sha256: "attachment-hash", byteLength: 16, mimeType: "text/plain", fileName: "note.txt" },
+    }
+  })
+}
+
+function applicationWorkspaceWithWorker(): Automerge.Doc<WorkspaceDocumentV2> {
+  const base = Automerge.from(createWorkspaceDoc("source-workspace", "Job search", "source-owner", "job-search", "2026-01-01T00:00:00.000Z"))
+  const board = Object.values(base.entities).find(entity => hasEntityKind(entity, "board"))!
+  const cardId = "application-card"
+  const leadColumn = Object.values(base.entities).find(entity => hasEntityKind(entity, "column") && entity.title === "Lead")!
+  const observedAt = "2026-01-01T00:00:00.000Z"
+  const originalRecordId = "source-original"
+  const refreshRecordId = "source-refresh"
+  const common = { kind: "application-source-observation", version: 2, workspaceId: base.id,
+    cardId: cardId, applicationId: `${base.id}:${cardId}`, messageIds: ["<applied@example.test>"], atsId: "REQ-1" }
+  const original = { ...common, recordId: originalRecordId, observation: { phase: "original", origin: "email", status: "available",
+    observedAt, company: "Nacre Light", title: "Engineer", text: "Original application evidence.",
+    extractorVersion: "mail-1", contentDigest: "a".repeat(43) } }
+  const refresh = { ...common, recordId: refreshRecordId, observation: { ...original.observation, phase: "refresh", originalRecordId } }
+  const sourceEntity = (recordId: string, data: unknown) => ({
+    id: `application-source:${recordId}`, kind: "application_source" as const, title: "Application source" as const,
+    placement: { parentId: cardId, rank: "0/1" as const }, archivedAt: null, createdAt: observedAt, updatedAt: observedAt,
+    data: canonicalizeJson(data),
+  })
+  const definition: AutomationDefinition = {
+    kind: "automation-definition", version: 1, id: "intake-1", name: "Job intake", type: "job-intake", typeVersion: 1,
+    parameters: { sources: ["website", "email"] }, permissions: ["workspace.read", "board.lead.create", "board.application.advance"],
+    scope: { workspaceId: base.id, boardId: board.id, grantId: "signed-grant-1" },
+  }
+  const approval = JSON.stringify({ definition: { payload: definition, signerKeyId: "owner-device", signature: "test-definition" },
+    grant: { payload: { kind: "workspace-grant", version: 1, grantId: "signed-grant-1", workspaceId: base.id, personId: "worker",
+      role: "automation", accessEpoch: 1, automation: { version: 1, boardId: board.id,
+        columns: { lead: "lead", interview: "interview", rejected: "rejected" }, fieldIds: ["company"], expiresAt: 2000000000000 } },
+      signerKeyId: "owner-device", signature: "test-grant" } })
+  const workerId = automationEntityId(definition.id)
+  return Automerge.change(base, draft => {
+    draft.entities[cardId] = { id: cardId, title: "Application", body: "", values: {},
+      placement: { parentId: leadColumn.id, rank: "0/1" }, workflow: { columnId: leadColumn.id, changedAt: observedAt },
+      archivedAt: null, createdAt: observedAt, updatedAt: observedAt }
+    draft.entities[sourceEntity(originalRecordId, original).id] = sourceEntity(originalRecordId, original)
+    draft.entities[sourceEntity(refreshRecordId, refresh).id] = sourceEntity(refreshRecordId, refresh)
+    draft.entities[workerId] = {
+      id: workerId, kind: "automation", title: definition.name, definition: canonicalizeJson(definition), approval,
+      executor: { origin: "https://automation.example.test", personId: "worker" }, controls: {
+        "c272eb90-9326-48c1-9321-8c0fd14c8854": JSON.stringify({ state: "active", supersedes: [] }),
+      }, placement: { parentId: board.id, rank: "0/1" }, archivedAt: null, createdAt: observedAt, updatedAt: observedAt,
     }
   })
 }

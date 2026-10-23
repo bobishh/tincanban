@@ -4,6 +4,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from "fflate"
 import type { CommandResult, FileReference, WorkspaceDocumentV2 } from "./model"
 import { validateWorkspaceDoc } from "./model"
 import { canonicalizeJson } from "./identity"
+import { readApplicationSourceData } from "./applicationSourceData"
 
 export type BundleManifest = { format: "tincanban" | "match"; version: 2; workspaceId: string; heads?: string[]; includedBlobHashes: string[]; missingBlobHashes: string[]; proofFormatVersion?: number; exportedAt?: string }
 export type BundleBlob = { blobId: string; bytes: Uint8Array }
@@ -50,7 +51,8 @@ export function forkWorkspaceDocumentV2(source: WorkspaceDocumentV2, workspaceId
   if (!validation.ok) return { ok: false, error: validation.error }
   if (!workspaceId || !ownerPersonId) return { ok: false, error: { code: "invalid_input", message: "A workspace id and owner are required" } }
   if (workspaceId === source.id) return { ok: false, error: { code: "conflict", message: "Imported workspaces must use a new id" } }
-  const content = Object.fromEntries(Object.entries(source.entities).filter(([, entity]) => !hasEntityKind(entity, "member_profile")))
+  const content = Object.fromEntries(Object.entries(source.entities).filter(([, entity]) =>
+    !hasEntityKind(entity, "member_profile") && !hasEntityKind(entity, "automation")))
   const reservedIds = new Set([workspaceId, ...Object.keys(content)])
   const boardIds = new Map<string, string>()
   for (const [id, entity] of Object.entries(content)) {
@@ -65,6 +67,10 @@ export function forkWorkspaceDocumentV2(source: WorkspaceDocumentV2, workspaceId
     const nextId = boardIds.get(id) ?? id
     copied.id = nextId
     if (copied.placement.parentId) copied.placement.parentId = boardIds.get(copied.placement.parentId) ?? copied.placement.parentId
+    if (hasEntityKind(copied, "application_source")) {
+      const data = readApplicationSourceData(copied.data)
+      copied.data = canonicalizeJson({ ...data, workspaceId, applicationId: `${workspaceId}:${data.cardId}` })
+    }
     return [nextId, copied]
   })) as WorkspaceDocumentV2["entities"]
   const copied: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId, title: source.title, archivedAt: null, ownerPersonId, entities, migration: null }

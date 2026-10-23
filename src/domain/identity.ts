@@ -31,6 +31,7 @@ import { readLocal, writeLocal, deleteLocal, compareAndSwapLocal } from "../loca
 import { normalizeDisplayName, unprovidedDisplayName, validateDisplayName } from "../chat/names"
 import { identityNameChoiceKey, planIdentityNameChoice } from "./identityNameChoice"
 import { requestWebLock } from "../webLock"
+import { certHashDefault, defaultProofStore } from "./proofs"
 
 export { canonicalizeJson, fromBase64Url, publicKeyId, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope }
 export type { SignedEnvelope }
@@ -209,6 +210,14 @@ export async function adoptApprovedApplicationDevice(
       if (!committed) throw new Error("Local app profile changed before authorization was saved")
     }
     assertCurrent()
+    // The portal proves a delegated issuer chain for this exact app certificate.
+    // Persist that public evidence before replacing the local profile so a newly
+    // adopted rootless device can immediately resolve its signing chain.
+    for (const certificate of verified.certificates) {
+      assertCurrent()
+      await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
+      assertCurrent()
+    }
     const adopted = await identityStore.adopt(verified.identity, verified.certificate, commit)
     return { ...adopted, identity: adopted.identity as PublicIdentity,
       certificate: adopted.certificate as DeviceCertificate }

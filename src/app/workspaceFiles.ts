@@ -118,9 +118,13 @@ export async function importWorkspaceFile(core: ReturnType<typeof useAppCore>, e
     const attachmentNotice = result.missingAttachments
       ? `${result.missingAttachments} attachment${result.missingAttachments === 1 ? "" : "s"} unavailable in the file`
       : "all attachments available"
+    const automationNotice = result.omittedAutomations
+      ? `${result.omittedAutomations} source-approved automation${result.omittedAutomations === 1 ? "" : "s"} omitted because approvals do not transfer to the imported board`
+      : ""
+    const details = [attachmentNotice, automationNotice].filter(Boolean).join("; ")
     core.notice.value = result.syncError
-      ? `Imported as a new board; ${attachmentNotice}; sync setup failed: ${result.syncError}`
-      : `Imported as a new board; ${attachmentNotice}`
+      ? `Imported as a new board; ${details}; sync setup failed: ${result.syncError}`
+      : `Imported as a new board; ${details}`
     core.showWorkspaces.value = false
   } catch (error) { state.error = error instanceof Error ? error.message : "tincanban bundle import failed" }
   finally { state.busy = false }
@@ -128,14 +132,15 @@ export async function importWorkspaceFile(core: ReturnType<typeof useAppCore>, e
 
 type Version2Bundle = { doc: WorkspaceDocumentV2; blobs: BundleBlob[]; manifest: { missingBlobHashes: string[] } }
 
-async function importVersion2Bundle(core: ReturnType<typeof useAppCore>, bundle: Version2Bundle): Promise<{ missingAttachments: number; syncError?: string }> {
+async function importVersion2Bundle(core: ReturnType<typeof useAppCore>, bundle: Version2Bundle): Promise<{ missingAttachments: number; omittedAutomations: number; syncError?: string }> {
+  const omittedAutomations = Object.values(bundle.doc.entities).filter(entity => hasEntityKind(entity, "automation")).length
   await restoreBundleAttachments(bundle)
   const doc = await core.tincanban.importWorkspaceAsNew(bundle.doc)
   try {
     await core.sync.addOwnerWorkspace(doc.id)
-    return { missingAttachments: bundle.manifest.missingBlobHashes.length }
+    return { missingAttachments: bundle.manifest.missingBlobHashes.length, omittedAutomations }
   } catch (error) {
-    return { missingAttachments: bundle.manifest.missingBlobHashes.length, syncError: messageFrom(error) }
+    return { missingAttachments: bundle.manifest.missingBlobHashes.length, omittedAutomations, syncError: messageFrom(error) }
   }
 }
 
