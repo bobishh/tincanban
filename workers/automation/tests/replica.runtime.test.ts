@@ -374,7 +374,9 @@ it("Given retained unbound mail on a legacy route, When the owner retries it, Th
   await runInDurableObject(stub, async (instance, ctx) => {
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "refreshReplica", async () => replica);
-    expect((await instance.getEvent(unboundEventId))?.status).toBe("pending");
+    // Durable Objects may begin the queued alarm before this final read. Both states
+    // mean the signed retry was enqueued exactly once and not lost.
+    expect(["pending", "processing"]).toContain((await instance.getEvent(unboundEventId))?.status);
     expect((await instance.getEvent(boundEventId))?.status).toBe("review");
     await ctx.storage.deleteAlarm();
   });
