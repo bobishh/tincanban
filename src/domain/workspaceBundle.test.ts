@@ -5,6 +5,7 @@ import { strToU8, unzipSync, zipSync } from "fflate"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { exportWorkspaceBundleV2, forkWorkspaceDocumentV2, readWorkspaceBundleV2 } from "./workspaceBundle"
 import type { WorkspaceDocumentV2 } from "./model"
+import { assertWorkspaceTransition } from "./permissions"
 
 beforeAll(async () => {
   await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))
@@ -47,6 +48,32 @@ it("imports as a fresh locally owned Automerge board without source authority or
   expect(changedCopy.title).toBe("Copy only")
   expect(source.ownerPersonId).toBe("source-owner")
   expect(forkWorkspaceDocumentV2(source, source.id, "local-owner")).toMatchObject({ ok: false })
+})
+
+it("Given an exported board contains participant profiles, when imported as a new board, then its content can be admitted under the new owner", async () => {
+  const source = Automerge.change(documentWithAttachment(), draft => {
+    for (const personId of ["source-owner", "former-participant", "local-owner"]) {
+      const id = `member-profile:${personId}`
+      draft.entities[id] = {
+        id, kind: "member_profile", personId, title: "Member profile",
+        data: JSON.stringify({ avatarData: null, changedAt: "2026-01-01T00:00:00.000Z" }),
+        placement: { parentId: null, rank: "0/1" }, archivedAt: null,
+        createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+      }
+    }
+  })
+  const bundle = await readWorkspaceBundleV2(await exportWorkspaceBundleV2(source))
+  expect(bundle.ok).toBe(true)
+  if (!bundle.ok) return
+  const copied = forkWorkspaceDocumentV2(bundle.value.doc, "new-workspace", "local-owner")
+  expect(copied.ok).toBe(true)
+  if (!copied.ok) return
+  const restored = Automerge.load<WorkspaceDocumentV2>(Automerge.save(copied.value))
+  expect(() => assertWorkspaceTransition("owner", Automerge.view(restored, []), restored, "local-owner")).not.toThrow()
+  expect(Object.values(restored.entities).some(entity => entity.kind === "member_profile")).toBe(false)
+  expect(restored.entities).toEqual(Object.fromEntries(Object.entries(source.entities)
+    .filter(([, entity]) => entity.kind !== "member_profile")))
+  expect(Object.values(source.entities).filter(entity => entity.kind === "member_profile")).toHaveLength(3)
 })
 
 it("treats attachments as unavailable in the original proof-format v2 export", async () => {

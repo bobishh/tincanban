@@ -44,13 +44,14 @@ export async function readWorkspaceBundleV2(bundleBytes: Uint8Array): Promise<Co
   return { ok: true, value: { doc, manifest, blobs: blobs as BundleBlob[] } }
 }
 
-/** Creates a local recovery copy with no imported owner, history, or proofs. */
+/** Creates a content copy without imported authority, history, or identity profiles. */
 export function forkWorkspaceDocumentV2(source: WorkspaceDocumentV2, workspaceId: string, ownerPersonId: string): CommandResult<Automerge.Doc<WorkspaceDocumentV2>> {
   const validation = validateWorkspaceDoc(source)
   if (!validation.ok) return { ok: false, error: validation.error }
   if (!workspaceId || !ownerPersonId) return { ok: false, error: { code: "invalid_input", message: "A workspace id and owner are required" } }
   if (workspaceId === source.id) return { ok: false, error: { code: "conflict", message: "Imported workspaces must use a new id" } }
-  const copied: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId, title: source.title, archivedAt: null, ownerPersonId, entities: JSON.parse(JSON.stringify(source.entities)) as WorkspaceDocumentV2["entities"], migration: null }
+  const content = Object.fromEntries(Object.entries(source.entities).filter(([, entity]) => !hasEntityKind(entity, "member_profile")))
+  const copied: WorkspaceDocumentV2 = { kind: "workspace", formatVersion: 3, id: workspaceId, title: source.title, archivedAt: null, ownerPersonId, entities: JSON.parse(JSON.stringify(content)) as WorkspaceDocumentV2["entities"], migration: null }
   return { ok: true, value: Automerge.from(copied) }
 }
 
