@@ -9,6 +9,9 @@ import {
   type IdentitySecurity,
   type IdentityAdoptionCommit,
   type LocalProfile as MeshLocalProfile,
+  verifyDeviceAuthorizationApproval,
+  type DeviceAuthorizationApproval,
+  type DeviceAuthorizationRequest,
 } from "@meta-uber/mesh-identity"
 import {
   canonicalizeJson,
@@ -164,6 +167,54 @@ export async function adoptEnrolledIdentity(
   commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
   return await identityStore.adopt(identity, certificate, commit)
+}
+
+/** Adopt only a signed, request-bound app-device approval for the key already held here. */
+export async function adoptApprovedApplicationDevice(
+  approval: DeviceAuthorizationApproval,
+  request: DeviceAuthorizationRequest,
+  expectedCurrent: LocalProfile,
+): Promise<LocalProfile> {
+  const verified = await verifyDeviceAuthorizationApproval(approval, request)
+  if (verified.certificate.payload.deviceId !== expectedCurrent.device.deviceId ||
+      verified.certificate.payload.devicePublicKey !== expectedCurrent.device.publicKey ||
+      verified.identity.personId !== verified.certificate.payload.personId) {
+    throw new Error("Identity approval belongs to another app device")
+  }
+  const adopt = async () => {
+    const current = await bootstrapIdentity()
+    const assertCurrent = () => {
+      if (current.identity.personId !== expectedCurrent.identity.personId ||
+          current.identity.publicKey !== expectedCurrent.identity.publicKey ||
+          current.device.deviceId !== expectedCurrent.device.deviceId ||
+          current.device.publicKey !== expectedCurrent.device.publicKey ||
+          current.certificate.signature !== expectedCurrent.certificate.signature ||
+          !identityStore.isCurrentProfile(expectedCurrent)) {
+        throw new Error("Local app identity changed before authorization completed")
+      }
+    }
+    assertCurrent()
+    const commit: IdentityAdoptionCommit = async (plan, ensureCurrent) => {
+      const nameChoice = await planIdentityNameChoice(verified.identity.personId)
+      assertCurrent()
+      ensureCurrent()
+      const committed = await compareAndSwapLocal({
+        conditions: [{ key: plan.storageKey, value: plan.previousProfile }, ...nameChoice.conditions],
+        writes: [
+          ...(plan.backup ? [plan.backup] : []),
+          ...nameChoice.writes,
+          { key: plan.storageKey, value: plan.candidateProfile },
+        ],
+      }, () => { assertCurrent(); ensureCurrent() })
+      if (!committed) throw new Error("Local app profile changed before authorization was saved")
+    }
+    assertCurrent()
+    const adopted = await identityStore.adopt(verified.identity, verified.certificate, commit)
+    return { ...adopted, identity: adopted.identity as PublicIdentity,
+      certificate: adopted.certificate as DeviceCertificate }
+  }
+  return typeof navigator !== "undefined" && navigator.locks
+    ? await requestWebLock("tincanban-identity-bootstrap", adopt) : await adopt()
 }
 
 /** Adopt only an explicitly enrolled device for the current person; never replace local identity data. */

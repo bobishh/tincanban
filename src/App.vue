@@ -32,6 +32,7 @@ import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { configuredIdentityPortalOrigin } from "./app/identityPortalConfig"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createIdentityPortalFlow, createWorkspaceInviteAction } from "./app/identityPortalFlow"
+import { createIdentityBrowserSignInReturn } from "./app/identityBrowserSignIn"
 import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
@@ -61,8 +62,9 @@ const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressR
 const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const showIdentityPortal = ref(false), identityPortalOrigin = configuredIdentityPortalOrigin(import.meta.env.VITE_IDENTITY_ORIGIN as string | undefined)
-const currentIdentityProfile = computed(() => app.workspace.getCurrentProfile())
+const currentIdentityProfile = computed(() => { void app.workspace.docVersion.value; return app.workspace.getCurrentProfile() })
 const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
+const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal, refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close })
 const workspaceDialogBusy = ref(false)
 function openConnections() {
   showSettings.value = false
@@ -505,8 +507,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   </TincanbanPageLayout>
   <BuildFooter />
   <IdentityPortalEnrollmentDialog v-if="showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
-    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile"
-    :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" @close="identityPortalFlow.close" @completed="identityPortalFlow.complete" />
+    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" @browser-signin-completed="browserSignInReturn.complete" />
 </template>
 
 <style>

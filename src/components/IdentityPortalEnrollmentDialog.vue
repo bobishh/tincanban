@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { ref } from "vue"
+import { onMounted, ref } from "vue"
 import DialogWindow from "./DialogWindow.vue"
 import type { LocalProfile } from "../domain/identity"
 import type { PublicIdentity, WorkspaceDocumentV2 } from "../domain/model"
 import { connectIdentityProfile, recoveryFileJson, startIdentityProfileHost, type IdentityEnrollmentRequest } from "../app/identityPortalEnrollment"
+import { createIdentityBrowserSignIn, identityBrowserReturnPath, readIdentityBrowserSignInReturn, readPendingIdentityBrowserSignIn, verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn, type IdentityBrowserSignInResult } from "../app/identityBrowserSignIn"
+import { adoptApprovedApplicationDevice } from "../domain/identity"
 import type { IdentityEnrollmentRecovery } from "@meta-uber/mesh-runtime"
 
-const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile;
+const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
   workspaces: Array<{ id: string; title: string }>; readWorkspaceDoc(id: string): Promise<WorkspaceDocumentV2>;
   exportCurrentWorkspace(): Promise<void> }>()
-const emit = defineEmits<{ close: []; completed: [] }>()
+const emit = defineEmits<{ close: []; completed: []; "browser-signin-completed": [returnPath: string] }>()
 const mode = ref<"choose" | "create" | "connect">("choose")
 const inviteUrl = ref("")
 const invitationToJoin = ref("")
@@ -26,12 +28,54 @@ const replacementIdentity = ref<Pick<PublicIdentity, "personId" | "displayName">
 const affectedBoards = ref<string[]>([])
 const unavailableWorkspaceCount = ref(0)
 const replacementConfirmed = ref(false)
+const browserApproval = ref<Extract<IdentityBrowserSignInResult, { kind: "approved" }> | null>(null)
 let resolveRequest: ((decision: "approve" | "reject") => void) | undefined
 let resolveRecovery: (() => void) | undefined
 let rejectRecovery: ((reason: Error) => void) | undefined
 let resolveReplacement: (() => void) | undefined
 let rejectReplacement: ((reason: Error) => void) | undefined
 let abortHost: AbortController | undefined
+
+onMounted(() => {
+  if (props.browserReturn) void finishBrowserSignInReturn()
+})
+
+async function beginBrowserSignIn() {
+  error.value = ""
+  try {
+    const returnPath = `${window.location.pathname}${window.location.search}`
+    const { pending, portalUrl } = await createIdentityBrowserSignIn({ profile: props.profile,
+      portalOrigin: props.portalOrigin, applicationOrigin: window.location.origin, returnPath })
+    writePendingIdentityBrowserSignIn(window.sessionStorage, pending)
+    window.location.assign(portalUrl)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : "Identity sign-in could not start"
+  }
+}
+
+async function finishBrowserSignInReturn() {
+  mode.value = "connect"
+  busy.value = true
+  const hash = readIdentityBrowserSignInReturn(window.sessionStorage) ?? window.location.hash
+  window.history.replaceState(window.history.state, "", `${identityBrowserReturnPath}${window.location.search}`)
+  try {
+    const pending = readPendingIdentityBrowserSignIn(window.sessionStorage)
+    if (!pending) throw new Error("Identity sign-in request expired or was already used. Start again.")
+    const result = await verifyIdentityBrowserSignInReturn({ hash, pending, currentProfile: props.profile,
+      applicationOrigin: window.location.origin })
+    if (result.kind === "cancelled") throw new DOMException("Identity sign-in was cancelled", "AbortError")
+    browserApproval.value = result
+    if (result.replacesIdentity) await confirmReplacement(result.approval.identity)
+    await adoptApprovedApplicationDevice(result.approval, pending.request, props.profile)
+    browserApproval.value = null
+    emit("browser-signin-completed", pending.returnPath)
+  } catch (cause) {
+    browserApproval.value = null
+    error.value = cause instanceof Error ? cause.message : "Identity sign-in failed"
+  } finally {
+    busy.value = false
+  }
+}
 
 async function confirmReplacement(identity: Pick<PublicIdentity, "personId" | "displayName">) {
   if (identity.personId === props.profile.identity.personId) return
@@ -181,7 +225,8 @@ function cancel() {
         <p class="dialog-copy">Your board data stays on this device. Identity enrollment adds a trusted device and synchronizes signed profile history.</p>
         <div class="dialog-actions">
           <button class="button button-primary" type="button" @click="createProfile">Create profile</button>
-          <button class="button button-quiet" type="button" @click="mode = 'connect'">Sign in</button>
+          <button class="button button-quiet" type="button" @click="beginBrowserSignIn">Sign in</button>
+          <button class="button button-quiet" type="button" @click="mode = 'connect'">Add another device</button>
         </div>
       </template>
 
@@ -203,8 +248,8 @@ function cancel() {
       </template>
 
       <template v-else>
-        <h2>Sign in</h2>
-        <p class="dialog-copy">Paste a one-use device invitation from Identity. Identity chooses which person this device joins.</p>
+        <h2>Add another device</h2>
+        <p class="dialog-copy">Connect this device using an invitation created by an existing Identity device. Sign in uses the separate browser authorization flow.</p>
         <label>Identity invitation<textarea v-model="invitationToJoin" class="technical-text" rows="3" :disabled="busy" autocomplete="off" /></label>
         <label>Device name<input v-model="deviceLabel" :disabled="busy" maxlength="128" /></label>
         <label><input v-model="allowRecoveryTransfer" type="checkbox" :disabled="busy" /> Allow an optional full-Identity recovery transfer. It gives full Identity authority and requires saving its file and words.</label>

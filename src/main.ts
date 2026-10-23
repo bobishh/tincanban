@@ -11,7 +11,10 @@ import "./styles/design-system/icons.css"
 import "../public/assets/primitive.css"
 import "./style.css"
 import { beginReleaseMonitor } from "./release/runtimeRelease"
+import { captureIdentityBrowserSignInReturn } from "./app/identityBrowserSignIn"
 import { canonicalizeBoardRoute, hasBoardRouteIdentityHint, isBoardAddressPath, parseBoardRoute, readBoardRouteHint } from "./app/boardRoute"
+
+captureIdentityBrowserSignInReturn({ pathname: window.location.pathname, hash: window.location.hash, storage: window.sessionStorage })
 
 const stopReleaseMonitor = beginReleaseMonitor()
 window.addEventListener("pagehide", event => { if (!event.persisted) stopReleaseMonitor() })
