@@ -174,7 +174,7 @@ test("Given another browser uses the owner's identity, when it opens an editor i
   } finally { await context.close() }
 })
 
-test("Given snapshot preparation fails, when an editor is approved, then both devices see one terminal cause", async ({ page, browser }) => {
+test("Given snapshot preparation fails, when an editor is approved, then guest sees failure and host keeps the approved invitation retryable", async ({ page, browser }) => {
   test.setTimeout(60_000)
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
@@ -201,11 +201,77 @@ test("Given snapshot preparation fails, when an editor is approved, then both de
 
     const snapshotError = /E2E snapshot preparation failure/i
     await expect(guestDialog.getByRole("alert")).toContainText(snapshotError, { timeout: 25_000 })
-    await expect(host.getByRole("alert")).toContainText(snapshotError, { timeout: 25_000 })
+    await expect(host.getByLabel("Pairing link")).toHaveValue(invite)
+    await expect(host.getByRole("region", { name: "Access request" })).toHaveCount(0)
     await expect(guestDialog.getByText(/Connected to/)).toHaveCount(0)
     await expect(page.getByLabel("Participant role")).toHaveCount(0)
     await page.waitForTimeout(1_000)
     await expect(guestDialog.getByRole("alert")).toHaveCount(1)
     await expect(guest).toHaveURL(invite)
   } finally { await context.close() }
+})
+
+test("Given the first peer-history module request fails after approval, when the same guest retries, then the saved editor membership receives the workspace", async ({ page, browser }) => {
+  test.setTimeout(90_000)
+  let moduleRequests = 0
+  let failedModuleRequests = 0
+  let failNextModuleRequest = false
+  let firstModuleFailure!: () => void
+  const failedModule = new Promise<void>(resolve => { firstModuleFailure = resolve })
+  await page.route(/\/src\/sync\/workspacePeerHistorySource\.ts(?:\?.*)?$/, async route => {
+    moduleRequests++
+    if (failNextModuleRequest) {
+      failNextModuleRequest = false
+      failedModuleRequests++
+      firstModuleFailure()
+      await route.abort("failed")
+    } else {
+      await route.continue()
+    }
+  })
+
+  await page.goto("/")
+  await ensureJobSearchWorkspace(page)
+  await page.getByRole("button", { name: /Add lead to/ }).first().click()
+  await page.getByLabel("Company *").fill("Join recovery")
+  await page.getByLabel("Role *").fill("Engineer")
+  await page.getByRole("button", { name: "Create item" }).click()
+  await page.getByRole("button", { name: "Close detail" }).click()
+  await page.getByRole("button", { name: "Sync", exact: true }).click()
+  const host = page.getByRole("dialog", { name: "Device sync" })
+  await host.getByRole("button", { name: "Add someone" }).click()
+  await host.getByRole("button", { name: "Generate link" }).click()
+  const invitation = await host.getByLabel("Pairing link").inputValue()
+  const context = await browser.newContext()
+  try {
+    const guest = await context.newPage()
+    await guest.goto(invitation)
+    const guestDialog = guest.getByRole("dialog", { name: "Device sync" })
+    await guestDialog.getByRole("button", { name: "Accept and join" }).click()
+    await expect(host.getByRole("region", { name: "Access request" })).toBeVisible()
+    expect(moduleRequests).toBe(0)
+    await host.getByLabel("Participant role").selectOption("editor")
+    failNextModuleRequest = true
+    await host.getByRole("button", { name: "Approve access" }).click()
+
+    await failedModule
+    expect(failedModuleRequests).toBe(1)
+    await expect(guestDialog.getByRole("alert")).toContainText(/snapshot failed.*Failed to fetch dynamically imported module/i, { timeout: 25_000 })
+    await expect(host.getByLabel("Pairing link")).toHaveValue(invitation)
+    const guestPersonId = JSON.parse(await guest.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!).identity.personId
+    await guest.reload()
+    await expect(guestDialog.getByText(/You have been invited to join/)).toBeVisible()
+    const reloadedPersonId = JSON.parse(await guest.evaluate(async () => (await import("/src/localDb.ts")).readLocal("tincanban.local_profile.v1"))!).identity.personId
+    expect(reloadedPersonId).toBe(guestPersonId)
+    await guestDialog.getByRole("button", { name: "Accept and join" }).click()
+    await expect.poll(() => moduleRequests, { timeout: 20_000 }).toBeGreaterThan(1)
+    await expect(guestDialog.getByText(/Connected to/)).toBeVisible({ timeout: 20_000 })
+    await expect(guest.getByLabel("Workspace role: editor")).toBeVisible()
+    await expect(host.getByRole("region", { name: "Access request" })).toHaveCount(0)
+    await guest.getByRole("button", { name: "Open Join recovery — Engineer" }).click()
+    await expect(guest.getByRole("button", { name: "Discuss Join recovery — Engineer" })).toBeVisible()
+    expect(moduleRequests).toBeGreaterThanOrEqual(2)
+  } finally {
+    await context.close()
+  }
 })

@@ -3,7 +3,21 @@ import type { createWorkspacePeerHistorySource } from "./workspacePeerHistorySou
 /** Archive serving loads only when an authenticated channel requests history. */
 export function createLazyWorkspacePeerHistorySource(input: Parameters<typeof createWorkspacePeerHistorySource>[0]): ReturnType<typeof createWorkspacePeerHistorySource> {
   let source: Promise<ReturnType<typeof createWorkspacePeerHistorySource>> | undefined
-  const load = () => source ??= import("./workspacePeerHistorySource").then(module => module.createWorkspacePeerHistorySource(input))
+  let retryImport = false
+  const load = () => {
+    if (source) return source
+    const pending = (retryImport
+      ? import("./workspacePeerHistorySource?retry" as "./workspacePeerHistorySource")
+      : import("./workspacePeerHistorySource")).then(module => module.createWorkspacePeerHistorySource(input))
+    source = pending
+    void pending.catch(() => {
+      if (source === pending) {
+        source = undefined
+        retryImport = true
+      }
+    })
+    return pending
+  }
   return {
     readHistoryBaseline: async (...args) => (await load()).readHistoryBaseline(...args),
     readHistoryBaselineDocument: async (...args) => (await load()).readHistoryBaselineDocument(...args),
