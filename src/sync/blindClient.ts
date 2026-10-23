@@ -1,5 +1,6 @@
 import type { BlindServiceCapabilities } from "./blindServiceCapabilities"
-import { fetchBlind, readBlindJson } from "./rustyHttp"
+import { discoverRustyService } from "@meta-uber/mesh-replication/rusty-management"
+import { fetchBlind } from "./rustyHttp"
 import {
   canonicalRustyJson,
   decodeBlindBytes,
@@ -9,7 +10,6 @@ import {
   rustyHash,
   rustyObjectId,
   rustyProducerHeaders,
-  rustyOrigin,
   uploadRustyObject,
   verifyRustyStorageReceipt,
   type BlindObject,
@@ -46,14 +46,7 @@ export async function discoverBlindKeeper(input: string): Promise<{ origin: stri
   encryptedBlobs?: { version: 1; maximumCiphertextBytes: number }; writerPolicy?: { version: 1; maximumWriterVersion: 2 };
   blobCoverage?: { version: 1; maximumObjects: 33 }; encryptedArchives?: { version: 1; maximumCiphertextBytes: 262160 };
   archiveCoverageBatches?: { version: 1; maximumObjects: 64 }; archiveCoverageAggregates?: { version: 1; maximumChildren: 8; maximumHeight: 31 } }> {
-  const origin = rustyOrigin(input)
-  const descriptor = await readBlindJson<{ protocolVersions: number[]; publicOrigin: string; service: { serviceId: string; publicKey: string };
-    capabilities: BlindServiceCapabilities }>(await fetchBlind(`${origin}/.well-known/mesh-lighthouse`, { signal: AbortSignal.timeout(10000) }), 16384)
-  if (!descriptor.protocolVersions?.includes(2) || descriptor.publicOrigin !== origin || !descriptor.capabilities?.modes?.includes("blind") ||
-    descriptor.capabilities.applicationWrites !== false || descriptor.capabilities.classification !== false ||
-    !descriptor.service || await blindHash(decodeBlindBytes(descriptor.service.publicKey)) !== descriptor.service.serviceId) {
-    throw new Error("This service does not support blind Rusty replication")
-  }
-  return { origin, servicePublicKey: descriptor.service.publicKey, serviceId: descriptor.service.serviceId,
-    ...(await import("./blindServiceCapabilities")).supportedManagementFeatures(descriptor.capabilities) }
+  const discovered = await discoverRustyService(input, (request, init) => fetchBlind(String(request), init ?? {}))
+  return { origin: discovered.origin, servicePublicKey: discovered.servicePublicKey, serviceId: discovered.serviceId,
+    ...(await import("./blindServiceCapabilities")).supportedManagementFeatures(discovered.capabilities as BlindServiceCapabilities) }
 }

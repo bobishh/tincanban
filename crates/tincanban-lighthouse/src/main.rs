@@ -313,6 +313,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     .await
                                 });
                                 peers.insert(route.clone(), (connection, receiver));
+                                println!("Lighthouse authenticated peer");
                             }
                             Err(error) => {
                                 eprintln!("Lighthouse handshake with {route}: {error}");

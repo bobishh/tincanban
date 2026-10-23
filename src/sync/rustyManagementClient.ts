@@ -4,17 +4,45 @@ import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext } from "../domain/signingContext"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { fetchBlind, readBlindJson } from "./rustyHttp"
-import { verifyRustyManagementCapability, verifyRustyManagementEvidence, type RustyManagementCapability } from "./rustyManagementCapability"
+import { verifyRustyManagementCapability, type RustyManagementCapability } from "./rustyManagementCapability"
 import { verifyRustyManagementStatus, type ManagementStatusAuthorization, type RustyManagementStatusResponse } from "./rustyManagementStatus"
-import { RustyManagementRepository, validatePolicy, type ManagementBinding, type ManagementUpdateAuthorization, type ManagementUpdateRequest } from "./rustyManagementRepository"
+import { RustyManagementRepository, validatePolicy, type ManagementBinding, type ManagementUpdateRequest } from "./rustyManagementRepository"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 import type { Context } from "@opentelemetry/api"
+import { createRustyManagementMutationClient, type RustyManagementMutationBinding } from "@meta-uber/mesh-replication/rusty-management-mutation"
 
 export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string>; diagnosticContext?: Context }
-const encoder = new TextEncoder()
 const path = (binding: ManagementBinding) => `${binding.origin}/v2/management/${binding.resourceKind}/${binding.resourceId}`
 const repo = (profile: { identity: { personId: string } }) => new RustyManagementRepository(profile.identity.personId)
 const revision = async (binding: ManagementBinding, profile: LocalProfile) => (await repo(profile).read(binding))?.capability?.payload.revision ?? 0
+
+async function assertMutationAuthorityCurrent(binding: ManagementBinding, profile: LocalProfile, repository: RustyManagementRepository,
+  retrying: boolean, capability: SignedEnvelope<RustyManagementCapability> | undefined,
+  parentCapability: SignedEnvelope<RustyManagementCapability> | undefined, currentAuthority?: () => Promise<string>) {
+  await currentAuthority?.()
+  const parentBinding = { ...binding, resourceKind: "person" as const, resourceId: profile.identity.personId }
+  const [current, parent] = await Promise.all([
+    repository.read(binding), binding.resourceKind === "person" ? Promise.resolve(undefined) : repository.read(parentBinding),
+  ])
+  if (!matchesAuthority(current?.capability, capability) || !matchesAuthority(parent?.capability, parentCapability)) {
+    throw new Error("Rusty management authority is stale")
+  }
+  if (retrying && !matchesPendingIntent(current?.pending, capability, parentCapability)) {
+    throw new Error("Pending Rusty management request was superseded; owner review required")
+  }
+}
+
+function matchesAuthority(actual: SignedEnvelope<RustyManagementCapability> | undefined,
+  expected: SignedEnvelope<RustyManagementCapability> | undefined): boolean {
+  return canonicalizeJson(actual ?? null) === canonicalizeJson(expected ?? null)
+}
+
+function matchesPendingIntent(pending: ManagementUpdateRequest | undefined,
+  capability: SignedEnvelope<RustyManagementCapability> | undefined,
+  parentCapability: SignedEnvelope<RustyManagementCapability> | undefined): boolean {
+  return Boolean(pending) && matchesAuthority(pending?.managementCapability, capability) &&
+    matchesAuthority(pending?.personManagementCapability, parentCapability)
+}
 
 /** A signing guard observes both imported revocations and a newly started policy transition. */
 export function rustyManagementAuthorityRevision(binding: ManagementBinding,
@@ -90,19 +118,6 @@ async function localManagementAuthority(binding: ManagementBinding, profile: Loc
   return [current?.capability ?? null, parent?.capability ?? null, parent?.pending ?? null]
 }
 
-async function creationAuthority(binding: ManagementBinding, profile: LocalProfile) {
-  if (binding.resourceKind === "person") {
-    if (binding.resourceId !== profile.identity.personId) throw new Error("Person policy must match this identity")
-    return undefined
-  }
-  const parent = await repo(profile).read({ ...binding, resourceKind: "person", resourceId: profile.identity.personId })
-  if (parent?.pending) throw new Error("Person creation policy update is pending")
-  if (!parent?.capability) return undefined
-  await verifyRustyManagementCapability(parent.capability, binding, { personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    resourceKind: "person", resourceId: profile.identity.personId, operation: "resource.create", minimumRevision: parent.capability.payload.revision })
-  return parent.capability
-}
-
 /** One explicit migration establishes person creation rights. Subsequent devices read current signed policy without ancestry repair. */
 export async function ensureRustyPersonPolicy(access: Pick<ManagementBinding, "origin" | "servicePublicKey">, profile: LocalProfile,
   supported: boolean, guard: ManagementClientGuard & { allowLegacyMigration?: boolean } = {}) {
@@ -171,28 +186,9 @@ export async function updateRustyManagementPolicy(binding: ManagementBinding, pr
   profile = captureIdentityProfile(profile)
   policy = policySnapshot(policy, binding.resourceKind)
   await assertRestorationSupported(binding, policy.restoredDeviceIds, guard)
-  const repository = repo(profile)
-  const saved = await repository.read(binding)
-  if (saved?.pending) throw new Error("A Rusty management request is pending; retry or review it first")
-  const parent = saved?.capability ? undefined : await creationAuthority(binding, profile)
-  if (saved?.capability) await verifyRustyManagementCapability(saved.capability, binding, { personId: profile.identity.personId,
-    deviceId: profile.device.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId,
-    operation: "management.update", minimumRevision: saved.capability.payload.revision })
   const issuedAt = Date.now()
   const signing = await context(binding, profile, "rusty-management-policy-update", issuedAt + 120_000, guard)
-  const evidence = signingEvidence(signing)
-  const authorization = await signWithContext(signing, {
-    kind: "rusty-management-policy-update", version: 1, serviceId: await sha256Base64Url(decodeBlindBytes(binding.servicePublicKey)),
-    origin: binding.origin, personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    resourceKind: binding.resourceKind, resourceId: binding.resourceId, expectedRevision: saved?.capability?.payload.revision ?? 0,
-    ...policy, requestId: crypto.randomUUID(), issuedAt, expiresAt: issuedAt + 120_000,
-    ...(parent ? { personManagementRevision: parent.payload.revision } : {}),
-  } satisfies ManagementUpdateAuthorization)
-  await assertDevice(profile, guard)
-  await repository.prepare(binding, { version: 1, identity: evidence.identity, deviceId: profile.device.deviceId, certificates: evidence.certificates,
-    ...(saved?.capability ? { managementCapability: saved.capability } : {}),
-    ...(parent ? { personManagementCapability: parent } : {}), authorization })
-  return retryRustyManagementUpdate(binding, profile, guard)
+  return mutationClient(binding, profile, guard, signing).update(policy)
 }
 
 function policySnapshot(value: { operations: string[]; revokedDeviceIds: string[]; restoredDeviceIds?: string[] },
@@ -218,26 +214,41 @@ export async function retryRustyManagementUpdate(binding: ManagementBinding, pro
     throw new Error("Pending Rusty management request was superseded; owner review required")
   }
   // Verify the live key and certified chain even though retries reuse the original signature.
-  await context(binding, profile, "rusty-management-policy-update", Date.now() + 120_000, guard)
+  const signing = await context(binding, profile, "rusty-management-policy-update", Date.now() + 120_000, guard)
   await assertDevice(profile, guard)
-  const response = await readBlindJson<{ capability: SignedEnvelope<RustyManagementCapability> }>(await fetchBlind(path(binding), {
-    diagnosticContext: guard.diagnosticContext,
-    method: "PUT", signal: AbortSignal.timeout(30_000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(pending),
-  }), 1024 * 1024)
-  if (!response || Object.keys(response).length !== 1) throw new Error("Invalid Rusty management update response")
-  const cap = await verifyRustyManagementEvidence(response.capability, binding, { personId: profile.identity.personId,
-    resourceKind: binding.resourceKind, resourceId: binding.resourceId, minimumRevision: pending.authorization.payload.expectedRevision + 1 })
-  await verifyConfirmation(cap, pending)
-  await assertDevice(profile, guard)
-  await repository.observe(binding, response.capability)
-  return structuredClone(response.capability)
+  return mutationClient(binding, profile, guard, signing, true).retry()
 }
 
-async function verifyConfirmation(cap: RustyManagementCapability, pending: ManagementUpdateRequest): Promise<void> {
-  const auth = pending.authorization.payload
-  if (cap.revision !== auth.expectedRevision + 1 || cap.requestId !== auth.requestId ||
-    cap.authorizationHash !== await sha256Base64Url(encoder.encode(canonicalizeJson(pending.authorization))) ||
-    canonicalizeJson(cap.operations) !== canonicalizeJson(auth.operations) || canonicalizeJson(cap.revokedDeviceIds) !== canonicalizeJson(auth.revokedDeviceIds)) {
-    throw new Error("Rusty management response does not cover pending request intent")
-  }
+function mutationClient(binding: ManagementBinding, profile: LocalProfile, guard: ManagementClientGuard,
+  signing: Awaited<ReturnType<typeof context>>, retrying = false) {
+  const repository = repo(profile)
+  const parentBinding: ManagementBinding = { ...binding, resourceKind: "person", resourceId: profile.identity.personId }
+  return createRustyManagementMutationClient({
+    binding: binding as RustyManagementMutationBinding,
+    identity: signingEvidence(signing).identity, deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
+    certificates: signingEvidence(signing).certificates,
+    fetcher: (input, init) => fetchBlind(String(input), { ...init, diagnosticContext: guard.diagnosticContext }),
+    allowUnparentedScopeCreation: true,
+    ensureCurrent: () => assertDevice(profile, guard),
+    getCapability: async () => {
+      if (retrying) return (await repository.read(binding))?.pending?.managementCapability
+      return (await repository.read(binding))?.capability
+    },
+    getParentCapability: async () => {
+      if (binding.resourceKind === "person") return undefined
+      if (retrying) return (await repository.read(binding))?.pending?.personManagementCapability
+      return (await repository.read(parentBinding))?.capability
+    },
+    ensureAuthorityCurrent: ({ capability, parentCapability }) => assertMutationAuthorityCurrent(binding, profile, repository,
+      retrying, capability, parentCapability, guard.currentAuthority),
+    signAuthorization: payload => signWithContext(signing, payload),
+    journal: {
+      read: async selected => {
+        const saved = await repository.read(selected as ManagementBinding)
+        return saved?.pending ? { body: JSON.stringify(saved.pending) } : undefined
+      },
+      prepare: async (selected, request) => repository.prepare(selected as ManagementBinding, request as ManagementUpdateRequest),
+      complete: async (selected, _request, capability) => repository.observe(selected as ManagementBinding, capability),
+    },
+  })
 }

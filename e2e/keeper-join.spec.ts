@@ -114,7 +114,9 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
 
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
+    const authenticated = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
+    await authenticated
     await addLead(page, "Live lighthouse")
     await expect.poll(() => stateContains(state, "Live lighthouse"), { timeout: 25_000 }).toBe(true)
       .catch(error => { throw new Error(`${error}\nNative errors: ${serverErrors}`) })
@@ -124,7 +126,9 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
     await addLead(page, "After lighthouse restart")
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
+    const reconnected = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
+    await reconnected
     await expect.poll(() => stateContains(state, "After lighthouse restart"), { timeout: 30_000 }).toBe(true)
       .catch(error => { throw new Error(`${error}\nNative errors: ${serverErrors}`) })
 
@@ -148,7 +152,9 @@ test("Given a tincanban invitation, when native lighthouse joins and restarts, t
     expect(nativeValidation.ok, JSON.stringify({ nativeValidation, nativeLead })).toBe(true)
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
+    const authenticatedAfterWrite = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
+    await authenticatedAfterWrite
     await expect(page.getByText("From lighthouse", { exact: false }).first()).toBeVisible({ timeout: 30_000 })
       .catch(async error => {
         await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -188,7 +194,9 @@ test("Given owner and editor share a fresh board, when owner closes, then editor
     await ownerDialog.getByRole("button", { name: "Close", exact: true }).first().click()
     server = lighthouse(join(directory, "config.json"))
     server.stderr.on("data", chunk => { serverErrors += String(chunk) })
+    const authenticated = output(server, /Lighthouse authenticated peer/, 30_000)
     await output(server, /Lighthouse .* listening/, 30_000)
+    await authenticated
     await addLead(page, "Owner online")
     const state = join(directory, "state.json")
     await expect.poll(() => stateContains(state, "Owner online"), { timeout: 25_000 }).toBe(true)

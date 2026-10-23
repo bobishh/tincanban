@@ -11,10 +11,12 @@ import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { resolveRustyManagementAuthority, rustyManagementAuthorityRevision } from "./rustyManagementClient"
 import type { RustyScopePolicyReceipt } from "../product-replica"
 import type { RustyManagementCapability } from "./rustyManagementCapability"
+import type { RustyServicePin } from "@meta-uber/mesh-replication/rusty-management"
 import { verifyRustyManagementEvidence } from "./rustyManagementCapability"
 import { completeScopeEnrollmentIntent, prepareScopeEnrollmentIntent, readScopeEnrollmentIntent, replaceScopeEnrollmentIntent,
   type ScopeEnrollmentBinding, type ScopeEnrollmentIntent } from "./rustyEnrollmentJournal"
 import { parseRustyScopePolicyReceipt } from "../product-replica"
+import { createRustyScopeEnrollmentClient } from "@meta-uber/mesh-replication/rusty-scope-enrollment"
 
 type Challenge = {
   kind: "rusty-enrollment-challenge"; version: 1; challengeId: string; nonce: string; serviceId: string;
@@ -44,16 +46,15 @@ function assertEnrollmentOptions(minimumWriterVersion: number | undefined, expec
   if (expectedPolicyRevision !== undefined && (!Number.isSafeInteger(expectedPolicyRevision) || expectedPolicyRevision < 0)) throw new Error("Invalid expected scope policy revision")
 }
 
-function assertEnrollmentService(service: Awaited<ReturnType<typeof discoverBlindKeeper>>, access: BlindAccess, minimumWriterVersion?: 2) {
+function assertEnrollmentService(service: RustyServicePin, access: BlindAccess, minimumWriterVersion?: 2) {
   if (service.servicePublicKey !== access.servicePublicKey) throw new Error("Rusty management service pin changed")
-  if (minimumWriterVersion === 2 && service.writerPolicy?.maximumWriterVersion !== 2)
+  if (minimumWriterVersion === 2 && featureObject(service, "writerPolicy")?.maximumWriterVersion !== 2)
     throw new Error("Rusty service does not advertise the requested writer policy")
 }
 
-function assertExpectedPolicyRevision(expected: number | undefined, request: EnrollmentRequest) {
-  if (expected !== undefined && request.authorization.payload.expectedRevision !== expected) {
-    throw new Error("Concurrent Rusty scope policy revision changed; original credentials retained for review")
-  }
+function featureObject(service: RustyServicePin, name: string): Record<string, unknown> | undefined {
+  const value = service.capabilities[name]
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 type ScopeAccessPin = Pick<BlindAccess, "origin" | "scopeId" | "servicePublicKey">
@@ -125,120 +126,57 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
   let assertAuthority: () => Promise<unknown> = async () => undefined
   const assertCurrent = async () => { await assertSigningContextCurrent(controllerContext); await assertAuthority(); await ensureCurrentOption?.() }
   const publicOrigin = blindOrigin(access.origin)
-  const serviceId = await blindHash(decodeBlindBytes(access.servicePublicKey))
-  await assertCurrent()
-  const controller = { identity: profile.identity, deviceId: profile.device.deviceId,
-    certificates: signingEvidence(controllerContext).certificates }
-  await assertCurrent()
-  const service = await discoverBlindKeeper(publicOrigin)
-  await assertCurrent()
-  assertEnrollmentService(service, access, minimumWriterVersion)
-  const intentBinding: ScopeEnrollmentBinding = { origin: publicOrigin, scopeId: access.scopeId, servicePublicKey: access.servicePublicKey,
-    personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    readTokenHash: await sha256Base64Url(new TextEncoder().encode(access.readToken)),
-    writeTokenHash: await sha256Base64Url(new TextEncoder().encode(access.writeToken)), revoked,
-    ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }) }
-  const pending = await readScopeEnrollmentIntent(intentBinding)
-  if ((pending || requireExactRetry) && service.scopeEnrollmentRetry !== 1) {
-    throw new Error("Rusty upgrade required for recoverable scope enrollment")
-  }
   const binding = { origin: publicOrigin, servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
-  const managementCapability = await resolveRustyManagementAuthority(binding, profile, "scope.policy", service.scopeManagement === 1)
-  assertAuthority = rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability)
-  await assertCurrent()
-  const initialBody = pending?.body ?? await createEnrollmentRequest(access, profile, controller, serviceId, managementCapability,
-    intentBinding, assertCurrent)
-  const initialRequest = await verifyEnrollmentRequest(initialBody, access, profile, serviceId, managementCapability, intentBinding, Boolean(pending))
-  assertExpectedPolicyRevision(expectedPolicyRevision, initialRequest)
-  await assertCurrent()
-  if (service.scopeEnrollmentRetry === 1) await prepareScopeEnrollmentIntent(intentBinding, initialBody, assertCurrent)
-  await assertCurrent()
-  const { body, request, receipt } = await submitRecoverableEnrollment({ body: initialBody, request: initialRequest,
-    pending, intentBinding, assertCurrent, refresh: async () => {
-      const body = await createEnrollmentRequest(access, profile, controller, serviceId, managementCapability, intentBinding, assertCurrent)
-      return { body, request: await verifyEnrollmentRequest(body, access, profile, serviceId, managementCapability, intentBinding, false) }
-    } })
-  await assertCurrent()
-  await verifyService(receipt, access, serviceId)
-  await assertCurrent()
-  const result = receipt.payload
-  const authorizationHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(request.authorization)))
-  if (!receiptCoversEnrollment(result, { serviceId, scopeId: access.scopeId, personId: profile.identity.personId,
-    revision: request.authorization.payload.expectedRevision, revoked, challengeId: request.authorization.payload.challengeId,
-    authorizationHash, minimumWriterVersion })) {
-    throw new Error("Rusty receipt does not cover this connection")
-  }
-  await assertCurrent()
-  await confirmed?.(structuredClone(receipt))
-  await assertCurrent()
-  if (service.scopeEnrollmentRetry === 1) await completeScopeEnrollmentIntent(intentBinding, body, assertCurrent)
-  return result.revision
-}
-
-async function submitRecoverableEnrollment(input: { body: string; request: EnrollmentRequest; pending?: ScopeEnrollmentIntent;
-  intentBinding: ScopeEnrollmentBinding; assertCurrent: () => Promise<void>;
-  refresh: () => Promise<{ body: string; request: EnrollmentRequest }> }) {
-  const submit = (body: string) => submitEnrollmentRequest(input.intentBinding.origin, input.intentBinding.scopeId, body, input.assertCurrent)
-  try { return { body: input.body, request: input.request, receipt: await submit(input.body) } }
-  catch (error) {
-    if (!input.pending || !error || typeof error !== "object" || !("status" in error) || error.status !== 410) throw error
-    await input.assertCurrent()
-    const fresh = await input.refresh()
-    if (fresh.request.challenge.payload.expectedRevision !== input.request.challenge.payload.expectedRevision ||
-        fresh.request.challenge.payload.issuedAt < input.request.challenge.payload.expiresAt)
-      throw new Error("Rusty enrollment outcome is unresolved; original request retained for recovery", { cause: error })
-    await input.assertCurrent()
-    await replaceScopeEnrollmentIntent(input.intentBinding, input.body, fresh.body, input.assertCurrent)
-    return { ...fresh, receipt: await submit(fresh.body) }
-  }
-}
-
-async function submitEnrollmentRequest(origin: string, scopeId: string, body: string, assertCurrent: () => Promise<void>) {
-  await assertCurrent()
-  const response = await fetchBlind(`${origin}/v2/scopes/${scopeId}`, {
-    method: "PUT", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" }, body,
+  let managementCapability: SignedEnvelope<RustyManagementCapability> | undefined
+  const assertManagementAuthority = async () => managementCapability
+    ? rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability)()
+    : canonicalizeJson(null)
+  const ensureCurrent = async () => { await assertCurrent(); await assertManagementAuthority() }
+  const client = createRustyScopeEnrollmentClient({
+    access: { origin: publicOrigin, scopeId: access.scopeId, servicePublicKey: access.servicePublicKey,
+      readToken: access.readToken, writeToken: access.writeToken },
+    identity: profile.identity, deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
+    certificates: signingEvidence(controllerContext).certificates,
+    ensureCurrent,
+    getManagementCapability: async service => {
+      await ensureCurrent()
+      assertEnrollmentService(service, access, minimumWriterVersion)
+      const supportsManagement = featureObject(service, "scopeManagement")?.version === 1
+      managementCapability = await resolveRustyManagementAuthority(binding, profile, "scope.policy", supportsManagement)
+      assertAuthority = rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability)
+      await ensureCurrent()
+      return managementCapability
+    },
+    ensureManagementCurrent: async capability => {
+      await ensureCurrent()
+      if (canonicalizeJson(capability ?? null) !== canonicalizeJson(managementCapability ?? null)) {
+        throw new Error("Rusty management authority changed during scope enrollment")
+      }
+    },
+    signAuthorization: async (payload, challenge) => {
+      const serviceId = challenge.payload.serviceId
+      const context = await resolveLocalSigningContext(profile, "rusty-scope-enrollment", {
+        scopeId: access.scopeId, publicOrigin, serviceId, personId: profile.identity.personId,
+        deviceId: profile.device.deviceId, challengeId: challenge.payload.challengeId, nonce: challenge.payload.nonce,
+        ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }),
+      }, { certificates: signingEvidence(controllerContext).certificates, expiresAt: payload.expiresAt,
+        ensureCurrent, currentAuthority: assertManagementAuthority })
+      await ensureCurrent()
+      return signWithContext(context, payload)
+    },
+    journal: {
+      read: async binding => {
+        const saved = await readScopeEnrollmentIntent(binding as ScopeEnrollmentBinding)
+        return saved ? { body: saved.body } : undefined
+      },
+      prepare: (binding, body, current) => prepareScopeEnrollmentIntent(binding as ScopeEnrollmentBinding, body, current),
+      replace: (binding, previousBody, body, current) => replaceScopeEnrollmentIntent(binding as ScopeEnrollmentBinding, previousBody, body, current),
+      complete: (binding, body, current) => completeScopeEnrollmentIntent(binding as ScopeEnrollmentBinding, body, current),
+    },
   })
-  await assertCurrent()
-  const result = await readBlindJson<{ receipt: SignedEnvelope<PolicyReceipt> }>(response, 65536)
-  await assertCurrent()
-  return result.receipt
-}
-
-async function createEnrollmentRequest(access: BlindAccess, profile: LocalProfile,
-  controller: Pick<EnrollmentRequest, "identity" | "deviceId" | "certificates">, serviceId: string,
-  managementCapability: SignedEnvelope<RustyManagementCapability> | undefined, intent: ScopeEnrollmentBinding,
-  assertCurrent: () => Promise<void>): Promise<string> {
-  const publicOrigin = intent.origin
-  const minimumWriterVersion = intent.minimumWriterVersion
-  const management = managementCapability ? { managementCapability } : {}
-  const binding = { origin: publicOrigin, servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
-  const challengeResponse = await fetchBlind(`${publicOrigin}/v2/enrollment/challenge`, {
-    method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version: 1, scopeId: access.scopeId, ...controller, ...management }),
-  })
-  await assertCurrent()
-  const { challenge } = await readBlindJson<{ challenge: SignedEnvelope<Challenge> }>(challengeResponse, 65536)
-  await assertCurrent()
-  await verifyService(challenge, access, serviceId)
-  validateChallenge(challenge.payload, access, profile, serviceId)
-  const { expectedRevision, challengeId, nonce, expiresAt } = challenge.payload
-  const context = await resolveLocalSigningContext(profile, "rusty-scope-enrollment", {
-    scopeId: access.scopeId, publicOrigin, serviceId, personId: profile.identity.personId,
-    deviceId: profile.device.deviceId, challengeId, nonce,
-    ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }),
-  }, { certificates: controller.certificates, expiresAt, ensureCurrent: assertCurrent,
-    currentAuthority: rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability) })
-  await assertCurrent()
-  const authorization = await signWithContext(context, {
-    kind: "rusty-scope-enrollment", version: 1, challengeId, nonce, serviceId, publicOrigin, scopeId: access.scopeId,
-    personId: profile.identity.personId, deviceId: profile.device.deviceId, deviceKeyId: profile.device.deviceId, expectedRevision,
-    readTokenHash: intent.readTokenHash, writeTokenHash: intent.writeTokenHash, revoked: intent.revoked, expiresAt,
-    ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }),
-    ...(managementCapability ? { managementRevision: managementCapability.payload.revision } : {}),
-  })
-  await assertCurrent()
-  return JSON.stringify({ challenge, ...controller, ...management, readToken: access.readToken, writeToken: access.writeToken,
-    revoked: intent.revoked, authorization })
+  const result = await client.enroll({ revoked, minimumWriterVersion, requireExactRetry, expectedPolicyRevision,
+    confirmed: async receipt => { await confirmed?.(parseRustyScopePolicyReceipt(receipt)) } })
+  return result.policyRevision
 }
 
 function requireFields(value: unknown, required: string[], optional: string[] = []): void {
