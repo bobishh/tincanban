@@ -4,19 +4,30 @@ import DialogWindow from "./DialogWindow.vue"
 import type { LocalProfile } from "../domain/identity"
 import type { PublicIdentity, WorkspaceDocumentV2 } from "../domain/model"
 import { connectIdentityProfile, recoveryFileJson, startIdentityProfileHost, type IdentityEnrollmentRequest } from "../app/identityPortalEnrollment"
-import { clearIdentityBrowserSignIn, createApprovedSignInCompletion, createIdentityBrowserSignIn, identityBrowserReturnPath,
+import { browserSignInFailureMessage, clearIdentityBrowserSignIn, createApprovedSignInCompletion, createIdentityBrowserSignIn, identityBrowserReturnPath,
   readIdentityBrowserSignInReturn, readPendingIdentityBrowserSignIn, recordIdentityBrowserSignIn,
   verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn, type IdentityBrowserSignInResult } from "../app/identityBrowserSignIn"
 import { completeIdentityBrowserSignIn } from "../app/completeIdentityBrowserSignIn"
 import type { IdentityEnrollmentRecovery } from "@meta-uber/mesh-runtime"
 
+class KeepCurrentIdentity extends Error {
+  constructor() {
+    super("Kept the current Identity")
+    this.name = "KeepCurrentIdentity"
+  }
+}
+
 function browserSignInFailure(phase: "callback" | "adoption" | "refresh", cause: unknown, elapsedMs: number): string {
   if (cause instanceof DOMException && cause.name === "AbortError") {
-    recordIdentityBrowserSignIn(phase, "cancelled", { elapsedMs })
-    return ""
+    recordIdentityBrowserSignIn(phase, "failed", { errorCode: phase === "callback" ? "callback_failed" : phase === "adoption" ? "adoption_failed" : "refresh_failed", elapsedMs })
+    return browserSignInFailureMessage(cause)
   }
   recordIdentityBrowserSignIn(phase, "failed", { errorCode: phase === "callback" ? "callback_failed" : phase === "adoption" ? "adoption_failed" : "refresh_failed", elapsedMs })
   return cause instanceof Error ? cause.message : "Identity sign-in failed"
+}
+
+function restoreSignInReturnPath(path: string | null) {
+  if (path) window.history.replaceState(window.history.state, "", path)
 }
 
 const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
@@ -92,6 +103,7 @@ async function finishBrowserSignInReturn() {
   const attempt = ++browserSignInAttempt
   const startedAt = performance.now()
   let phase: "callback" | "adoption" | "refresh" = "callback"
+  let trustedReturnPath: string | null = null
   mode.value = "signin"
   busy.value = true
   const hash = readIdentityBrowserSignInReturn(window.sessionStorage) ?? window.location.hash
@@ -99,7 +111,8 @@ async function finishBrowserSignInReturn() {
   window.history.replaceState(window.history.state, "", `${identityBrowserReturnPath}${window.location.search}`)
   try {
     const pending = readPendingIdentityBrowserSignIn(window.sessionStorage, callbackState)
-    if (!pending) throw new Error("Identity sign-in request expired or was already used. Start again.")
+    if (!pending) throw new Error("Identity sign-in request expired or was already used. Select Sign in to try again.")
+    trustedReturnPath = pending.returnPath
     activeBrowserSignInChallenge = pending.request.payload.challenge
     browserSignInReturnPath.value = pending.returnPath
     const result = await verifyIdentityBrowserSignInReturn({ hash, pending, currentProfile: props.profile,
@@ -107,7 +120,9 @@ async function finishBrowserSignInReturn() {
     if (attempt !== browserSignInAttempt) return
     if (result.kind === "cancelled") {
       recordIdentityBrowserSignIn("callback", "cancelled", { elapsedMs: performance.now() - startedAt })
-      throw new DOMException("Identity sign-in was cancelled", "AbortError")
+      restoreSignInReturnPath(pending.returnPath)
+      error.value = "Identity approval was not granted. Select Sign in to try again."
+      return
     }
     recordIdentityBrowserSignIn("callback", "verified", { elapsedMs: performance.now() - startedAt })
     browserApproval.value = result
@@ -121,13 +136,22 @@ async function finishBrowserSignInReturn() {
     if (await browserSignInCompletion.finish(pending.returnPath)) browserApproval.value = null
     else {
       browserApproval.value = null
-      error.value = browserSignInCompletion.error.value ?? "Identity was approved, but the app could not finish sign-in. Start a new sign-in."
+      error.value = browserSignInCompletion.error.value ?? "Identity was approved, but the app could not finish sign-in. Select Sign in to retry."
     }
   } catch (cause) {
     if (attempt !== browserSignInAttempt) return
+    if (cause instanceof KeepCurrentIdentity) {
+      browserApproval.value = null
+      mode.value = "signin"
+      error.value = ""
+      status.value = "Kept the current Identity. No local data changed."
+      restoreSignInReturnPath(trustedReturnPath)
+      return
+    }
     browserApproval.value = null
     mode.value = "signin"
     error.value = browserSignInFailure(phase, cause, performance.now() - startedAt)
+    restoreSignInReturnPath(trustedReturnPath)
   } finally {
     if (attempt === browserSignInAttempt) busy.value = false
   }
@@ -188,7 +212,7 @@ function approveReplacement() {
 }
 
 function cancelReplacement() {
-  rejectReplacement?.(new DOMException("Identity replacement was cancelled", "AbortError"))
+  rejectReplacement?.(new KeepCurrentIdentity())
   resolveReplacement = undefined
   rejectReplacement = undefined
   replacementIdentity.value = null
@@ -247,7 +271,11 @@ async function connectProfile() {
     })
     emit("completed")
   } catch (cause) {
-    if (!abortHost?.signal.aborted) error.value = cause instanceof Error ? cause.message : "Identity sign-in failed"
+    if (!abortHost?.signal.aborted && cause instanceof KeepCurrentIdentity) {
+      status.value = "Kept the current Identity. No local data changed."
+    } else if (!abortHost?.signal.aborted) {
+      error.value = cause instanceof Error ? cause.message : "Identity sign-in failed"
+    }
   } finally {
     busy.value = false
     recovery.value = null
@@ -330,9 +358,9 @@ function cancel() {
       <template v-else-if="mode === 'signin'">
         <h2>Sign in</h2>
         <p v-if="busy" class="dialog-copy" role="status">Signing in…</p>
-        <p v-else class="dialog-copy">Start a new request to approve this app device in Identity.</p>
+        <p v-else class="dialog-copy">Approve this app device in Identity to continue.</p>
         <div v-if="!browserApproval && !busy" class="dialog-actions identity-browser-signin-actions">
-          <button class="button button-primary" type="button" @click="beginBrowserSignIn">Start new sign-in</button>
+          <button class="button button-primary" type="button" @click="beginBrowserSignIn">Sign in</button>
         </div>
         <p v-if="status" role="status">{{ status }}</p>
         <section v-if="replacementIdentity" class="mesh-member-action" aria-label="Replace local Identity confirmation">
@@ -376,9 +404,8 @@ function cancel() {
 
       <p v-if="error" class="sync-error" role="alert">{{ error }}</p>
       <div class="dialog-actions">
-        <button v-if="mode === 'signin'" class="button button-quiet" type="button" @click="dismissBrowserSignIn">Dismiss</button>
-        <button v-else-if="busy" class="button button-quiet" type="button" @click="cancel">Cancel</button>
-        <button v-else class="button button-quiet" type="button" @click="emit('close')">Close</button>
+        <button v-if="mode !== 'signin' && busy" class="button button-quiet" type="button" @click="cancel">Cancel</button>
+        <button v-else class="button button-quiet" type="button" @click="mode === 'signin' ? dismissBrowserSignIn() : emit('close')">Close</button>
       </div>
     </section>
   </DialogWindow>

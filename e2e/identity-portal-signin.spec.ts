@@ -19,25 +19,26 @@ test("Given local identity P and board, when replacing P with portal identity Q,
 
   async function createPortalIdentity() {
     await portal.goto(identityOrigin!)
-    await portal.locator('[data-action="create"]').click()
+    await portal.getByRole("button", { name: "Create identity", exact: true }).click()
     await portal.locator('#create-form input[name="displayName"]').fill("Portal Sign-in Q")
-    await portal.locator("#create-form button").click()
+    await portal.locator("#create-form").getByRole("button", { name: "Create identity", exact: true }).click()
     await portal.getByRole("heading", { name: "Save your recovery" }).waitFor()
     const downloadEvent = portal.waitForEvent("download")
-    await portal.locator('[data-action="download"]').click()
+    await portal.getByRole("button", { name: "Download encrypted identity file", exact: true }).click()
     const download = await downloadEvent
     expect(download.suggestedFilename()).toMatch(/\.identity\.json$/u)
     await portal.locator('input[name="saved-words"]').check()
-    await portal.locator('[data-action="finish"]').click()
+    await portal.getByRole("button", { name: "Continue to identity", exact: true }).click()
     await portal.getByRole("heading", { name: "Portal Sign-in Q" }).waitFor()
-    return (await portal.locator(".identity-id code").textContent())?.trim() ?? ""
+    return (await portal.locator(".identity-id-badge").getAttribute("data-identity-id")) ?? ""
   }
 
   async function issueInvite() {
-    await portal.locator('[data-action="add-device"]').click()
-    const invitation = portal.locator("input[readonly]").first()
+    await portal.getByRole("tab", { name: "Devices", exact: true }).click()
+    await portal.getByRole("button", { name: "Add a device", exact: true }).click()
+    const invitation = portal.locator(".identity-invite-url")
     await invitation.waitFor()
-    const value = await invitation.inputValue()
+    const value = (await invitation.textContent())?.trim() ?? ""
     expect(value).toContain("#")
     return value
   }
@@ -60,7 +61,7 @@ test("Given local identity P and board, when replacing P with portal identity Q,
     const transfer = portal.locator('input[name="recovery-transfer"]')
     await expect(transfer).toHaveCount(1)
     expect(await transfer.isChecked()).toBe(false)
-    await portal.locator('[data-action="approve-device"]').click()
+    await portal.getByRole("button", { name: "Approve device", exact: true }).click()
   }
 
   async function localIdentity() {
@@ -172,8 +173,9 @@ test("Given local identity P and board, when replacing P with portal identity Q,
     const firstDialog = await openAddDevice(await issueInvite())
     await approveWithoutRecovery()
     const firstPrompt = await replacementPrompt(qId)
-    await firstPrompt.getByRole("button", { name: "Cancel sign in", exact: true }).click()
-    await firstDialog.getByRole("alert").waitFor()
+    await firstPrompt.getByRole("button", { name: "Keep current Identity", exact: true }).click()
+    await expect(firstDialog.getByRole("status")).toHaveText("Kept the current Identity. No local data changed.")
+    await expect(firstDialog.getByRole("button", { name: "Connect this device", exact: true })).toBeVisible()
     await firstDialog.locator('button[aria-label="Close"]').click()
     const afterCancel = await localIdentity()
     expect(afterCancel).toEqual(guestBefore)

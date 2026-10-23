@@ -18,6 +18,13 @@ const identityBrowserSignInReturnKey = "tincanban.identity-browser-signin.return
 export type IdentityBrowserSignInPhase = "request" | "redirect" | "callback" | "adoption" | "refresh" | "restore" | "cancel"
 export type IdentityBrowserSignInOutcome = "started" | "verified" | "completed" | "cancelled" | "failed"
 
+export function browserSignInFailureMessage(cause: unknown): string {
+  if (cause instanceof DOMException && cause.name === "AbortError") {
+    return "Identity sign-in was interrupted. Select Sign in to try again."
+  }
+  return cause instanceof Error ? cause.message : "Identity sign-in failed"
+}
+
 /** Emit only fixed lifecycle fields; never include profile, device, request, or certificate data. */
 export function recordIdentityBrowserSignIn(phase: IdentityBrowserSignInPhase, outcome: IdentityBrowserSignInOutcome,
   options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "restore_failed"; elapsedMs?: number } = {}) {
@@ -118,7 +125,7 @@ export function createApprovedSignInCompletion(complete: (returnPath: string) =>
       return true
     } catch {
       phase.value = "failed"
-      error.value = "Identity approval was saved, but the app could not finish loading the profile. Start a new sign-in."
+      error.value = "Identity approval was saved, but the app could not finish loading the profile. Select Sign in to retry."
       return false
     }
   }

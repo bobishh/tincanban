@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
 import { createRecoverableIdentity, createDeviceAuthorizationApproval } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
-  clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
+  browserSignInFailureMessage, clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
   shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn } from "./identityBrowserSignIn"
 
 describe("Identity browser sign-in", () => {
+  it("keeps unexpected aborts visible with a fresh-sign-in action", () => {
+    expect(browserSignInFailureMessage(new DOMException("storage unavailable", "AbortError")))
+      .toBe("Identity sign-in was interrupted. Select Sign in to try again.")
+    expect(browserSignInFailureMessage(new Error("approval validation failed"))).toBe("approval validation failed")
+  })
+
   it("Given a verified approval, when profile refresh is delayed, then completion stays pending until the app finishes", async () => {
     let resolveRefresh!: () => void
     const completion = createApprovedSignInCompletion(() => new Promise<void>(resolve => { resolveRefresh = resolve }))
@@ -26,7 +32,7 @@ describe("Identity browser sign-in", () => {
 
     await expect(completion.finish("/boards/current")).resolves.toBe(false)
     expect(completion.phase.value).toBe("failed")
-    expect(completion.error.value).toContain("Start a new sign-in")
+    expect(completion.error.value).toContain("Select Sign in to retry")
     await expect(completion.finish("/boards/current")).resolves.toBe(false)
     expect(paths).toEqual(["/boards/current"])
     completion.reset()

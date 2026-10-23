@@ -1,4 +1,5 @@
-import { expect, test } from "./support/coverage"
+import { createDeviceAuthorizationApproval, createRecoverableIdentity, parseDeviceAuthorizationRequest } from "@meta-uber/mesh-identity"
+import { expect, test, type Page } from "./support/coverage"
 
 test.use({ trace: "off", video: "off", screenshot: "off" })
 
@@ -10,18 +11,21 @@ test("Given a local app device and saved board, when Identity approves browser s
   test.setTimeout(120_000)
   const appUrl = process.env.TINCANBAN_E2E_ORIGIN ?? `http://127.0.0.1:${process.env.TINCANBAN_E2E_PORT ?? 4244}`
   const portal = await context.newPage()
-  await portal.goto(identityOrigin!)
-  await portal.getByRole("button", { name: "Create identity", exact: true }).click()
-  await portal.locator('#create-form input[name="displayName"]').fill("Browser Login Owner")
-  await portal.locator("#create-form").getByRole("button", { name: "Create identity", exact: true }).click()
-  await portal.getByRole("heading", { name: "Save your recovery" }).waitFor()
-  const downloadEvent = portal.waitForEvent("download")
-  await portal.getByRole("button", { name: "Download encrypted identity file", exact: true }).click()
-  await downloadEvent
-  await portal.locator('input[name="saved-words"]').check()
-  await portal.getByRole("button", { name: "Continue to identity", exact: true }).click()
-  await portal.getByRole("heading", { name: "Browser Login Owner" }).waitFor()
-  const identityId = await portal.locator(".identity-id-badge").getAttribute("data-identity-id")
+  const createPortalIdentity = async (target: Page, displayName: string) => {
+    await target.goto(identityOrigin!)
+    await target.getByRole("button", { name: "Create identity", exact: true }).click()
+    await target.locator('#create-form input[name="displayName"]').fill(displayName)
+    await target.locator("#create-form").getByRole("button", { name: "Create identity", exact: true }).click()
+    await target.getByRole("heading", { name: "Save your recovery" }).waitFor()
+    const downloadEvent = target.waitForEvent("download")
+    await target.getByRole("button", { name: "Download encrypted identity file", exact: true }).click()
+    await downloadEvent
+    await target.locator('input[name="saved-words"]').check()
+    await target.getByRole("button", { name: "Continue to identity", exact: true }).click()
+    await target.getByRole("heading", { name: displayName }).waitFor()
+    return { identityId: await target.locator(".identity-id-badge").getAttribute("data-identity-id") }
+  }
+  const { identityId } = await createPortalIdentity(portal, "Browser Login Owner")
   expect(identityId).toBeTruthy()
 
   await page.goto(appUrl)
@@ -41,6 +45,8 @@ test("Given a local app device and saved board, when Identity approves browser s
   }, "Board survives browser login")
   expect(retainedWorkspaceId).toBeTruthy()
   await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
+  const savedReturnPath = `${new URL(page.url()).pathname}${new URL(page.url()).search}`
+  expect(savedReturnPath).toMatch(/^\/boards\/[a-f0-9-]{36}\/board-survives-browser-login$/u)
 
   const openSignIn = async () => {
     await page.getByRole("button", { name: "Identity", exact: true }).click()
@@ -63,19 +69,15 @@ test("Given a local app device and saved board, when Identity approves browser s
   await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
   await expect(page.getByText(new URL(appUrl).origin, { exact: false })).toBeVisible()
   await page.getByRole("button", { name: "Cancel", exact: true }).click()
-  await page.waitForURL(new RegExp(`^${appUrl.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/identity/return`), { timeout: 30000 })
+  await expect.poll(() => `${new URL(page.url()).pathname}${new URL(page.url()).search}`).toBe(savedReturnPath)
   const failedSignIn = page.getByRole("dialog", { name: "Identity profile", exact: true })
   await expect(failedSignIn.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible()
-  await expect(failedSignIn.getByRole("alert")).toHaveCount(0)
-  await expect(failedSignIn.getByRole("button", { name: "Start new sign-in", exact: true })).toBeEnabled()
+  await expect(failedSignIn.getByRole("alert")).toHaveText("Identity approval was not granted. Select Sign in to try again.")
+  await expect(failedSignIn.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled()
   await expect(failedSignIn.getByLabel("Identity invitation")).toHaveCount(0)
   expect(await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(localBefore)
 
-  await failedSignIn.getByRole("button", { name: "Dismiss", exact: true }).click()
-  await expect(failedSignIn).toHaveCount(0)
-  await page.reload()
-  await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toHaveCount(0)
-  await openSignIn()
+  await failedSignIn.getByRole("button", { name: "Sign in", exact: true }).click()
   await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
   await page.getByLabel("Allow this app to use the Identity shown above.").check()
   await page.getByRole("button", { name: "Approve app device", exact: true }).click()
@@ -126,5 +128,42 @@ test("Given a local app device and saved board, when Identity approves browser s
   expect(after.deviceId).not.toBe("")
   expect(after.rootPeople).toContain(localBefore)
   expect(after.rootPeople).toContain(identityId)
+
+  const replacementIdentity = await createRecoverableIdentity("better", "Replacement Sign-in Owner")
+  expect(replacementIdentity.profile.identity.personId).not.toBe(identityId)
+
+  await page.getByRole("button", { name: "Identity", exact: true }).click()
+  const keepReturnPath = `${new URL(page.url()).pathname}${new URL(page.url()).search}`
+  await page.getByRole("dialog", { name: "Identity profile", exact: true })
+    .getByRole("button", { name: "Sign in", exact: true }).click()
+  await page.waitForURL(new RegExp(`^${identityOrigin!.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/authorize`), { timeout: 30000 })
+  const requestHash = new URL(page.url()).hash
+  const requestEncoded = new URLSearchParams(requestHash.slice(1)).get("device-request")
+  expect(requestEncoded).toBeTruthy()
+  const request = await parseDeviceAuthorizationRequest(requestEncoded!)
+  expect(request.payload.applicationOrigin).toBe(new URL(appUrl).origin)
+  const approval = await createDeviceAuthorizationApproval(replacementIdentity.profile, request, {
+    applicationOrigin: new URL(appUrl).origin,
+    challenge: request.payload.challenge,
+  })
+  const approvalEncoded = Buffer.from(JSON.stringify(approval)).toString("base64url")
+  await page.goto(`${new URL(appUrl).origin}/identity/return#${new URLSearchParams({
+    state: request.payload.challenge,
+    approval: approvalEncoded,
+  }).toString()}`)
+  const keepIdentity = page.getByRole("dialog", { name: "Identity profile", exact: true })
+  const replacementPrompt = keepIdentity.getByRole("region", { name: "Replace local Identity confirmation" })
+  await expect(replacementPrompt.getByRole("heading", { name: "Join Replacement Sign-in Owner?" })).toBeVisible()
+  await replacementPrompt.getByRole("button", { name: "Keep current Identity", exact: true }).click()
+  await expect.poll(() => `${new URL(page.url()).pathname}${new URL(page.url()).search}`).toBe(keepReturnPath)
+  await expect(keepIdentity.getByRole("status")).toHaveText("Kept the current Identity. No local data changed.")
+  await expect(keepIdentity.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled()
+  await expect(keepIdentity.getByLabel("Identity invitation")).toHaveCount(0)
+  await expect.poll(async () => await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(identityId)
+  const boardAfterKeep = await page.evaluate(async workspaceId => {
+    const loaded = await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(workspaceId)
+    return loaded ? { owner: loaded.doc.ownerPersonId, title: loaded.doc.title } : null
+  }, retainedWorkspaceId)
+  expect(boardAfterKeep).toEqual({ owner: localBefore, title: "Board survives browser login" })
   await portal.close()
 })
