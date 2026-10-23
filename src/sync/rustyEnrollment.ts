@@ -141,7 +141,7 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
     getManagementCapability: async service => {
       await ensureCurrent()
       assertEnrollmentService(service, access, minimumWriterVersion)
-      const supportsManagement = featureObject(service, "scopeManagement")?.version === 1
+      const supportsManagement = service.capabilities.scopeManagement === 1 || featureObject(service, "scopeManagement")?.version === 1
       managementCapability = await resolveRustyManagementAuthority(binding, profile, "scope.policy", supportsManagement)
       assertAuthority = rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability)
       await ensureCurrent()
@@ -175,6 +175,7 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
     },
   })
   const result = await client.enroll({ revoked, minimumWriterVersion, requireExactRetry, expectedPolicyRevision,
+    allowLegacyUnmanagedScope: true,
     confirmed: async receipt => { await confirmed?.(parseRustyScopePolicyReceipt(receipt)) } })
   return result.policyRevision
 }
