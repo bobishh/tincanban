@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: reflux-reaction-runtime
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   image:
