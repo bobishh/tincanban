@@ -315,11 +315,26 @@ async function approveEnrollment(
     return current
   })
   if (!root) throw new Error("Personal identity is unavailable. Reload and try again.")
+  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
+  const [identitySdk, identityProfileRoot, enrollment, authorityStore] = await Promise.all([
+    import("@meta-uber/mesh-identity"), import("../domain/identityProfileRoot"), import("./enrollment"),
+    import("./identityAuthorityStore"),
+  ])
+  const currentAuthority = await authorityStore.requireIdentityAuthorityView(profile.identity.personId)
+  await enrollment.assertActiveIdentityEnrollmentDevice(currentAuthority, currentAuthority, profile.identity.personId,
+    profile.device.deviceId, profile.device.publicKey)
+  const enrollmentAuthority = await identitySdk.createIdentityAuthorityView(profile.identity,
+    { certificates: [...currentAuthority.certificates, result.certificate], revocations: currentAuthority.revocations },
+    await identityProfileRoot.rootIdentityProfileState(root))
+  const acceptedAuthority = await authorityStore.mergeIdentityAuthorityView(enrollmentAuthority, ensureCurrent)
+  await enrollment.assertActiveIdentityEnrollmentDevice(acceptedAuthority, acceptedAuthority, profile.identity.personId,
+    profile.device.deviceId, profile.device.publicKey)
+  await enrollment.assertActiveIdentityEnrollmentDevice(acceptedAuthority, acceptedAuthority, profile.identity.personId,
+    result.certificate.payload.deviceId, result.certificate.payload.devicePublicKey)
   const transfer = await transferableWorkspaces(context, profile)
   const workspaces = transfer.workspaces
   const ids = workspaces.map(item => item.id)
   const active = selectActiveWorkspace(context, ids)
-  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
   await context.durableMesh!.restoreEnrolledDevice(ids, profile.identity.personId, guest.deviceId, ensureCurrent)
   const { restoreEnrolledRustyAccess } = await import("./enrollmentDeviceRestoration")
   await restoreEnrolledRustyAccess(profile, guest.deviceId, ids, ensureCurrent, diagnosticContext)

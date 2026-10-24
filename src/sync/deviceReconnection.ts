@@ -1,4 +1,4 @@
-import { renewDeviceIdentity } from "../domain/identity"
+import { bootstrapIdentity, renewDeviceIdentity } from "../domain/identity"
 import type { WorkspaceJoinInvitation } from "@meta-uber/mesh-pairing"
 import { userMessage, type DeviceSyncState } from "./deviceSyncState"
 
@@ -27,7 +27,30 @@ export async function reconnectWorkspaceDevice(context: {
   try {
     await context.stop()
     await context.resetMesh()
-    await renewDeviceIdentity()
+    const [identitySdk, identityProfileRoot, proofs, storage, enrollment, authorityStore] = await Promise.all([
+      import("@meta-uber/mesh-identity"), import("../domain/identityProfileRoot"), import("../domain/proofs"),
+      import("../storage"), import("./enrollment"), import("./identityAuthorityStore"),
+    ])
+    const previousProfile = await bootstrapIdentity()
+    const currentAuthority = await authorityStore.requireIdentityAuthorityView(previousProfile.identity.personId)
+    const root = await storage.defaultStorage.loadPersonalRoot()
+    if (!root || root.identity.personId !== previousProfile.identity.personId) {
+      throw new Error("Personal Identity root is unavailable")
+    }
+    const currentCertificateKnown = currentAuthority.certificates.some(certificate =>
+      certificate.payload.deviceId === previousProfile.device.deviceId)
+    if (currentCertificateKnown) {
+      await enrollment.assertActiveIdentityEnrollmentDevice(currentAuthority, currentAuthority, previousProfile.identity.personId,
+        previousProfile.device.deviceId, previousProfile.device.publicKey)
+    }
+    const profile = currentCertificateKnown ? await renewDeviceIdentity() : previousProfile
+    await proofs.defaultProofStore.putCertificate(await proofs.certHashDefault(profile.certificate), profile.certificate)
+    const renewedAuthority = await identitySdk.createLocalRootIdentityAuthorityView(profile,
+      { certificates: [...currentAuthority.certificates, profile.certificate], revocations: currentAuthority.revocations },
+      await identityProfileRoot.rootIdentityProfileState(root))
+    const acceptedAuthority = await authorityStore.mergeIdentityAuthorityView(renewedAuthority)
+    await enrollment.assertActiveIdentityEnrollmentDevice(acceptedAuthority, acceptedAuthority, profile.identity.personId,
+      profile.device.deviceId, profile.device.publicKey)
     await context.identityChanged?.()
     await context.refreshProfile()
     state.step.value = "workspace-merge-confirm"

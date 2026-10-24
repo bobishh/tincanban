@@ -190,9 +190,14 @@ test("Given an older recipient receives an owner-signed approval with an unknown
     const approval = await page.evaluate(async target => {
       const { bootstrapIdentity, signEnvelope, toBase64Url } = await import("/src/domain/identity.ts")
       const { createDeviceEnrollmentInvite } = await import("/vendor/meta-mesh/packages/mesh-pairing/src/index.ts")
+      const { createIdentityAuthorityView } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
       const { InvitationService } = await import("/src/sync/invitations.ts")
       const { enrollmentPayload } = await import("/src/sync/enrollment.ts")
       const { defaultStorage } = await import("/src/storage.ts")
+      const { certHashDefault, defaultProofStore } = await import("/src/domain/proofs.ts")
+      const { registerDeviceInRoot } = await import("/src/domain/personalRoot.ts")
+      const { rootIdentityProfileState } = await import("/src/domain/identityProfileRoot.ts")
+      const { mergeIdentityAuthorityView, requireIdentityAuthorityView } = await import("/src/sync/identityAuthorityStore.ts")
       const { useTincanban } = await import("/src/test/stateFixture.ts")
       const owner = await bootstrapIdentity()
       const invite = createDeviceEnrollmentInvite("fixture-enrollment-endpoint", "fixture-enrollment-secret", owner)
@@ -202,8 +207,19 @@ test("Given an older recipient receives an owner-signed approval with an unknown
       if (!claim.ok) throw new Error(claim.error)
       const approved = await invitations.approveEnrollment(invite.invitationId, target.device, owner)
       if (!approved.ok) throw new Error(approved.error)
-      const root = await defaultStorage.loadPersonalRoot()
+      const certificateHash = await certHashDefault(approved.certificate)
+      await defaultProofStore.putCertificate(certificateHash, approved.certificate)
+      const root = await defaultStorage.updatePersonalRootForIdentity(owner.identity.personId, current => {
+        if (!current) throw new Error("Owner personal root unavailable")
+        registerDeviceInRoot(current, { ...target.device, certificateHash, addedAt: new Date().toISOString() })
+        return current
+      })
       if (!root) throw new Error("Owner personal root unavailable")
+      const currentAuthority = await requireIdentityAuthorityView(owner.identity.personId)
+      const authority = await createIdentityAuthorityView(owner.identity,
+        { certificates: [...currentAuthority.certificates, approved.certificate], revocations: currentAuthority.revocations },
+        await rootIdentityProfileState(root))
+      await mergeIdentityAuthorityView(authority)
       const workspaceId = useTincanban().activeWorkspace.id
       const workspaces = [{ id: workspaceId, title: "Enrollment fixture" }]
       const meshWorkspaces = [{ version: 1, workspaceId, ownerPersonId: owner.identity.personId,
