@@ -384,6 +384,7 @@ jobs:
           repository: bobishh/identity
           ref: df264b720c8c14c1e2eccbe6f9936e04d259b99a
           path: .ci/identity-provider
+          ssh-key: ${{ secrets.IDENTITY_DEPLOY_KEY }}
           submodules: recursive
           persist-credentials: false
       - name: Install pinned Identity portal dependencies
