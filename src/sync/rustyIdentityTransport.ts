@@ -152,7 +152,7 @@ async function prepareScopeRequest(input: RequestInfo | URL, init: RequestInit, 
   new Headers(init.headers).forEach((value, key) => headers.set(key, value))
   const method = (init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase()
   validateMethod(method)
-  const action = method === "GET" || method === "HEAD" ? "read" : "write"
+  const action = method === "GET" || method === "HEAD" || method === "POST" && !parsed.pathname.endsWith("/checkpoint") ? "read" : "write"
   const token = tokenForAction(headers, action, access)
   return { url: parsed.href, method, action, token, body: await requestBody(input, init), headers }
 }

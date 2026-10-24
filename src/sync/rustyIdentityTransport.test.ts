@@ -94,6 +94,41 @@ it("Given a visitor grant, When the visitor attempts a write, Then reject before
   expect(f.rawFetch).not.toHaveBeenCalled()
 })
 
+it.each(["archive-coverage", "archive-coverage/aggregate", "blob-coverage"])("Given a read-only coverage query, When POSTing to %s, Then sign a read operation with the read token", async path => {
+  const f = await fixture()
+  const fetcher = createRustyIdentityScopeFetcher({ ...f.base, fetcher: f.rawFetch,
+    principal: { grantId: "grant-reader", policyEpoch: 4, actions: ["read"] } })
+  await fetcher(`https://rusty.example/v2/scopes/scope-1/${path}`, {
+    method: "POST", headers: { Authorization: "Bearer read-token" }, body: "{}",
+  })
+  const headers = new Headers(f.rawFetch.mock.calls[0]![1].headers)
+  const proof = JSON.parse(Buffer.from(headers.get("X-Rusty-Identity-Proof")!, "base64url").toString("utf8"))
+  expect(proof.payload).toMatchObject({ method: "POST", action: "read", path: `/v2/scopes/scope-1/${path}` })
+})
+
+it("Given a reader, When publishing a checkpoint, Then reject before sending the write", async () => {
+  const f = await fixture()
+  const fetcher = createRustyIdentityScopeFetcher({ ...f.base, fetcher: f.rawFetch,
+    principal: { grantId: "grant-reader", policyEpoch: 4, actions: ["read"] } })
+
+  await expect(fetcher("https://rusty.example/v2/scopes/scope-1/checkpoint", {
+    method: "POST", headers: { Authorization: "Bearer write-token" }, body: "{}",
+  })).rejects.toThrow("Rusty principal grant does not permit this action")
+  expect(f.rawFetch).not.toHaveBeenCalled()
+})
+
+it("Given a writer, When publishing a checkpoint, Then sign POST as a write operation", async () => {
+  const f = await fixture()
+  const fetcher = createRustyIdentityScopeFetcher({ ...f.base, fetcher: f.rawFetch })
+
+  await fetcher("https://rusty.example/v2/scopes/scope-1/checkpoint", {
+    method: "POST", headers: { Authorization: "Bearer write-token" }, body: "{}",
+  })
+  const headers = new Headers(f.rawFetch.mock.calls[0]![1].headers)
+  const proof = JSON.parse(Buffer.from(headers.get("X-Rusty-Identity-Proof")!, "base64url").toString("utf8"))
+  expect(proof.payload).toMatchObject({ method: "POST", action: "write", path: "/v2/scopes/scope-1/checkpoint" })
+})
+
 it("Given Rusty denies the current scope authority preflight, When private data is polled, Then preserve the HTTP access failure", async () => {
   const f = await fixture()
   f.rawFetch.mockResolvedValue(new Response("forbidden", { status: 403 }))
