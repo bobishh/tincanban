@@ -8,12 +8,15 @@ defineProps<{
   activeWorkspaceTitle: string
   isEditingBoard: boolean
   entityName: string
+  showSignIn?: boolean
+  signInReady?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: "close"): void
   (e: "openWorkspaces"): void
   (e: "openSettings"): void
+  (e: "signIn"): void
   (e: "toggleBoardEdit"): void
   (e: "openEntitySettings"): void
   (e: "openSync"): void
@@ -79,6 +82,10 @@ function handleAction(event: () => void) {
         <section class="drawer-group" aria-labelledby="heading-settings">
           <h3 id="heading-settings" class="drawer-group-title">Settings</h3>
           <div class="drawer-group-items">
+            <button v-if="showSignIn" class="drawer-item-btn" type="button" :disabled="!signInReady" @click="handleAction(() => emit('signIn'))">
+              <span>Sign in</span>
+              <span class="drawer-item-arrow" aria-hidden="true">→</span>
+            </button>
             <button
               class="drawer-item-btn"
               type="button"

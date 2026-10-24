@@ -187,7 +187,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <div class="top-actions top-actions-desktop" :inert="!uiReady || undefined">
         <button class="button button-quiet" type="button" aria-label="Workspace chat" :disabled="!boardAddressResolved" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button class="button button-quiet" type="button" @click="openConnections()">Sync</button>
-        <IdentityAccountControls :portal-enabled="Boolean(identityPortalOrigin)" :signed-in="identitySignedIn" :person-id="currentIdentityProfile?.identity.personId" :name="currentIdentityProfile?.identity.displayName" :avatar-data="currentAvatar" @sign-in="beginHeaderSignIn" @settings="showSettings = true" />
+        <IdentityAccountControls :portal-enabled="Boolean(identityPortalOrigin)" :signed-in="identitySignedIn" :person-id="currentIdentityProfile?.identity.personId" @sign-in="beginHeaderSignIn" @settings="showSettings = true" />
         <button v-if="canEditBoard" class="button button-quiet" type="button" :disabled="!boardAddressResolved" @click="isEditingBoard = !isEditingBoard">{{ isEditingBoard ? "Done" : "Edit board" }}</button>
         <button v-if="isEditingBoard" class="button button-primary" type="button" :disabled="!boardAddressResolved" @click="showEntitySettings = true">Edit {{ entityName }}</button>
         <a v-if="hasExperimentalMcp" class="button button-quiet agent-guide-desktop" href="/agent">Agent guide</a>
@@ -222,10 +222,10 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :active-workspace-title="workspaceLabel"
       :is-editing-board="isEditingBoard && boardAddressResolved"
       :can-edit-board="canEditBoard && boardAddressResolved"
-      :entity-name="entityName"
+      :entity-name="entityName" :show-sign-in="Boolean(identityPortalOrigin) && !identitySignedIn" :sign-in-ready="Boolean(currentIdentityProfile)"
       @close="closeMobileMenu"
       @open-workspaces="showWorkspaces = true"
-      @open-settings="showSettings = true"
+      @open-settings="showSettings = true" @sign-in="beginHeaderSignIn"
       @toggle-board-edit="isEditingBoard = !isEditingBoard"
       @open-entity-settings="showEntitySettings = true"
       @open-sync="openConnections()"

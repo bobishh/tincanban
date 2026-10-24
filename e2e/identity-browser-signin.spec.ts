@@ -98,14 +98,14 @@ test("Given a local app device and saved board, when Identity approves browser s
   await expect(page.getByRole("region", { name: "Board survives browser login", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const identitySettings = page.getByRole("region", { name: "Your profile", exact: true })
-  await expect(identitySettings.getByRole("link", { name: "Edit profile in Identity", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
+  await expect(identitySettings.getByRole("link", { name: "Edit profile", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
   await expect(identitySettings.getByRole("textbox", { name: "Name", exact: true })).toHaveCount(0)
   await expect(identitySettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
   await page.goto(appUrl)
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await page.getByRole("button", { name: "Settings", exact: true }).click()
   const restoredSettings = page.getByRole("region", { name: "Your profile", exact: true })
-  await expect(restoredSettings.getByRole("link", { name: "Edit profile in Identity", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
+  await expect(restoredSettings.getByRole("link", { name: "Edit profile", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
   await expect(restoredSettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Dismiss", exact: true }).click()
   const after = await page.evaluate(async personId => {
@@ -134,7 +134,7 @@ test("Given a local app device and saved board, when Identity approves browser s
   const replacementIdentity = await createRecoverableIdentity("better", "Replacement Sign-in Owner")
   expect(replacementIdentity.profile.identity.personId).not.toBe(identityId)
 
-  await page.getByRole("button", { name: /Open profile for/ }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
   const keepReturnPath = `${new URL(page.url()).pathname}${new URL(page.url()).search}`
   await page.getByRole("button", { name: "Refresh profile", exact: true }).click()
   await page.waitForURL(new RegExp(`^${identityOrigin!.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/authorize`), { timeout: 30000 })

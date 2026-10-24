@@ -11,7 +11,7 @@ defineEmits<{ refresh: []; connect: [] }>()
       <strong>{{ name }}</strong>
       <p class="dialog-copy">Connected to your Identity</p>
       <div class="dialog-actions">
-        <a class="button button-quiet" :href="`${portalOrigin}/profile`">Edit profile in Identity</a>
+        <a class="button button-quiet" :href="`${portalOrigin}/profile`">Edit profile</a>
         <button class="button button-quiet" type="button" @click="$emit('refresh')">Refresh profile</button>
         <button class="button button-quiet" type="button" @click="$emit('connect')">Add another device</button>
       </div>
