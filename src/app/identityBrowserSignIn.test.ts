@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { createRecoverableIdentity, createDeviceAuthorizationApproval } from "@meta-uber/mesh-identity"
+import { createRecoverableIdentity, createDeviceAuthorizationApproval, publicKeyId } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
   browserSignInFailureMessage, clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
-  shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn } from "./identityBrowserSignIn"
+  shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn, readPendingRustyConnectionIntent,
+  writePendingRustyConnectionIntent, clearPendingRustyConnectionIntent } from "./identityBrowserSignIn"
 
 describe("Identity browser sign-in", () => {
   it("keeps unexpected aborts visible with a fresh-sign-in action", () => {
@@ -108,6 +109,29 @@ describe("Identity browser sign-in", () => {
     const substituted = btoa(JSON.stringify(substitutedApproval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
     await expect(verifyIdentityBrowserSignInReturn({ hash: `#state=${"a".repeat(64)}&approval=${substituted}`,
       pending, currentProfile: app, applicationOrigin: "https://boards.example" })).rejects.toThrow(/approval|request/u)
+  })
+
+  it("Given Add Rusty requests Identity consent, When creating the browser request, Then bind the same Identity and exact Rusty service key", async () => {
+    const app = (await createRecoverableIdentity("better", "Current app")).profile
+    const service = (await createRecoverableIdentity("better", "Rusty service")).profile
+    const pin = { origin: "https://rusty.example", serviceId: await publicKeyId(service.identity.publicKey),
+      servicePublicKey: service.identity.publicKey }
+    const { pending } = await createIdentityBrowserSignIn({ profile: app, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/boards/current", personId: app.identity.personId,
+      rustyServicePins: [pin], challenge: "c".repeat(64) })
+    expect(pending.request.payload.personId).toBe(app.identity.personId)
+    expect(pending.request.payload).toMatchObject({ version: 2, rustyServicePins: [pin] })
+
+    const storage = new Map<string, string>()
+    const adapter = { setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null, removeItem: (key: string) => storage.delete(key) }
+    const intent = { version: 1 as const, origin: pin.origin, serviceId: pin.serviceId,
+      workspaceId: "workspace-1", challenge: pending.request.payload.challenge }
+    writePendingRustyConnectionIntent(adapter, intent)
+    expect(readPendingRustyConnectionIntent(adapter, false)).toEqual(intent)
+    expect(readPendingRustyConnectionIntent(adapter)).toEqual(intent)
+    clearPendingRustyConnectionIntent(adapter)
+    expect(readPendingRustyConnectionIntent(adapter)).toBeNull()
   })
 
   it("Given a cancelled or substituted browser return, when callback handling runs, then leave identity approval unavailable", async () => {

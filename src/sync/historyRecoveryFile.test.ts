@@ -1,5 +1,6 @@
+import { generateIdentityRecovery } from "@meta-uber/mesh-identity/recovery"
 import { beforeEach, expect, it } from "vitest"
-import { generateIdentityRecovery, identitySeedFromPrivateKey, sealIdentitySeed, toBase64Url } from "@meta-uber/mesh-identity"
+import { identitySeedFromPrivateKey, sealIdentitySeed, toBase64Url } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"

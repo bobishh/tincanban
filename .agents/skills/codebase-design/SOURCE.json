@@ -7,7 +7,8 @@
   ],
   "path": "skills/engineering/codebase-design",
   "local_patches": [
-    "Append repository safety and host integration rules to SKILL.md."
+    "Append repository safety and host integration rules to SKILL.md.",
+    "Add mandatory ownership, cognitive-budget, and contract-evidence review procedure for domain and shared-protocol changes."
   ],
   "review_date": "2026-10-19",
   "upstream_url": "https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/codebase-design"

@@ -1,0 +1,19 @@
+id: no-sdk-source-imports
+language: TypeScript
+severity: error
+message: Use a public SDK package export; applications must not depend on SDK source layout.
+rule:
+  all:
+    - kind: string
+    - regex: 'vendor/meta-mesh/(packages/[^/]+/src|crates)/|@meta-uber/mesh-[^/]+/(src|dist|lib)/'
+    - any:
+        - inside:
+            kind: import_statement
+        - inside:
+            kind: export_statement
+        - inside:
+            kind: arguments
+            inside:
+              any:
+                - pattern: import($SOURCE)
+                - pattern: require($SOURCE)

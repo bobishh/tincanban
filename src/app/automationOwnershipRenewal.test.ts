@@ -7,7 +7,7 @@ import { executeCommand as executeCommandWithoutSigningContext } from "../domain
 import { automationEntityId } from "../domain/automationLifecycle"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { resolveSigningContext } from "../domain/signingContext"
-import { createWorkspaceDeviceRevocation, createWorkspaceOwnershipTransfer } from "../../vendor/meta-mesh/packages/mesh-workspace/src/index"
+import { createWorkspaceDeviceRevocation, createWorkspaceOwnershipTransfer } from "@meta-uber/mesh-workspace"
 import { prepareAutomationActivation, type AutomationWorkerIdentity } from "./automation"
 import { authorizeHistoricalChanges as authorizeLocalChanges, recordHistoricalGenesis as recordGenesisAuthority } from "../sync/workspaceSigning.testSupport"
 import type { WorkspaceDocumentV2 } from "../domain/model"

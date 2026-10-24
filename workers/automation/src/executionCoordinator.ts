@@ -9,8 +9,8 @@ import { AutomationReplica, AutomationControlError, type AutomationActivationPac
   type AutomationManagementInspector, type ReplicaTransport } from "./replica";
 import { runRegisteredAutomation } from "./handlers";
 import { canonicalizeJson, sha256Base64Url } from "../../../src/domain/identityCrypto";
-import { profileFromIdentitySeedForDevice } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
-import type { DeviceCertificate } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index";
+import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity";
+import type { DeviceCertificate } from "@meta-uber/mesh-identity";
 import { planApplicationMove, planBoundApplicationMove } from "./applicationMove";
 import { correlateApplicationSources } from "./applicationSourceMatching";
 import { parseApplicationBindingProof, type ApplicationBindingProof } from "../../../src/domain/applicationBinding";

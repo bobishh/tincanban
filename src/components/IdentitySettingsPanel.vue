@@ -6,6 +6,7 @@ const IdentityPhotoPanel = defineAsyncComponent<Component>(() => import("./Ident
 type ProfileDraft = { name?: string; avatarData?: string | null; revision?: string }
 type PhotoOption = { avatarData: string | null; changedAt: string }
 const props = withDefaults(defineProps<{
+  connectDevice?: () => void
   workspaceId?: string
   displayName: string
   nameProvided?: boolean
@@ -138,6 +139,7 @@ async function save() {
         </button>
       </div>
     </section>
+    <button v-if="connectDevice" class="button button-quiet" type="button" @click="connectDevice">Add another device</button>
     <slot />
   </section>
 </template>

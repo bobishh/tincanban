@@ -1,4 +1,5 @@
-import { createDeviceAuthorizationApproval, createRecoverableIdentity, parseDeviceAuthorizationRequest } from "@meta-uber/mesh-identity"
+import { createDeviceAuthorizationApproval, createRecoverableIdentity, parseDeviceAuthorizationRequest,
+  createIdentityProfileOperation, emptyIdentityProfileState, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { expect, test, type Page } from "./support/coverage"
 
 test.use({ trace: "off", video: "off", screenshot: "off" })
@@ -49,13 +50,12 @@ test("Given a local app device and saved board, when Identity approves browser s
   expect(savedReturnPath).toMatch(/^\/boards\/[a-f0-9-]{36}\/board-survives-browser-login$/u)
 
   const openSignIn = async () => {
-    await page.getByRole("button", { name: "Identity", exact: true }).click()
-    await page.getByRole("dialog", { name: "Identity profile", exact: true }).getByRole("button", { name: "Sign in", exact: true }).click()
+    await page.getByRole("button", { name: "Sign in", exact: true }).click()
   }
 
-  await page.getByRole("button", { name: "Identity", exact: true }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
   const options = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  await options.getByRole("button", { name: "Add another device", exact: true }).click()
   const connectForm = options.locator(".identity-device-connect-form")
   await expect(connectForm).toHaveCSS("display", "grid")
   await expect(connectForm.locator(".identity-device-field")).toHaveCount(2)
@@ -63,6 +63,7 @@ test("Given a local app device and saved board, when Identity approves browser s
   await expect(connectForm.getByLabel("Identity invitation")).toBeVisible()
   await expect(connectForm.getByLabel("Device name")).toBeVisible()
   await options.getByRole("button", { name: "Back to Identity options", exact: true }).click()
+  await options.getByRole("button", { name: "Close", exact: true }).last().click()
 
   await openSignIn()
   await expect(page).toHaveURL(new RegExp(`^${identityOrigin!.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}.*`))
@@ -96,14 +97,15 @@ test("Given a local app device and saved board, when Identity approves browser s
   await expect.poll(async () => await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(identityId)
   await expect(page.getByRole("region", { name: "Board survives browser login", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "Settings", exact: true }).click()
-  const identitySettings = page.getByRole("group", { name: "Your profile", exact: true })
-  await expect(identitySettings.getByRole("textbox", { name: "Name", exact: true })).toBeEnabled()
+  const identitySettings = page.getByRole("region", { name: "Your profile", exact: true })
+  await expect(identitySettings.getByRole("link", { name: "Edit profile in Identity", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
+  await expect(identitySettings.getByRole("textbox", { name: "Name", exact: true })).toHaveCount(0)
   await expect(identitySettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
   await page.goto(appUrl)
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await page.getByRole("button", { name: "Settings", exact: true }).click()
-  const restoredSettings = page.getByRole("group", { name: "Your profile", exact: true })
-  await expect(restoredSettings.getByRole("textbox", { name: "Name", exact: true })).toBeEnabled()
+  const restoredSettings = page.getByRole("region", { name: "Your profile", exact: true })
+  await expect(restoredSettings.getByRole("link", { name: "Edit profile in Identity", exact: true })).toHaveAttribute("href", `${identityOrigin}/profile`)
   await expect(restoredSettings.getByText("Loading saved profile…", { exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "Dismiss", exact: true }).click()
   const after = await page.evaluate(async personId => {
@@ -132,19 +134,21 @@ test("Given a local app device and saved board, when Identity approves browser s
   const replacementIdentity = await createRecoverableIdentity("better", "Replacement Sign-in Owner")
   expect(replacementIdentity.profile.identity.personId).not.toBe(identityId)
 
-  await page.getByRole("button", { name: "Identity", exact: true }).click()
+  await page.getByRole("button", { name: /Open profile for/ }).click()
   const keepReturnPath = `${new URL(page.url()).pathname}${new URL(page.url()).search}`
-  await page.getByRole("dialog", { name: "Identity profile", exact: true })
-    .getByRole("button", { name: "Sign in", exact: true }).click()
+  await page.getByRole("button", { name: "Refresh profile", exact: true }).click()
   await page.waitForURL(new RegExp(`^${identityOrigin!.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}/authorize`), { timeout: 30000 })
   const requestHash = new URL(page.url()).hash
   const requestEncoded = new URLSearchParams(requestHash.slice(1)).get("device-request")
   expect(requestEncoded).toBeTruthy()
   const request = await parseDeviceAuthorizationRequest(requestEncoded!)
   expect(request.payload.applicationOrigin).toBe(new URL(appUrl).origin)
+  const initial = emptyIdentityProfileState(replacementIdentity.profile.identity.personId)
+  const name = await createIdentityProfileOperation(replacementIdentity.profile, initial, "name", "Replacement Sign-in Owner")
+  const profileState = await readIdentityProfileState({ ...initial, operations: [name] }, replacementIdentity.profile.identity)
   const approval = await createDeviceAuthorizationApproval(replacementIdentity.profile, request, {
     applicationOrigin: new URL(appUrl).origin,
-    challenge: request.payload.challenge,
+    challenge: request.payload.challenge, profileState, revocations: [], includeProfileState: true,
   })
   const approvalEncoded = Buffer.from(JSON.stringify(approval)).toString("base64url")
   await page.goto(`${new URL(appUrl).origin}/identity/return#${new URLSearchParams({

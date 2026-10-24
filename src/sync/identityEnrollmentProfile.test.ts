@@ -7,12 +7,21 @@ import { identityProfileRevision } from "../domain/identityProfileRevision"
 import { identityProfileValue } from "../domain/identityProfileState"
 import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "./identityEnrollmentProfile"
+import { createIdentityAuthorityView, createIdentityRustyServicePinOperation, emptyIdentityProfileState,
+  identityProfileRustyServicePins, publicKeyId } from "@meta-uber/mesh-identity"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+
+async function saveRoot(profile: Awaited<ReturnType<typeof bootstrapIdentity>>, root: ReturnType<typeof createPersonalRoot>) {
+  await defaultStorage.savePersonalRoot(root)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(profile.identity,
+    { certificates: [profile.certificate], revocations: [] }, await rootIdentityProfileState(root)))
+}
 
 beforeEach(resetIdentityStorageForTest)
 
 it("Given an unchanged signed profile, when the sync adapter reloads it, then reuse the same Automerge history", async () => {
   const profile = await bootstrapIdentity("Original")
-  await defaultStorage.savePersonalRoot(createPersonalRoot(profile, "certificate"))
+  await saveRoot(profile, createPersonalRoot(profile, "certificate"))
   const store = createIdentityEnrollmentProfileStore(profile)
 
   const first = await store.current()
@@ -36,10 +45,30 @@ it("Given an unchanged signed profile, when the sync adapter reloads it, then re
   expect(Automerge.getHeads(afterReload)).toEqual(Automerge.getHeads(afterSignedChange))
 })
 
+it("Given a manager-signed Rusty service pin, when Tincanban merges and exports profile history, then preserve the pin without projecting it as a user profile field", async () => {
+  const profile = await bootstrapIdentity("Pinned service")
+  const root = createPersonalRoot(profile, "certificate")
+  const servicePublicKey = "A".repeat(43)
+  const pin = { origin: "https://rusty.example", serviceId: await publicKeyId(servicePublicKey), servicePublicKey }
+  const operation = await createIdentityRustyServicePinOperation(profile,
+    emptyIdentityProfileState(profile.identity.personId), pin, [profile.certificate])
+  expect(operation).not.toBeNull()
+  const state = { ...(await rootIdentityProfileState(root)), operations: [operation!] }
+  const pinnedRoot = { ...root, profileState: state }
+  await saveRoot(profile, pinnedRoot)
+
+  const document = await createIdentityEnrollmentProfileStore(profile).current()
+  expect(identityProfileRustyServicePins(document.profileState)).toEqual([pin])
+  expect(document.profileState.operations).toEqual([operation])
+  const savedRoot = await defaultStorage.loadPersonalRoot()
+  expect(savedRoot?.identity.displayName).toBe("Pinned service")
+  expect(await rootIdentityProfileState(savedRoot!)).toEqual(state)
+})
+
 it("Given a locally changed signed profile, when a paired replica commits its next operation, then merge through the existing root history", async () => {
   const profile = await bootstrapIdentity("Original")
   const initialRoot = createPersonalRoot(profile, "certificate")
-  await defaultStorage.savePersonalRoot(initialRoot)
+  await saveRoot(profile, initialRoot)
   const store = createIdentityEnrollmentProfileStore(profile)
   const baseDocument = await store.current()
   const root = await editIdentityProfileRoot(initialRoot, profile, "name", "Updated")
@@ -47,7 +76,7 @@ it("Given a locally changed signed profile, when a paired replica commits its ne
     avatarData: null,
     changedAt: "2026-01-01T00:00:00.000Z",
   })
-  await defaultStorage.savePersonalRoot(root)
+  await saveRoot(profile, root)
   const currentState = await rootIdentityProfileState(root)
   const document = Automerge.change(baseDocument, draft => {
     draft.profileState = incomingRoot.profileState!
@@ -70,7 +99,7 @@ it("Given a locally changed signed profile, when a paired replica commits its ne
 it("Given the personal root changed after sync began, when a stale candidate commits, then preserve the newer root unchanged", async () => {
   const profile = await bootstrapIdentity("Original")
   let root = await editIdentityProfileRoot(createPersonalRoot(profile, "certificate"), profile, "name", "Updated")
-  await defaultStorage.savePersonalRoot(root)
+  await saveRoot(profile, root)
   const expected = await identityProfileRevision(await rootIdentityProfileState(root))
   const candidate = await editIdentityProfileRoot(root, profile, "photo", {
     avatarData: null,
@@ -84,10 +113,11 @@ it("Given the personal root changed after sync began, when a stale candidate com
   const store = createIdentityEnrollmentProfileStore(profile)
   const document = Automerge.from({
     kind: "mesh-personal-identity" as const,
-    version: 1 as const,
+    version: 2 as const,
     personId: profile.identity.personId,
     identityPublicKey: profile.identity.publicKey,
     certificates: [profile.certificate],
+    revocations: [],
     profileState: candidate.profileState!,
   })
 

@@ -1,8 +1,6 @@
 import {
   BrowserIdentityStore,
-  generateIdentityRecovery,
   identitySeedFromPrivateKey,
-  identitySecurityForRecovery,
   openIdentityRecoveryEnvelope,
   sealIdentitySeed,
   type IdentityRecoveryEnvelope,
@@ -134,6 +132,7 @@ export async function createIdentityRecovery(
   const key = profile.privateKeys.identityPrivateKey
   if (!key) throw new Error("This device cannot back up the workspace identity")
   const seed = await identitySeedFromPrivateKey(key, profile.identity.personId)
+  const { generateIdentityRecovery } = await import("@meta-uber/mesh-identity/recovery")
   const recoveryKey = generateIdentityRecovery(security)
   const recoveryEnvelope = await sealIdentitySeed(seed, profile.identity.personId, recoveryKey, security)
   const restored = await openIdentityRecoveryEnvelope(recoveryEnvelope, recoveryKey, profile.identity.displayName)
@@ -150,6 +149,7 @@ export async function restoreIdentityRecovery(
   beforeRestore?: () => Promise<void>,
   commit?: IdentityAdoptionCommit,
 ): Promise<LocalProfile> {
+  const { identitySecurityForRecovery } = await import("@meta-uber/mesh-identity/recovery")
   if (!identitySecurityForRecovery(recoveryKey)) throw new Error("Invalid recovery words")
   const current = await bootstrapIdentity(displayName)
   const candidate = await openIdentityRecoveryEnvelope(envelope, recoveryKey, displayName)
@@ -174,6 +174,7 @@ export async function adoptApprovedApplicationDevice(
   approval: DeviceAuthorizationApproval,
   request: DeviceAuthorizationRequest,
   expectedCurrent: LocalProfile,
+  beforeAdoption?: (approval: DeviceAuthorizationApproval, ensureCurrent: () => void) => Promise<void>,
 ): Promise<LocalProfile> {
   const verified = await verifyDeviceAuthorizationApproval(approval, request)
   if (verified.certificate.payload.deviceId !== expectedCurrent.device.deviceId ||
@@ -208,6 +209,8 @@ export async function adoptApprovedApplicationDevice(
       }, () => { assertCurrent(); ensureCurrent() })
       if (!committed) throw new Error("Local app profile changed before authorization was saved")
     }
+    assertCurrent()
+    await beforeAdoption?.(verified, assertCurrent)
     assertCurrent()
     const { certHashDefault, defaultProofStore } = await import("./proofs")
     // The portal proves a delegated issuer chain for this exact app certificate.

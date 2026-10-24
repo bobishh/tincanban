@@ -1,5 +1,5 @@
-import type { HistoryPreparationPersistence } from "../../../vendor/meta-mesh/packages/mesh-replication/src/historyPreparationJournal"
-import { canonicalizeJson, fromBase64Url, toBase64Url } from "../../../vendor/meta-mesh/packages/mesh-identity/src/index"
+import type { HistoryPreparationPersistence } from "@meta-uber/mesh-replication/history-preparation-journal"
+import { canonicalizeJson, fromBase64Url, toBase64Url } from "@meta-uber/mesh-identity"
 
 const MAX_RECORD_BYTES = 360 * 1024
 const MAX_ENCODED_BYTES = Math.ceil((MAX_RECORD_BYTES + 16) / 3) * 4 + 17

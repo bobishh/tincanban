@@ -75,6 +75,8 @@ describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
     expect((await bootstrapIdentity()).identity.personId).toBe(app.identity.personId)
 
     const adopted = await adoptApprovedApplicationDevice(approval, request, app)
+    const { identityEnrollmentConfirmed } = await import("../app/identityEnrollmentReceipt")
+    expect(await identityEnrollmentConfirmed(adopted)).toBe(true)
     expect(adopted.device.publicKey).toBe(app.device.publicKey)
     expect(adopted.privateKeys.devicePrivateKey).toBe(app.privateKeys.devicePrivateKey)
     expect(adopted.privateKeys.identityPrivateKey).toBeUndefined()
@@ -89,6 +91,7 @@ describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
     expect(context.deviceId).toBe(adopted.device.deviceId)
     clearInMemoryProfileForReloadTest()
     const reloaded = await bootstrapIdentity()
+    expect(await identityEnrollmentConfirmed(reloaded)).toBe(true)
     await expect(resolveLocalSigningContext(reloaded, "device-authorization-test", { boardId: "board-proof" }))
       .resolves.toMatchObject({ personId: reloaded.identity.personId, deviceId: reloaded.device.deviceId })
   })

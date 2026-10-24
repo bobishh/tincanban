@@ -1,23 +1,25 @@
 import { z } from "zod"
-import { verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
+import { normalizeIdentityRustyServicePin, verifyDeviceCertificateChain, type IdentityRustyServicePin } from "@meta-uber/mesh-identity"
 import { canonicalizeJson, sha256Base64Url, verifyEnvelope, type SignedEnvelope } from "./identity"
 import { signWithContext, signingEvidence, type VerifiedSigningContext } from "./signingContext"
 import type { DeviceCertificate, PublicIdentity } from "./model"
 import { isMemberProfileData } from "./avatarData"
 import { normalizeDisplayName, validateDisplayName } from "../chat/names"
 
-export type ProfileField = "name" | "photo"
-export type ProfileValue = string | { avatarData: string | null; changedAt: string }
+type ProfileField = "name" | "photo" | "rustyServicePin"
+export type ProfilePresentationField = Exclude<ProfileField, "rustyServicePin">
+export type ProfileValue = string | { avatarData: string | null; changedAt: string } | IdentityRustyServicePin
 type Identity = Pick<PublicIdentity, "personId" | "publicKey">
 type Clock = Record<string, number>
 type ProfilePayload = { kind: "identity-profile-update"; version: 1; personId: string; deviceId: string;
   counter: number; context: Clock; field: ProfileField; value: ProfileValue; supersedesLegacy: string[] }
 export type IdentityProfileOperation = { signed: SignedEnvelope<ProfilePayload>; certificates: DeviceCertificate[] }
-type LegacyObservation = { id: string; field: ProfileField; value: ProfileValue }
+type LegacyObservation = { id: string; field: ProfilePresentationField; value: string | { avatarData: string | null; changedAt: string } }
 export type IdentityProfileState = { version: 1; personId: string; operations: IdentityProfileOperation[]; legacy: LegacyObservation[] }
 const id = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
 const counter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-const fieldSchema = z.enum(["name", "photo"])
+const fieldSchema = z.enum(["name", "photo", "rustyServicePin"])
+const presentationFieldSchema = z.enum(["name", "photo"])
 const payloadSchema = z.object({ kind: z.literal("identity-profile-update"), version: z.literal(1), personId: id,
   deviceId: id, counter: counter.refine(value => value > 0), context: z.record(id, counter),
   field: fieldSchema, value: z.unknown(), supersedesLegacy: z.array(id).max(512) }).strict()
@@ -25,7 +27,7 @@ const operationSchema = z.object({ signed: z.object({ payload: payloadSchema, si
   certificates: z.array(z.unknown()).min(1).max(32) }).strict()
 const stateSchema = z.object({ version: z.literal(1), personId: id,
   operations: z.array(operationSchema).max(512),
-  legacy: z.array(z.object({ id, field: fieldSchema, value: z.unknown() }).strict()).max(512) }).strict()
+  legacy: z.array(z.object({ id, field: presentationFieldSchema, value: z.unknown() }).strict()).max(512) }).strict()
 const operationId = (operation: IdentityProfileOperation) => `${operation.signed.payload.deviceId}:${operation.signed.payload.counter}`
 const compareOrdinal = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0
 const precedes = (before: IdentityProfileOperation, after: IdentityProfileOperation) =>
@@ -41,12 +43,18 @@ export function emptyIdentityProfileState(personId: string): IdentityProfileStat
 }
 
 function validateValue(field: ProfileField, value: unknown): asserts value is ProfileValue {
-  if (field === "name") {
+  if (field === "rustyServicePin") {
+    const pin = value as Record<string, unknown> | null
+    if (!pin || typeof pin !== "object" || Array.isArray(pin) || Object.keys(pin).sort().join(",") !== "origin,serviceId,servicePublicKey" ||
+        typeof pin.origin !== "string" || typeof pin.serviceId !== "string" || typeof pin.servicePublicKey !== "string") {
+      throw new Error("Invalid Rusty service pin")
+    }
+  } else if (field === "name") {
     if (typeof value !== "string" || validateDisplayName(value) || normalizeDisplayName(value) !== value) throw new Error("Invalid identity profile name")
   } else if (!value || !isMemberProfileData(JSON.stringify(value))) throw new Error("Invalid identity profile photo")
 }
 
-async function legacyId(field: ProfileField, value: ProfileValue): Promise<string> {
+async function legacyId(field: ProfilePresentationField, value: Exclude<ProfileValue, IdentityRustyServicePin>): Promise<string> {
   return sha256Base64Url(new TextEncoder().encode(canonicalizeJson([field, value])))
 }
 
@@ -66,6 +74,10 @@ export async function readIdentityProfileState(value: unknown, identity: Identit
   const operations = new Map<string, IdentityProfileOperation>(), legacy = new Map<string, LegacyObservation>()
   for (const operation of state.operations) {
     await verifyOperation(operation, identity)
+    if (operation.signed.payload.field === "rustyServicePin") {
+      const normalized = await normalizeIdentityRustyServicePin(operation.signed.payload.value)
+      if (canonicalizeJson(normalized) !== canonicalizeJson(operation.signed.payload.value)) throw new Error("Invalid Rusty service pin")
+    }
     const key = operationId(operation), previous = operations.get(key)
     if (previous && canonicalizeJson(previous) !== canonicalizeJson(operation)) throw new Error("Identity profile device equivocation")
     operations.set(key, operation)
@@ -115,7 +127,7 @@ function validateCausality(operations: IdentityProfileOperation[]): void {
 }
 
 export async function observeLegacyIdentityProfile(state: IdentityProfileState, identity: Identity,
-  field: ProfileField, value: ProfileValue): Promise<IdentityProfileState> {
+  field: ProfilePresentationField, value: Exclude<ProfileValue, IdentityRustyServicePin>): Promise<IdentityProfileState> {
   value = structuredClone(value)
   validateValue(field, value)
   const current = await readIdentityProfileState(state, identity)
@@ -138,7 +150,7 @@ export async function mergeIdentityProfileState(left: IdentityProfileState, righ
 }
 
 export async function createIdentityProfileOperation(context: VerifiedSigningContext, state: IdentityProfileState,
-  identity: Identity, field: ProfileField, value: ProfileValue): Promise<IdentityProfileOperation> {
+  identity: Identity, field: ProfilePresentationField, value: Exclude<ProfileValue, IdentityRustyServicePin>): Promise<IdentityProfileOperation> {
   value = structuredClone(value)
   validateValue(field, value)
   const current = await readIdentityProfileState(state, identity), evidence = signingEvidence(context)
@@ -158,10 +170,14 @@ export async function createIdentityProfileOperation(context: VerifiedSigningCon
 }
 
 /** A conflict retains every incompatible value; only an explicit operation can supersede observed candidates. */
-export function identityProfileValue(state: IdentityProfileState, field: ProfileField): { status: "empty" | "value" | "conflict"; values: ProfileValue[] } {
+export function identityProfileValue(state: IdentityProfileState, field: ProfilePresentationField): {
+  status: "empty" | "value" | "conflict"; values: Array<string | { avatarData: string | null; changedAt: string }>
+} {
   const operations = state.operations.filter(item => item.signed.payload.field === field)
   const superseded = new Set(operations.flatMap(item => item.signed.payload.supersedesLegacy))
-  const values = [...operations.filter(item => !operations.some(other => precedes(item, other))).map(item => item.signed.payload.value),
+  const values = [...operations.filter(item => !operations.some(other => precedes(item, other))).map(item => item.signed.payload.value)
+    .filter((value): value is string | { avatarData: string | null; changedAt: string } =>
+      typeof value === "string" || (typeof value === "object" && value !== null && "avatarData" in value)),
     ...state.legacy.filter(item => item.field === field && !superseded.has(item.id)).map(item => item.value)]
   const distinct = new Map(values.map(value => [typeof value === "string" ? value : value.avatarData ?? "", value]))
   const selected = [...distinct.entries()].sort(([a], [b]) => compareOrdinal(a, b)).map(([, value]) => value)

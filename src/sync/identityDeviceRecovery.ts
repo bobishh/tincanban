@@ -1,4 +1,4 @@
-import { generateIdentityRecovery, identitySeedFromPrivateKey, sealIdentitySeed, type IdentityAdoptionCommitPlan, type IdentitySecurity } from "@meta-uber/mesh-identity"
+import { identitySeedFromPrivateKey, sealIdentitySeed, type IdentityAdoptionCommitPlan, type IdentitySecurity } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, canonicalizeJson, isCurrentIdentityProfile, refreshIdentityPresentation, restoreIdentityRecovery } from "../domain/identity"
 import type { PersonalRootDocumentV1 } from "../domain/model"
 import { createPersonalRoot } from "../domain/personalRoot"
@@ -59,6 +59,7 @@ export async function createIdentityDeviceRecovery(security: IdentitySecurity = 
   const context = await resolveLocalSigningContext(profile, "identity-device-recovery", { personId: profile.identity.personId })
   const seed = await identitySeedFromPrivateKey(profile.privateKeys.identityPrivateKey, profile.identity.personId)
   try {
+    const { generateIdentityRecovery } = await import("@meta-uber/mesh-identity/recovery")
     const recoveryKey = generateIdentityRecovery(security)
     const envelope = await sealIdentitySeed(seed, profile.identity.personId, recoveryKey, security)
     for (let attempt = 0; attempt < 8; attempt++) {

@@ -1,0 +1,12 @@
+id: no-sdk-source-imports
+valid:
+  - import { publish } from "@meta-uber/mesh-replication/rusty-scope-authority"
+  - export { verify } from "@meta-uber/mesh-identity"
+  - const sdk = await import("@meta-uber/mesh-identity")
+  - export function implementationPath() { return "../../vendor/meta-mesh/packages/mesh-identity/src/index" }
+  - const label = "@meta-uber/mesh-replication/dist/client"
+invalid:
+  - import { verify } from "../../vendor/meta-mesh/packages/mesh-identity/src/index"
+  - export { verify } from "@meta-uber/mesh-identity/src/index"
+  - const sdk = await import("../../vendor/meta-mesh/packages/mesh-identity/src/index")
+  - const sdk = require("@meta-uber/mesh-replication/dist/client")

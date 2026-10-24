@@ -17,7 +17,7 @@ async function clearIdentityInvitations(page: import("@playwright/test").Page): 
   }).catch(() => undefined)
 }
 
-test("Given a pending Identity invitation, when sign-in is cancelled, then keep the guest profile and stop enrollment", async ({ page }) => {
+test("Given a pending Identity invitation, when device connection is cancelled, then keep the guest profile and stop enrollment", async ({ page }) => {
   test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
   const browserErrors: string[] = []
   page.on("pageerror", error => browserErrors.push(error.stack ?? error.message))
@@ -44,9 +44,9 @@ test("Given a pending Identity invitation, when sign-in is cancelled, then keep 
   }, identityOrigin)
   try {
     expect(before.inviteUrl, `${before.hostError}\n${browserErrors.join("\n")}`).toContain("#")
-    await page.getByRole("button", { name: "Identity", exact: true }).click()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
     const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
     await dialog.getByLabel("Identity invitation").fill(before.inviteUrl)
     await dialog.getByRole("button", { name: "Connect this device", exact: true }).click()
     await expect(dialog.getByRole("status")).toContainText("Connecting", { timeout: 15000 })
@@ -73,9 +73,9 @@ test("Given an invalid Identity invitation, when connecting, then show an error 
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   const personId = await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)
-  await page.getByRole("button", { name: "Identity", exact: true }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
   await dialog.getByLabel("Identity invitation").fill("not-an-identity-invitation")
   await dialog.getByRole("button", { name: "Connect this device", exact: true }).click()
   await expect(dialog.getByRole("alert")).toContainText(/invalid/i)
@@ -194,7 +194,7 @@ test("Given an unregistered local profile, when Add my device requests registrat
     await backup.getByRole("button", { name: "Confirm and connect", exact: true }).click()
 
     mark("verify registration and resume action")
-    await expect(portal.getByText("Identity ID:", { exact: false })).toContainText(localPersonId, { timeout: 60000 })
+    await expect(portal.locator(".identity-id-badge")).toHaveAttribute("data-identity-id", localPersonId, { timeout: 60000 })
     await expect(enrollment).not.toBeVisible({ timeout: 60000 })
     await expect(sync.getByText("Add your second device", { exact: true })).toBeVisible({ timeout: 60000 })
     await expect(sync.getByRole("button", { name: "Copy enrollment link", exact: true })).toBeVisible()

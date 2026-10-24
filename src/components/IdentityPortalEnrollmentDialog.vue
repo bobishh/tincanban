@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import DialogWindow from "./DialogWindow.vue"
+import type { DeviceAuthorizationRequest } from "@meta-uber/mesh-identity"
 import type { LocalProfile } from "../domain/identity"
 import type { PublicIdentity, WorkspaceDocumentV2 } from "../domain/model"
 import { connectIdentityProfile, recoveryFileJson, startIdentityProfileHost, type IdentityEnrollmentRequest } from "../app/identityPortalEnrollment"
-import { browserSignInFailureMessage, clearIdentityBrowserSignIn, createApprovedSignInCompletion, createIdentityBrowserSignIn, identityBrowserReturnPath,
+import { browserSignInFailureMessage, clearIdentityBrowserSignIn, clearPendingRustyConnectionIntent, createApprovedSignInCompletion, createIdentityBrowserSignIn, identityBrowserReturnPath,
   readIdentityBrowserSignInReturn, readPendingIdentityBrowserSignIn, recordIdentityBrowserSignIn,
   verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn, type IdentityBrowserSignInResult } from "../app/identityBrowserSignIn"
 import { completeIdentityBrowserSignIn } from "../app/completeIdentityBrowserSignIn"
@@ -31,8 +32,9 @@ function restoreSignInReturnPath(path: string | null) {
 }
 
 const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
+  initialMode?: "choose" | "signin" | "connect";
   workspaces: Array<{ id: string; title: string }>; readWorkspaceDoc(id: string): Promise<WorkspaceDocumentV2>;
-  exportCurrentWorkspace(): Promise<void>; completeBrowserSignIn(returnPath: string): Promise<void> }>()
+  exportCurrentWorkspace(): Promise<void>; completeBrowserSignIn(returnPath: string, request?: DeviceAuthorizationRequest): Promise<void> }>()
 const emit = defineEmits<{ close: []; completed: [] }>()
 const mode = ref<"choose" | "create" | "connect" | "signin">("choose")
 const inviteUrl = ref("")
@@ -64,6 +66,8 @@ let activeBrowserSignInChallenge: string | null = null
 
 onMounted(() => {
   if (props.browserReturn) void finishBrowserSignInReturn()
+  else if (props.initialMode === "signin") void beginBrowserSignIn()
+  else if (props.initialMode === "connect") mode.value = "connect"
 })
 
 async function beginBrowserSignIn() {
@@ -119,6 +123,7 @@ async function finishBrowserSignInReturn() {
       applicationOrigin: window.location.origin })
     if (attempt !== browserSignInAttempt) return
     if (result.kind === "cancelled") {
+      clearPendingRustyConnectionIntent(window.sessionStorage)
       recordIdentityBrowserSignIn("callback", "cancelled", { elapsedMs: performance.now() - startedAt })
       restoreSignInReturnPath(pending.returnPath)
       error.value = "Identity approval was not granted. Select Sign in to try again."
@@ -133,7 +138,7 @@ async function finishBrowserSignInReturn() {
     await completeIdentityBrowserSignIn(result.approval, pending.request, props.profile)
     recordIdentityBrowserSignIn("adoption", "completed", { elapsedMs: performance.now() - startedAt })
     phase = "refresh"
-    if (await browserSignInCompletion.finish(pending.returnPath)) browserApproval.value = null
+    if (await browserSignInCompletion.finish(pending.returnPath, pending.request)) browserApproval.value = null
     else {
       browserApproval.value = null
       error.value = browserSignInCompletion.error.value ?? "Identity was approved, but the app could not finish sign-in. Select Sign in to retry."
@@ -165,6 +170,7 @@ function dismissBrowserSignIn() {
   if (activeBrowserSignInChallenge) {
     readPendingIdentityBrowserSignIn(window.sessionStorage, activeBrowserSignInChallenge)
   }
+  clearPendingRustyConnectionIntent(window.sessionStorage)
   cancelReplacement()
   if (returnPath) window.history.replaceState(window.history.state, "", returnPath)
   browserSignInReturnPath.value = null
