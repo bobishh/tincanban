@@ -31,7 +31,7 @@ async function readProfileChoices(root: PersonalRootDocumentV1, ownerIsCurrent: 
   const name = identityProfileValue(state, "name"), picture = identityProfileValue(state, "photo")
   const revision = await identityProfileRevision(state)
   const nameProvided = state.operations.some(operation => operation.signed.payload.field === "name") || await identityNameIsProvided(profileRoot.identity)
-  return { name, picture, revision, nameProvided }
+  return { name, picture, revision, nameProvided, storedPhoto: profileRoot.photo }
 }
 
 function photoProjector(workspace: ReturnType<typeof useTincanban>, isOwnerCurrent: (ownerId: string) => boolean,
@@ -72,18 +72,18 @@ class ProfileReadFailure extends Error {
 
 async function readOwnerProfilePhoto(workspace: ReturnType<typeof useTincanban>, ownerId: string,
   ownerIsCurrent: (ownerId: string) => boolean,
-  updateProfileChoices: (root: PersonalRootDocumentV1, ownerId: string) => Promise<boolean>) {
+  updateProfileChoices: (root: PersonalRootDocumentV1, ownerId: string) => Promise<{ conflicted: boolean; storedPhoto?: IdentityPhoto }>) {
   let stage = "personal-root-read"
   try {
     const root = await defaultStorage.loadPersonalRoot()
     if (!ownerIsCurrent(ownerId)) return undefined
     if (root?.identity.personId !== ownerId) return undefined
-    const stored = parseIdentityPhoto(root.photo)
     stage = "workspace-photo-read"
     const entity = workspace.getActiveDoc()?.entities[memberProfileEntityId(ownerId)]
     const incoming = entity?.kind === "member_profile" ? parseIdentityPhoto(JSON.parse(entity.data)) : undefined
     stage = "identity-profile-history-read"
-    const conflicted = await updateProfileChoices(root, ownerId)
+    const { conflicted, storedPhoto } = await updateProfileChoices(root, ownerId)
+    const stored = parseIdentityPhoto(storedPhoto)
     return { conflicted, photo: stored ?? incoming, stored }
   } catch (cause) {
     throw new ProfileReadFailure(stage, cause)
@@ -134,14 +134,14 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
   function ownerIsCurrent(ownerId: string): boolean { return !disposed && personId() === ownerId }
   const projectPhoto = photoProjector(workspace, ownerIsCurrent, value => { avatarNotice.value = value })
   async function updateProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
-    const { name, picture, revision, nameProvided } = await readProfileChoices(root, () => ownerIsCurrent(ownerId))
-    if (!ownerIsCurrent(ownerId)) return false
+    const { name, picture, revision, nameProvided, storedPhoto } = await readProfileChoices(root, () => ownerIsCurrent(ownerId))
+    if (!ownerIsCurrent(ownerId)) return { conflicted: false }
     identityNameProvided.value = nameProvided
     profileRevision.value = revision
     profileLoadError.value = ""
     profileConflicts.value = { names: name.status === "conflict" ? name.values.filter((value): value is string => typeof value === "string") : [],
       photos: picture.status === "conflict" ? picture.values.filter((value): value is IdentityPhoto => typeof value !== "string") : [] }
-    return picture.status === "conflict"
+    return { conflicted: picture.status === "conflict", storedPhoto }
   }
   function clearProfileChoices(): void {
     profileRevision.value = ""

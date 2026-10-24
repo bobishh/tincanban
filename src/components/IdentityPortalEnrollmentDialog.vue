@@ -135,7 +135,7 @@ async function finishBrowserSignInReturn() {
     if (attempt !== browserSignInAttempt) return
     phase = "adoption"
     recordIdentityBrowserSignIn("adoption", "started")
-    await completeIdentityBrowserSignIn(result.approval, pending.request, props.profile)
+    await completeIdentityBrowserSignIn(result.approval, pending.request, props.profile, props.workspaceId)
     recordIdentityBrowserSignIn("adoption", "completed", { elapsedMs: performance.now() - startedAt })
     phase = "refresh"
     if (await browserSignInCompletion.finish(pending.returnPath, pending.request)) browserApproval.value = null

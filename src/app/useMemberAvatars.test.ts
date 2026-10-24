@@ -52,6 +52,37 @@ it("Given a saved identity photo while startup checks are pending, when the work
   } finally { scope.stop() }
 })
 
+it("Given signed photo history with a missing root shadow, when avatar preferences reconcile, then publish the recovered photo", async () => {
+  const { bootstrapIdentity } = await import("../domain/identity")
+  const { createPersonalRoot } = await import("../domain/personalRoot")
+  const { createIdentityProfileOperation, emptyIdentityProfileState, observeLegacyIdentityProfile, readIdentityProfileState } = await import("../domain/identityProfileState")
+  const { resolveLocalSigningContext } = await import("../domain/localSigningContext")
+  const profile = await bootstrapIdentity("Photo Owner")
+  const state = await observeLegacyIdentityProfile(emptyIdentityProfileState(profile.identity.personId), profile.identity, "name", profile.identity.displayName)
+  const context = await resolveLocalSigningContext(profile, "identity-profile-update", { personId: profile.identity.personId })
+  const signedPhoto = await createIdentityProfileOperation(context, state, profile.identity, "photo", photo)
+  const profileState = await readIdentityProfileState({ ...state, operations: [signedPhoto] }, profile.identity)
+  let root: unknown = { ...createPersonalRoot(profile, "certificate"), profileState }
+  storage.loadPersonalRoot.mockImplementation(async () => root)
+  storage.updatePersonalRootForIdentity.mockImplementation(async (_id: string, update: (value: unknown) => unknown) => {
+    root = await update(root)
+    return root
+  })
+  const doc = { id: "workspace", entities: {} }
+  const execute = vi.fn(async () => {})
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
+    getCurrentProfile: () => profile, getActiveDoc: () => doc, readWorkspaceDoc: async () => doc,
+    executeWorkspaceCommandAsync: execute,
+  } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
+  try {
+    await vi.waitFor(() => expect(avatars.currentAvatar.value).toBe(photo.avatarData))
+    expect((root as { photo?: unknown }).photo).toEqual(photo)
+    expect(execute).toHaveBeenCalledWith(doc.id, { kind: "setMemberAvatar", ...photo })
+  } finally { scope.stop() }
+})
+
 it("Given a same-owner identity-scope photo update without a document version change, when preferences notify, then update the visible avatar", async () => {
   const docVersion = ref(7)
   const doc = { id: "workspace", entities: {} }

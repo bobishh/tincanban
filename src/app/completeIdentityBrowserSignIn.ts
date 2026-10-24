@@ -7,12 +7,14 @@ import { saveIdentityRustyServiceCatalogApproval } from "../sync/identityRustySe
 import { mergeIdentityProfileState } from "../domain/identityProfileState"
 import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { identityDevicePreferencesChanged } from "../sync/identityDevicePreferenceEvents"
+import { publishIdentityNameToChat } from "./identityName"
 
 /** Finish an approved browser sign-in before returning control to the UI. */
 export async function completeIdentityBrowserSignIn(
   approval: DeviceAuthorizationApproval,
   request: DeviceAuthorizationRequest,
   currentProfile: LocalProfile,
+  workspaceId?: string,
 ): Promise<LocalProfile> {
   const adopted = await adoptApprovedApplicationDevice(approval, request, currentProfile, async (verified, ensureCurrent) => {
     if (!verified.authorityView) throw new Error("Identity approval is missing its signed global authority view")
@@ -28,5 +30,6 @@ export async function completeIdentityBrowserSignIn(
     })
     identityDevicePreferencesChanged(adopted.identity.personId)
   }
+  await publishIdentityNameToChat(workspaceId)
   return adopted
 }
