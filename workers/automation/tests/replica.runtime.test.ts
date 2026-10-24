@@ -1688,6 +1688,93 @@ it("Given a saved upload fenced by a newer Rusty checkpoint, when sync retries, 
   expect(JSON.parse(replica.serialize()).pending).toBeUndefined();
 });
 
+it("Given a checkpoint commits after Worker inventory, when a fresh upload is rejected, then admit its snapshot before retrying", async () => {
+  const data = await fixture();
+  let checkpointAvailable = false;
+  let checkpointObject: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const observedSequences: number[] = [];
+  const transport: ReplicaTransport = {
+    inventory: async (_access, after) => checkpointAvailable && after < 7
+      ? { objects: [{ objectId: await blindObjectId(checkpointObject!), sequence: 7 }], cursor: 7, hasMore: false }
+      : { objects: [], cursor: after, hasMore: false },
+    download: async (_access, objectId) => {
+      if (!checkpointObject || objectId !== await blindObjectId(checkpointObject)) throw new Error("Checkpoint object is missing");
+      return checkpointObject;
+    },
+    upload: async (access, object, requestId, observedSequence = 0) => {
+      observedSequences.push(observedSequence);
+      if (!checkpointAvailable) checkpointAvailable = true;
+      if (observedSequence < 7) throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+        { code: "checkpoint_generation_required", status: 409 });
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  const checkpoint = { version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial };
+  checkpointObject = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify(checkpoint)));
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  await replica.createLead("checkpoint-race", { company: "Acme", role: "Engineer" }, {});
+
+  await expect(replica.sync()).resolves.toBeUndefined();
+
+  expect(observedSequences).toEqual([0, 7]);
+  const completed = JSON.parse(replica.serialize());
+  expect(completed.blind.cursor).toBe(7);
+  expect(completed).not.toHaveProperty("pending");
+});
+
+it("Given checkpoint refresh fails after a rejected fresh upload, when a restored Worker retries, then preserve exact outbox until admission", async () => {
+  const data = await fixture();
+  let checkpointAvailable = false;
+  let refreshUnavailable = false;
+  let checkpointObject: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const requests: Array<{ object: unknown; requestId: string; observedSequence: number }> = [];
+  const transport: ReplicaTransport = {
+    inventory: async (_access, after) => {
+      if (refreshUnavailable) throw new Error("Inventory unavailable during checkpoint refresh");
+      return checkpointAvailable && after < 7
+        ? { objects: [{ objectId: await blindObjectId(checkpointObject!), sequence: 7 }], cursor: 7, hasMore: false }
+        : { objects: [], cursor: after, hasMore: false };
+    },
+    download: async (_access, objectId) => {
+      if (!checkpointObject || objectId !== await blindObjectId(checkpointObject)) throw new Error("Checkpoint object is missing");
+      return checkpointObject;
+    },
+    upload: async (access, object, requestId, observedSequence = 0) => {
+      requests.push({ object: structuredClone(object), requestId: requestId!, observedSequence });
+      if (observedSequence < 7) {
+        checkpointAvailable = true;
+        if (requests.length === 1) refreshUnavailable = true;
+        throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+          { code: "checkpoint_generation_required", status: 409 });
+      }
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  const checkpoint = { version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial };
+  checkpointObject = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify(checkpoint)));
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  await replica.createLead("checkpoint-refresh-restart", { company: "Acme", role: "Engineer" }, {});
+
+  await expect(replica.sync()).rejects.toThrow("Inventory unavailable during checkpoint refresh");
+  const saved = JSON.parse(replica.serialize()).pending;
+  expect(saved).toBeDefined();
+  expect(saved).toMatchObject({ object: requests[0]!.object, requestId: requests[0]!.requestId, observedSequence: 0 });
+
+  refreshUnavailable = false;
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, transport);
+  await expect(restored.sync()).resolves.toBeUndefined();
+
+  expect(requests.slice(0, 2).map(({ object, requestId, observedSequence }) => ({ object, requestId, observedSequence })))
+    .toEqual([requests[0], requests[0]]);
+  expect(requests[2]!.observedSequence).toBe(7);
+  expect(requests[2]!.requestId).not.toBe(requests[0]!.requestId);
+  const completed = JSON.parse(restored.serialize());
+  expect(completed.blind.cursor).toBe(7);
+  expect(completed).not.toHaveProperty("pending");
+});
+
 it("Given expired management history with newer local content and a saved upload, When Owner drains pending, Then retry exact ciphertext without pulling or capturing", async () => {
   const f = await pendingManagementFixture()
   const guard = vi.fn(async () => f.inspector.assertOwner(f.owner, f.data.owner.device.deviceId))

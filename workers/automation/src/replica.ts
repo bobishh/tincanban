@@ -656,14 +656,7 @@ export class AutomationReplica {
           span?.setAttribute("replication.phase", "confirm-pending-upload");
           try { await this.engine.drainPending(); }
           catch (error) {
-            if (!isCheckpointGenerationRequired(error)) throw error;
-            // Rusty guarantees this conflict happens before storing the prepared object. Retire only
-            // that rejected request, durably refresh the checkpoint frontier, then prepare a new upload.
-            span?.setAttribute("replication.phase", "refresh-checkpoint-generation");
-            this.pending = undefined;
-            await this.persistState();
-            await this.engine.pull();
-            await this.engine.push();
+            await this.refreshRejectedCheckpointUpload(error, this.engine, phase => span?.setAttribute("replication.phase", phase));
           }
           await this.deliverPublicChanges(automationDiagnosticContext(span));
           return;
@@ -675,11 +668,45 @@ export class AutomationReplica {
           await this.persistState();
         }
         span?.setAttribute("replication.phase", "local-admission-serialize-push");
-        await this.engine.push();
+        try { await this.engine.push(); }
+        catch (error) {
+          await this.refreshRejectedCheckpointUpload(error, this.engine, phase => span?.setAttribute("replication.phase", phase));
+        }
         span?.setAttribute("replication.phase", "confirm-public-delivery");
         await this.deliverPublicChanges(automationDiagnosticContext(span));
       });
     });
+  }
+
+  private async refreshRejectedCheckpointUpload(error: unknown, engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>,
+    setPhase: (phase: string) => void): Promise<void> {
+    if (!isCheckpointGenerationRequired(error)) throw error;
+    const rejected = this.progress.pending && structuredClone(this.progress.pending);
+    if (!rejected) throw new Error("Rusty rejected an upload without a durable Worker outbox", { cause: error });
+
+    // Keep exact bytes and request ID durable until the checkpoint snapshot is fully admitted.
+    setPhase("refresh-checkpoint-generation");
+    const caughtUp = await engine.pull();
+    const current = this.progress.pending;
+    if (!current || canonicalizeJson(current) !== canonicalizeJson(rejected)) {
+      throw new Error("Worker outbox changed while admitting its checkpoint", { cause: error });
+    }
+    if (!caughtUp || this.progress.cursor <= (rejected.observedSequence ?? 0)) {
+      throw new Error("Rusty checkpoint inventory is not fully admitted; retry synchronization", { cause: error });
+    }
+
+    const previous = this.progress;
+    if (previous.generation >= Number.MAX_SAFE_INTEGER) throw new Error("Worker replica generation is exhausted");
+    const refreshed = structuredClone(previous);
+    delete refreshed.pending;
+    refreshed.generation += 1;
+    this.progress = refreshed;
+    try { await this.persistState(); }
+    catch (persistError) { this.progress = previous; throw persistError; }
+
+    // Rusty rejected the prior object before storage. Replace it only after admitting the newer frontier.
+    setPhase("retry-after-checkpoint-generation");
+    await engine.push();
   }
 
   createLead(eventId: string, normalized: NormalizedLead, decision: unknown, columnId = this.bindings.columns.lead): Promise<{ cardId: string; duplicate: boolean }> {
