@@ -35,6 +35,13 @@ npx playwright install chromium
 npx playwright test --project=core
 ```
 
+Architecture checks run within `npm run quality`: dependency direction and cycle
+rules include executable allowed/forbidden import fixtures; pattern rules reject
+imports of SDK implementation files. `npm run quality:replica` separately checks
+the headless product and automation boundaries. These checks enforce structural
+contracts; domain ownership and client/server compatibility also require review
+and behavior tests. See [architecture guidance](AGENTS.md).
+
 ## Components
 
 - [MetaMesh](https://github.com/bobishh/meta-mesh): identity, transport, and replication SDK.

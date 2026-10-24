@@ -106,17 +106,19 @@
       ],
       "path": "skills/engineering/codebase-design",
       "local_patches": [
-        "Append repository safety and host integration rules to SKILL.md."
+        "Append repository safety and host integration rules to SKILL.md.",
+        "Add mandatory ownership, cognitive-budget, and contract-evidence review procedure for domain and shared-protocol changes."
       ],
       "review_date": "2026-10-19",
       "upstream_url": "https://github.com/mattpocock/skills/tree/49dd158d1076134a641b33efb035946536778336/skills/engineering/codebase-design",
       "installed_sha256": {
         "DEEPENING.md": "f3dd099ce99289bd213914d8ee3e2429b78309c3957ca4583f7659551b1d53c1",
         "DESIGN-IT-TWICE.md": "52b52e75655a27aea59c6966b410bac82448968ad46ef1ebb9f07c274e3ae010",
-        "SKILL.md": "b4f299055eae9e00c2d5a49547cee13644b0ae5b48e6ff6358e82bb67e4f7465",
-        "SOURCE.json": "0aabf473e7249408229a650a19be1d108d45e9ac5e08dce249c81b1edc0b5cec",
+        "SKILL.md": "d63d4e6ff654810171988391466c0b2fcd267e8515f1c0d1c25a4f915391b5b7",
+        "SOURCE.json": "b7c60417897ca767fd614ed80c6769851863ffbd11950a817337f42e3ed040e4",
         "UPSTREAM-LICENSE": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
-        "agents/openai.yaml": "edebc9e4fcfe102114012575eaa9600b9b5fd08c311664f389c36e7bc717740f"
+        "agents/openai.yaml": "edebc9e4fcfe102114012575eaa9600b9b5fd08c311664f389c36e7bc717740f",
+        "ARCHITECTURE-REVIEW.md": "abb27b8b22c72e7291b586974a0bd9ff2bbf176062ce1580fdefe17c8958421f"
       }
     },
     {

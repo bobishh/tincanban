@@ -3,7 +3,7 @@ import { defaultProofStore } from "./proofs"
 import type { DeviceCertificate } from "./model"
 import { resolveSigningContext } from "./signingContext"
 import { readLocal } from "../localDb"
-import { assertClientReleaseWritable } from "../release/runtimeRelease"
+import { assertClientReleaseWritable } from "../release/releaseCompatibility"
 
 type LocalSigningOptions = {
   certificates?: DeviceCertificate[]

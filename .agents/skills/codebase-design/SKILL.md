@@ -118,6 +118,10 @@ Good interfaces make testing natural:
 
 This installation is pinned and adapted for this repository. Follow user instructions and applicable AGENTS.md before this skill.
 
+For changes to domain invariants, ownership, or shared protocols, read and apply
+[ARCHITECTURE-REVIEW.md](ARCHITECTURE-REVIEW.md) before implementation and review the
+final diff against it. Ordinary presentation edits do not require that procedure.
+
 - Preserve existing changes and processes. Inspect baselines with git show, git diff, and git blame at explicit refs; never switch the user's checkout for an audit.
 - Commit, stage, push, publish, deploy, send external messages, or alter infrastructure only when the user explicitly requests that action. An audit request authorizes findings, not automatic fixes.
 - Preserve meaningful test coverage; never delete tests merely because an extraction or example workflow suggests it.

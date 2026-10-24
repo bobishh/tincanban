@@ -15,6 +15,23 @@ module.exports = {
       },
     },
     {
+      name: "domain-does-not-initialize-vue",
+      severity: "error",
+      comment: "Domain behavior must run without a UI runtime, including through helpers.",
+      from: { path: "^src/domain/", pathNot: "[.](?:test|spec)[.]ts$" },
+      to: { reachable: true, path: "^(?:node_modules/)?(?:vue(?:/|$)|@vue/)" },
+    },
+    {
+      name: "ui-does-not-call-protocol-sdk",
+      severity: "error",
+      comment: "Views call application operations; protocol clients belong behind that interface.",
+      from: { path: "^src/(?:components|ui)/", pathNot: "[.](?:test|spec)[.]ts$" },
+      to: {
+        dependencyTypesNot: ["type-only"],
+        path: "^(?:(?:node_modules/)?@meta-uber/mesh-|vendor/meta-mesh/packages/mesh-)(?:replication|runtime|transport)(?:/|$)",
+      },
+    },
+    {
       name: "no-circular",
       severity: "error",
       comment: "Cycles hide initialization order and couple unrelated changes.",
