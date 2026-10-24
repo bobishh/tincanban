@@ -16,6 +16,8 @@ import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEven
 import { discoverBlindKeeper } from "./blindClient"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 import { withPrivateReplicaOperation } from "./privateReplicaOperation"
+import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
+import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
 export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void) {
@@ -25,6 +27,13 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
   profile = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
     certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
   const personId = profile.identity.personId
+  const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent })
+  const transport = {
+    inventory: (access: BlindAccess, after: number) => inventoryBlindObjects(access, after, scopeFetch),
+    download: (access: BlindAccess, id: string) => downloadBlindObject(access, id, scopeFetch),
+    upload: (access: BlindAccess, object: Parameters<typeof uploadBlindObject>[1], requestId: string, observedSequence = 0) =>
+      uploadBlindObject(access, object, requestId, observedSequence, scopeFetch),
+  }
   const management: ManagementBinding = { origin: config.origin, servicePublicKey: config.servicePublicKey,
     resourceKind: "scope", resourceId: config.scopeId }
   const repository = new RustyManagementRepository(personId)
@@ -82,7 +91,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
       await guard()
       if (await applyIdentityDeviceTransfer(transfer, ensureCurrent)) identityDevicePreferencesChanged(personId)
     }, authorize, guard,
-  })
+  }, transport)
   const refresh = async () => {
     ensureCurrent()
     const service = await discoverBlindKeeper(config.origin)

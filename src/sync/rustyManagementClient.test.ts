@@ -1,5 +1,6 @@
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "./identityAuthority.testSupport"
 import { afterEach, expect, it, vi } from "vitest"
-import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope } from "../domain/identity"
+import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope } from "../domain/identity"
 import { readRustyManagementStatus, retryRustyManagementUpdate, updateRustyManagementPolicy } from "./rustyManagementClient"
 import { RustyManagementRepository, type ManagementBinding, type ManagementUpdateRequest } from "./rustyManagementRepository"
 import type { RustyManagementStatusResponse, ManagementStatusAuthorization } from "./rustyManagementStatus"

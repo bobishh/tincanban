@@ -22,6 +22,7 @@ import { defaultStorage } from "../storage"
 import { exportAuthorizationBundle, localWorkspaceAdmissionAuthority, workspaceRole } from "./changeAuthorization"
 import { defaultProofStore } from "../domain/proofs"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
+import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { HistoryCaptureSourceChangedError } from "./historyCheckpointSource"
 import { checkpointAdmissionReady } from "./blindCheckpointAdmission"
@@ -200,7 +201,7 @@ type CaptureInput = {
   resolveSigningContext: (binding: Record<string, string | number>) => Promise<VerifiedSigningContext>
   readCurrentWorkspaceBytes: () => Promise<Uint8Array>
   checkpointBeforeActivation?: CaptureCheckpointPort
-  fetch?: typeof fetch
+  fetch: typeof fetch
   ensureCurrent: () => void | Promise<void>
   ensureNativeCurrent: () => void
 }
@@ -240,7 +241,7 @@ async function prepareCaptureWork(input: CaptureInput): Promise<CaptureWork> {
   await data.capture(encodedSource(source, controlJson, authorizationJson))
   const captureKey = await sha256Base64Url(encoder.encode(canonicalizeJson({ transitionId, sourceRevision,
     authorityRevision, workspaceId: config.workspaceId, scopeId: config.scopeId, keyEpoch: config.keyEpoch, keyDigest })))
-  const keyringRemote = createArchiveRemote(config, { fetch: input.fetch ?? fetch, ensureCurrent })
+  const keyringRemote = createArchiveRemote(config, { fetch: input.fetch, ensureCurrent })
   const remote: HistoryPreparationRemote = { upload: keyringRemote.upload, coverage: keyringRemote.coverage, aggregate: keyringRemote.aggregate }
   return { ...input, config, source, signer, scope, authority, scopeAuthority, ensureCurrent, ensureNativeCurrent,
     receivedBasis, previous, controlJson, authorizationJson, sourceRevision, authorityRevision, historyEpoch,
@@ -419,9 +420,10 @@ export async function captureWorkspaceHistoryBaselineFromApp(input: {
   const { tincanban, config, transitionId, ensureCurrent, ensureNativeCurrent } = input
   const { assertHistoryStorageCheckpointSupport } = await import("./blindHistoryCheckpoint")
   await assertHistoryStorageCheckpointSupport(config, ensureCurrent)
-  const resumed = await (await import("./historyBaselinePublicationResume")).resumePublishedHistoryBaseline(input)
-  if (resumed) return resumed
   const profile = captureProfile(tincanban)
+  const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent })
+  const resumed = await (await import("./historyBaselinePublicationResume")).resumePublishedHistoryBaseline({ ...input, fetch: scopeFetch })
+  if (resumed) return resumed
   const { doc, bytes, authorization } = await loadCaptureSource(tincanban, config.workspaceId, profile, ensureCurrent)
   const source = nativeSource(config.workspaceId, bytes, authorization)
   await requireAdmittedWorkspaceEvidence(config.workspaceId, ensureCurrent)
@@ -442,7 +444,7 @@ export async function captureWorkspaceHistoryBaselineFromApp(input: {
         policyRevision: config.policyRevision, servicePublicKey: config.servicePublicKey }, scopeAuthority,
       resolveSigningContext: async binding => resolveLocalSigningContext(profile, "workspace-history-baseline", binding,
         { certificates, currentAuthority, ensureCurrent, domain: "MESH-HISTORY/1", expiresAt: Date.now() + 60_000 }),
-      readCurrentWorkspaceBytes: () => tincanban.readWorkspaceBytes(config.workspaceId), ensureCurrent, ensureNativeCurrent,
+      readCurrentWorkspaceBytes: () => tincanban.readWorkspaceBytes(config.workspaceId), fetch: scopeFetch, ensureCurrent, ensureNativeCurrent,
       checkpointBeforeActivation: input.checkpointBeforeActivation })
   } finally { previous?.free() }
 }

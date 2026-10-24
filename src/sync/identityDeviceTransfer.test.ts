@@ -7,8 +7,22 @@ import { recordReplicaPreference } from "./identityDevicePreferences"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 import { createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import type { BlindReplicaConfig } from "./blindReplication"
+import { createIdentityAuthorityView } from "@meta-uber/mesh-identity"
+import { rootIdentityProfileState } from "../domain/identityProfileRoot"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+import { projectRedundantDeviceCertificates } from "./identityDeviceTransferCertificateProjection"
 
 beforeEach(() => resetIdentityStorageForTest())
+
+async function exportTransfer(root: ReturnType<typeof createPersonalRoot>, certificates: Parameters<typeof createIdentityDeviceTransfer>[1]) {
+  root = structuredClone(root)
+  const projected = await projectRedundantDeviceCertificates(root, certificates)
+  root = projected.root
+  const state = await rootIdentityProfileState(root)
+  const view = await createIdentityAuthorityView(root.identity, { certificates: projected.certificates, revocations: [] }, state)
+  await mergeIdentityAuthorityView(view)
+  return createIdentityDeviceTransfer(root, certificates)
+}
 
 it("Given catalog, private connection and signed service policy, when building a portable manifest, then retain every required component without local progress", async () => {
   const owner = await bootstrapIdentity("Owner")
@@ -28,9 +42,9 @@ it("Given catalog, private connection and signed service policy, when building a
     authorizationHash: "A".repeat(43), issuedAt: Date.now() }, serviceId, "RUSTY/2")
   await new RustyManagementRepository(owner.identity.personId).observe({ origin: config.origin, servicePublicKey: config.servicePublicKey,
     resourceKind: "scope", resourceId: config.scopeId }, capability)
-  const manifest = await createIdentityDeviceTransfer(root, [owner.certificate])
+  const manifest = await exportTransfer(root, [owner.certificate])
   const parsed = await readIdentityDeviceTransfer(manifest, owner.identity.personId)
-  expect(Object.keys(manifest.components)).toHaveLength(6)
+  expect(Object.keys(manifest.components)).toHaveLength(7)
   expect(parsed.personalRoot.pendingKeeperWithdrawals).toEqual(root.pendingKeeperWithdrawals)
   expect(parsed.capabilities[0].capability).toEqual(capability)
   expect(parsed.recoveryEvidence.envelopes).toEqual([])
@@ -40,7 +54,7 @@ it("Given catalog, private connection and signed service policy, when building a
 it("Given complete catalog state mutated during an async source read, when export finishes, then retain the original snapshot", async () => {
   const owner = await bootstrapIdentity("Owner")
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
-  const pending = createIdentityDeviceTransfer(root, [owner.certificate])
+  const pending = exportTransfer(root, [owner.certificate])
   root.identity.displayName = "Mutated"
   const parsed = await readIdentityDeviceTransfer(await pending, owner.identity.personId)
   expect(parsed.personalRoot.identity.displayName).toBe("Owner")
@@ -54,8 +68,8 @@ it("Given identical multi-device certificate evidence in different orders with d
   const delegated = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
     owner.identity.personId, second.device.deviceId, second.device.publicKey, await certHashDefault(owner.certificate))
 
-  const first = await createIdentityDeviceTransfer(root, [delegated, owner.certificate, delegated])
-  const reordered = await createIdentityDeviceTransfer(root, [owner.certificate, delegated])
+  const first = await exportTransfer(root, [delegated, owner.certificate, delegated])
+  const reordered = await exportTransfer(root, [owner.certificate, delegated])
   const catalog = first.components.identityCatalog.value as { certificates: typeof owner.certificate[] }
 
   expect(catalog.certificates).toHaveLength(2)
@@ -73,7 +87,7 @@ it("projects only a fully signed same-key repeated-device leaf to its verified a
   const reissuedPhoneCertificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
     owner.identity.personId, phone.device.deviceId, phone.device.publicKey, await certHashDefault(owner.certificate))
 
-  await expect(createIdentityDeviceTransfer(root, [owner.certificate, oldPhoneCertificate, reissuedPhoneCertificate])).resolves.toBeDefined()
+  await expect(exportTransfer(root, [owner.certificate, oldPhoneCertificate, reissuedPhoneCertificate])).resolves.toBeDefined()
 
   const selfIssuedCertificate = await createDelegatedCertificate(phone.privateKeys.devicePrivateKey!, phone.device.deviceId,
     owner.identity.personId, phone.device.deviceId, phone.device.publicKey, await certHashDefault(oldPhoneCertificate))
@@ -82,7 +96,7 @@ it("projects only a fully signed same-key repeated-device leaf to its verified a
   registerDeviceInRoot(root, { deviceId: phone.device.deviceId, publicKey: phone.device.publicKey, displayName: "Phone",
     certificateHash: await certHashDefault(selfIssuedCertificate), addedAt: new Date().toISOString() })
 
-  const exported = await createIdentityDeviceTransfer(root, input)
+  const exported = await exportTransfer(root, input)
   const catalog = exported.components.identityCatalog.value as {
     personalRoot: { devices: Record<string, { certificateHash: string }> }
     certificates: Array<{ signature: string }>
@@ -98,13 +112,13 @@ it("projects only a fully signed same-key repeated-device leaf to its verified a
   const changedCapabilityRoot = structuredClone(root)
   registerDeviceInRoot(changedCapabilityRoot, { deviceId: phone.device.deviceId, publicKey: phone.device.publicKey,
     displayName: "Phone", certificateHash: await certHashDefault(changedCapabilityCertificate), addedAt: new Date().toISOString() })
-  await expect(createIdentityDeviceTransfer(changedCapabilityRoot,
+  await expect(exportTransfer(changedCapabilityRoot,
     [owner.certificate, oldPhoneCertificate, changedCapabilityCertificate])).rejects.toThrow(/registered device|redundant/i)
 
   const invalid = structuredClone(exported)
   const invalidCatalog = invalid.components.identityCatalog.value as typeof catalog
   invalidCatalog.certificates.push(selfIssuedCertificate)
-  await expect(readIdentityDeviceTransfer(invalid, owner.identity.personId)).rejects.toThrow("Invalid device certificate")
+  await expect(readIdentityDeviceTransfer(invalid, owner.identity.personId)).rejects.toThrow(/certificate/)
 })
 
 it("Given incomplete or malformed certificate evidence, when exporting, then fail closed instead of emitting an unverifiable catalog", async () => {
@@ -115,16 +129,16 @@ it("Given incomplete or malformed certificate evidence, when exporting, then fai
   const delegated = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
     owner.identity.personId, second.device.deviceId, second.device.publicKey, await certHashDefault(owner.certificate))
 
-  await expect(createIdentityDeviceTransfer(root, [delegated])).rejects.toThrow(/ancestor|certificate/i)
+  await expect(exportTransfer(root, [delegated])).rejects.toThrow(/ancestor|certificate/i)
   const malformed = structuredClone(owner.certificate)
   malformed.signature = "forged-signature"
-  await expect(createIdentityDeviceTransfer(root, [malformed])).rejects.toThrow(/signature|certificate/i)
+  await expect(exportTransfer(root, [malformed])).rejects.toThrow(/signature|certificate/i)
 })
 
 it("Given a malformed policy or omitted required component, when preflighting the manifest, then reject without installing any state", async () => {
   const owner = await bootstrapIdentity("Owner")
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
-  const manifest = await createIdentityDeviceTransfer(root, [owner.certificate])
+  const manifest = await exportTransfer(root, [owner.certificate])
   manifest.components.ownerCapabilities.value.capabilities = [{ binding: { origin: "https://rusty.example" }, capability: "forged" }]
   await expect(readIdentityDeviceTransfer(manifest, owner.identity.personId)).rejects.toThrow()
   delete manifest.components.ownerCapabilities
@@ -134,7 +148,7 @@ it("Given a malformed policy or omitted required component, when preflighting th
 it("Given a mismatched root key or forged catalog certificate, when preflighting, then reject the entire private bundle", async () => {
   const owner = await bootstrapIdentity("Owner")
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
-  const manifest = await createIdentityDeviceTransfer(root, [owner.certificate])
+  const manifest = await exportTransfer(root, [owner.certificate])
   const forged = structuredClone(manifest)
   const catalog = forged.components.identityCatalog.value as { certificates: typeof owner.certificate[] }
   catalog.certificates[0].signature = "A".repeat(86)
@@ -151,7 +165,7 @@ it("Given a released catalog containing enrollment request metadata, when export
   const device = root.devices[owner.device.deviceId]!
   Object.assign(device, { kind: "device-enrollment-request", version: 2, invitationId: "previous-enrollment" })
   const original = JSON.stringify(root)
-  const parsed = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(root, [owner.certificate]), owner.identity.personId)
+  const parsed = await readIdentityDeviceTransfer(await exportTransfer(root, [owner.certificate]), owner.identity.personId)
   expect(parsed.personalRoot.devices[owner.device.deviceId]).toEqual({ deviceId: device.deviceId, publicKey: device.publicKey,
     displayName: device.displayName, certificateHash: device.certificateHash, addedAt: device.addedAt })
   expect(JSON.stringify(root)).toBe(original)
@@ -162,7 +176,7 @@ it.each(["certificateHash", "publicKey", "deviceId"] as const)("Given legacy enr
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
   const device = root.devices[owner.device.deviceId]!
   Object.assign(device, { kind: "device-enrollment-request", version: 2, invitationId: "previous-enrollment", [field]: "A".repeat(43) })
-  await expect(createIdentityDeviceTransfer(root, [owner.certificate])).rejects.toThrow(/certificate|device/i)
+  await expect(exportTransfer(root, [owner.certificate])).rejects.toThrow(/certificate|device/i)
 })
 
 it("Given unknown legacy catalog fields, when exporting, then reject without silently stripping them", async () => {
@@ -170,5 +184,5 @@ it("Given unknown legacy catalog fields, when exporting, then reject without sil
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
   Object.assign(root.devices[owner.device.deviceId]!, { kind: "device-enrollment-request", version: 2,
     invitationId: "previous-enrollment", revoked: true })
-  await expect(createIdentityDeviceTransfer(root, [owner.certificate])).rejects.toThrow()
+  await expect(exportTransfer(root, [owner.certificate])).rejects.toThrow()
 })

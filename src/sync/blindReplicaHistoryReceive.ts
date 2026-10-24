@@ -9,7 +9,7 @@ import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import { defaultStorage } from "../storage"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { contentKeysForEpoch, openWithReplicaContentKeys } from "./replicaContentKeys"
-import { fetchBlind } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 import { peerStore } from "./peerStore"
 import { mergeCurrentBlindHistory } from "./blindCurrentHistory"
 import { receiveBrowserHistoryBaseline } from "./browserHistoryBaselineReceive"
@@ -33,7 +33,7 @@ function persistCurrentWireRoute(repository: ActiveRouteRepository, previous: Wa
 
 export type ReceiveContext = { config: BlindReplicaConfig; tincanban: ReturnType<typeof useTincanban>; owner: string;
   guardIdentity: () => void; readReplicaProgress: () => ReturnType<typeof getPrivateReplicaProgress>;
-  readSnapshotRevision: ReturnType<typeof createBlindSnapshotRevision> }
+  readSnapshotRevision: ReturnType<typeof createBlindSnapshotRevision>; scopeFetch: RustyFetch }
 
 /** The history receiver shares the exact private replica generation and current-device guards. */
 export async function receiveBlindReplicaHistory(context: ReceiveContext, id: string, bytes: Uint8Array, authorization: unknown, history: unknown) {
@@ -59,7 +59,7 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
   if (previous) assertCurrentHistoryStorage(previous, config)
   const remote = createArchiveRemote({ origin: config.origin, scopeId: config.scopeId, servicePublicKey: config.servicePublicKey,
     readToken: config.readToken, writeToken: config.writeToken, policyRevision: config.policyRevision },
-    { fetch: fetchBlind, ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() } })
+    { fetch: context.scopeFetch, ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() } })
   const archiveFetch = { ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() },
     download: async (ciphertextId: string) => {
       guardIdentity(); await readReplicaProgress(); guardIdentity()

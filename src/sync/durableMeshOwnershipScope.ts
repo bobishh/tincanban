@@ -262,7 +262,7 @@ export async function confirmedOwnershipSnapshot(store: WorkspaceSetStore, works
 
 export async function createOwnershipProposal(profile: LocalProfile, workspaceId: string,
   target: { payload: { personId: string }; publicKey: string; certificates: DeviceCertificate[] }, credential: WorkspaceMeshCredential,
-  store: PeerStore, workspaceStore: WorkspaceSetStore) {
+  store: PeerStore, workspaceStore: Pick<WorkspaceSetStore, "readAuthorityHeads">) {
   if (!workspaceStore.readAuthorityHeads) throw new Error("Admitted workspace document unavailable for ownership signing")
   const heads = await workspaceStore.readAuthorityHeads(workspaceId)
   const transfer = await createWorkspaceOwnershipTransfer(profile, workspaceId, {

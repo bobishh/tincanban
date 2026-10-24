@@ -56,6 +56,7 @@ export function createDeviceSyncState() {
   const enrollmentConflict = ref<{ currentPersonId: string; currentName: string; targetPersonId: string } | null>(null)
   const replacementPersonId = ref<string | undefined>(undefined)
   const enrollmentDeviceName = ref("")
+  const enrollmentSameIdentity = ref(false)
   const isLive = computed(() => directLive.value || meshLiveWorkspaceIds.value.length > 0)
   const phase = computed<SyncPhase>(() => step.value === "error" ? "error" : step.value === "synced" ? "synced" : "idle")
   const title = computed(() => {
@@ -71,7 +72,7 @@ export function createDeviceSyncState() {
     pendingJoins, selectedWorkspaceId, selectedWorkspaceIds, invitationWorkspaceTitle,
     invitationWorkspaces, parsedInvite, meshPeers, meshDiagnostic, meshRetryAt, networkOnline,
     localDeviceId, canRenewDevice, localUserAgent, meshLiveWorkspaceIds, revokedWorkspaceIds, ownershipRevision,
-    meshSuccession, enrollmentDeviceName, enrollmentConflict, replacementPersonId, isLive, phase, title,
+    meshSuccession, enrollmentDeviceName, enrollmentSameIdentity, enrollmentConflict, replacementPersonId, isLive, phase, title,
   }
 }
 

@@ -24,6 +24,7 @@ import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
 import ConnectedIdentityProfile from "./components/ConnectedIdentityProfile.vue"
 import IdentityAccountControls from "./components/IdentityAccountControls.vue"
 import { useIdentityAccount } from "./app/useIdentityAccount"
+import { useAutomationConnection } from "./app/useAutomationConnection"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component, watch } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
@@ -37,17 +38,9 @@ import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
 import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
 const showRustyStatus = ref(new URLSearchParams(window.location.hash.slice(1)).has("rusty-status"))
-function closeRustyStatus() {
-  showRustyStatus.value = false
-  if (window.opener) window.close()
-  const url = new URL(window.location.href)
-  const hash = new URLSearchParams(url.hash.slice(1))
-  hash.delete("rusty-status")
-  url.hash = hash.toString()
-  window.history.replaceState(window.history.state, "", url)
-}
 const boardAddress = useBoardAddress(app.workspace)
 const routeContent = ref<HTMLElement | null>(null)
 type IdentityNameSaver = typeof identityNameSaverType
@@ -64,6 +57,7 @@ const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
   beginHeaderSignIn, beginDeviceConnection, identityPortalFlow, browserSignInReturn } = useIdentityAccount(app, showSettings)
+const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
   showSettings.value = false
@@ -300,7 +294,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </DialogWindow>
-    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
+    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
+    <AutomationConnectionDialog v-if="connectingAutomation && ready.value" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="currentIdentityProfile" :boards="availableWorkspaces" :describe="describeAutomationBoard" :export-packet="exportAutomationConnection" @sign-in="beginHeaderSignIn" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -496,6 +491,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       @promote-peer="promoteWorkspacePeer"
       @request-enrollment="sync.requestEnrollment"
       :enrollment-device-name="sync.enrollmentDeviceName.value"
+      :enrollment-same-identity="sync.enrollmentSameIdentity.value"
       @approve-device="sync.approveEnrollment"
       @decline-device="sync.declineEnrollment"
       @accept-and-join="sync.acceptWorkspaceJoin"

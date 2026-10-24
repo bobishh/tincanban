@@ -1,6 +1,7 @@
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "./identityAuthority.testSupport"
 import type * as LocalDatabase from "../localDb"
 import { afterEach, expect, test, vi } from "vitest"
-import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
+import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
 import type { LocalProfile } from "../domain/identity"
 import * as localDb from "../localDb"
 import type { BlindAccess } from "./blindClient"

@@ -4,7 +4,7 @@ import { identitySeedFromPrivateKey, sealIdentitySeed } from "@meta-uber/mesh-id
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { openIdentityDeviceRecovery, parseIdentityRecoveryFile, sealIdentityDeviceRecovery } from "./identityDeviceRecoveryCodec"
 
 beforeEach(() => resetIdentityStorageForTest())

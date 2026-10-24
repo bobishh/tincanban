@@ -16,6 +16,8 @@ import { capturePeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistor
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
 import { selectActiveHistoryRoute } from "./workspaceActiveHistoryRoute"
+import { createRustyIdentityProfileScopeFetcher } from "../sync/rustyIdentityTransport"
+import { assertParticipantStorageAccess } from "../sync/workspaceRustyGuard"
 
 type Reader = ReturnType<typeof createHistoryArchiveReader>
 type ArchivedVersion = Awaited<ReturnType<Reader["readItemVersion"]>>
@@ -57,7 +59,12 @@ export async function createWorkspaceArchivedHistorySession(app: ReturnType<type
   }
   const repository = createReceivedHistoryBaselineRepository(workspaceId, ensureCurrent)
   const [archive, stored, current, peerSources, active] = await Promise.all([
-    workspaceHistoryRecoverySources(workspaceId, wire, guard),
+    workspaceHistoryRecoverySources(workspaceId, wire, guard,
+      config => createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent: async () => {
+        ensureCurrent()
+        if (config.boardAccess) await assertParticipantStorageAccess(app, config)
+        ensureCurrent()
+      } })),
     repository.readArchiveRecords(),
     readWorkspaceSigningAuthority(workspaceId),
     workspacePeerHistoryRecoverySources(profile.identity.personId, workspaceId, guard, remote),

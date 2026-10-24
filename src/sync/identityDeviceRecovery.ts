@@ -1,6 +1,7 @@
-import { identitySeedFromPrivateKey, sealIdentitySeed, type IdentityAdoptionCommitPlan, type IdentitySecurity } from "@meta-uber/mesh-identity"
+import { createIdentityAuthorityView, verifyIdentityAuthorityView, identitySeedFromPrivateKey, sealIdentitySeed, type IdentityAdoptionCommitPlan, type IdentitySecurity } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, canonicalizeJson, isCurrentIdentityProfile, refreshIdentityPresentation, restoreIdentityRecovery } from "../domain/identity"
 import type { PersonalRootDocumentV1 } from "../domain/model"
+import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -123,6 +124,10 @@ export async function restoreIdentityDeviceRecovery(input: IdentityRecoveryFile,
       if (!catalog.certificates.some(certificate => canonicalizeJson(certificate) === canonicalizeJson(adoption.publicProfile.certificate))) {
         catalog.certificates.push(adoption.publicProfile.certificate)
       }
+      const retainedAuthority = await verifyIdentityAuthorityView(manifest.components.identityAuthority.value.authorityView)
+      manifest.components.identityAuthority.value.authorityView = await createIdentityAuthorityView(catalog.personalRoot.identity,
+        { certificates: catalog.certificates, revocations: retainedAuthority.revocations },
+        await rootIdentityProfileState(catalog.personalRoot))
       const transfer = await readIdentityDeviceTransfer(manifest, file.personId)
       const plan = await adoptionPlan(adoption, previousRaw)
       ensureCurrent()

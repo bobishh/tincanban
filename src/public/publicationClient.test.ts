@@ -1,5 +1,6 @@
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "../sync/identityAuthority.testSupport"
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { snapshotPublicBoardSource } from "./publicProjection"
 import { hasLocalPublicBoardChanges, publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoard } from "./publicationClient"

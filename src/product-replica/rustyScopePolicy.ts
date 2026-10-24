@@ -8,7 +8,8 @@ const scopePolicyReceiptSchema = z.strictObject({
   signerKeyId: policyHash, signature: z.string().min(1).max(128),
   payload: z.strictObject({ kind: z.literal("rusty-scope-policy-receipt"), version: z.literal(1), serviceId: policyHash,
     scopeId: policyId, personId: policyId, revision: z.number().int().positive().refine(Number.isSafeInteger), revoked: z.boolean(),
-    challengeId: policyId, authorizationHash: policyHash, minimumWriterVersion: z.literal(2).optional() }),
+    challengeId: policyId, authorizationHash: policyHash, minimumWriterVersion: z.literal(2).optional(),
+    scopePurpose: z.enum(["workspace", "person-identity"]).optional() }),
 })
 export type RustyScopePolicyReceipt = z.infer<typeof scopePolicyReceiptSchema>
 type RustyPolicyStorage = { scopeId: string; servicePublicKey: string }

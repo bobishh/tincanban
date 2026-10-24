@@ -20,6 +20,7 @@ export function createPrivateReplicaUserActions(waitForBackground: () => Promise
   function protect(actions: ReturnType<typeof createPrivateReplicationActions>) {
     return {
       attach: manual(actions.attach), resumeRustyOperation: manual(actions.resumeRustyOperation), forgetRusty: manual(actions.forgetRusty),
+      addRustyConnection: manual(actions.addRustyConnection), attachAfterIdentityApproval: manual(actions.attachAfterIdentityApproval),
       updateDeviceAccess: manual(actions.updateDeviceAccess), revokeIdentityDevice: manual(actions.revokeIdentityDevice),
       recoverCredentialConflict: manual(actions.recoverCredentialConflict), compactWorkspaceHistory: manual(actions.compactWorkspaceHistory),
       remove: manual(actions.remove),

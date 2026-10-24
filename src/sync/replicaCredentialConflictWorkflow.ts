@@ -9,7 +9,8 @@ import { parseReplicaState, type ReplicaState } from '@meta-uber/mesh-replicatio
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindObjectId, blindProducerHeaders, discoverBlindKeeper, verifyBlindReceipt, type BlindReceipt } from './blindClient'
-import { fetchBlind, readBlindJson } from './rustyHttp'
+import { readBlindJson } from './rustyHttp'
+import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import type { PrivateReplicaConfig } from './blindReplication'
 import { assertRetainsReplicaContentKeys, contentKeysForEpoch } from "./replicaContentKeys"
@@ -74,6 +75,7 @@ async function enrollmentBinding(freeze: ReplicaCredentialConflictFreeze): Promi
     personId: freeze.personId, deviceId: freeze.signerDeviceId, revoked: false,
     readTokenHash: await sha256Base64Url(new TextEncoder().encode(next.readToken)),
     writeTokenHash: await sha256Base64Url(new TextEncoder().encode(next.writeToken)),
+    scopePurpose: next.purpose === 'identity' ? 'person-identity' : 'workspace',
     ...(next.purpose === 'identity' ? {} : { minimumWriterVersion: 2 as const }) }
 }
 async function workerDescription(worker: Worker, proof: AutomationInstanceIdentityProof) {
@@ -187,6 +189,7 @@ type ConflictExecution = {
 function conflictRecoverySteps(state: ConflictExecution) {
   const { profile, freeze, capture, trace, live, save, finishSnapshot } = state
   const next = freeze.proposal.next, origin = freeze.origin, scopeId = freeze.scopeId, personId = freeze.personId
+  const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: next, profile, ensureCurrent: live })
   return {
       confirmPolicy: async () => {
         const policy = state.journal().policy
@@ -194,7 +197,9 @@ function conflictRecoverySteps(state: ConflictExecution) {
           await traceRecoveryPhase(trace, 'confirmSavedPolicy', () => completeScopeEnrollmentIntent(policy.request.binding, policy.request.body, live))
           return
         }
-        await traceRecoveryPhase(trace, 'approveReplacementPolicy', () => approveRustyScope(next, profile, false, { expectedPolicyRevision: freeze.proposal.expectedPolicyRevision, requireExactRetry: true,
+        await traceRecoveryPhase(trace, 'approveReplacementPolicy', () => approveRustyScope(next, profile, false, {
+          scopePurpose: next.purpose === 'identity' ? 'person-identity' : 'workspace',
+          expectedPolicyRevision: freeze.proposal.expectedPolicyRevision, requireExactRetry: true,
           ...(next.purpose === 'identity' ? {} : { minimumWriterVersion: 2 }), ensureCurrent: live, confirmed: async receipt => {
             const binding = await traceRecoveryPhase(trace, 'readPolicyIntentBinding', () => enrollmentBinding(freeze))
             const request = await traceRecoveryPhase(trace, 'readPolicyIntent', () => readScopeEnrollmentIntent(binding))
@@ -208,7 +213,7 @@ function conflictRecoverySteps(state: ConflictExecution) {
         if (!pending) { await save({ ...state.journal(), drained: { progress: capture.progress } }); return }
         await live()
         const objectId = await traceRecoveryPhase(trace, 'identifyOriginalOutboxObject', () => blindObjectId(pending.object))
-        const response = await traceRecoveryPhase(trace, 'uploadOriginalOutbox', () => fetchBlind(`${origin}/v2/scopes/${scopeId}/objects/${objectId}?writerVersion=2&observedSequence=${pending.observedSequence ?? 0}`, {
+        const response = await traceRecoveryPhase(trace, 'uploadOriginalOutbox', () => scopeFetch(`${origin}/v2/scopes/${scopeId}/objects/${objectId}?writerVersion=2&observedSequence=${pending.observedSequence ?? 0}`, {
           method: 'PUT', signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(next), Authorization: `Bearer ${next.writeToken}`, 'Content-Type': 'application/json', 'X-Rusty-Request-Id': pending.requestId }, body: JSON.stringify(pending.object) }))
         const receipt = await traceRecoveryPhase(trace, 'verifyOriginalOutboxReceipt', () => readBlindJson<BlindReceipt>(response, 16384))
         const progress = { ...capture.progress!, generation: capture.progress!.generation + 1, lastUploaded: pending.hash, ...(pending.revision === undefined ? {} : { uploadedRevision: pending.revision }), ...(pending.identity === undefined ? {} : { contentIdentity: pending.identity }) }

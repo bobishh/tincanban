@@ -30,6 +30,7 @@ const props = defineProps<{
   error: string
   canReconnectDevice?: boolean
   enrollmentDeviceName?: string
+  enrollmentSameIdentity?: boolean
   enrollmentConflict?: { currentPersonId: string; currentName: string; targetPersonId: string } | null
   authCode?: string
   invitationWorkspaceTitle?: string
@@ -389,7 +390,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
 
         <!-- Authentication code and approval -->
         <div v-if="step === 'enroll-host-pending'" class="approval-card">
-          <p class="dialog-copy">{{ enrollmentDeviceName }} requests your identity and Owner access.</p>
+          <p v-if="enrollmentSameIdentity" class="dialog-copy">This device is already in your Identity. Approving adds the selected board and keeps your Identity profile in sync through Rusty.</p>
+          <p v-else class="dialog-copy">{{ enrollmentDeviceName }} requests your identity and Owner access.</p>
           <span class="detail-label">Authentication code</span>
           <div class="auth-code">{{ authCode }}</div>
           <p class="dialog-copy sync-help">Verify this code matches on your second device before approving.</p>

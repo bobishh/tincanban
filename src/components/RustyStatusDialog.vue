@@ -14,6 +14,15 @@ const error = ref("")
 const pending = ref(false)
 const sent = ref(false)
 const originalOpener = window.opener as Window | null
+function close() {
+  if (window.opener) window.close()
+  const url = new URL(window.location.href)
+  const hash = new URLSearchParams(url.hash.slice(1))
+  hash.delete("rusty-status")
+  url.hash = hash.toString()
+  window.history.replaceState(window.history.state, "", url)
+  emit("close")
+}
 try {
   request.value = parseRustyStatusRequest(location.hash, Date.now())
   if (!originalOpener) throw new Error("Open board status from Rusty in this browser.")
@@ -55,7 +64,7 @@ async function approve() {
 </script>
 
 <template>
-  <DialogWindow window-id="rusty-status-confirmation" :workspace-id="workspaceId" title="View board storage status" :busy="pending" @close="emit('close')">
+  <DialogWindow window-id="rusty-status-confirmation" :workspace-id="workspaceId" title="View board storage status" :busy="pending" @close="close">
     <section class="dialog dialog-window-content rusty-status-confirmation ui-stack">
       <p v-if="request">Share connected board names and their latest sync results with <strong>{{ request.origin }}</strong>?</p>
       <ul v-if="visibleBoards.length"><li v-for="board in visibleBoards" :key="board.id">{{ board.title }}</li></ul>
@@ -64,7 +73,7 @@ async function approve() {
       <p v-if="error" role="alert">{{ error }}</p>
       <div class="ui-actions">
         <button v-if="request && !sent" class="button button-primary" type="button" :disabled="!canApprove || pending" @click="approve">{{ pending ? 'Checking board storage…' : 'Share board status' }}</button>
-        <button class="button" type="button" :disabled="pending" @click="emit('close')">{{ sent ? 'Close' : 'Cancel' }}</button>
+        <button class="button" type="button" :disabled="pending" @click="close">{{ sent ? 'Close' : 'Cancel' }}</button>
       </div>
     </section>
   </DialogWindow>

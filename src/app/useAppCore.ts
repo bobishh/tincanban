@@ -80,7 +80,8 @@ function useAppUiState() {
 }
 
 function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>) {
-  const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile() })
+  const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile(),
+    readWorkspaceDoc: id => tincanban.readWorkspaceDoc(id) })
   configureChat(
     async id => (await tincanban.readWorkspaceDoc(id)).ownerPersonId,
     async id => workspaceChatRoomId(await tincanban.readWorkspaceDoc(id)),

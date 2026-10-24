@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { discussObject } from "./support/discussions"
 import { verifyPublicOwnerPollingDraft } from "./support/publicOwnerPolling"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 test("Given an owner publishes a board, when Keeper restarts and the owner withdraws it, then anonymous readers get only the active snapshot and file bytes", async ({ page, browser, baseURL }, info) => {
   test.setTimeout(120_000)
@@ -89,6 +90,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
   }
   try {
     await start()
+    await approveRustyForFixture(page, origin)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const syncDialog = page.getByRole("dialog", { name: "Device sync" })
 

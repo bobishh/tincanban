@@ -2,6 +2,7 @@ import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-re
 import { decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, blindProducerHeaders, type BlindAccess } from "./blindClient"
 import { fetchBlind, readBlindJson } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 
 const MAX_BLOB_CIPHERTEXT_BYTES = 1_048_592
 const MAX_BLOB_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -85,13 +86,14 @@ export async function verifyBlindBlobReceipt(input: BlindBlobReceipt, accessInpu
 }
 
 /** Upload an opaque attachment object and return only after verifying the service's signed durability receipt. */
-export async function uploadBlindBlob(accessInput: BlindAccess, objectInput: BlindObject, requestIdInput: string): Promise<BlindBlobReceipt> {
+export async function uploadBlindBlob(accessInput: BlindAccess, objectInput: BlindObject, requestIdInput: string,
+  fetcher: RustyFetch = fetchBlind): Promise<BlindBlobReceipt> {
   const access = validateAccess(accessInput)
   const object = validateObject(structuredClone(objectInput), access.scopeId)
   const requestId = requestIdInput
   validateRequestId(requestId)
   const objectId = await blindObjectId(object)
-  const receipt = await readBlindJson<unknown>(await fetchBlind(`${access.origin}/v2/scopes/${access.scopeId}/blobs/${objectId}?writerVersion=2`, {
+  const receipt = await readBlindJson<unknown>(await fetcher(`${access.origin}/v2/scopes/${access.scopeId}/blobs/${objectId}?writerVersion=2`, {
     method: "PUT", signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`,
       "Content-Type": "application/json", "X-Rusty-Request-Id": requestId }, body: JSON.stringify(object),
   }), 16384)
@@ -101,11 +103,11 @@ export async function uploadBlindBlob(accessInput: BlindAccess, objectInput: Bli
 }
 
 /** Download an opaque ciphertext object; reject namespace, schema, encoding and digest mismatches. */
-export async function downloadBlindBlob(accessInput: BlindAccess, idInput: string): Promise<BlindObject> {
+export async function downloadBlindBlob(accessInput: BlindAccess, idInput: string, fetcher: RustyFetch = fetchBlind): Promise<BlindObject> {
   const access = validateAccess(accessInput)
   const id = idInput
   if (typeof id !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(id)) throw new Error("Invalid encrypted attachment ID")
-  const value = await readBlindJson<unknown>(await fetchBlind(`${access.origin}/v2/scopes/${access.scopeId}/blobs/${id}`, {
+  const value = await readBlindJson<unknown>(await fetcher(`${access.origin}/v2/scopes/${access.scopeId}/blobs/${id}`, {
     signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}` },
   }), MAX_BLOB_RESPONSE_BYTES)
   const object = validateObject(value, access.scopeId)

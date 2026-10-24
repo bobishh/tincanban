@@ -4,7 +4,7 @@ import { identitySeedFromPrivateKey, sealIdentitySeed, toBase64Url } from "@meta
 import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { sealIdentityDeviceRecovery } from "./identityDeviceRecoveryCodec"
 import { exportHistoryRecoveryArchive, type HistoryRecoveryRecord } from "./historyRecoveryArchive"
 import { buildArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locators"

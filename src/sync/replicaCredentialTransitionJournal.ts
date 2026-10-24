@@ -265,6 +265,7 @@ export function confirmCredentialTransitionScope(pending: ReplicaCredentialFreez
     const binding: ScopeEnrollmentBinding = { origin: pending.origin, scopeId, servicePublicKey: pending.servicePublicKey,
       personId: pending.personId, deviceId: profile.device.deviceId, revoked: false,
       readTokenHash: await sha256Base64Url(encoder.encode(next.readToken)), writeTokenHash: await sha256Base64Url(encoder.encode(next.writeToken)),
+      scopePurpose: next.purpose === "identity" ? "person-identity" : "workspace",
       ...(next.purpose === "identity" ? {} : { minimumWriterVersion: 2 as const }) }
     const request = await readScopeEnrollmentIntent(binding)
     if (!request) throw new Error("Original scope enrollment request must remain durable until its confirmation is saved")

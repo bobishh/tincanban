@@ -26,7 +26,14 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
   }
   const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
   const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal,
-    refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close })
+    refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close,
+    resumeRustyConnection: async (origin, workspaceId) => {
+      await app.workspace.whenReady()
+      await app.collaboration.device.blindReplication.attachAfterIdentityApproval(origin, workspaceId)
+    },
+    reportRustyConnectionFailure: (origin, cause) => {
+      app.ui.state.notice.value = `Identity linked ${origin}, but Rusty setup is pending. Retry Add Rusty to finish. ${cause instanceof Error ? cause.message : ""}`.trim()
+    } })
   return { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
     beginHeaderSignIn, beginDeviceConnection, identityPortalFlow, browserSignInReturn }
 }

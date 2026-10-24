@@ -14,6 +14,10 @@ import type { createWorkspaceAttachmentIndex } from "./attachmentIndexScope"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { WorkspaceAttachmentReplication } from "./workspaceAttachmentReplication"
 import { withPrivateReplicaOperation } from "./privateReplicaOperation"
+import { createRustyIdentityProfileScopeFetcher, principalForBoardStorageAccess } from "./rustyIdentityTransport"
+import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
+import { submitBlindCheckpoint } from "./blindCheckpoint"
+import { peerStore } from "./peerStore"
 
 export function createBlindReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig, configurations?: BlindReplicaConfig[]) => Promise<void>,
@@ -22,10 +26,14 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
   ensureIdentity()
   const owner = tincanban.getCurrentProfile()?.identity.personId
   if (!owner) throw new Error("Identity unavailable during Rusty replication")
+  const profile = tincanban.getCurrentProfile()
+  if (!profile || profile.identity.personId !== owner) throw new Error("Identity unavailable during Rusty replication")
   const guardIdentity = () => {
     ensureIdentity()
     if (tincanban.getCurrentProfile()?.identity.personId !== owner) throw new Error("Identity changed during Rusty replication")
   }
+  const ensureScopeCurrent = () => ensureRustyScopeAccess(tincanban, config, guardIdentity)
+  const { scopeFetch, transport } = createBlindReplicaTransport(config, profile, ensureScopeCurrent)
   const readReplicaProgress = async () => {
     guardIdentity()
     if (config.boardAccess) await (await import("./workspaceRustyGuard")).assertParticipantStorageAccess(tincanban, config)
@@ -58,7 +66,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
         const runtime = await (attachments ??= import("./workspaceAttachmentReplicaStore").then(module => {
           guardIdentity()
           return module.createWorkspaceAttachmentReplication(tincanban, config, guardIdentity,
-            () => replica.flushCurrentSnapshot(), reportAttachments)
+            () => replica.flushCurrentSnapshot(), reportAttachments, scopeFetch)
         }).catch(cause => { attachments = undefined; throw cause }))
         guardIdentity()
         await runtime.run()
@@ -115,7 +123,7 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
     read: async id => { guardIdentity(); return tincanban.readWorkspaceBytes(id) },
     readSnapshotRevision: async id => { guardIdentity(); return readSnapshotRevision(id) },
     authorization: bytes => exportAuthorizationBundle(bytes),
-    ...createBlindHistoryStoreHooks({ config, tincanban, owner, guardIdentity, readReplicaProgress, readSnapshotRevision }),
+    ...createBlindHistoryStoreHooks({ config, tincanban, owner, guardIdentity, readReplicaProgress, readSnapshotRevision, scopeFetch }),
     readChat: async id => { guardIdentity(); const chat = await exportChat(id); return { ...chat, typing: [] } },
     mergeChat: async (id, chat) => { guardIdentity(); await receiveChat(id, chat, true) },
     documentRevision: async bytes => {
@@ -126,7 +134,44 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
     diagnostic: (event, detail) => meshTrace(event, detail, event.endsWith("failed") ? "warn" : "info"),
     operation: (name, operation) => traceDiagnosticOperation(name, { "workspace.id": config.workspaceId, "sync.scope.id": config.scopeId }, () => operation()),
     persist,
-  })
+  }, transport)
   return replica
+}
+
+async function ensureRustyScopeAccess(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig,
+  guardIdentity: () => void): Promise<void> {
+  guardIdentity()
+  if (config.boardAccess) {
+    const { assertParticipantStorageAccess } = await import("./workspaceRustyGuard")
+    await assertParticipantStorageAccess(tincanban, config)
+  }
+  guardIdentity()
+}
+
+function createBlindReplicaTransport(config: BlindReplicaConfig, profile: NonNullable<ReturnType<ReturnType<typeof useTincanban>["getCurrentProfile"]>>,
+  ensureCurrent: () => void) {
+  const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent,
+    principal: principalForBoardStorageAccess(config.boardAccess),
+    workspace: { workspaceId: config.workspaceId, scopeAuthority: async () => {
+      ensureCurrent()
+      if (config.boardAccess) {
+        const snapshot = config.boardAccess.principalGrant?.payload.scopeAuthority
+        if (!snapshot) throw new Error("Verified participant scope authority is required before Rusty access")
+        return snapshot
+      }
+      const stored = await peerStore.getWorkspaceAuthority(config.workspaceId) ?? await peerStore.getWorkspaceCredential(config.workspaceId)
+      ensureCurrent()
+      const snapshot = (stored as { scopeAuthoritySnapshot?: unknown } | null)?.scopeAuthoritySnapshot
+      if (!snapshot) throw new Error("Verified workspace scope authority is required before Rusty access")
+      return snapshot
+    } } })
+  const transport = {
+    inventory: (access: BlindAccess, after: number) => inventoryBlindObjects(access, after, scopeFetch),
+    download: (access: BlindAccess, id: string) => downloadBlindObject(access, id, scopeFetch),
+    upload: (access: BlindAccess, object: Parameters<typeof uploadBlindObject>[1], requestId: string, observedSequence = 0) =>
+      uploadBlindObject(access, object, requestId, observedSequence, scopeFetch),
+    checkpoint: (access: BlindAccess, request: Parameters<typeof submitBlindCheckpoint>[1]) => submitBlindCheckpoint(access, request, scopeFetch),
+  }
+  return { scopeFetch, transport }
 }
 

@@ -9,6 +9,7 @@ import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type Workspace
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
 import { rememberWorkspaceAdmission, reusedWorkspaceAdmission } from "./workspaceAdmissionReuse"
+import { assertLearnedIdentityDeviceActive } from "../domain/identityAuthority"
 import { receivedHistoryBasisIdentity } from "../product-replica/receivedHistoryBasisIdentity"
 import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica"
 import { readWorkspaceSnapshot } from "../storageJournal"
@@ -414,11 +415,12 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
   const { credential, frozenCredential, knownAuthority, combinedBundle, context } = await workspaceAdmissionContext(local ?? remote, raw,
     priorEvidenceRecords, Boolean(local), undefined, receivedBasis)
+  const learnedIdentityAuthorities = await guardNewChangesAgainstLearnedIdentityRevocations(local, remote, combinedBundle.records as Authorization[])
   const startedAt = performance.now()
   meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
   const { bytes: rawBytes, heads } = rawAdmissionSnapshot(local, remote)
   // Causal admission uses signed change-time authority, not receiver wall time.
-  const reuseKey = canonicalizeJson({ heads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis) })
+  const reuseKey = canonicalizeJson({ heads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis), learnedIdentityAuthorities })
   const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
   const plan = reused ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
     ...(receivedBasis ? { receivedBasis } : {}), local: undefined, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
@@ -429,6 +431,7 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   // Authority may change while either policy computation or hashing yields.
   const currentCredential = await incomingCredential(remote.id)
   traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
+  await assertLearnedIdentityAuthoritiesUnchanged(learnedIdentityAuthorities)
   if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan)
   return { ...structuredClone(plan), rawBytes, credentialFingerprint: frozenCredential, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
 }
@@ -465,6 +468,43 @@ async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>
   const basisId = receivedHistoryBasisIdentity(receivedBasis)?.baselineId ?? null
   return { credential, frozenCredential, knownAuthority, combinedBundle,
     context: { workspaceId: doc.id, authorization: combinedBundle, knownAuthority, credential: frozenCredential, basisId } }
+}
+
+/** A learned Identity revocation applies to newly received commands before reusable admission results. */
+async function guardNewChangesAgainstLearnedIdentityRevocations(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
+  remote: Automerge.Doc<WorkspaceDocumentV2>, authorizations: Authorization[]) {
+  const knownHashes = new Set(local ? Automerge.getChangesMetaSince(local, []).map(change => change.hash) : [])
+  const incomingHashes = new Set(Automerge.getChangesMetaSince(remote, []).map(change => change.hash)
+    .filter(hash => !knownHashes.has(hash)))
+  const devicesByPerson = new Map<string, Set<string>>()
+  for (const authorization of authorizations) {
+    const { personId, deviceId, hashes } = authorization.signed.payload
+    if (!hashes.some(hash => incomingHashes.has(hash))) continue
+    const devices = devicesByPerson.get(personId) ?? new Set<string>()
+    devices.add(deviceId)
+    devicesByPerson.set(personId, devices)
+  }
+  const learned: Record<string, { digest: string | null; devices: string[] }> = {}
+  for (const [personId, devices] of [...devicesByPerson.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+    let digest: string | null = null
+    for (const deviceId of [...devices].sort()) {
+      const current = await assertLearnedIdentityDeviceActive(personId, deviceId)
+      if (digest !== null && current !== digest) throw new Error("Identity authority changed during workspace admission")
+      digest = current
+    }
+    learned[personId] = { digest, devices: [...devices].sort() }
+  }
+  return learned
+}
+
+async function assertLearnedIdentityAuthoritiesUnchanged(
+  learned: Record<string, { digest: string | null; devices: string[] }>): Promise<void> {
+  for (const [personId, authority] of Object.entries(learned)) {
+    for (const deviceId of authority.devices) {
+      const current = await assertLearnedIdentityDeviceActive(personId, deviceId)
+      if (current !== authority.digest) throw new Error("Identity authority changed during workspace admission")
+    }
+  }
 }
 
 function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>) {

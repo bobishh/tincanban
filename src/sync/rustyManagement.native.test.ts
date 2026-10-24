@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore, type WasmVerifiedHistoryArchiveCoverage } from "@meta-uber/mesh-transport/wasm"
-import { adoptEnrolledIdentity, bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -56,6 +56,9 @@ import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-arch
 import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
 import { verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
+import { initializePersonalRootCatalog } from "../statePersonalRoot"
+import { peerStore } from "./peerStore"
 import { createWorkspaceHistoryPreparation } from "./historyPreparationRepository"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { receiveBrowserHistoryBaseline, type BrowserHistoryBaselineReceivePorts } from "./browserHistoryBaselineReceive"
@@ -63,6 +66,7 @@ import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBas
 import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority } from "../../workers/automation/src/historyBaseline"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory())
@@ -76,6 +80,51 @@ function initializeNativeAutomerge(): Promise<void> {
   return automergeReady ??= readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
     .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
 }
+
+test("Given actual Rusty and an SDK authority snapshot missing serde defaults, When its authority is published and read again, Then Rust accepts the SDK hash, returns a receipt-only reply, and no-op read performs no PUT", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("SDK Rusty contract owner")
+  await initializePersonalRootCatalog(defaultStorage, profile)
+  const service = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    await ensureRustyPersonPolicy(discovery, profile, true, { allowLegacyMigration: true })
+    const workspaceId = crypto.randomUUID()
+    const scopeId = `opaque-${crypto.randomUUID()}`
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false,
+      { minimumWriterVersion: 2, scopePurpose: "workspace" })
+    await initializeNativeAutomerge()
+    const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(workspaceId, "SDK contract board", profile.identity.personId, "blank"))
+    await recordGenesisAuthority(doc, profile)
+    const stored = await peerStore.getWorkspaceAuthority(workspaceId)
+    const full = (stored as { scopeAuthoritySnapshot?: { genesis?: unknown } } | null)?.scopeAuthoritySnapshot
+    if (!full?.genesis) throw new Error("Workspace genesis authority was not persisted")
+    const incomplete = { genesis: full.genesis }
+    let authorityPuts = 0
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method === "PUT" && url.pathname === `/v2/scopes/${scopeId}/authority`) authorityPuts += 1
+      return fetch(input, init)
+    }
+    const connection = { ...access, workspaceId }
+    const first = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
+    expect(first.receipt).toMatchObject({ payload: { kind: "rusty-scope-authority-receipt" } })
+    expect(first.snapshot).toMatchObject({ grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] })
+    expect(authorityPuts).toBe(1)
+    const second = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
+    expect(second.receipt).toBeUndefined()
+    expect(authorityPuts).toBe(1)
+    Automerge.free(doc)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 45_000)
 
 afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
 
@@ -105,7 +154,7 @@ function verifyNativeArchive(input: unknown): Promise<unknown> {
 }
 
 async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>,
-  options: { port?: number; stateDirectory?: string; controllers?: string[] } = {}) {
+  options: { port?: number; stateDirectory?: string } = {}) {
   const port = options.port ?? await unusedLoopbackPort()
   const stateDirectory = options.stateDirectory ?? await mkdtemp(resolve(tmpdir(), "tincanban-rusty-native-"))
   const origin = `http://127.0.0.1:${port}`
@@ -114,10 +163,6 @@ async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>
     env: {
       ...process.env,
       RUSTY_PUBLIC_ORIGIN: origin,
-      RUSTY_TRUSTED_OWNER: JSON.stringify({
-        identity: profile.identity,
-        allowedControllerDeviceIds: options.controllers ?? [profile.device.deviceId],
-      }),
       RUSTY_LOG: "off",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -942,7 +987,7 @@ test("Given a floor-1 workspace scope, when its owner completes the real writer 
     const access = { origin: discovery.origin, servicePublicKey: discovery.servicePublicKey,
       scopeId: `writer-${crypto.randomUUID()}`, readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
       writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
-    access.policyRevision = await approveRustyScope(access, profile)
+    access.policyRevision = await approveRustyScope(access, profile, false, { scopePurpose: "workspace" })
     expect(access.policyRevision).toBe(1)
 
     const contentKey = crypto.getRandomValues(new Uint8Array(32))
@@ -996,7 +1041,7 @@ test("Given a floor-1 workspace scope, when its owner completes the real writer 
   }
 }, 20_000)
 
-test("Given an approved person policy, when controller pins are removed and an independent owner device creates a scope, then the browser client needs no primary device or its ancestry", async () => {
+test("Given an approved person policy, when Rusty restarts and an independent owner device creates a scope, then the browser client needs no primary device or its ancestry", async () => {
   resetIdentityStorageForTest()
   const owner = await bootstrapIdentity("Person policy owner")
   let process = await startRusty(owner)
@@ -1007,19 +1052,20 @@ test("Given an approved person policy, when controller pins are removed and an i
     expect(person?.payload.kind).toBe("rusty-person-management-capability")
     const port = Number(new URL(process.origin).port), stateDirectory = process.stateDirectory
     await stopRusty(process.child)
-    process = await startRusty(owner, { port, stateDirectory, controllers: [] })
+    process = await startRusty(owner, { port, stateDirectory })
 
     resetIdentityStorageForTest()
-    const fresh = await bootstrapIdentity("Independent owner device")
+    const fresh = await bootstrapRawIdentity("Independent owner device")
     if (!owner.privateKeys.identityPrivateKey) throw new Error("Fixture owner has no root key")
     const certificate = await signEnvelope(owner.privateKeys.identityPrivateKey, { kind: "device-certificate" as const, version: 1 as const,
       personId: owner.identity.personId, deviceId: fresh.device.deviceId, devicePublicKey: fresh.device.publicKey,
       issuerCertificateHash: null, canEnrollDevices: true }, owner.identity.personId)
     await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
     await adoptEnrolledIdentity(owner.identity, certificate)
-    const independent = await bootstrapIdentity()
+    const independent = await bootstrapRawIdentity()
     expect(independent.privateKeys.identityPrivateKey).toBeUndefined()
     expect(independent.certificate.payload.issuerCertificateHash).toBeNull()
+    await confirmIdentityAuthorityFixture(createPersonalRoot(independent, await certHashDefault(certificate)), [owner.certificate, certificate])
     const confirmed = await ensureRustyPersonPolicy(discovery, independent, true)
     expect(confirmed).toEqual(person)
 
@@ -1078,20 +1124,22 @@ test("Given a cold enrolled device without its workspace, when its identity-scop
     expect(JSON.stringify(portablePreferences)).not.toContain('"progress"')
 
     resetIdentityStorageForTest()
-    const temporaryRecipient = await bootstrapIdentity("Enrolled native recipient")
+    const temporaryRecipient = await bootstrapRawIdentity("Enrolled native recipient")
     const ownerCertificateHash = await certHashDefault(owner.certificate)
     const recipientCertificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
       owner.identity.personId, temporaryRecipient.device.deviceId, temporaryRecipient.device.publicKey, ownerCertificateHash)
     await defaultProofStore.putCertificate(ownerCertificateHash, owner.certificate)
     await defaultProofStore.putCertificate(await certHashDefault(recipientCertificate), recipientCertificate)
     await adoptEnrolledIdentity(owner.identity, recipientCertificate)
-    const recipient = await bootstrapIdentity()
+    const recipient = await bootstrapRawIdentity()
     expect(recipient.identity.personId).toBe(owner.identity.personId)
     expect(recipient.privateKeys.identityPrivateKey).toBeUndefined()
+    await confirmIdentityAuthorityFixture(createPersonalRoot(recipient, await certHashDefault(recipientCertificate)), [owner.certificate, recipientCertificate])
 
     olderRoot.devices[recipient.device.deviceId] = { deviceId: recipient.device.deviceId, publicKey: recipient.device.publicKey,
       displayName: recipient.device.displayName, certificateHash: await certHashDefault(recipientCertificate), addedAt: "2026-10-14T07:00:00.000Z" }
     await defaultStorage.savePersonalRoot(olderRoot)
+    await ensureRustyIdentityAuthorityPublished({ profile: recipient, access: sourceConfig })
 
     await deleteLocal(`tincanban.private-replica-state.v2.${owner.identity.personId}`)
     await deleteLocal(`tincanban.rusty-management.v1.${owner.identity.personId}`)

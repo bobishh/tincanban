@@ -16,7 +16,8 @@ import {
   verifyEnvelope,
 } from "./identityCrypto"
 import type { LocalProfile } from "./identity"
-import { signWithContext, type VerifiedSigningContext } from "./signingContext"
+import { signWithContext, signingEvidence, type VerifiedSigningContext } from "./signingContext"
+import { createAutomationWorkspaceGrant as issueAutomationGrant, parseAutomationGrantScope } from "@meta-uber/mesh-workspace"
 import { readLocal, updateLocal } from "../localDb"
 export { certHashDefault, validateCertificateChain } from "./proofValidation"
 
@@ -151,45 +152,11 @@ export async function createAutomationWorkspaceGrant(
   if (signingContext && (signingContext.personId !== profile.identity.personId || signingContext.deviceId !== profile.device.deviceId)) {
     throw new Error("Automation grant signing context belongs to another owner device")
   }
-  automation = structuredClone(automation)
-  assertAutomationGrantScope(automation, Date.now())
-  if (!workspaceId || !subjectPersonId || !Number.isSafeInteger(accessEpoch) || accessEpoch < 1) {
-    throw new TypeError("Invalid automation workspace grant")
-  }
-  const payload = {
-    kind: "workspace-grant" as const,
-    version: 1 as const,
-    grantId: crypto.randomUUID(),
-    workspaceId,
-    personId: subjectPersonId,
-    role: "automation" as const,
-    accessEpoch,
-    automation,
-  }
-  return (signingContext ? await signWithContext(signingContext, payload)
-    : await signEnvelope(profile.privateKeys.devicePrivateKey, payload, profile.device.deviceId)) as unknown as WorkspaceGrant
-}
-
-function exactAutomationKeys(value: object, expected: string[]): boolean {
-  const keys = Object.keys(value).sort()
-  const sorted = expected.slice().sort()
-  return keys.length === expected.length && keys.every((key, index) => key === sorted[index])
-}
-function validAutomationColumns(columns: AutomationGrantScope["columns"]): boolean {
-  if (!columns || !exactAutomationKeys(columns, ["lead", "interview", "rejected", ...(columns.applied === undefined ? [] : ["applied"])])) return false
-  const ids = [columns.lead, columns.interview, columns.rejected, ...(columns.applied === undefined ? [] : [columns.applied])]
-  return ids.every(id => typeof id === "string" && Boolean(id)) && new Set(ids).size === ids.length
-}
-function validAutomationFields(ids: AutomationGrantScope["fieldIds"]): boolean {
-  return Array.isArray(ids) && ids.length <= 128 && ids.every(id => typeof id === "string" && Boolean(id)) && new Set(ids).size === ids.length
-}
-function assertAutomationGrantScope(scope: AutomationGrantScope, now: number): void {
-  if (!scope || !exactAutomationKeys(scope, ["version", "boardId", "columns", "fieldIds", "expiresAt"]) ||
-    ![1, 2].includes(scope.version) || typeof scope.boardId !== "string" || !scope.boardId.trim() ||
-    !validAutomationColumns(scope.columns) || !validAutomationFields(scope.fieldIds) ||
-    !Number.isSafeInteger(scope.expiresAt) || scope.expiresAt <= now) {
-    throw new TypeError("Invalid automation grant scope")
-  }
+  const evidence = signingContext ? signingEvidence(signingContext) : undefined
+  return issueAutomationGrant(profile, { workspaceId, personId: subjectPersonId, scope: automation, accessEpoch },
+    signingContext && evidence ? { personId: signingContext.personId, deviceId: signingContext.deviceId,
+      publicKey: evidence.identity.publicKey, certificates: evidence.certificates,
+      sign: payload => signWithContext(signingContext, payload) } : undefined)
 }
 
 export async function verifyWorkspaceGrant(
@@ -197,7 +164,7 @@ export async function verifyWorkspaceGrant(
   publicKey: string
 ): Promise<boolean> {
   if (grant?.payload?.role === "automation") {
-    try { assertAutomationGrantScope(grant.payload.automation!, Date.now()) }
+    try { parseAutomationGrantScope(grant.payload.automation) }
     catch { return false }
   } else if (!grant?.payload || grant.payload.automation !== undefined ||
     !["owner", "editor", "visitor"].includes(grant.payload.role)) return false

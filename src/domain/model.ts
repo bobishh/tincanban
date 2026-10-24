@@ -1,4 +1,5 @@
 import type { IdentityProfileState } from "./identityProfileState"
+import type { AutomationGrantScope as MeshAutomationGrantScope } from "@meta-uber/mesh-workspace"
 
 export type EntityId = string
 export type WorkspaceId = string
@@ -148,14 +149,7 @@ export type WorkspaceGrant = SignedEnvelope<{
   automation?: AutomationGrantScope
 }>
 
-export type AutomationGrantScope = {
-  version: 1 | 2
-  boardId: string
-  columns: { lead: string; applied?: string; interview: string; rejected: string }
-  fieldIds: string[]
-  /** Unix timestamp in milliseconds. */
-  expiresAt: number
-}
+export type AutomationGrantScope = MeshAutomationGrantScope
 
 export type WorkspaceGenesis = SignedEnvelope<{
   kind: "workspace-genesis"

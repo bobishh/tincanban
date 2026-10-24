@@ -1,5 +1,6 @@
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "./identityAuthority.testSupport"
 import { beforeEach, expect, it, vi } from "vitest"
-import { bootstrapIdentity, createIdentityRecovery, resetIdentityStorageForTest } from "../domain/identity"
+import { createIdentityRecovery, resetIdentityStorageForTest } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { defaultStorage } from "../storage"

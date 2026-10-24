@@ -18,10 +18,10 @@ async function stage<T>(trace: RequestTrace | undefined, phase: string, operatio
 
 /** Bound response bytes before parsing; private mail readers and public identity readers use distinct limits. */
 export async function requestWorkerJson(origin: string, path: string, method: "GET" | "POST" | "PUT",
-  maximumBytes: number, body?: unknown, invalidJsonMessage?: string): Promise<unknown> {
+  maximumBytes: number, body?: unknown, invalidJsonMessage?: string, fetcher: typeof fetch = fetch): Promise<unknown> {
   const trace = managementTrace(origin, path)
   const encoded = body === undefined ? undefined : await stage(trace, "serializeRequest", () => JSON.stringify(body))
-  const response = await stage(trace, "fetchHeaders", () => fetch(`${origin}${path}`, { method, mode: "cors", credentials: "omit", redirect: "error",
+  const response = await stage(trace, "fetchHeaders", () => fetcher(`${origin}${path}`, { method, mode: "cors", credentials: "omit", redirect: "error",
     signal: AbortSignal.timeout(method === "GET" ? 15_000 : 60_000), ...(encoded === undefined ? {} : {
       headers: { "content-type": "application/json" }, body: encoded,
     }) }))

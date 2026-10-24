@@ -30,6 +30,7 @@ const contextFor = () => {
     state: {
       authCode: { value: "" },
       enrollmentDeviceName: { value: "" },
+      enrollmentSameIdentity: { value: false },
       step: { value: "enroll-host" },
       isOpen: { value: false },
       error: { value: "" },

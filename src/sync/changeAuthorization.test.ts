@@ -5,7 +5,7 @@ import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 import * as Automerge from "@automerge/automerge/slim"
 import type { WorkspaceOwnershipTransfer, WorkspaceRevocation } from "@meta-uber/mesh-workspace"
 import { initializeAutomerge } from "../crdt"
-import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, type LocalProfile } from "../domain/identity"
 import { readLocal, writeLocal } from "../localDb"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, createAutomationWorkspaceGrant, defaultProofStore } from "../domain/proofs"
@@ -18,6 +18,9 @@ import { recordHistoricalGenesis as recordGenesisAuthority, prepareHistoricalAut
 import { assertWorkspaceTransition } from "../domain/permissions"
 import { isItem, type WorkspaceDocumentV2 } from "../domain/model"
 import { resolveSigningContext } from "../domain/signingContext"
+import { createDeviceRevocation, createIdentityAuthorityView, emptyIdentityProfileState,
+  verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 
 type TestCatalog = {
   revocations?: WorkspaceRevocation[]
@@ -258,6 +261,40 @@ it("Given unproven raw history, When its missing signed proof arrives then repea
     expect(revoked.quarantinedHashes).toContain(hash)
     expect(admit).toHaveBeenCalledTimes(5)
   } finally { admit.mockRestore(); Automerge.free(local); Automerge.free(remote) }
+})
+
+it("Given no learned global Identity revocation, When admitting a delegated device change, Then allow it; once its signed revocation is learned, reject that incoming change", async () => {
+  const local = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Global Identity admission", owner.identity.personId, "blank"))
+  await recordGenesisAuthority(local, owner)
+  const column = Object.values(local.entities).find(entity => entity.kind === "column")!
+  resetIdentityStorageForTest()
+  const app = await bootstrapIdentity("Revoked member device")
+  const appCertificate = await createDelegatedCertificate(member.privateKeys.devicePrivateKey, member.device.deviceId,
+    member.identity.personId, app.device.deviceId, app.device.publicKey, await certHashDefault(member.certificate))
+  const appProfile = await adoptEnrolledIdentity(member.identity, appCertificate)
+  await defaultProofStore.putCertificate(await certHashDefault(member.certificate), member.certificate)
+  const grant = await createWorkspaceGrant(owner, local.id, member.identity.personId, "editor", 1)
+  const result = await executeCommand(local, { kind: "createItem", parentId: column.id, title: "New remote item" }, appProfile)
+  if (!result.ok) throw new Error(result.error.message)
+  const hash = result.value.receipt.changeHash
+  const record = { signed: await signEnvelope(appProfile.privateKeys.devicePrivateKey, { kind: "workspace-changes" as const, version: 1 as const,
+    workspaceId: local.id, personId: member.identity.personId, deviceId: appProfile.device.deviceId, hashes: [hash] }, appProfile.device.deviceId),
+    publicKey: member.identity.publicKey, certificates: [appCertificate, member.certificate], grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] }
+  const bundle = authorizationBundle(local, [record])
+  const admission = await evaluateIncomingWorkspaceAdmission(local, result.value.newDoc, bundle)
+  expect(admission.admittedHashes).toContain(hash)
+
+  const profileState = emptyIdentityProfileState(member.identity.personId)
+  const certificates = [member.certificate, appCertificate]
+  const authority = await verifyIdentityDeviceAuthority(member.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(member, authority, appProfile.device.deviceId, profileState)
+  const view = await createIdentityAuthorityView(member.identity, { certificates, revocations: [revocation] }, profileState)
+  await mergeIdentityAuthorityView(view)
+  await expect(evaluateIncomingWorkspaceAdmission(local, result.value.newDoc, bundle))
+    .rejects.toThrow(/Identity device access is revoked/i)
+  Automerge.free(local)
+  Automerge.free(result.value.newDoc)
 })
 
 it("admits a signed owner bootstrap with long text without expanding it into text patches", async () => {

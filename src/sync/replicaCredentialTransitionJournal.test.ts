@@ -55,6 +55,7 @@ async function enrollmentEvidence(f: Awaited<ReturnType<typeof fixture>>) {
   const enrollmentJournal = await import("./rustyEnrollmentJournal")
   const resource = f.pending.resources[0]!
   const config = resource.next
+  const scopePurpose = config.purpose === "identity" ? "person-identity" as const : "workspace" as const
   const access = { origin: config.origin, scopeId: config.scopeId, servicePublicKey: config.servicePublicKey,
     readToken: config.readToken, writeToken: config.writeToken }
   const serviceId = f.serviceId
@@ -62,7 +63,7 @@ async function enrollmentEvidence(f: Awaited<ReturnType<typeof fixture>>) {
     kind: "rusty-enrollment-challenge", version: 1, challengeId: "transition-challenge", nonce: "transition-nonce",
     serviceId, publicOrigin: access.origin, scopeId: access.scopeId, personId: f.profile.identity.personId,
     deviceId: f.profile.device.deviceId, deviceKeyId: f.profile.device.deviceId, expectedRevision: resource.previous.policyRevision,
-    issuedAt: Date.now(), expiresAt: Date.now() + 60_000,
+    scopePurpose, issuedAt: Date.now(), expiresAt: Date.now() + 60_000,
   }, serviceId, "RUSTY/2")
   const managementPayload: RustyManagementCapability = {
     kind: "rusty-scope-management-capability", version: 1, serviceId, origin: access.origin,
@@ -85,20 +86,20 @@ async function enrollmentEvidence(f: Awaited<ReturnType<typeof fixture>>) {
     deviceId: f.profile.device.deviceId, deviceKeyId: f.profile.device.deviceId,
     expectedRevision: challenge.payload.expectedRevision, readTokenHash, writeTokenHash, revoked: false,
     expiresAt: challenge.payload.expiresAt, ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }),
-    managementRevision: managementCapability.payload.revision,
+    managementRevision: managementCapability.payload.revision, scopePurpose,
   })
   const certificates = signingContext.signingEvidence(authorizationContext).certificates
   const body = JSON.stringify({ challenge, identity: f.profile.identity, deviceId: f.profile.device.deviceId, certificates,
     managementCapability, readToken: access.readToken, writeToken: access.writeToken, revoked: false, authorization })
   const binding = { origin: access.origin, scopeId: access.scopeId, servicePublicKey: access.servicePublicKey,
     personId: f.profile.identity.personId, deviceId: f.profile.device.deviceId, readTokenHash, writeTokenHash,
-    revoked: false, ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }) }
+    revoked: false, scopePurpose, ...(minimumWriterVersion === undefined ? {} : { minimumWriterVersion }) }
   await enrollmentJournal.prepareScopeEnrollmentIntent(binding, body, async () => {})
   const authorizationHash = await f.identity.sha256Base64Url(new TextEncoder().encode(f.identity.canonicalizeJson(authorization)))
   const receipt = await f.identity.signEnvelope(f.service.privateKey, {
     kind: "rusty-scope-policy-receipt" as const, version: 1 as const, serviceId, scopeId: access.scopeId,
     personId: f.profile.identity.personId, revision: challenge.payload.expectedRevision + 1, revoked: false,
-    challengeId: challenge.payload.challengeId, authorizationHash, minimumWriterVersion,
+    challengeId: challenge.payload.challengeId, authorizationHash, minimumWriterVersion, scopePurpose,
   }, serviceId, "RUSTY/2")
   return { access, binding, body, receipt }
 }

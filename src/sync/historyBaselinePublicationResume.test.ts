@@ -28,7 +28,7 @@ function fixture() {
   const input = { tincanban: { readWorkspaceBytes: async () => bytes.slice(), getCurrentProfile: () => ({ identity: { personId: "owner" } }) } as never,
     config: { ...scope, workspaceId: "resume-board", origin: "https://rusty.example", contentKey: "A".repeat(43), keyEpoch: 1,
       readToken: "read", writeToken: "write", cursor: 0, lastUploaded: "" }, transitionId: "transition", previousBaselineId: null,
-    scopeAuthority: {}, ensureCurrent: () => {}, ensureNativeCurrent: () => {} }
+    scopeAuthority: {}, ensureCurrent: () => {}, ensureNativeCurrent: () => {}, fetch: vi.fn(async () => new Response()) }
   return { document, input }
 }
 it("Given a retained candidate, when storage checkpoint is pending, then hold source check through activation against concurrent workspace mutation", async () => {

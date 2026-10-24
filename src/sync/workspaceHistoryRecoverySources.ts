@@ -10,7 +10,6 @@ import { createArchiveRemote, ArchiveRemoteError } from "@meta-uber/mesh-replica
 import { openArchiveObject, type EncryptedArchiveObject } from "@meta-uber/mesh-replication/history-archive-crypto"
 import type { ArchiveLocatorRoot } from "@meta-uber/mesh-replication/history-archive-locators"
 import type { HistoryRecoveryArchiveSource } from "./historyRecoveryArchive"
-import { fetchBlind } from "./rustyHttp"
 import { listRetainedWorkspaceRecoveryArchives } from "./workspaceHistoryRecoveryArchives"
 import { listWorkspaceRecoveryObjectIndexes, readWorkspaceRecoveryObject } from "./workspaceHistoryRecoveryObjects"
 import { parseWireHistoryBaseline } from "../product-replica"
@@ -21,7 +20,8 @@ type Routing = { payload: { workspaceId: string; baselineId: string; locatorRoot
 type AddSource = { id: string; signedJson: Uint8Array; basisRoot?: ArchiveLocatorRoot; keyDigest?: string;
   metadata: unknown; local: (id: string) => Promise<EncryptedArchiveObject | undefined> }
 type SourceContext = { workspaceId: string; wire: PrivateReplicaWire; configurations: BlindReplicaConfig[];
-  variants: BlindReplicaConfig[]; retainedObjects: Set<string>; guard: () => Promise<void> }
+  variants: BlindReplicaConfig[]; retainedObjects: Set<string>; guard: () => Promise<void>;
+  fetchForConfig(config: BlindReplicaConfig): typeof fetch }
 
 export function receivedHistoryHasRustyArchiveRoute(row: Pick<StoredReceivedHistoryBaseline, "peerProofs" | "wire">): boolean {
   return row.peerProofs === undefined || row.wire !== undefined
@@ -75,7 +75,7 @@ async function retainedObject(id: string, context: SourceContext, scopeId: strin
 async function fetchCurrentArchiveObject(id: string, current: BlindReplicaConfig, context: SourceContext) {
   const remoteGuard = async () => { await context.guard(); await getPrivateReplicaProgress(context.wire.personId, current); await context.guard() }
   await remoteGuard()
-  try { return await createArchiveRemote(current, { fetch: fetchBlind, ensureCurrent: remoteGuard }).download(id) }
+  try { return await createArchiveRemote(current, { fetch: context.fetchForConfig(current), ensureCurrent: remoteGuard }).download(id) }
   catch (error) { if (error instanceof ArchiveRemoteError && error.status === 404) return undefined; throw error }
 }
 async function selectReadingKey(input: AddSource, root: ArchiveLocatorRoot, scopeId: string, keyEpoch: number,
@@ -103,7 +103,8 @@ async function authenticateRootKey(keys: string[], root: ArchiveLocatorRoot, sco
 }
 
 /** Recovery retains all published/received roots. It does not choose or activate a baseline. */
-export async function workspaceHistoryRecoverySources(workspaceId: string, wire: PrivateReplicaWire, guard: () => Promise<void>) {
+export async function workspaceHistoryRecoverySources(workspaceId: string, wire: PrivateReplicaWire, guard: () => Promise<void>,
+  fetchForConfig: (config: BlindReplicaConfig) => typeof fetch) {
   const sources: HistoryRecoveryArchiveSource[] = []
   const readers = new Map<string, (id: string) => Promise<EncryptedArchiveObject | undefined>>()
   const configurations = (await getPrivateReplicaConfigurations(wire.personId)).filter((config): config is BlindReplicaConfig =>
@@ -118,7 +119,7 @@ export async function workspaceHistoryRecoverySources(workspaceId: string, wire:
   const retainedIndexes = await listWorkspaceRecoveryObjectIndexes(wire.personId, workspaceId, () => {})
   await guard()
   const retainedObjects = new Set(retainedIndexes.flatMap(index => index.objects.map(object => `${object.scopeId}/${object.ciphertextId}`)))
-  const sourceContext: SourceContext = { workspaceId, wire, configurations, variants, retainedObjects, guard }
+  const sourceContext: SourceContext = { workspaceId, wire, configurations, variants, retainedObjects, guard, fetchForConfig }
   await addPublicationSources(publications, sourceContext, sources, readers)
   await addReceivedSources(received, sourceContext, sources, readers)
   await addRetainedSources(sourceContext, sources, readers)

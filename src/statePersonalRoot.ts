@@ -6,6 +6,10 @@ import {
   registerWorkspaceInRoot,
 } from "./domain/personalRoot"
 import type { WorkspaceStorage } from "./storage"
+import { createLocalRootIdentityAuthorityView } from "@meta-uber/mesh-identity"
+import { defaultProofStore } from "./domain/proofs"
+import { rootIdentityProfileState } from "./domain/identityProfileRoot"
+import { mergeIdentityAuthorityView } from "./sync/identityAuthorityStore"
 
 export async function initializePersonalRootCatalog(storage: WorkspaceStorage, profile: LocalProfile): Promise<void> {
   const workspaces = [...await storage.listWorkspaces(), ...await storage.listArchivedWorkspaces()]
@@ -16,6 +20,7 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
   }
   const certificate = new TextEncoder().encode(JSON.stringify(profile.certificate))
   const initialRoot = createPersonalRoot(profile, await sha256Base64Url(certificate))
+  let created = false
   await storage.updatePersonalRootForIdentity(profile.identity.personId, async current => {
     let root = initialRoot
     if (current) {
@@ -24,7 +29,7 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
       catch { return current }
     }
     root.workspaces ??= {}
-    const created = current === null
+    created = current === null
     const newlyAdded = created
       ? reconcilePersonalRootWorkspaces(root, workspaces.filter(workspace => ownerById.get(workspace.id) === profile.identity.personId))
       : []
@@ -35,6 +40,16 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
       JSON.stringify(root.photo) !== JSON.stringify(current.photo))
     return created || newlyAdded.length > 0 || removedStaleGenesisRefs || presentationRepaired ? root : current
   })
+  if (created && profile.privateKeys.identityPrivateKey) {
+    const storedRoot = await storage.loadPersonalRoot()
+    if (storedRoot?.identity.personId === profile.identity.personId) {
+      const certificates = [profile.certificate, ...await defaultProofStore.listCertificates()]
+        .filter(item => item.payload.personId === profile.identity.personId)
+      const view = await createLocalRootIdentityAuthorityView(profile,
+        { certificates, revocations: [] }, await rootIdentityProfileState(storedRoot))
+      await mergeIdentityAuthorityView(view)
+    }
+  }
 }
 
 export async function registerWorkspaceInCurrentRoot(

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises"
 import { expect, test, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
 import { captureHistoryBackupProgress } from "./support/historyBackupProgress"
 import { downloadPrivateWorkspaceRecovery } from "./support/workspaceRecoveryDownload"
@@ -282,6 +283,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
     })
     rusty = await startRustyService(trustedOwner, baseURL!)
+    await approveRustyForFixture(owner, rusty.origin)
 
     const add = owner.getByRole("region", { name: "Lead" }).getByRole("button", { name: "Add lead to Lead" })
     await add.click()
@@ -497,6 +499,7 @@ test("Given an owner with two archived history generations, when adding my phone
       return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
     })
     rusty = await startRustyService(trustedOwner, baseURL!)
+    await approveRustyForFixture(source, rusty.origin)
     await source.getByRole("button", { name: "Add lead to Lead", exact: true }).click()
     const add = source.getByRole("dialog", { name: "Add item" })
     await add.getByLabel("Company *").fill("Enrolled history")

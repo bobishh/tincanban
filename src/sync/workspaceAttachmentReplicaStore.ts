@@ -2,6 +2,7 @@ import type { useTincanban } from "../state"
 import { readStoredAttachmentStream } from "../attachments"
 import { BLOB_CHUNK_BYTES } from "@meta-uber/mesh-blob"
 import { blindHash, canonicalBlindJson, discoverBlindKeeper } from "./blindClient"
+import { downloadBlindBlob, uploadBlindBlob } from "./blindBlobClient"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { createWorkspaceAttachmentIndex, attachmentIndexBinding } from "./attachmentIndexScope"
 import { createAttachmentRepository } from "./attachmentRepository"
@@ -15,12 +16,14 @@ import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import { getPrivateReplicaProgress } from "./privateReplicaRepository"
 import { parseReplicaContentKeys } from "./replicaContentKeys"
 import { selectWorkspaceAttachmentTransfer, type WorkspaceAttachmentTransfer } from "./workspaceAttachmentTransfers"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 
 type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
 
 /** The production background adapter retains private progress independently of the original source bytes. */
 export function createWorkspaceAttachmentReplication(app: AttachmentApp, configInput: BlindReplicaConfig,
-  ensureCurrent: () => void, flush: () => Promise<void>, report: (states: AttachmentCoverageStatus[]) => void) {
+  ensureCurrent: () => void, flush: () => Promise<void>, report: (states: AttachmentCoverageStatus[]) => void,
+  scopeFetch?: RustyFetch) {
   const config = structuredClone(configInput)
   const owner = app.getCurrentProfile()?.identity.personId
   if (!owner) throw new Error("Attachment identity is unavailable")
@@ -62,9 +65,14 @@ export function createWorkspaceAttachmentReplication(app: AttachmentApp, configI
       await current()
       const selected = transfers.get(descriptorKey(descriptor)) ?? await selectTransfer(descriptor)
       const context = { workspaceId: config.workspaceId, scopeId: config.scopeId, ...parseReplicaContentKeys(selected.config) }
-      return new AttachmentTransfer(context, config, selected.repository, guard).uploadStream(descriptor, source)
+      const transport = scopeFetch ? {
+        upload: (access: Parameters<typeof uploadBlindBlob>[0], object: Parameters<typeof uploadBlindBlob>[1], requestId: string) =>
+          uploadBlindBlob(access, object, requestId, scopeFetch),
+        download: (access: Parameters<typeof downloadBlindBlob>[0], id: string) => downloadBlindBlob(access, id, scopeFetch),
+      } : undefined
+      return new AttachmentTransfer(context, config, selected.repository, guard, transport).uploadStream(descriptor, source)
     },
-    confirm: async (descriptor, locator, guard) => { await confirmRustyAttachmentCoverage(scope, config, descriptor, locator, guard) },
+    confirm: async (descriptor, locator, guard) => { await confirmRustyAttachmentCoverage(scope, config, descriptor, locator, guard, scopeFetch) },
     publish: async locator => { await current(); await index.merge([locator]); await current() },
     flush,
     supportsCoverage: async () => {

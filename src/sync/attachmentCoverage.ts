@@ -7,6 +7,7 @@ import { openAttachmentManifest, type AttachmentScope } from "./attachmentCodec"
 import type { AttachmentLocator } from "../product-replica"
 import { requestBlindBlobCoverage, type BlindBlobCoverageReceipt } from "./blindBlobCoverage"
 import { parseReplicaContentKeys } from "./replicaContentKeys"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/
 const HASH = /^[A-Za-z0-9_-]{43}$/
@@ -66,20 +67,20 @@ function captureLocator(value: AttachmentLocator, descriptor: BlobDescriptor): A
 
 /** Confirm immutable attachment ciphertext exists without downloading chunks or contacting its original peer. */
 export async function confirmRustyAttachmentCoverage(scopeInput: AttachmentScope, accessInput: BlindAccess,
-  descriptorInput: BlobDescriptor, locatorInput: AttachmentLocator, guard: () => Promise<void>): Promise<BlindBlobCoverageReceipt> {
+  descriptorInput: BlobDescriptor, locatorInput: AttachmentLocator, guard: () => Promise<void>, fetcher?: RustyFetch): Promise<BlindBlobCoverageReceipt> {
   const scope = captureScope(scopeInput)
   const access = captureAccess(accessInput, scope)
   const descriptor = captureDescriptor(descriptorInput)
   const locator = captureLocator(locatorInput, descriptor)
   await guard()
 
-  const manifestObject: BlindObject = await downloadBlindBlob(access, locator.manifestId)
+  const manifestObject: BlindObject = await downloadBlindBlob(access, locator.manifestId, fetcher)
   await guard()
   const manifest = await openAttachmentManifest(scope, descriptor, locator, manifestObject)
   await guard()
   const objects = [{ objectId: locator.manifestId, keyEpoch: manifestObject.keyEpoch },
     ...manifest.chunks.map(chunk => ({ objectId: chunk.objectId, keyEpoch: manifestObject.keyEpoch }))]
-  const receipt = await requestBlindBlobCoverage(access, objects)
+  const receipt = await requestBlindBlobCoverage(access, objects, undefined, fetcher)
   await guard()
   return receipt
 }

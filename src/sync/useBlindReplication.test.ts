@@ -294,7 +294,7 @@ it("Given board and personal Rusty connections, when removal receives confirmed 
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   await controller.remove(f.workspace)
-  expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true)
+  expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true, { scopePurpose: "workspace" })
   expect(await getReplicaConfigurations(f.personId)).toEqual([])
   expect(controller.identityConfigs.value[0]?.scopeId).toBe(f.identity.scopeId)
 })

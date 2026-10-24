@@ -1,5 +1,6 @@
 import { captureIdentityProfile } from "../domain/identity"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
+import { RustyScopePurposeError } from "@meta-uber/mesh-replication/rusty-scope-purpose"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { blindHash } from "./blindClient"
@@ -7,11 +8,12 @@ import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-re
 import { encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import type { IdentityReplicaConfig } from "./blindReplication"
 import { parsePrivateReplicaConfig } from "./blindReplicaConfig"
-import { exportPrivateReplicaState, getIdentityReplicaConfigurations, planPrivateReplicaImport } from "./privateReplicaRepository"
+import { exportPrivateReplicaState, getIdentityReplicaConfigurations, planPrivateReplicaImport, privateReplicaBinding, setReplicaPreference } from "./privateReplicaRepository"
 import { changeReplicaPreference, portableReplicaState } from "./privateReplicaPreferences"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 import { ensureRustyPersonPolicy, readRustyManagementStatus, retryRustyManagementUpdate, updateRustyManagementPolicy } from "./rustyManagementClient"
 import { approveRustyScope } from "./rustyEnrollment"
+import { ensureRustyIdentityAuthorityPublished, ensureRustyPersonIdentityScope } from "./rustyIdentityTransport"
 import { identityDevicePreferencesChanged } from "./identityDevicePreferenceEvents"
 import { assertReplicaCredentialsUnfrozen, replicaCredentialOriginCondition, replicaCredentialFreezeKey } from "./replicaCredentialFreeze"
 
@@ -54,8 +56,16 @@ async function selectedConnection(service: Service, personId: string, allowNewSc
   }
 }
 
+async function retireUnavailableIdentityScope(personId: string, config: IdentityReplicaConfig, cause: unknown) {
+  if (!await setReplicaPreference(personId, config, true, privateReplicaBinding(personId, config))) {
+    throw new Error("Unavailable private scope changed before replacement; retry required", { cause })
+  }
+  identityDevicePreferencesChanged(personId)
+}
+
 async function confirmPolicy(service: Service, profile: LocalProfile, config: IdentityReplicaConfig, guard: () => void) {
-  if (service.personManagement === 1) await ensureRustyPersonPolicy(service, profile, true, { ensureCurrent: guard })
+  await ensureRustyIdentityAuthorityPublished({ profile, access: config, ensureCurrent: guard })
+  if (service.personManagement === 1) await ensureRustyPersonPolicy(service, profile, true, { ensureCurrent: guard, allowLegacyMigration: true })
   const binding = { origin: config.origin, servicePublicKey: config.servicePublicKey, resourceKind: "scope" as const, resourceId: config.scopeId }
   const status = await readRustyManagementStatus(binding, profile, { ensureCurrent: guard })
   guard()
@@ -102,7 +112,17 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
     ensureCurrent()
     const existing = await selectedConnection(service, personId, options.allowNewScopeAfterRemoval)
     ensureCurrent()
-    if (existing) return existing
+    if (existing) {
+      try {
+        await ensureRustyPersonIdentityScope({ profile, access: existing, ensureCurrent })
+        ensureCurrent()
+        return existing
+      } catch (error) {
+        if (!options.allowNewScopeAfterRemoval || !(error instanceof RustyScopePurposeError) || error.reason !== "scope-unavailable") throw error
+        ensureCurrent()
+        await retireUnavailableIdentityScope(personId, existing, error)
+      }
+    }
     if (service.scopeManagement !== 1) throw new Error("Rusty upgrade required for private profile delivery")
     let raw = await readLocal(key)
     if (raw !== null) parseSetup(raw, service, personId)
@@ -124,7 +144,7 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
     await confirmPolicy(service, profile, setup.config, ensureCurrent)
     await assertReplicaCredentialsUnfrozen(personId, service)
     if (setup.stage === "policy") {
-      setup.config.policyRevision = await approveRustyScope(setup.config, profile)
+      setup.config.policyRevision = await approveRustyScope(setup.config, profile, false, { scopePurpose: "person-identity" })
       ensureCurrent()
       await assertReplicaCredentialsUnfrozen(personId, service)
       setup.stage = "activate"
@@ -150,6 +170,8 @@ export async function ensureIdentityReplicaConnection(service: Service, profile:
     if (!result || credentials(result) !== credentials(setup.config)) {
       throw new Error("Private scope activation was superseded")
     }
+    await ensureRustyPersonIdentityScope({ profile, access: result, ensureCurrent })
+    ensureCurrent()
     return result
     })
   })

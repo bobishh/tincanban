@@ -7,7 +7,7 @@ export function createBlindHistoryStoreHooks(context: ReceiveContext): Pick<Blin
   const covered = async (document: Uint8Array) => {
     guardIdentity()
     const { isCoveredBlindHistoricalSnapshot } = await import("./blindReplicaHistoricalSnapshot")
-    return isCoveredBlindHistoricalSnapshot({ config, owner, document, guardIdentity,
+    return isCoveredBlindHistoricalSnapshot({ config, owner, document, fetch: context.scopeFetch, guardIdentity,
       ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() } })
   }
   return {

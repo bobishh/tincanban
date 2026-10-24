@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises"
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 /**
  * Complete coverage requires verified receipts for the manifest and every chunk.
@@ -30,6 +31,7 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     })
     const service = await startRustyService(trustedOwner, baseURL!)
     rusty = service
+    await approveRustyForFixture(source, service.origin)
 
     await source.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerSync = source.getByRole("dialog", { name: "Device sync" })
@@ -149,6 +151,7 @@ test("Given file uploads are unavailable, when a card is edited, then its metada
   })
   const rusty = await startRustyService(owner, baseURL!)
   try {
+    await approveRustyForFixture(page, rusty.origin)
     await page.route("**/v2/scopes/*/blobs/*", async route => {
       if (route.request().method() === "PUT") await route.fulfill({ status: 503, contentType: "application/json",
         body: JSON.stringify({ message: "Attachment storage temporarily unavailable" }) })

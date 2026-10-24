@@ -4,11 +4,25 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
 export async function startRustyService(owner: unknown, corsOrigin: string) {
+  return startRustyServiceWithEnvironment(corsOrigin, {
+    RUSTY_TRUSTED_OWNER: JSON.stringify(owner),
+    RUSTY_CORS_ORIGINS: corsOrigin,
+  })
+}
+
+export async function startIdentityRustyService(corsOrigin: string) {
+  return startRustyServiceWithEnvironment(corsOrigin, {
+    RUSTY_IDENTITY_AUTHORITY_ENFORCEMENT: "strict",
+    RUSTY_CORS_ORIGINS: corsOrigin,
+  })
+}
+
+async function startRustyServiceWithEnvironment(corsOrigin: string, env: Record<string, string>) {
   const directory = await mkdtemp(join(tmpdir(), "rusty-mobile-"))
   let child: ChildProcess
   const origin = await new Promise<string>((ready, reject) => {
     child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, "127.0.0.1:0"], {
-      env: { RUSTY_TRUSTED_OWNER: JSON.stringify(owner), RUSTY_CORS_ORIGINS: corsOrigin },
+      env,
     })
     const timer = setTimeout(() => reject(new Error("Rusty did not start")), 10_000)
     child.stdout?.on("data", chunk => {

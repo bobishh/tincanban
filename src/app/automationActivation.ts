@@ -13,6 +13,22 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { assertReplicaCredentialsUnfrozen, replicaCredentialFreezeKey } from "../sync/replicaCredentialFreeze"
 import { privateReplicaBinding } from "../sync/privateReplicaBinding"
 
+/** Use one configured writer for this board; no keys or bootstrap enter the navigation handoff. */
+export async function exportAutomationConnectionPacket(tincanban: ReturnType<typeof useTincanban>,
+  identity: AutomationWorkerIdentity, workspaceId: string, expectedFingerprint: string, configuration: AutomationConfiguration): Promise<string> {
+  const { automationBoardDescription } = await import("./automation")
+  const { getReplicaConfigurations } = await import("../sync/privateReplicaRepository")
+  const profile = tincanban.getCurrentProfile()
+  if (!profile || tincanban.getActiveDoc()?.id !== workspaceId) throw new Error("Open the selected board before approving automation")
+  const doc = await tincanban.readWorkspaceDoc(workspaceId)
+  if (automationBoardDescription(doc, configuration).fingerprint !== expectedFingerprint) throw new Error("Board automation settings changed. Review the updated access before approving.")
+  const configs = (await getReplicaConfigurations(profile.identity.personId))
+    .filter(config => config.workspaceId === workspaceId && !config.removalPending && Boolean(config.writeToken))
+    .sort((left, right) => left.origin.localeCompare(right.origin))
+  if (!configs[0]) throw new Error("Connect Rusty for this board in Sync, then retry this connection.")
+  return exportApprovedAutomation(tincanban, configs[0], JSON.stringify(identity), configuration)
+}
+
 export async function exportApprovedAutomation(tincanban: ReturnType<typeof useTincanban>, config: BlindReplicaConfig, workerIdentity: string, configuration?: AutomationConfiguration) {
   config = JSON.parse(canonicalizeJson(config)) as BlindReplicaConfig
   configuration = configuration === undefined ? undefined : JSON.parse(canonicalizeJson(configuration)) as AutomationConfiguration

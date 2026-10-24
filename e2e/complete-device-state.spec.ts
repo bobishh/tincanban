@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 type PublicProfile = { identity: { personId: string }; device: { deviceId: string; publicKey: string; displayName: string } }
 
@@ -32,6 +33,7 @@ async function enrollDevice(hostPage: Page, recipient: Page) {
 }
 
 async function connectRusty(page: Page, origin: string) {
+  await approveRustyForFixture(page, origin)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
 
   const panel = page.getByRole("region", { name: "Rusty", exact: true })

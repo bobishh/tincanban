@@ -17,6 +17,8 @@ import { createHistoryRecoveryFileWriter, openHistoryRecoveryFile } from "../syn
 import { exportHistoryRecoveryArchive, type HistoryRecoveryEvidencePart, type HistoryRecoveryManifest } from "../sync/historyRecoveryArchive"
 import { createWorkspaceHistoryRecoveryEvidence } from "../sync/workspaceHistoryRecoveryEvidence"
 import { workspaceHistoryRecoverySources } from "../sync/workspaceHistoryRecoverySources"
+import { createRustyIdentityProfileScopeFetcher } from "../sync/rustyIdentityTransport"
+import { assertParticipantStorageAccess } from "../sync/workspaceRustyGuard"
 import { decodeWorkspaceRecoveryEvidence } from "../sync/workspaceHistoryRecoveryDecode"
 import { admitWorkspaceHistoryRecovery, recoveryProjectionAccess } from "../sync/workspaceHistoryRecoveryAdmission"
 import { restoreWorkspaceRecoveryJournal } from "../sync/workspaceHistoryRecoveryJournal"
@@ -101,7 +103,12 @@ export async function createPrivateWorkspaceRecovery(core: Core, selectedWorkspa
   const [authority, credential] = await Promise.all([
     peerStore.getWorkspaceAuthority(workspaceId), peerStore.getWorkspaceCredential(workspaceId),
   ])
-  const archive = await workspaceHistoryRecoverySources(workspaceId, transfer.replicas, guard)
+  const archive = await workspaceHistoryRecoverySources(workspaceId, transfer.replicas, guard,
+    config => createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent: async () => {
+      await guard()
+      if (config.boardAccess) await assertParticipantStorageAccess(core.tincanban, config)
+      await guard()
+    } }))
   const peerAuthority = await readWorkspaceSigningAuthority(workspaceId)
   if (peerAuthority.invalid) throw new Error("Workspace permissions could not be verified")
   const scopeAuthority = peerAuthority.authority?.scopeAuthoritySnapshot
