@@ -3,6 +3,7 @@ ARG RELEASE_SHA
 ARG RELEASE_SDK_SHA
 ENV RELEASE_SHA=${RELEASE_SHA} RELEASE_SDK_SHA=${RELEASE_SDK_SHA}
 WORKDIR /source
+RUN apt-get update && apt-get install --yes --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 COPY . .
 RUN npm ci
 RUN npm install --global pnpm@11.25.0 && pnpm --dir workers/automation install --prod --frozen-lockfile
