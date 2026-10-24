@@ -133,8 +133,10 @@ test("Given three distinct identities and owner-configured Rusty, when owner clo
       rustyStopped = true
       await reader!.getByRole("region", { name: "Rusty", exact: true }).getByRole("button", { name: "Sync now", exact: true }).click()
       const offlineStorage = reader!.getByRole("region", { name: "Rusty", exact: true })
-      await expect(offlineStorage.getByText(/Sync paused/)).toBeVisible({ timeout: 20_000 })
+      await expect(offlineStorage.getByText("Unavailable", { exact: true })).toBeVisible({ timeout: 20_000 })
+      await expect(offlineStorage.getByRole("alert")).toContainText("Rusty connection unavailable. Retry sync.")
       await expect(reader!.getByRole("button", { name: "Open Owner asleep, Rusty delivered", exact: true })).toBeVisible()
+      expect(readerWrites).toEqual([])
       await reader!.screenshot({ path: testInfo.outputPath("visitor-rusty-unavailable.png") })
     } finally { for (const context of coldContexts) await context.close() }
   } finally {
