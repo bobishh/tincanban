@@ -129,6 +129,7 @@ test("Given an acknowledged profile photo update, when the source closes and the
   await ensureJobSearchWorkspace(page)
   const hostProfile = await profile(page)
   const rusty = await startRustyService({ identity: hostProfile.identity, allowedControllerDeviceIds: [hostProfile.device.deviceId] }, baseURL!)
+  let releaseIdentityRead = () => {}
   try {
     await enrollDevice(page, phone)
     await phone.goto("about:blank")
@@ -138,10 +139,20 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await phone.goto(baseURL!)
     await expect.poll(() => phone.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const { getIdentityReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
       const current = await bootstrapIdentity()
-      return (await getReplicaConfigurations(current.identity.personId)).some(config => config.origin === origin)
+      return (await getIdentityReplicaConfigurations(current.identity.personId))
+        .some(config => config.origin === origin)
     }, rusty.origin), { timeout: 30_000 }).toBe(true)
+    const identityScopeId = await phone.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getIdentityReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const current = await bootstrapIdentity()
+      const config = (await getIdentityReplicaConfigurations(current.identity.personId))
+        .find(config => config.origin === origin)
+      if (!config) throw new Error("Private Identity connection was not received")
+      return config.scopeId
+    }, rusty.origin)
     await phone.goto("about:blank")
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
@@ -164,17 +175,38 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
     await page.goto("about:blank")
+    // Workspace projection may arrive while its private Identity read is pending.
+    const identityReadGate = new Promise<void>(resolve => { releaseIdentityRead = resolve })
+    let blockedIdentityReads = 0
+    await phone.route(`${rusty.origin}/v2/scopes/${identityScopeId}/objects**`, async route => {
+      if (route.request().method() === "GET") {
+        blockedIdentityReads++
+        await identityReadGate
+      }
+      await route.continue()
+    })
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
     await phone.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", latestSource!, { timeout: 30_000 })
-    const saved = await phone.evaluate(async () => {
+    const savedProfile = () => phone.evaluate(async () => {
       const { defaultStorage } = await import("/src/storage.ts")
-      return await defaultStorage.loadPersonalRoot()
+      const saved = await defaultStorage.loadPersonalRoot()
+      return { photo: saved?.photo?.avatarData, name: saved?.identity.displayName }
     })
-    expect(saved?.photo?.avatarData).toBe(latestSource)
-    expect(saved?.identity.displayName).toBe("Latest owner profile")
-  } finally { await context.close(); await mobileBrowser.close(); await rusty.close() }
+    await expect.poll(() => blockedIdentityReads).toBeGreaterThan(0)
+    expect((await savedProfile()).photo).not.toBe(latestSource)
+    releaseIdentityRead()
+    await expect.poll(savedProfile, { timeout: 30_000 })
+      .toEqual({ photo: latestSource, name: "Latest owner profile" })
+    await phone.reload()
+    await expect.poll(savedProfile, { timeout: 30_000 })
+      .toEqual({ photo: latestSource, name: "Latest owner profile" })
+  } finally {
+    releaseIdentityRead()
+    await phone.unrouteAll({ behavior: "wait" })
+    await context.close(); await mobileBrowser.close(); await rusty.close()
+  }
 })
 
 test("Given an older recipient receives an owner-signed approval with an unknown required component, when enrollment preflights and installs, then upgrade is required and saved identity stays intact", async ({ page, browser }) => {
