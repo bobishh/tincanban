@@ -1,4 +1,5 @@
 import { receiveBlindReplicaHistory, type ReceiveContext } from "./blindReplicaHistoryReceive"
+import { rememberAdmittedRustyWorkspaceAuthority } from "./rustyWorkspaceAuthority"
 import type { BlindReplicaStore } from "./blindReplication"
 
 export function createBlindHistoryStoreHooks(context: ReceiveContext): Pick<BlindReplicaStore,
@@ -15,10 +16,12 @@ export function createBlindHistoryStoreHooks(context: ReceiveContext): Pick<Blin
       if (await covered(bytes)) return
       guardIdentity()
       await tincanban.mergeAuthorizedWorkspace(id, bytes, authorization)
+      await rememberAdmittedRustyWorkspaceAuthority(config, bytes, authorization, guardIdentity)
     },
     receiveHistoryBaseline: async (id, bytes, authorization, history) => {
       if (await covered(bytes)) return
       await receiveBlindReplicaHistory(context, id, bytes, authorization, history)
+      await rememberAdmittedRustyWorkspaceAuthority(config, bytes, authorization, guardIdentity)
     },
     prepareHistoryCheckpoint: async (bytes, object, sequence, baselineId, existing, candidate, history) => {
       await readReplicaProgress()

@@ -70,7 +70,8 @@ async function fixture() {
   const profileSetupKey = await identityReplicaSetupKey(owner, config.origin)
   await local.writeLocal(boardSetupKey, JSON.stringify({ personId: owner, config }))
   await local.writeLocal(profileSetupKey, JSON.stringify({ personId: owner, config: { ...privateConfig, purpose: "identity", personId: owner, scopeId: "old-profile" } }))
-  const app = { getCurrentProfile: () => profile, readWorkspaceDoc: vi.fn(async () => ({ id: config.workspaceId, ownerPersonId: owner })) }
+  const app = { getCurrentProfile: () => profile, getWorkspaceRole: vi.fn(async () => await membership.role()),
+    readWorkspaceDoc: vi.fn(async () => ({ id: config.workspaceId, ownerPersonId: owner })) }
   return { profile, config, owner, other, old, frozen, freezeKey, journalKey, journalRaw, boardSetupKey, profileSetupKey, app }
 }
 
@@ -118,7 +119,7 @@ it("Given an admitted editor, When forgetting its own local bindings, Then clear
   membership.role.mockResolvedValueOnce("editor")
   await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
   expect(await getPrivateReplicaConfigurations(f.owner)).toMatchObject([f.other])
-  f.app.readWorkspaceDoc.mockResolvedValue({ id: f.config.workspaceId, ownerPersonId: "different-board-owner" })
+  membership.role.mockResolvedValue("editor")
   await expect(connectWorkspaceReplica(f.app as never, f.config.origin, f.config.workspaceId, () => {})).rejects.toThrow(/owner/i)
 })
 

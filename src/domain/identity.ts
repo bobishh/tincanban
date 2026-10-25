@@ -222,8 +222,7 @@ export async function adoptApprovedApplicationDevice(
       assertCurrent()
     }
     const adopted = await identityStore.adopt(verified.identity, verified.certificate, commit)
-    return { ...adopted, identity: adopted.identity as PublicIdentity,
-      certificate: adopted.certificate as DeviceCertificate }
+    return adopted as LocalProfile
   }
   return typeof navigator !== "undefined" && navigator.locks
     ? await requestWebLock("tincanban-identity-bootstrap", adopt) : await adopt()

@@ -3,12 +3,13 @@ import { onMounted, ref } from "vue"
 import DialogWindow from "./DialogWindow.vue"
 import type { DeviceAuthorizationRequest } from "@meta-uber/mesh-identity"
 import type { LocalProfile } from "../domain/identity"
-import type { PublicIdentity, WorkspaceDocumentV2 } from "../domain/model"
+import type { PublicIdentity } from "../domain/model"
 import { startIdentityProfileHost, type IdentityEnrollmentRequest } from "../app/identityPortalEnrollment"
 import { beginIdentityBrowserSignInDiagnostic, browserSignInFailureMessage, clearIdentityBrowserSignIn, clearPendingRustyConnectionIntent, createApprovedSignInCompletion, createIdentityBrowserSignIn, identityBrowserReturnPath,
   readIdentityBrowserSignInReturn, readPendingIdentityBrowserSignIn, recordIdentityBrowserSignIn,
   verifyIdentityBrowserSignInReturn, writePendingIdentityBrowserSignIn, type IdentityBrowserSignInResult } from "../app/identityBrowserSignIn"
 import { completeIdentityBrowserSignIn } from "../app/completeIdentityBrowserSignIn"
+import { readIdentityLocalBoardPlan, type IdentityLocalBoardChoice } from "../app/identityLocalBoards"
 
 class KeepCurrentIdentity extends Error {
   constructor() {
@@ -32,8 +33,7 @@ function restoreSignInReturnPath(path: string | null) {
 
 const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
   initialMode?: "choose" | "signin";
-  workspaces: Array<{ id: string; title: string }>; readWorkspaceDoc(id: string): Promise<WorkspaceDocumentV2>;
-  exportCurrentWorkspace(): Promise<void>; completeBrowserSignIn(returnPath: string, request?: DeviceAuthorizationRequest): Promise<void> }>()
+  completeBrowserSignIn(returnPath: string, request?: DeviceAuthorizationRequest): Promise<void> }>()
 const emit = defineEmits<{ close: []; completed: [] }>()
 const mode = ref<"choose" | "create" | "signin">("choose")
 const inviteUrl = ref("")
@@ -43,15 +43,13 @@ const busy = ref(false)
 const request = ref<IdentityEnrollmentRequest | null>(null)
 const approveFullRecovery = ref(false)
 const replacementIdentity = ref<Pick<PublicIdentity, "personId" | "displayName"> | null>(null)
-const affectedBoards = ref<string[]>([])
-const unavailableWorkspaceCount = ref(0)
-const replacementConfirmed = ref(false)
+const ownedLocalBoards = ref<Array<{ workspaceId: string; title: string }>>([])
 const browserApproval = ref<Extract<IdentityBrowserSignInResult, { kind: "approved" }> | null>(null)
 const browserSignInReturnPath = ref<string | null>(null)
 const browserSignInCompletion = createApprovedSignInCompletion(props.completeBrowserSignIn)
 let browserSignInAttempt = 0
 let resolveRequest: ((decision: "approve" | "reject") => void) | undefined
-let resolveReplacement: (() => void) | undefined
+let resolveReplacement: ((choice: IdentityLocalBoardChoice) => void) | undefined
 let rejectReplacement: ((reason: Error) => void) | undefined
 let abortHost: AbortController | undefined
 let activeBrowserSignInChallenge: string | null = null
@@ -128,11 +126,11 @@ async function finishBrowserSignInReturn() {
     }
     recordIdentityBrowserSignIn("callback", "verified", { elapsedMs: performance.now() - startedAt })
     browserApproval.value = result
-    if (result.replacesIdentity) await confirmReplacement(result.approval.identity)
+    const localBoardChoice = result.replacesIdentity ? await confirmReplacement(result.approval.identity) : undefined
     if (attempt !== browserSignInAttempt) return
     phase = "adoption"
     recordIdentityBrowserSignIn("adoption", "started")
-    await completeIdentityBrowserSignIn(result.approval, pending.request, props.profile, props.workspaceId)
+    await completeIdentityBrowserSignIn(result.approval, pending.request, props.profile, props.workspaceId, localBoardChoice)
     recordIdentityBrowserSignIn("adoption", "completed", { elapsedMs: performance.now() - startedAt })
     phase = "refresh"
     if (await browserSignInCompletion.finish(pending.returnPath, pending.request)) browserApproval.value = null
@@ -146,7 +144,7 @@ async function finishBrowserSignInReturn() {
       browserApproval.value = null
       mode.value = "signin"
       error.value = ""
-      status.value = "Kept the current Identity. No local data changed."
+      status.value = "Stayed on your boards. Sign-in was not completed."
       restoreSignInReturnPath(trustedReturnPath)
       return
     }
@@ -156,7 +154,7 @@ async function finishBrowserSignInReturn() {
     diagnostic.end(new Error("Identity callback failed"))
     restoreSignInReturnPath(trustedReturnPath)
   } finally {
-    diagnostic.end()
+    await diagnostic.beforeRedirect()
     if (attempt === browserSignInAttempt) busy.value = false
   }
 }
@@ -182,36 +180,21 @@ function dismissBrowserSignIn() {
   emit("close")
 }
 
-async function confirmReplacement(identity: Pick<PublicIdentity, "personId" | "displayName">) {
-  if (identity.personId === props.profile.identity.personId) return
-  const signal = abortHost?.signal
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Sign in was cancelled", "AbortError")
+async function confirmReplacement(identity: Pick<PublicIdentity, "personId" | "displayName">): Promise<IdentityLocalBoardChoice> {
+  const plan = await readIdentityLocalBoardPlan(props.profile, identity.personId)
+  if (!plan.ownedBoards.length) return { kind: "stay" }
+  ownedLocalBoards.value = plan.ownedBoards
   replacementIdentity.value = identity
-  replacementConfirmed.value = false
-  affectedBoards.value = []
-  unavailableWorkspaceCount.value = 0
-  await Promise.all(props.workspaces.map(async workspace => {
-    try {
-      const doc = await props.readWorkspaceDoc(workspace.id)
-      const boards = Object.values(doc.entities).filter(entity => entity.kind === "board")
-      affectedBoards.value.push(...(boards.length ? boards.map(board => `${board.title} · ${workspace.title}`) : [workspace.title]))
-    } catch { unavailableWorkspaceCount.value++ }
-  }))
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new DOMException("Sign in was cancelled", "AbortError")
-  await new Promise<void>((resolve, reject) => {
-    const cleanup = () => signal?.removeEventListener("abort", onAbort)
-    const onAbort = () => { cleanup(); reject(signal?.reason instanceof Error ? signal.reason : new DOMException("Sign in was cancelled", "AbortError")) }
-    resolveReplacement = () => { cleanup(); resolve() }
-    rejectReplacement = reason => { cleanup(); reject(reason) }
-    if (signal?.aborted) onAbort()
-    else signal?.addEventListener("abort", onAbort, { once: true })
+  const choice = await new Promise<IdentityLocalBoardChoice>((resolve, reject) => {
+    resolveReplacement = resolve
+    rejectReplacement = reject
   })
   replacementIdentity.value = null
+  return choice
 }
 
-function approveReplacement() {
-  if (!replacementConfirmed.value) return
-  resolveReplacement?.()
+function addLocalBoards() {
+  resolveReplacement?.({ kind: "add", workspaceIds: ownedLocalBoards.value.map(board => board.workspaceId) })
   resolveReplacement = undefined
   rejectReplacement = undefined
 }
@@ -309,18 +292,13 @@ function cancel() {
           <button class="button button-primary" type="button" @click="beginBrowserSignIn">Sign in</button>
         </div>
         <p v-if="status" role="status">{{ status }}</p>
-        <section v-if="replacementIdentity" class="mesh-member-action" aria-label="Replace local Identity confirmation">
-          <h3>Join {{ replacementIdentity.displayName }}?</h3>
-          <p class="dialog-copy">Incoming Identity: <code>{{ replacementIdentity.personId }}</code></p>
-          <p class="dialog-copy">This replaces the Identity active in this browser. Local board data stays stored, but {{ replacementIdentity.displayName }} may not have access to it. Identities and boards are not merged.</p>
-          <p v-if="affectedBoards.length">Known local boards and workspaces:</p>
-          <ul v-if="affectedBoards.length"><li v-for="name in affectedBoards" :key="name">{{ name }}</li></ul>
-          <p v-if="unavailableWorkspaceCount || !affectedBoards.length" class="dialog-copy">Some saved or inaccessible copies may not appear in this list.</p>
-          <button class="button button-quiet" type="button" @click="exportCurrentWorkspace">Download active workspace backup</button>
-          <label><input v-model="replacementConfirmed" type="checkbox" /> I understand this changes the active Identity and may leave local boards inaccessible.</label>
+        <section v-if="replacementIdentity" class="mesh-member-action" aria-label="Local boards before sign-in">
+          <h3>Add your local boards to {{ replacementIdentity.displayName }}?</h3>
+          <p class="dialog-copy">These boards have changes made in this browser. Add them to your profile and keep editing them on your devices. If you stay here, sign-in will not continue and your boards remain available.</p>
+          <ul><li v-for="board in ownedLocalBoards" :key="board.workspaceId">{{ board.title }}</li></ul>
           <div class="dialog-actions">
-            <button class="button button-primary" type="button" :disabled="!replacementConfirmed" @click="approveReplacement">Continue with this Identity</button>
-            <button class="button button-quiet" type="button" @click="cancelReplacement">Keep current Identity</button>
+            <button class="button button-primary" type="button" @click="addLocalBoards">Add boards and sign in</button>
+            <button class="button button-quiet" type="button" @click="cancelReplacement">Stay on my boards</button>
           </div>
         </section>
       </template>

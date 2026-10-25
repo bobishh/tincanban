@@ -18,9 +18,12 @@ import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigratio
 import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
 import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
+import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
-export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void) {
+export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void,
+  options: { includeRecoveryEvidence?: boolean } = {}) {
+  const trackedProfile = profile
   const parsed = parsePrivateReplicaConfig(JSON.stringify(config), profile.identity.personId)
   if (parsed.purpose !== "identity") throw new Error("Private identity scope required")
   config = parsed
@@ -89,7 +92,8 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     },
     merge: async transfer => {
       await guard()
-      if (await applyIdentityDeviceTransfer(transfer, ensureCurrent)) identityDevicePreferencesChanged(personId)
+      const selected = options.includeRecoveryEvidence === false ? await projectIdentityReplicaCatalogOnly(transfer, personId) : transfer
+      if (await applyIdentityDeviceTransfer(selected, ensureCurrent)) identityDevicePreferencesChanged(personId)
     }, authorize, guard,
   }, transport)
   const refresh = async () => {
@@ -105,6 +109,19 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     if (status.migrationPending || !status.capability) throw new Error("Private identity policy migration is unfinished")
     await guard()
   }
-  return { sync: async () => { await refresh(); return replica.sync() },
-    pull: async () => { await refresh(); return replica.pull() }, push: async () => { await refresh(); return replica.push() } }
+  const publishAfterPush = async (changed: boolean) => {
+    ensureCurrent()
+    if (changed) await (await import("./identityCatalogPublisher")).publishCurrentIdentityCatalogAccess(trackedProfile, config)
+  }
+  return { sync: async () => { await refresh(); const changed = await replica.sync(); await publishAfterPush(changed); return changed },
+    pull: async () => { await refresh(); return replica.pull() },
+    push: async () => { await refresh(); const changed = await replica.push(); await publishAfterPush(changed); return changed } }
+}
+
+export async function projectIdentityReplicaCatalogOnly(transfer: Awaited<ReturnType<typeof readIdentityDeviceTransfer>>,
+  personId: string): Promise<Awaited<ReturnType<typeof readIdentityDeviceTransfer>>> {
+  const manifest = structuredClone(transfer.manifest)
+  manifest.components.recoveryEvidence = { ...manifest.components.recoveryEvidence,
+    value: { personId, envelopes: [] } }
+  return readIdentityDeviceTransfer(manifest, personId)
 }

@@ -26,7 +26,7 @@ export async function saveIdentityRustyServiceCatalogApproval(
   expectedExistingProfile: LocalProfile,
 ): Promise<void> {
   const verified = await verifyDeviceAuthorizationApproval(approval, request, { expectedExistingProfile })
-  const requestedPins = "rustyServicePins" in request.payload ? request.payload.rustyServicePins : []
+  const requestedPins = "rustyServicePins" in request.payload ? (request.payload.rustyServicePins ?? []) : []
   if (!requestedPins.length || !verified.rustyServicePins) return
   const personId = verified.identity.personId
   if (request.payload.personId !== personId) throw new Error("Rusty service approval belongs to another Identity")

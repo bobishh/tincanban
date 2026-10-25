@@ -4,6 +4,7 @@ import { configuredIdentityPortalOrigin } from "./identityPortalConfig"
 import { identityEnrollmentConfirmed } from "./identityEnrollmentReceipt"
 import { createIdentityPortalFlow } from "./identityPortalFlow"
 import { createIdentityBrowserSignInReturn } from "./identityBrowserSignIn"
+import { resolveIdentitySignInReturnPath } from "./boardRoute"
 
 /** Keep account presentation and the Identity return flow on the same durable profile. */
 export function useIdentityAccount(app: ReturnType<typeof useAppController>, showSettings: Ref<boolean>) {
@@ -33,6 +34,8 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
   const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
   const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal,
     refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close,
+    loadBoards: async returnPath => (await import("./loadIdentityBoards")).loadIdentityBoards(app.workspace, returnPath),
+    resolveReturnPath: path => resolveIdentitySignInReturnPath(path, app.workspace.activeBoard.value),
     resumeRustyConnection: async (origin, workspaceId) => {
       await app.workspace.whenReady()
       await app.collaboration.device.blindReplication.attachAfterIdentityApproval(origin, workspaceId)

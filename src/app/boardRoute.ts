@@ -76,6 +76,29 @@ export function parseBoardRoute(pathname: string, search = "", hash = ""): Board
   }
 }
 
+export function parseBoardRouteUrl(path: string): BoardRoute | null {
+  try {
+    const url = new URL(path, "https://tincanban.invalid")
+    return parseBoardRoute(url.pathname, url.search, url.hash)
+  } catch { return null }
+}
+
+/** Restore a board route only when board loading selected that exact eligible board. */
+export function resolveIdentitySignInReturnPath(path: string,
+  activeBoard: { id: string; title: string } | null): string {
+  const route = parseBoardRouteUrl(path)
+  if (route && activeBoard?.id === route.boardId) return boardRouteUrl(activeBoard.id, activeBoard.title, route)
+  if (path === "/" || isBoardAddressPath(safePathname(path))) {
+    return activeBoard ? boardRouteUrl(activeBoard.id, activeBoard.title) : "/"
+  }
+  return path
+}
+
+function safePathname(path: string): string {
+  try { return new URL(path, "https://tincanban.invalid").pathname }
+  catch { return path }
+}
+
 function hasForbiddenRouteCharacters(value: string): boolean {
   return value.includes("/") || value.includes("\\") || [...value].some(character => character.charCodeAt(0) < 32)
 }

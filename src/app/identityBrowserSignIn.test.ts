@@ -89,6 +89,7 @@ describe("Identity browser sign-in", () => {
     expect(new URLSearchParams(new URL(portalUrl).hash.slice(1)).has("device-request")).toBe(true)
     expect(portalUrl).not.toContain("privateKey")
     expect(pending.request.payload.devicePublicKey).toBe(app.device.publicKey)
+    expect(pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true })
     const storage = new Map<string, string>()
     writePendingIdentityBrowserSignIn({ setItem: (key, value) => storage.set(key, value) }, pending)
     const read = readPendingIdentityBrowserSignIn({ getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) })
@@ -96,6 +97,7 @@ describe("Identity browser sign-in", () => {
     expect(readPendingIdentityBrowserSignIn({ getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) })).toBeNull()
     const approval = await createDeviceAuthorizationApproval(owner, pending.request, {
       applicationOrigin: "https://boards.example", challenge: pending.request.payload.challenge,
+      profileState: emptyIdentityProfileState(owner.identity.personId), certificates: [owner.certificate], revocations: [], includeProfileState: true,
     })
     const encoded = btoa(JSON.stringify(approval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
     const result = await verifyIdentityBrowserSignInReturn({ hash: `#state=${"a".repeat(64)}&approval=${encoded}`,
@@ -146,7 +148,7 @@ describe("Identity browser sign-in", () => {
       applicationOrigin: "https://boards.example", returnPath: "/boards/current", personId: app.identity.personId,
       rustyServicePins: [pin], challenge: "c".repeat(64) })
     expect(pending.request.payload.personId).toBe(app.identity.personId)
-    expect(pending.request.payload).toMatchObject({ version: 2, rustyServicePins: [pin] })
+    expect(pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true, rustyServicePins: [pin] })
 
     const storage = new Map<string, string>()
     const adapter = { setItem: (key: string, value: string) => storage.set(key, value),

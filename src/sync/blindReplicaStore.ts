@@ -18,6 +18,7 @@ import { createRustyIdentityProfileScopeFetcher, principalForBoardStorageAccess 
 import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 import { submitBlindCheckpoint } from "./blindCheckpoint"
 import { peerStore } from "./peerStore"
+import { ensureOwnedRustyWorkspaceAuthority } from "./rustyWorkspaceAuthority"
 
 export function createBlindReplica(config: BlindReplicaConfig, tincanban: ReturnType<typeof useTincanban>, ensureIdentity: () => void,
   persist: (config: BlindReplicaConfig, configurations?: BlindReplicaConfig[]) => Promise<void>,
@@ -150,6 +151,7 @@ async function ensureRustyScopeAccess(tincanban: ReturnType<typeof useTincanban>
 
 function createBlindReplicaTransport(config: BlindReplicaConfig, profile: NonNullable<ReturnType<ReturnType<typeof useTincanban>["getCurrentProfile"]>>,
   ensureCurrent: () => void) {
+  let readOnlyRemoteScopeAuthority = false
   const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent,
     principal: principalForBoardStorageAccess(config.boardAccess),
     workspace: { workspaceId: config.workspaceId, scopeAuthority: async () => {
@@ -162,9 +164,16 @@ function createBlindReplicaTransport(config: BlindReplicaConfig, profile: NonNul
       const stored = await peerStore.getWorkspaceAuthority(config.workspaceId) ?? await peerStore.getWorkspaceCredential(config.workspaceId)
       ensureCurrent()
       const snapshot = (stored as { scopeAuthoritySnapshot?: unknown } | null)?.scopeAuthoritySnapshot
-      if (!snapshot) throw new Error("Verified workspace scope authority is required before Rusty access")
-      return snapshot
-    } } })
+      if (snapshot) {
+        readOnlyRemoteScopeAuthority = false
+        return snapshot
+      }
+      const remote = await ensureOwnedRustyWorkspaceAuthority(config, profile, ensureCurrent)
+      ensureCurrent()
+      readOnlyRemoteScopeAuthority = true
+      if (!remote?.scopeAuthoritySnapshot) throw new Error("Rusty workspace authority is unavailable")
+      return remote.scopeAuthoritySnapshot
+    }, authorityIsReadOnly: () => readOnlyRemoteScopeAuthority } })
   const transport = {
     inventory: (access: BlindAccess, after: number) => inventoryBlindObjects(access, after, scopeFetch),
     download: (access: BlindAccess, id: string) => downloadBlindObject(access, id, scopeFetch),

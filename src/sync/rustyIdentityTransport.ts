@@ -1,5 +1,5 @@
 import { createRustyIdentityRequestProof, type RustyIdentityRequestProofPayload } from "@meta-uber/mesh-replication/rusty-identity-request-proof"
-import { createLocalRootIdentityAuthorityView, mergeIdentityAuthorityViews,
+import { authorizeIdentityDataDevice, createLocalRootIdentityAuthorityView, mergeIdentityAuthorityViews,
   publicKeyId, verifyIdentityAuthorityView, type VerifiedIdentityAuthorityView, type PublicIdentity, type SignedEnvelope } from "@meta-uber/mesh-identity"
 import { publishRustyIdentityAuthorityView, readRustyIdentityAuthorityStatus,
   RustyIdentityAuthorityStaleError } from "@meta-uber/mesh-replication/rusty-identity-authority"
@@ -46,7 +46,7 @@ export type RustyIdentityScopeFetcherOptions = {
   ensureCurrent?: () => void | Promise<void>
   principal?: RustyPrincipalRequestGrant
   profile?: LocalProfile
-  workspace?: { workspaceId: string; scopeAuthority: () => Promise<unknown> }
+  workspace?: { workspaceId: string; scopeAuthority: () => Promise<unknown>; authorityIsReadOnly?: () => boolean }
   fetcher?: (url: string, init: RustyRequestInit) => Promise<Response>
 }
 
@@ -76,8 +76,11 @@ export function createRustyIdentityScopeFetcher(options: RustyIdentityScopeFetch
         await verifyRegisteredPrincipalScope(options, access, origin)
       } else {
         if (!options.profile) throw new Error("Workspace Rusty authority signer is unavailable")
-        await ensureRustyWorkspaceScopeAuthority(options.profile, { ...access, workspaceId: options.workspace.workspaceId },
-          await options.workspace.scopeAuthority(), options.ensureCurrent, options.fetcher)
+        const snapshot = await options.workspace.scopeAuthority()
+        if (!options.workspace.authorityIsReadOnly?.()) {
+          await ensureRustyWorkspaceScopeAuthority(options.profile, { ...access, workspaceId: options.workspace.workspaceId },
+            snapshot, options.ensureCurrent, options.fetcher)
+        }
       }
     }
     const principal = options.principal
@@ -198,6 +201,17 @@ export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityPro
     },
   } : undefined)
   const currentAuthorityView = async (): Promise<VerifiedIdentityAuthorityView> => {
+    if (options.workspace?.authorityIsReadOnly?.()) {
+      await options.ensureCurrent?.()
+      const view = await readIdentityAuthorityView(profile.identity.personId)
+      await options.ensureCurrent?.()
+      if (!view || view.personId !== profile.identity.personId || view.identityPublicKey !== profile.identity.publicKey ||
+          !view.certificates.some(certificate => canonicalizeJson(certificate) === canonicalizeJson(profile.certificate)) ||
+          await authorizeIdentityDataDevice(view, profile.device.deviceId) !== profile.device.publicKey) {
+        throw new Error("Current local Identity authority does not authorize Rusty workspace reads")
+      }
+      return view
+    }
     return ensureRustyIdentityAuthorityPublished({ ...options, profile, access })
   }
   const sign = async (payload: RustyIdentityRequestProofPayload) => {
@@ -253,7 +267,6 @@ export async function ensureRustyPersonIdentityScope(options: EnsureRustyPersonS
 export async function ensureRustyWorkspaceScopeAuthority(profile: LocalProfile,
   access: BlindAccess & { workspaceId: string }, snapshot: unknown,
   ensureCurrent?: () => void | Promise<void>, fetcher?: (url: string, init: RustyRequestInit) => Promise<Response>): Promise<RustyWorkspaceScopeAuthority> {
-  const view = await ensureRustyIdentityAuthorityPublished({ profile, access, ensureCurrent, fetcher })
   const validateSnapshot = (value: unknown): RustyWorkspaceScopeAuthority => {
     const checked = meshRustRuntime().state.validateScopeAuthority(value, Date.now()) as {
       scopeId: string; controller: { personId: string; publicKey: string }; controlEpoch: number
@@ -264,6 +277,7 @@ export async function ensureRustyWorkspaceScopeAuthority(profile: LocalProfile,
   const proposed = validateSnapshot(snapshot)
   if (proposed.workspaceId !== access.workspaceId || proposed.controllerPersonId !== profile.identity.personId ||
       proposed.controllerPublicKey !== profile.identity.publicKey) throw new Error("Workspace authority is not controlled by the current Identity")
+  const view = await ensureRustyIdentityAuthorityPublished({ profile, access, ensureCurrent, fetcher })
   const serviceId = await publicKeyId(access.servicePublicKey)
   const published = await ensureRustyScopeAuthoritySnapshot({ origin: access.origin, servicePublicKey: access.servicePublicKey,
     scopeId: access.scopeId, workspaceId: access.workspaceId, identity: profile.identity, authorityView: view,
@@ -277,6 +291,26 @@ export async function ensureRustyWorkspaceScopeAuthority(profile: LocalProfile,
   }
   await ensureCurrent?.()
   return { ...published.scopeAuthority, ...(published.receipt ? { receipt: published.receipt } : {}) }
+}
+
+/** Read the accepted Rusty scope ledger without creating or updating workspace authority. */
+export async function readRustyOwnerWorkspaceScopeAuthority(profile: LocalProfile,
+  access: BlindAccess & { workspaceId: string }, ensureCurrent?: () => void | Promise<void>,
+  fetcher?: (url: string, init: RustyRequestInit) => Promise<Response>): Promise<RustyWorkspaceScopeAuthority> {
+  await ensureCurrent?.()
+  const origin = new URL(access.origin).origin
+  const result = await readRustyScopeAuthorityStatus({ origin, servicePublicKey: access.servicePublicKey,
+    scopeId: access.scopeId, fetcher: (url, init) => fetchRustyScopeAuthority(url, init, fetcher),
+    validateSnapshot: validateWorkspaceSnapshot })
+  await ensureCurrent?.()
+  const accepted = result.authority
+  if (result.status.payload.state !== "ready" || !accepted ||
+      result.status.payload.workspaceId !== access.workspaceId || accepted.workspaceId !== access.workspaceId ||
+      accepted.controllerPersonId !== profile.identity.personId ||
+      accepted.controllerPublicKey !== profile.identity.publicKey) {
+    throw new Error("Rusty accepted workspace authority does not belong to the current Identity")
+  }
+  return accepted
 }
 
 async function fetchRustyScopeAuthority(url: RequestInfo | URL, init: RequestInit | undefined,

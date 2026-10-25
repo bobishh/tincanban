@@ -1,7 +1,7 @@
 import { beforeEach, expect, it } from "vitest"
 import { createDeviceAuthorizationApproval, createDeviceAuthorizationRequest, createIdentityProfileOperation,
   createRecoverableIdentity, emptyIdentityProfileState, readIdentityProfileState } from "@meta-uber/mesh-identity"
-import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest } from "../domain/identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, isCurrentIdentityProfile, resetIdentityStorageForTest } from "../domain/identity"
 import { defaultStorage } from "../storage"
 import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { completeIdentityBrowserSignIn } from "./completeIdentityBrowserSignIn"
@@ -24,6 +24,7 @@ it("Given an approved signed profile photo, when browser sign-in completes, then
     certificates: [owner.certificate], revocations: [], profileState, includeProfileState: true })
   const adopted = await completeIdentityBrowserSignIn(approval, request, app)
   expect(await identityEnrollmentConfirmed(adopted)).toBe(true)
+  expect(isCurrentIdentityProfile(adopted)).toBe(true)
   clearInMemoryProfileForReloadTest()
   const restored = await bootstrapIdentity()
   expect(restored.identity.personId).toBe(owner.identity.personId)
@@ -66,4 +67,34 @@ it("Given the current app key already holds its manager certificate, when that s
   expect(adopted.certificate).toEqual(manager.certificate)
   expect(adopted.certificate.payload.canEnrollDevices).toBe(true)
   expect((await defaultStorage.loadPersonalRoot())?.photo?.avatarData).toBe(avatarData)
+})
+
+it("Given a valid approval but unavailable catalog service, when completing sign-in, then retain the previous active Identity and local boards", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Owner")).profile
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge: "d".repeat(64),
+    expiresAt: Date.now() + 120_000, includeIdentityCatalogAccess: true })
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example",
+    challenge: request.payload.challenge, profileState: emptyIdentityProfileState(owner.identity.personId),
+    certificates: [owner.certificate], revocations: [], includeProfileState: true, identityCatalogAccessUnavailable: true })
+  await expect(completeIdentityBrowserSignIn(approval, request, app)).rejects.toThrow(/boards could not be checked/)
+  expect(await bootstrapIdentity()).toBe(app)
+  expect(isCurrentIdentityProfile(app)).toBe(true)
+})
+
+it("Given an empty new Identity catalog and null-person request, when completing sign-in, then retain the active approved app profile without another root key", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Owner")).profile
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge: "e".repeat(64),
+    expiresAt: Date.now() + 120_000, includeIdentityCatalogAccess: true })
+  const initial = emptyIdentityProfileState(owner.identity.personId)
+  const name = await createIdentityProfileOperation(owner, initial, "name", "Owner")
+  const profileState = await readIdentityProfileState({ ...initial, operations: [name] }, owner.identity)
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example",
+    challenge: request.payload.challenge, profileState,
+    certificates: [owner.certificate], revocations: [], includeProfileState: true })
+  const adopted = await completeIdentityBrowserSignIn(approval, request, app)
+  expect(adopted.identity.personId).toBe(owner.identity.personId)
+  expect(isCurrentIdentityProfile(adopted)).toBe(true)
+  expect(adopted.privateKeys.identityPrivateKey).toBeUndefined()
 })

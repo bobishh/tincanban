@@ -1,4 +1,5 @@
-import { sha256Base64Url, type LocalProfile } from "./domain/identity"
+import { sha256Base64Url, isCurrentIdentityProfile, type LocalProfile } from "./domain/identity"
+import { save, free } from "@automerge/automerge/slim"
 import {
   createPersonalRoot,
   pruneForeignGenesisWorkspaceRefs,
@@ -10,6 +11,7 @@ import { createLocalRootIdentityAuthorityView } from "@meta-uber/mesh-identity"
 import { defaultProofStore } from "./domain/proofs"
 import { rootIdentityProfileState } from "./domain/identityProfileRoot"
 import { mergeIdentityAuthorityView } from "./sync/identityAuthorityStore"
+import { hasPendingLocalWorkspaceOwnershipIntent } from "./sync/localWorkspaceOwnershipIntent"
 
 export async function initializePersonalRootCatalog(storage: WorkspaceStorage, profile: LocalProfile): Promise<void> {
   const workspaces = [...await storage.listWorkspaces(), ...await storage.listArchivedWorkspaces()]
@@ -49,6 +51,20 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
         { certificates, revocations: [] }, await rootIdentityProfileState(storedRoot))
       await mergeIdentityAuthorityView(view)
     }
+  }
+  if (await hasPendingLocalWorkspaceOwnershipIntent(profile.device.deviceId)) {
+    const { completePendingLocalWorkspaceOwnershipTransfer } = await import("./sync/localWorkspaceOwnership")
+    await completePendingLocalWorkspaceOwnershipTransfer({ profile,
+      ensureCurrent: () => {
+        if (!isCurrentIdentityProfile(profile)) throw new Error("Identity changed before registering added boards")
+      },
+      workspaceStore: { read: async workspaceId => {
+        const loaded = await storage.loadWorkspaceDoc(workspaceId)
+        if (!loaded) throw new Error("Added board is unavailable; its ownership registration remains pending")
+        try { return save(loaded.doc) } finally { free(loaded.doc) }
+      } },
+      registerOwnerReference: reference => registerWorkspaceInCurrentRoot(storage, profile, reference.workspaceId, reference.ownerGrantHash),
+    })
   }
 }
 

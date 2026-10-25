@@ -126,6 +126,73 @@ test("Given actual Rusty and an SDK authority snapshot missing serde defaults, W
   }
 }, 45_000)
 
+test("Given an owner with Rusty credentials but no local workspace ledger, when its replica pulls, then read the signed Rusty ledger without control-plane writes", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Remote workspace authority owner")
+  const service = await startRusty(profile)
+  const workspaceId = crypto.randomUUID()
+  const access = { origin: service.origin, servicePublicKey: (await discoverBlindKeeper(service.origin)).servicePublicKey,
+    scopeId: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+    readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+    writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+  try {
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2, scopePurpose: "workspace" })
+    const snapshot = {
+      genesis: await signEnvelope(profile.privateKeys.devicePrivateKey!, {
+        kind: "scope-genesis", version: 1, scopeId: workspaceId,
+        creator: { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
+          certificates: [profile.certificate] }, controlEpoch: 1,
+      }, profile.device.deviceId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [],
+    }
+    await ensureRustyWorkspaceScopeAuthority(profile, { ...access, workspaceId }, snapshot, () => {})
+    expect(await peerStore.getWorkspaceAuthority(workspaceId)).toBeNull()
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+
+    const config = { ...access, workspaceId, keyEpoch: 1,
+      contentKey: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), cursor: 0, lastUploaded: "" }
+    await setReplicaPreference(profile.identity.personId, config)
+    const selected = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === workspaceId)!
+    const app = { getCurrentProfile: () => profile, readWorkspaceBytes: async () => new Uint8Array(),
+      readWorkspaceDoc: async () => undefined, mergeAuthorizedWorkspace: async () => {}, causalReviewError: { value: undefined } }
+    const requests: Array<{ method: string; path: string }> = []
+    const nativeFetch = globalThis.fetch
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url)
+      requests.push({ method: (init?.method ?? "GET").toUpperCase(), path: requestUrl.pathname })
+      return nativeFetch(input, init)
+    })
+
+    const replica = createBlindReplica(selected, app as never, () => {}, async () => {})
+    await expect(replica.pull()).resolves.toBe(true)
+    expect(requests.some(request => request.method === "GET" &&
+      request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/authority/status`)).toBe(true)
+    expect(requests.some(request => request.method === "GET" &&
+      request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/objects`)).toBe(true)
+    expect(requests.filter(request => request.method === "PUT")).toEqual([])
+    expect(await peerStore.getWorkspaceAuthority(workspaceId)).toMatchObject({ ownerPersonId: profile.identity.personId,
+      scopeAuthoritySnapshot: snapshot })
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+
+    resetIdentityStorageForTest()
+    const reader = await bootstrapIdentity("Different workspace identity")
+    expect(reader.identity.personId).not.toBe(profile.identity.personId)
+    await setReplicaPreference(reader.identity.personId, config)
+    const readerConfig = (await getReplicaConfigurations(reader.identity.personId)).find(value => value.workspaceId === workspaceId)!
+    const readerApp = { ...app, getCurrentProfile: () => reader }
+    requests.length = 0
+    const readerReplica = createBlindReplica(readerConfig, readerApp as never, () => {}, async () => {})
+    await expect(readerReplica.pull()).rejects.toThrow(/current Identity/u)
+    expect(requests.some(request => request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/objects`)).toBe(false)
+    expect(requests.filter(request => request.method === "PUT")).toEqual([])
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 45_000)
+
 afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
 
 async function unusedLoopbackPort(): Promise<number> {

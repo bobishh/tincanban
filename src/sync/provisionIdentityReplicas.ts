@@ -15,7 +15,11 @@ export async function provisionIdentityReplicas(app: Pick<ReturnType<typeof useT
     try {
       const profile = app.getCurrentProfile()
       if (!profile) throw new Error("Identity unavailable during profile setup")
-      await provisionIdentityReplica(config, profile, guard)
+      const identityConfig = await provisionIdentityReplica(config, profile, guard)
+      guard()
+      if (!await (await import("./identityReplicaStore")).createIdentityReplica(identityConfig, profile, guard).push()) {
+        throw new Error("Private Identity catalog changed during initial upload; retry required")
+      }
       guard()
     } catch (cause) {
       guard()

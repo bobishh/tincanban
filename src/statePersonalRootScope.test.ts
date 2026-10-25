@@ -9,6 +9,10 @@ import { initializePersonalRootCatalog } from "./statePersonalRoot"
 import { refreshAvailableWorkspaces, resetStateForTest } from "./statePersistence"
 import { stateRuntime } from "./stateContext"
 
+vi.mock("./sync/localWorkspaceOwnership", () => {
+  throw new Error("Heavy local ownership recovery module loaded without a pending intent")
+})
+
 describe("identity-scoped local workspace catalog", () => {
   beforeEach(() => {
     resetIdentityStorageForTest()
@@ -68,6 +72,22 @@ describe("identity-scoped local workspace catalog", () => {
       ["stale-old-owner", "old-identity"],
     ]))).toEqual(["stale-old-owner"])
     expect(Object.keys(root.workspaces).sort()).toEqual(["not-yet-downloaded", "owned", "visitor-invite"])
+  })
+
+  it("initializes a normal root without loading the transfer recovery module when no intent exists", async () => {
+    const profile = await bootstrapIdentity("Ordinary startup")
+    profile.device.deviceId = crypto.randomUUID()
+    const root = createPersonalRoot(profile, "certificate")
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
+      loadWorkspaceDoc: vi.fn(),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
+        return await update(root)
+      }),
+    } as unknown as WorkspaceStorage
+
+    await expect(initializePersonalRootCatalog(storage, profile)).resolves.toBeUndefined()
   })
 
   it("Given a signed profile history, when initializing an existing root for an adopted device, then preserve its validated name shadow and history", async () => {

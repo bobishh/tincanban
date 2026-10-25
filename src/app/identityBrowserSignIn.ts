@@ -11,7 +11,7 @@ const identityBrowserSignInPendingKey = "tincanban.identity-browser-signin.pendi
 const identityBrowserSignInReturnKey = "tincanban.identity-browser-signin.return.v1"
 const pendingRustyConnectionKey = "tincanban.identity-browser-signin.rusty.v1"
 
-export type IdentityBrowserSignInPhase = "request" | "redirect" | "callback" | "adoption" | "refresh" | "restore" | "cancel"
+export type IdentityBrowserSignInPhase = "request" | "redirect" | "callback" | "adoption" | "refresh" | "catalog" | "boards" | "restore" | "cancel"
 export type IdentityBrowserSignInOutcome = "started" | "verified" | "completed" | "cancelled" | "failed"
 
 /** Keep this browser activity linked across the same-tab Identity redirect. */
@@ -47,7 +47,7 @@ export function browserSignInFailureMessage(cause: unknown): string {
 
 /** Emit only fixed lifecycle fields; never include profile, device, request, or certificate data. */
 export function recordIdentityBrowserSignIn(phase: IdentityBrowserSignInPhase, outcome: IdentityBrowserSignInOutcome,
-  options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "restore_failed"; elapsedMs?: number } = {}) {
+  options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "catalog_failed" | "boards_failed" | "restore_failed"; elapsedMs?: number } = {}) {
   try {
     record("identity.browser_signin", { phase, outcome,
       ...(options.errorCode ? { errorCode: options.errorCode } : {}),
@@ -60,6 +60,8 @@ export function createIdentityBrowserSignInReturn(options: {
   showPortal: Ref<boolean>
   refreshIdentity(): Promise<void>
   closePortal(): void
+  loadBoards?(returnPath: string): Promise<void>
+  resolveReturnPath?(returnPath: string): string
   resumeRustyConnection?(origin: string, workspaceId: string): Promise<void>
   reportRustyConnectionFailure?(origin: string, cause: unknown): void
 }) {
@@ -82,14 +84,15 @@ export function createIdentityBrowserSignInReturn(options: {
       recordIdentityBrowserSignIn("refresh", "completed", { elapsedMs: performance.now() - refreshStarted })
       const intent = readPendingRustyConnectionIntent(window.sessionStorage, false)
       if (intent && request?.payload.challenge === intent.challenge && "rustyServicePins" in request.payload &&
-          request.payload.rustyServicePins.some(pin => pin.origin === intent.origin && pin.serviceId === intent.serviceId)) {
+          (request.payload.rustyServicePins ?? []).some(pin => pin.origin === intent.origin && pin.serviceId === intent.serviceId)) {
         try { await options.resumeRustyConnection?.(intent.origin, intent.workspaceId) }
         catch (cause) { options.reportRustyConnectionFailure?.(intent.origin, cause) }
         finally { clearPendingRustyConnectionIntent(window.sessionStorage) }
       }
+      await options.loadBoards?.(returnPath)
       const restoreStarted = performance.now()
       try {
-        window.history.replaceState(window.history.state, "", returnPath)
+        window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
         recordIdentityBrowserSignIn("restore", "completed", { elapsedMs: performance.now() - restoreStarted })
       } catch (error) {
         recordIdentityBrowserSignIn("restore", "failed", { errorCode: "restore_failed", elapsedMs: performance.now() - restoreStarted })
@@ -175,9 +178,9 @@ export function createApprovedSignInCompletion(complete: (returnPath: string, re
       await complete(returnPath, request)
       phase.value = "complete"
       return true
-    } catch {
+    } catch (cause) {
       phase.value = "failed"
-      error.value = "Identity approval was saved, but the app could not finish loading the profile. Select Sign in to retry."
+      error.value = `Identity approval was saved, but the app could not finish loading your boards. ${cause instanceof Error ? cause.message : ""} Select Sign in to retry.`
       return false
     }
   }

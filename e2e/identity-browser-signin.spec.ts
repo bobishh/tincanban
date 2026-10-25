@@ -8,9 +8,9 @@ const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
 
 test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal preview")
 
-test("Given a local app device and saved board, when Identity approves browser sign-in, then return with the approved identity and preserved board", async ({ page, context }) => {
+test("Given a local app device and saved board, when Identity approves browser sign-in, then return with the approved identity and preserved board", async ({ page, context, baseURL }) => {
   test.setTimeout(120_000)
-  const appUrl = process.env.TINCANBAN_E2E_ORIGIN ?? `http://127.0.0.1:${process.env.TINCANBAN_E2E_PORT ?? 4244}`
+  const appUrl = baseURL!
   const portal = await context.newPage()
   const createPortalIdentity = async (target: Page, displayName: string) => {
     await target.goto(identityOrigin!)
@@ -53,18 +53,6 @@ test("Given a local app device and saved board, when Identity approves browser s
     await page.getByRole("button", { name: "Sign in", exact: true }).click()
   }
 
-  await page.getByRole("button", { name: "Settings", exact: true }).click()
-  await page.getByRole("button", { name: "Add another device", exact: true }).click()
-  const options = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  const connectForm = options.locator(".identity-device-connect-form")
-  await expect(connectForm).toHaveCSS("display", "grid")
-  await expect(connectForm.locator(".identity-device-field")).toHaveCount(2)
-  await expect(connectForm.locator(".identity-device-consent")).toHaveCSS("display", "grid")
-  await expect(connectForm.getByLabel("Identity invitation")).toBeVisible()
-  await expect(connectForm.getByLabel("Device name")).toBeVisible()
-  await options.getByRole("button", { name: "Back to Identity options", exact: true }).click()
-  await options.getByRole("button", { name: "Close", exact: true }).last().click()
-
   await openSignIn()
   await expect(page).toHaveURL(new RegExp(`^${identityOrigin!.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}.*`))
   await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
@@ -88,11 +76,9 @@ test("Given a local app device and saved board, when Identity approves browser s
   await expect(replacement.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible()
   await expect(replacement.getByRole("heading", { name: "Add another device", exact: true })).toHaveCount(0)
   await expect(replacement.getByLabel("Identity invitation")).toHaveCount(0)
-  await expect(replacement.getByRole("heading", { name: "Join Browser Login Owner?" })).toBeVisible()
+  await expect(replacement.getByRole("heading", { name: "Add your local boards to Browser Login Owner?" })).toBeVisible()
   await expect(replacement.getByText("Board survives browser login")).toBeVisible()
-  await replacement.getByRole("button", { name: "Download active workspace backup", exact: true }).click()
-  await replacement.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.").check()
-  await replacement.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
+  await replacement.getByRole("button", { name: "Add boards and sign in", exact: true }).click()
   await expect(replacement).toHaveCount(0)
   await expect.poll(async () => await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(identityId)
   await expect(page.getByRole("region", { name: "Board survives browser login", exact: true })).toBeVisible()
@@ -148,7 +134,7 @@ test("Given a local app device and saved board, when Identity approves browser s
   const profileState = await readIdentityProfileState({ ...initial, operations: [name] }, replacementIdentity.profile.identity)
   const approval = await createDeviceAuthorizationApproval(replacementIdentity.profile, request, {
     applicationOrigin: new URL(appUrl).origin,
-    challenge: request.payload.challenge, profileState, revocations: [], includeProfileState: true,
+    challenge: request.payload.challenge, profileState, revocations: [], includeProfileState: true, identityCatalogAccess: [],
   })
   const approvalEncoded = Buffer.from(JSON.stringify(approval)).toString("base64url")
   await page.goto(`${new URL(appUrl).origin}/identity/return#${new URLSearchParams({
@@ -156,11 +142,11 @@ test("Given a local app device and saved board, when Identity approves browser s
     approval: approvalEncoded,
   }).toString()}`)
   const keepIdentity = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  const replacementPrompt = keepIdentity.getByRole("region", { name: "Replace local Identity confirmation" })
-  await expect(replacementPrompt.getByRole("heading", { name: "Join Replacement Sign-in Owner?" })).toBeVisible()
-  await replacementPrompt.getByRole("button", { name: "Keep current Identity", exact: true }).click()
+  const replacementPrompt = keepIdentity.getByRole("region", { name: "Local boards before sign-in" })
+  await expect(replacementPrompt.getByRole("heading", { name: "Add your local boards to Replacement Sign-in Owner?" })).toBeVisible()
+  await replacementPrompt.getByRole("button", { name: "Stay on my boards", exact: true }).click()
   await expect.poll(() => `${new URL(page.url()).pathname}${new URL(page.url()).search}`).toBe(keepReturnPath)
-  await expect(keepIdentity.getByRole("status")).toHaveText("Kept the current Identity. No local data changed.")
+  await expect(keepIdentity.getByText("Stayed on your boards. Sign-in was not completed.", { exact: true })).toBeVisible()
   await expect(keepIdentity.getByRole("button", { name: "Sign in", exact: true })).toBeEnabled()
   await expect(keepIdentity.getByLabel("Identity invitation")).toHaveCount(0)
   await expect.poll(async () => await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(identityId)
@@ -169,5 +155,12 @@ test("Given a local app device and saved board, when Identity approves browser s
     return loaded ? { owner: loaded.doc.ownerPersonId, title: loaded.doc.title } : null
   }, retainedWorkspaceId)
   expect(boardAfterKeep).toEqual({ owner: localBefore, title: "Board survives browser login" })
+  await keepIdentity.getByRole("button", { name: "Close", exact: true }).last().click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
+  const invitation = page.getByRole("dialog", { name: "Device sync", exact: true })
+  await expect(invitation.getByRole("img", { name: "Pairing QR code", exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(invitation.getByLabel("Pairing link", { exact: true })).toHaveValue(/https?:\/\/.+/u)
+  await expect(invitation.getByLabel("Identity invitation", { exact: true })).toHaveCount(0)
   await portal.close()
 })

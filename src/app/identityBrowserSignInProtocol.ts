@@ -37,6 +37,7 @@ export async function createIdentityBrowserSignIn(options: {
     challenge,
     expiresAt: now + 120_000,
     personId: options.personId ?? null,
+    includeIdentityCatalogAccess: true,
     ...(options.rustyServicePins ? { rustyServicePins: options.rustyServicePins } : {}),
   })
   const pending: PendingIdentityBrowserSignIn = {
