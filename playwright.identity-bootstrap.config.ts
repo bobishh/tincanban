@@ -14,7 +14,7 @@ export default defineConfig({
   use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
   webServer: [
     ...(identityProviderDirectory ? [{
-      command: "npm run dev",
+      command: `npm run dev -- --port ${Number(new URL(identityOrigin ?? "http://127.0.0.1:4175").port)}`,
       cwd: resolve(identityProviderDirectory),
       url: identityOrigin,
       reuseExistingServer: false,

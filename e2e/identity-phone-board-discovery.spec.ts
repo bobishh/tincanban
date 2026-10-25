@@ -33,11 +33,16 @@ async function createOwnerIdentity(portal: Page): Promise<string> {
   await portal.getByRole("button", { name: "Edit profile", exact: true }).click()
   await portal.getByLabel("Change avatar").setInputFiles({ name: "bo-avatar.png", mimeType: "image/png", buffer: avatarPng })
   await portal.getByRole("button", { name: "Save changes", exact: true }).click()
-  await expect(portal.locator(".identity-profile-card .identity-avatar img")).toHaveAttribute("src", /^data:image\/webp;base64,/u)
+  await expect(portal.locator(".identity-profile-card .identity-avatar img")).toHaveAttribute("src", /^data:image\/(?:webp|jpeg);base64,/u)
+  const uploadedPhoto = portal.locator(".identity-profile-card .identity-avatar img")
+  await expect.poll(() => uploadedPhoto.evaluate((image: HTMLImageElement) => ({
+    width: image.naturalWidth, height: image.naturalHeight,
+  }))).toEqual({ width: 128, height: 128 })
   return (await portal.locator(".identity-id-badge").getAttribute("data-identity-id"))!
 }
 
-async function approveApplicationDevice(page: Page, appOrigin: string, personId: string, localBoardChoice?: "add" | "stay"): Promise<void> {
+async function approveApplicationDevice(page: Page, appOrigin: string, personId: string,
+  localBoardChoice?: "add" | "stay", afterApproval?: () => Promise<void>): Promise<void> {
   await page.addInitScript(({ expectedOrigin }) => {
     if (location.origin !== expectedOrigin || location.pathname !== "/identity/return") return
     const pendingKey = "tincanban.identity-browser-signin.pending.v1"
@@ -55,6 +60,7 @@ async function approveApplicationDevice(page: Page, appOrigin: string, personId:
   await expect(page.getByRole("heading", { name: "Authorize app device", exact: true })).toBeVisible()
   await page.getByLabel("Allow this app to use the Identity shown above.", { exact: true }).check()
   await page.getByRole("button", { name: "Approve app device", exact: true }).click()
+  await afterApproval?.()
   if (localBoardChoice) {
     await expect(page.getByRole("heading", { name: /Add your local boards to/u })).toBeVisible({ timeout: 30_000 })
     await page.getByRole("button", { name: localBoardChoice === "add" ? "Add boards and sign in" : "Stay on my boards", exact: true }).click()
@@ -138,6 +144,17 @@ async function enrollPhoneManager(ownerPortal: Page, phonePortal: Page, personId
       saved.privateKeys.identityPrivateKeyPkcs8 === undefined)
   })
   expect(rootKeyIsAbsent).toBe(true)
+  try {
+    await ownerPortal.getByRole("tab", { name: "Profile", exact: true }).click({ timeout: 45_000 })
+    await expect(ownerPortal.getByRole("heading", { name: "Bo catalog owner", exact: true })).toBeVisible({ timeout: 45_000 })
+  } catch {
+    const status = await ownerPortal.evaluate(async () => {
+      const { createIdentityPortalController } = await import("/src/identityPortalController.ts")
+      const state = createIdentityPortalController().state.value
+      return { status: state.deviceEnrollmentStatus, error: state.error }
+    })
+    throw new Error(`The source did not finish enrolled-device profile sync: ${JSON.stringify(status)}`)
+  }
 }
 
 async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
@@ -261,6 +278,25 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
   const phoneLogs: LogRecord[] = []
   const phoneSpans: Span[] = []
   const desktopSpans: Span[] = []
+  const identityDiagnostics: Array<{ page: string; phase?: string; errorType?: string; elapsedMs?: number }> = []
+  for (const [name, portal] of [["source", ownerPortal], ["phone", phone]] as const) {
+    portal.on("console", async message => {
+      if (!message.text().startsWith("Identity peer ")) return
+      const fields = await message.args()[1]?.jsonValue().catch(() => null) as Record<string, unknown> | null
+      identityDiagnostics.push({ page: name,
+        phase: typeof fields?.phase === "string" ? fields.phase : undefined,
+        errorType: typeof fields?.errorType === "string" ? fields.errorType : undefined,
+        elapsedMs: typeof fields?.elapsedMs === "number" ? fields.elapsedMs : undefined })
+    })
+  }
+  const phoneCatalogTraffic: Array<{ path: string; status: number }> = []
+  phone.on("response", response => {
+    const url = new URL(response.url())
+    if (url.origin === rusty.origin && url.pathname.startsWith("/v2/identity/")) {
+      phoneCatalogTraffic.push({ path: url.pathname.replace(/[A-Za-z0-9_-]{40,}/gu, "<id>"), status: response.status() })
+    }
+  })
+  let releasePhonePeerReconnect: (() => void) | undefined
   const browserKey = "public-browser-fixture-key-0123456789"
   await context.route("https://telemetry.invalid/v1/traces", async route => {
     const headers = route.request().headers()
@@ -287,6 +323,10 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     const personId = await createOwnerIdentity(ownerPortal)
     expect(personId).toMatch(/^[A-Za-z0-9_-]{43}$/u)
 
+    await desktop.goto(baseURL!)
+    await expect(desktop.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(desktop, appOrigin, personId)
+
     // Seed a second authorized Identity manager before publishing this app's
     // board catalog. Phone receives no TCB board/configuration state here.
     await enrollPhoneManager(ownerPortal, phonePortal, personId)
@@ -301,9 +341,6 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     })
     expect(anonymous).toMatchObject({ title: "Untitled", ownerPersonId: anonymous.profilePersonId, items: 0 })
 
-    await desktop.goto(baseURL!)
-    await expect(desktop.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
-    await approveApplicationDevice(desktop, appOrigin, personId)
     await createJobSearchWorkspace(desktop, "Bo Job search")
     const actualWorkspaceId = await desktop.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
     await desktop.getByRole("region", { name: "Lead", exact: true })
@@ -313,6 +350,9 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await create.getByLabel("Role *").fill("Senior engineer")
     await create.getByRole("button", { name: "Create item", exact: true }).click()
     await expect(desktop.getByRole("button", { name: /Open Bo private opportunity/u })).toBeVisible()
+    // Keep initial empty-catalog sign-in legitimate, then take the phone offline
+    // before the source creates the signed Rusty link it must later discover.
+    await phonePortal.close()
     // Service verification may finish after Playwright's default 5s expectation.
     // Hold the real service descriptor to cover the pending navigation boundary.
     let delayedDescriptorRequests = 0
@@ -333,14 +373,58 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
       throw new Error(`${message}; captured rusty.sync exceptions: ${JSON.stringify(exceptionDetails(desktopSpans))}`, { cause })
     }
     expect(delayedDescriptorRequests).toBe(1)
-    await expect.poll(() => identityRustyPinOrigins(phonePortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
+    await expect.poll(() => identityRustyPinOrigins(ownerPortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
     await joinAsEditor(desktop, peer)
 
-    try { await approveApplicationDevice(phone, appOrigin, personId) }
+    let phonePeerReconnectStarted = false
+    const phonePeerReconnectGate = new Promise<void>(resolve => { releasePhonePeerReconnect = resolve })
+    await phoneContext.routeWebSocket("**/*", async socket => {
+      if (new URL(phone.url()).origin !== new URL(identityOrigin!).origin ||
+          new URL(socket.url()).protocol !== "wss:") {
+        socket.connectToServer()
+        return
+      }
+      const server = socket.connectToServer()
+      const buffered: Array<string | Buffer> = []
+      let released = false
+      server.onMessage(message => {
+        phonePeerReconnectStarted = true
+        if (released) socket.send(message)
+        else buffered.push(message)
+      })
+      await phonePeerReconnectGate
+      released = true
+      for (const message of buffered) socket.send(message)
+    })
+    let phoneIdentityReturnRequests = 0
+    phone.on("request", request => {
+      const url = new URL(request.url())
+      if (url.origin === appOrigin && url.pathname === "/identity/return") phoneIdentityReturnRequests += 1
+    })
+    try {
+      await approveApplicationDevice(phone, appOrigin, personId, undefined, async () => {
+        try {
+          await expect.poll(() => phonePeerReconnectStarted, { timeout: 10_000 }).toBe(true)
+          const pending = phone.getByRole("status", { name: "Checking your Identity and boards…", exact: true })
+          await expect(pending).toBeVisible({ timeout: 15_000 })
+          await expect(phone.getByRole("button", { name: "Approve app device", exact: true })).toBeDisabled()
+          await expect(phone).toHaveURL(url => url.origin === new URL(identityOrigin!).origin && url.pathname === "/authorize")
+          expect(phoneIdentityReturnRequests).toBe(0)
+        } finally {
+          releasePhonePeerReconnect()
+        }
+      })
+    }
     catch (cause) {
       const phases = phoneLogs.filter(log => log.body?.stringValue === "identity.browser_signin")
         .map(log => ({ phase: attribute(log, "sync.phase"), outcome: attribute(log, "identity.signin.outcome") }))
-      throw new Error(`${cause instanceof Error ? cause.message : "Phone callback failed"}; phases: ${JSON.stringify(phases)}; errors: ${JSON.stringify(exceptionDetails(phoneSpans))}`, { cause })
+      const sourceMessages = await ownerPortal.locator('[role="alert"], [role="status"]').allTextContents()
+      const sourceState = await ownerPortal.evaluate(async () => {
+        const { createIdentityPortalController } = await import("/src/identityPortalController.ts")
+        const state = createIdentityPortalController().state.value
+        return { status: state.deviceEnrollmentStatus, error: state.error, notice: state.notice }
+      })
+      throw new Error(`${cause instanceof Error ? cause.message : "Phone callback failed"}; phases: ${JSON.stringify(phases)}; errors: ${JSON.stringify(exceptionDetails(phoneSpans))}; Identity diagnostics: ${JSON.stringify(identityDiagnostics)}; Rusty: ${JSON.stringify(phoneCatalogTraffic)}; source messages: ${JSON.stringify(sourceMessages)}; source state: ${JSON.stringify(sourceState)}`, { cause })
     }
     try {
       await expect(phone.getByRole("region", { name: "Bo Job search", exact: true })).toBeVisible({ timeout: 60_000 })
@@ -370,7 +454,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
       return storage.defaultStorage.loadPersonalRoot()
     })
     expect(profile?.identity.personId).toBe(personId)
-    expect(profile?.photo?.avatarData).toMatch(/^data:image\/webp;base64,/u)
+    expect(profile?.photo?.avatarData).toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
 
     await phone.getByRole("button", { name: /Open Bo private opportunity/u }).click()
     const details = phone.getByRole("dialog", { name: "Item overview" })
@@ -388,7 +472,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await desktopRusty.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(desktop.getByRole("button", { name: /Open Bo private opportunity — Senior engineer on phone/u })).toBeVisible({ timeout: 45_000 })
     await expect.poll(() => projectedAvatar(peer, actualWorkspaceId, personId), { timeout: 45_000 })
-      .toMatch(/^data:image\/webp;base64,/u)
+      .toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
 
     await phone.reload()
     await expect(phone.getByRole("region", { name: "Bo Job search", exact: true })).toBeVisible({ timeout: 60_000 })
@@ -400,7 +484,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
       return { personId: root?.identity.personId, photo: root?.photo?.avatarData }
     })
     expect(restored.personId).toBe(personId)
-    expect(restored.photo).toMatch(/^data:image\/webp;base64,/u)
+    expect(restored.photo).toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
 
     await phone.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
     const expectedPhases = [
@@ -475,6 +559,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await expect(deviceInvitation.getByLabel("Pairing link", { exact: true })).toHaveValue(/https?:\/\/.+/u)
     await expect(deviceInvitation.getByLabel("Identity invitation", { exact: true })).toHaveCount(0)
   } finally {
+    releasePhonePeerReconnect?.()
     await Promise.allSettled([peerContext.close(), phoneContext.close(), rusty.close()])
   }
 })

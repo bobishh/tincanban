@@ -25,6 +25,7 @@ async function startRustyServiceWithEnvironment(corsOrigin: string, env: Record<
     child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, "127.0.0.1:0"], {
       env,
     })
+    child.stderr?.on("data", chunk => { process.stderr.write(chunk) })
     const timer = setTimeout(() => reject(new Error("Rusty did not start")), 10_000)
     child.stdout?.on("data", chunk => {
       const address = String(chunk).match(/listening on (127\.0\.0\.1:\d+)/)?.[1]
