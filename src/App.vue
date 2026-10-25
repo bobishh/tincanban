@@ -56,7 +56,7 @@ const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressR
 const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
-  beginHeaderSignIn, beginDeviceConnection, identityPortalFlow, browserSignInReturn } = useIdentityAccount(app, showSettings)
+  beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn } = useIdentityAccount(app, showSettings)
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
@@ -118,6 +118,7 @@ const { publicAccess, publicDelivery } = useAppPublicBoards(app, uiReady)
 const identityOwnerActions = createIdentityOwnerActions({ gate: identityPortalFlow.gate, portalOrigin: identityPortalOrigin, publicAccess,
   getProfile: app.workspace.getCurrentProfile, getBoard: () => ({ boardId: activeBoard.value?.id ?? "", workspaceId: activeWorkspace.id, sourceHeads: [...currentDocHeads.value] }),
   isOwner: () => confirmedRole.value === "owner", addMyDevice: sync.selectSyncAll, isSyncChooserOpen: () => sync.isOpen.value && (sync.step.value === "chooser" || sync.step.value === "members") })
+function beginIdentityDeviceEnrollment() { return beginDeviceEnrollment(identityOwnerActions.addMyDevice) }
 const publicAccessWithIdentity = { ...publicAccess, setPublic: identityOwnerActions.setPublic }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
@@ -259,8 +260,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       @apply-workspace-settings="applyWorkspaceSettings"
     >
       <template #identity>
-        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginDeviceConnection" />
-        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginDeviceConnection : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
+        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginIdentityDeviceEnrollment" />
+        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginIdentityDeviceEnrollment : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
           :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
@@ -283,8 +284,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     </SchemaEditorDialog>
     <DialogWindow v-else-if="showSettings" window-id="settings-profile" :workspace-id="activeWorkspace.id" title="Settings" aria-label="Settings" @close="showSettings = false">
       <section class="dialog dialog-window-content">
-        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginDeviceConnection" />
-        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginDeviceConnection : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
+        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginIdentityDeviceEnrollment" />
+        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginIdentityDeviceEnrollment : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
           :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
           :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"

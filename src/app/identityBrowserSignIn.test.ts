@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { createRecoverableIdentity, createDeviceAuthorizationApproval, publicKeyId } from "@meta-uber/mesh-identity"
+import { createRecoverableIdentity, createDeviceAuthorizationApproval, createIdentityProfileOperation,
+  emptyIdentityProfileState, publicKeyId, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
   browserSignInFailureMessage, clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
   shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn, readPendingRustyConnectionIntent,
@@ -109,6 +110,31 @@ describe("Identity browser sign-in", () => {
     const substituted = btoa(JSON.stringify(substitutedApproval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
     await expect(verifyIdentityBrowserSignInReturn({ hash: `#state=${"a".repeat(64)}&approval=${substituted}`,
       pending, currentProfile: app, applicationOrigin: "https://boards.example" })).rejects.toThrow(/approval|request/u)
+  })
+
+  it("Given an existing manager certificate, when the exact same device returns from Identity, then accept its signed profile approval", async () => {
+    const manager = (await createRecoverableIdentity("better", "Existing manager app")).profile
+    const challenge = "e".repeat(64)
+    const { pending } = await createIdentityBrowserSignIn({ profile: manager, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/boards/current", challenge,
+      personId: manager.identity.personId })
+    const initial = emptyIdentityProfileState(manager.identity.personId)
+    const avatarData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA"
+    const photo = await createIdentityProfileOperation(manager, initial, "photo", {
+      avatarData, changedAt: "2026-10-25T00:00:00.000Z",
+    })
+    const profileState = await readIdentityProfileState({ ...initial, operations: [photo] }, manager.identity,
+      [manager.certificate])
+    const approval = await createDeviceAuthorizationApproval(manager, pending.request, {
+      applicationOrigin: "https://boards.example", challenge, certificates: [manager.certificate], profileState,
+      revocations: [], includeProfileState: true,
+    })
+    const encoded = btoa(JSON.stringify(approval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
+
+    await expect(verifyIdentityBrowserSignInReturn({ hash: `#state=${challenge}&approval=${encoded}`, pending,
+      currentProfile: manager, applicationOrigin: "https://boards.example" })).resolves.toMatchObject({
+      kind: "approved", replacesIdentity: false, approval: { certificate: manager.certificate },
+    })
   })
 
   it("Given Add Rusty requests Identity consent, When creating the browser request, Then bind the same Identity and exact Rusty service key", async () => {

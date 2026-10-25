@@ -67,7 +67,7 @@ export async function verifyIdentityBrowserSignInReturn(options: {
     throw new Error("Local app identity changed during sign-in")
   }
   const approval = await parseDeviceAuthorizationApproval(encoded, options.pending.request,
-    { now: () => options.now ?? Date.now() })
+    { now: () => options.now ?? Date.now(), expectedExistingProfile: options.currentProfile })
   const request = options.pending.request.payload
   if (approval.certificate.payload.deviceId !== options.currentProfile.device.deviceId ||
       approval.certificate.payload.devicePublicKey !== options.currentProfile.device.publicKey ||

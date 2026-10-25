@@ -24,7 +24,7 @@ export async function connectWorkspaceReplica(app: ReturnType<typeof useTincanba
   if (!owner || doc.ownerPersonId !== owner) throw new Error("Only the workspace owner can configure Rusty")
   const service = await discoverBlindKeeper(origin)
   await requireIdentityAuthorityView(profile.identity.personId)
-  const servicePin = await readIdentityRustyServicePin(profile.identity.personId, service.origin)
+  const servicePin = await readIdentityRustyServicePin(profile.identity.personId, service.origin, profile)
   if (servicePin && (servicePin.servicePublicKey !== service.servicePublicKey ||
       servicePin.serviceId !== service.serviceId)) throw new Error("Rusty service key changed after Identity approval")
   if (!servicePin) throw new Error("Approve this Rusty service key in Identity before connecting it")

@@ -1,11 +1,8 @@
-import { createIdentityProfileRecovery, type IdentityProfileRecoveryFile } from "@meta-uber/mesh-identity"
-import { createBrowserIdentityEnrollmentHost, connectBrowserIdentityEnrollment, serveIdentityProfileSync,
-  syncProfileState, type BrowserIdentityEnrollmentHost, type PendingIdentityEnrollment,
-  type IdentityEnrollmentRecovery } from "@meta-uber/mesh-runtime"
+import { createIdentityProfileRecovery } from "@meta-uber/mesh-identity"
+import { createBrowserIdentityEnrollmentHost, serveIdentityProfileSync,
+  syncProfileState, type BrowserIdentityEnrollmentHost, type PendingIdentityEnrollment } from "@meta-uber/mesh-runtime"
 import { defaultProofStore, certHashDefault } from "../domain/proofs"
-import { bootstrapIdentity, isCurrentIdentityProfile, replaceWithEnrolledIdentityDevice, type LocalProfile } from "../domain/identity"
-import type { PublicIdentity } from "../domain/model"
-import { initializePersonalRootCatalog } from "../statePersonalRoot"
+import { isCurrentIdentityProfile, type LocalProfile } from "../domain/identity"
 import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "../sync/identityEnrollmentProfile"
 import { writeLocal } from "../localDb"
@@ -85,104 +82,6 @@ async function approveIdentityDevice(options: {
   }))
 }
 
-export async function connectIdentityProfile(options: {
-  profile: LocalProfile
-  inviteUrl: string
-  deviceLabel: string
-  fullRecoveryConsent: boolean
-  signal?: AbortSignal
-  confirmReplacement(identity: Pick<PublicIdentity, "personId" | "displayName">): Promise<void>
-  onRecovery(recovery: IdentityEnrollmentRecovery): Promise<void>
-  onStatus(message: string): void
-}): Promise<void> {
-  throwIfAborted(options.signal)
-  const before = await bootstrapIdentity()
-  throwIfAborted(options.signal)
-  if (before.identity.personId !== options.profile.identity.personId || !isCurrentIdentityProfile(options.profile)) {
-    throw new Error("Local Identity changed before enrollment")
-  }
-  let replacementConfirmed = false
-  const confirmReplacement = async (identity: Pick<PublicIdentity, "personId" | "displayName">) => {
-    if (identity.personId === before.identity.personId) return
-    await options.confirmReplacement(identity)
-    throwIfAborted(options.signal)
-    replacementConfirmed = true
-  }
-  const connected = await awaitConnectionUnlessAborted(connectBrowserIdentityEnrollment({ inviteUrl: options.inviteUrl,
-    transportSeed: crypto.getRandomValues(new Uint8Array(32)), deviceLabel: options.deviceLabel,
-    ...(options.fullRecoveryConsent ? { fullRecoveryConsent: true as const } : {}),
-    ...(options.signal ? { signal: options.signal } : {}),
-    acknowledgeRecovery: async (recovery, identity, callbackSignal) => {
-      throwIfAborted(callbackSignal ?? options.signal)
-      if (!recovery) throw new Error("Identity recovery package is invalid")
-      if (recovery.file.personId !== identity.personId) throw new Error("Identity recovery package belongs to another person")
-      await confirmReplacement(identity)
-      throwIfAborted(callbackSignal ?? options.signal)
-      await options.onRecovery(recovery)
-      throwIfAborted(callbackSignal ?? options.signal)
-    },
-  }), options.signal)
-  try {
-    throwIfAborted(options.signal)
-    if (connected.identity.personId !== before.identity.personId && !replacementConfirmed) {
-      await confirmReplacement(connected.identity)
-    }
-    throwIfAborted(options.signal)
-    if (!isCurrentIdentityProfile(before)) throw new Error("Local Identity changed before enrollment completed")
-    options.onStatus("Adopting this approved device and saving the signed profile…")
-    const adopted = connected.identity.personId === before.identity.personId
-      ? await (await import("../domain/identity")).adoptEnrolledIdentityDevice(connected.profile, connected.certificates, before.identity.personId, undefined, options.signal)
-      : await replaceWithEnrolledIdentityDevice(connected.profile, connected.certificates, before,
-        { consentToReplaceExistingIdentity: replacementConfirmed, signal: options.signal })
-    throwIfAborted(options.signal)
-    const certificates = await trustedCertificates(adopted)
-    throwIfAborted(options.signal)
-    await persistCertificates(connected.certificates)
-    throwIfAborted(options.signal)
-    await initializePersonalRootCatalog(defaultStorage, adopted)
-    throwIfAborted(options.signal)
-    await syncNewPeer(adopted, certificates, connected.connection, connected.remoteRoute, connected.remoteRoute.deviceId)
-    throwIfAborted(options.signal)
-    const certificateHash = await certHashDefault(adopted.certificate)
-    throwIfAborted(options.signal)
-    await writeLocal(`${identityEnrollmentPrefix}${adopted.identity.personId}`, JSON.stringify({
-      personId: adopted.identity.personId,
-      deviceId: adopted.device.deviceId,
-      certificateHash,
-      completedAt: new Date().toISOString(),
-    }))
-  } finally {
-    await connected.close()
-  }
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-  if (!signal?.aborted) return
-  throw signal.reason instanceof Error ? signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError")
-}
-
-export async function awaitConnectionUnlessAborted<T extends { close(): Promise<void> }>(
-  connectionPromise: Promise<T>, signal?: AbortSignal,
-): Promise<T> {
-  throwIfAborted(signal)
-  if (!signal) return await connectionPromise
-  let onAbort: (() => void) | undefined
-  const aborted = new Promise<never>((_resolve, reject) => {
-    onAbort = () => reject(signal.reason instanceof Error ? signal.reason : new DOMException("Identity enrollment was cancelled", "AbortError"))
-    signal.addEventListener("abort", onAbort, { once: true })
-  })
-  try {
-    const connection = await Promise.race([connectionPromise, aborted])
-    throwIfAborted(signal)
-    return connection
-  } catch (error) {
-    if (signal.aborted) void connectionPromise.then(value => value.close(), () => undefined)
-    throw error
-  } finally {
-    if (onAbort) signal.removeEventListener("abort", onAbort)
-  }
-}
-
 async function syncNewPeer(profile: LocalProfile, certificates: Awaited<ReturnType<typeof trustedCertificates>>,
   connection: Parameters<typeof serveIdentityProfileSync>[0]["connection"], route: Parameters<typeof syncProfileState>[0]["route"],
   remoteDeviceId: string): Promise<void> {
@@ -208,8 +107,4 @@ async function trustedCertificates(profile: LocalProfile) {
 
 async function persistCertificates(certificates: readonly NonNullable<Awaited<ReturnType<typeof defaultProofStore.listCertificates>>[number]>[]) {
   for (const certificate of certificates) await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
-}
-
-export function recoveryFileJson(file: IdentityProfileRecoveryFile): string {
-  return JSON.stringify(file, null, 2)
 }

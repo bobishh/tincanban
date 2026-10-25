@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { InMemoryLogRecordExporter } from "@opentelemetry/sdk-logs"
 import { InMemorySpanExporter } from "@opentelemetry/sdk-trace-base"
 import { ExportResultCode } from "@opentelemetry/core"
+import { trace } from "@opentelemetry/api"
 import { telemetryConfig } from "./telemetryConfig"
 import { BrowserOtelSdk } from "./otelBrowserSdk"
 
@@ -17,6 +18,29 @@ function config() {
 }
 
 describe("browser OTel SDK", () => {
+  it("Given a callback operation context restored across navigation, when its lifecycle log exports, then the log and callback span retain the same trace", async () => {
+    const logs = new InMemoryLogRecordExporter(), traces = new InMemorySpanExporter()
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })
+    try {
+      const request = sdk.startOperation("identity.browser_signin.request", {})!
+      sdk.finishOperation(request.span, request.context, "identity.browser_signin.request", {}, performance.now())
+      const callback = sdk.startOperation("identity.browser_signin.callback", {}, performance.now(), request.context)!
+      const loggerContext = callback.context
+      const callerSpanContext = trace.getSpanContext(loggerContext)!
+
+      expect(callerSpanContext).toMatchObject({ traceId: request.span.spanContext().traceId, spanId: callback.span.spanContext().spanId })
+      sdk.emit({ event: "identity.browser_signin", detail: { phase: "callback", outcome: "verified" }, level: "info",
+        timestamp: Date.now(), context: loggerContext })
+      sdk.finishOperation(callback.span, callback.context, "identity.browser_signin.callback", {}, performance.now())
+      await sdk.forceFlush()
+
+      const log = logs.getFinishedLogRecords().find(record => record.attributes["sync.phase"] === "callback")!
+      const exportedCallback = traces.getFinishedSpans().find(span => span.name === "identity.browser_signin.callback")!
+      expect(log.spanContext).toMatchObject({ traceId: callerSpanContext.traceId, spanId: callerSpanContext.spanId })
+      expect(exportedCallback.spanContext().traceId).toBe(callerSpanContext.traceId)
+    } finally { await sdk.shutdown() }
+  })
+
   it("Given a parent operation, when nested work and HTTP fail, then all spans and error logs retain the same trace and exact parent", async () => {
     const logs = new InMemoryLogRecordExporter(), traces = new InMemorySpanExporter()
     const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })

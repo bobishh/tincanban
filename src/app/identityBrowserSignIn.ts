@@ -14,6 +14,30 @@ const pendingRustyConnectionKey = "tincanban.identity-browser-signin.rusty.v1"
 export type IdentityBrowserSignInPhase = "request" | "redirect" | "callback" | "adoption" | "refresh" | "restore" | "cancel"
 export type IdentityBrowserSignInOutcome = "started" | "verified" | "completed" | "cancelled" | "failed"
 
+/** Keep this browser activity linked across the same-tab Identity redirect. */
+export async function beginIdentityBrowserSignInDiagnostic(phase: "request" | "callback"): Promise<{
+  end(exception?: unknown): void
+  beforeRedirect(): Promise<void>
+}> {
+  try {
+    const contexts = await import("../sync/diagnosticTraceContext")
+    if (phase === "request") contexts.clearDiagnosticContinuation()
+    const { beginDiagnosticOperation } = await import("../sync/telemetry")
+    const operation = await beginDiagnosticOperation(`identity.browser_signin.${phase}`, {})
+    contexts.rememberDiagnosticContinuation(operation.context)
+    return {
+      end: operation.end,
+      async beforeRedirect() {
+        operation.end()
+        try { await (await import("../sync/telemetry")).flushTelemetryBeforeNavigation() }
+        catch { /* Optional diagnostics cannot block sign-in. */ }
+      },
+    }
+  } catch {
+    return { end() {}, async beforeRedirect() {} }
+  }
+}
+
 export function browserSignInFailureMessage(cause: unknown): string {
   if (cause instanceof DOMException && cause.name === "AbortError") {
     return "Identity sign-in was interrupted. Select Sign in to try again."

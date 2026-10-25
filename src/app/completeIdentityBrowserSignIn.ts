@@ -20,7 +20,7 @@ export async function completeIdentityBrowserSignIn(
     if (!verified.authorityView) throw new Error("Identity approval is missing its signed global authority view")
     await mergeIdentityAuthorityView(verified.authorityView, ensureCurrent)
   })
-  await saveIdentityRustyServiceCatalogApproval(request, approval)
+  await saveIdentityRustyServiceCatalogApproval(request, approval, currentProfile)
   await initializePersonalRootCatalog(defaultStorage, adopted)
   if (approval.profileState) {
     await defaultStorage.updatePersonalRootForIdentity(adopted.identity.personId, async current => {

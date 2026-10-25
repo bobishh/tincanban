@@ -22,7 +22,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
     const profile = tincanban.getCurrentProfile()
     if (!profile) throw new Error("Identity unavailable")
     const service = await discoverBlindKeeper(originInput)
-    const pin = await (await import("./identityRustyServiceCatalog")).readIdentityRustyServicePin(profile.identity.personId, service.origin)
+    const pin = await (await import("./identityRustyServiceCatalog")).readIdentityRustyServicePin(profile.identity.personId, service.origin, profile)
     if (pin) {
       if (pin.servicePublicKey !== service.servicePublicKey || pin.serviceId !== await publicKeyId(service.servicePublicKey)) {
         throw new Error("Rusty service key changed. Review its Identity pin before reconnecting.")
@@ -47,7 +47,7 @@ export function createPrivateReplicationActions(tincanban: ReturnType<typeof use
   async function attachAfterIdentityApproval(origin: string, workspaceId: string): Promise<void> {
     const profile = tincanban.getCurrentProfile()
     if (!profile) throw new Error("Identity unavailable")
-    const pin = await (await import("./identityRustyServiceCatalog")).readIdentityRustyServicePin(profile.identity.personId, origin)
+    const pin = await (await import("./identityRustyServiceCatalog")).readIdentityRustyServicePin(profile.identity.personId, origin, profile)
     if (!pin) throw new Error("Identity approval does not include the requested Rusty service pin")
     const service = await discoverBlindKeeper(origin)
     if (pin.servicePublicKey !== service.servicePublicKey || pin.serviceId !== await publicKeyId(service.servicePublicKey)) {

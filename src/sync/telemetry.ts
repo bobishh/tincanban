@@ -159,6 +159,19 @@ export function retryTelemetry() {
   notify()
 }
 
+/** Give queued diagnostics a bounded delivery window before a same-tab redirect. */
+export async function flushTelemetryBeforeNavigation(): Promise<void> {
+  if (!telemetryConfig().enabled) return
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      initialize().then(instance => instance?.forceFlush()),
+      new Promise<void>(resolve => { timeout = setTimeout(resolve, 200) }),
+    ])
+  } catch { /* Collector availability must not prevent navigation. */ }
+  finally { if (timeout !== undefined) clearTimeout(timeout) }
+}
+
 function installGlobalHandlers() {
   if (globalHandlersInstalled || typeof window === "undefined") return
   globalHandlersInstalled = true

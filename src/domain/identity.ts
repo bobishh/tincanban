@@ -176,7 +176,7 @@ export async function adoptApprovedApplicationDevice(
   expectedCurrent: LocalProfile,
   beforeAdoption?: (approval: DeviceAuthorizationApproval, ensureCurrent: () => void) => Promise<void>,
 ): Promise<LocalProfile> {
-  const verified = await verifyDeviceAuthorizationApproval(approval, request)
+  const verified = await verifyDeviceAuthorizationApproval(approval, request, { expectedExistingProfile: expectedCurrent })
   if (verified.certificate.payload.deviceId !== expectedCurrent.device.deviceId ||
       verified.certificate.payload.devicePublicKey !== expectedCurrent.device.publicKey ||
       verified.identity.personId !== verified.certificate.payload.personId) {

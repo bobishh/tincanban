@@ -1,8 +1,9 @@
 import { beforeEach, expect, it } from "vitest"
-import { createDeviceAuthorizationApproval, createDeviceAuthorizationRequest, createRecoverableIdentity,
-  createIdentityProfileOperation, emptyIdentityProfileState, readIdentityProfileState } from "@meta-uber/mesh-identity"
+import { createDeviceAuthorizationApproval, createDeviceAuthorizationRequest, createIdentityProfileOperation,
+  createRecoverableIdentity, emptyIdentityProfileState, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest } from "../domain/identity"
 import { defaultStorage } from "../storage"
+import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { completeIdentityBrowserSignIn } from "./completeIdentityBrowserSignIn"
 import { identityEnrollmentConfirmed } from "./identityEnrollmentReceipt"
 
@@ -39,4 +40,30 @@ it("Given substituted profile evidence, when completing sign-in, then keep the o
     certificates: [owner.certificate], revocations: [], profileState, includeProfileState: true })
   await expect(completeIdentityBrowserSignIn({ ...approval, profileState: { ...profileState, personId: "another-person" } }, request, app)).rejects.toThrow()
   expect((await bootstrapIdentity()).identity.personId).toBe(app.identity.personId)
+})
+
+it("Given the current app key already holds its manager certificate, when that same device signs in again, then preserve its exact certificate and signed photo", async () => {
+  const manager = await bootstrapIdentity("Existing manager app")
+  const initial = emptyIdentityProfileState(manager.identity.personId)
+  const name = await createIdentityProfileOperation(manager, initial, "name", "Existing manager app")
+  const named = await readIdentityProfileState({ ...initial, operations: [name] }, manager.identity,
+    [manager.certificate])
+  const avatarData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA"
+  const photo = await createIdentityProfileOperation(manager, named, "photo", {
+    avatarData, changedAt: "2026-10-25T00:00:00.000Z",
+  })
+  const profileState = await readIdentityProfileState({ ...named, operations: [...named.operations, photo] }, manager.identity,
+    [manager.certificate])
+  await initializePersonalRootCatalog(defaultStorage, manager)
+  const challenge = "c".repeat(64)
+  const request = await createDeviceAuthorizationRequest(manager, { applicationOrigin: "https://boards.example", challenge,
+    expiresAt: Date.now() + 120_000, personId: manager.identity.personId })
+  const approval = await createDeviceAuthorizationApproval(manager, request, { applicationOrigin: "https://boards.example",
+    challenge, certificates: [manager.certificate], profileState, revocations: [], includeProfileState: true })
+
+  const adopted = await completeIdentityBrowserSignIn(approval, request, manager)
+  expect(adopted.identity.personId).toBe(manager.identity.personId)
+  expect(adopted.certificate).toEqual(manager.certificate)
+  expect(adopted.certificate.payload.canEnrollDevices).toBe(true)
+  expect((await defaultStorage.loadPersonalRoot())?.photo?.avatarData).toBe(avatarData)
 })

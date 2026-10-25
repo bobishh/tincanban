@@ -158,7 +158,7 @@ async function normalizeSamePersonBootstrapStorage(input: SamePersonWorkspaceBoo
     return parsed
   })
   for (const config of [...storage, ...identityStorage]) {
-    const pin = await readIdentityRustyServicePin(input.profile.identity.personId, config.origin)
+    const pin = await readIdentityRustyServicePin(input.profile.identity.personId, config.origin, input.profile)
     if (!pin || pin.servicePublicKey !== config.servicePublicKey || pin.serviceId !== await publicKeyId(config.servicePublicKey)) {
       throw new Error("Selected Rusty service is not pinned by the current Identity")
     }
@@ -237,13 +237,13 @@ async function parseSamePersonWorkspaceStorage(payload: WorkspaceBootstrapPayloa
       new Set(identityStorage.map(config => config.origin)).size !== identityStorage.length) {
     throw new Error("Identity profile Rusty access binding is invalid")
   }
-  await verifySamePersonWorkspaceServicePins(storage, identityStorage, profile.identity.personId)
+  await verifySamePersonWorkspaceServicePins(storage, identityStorage, profile)
   return { storage, identityStorage }
 }
 
-async function verifySamePersonWorkspaceServicePins(storage: BlindReplicaConfig[], identityStorage: IdentityReplicaConfig[], personId: string) {
+async function verifySamePersonWorkspaceServicePins(storage: BlindReplicaConfig[], identityStorage: IdentityReplicaConfig[], profile: LocalProfile) {
   for (const config of [...storage, ...identityStorage]) {
-    const pin = await readIdentityRustyServicePin(personId, config.origin)
+    const pin = await readIdentityRustyServicePin(profile.identity.personId, config.origin, profile)
     if (!pin || pin.servicePublicKey !== config.servicePublicKey || pin.serviceId !== await publicKeyId(config.servicePublicKey)) {
       throw new Error("Workspace Rusty service is not pinned by the current Identity")
     }

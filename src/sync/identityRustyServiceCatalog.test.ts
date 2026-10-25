@@ -28,13 +28,34 @@ describe("durable Identity Rusty service catalog", () => {
     const approval = await createDeviceAuthorizationApproval(manager, request, { applicationOrigin: "https://boards.example",
       challenge: request.payload.challenge, certificates: [manager.certificate], profileState, revocations: [] })
 
-    await saveIdentityRustyServiceCatalogApproval(request, approval)
+    await saveIdentityRustyServiceCatalogApproval(request, approval, app)
     const expiredAt = request.payload.expiresAt + 1
     vi.spyOn(Date, "now").mockReturnValue(expiredAt)
     try {
-      await expect(readIdentityRustyServicePin(manager.identity.personId, origin)).resolves.toMatchObject(pin)
+      await expect(readIdentityRustyServicePin(manager.identity.personId, origin, app)).resolves.toMatchObject(pin)
     } finally {
       vi.restoreAllMocks()
     }
+  })
+
+  it("Given an existing manager app key with a signed Rusty pin, when its approval is saved and revalidated, then keep the exact manager certificate", async () => {
+    const manager = (await createRecoverableIdentity("better", "Existing manager app")).profile
+    const service = (await createRecoverableIdentity("better", "Rusty service")).profile
+    const origin = "https://manager-rusty.example"
+    const pin = { origin, serviceId: await publicKeyId(service.identity.publicKey), servicePublicKey: service.identity.publicKey }
+    const request = await createDeviceAuthorizationRequest(manager, { applicationOrigin: "https://boards.example",
+      challenge: "e".repeat(64), expiresAt: Date.now() + 60_000, personId: manager.identity.personId,
+      rustyServicePins: [pin] })
+    const initial = emptyIdentityProfileState(manager.identity.personId)
+    const operation = await createIdentityRustyServicePinOperation(manager, initial, pin, [manager.certificate])
+    const profileState = await readIdentityProfileState({ ...initial, operations: operation ? [operation] : [] },
+      manager.identity, [manager.certificate])
+    const approval = await createDeviceAuthorizationApproval(manager, request, { applicationOrigin: "https://boards.example",
+      challenge: request.payload.challenge, certificates: [manager.certificate], profileState, revocations: [],
+      includeProfileState: true })
+
+    await saveIdentityRustyServiceCatalogApproval(request, approval, manager)
+    await expect(readIdentityRustyServicePin(manager.identity.personId, origin, manager)).resolves.toMatchObject(pin)
+    await expect(readIdentityRustyServicePin(manager.identity.personId, origin)).rejects.toThrow(/does not match/u)
   })
 })

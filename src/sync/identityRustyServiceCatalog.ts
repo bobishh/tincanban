@@ -6,6 +6,7 @@ import {
   type DeviceAuthorizationApproval,
   type DeviceAuthorizationRequest,
   type IdentityRustyServicePin,
+  type LocalProfile,
 } from "@meta-uber/mesh-identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { defaultStorage } from "../storage"
@@ -22,8 +23,9 @@ const keyFor = (personId: string) => `tincanban.identity-rusty-service-catalog.v
 export async function saveIdentityRustyServiceCatalogApproval(
   request: DeviceAuthorizationRequest,
   approval: DeviceAuthorizationApproval,
+  expectedExistingProfile: LocalProfile,
 ): Promise<void> {
-  const verified = await verifyDeviceAuthorizationApproval(approval, request)
+  const verified = await verifyDeviceAuthorizationApproval(approval, request, { expectedExistingProfile })
   const requestedPins = "rustyServicePins" in request.payload ? request.payload.rustyServicePins : []
   if (!requestedPins.length || !verified.rustyServicePins) return
   const personId = verified.identity.personId
@@ -46,7 +48,8 @@ export async function saveIdentityRustyServiceCatalogApproval(
 }
 
 /** Resolve one exact service pin from signed Identity history or a verified saved approval. */
-export async function readIdentityRustyServicePin(personId: string, origin: string): Promise<IdentityRustyServicePin | null> {
+export async function readIdentityRustyServicePin(personId: string, origin: string,
+  expectedExistingProfile?: LocalProfile): Promise<IdentityRustyServicePin | null> {
   const root = await defaultStorage.loadPersonalRoot()
   const { pin: profilePin, revision: rootProfileRevision, ownsIdentity } = await readRootPin(root, personId, origin)
   if (profilePin) return profilePin
@@ -57,7 +60,7 @@ export async function readIdentityRustyServicePin(personId: string, origin: stri
     rootProfileRevision === catalogProfileDigest(catalog)
   if (signedRootIsCurrent) return profilePin ?? null
   if (!catalog) return profilePin ?? null
-  return verifySavedServicePin(catalog, personId, origin)
+  return verifySavedServicePin(catalog, personId, origin, expectedExistingProfile)
 }
 
 async function readRootPin(root: Awaited<ReturnType<typeof defaultStorage.loadPersonalRoot>>, personId: string, origin: string) {
@@ -72,8 +75,10 @@ function catalogProfileDigest(catalog: CatalogState | null): string | null {
   return catalog?.approval.proof.payload.version === 3 ? catalog.approval.proof.payload.profileStateDigest : null
 }
 
-async function verifySavedServicePin(catalog: CatalogState, personId: string, origin: string): Promise<IdentityRustyServicePin | null> {
-  const approval = await verifyRetainedDeviceAuthorizationApproval(catalog.approval, catalog.request)
+async function verifySavedServicePin(catalog: CatalogState, personId: string, origin: string,
+  expectedExistingProfile?: LocalProfile): Promise<IdentityRustyServicePin | null> {
+  const approval = await verifyRetainedDeviceAuthorizationApproval(catalog.approval, catalog.request,
+    expectedExistingProfile ? { expectedExistingProfile } : {})
   if (approval.identity.personId !== personId || catalog.request.payload.personId !== personId) {
     throw new Error("Saved Identity service approval belongs to another Identity")
   }
