@@ -141,6 +141,7 @@ async function enrollPhoneManager(ownerPortal: Page, phonePortal: Page, personId
 }
 
 async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
+  const appOrigin = new URL(page.url()).origin
   const traffic: string[] = []
   const rustyOriginValue = new URL(rustyOrigin).origin
   const safePath = (input: string) => {
@@ -158,16 +159,15 @@ async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
   await rusty.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await rusty.getByLabel("Address", { exact: true }).fill(rustyOrigin)
   await rusty.getByRole("button", { name: "Connect", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "Authorize app device", exact: true })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Authorize app device", exact: true })).toBeVisible({ timeout: 30_000 })
   await page.getByLabel("Allow this app device and add the listed verified Rusty service keys to the shared Identity catalog.").check()
   await page.getByRole("button", { name: "Approve device and link services", exact: true }).click()
-  await page.waitForFunction(() => Boolean([...document.querySelectorAll("button")].find(button => button.textContent?.trim() === "Sync")) ||
-    [...document.querySelectorAll('[role="alert"], [role="status"]')].some(node =>
-      /Identity linked|Rusty setup|Could not|failed|unavailable/iu.test(node.textContent ?? "")), null, { timeout: 30_000 })
+  await page.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
   const visibleOutcome = await page.evaluate(() => [...document.querySelectorAll('[role="alert"], [role="status"]')]
     .map(node => (node.textContent ?? "").trim()).find(text =>
       /Identity linked|Rusty setup|Could not|failed|unavailable/iu.test(text)) ?? null)
   if (visibleOutcome) throw new Error(`Rusty approval returned with visible setup outcome: ${visibleOutcome}; recent requests: ${traffic.slice(-16).join(" | ")}`)
+  await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden({ timeout: 30_000 })
   await expect(page.getByRole("button", { name: "Sync", exact: true })).toBeVisible({ timeout: 30_000 })
   await page.getByRole("button", { name: "Sync", exact: true }).click()
   await page.waitForFunction(() => Boolean(document.querySelector(".rusty-connections .rusty-connection")) ||
@@ -313,12 +313,22 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await create.getByLabel("Role *").fill("Senior engineer")
     await create.getByRole("button", { name: "Create item", exact: true }).click()
     await expect(desktop.getByRole("button", { name: /Open Bo private opportunity/u })).toBeVisible()
+    // Service verification may finish after Playwright's default 5s expectation.
+    // Hold the real service descriptor to cover the pending navigation boundary.
+    let delayedDescriptorRequests = 0
+    await desktop.route(`${rusty.origin}/.well-known/mesh-lighthouse`, async route => {
+      delayedDescriptorRequests += 1
+      await new Promise(resolve => setTimeout(resolve, 6_500))
+      await route.continue()
+    }, { times: 1 })
     try { await connectRusty(desktop, rusty.origin) }
     catch (cause) {
-      await expect.poll(() => exceptionDetails(desktopSpans).length, { timeout: 10_000 }).toBeGreaterThan(0)
-      const message = cause instanceof Error ? cause.message : "Rusty profile delivery failed"
+      // A test readiness failure need not create an application exception.
+      const message = (cause instanceof Error ? cause.message : "Rusty profile delivery failed")
+        .replace(/(https?:\/\/[^\s?#]+)[?#][^\s]*/gu, "$1<redacted>")
       throw new Error(`${message}; captured rusty.sync exceptions: ${JSON.stringify(exceptionDetails(desktopSpans))}`)
     }
+    expect(delayedDescriptorRequests).toBe(1)
     await expect.poll(() => identityRustyPinOrigins(phonePortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
     await joinAsEditor(desktop, peer)
 
