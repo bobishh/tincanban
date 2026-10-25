@@ -41,6 +41,8 @@ test("Given an enabled local diagnostic collector, when Identity approves browse
   await portal.locator('input[name="saved-words"]').check()
   await portal.getByRole("button", { name: "Continue to identity", exact: true }).click()
   await portal.getByRole("heading", { name: "Trace Acceptance Owner" }).waitFor()
+  const ownerId = await portal.locator(".identity-id-badge").getAttribute("data-identity-id")
+  expect(ownerId).toBeTruthy()
 
   await page.goto(appOrigin)
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
@@ -50,17 +52,12 @@ test("Given an enabled local diagnostic collector, when Identity approves browse
   await page.getByRole("button", { name: "Approve app device", exact: true }).click()
 
   const decision = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  await expect(decision.getByRole("heading", { name: "Join Trace Acceptance Owner?" })).toBeVisible({ timeout: 30_000 })
-  await decision.getByRole("button", { name: "Download active workspace backup", exact: true }).click()
-  await decision.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.").check()
-  await decision.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
-  await expect.poll(async () => (await decision.count()) === 0 || (await decision.getByRole("alert").count()) > 0, { timeout: 30_000 }).toBe(true)
-  if (await decision.count()) {
-    const userVisibleError = (await decision.getByRole("alert").textContent().catch(() => ""))?.trim() ?? ""
-    const safeToReport = /^[A-Za-z0-9 .,!?'-]{1,200}$/u.test(userVisibleError)
-    console.log("Post-approval adoption outcome", safeToReport ? userVisibleError : "Error message omitted (sensitive or unbounded text)")
-  }
+  // Untouched default boards do not interrupt sign-in with an adoption choice.
+  await page.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
   await expect(decision).toHaveCount(0)
+  await expect.poll(() => page.evaluate(async () =>
+    (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId)),
+  { timeout: 30_000 }).toBe(ownerId)
   await page.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
   await expect.poll(() => logs.some(log => log.body?.stringValue === "identity.browser_signin" && attribute(log, "sync.phase") === "callback" && attribute(log, "identity.signin.outcome") === "verified"), { timeout: 15_000 }).toBe(true)
   await expect.poll(() => logs.some(log => log.body?.stringValue === "identity.browser_signin" && attribute(log, "sync.phase") === "adoption" && attribute(log, "identity.signin.outcome") === "completed"), { timeout: 15_000 }).toBe(true)
