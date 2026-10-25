@@ -11,9 +11,10 @@ export async function startRustyService(owner: unknown, corsOrigin: string) {
 }
 
 export async function startIdentityRustyService(corsOrigin: string) {
+  const origins = [...new Set([corsOrigin, process.env.IDENTITY_E2E_ORIGIN].filter(Boolean))].join(",")
   return startRustyServiceWithEnvironment(corsOrigin, {
     RUSTY_IDENTITY_AUTHORITY_ENFORCEMENT: "strict",
-    RUSTY_CORS_ORIGINS: corsOrigin,
+    RUSTY_CORS_ORIGINS: origins,
   })
 }
 

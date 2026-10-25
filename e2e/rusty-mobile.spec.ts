@@ -57,15 +57,9 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
     await page.getByLabel("Allow this app to use the Identity shown above.").check()
     await page.getByRole("button", { name: "Approve app device", exact: true }).click()
-    await page.waitForURL(url => url.origin === appOrigin && url.pathname === "/identity/return", { timeout: 30_000 })
+    await page.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
     const replacement = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    const replaceConsent = replacement.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.")
-    await expect.poll(async () => await replaceConsent.isVisible().catch(() => false) || await page.evaluate(async id =>
-      (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId === id), ownerId), { timeout: 30_000 }).toBe(true)
-    if (await replaceConsent.isVisible().catch(() => false)) {
-      await replaceConsent.check()
-      await replacement.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
-    }
+    await expect(replacement).toBeHidden({ timeout: 30_000 })
     await expect.poll(async () => page.evaluate(async () =>
       (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId)), { timeout: 30_000 }).toBe(ownerId)
     await ensureJobSearchWorkspace(page)
@@ -80,6 +74,7 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     await page.getByLabel("Allow this app device and add the listed verified Rusty service keys to the shared Identity catalog.").check()
     await page.getByRole("button", { name: "Approve device and link services", exact: true }).click()
     await page.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
+    await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden({ timeout: 30_000 })
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
@@ -87,6 +82,7 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     // The owner portal issues a genuine Identity enrollment for the phone. App devices
     // cannot mint another manager device through Rusty's old peer-pairing shortcut.
     await portal.getByRole("tab", { name: "Devices", exact: true }).click()
+    await portal.getByRole("button", { name: "Manage devices", exact: true }).click()
     await portal.getByRole("button", { name: "Add a device", exact: true }).click()
     const invite = portal.getByRole("link", { name: "Open invite link", exact: true })
     await invite.waitFor({ state: "visible", timeout: 30_000 })
@@ -109,20 +105,14 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     await phone.getByRole("heading", { name: "Authorize app device" }).waitFor()
     await phone.getByLabel("Allow this app to use the Identity shown above.").check()
     await phone.getByRole("button", { name: "Approve app device", exact: true }).click()
-    await phone.waitForURL(url => url.origin === appOrigin && url.pathname === "/identity/return", { timeout: 30_000 })
+    await phone.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
     const phoneReplacement = phone.getByRole("dialog", { name: "Identity profile", exact: true })
-    const phoneConsent = phoneReplacement.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.")
-    await expect.poll(async () => await phoneConsent.isVisible().catch(() => false) || await phone.evaluate(async id =>
-      (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId === id), ownerId), { timeout: 30_000 }).toBe(true)
-    if (await phoneConsent.isVisible().catch(() => false)) {
-      await phoneConsent.check()
-      await phoneReplacement.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
-    }
+    await expect(phoneReplacement).toBeHidden({ timeout: 30_000 })
     await expect.poll(async () => phone.evaluate(async () =>
       (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId)), { timeout: 30_000 }).toBe(ownerId)
-    // Identity sign-in does not join or create a board. Give the phone a real
-    // local workspace before testing that the bootstrap preserves its state.
-    await ensureJobSearchWorkspace(phone)
+    // Ordinary sign-in has finished loading the existing catalog and workspace.
+    await expect(phone.getByRole("region", { name: "Job search", exact: true })).toBeVisible()
+    await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     const phoneBeforeBootstrap = await localIdentityWorkspaceState(phone)
     expect(Object.keys(phoneBeforeBootstrap.workspaceReferences).length).toBeGreaterThan(0)
 
@@ -172,8 +162,14 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     expect(phoneAfterIdentitySync.certificateSignature).toBe(phoneBeforeBootstrap.certificateSignature)
     expect(phoneAfterIdentitySync.rootId).toBe(phoneBeforeBootstrap.rootId)
     for (const [workspaceId, reference] of Object.entries(phoneBeforeBootstrap.workspaceReferences)) {
-      expect(phoneAfterIdentitySync.workspaceReferences[workspaceId]).toEqual(reference)
+      // An owner offer records the verified local catalog reference as imported.
+      // Workspace identity and visibility survive; ownership is checked separately.
+      expect(phoneAfterIdentitySync.workspaceReferences[workspaceId]).toEqual({
+        ...reference, grantHash: expect.stringMatching(/^(genesis|import)$/),
+      })
     }
+
+    await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
 
     // Phone goes offline while the manager edits the Identity photo.
     await phone.goto("about:blank")
@@ -205,17 +201,8 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
     await page.getByLabel("Allow this app to use the Identity shown above.").check()
     await page.getByRole("button", { name: "Approve app device", exact: true }).click()
-    await page.waitForURL(url => url.origin === appOrigin && url.pathname === "/identity/return", { timeout: 30_000 })
-    const desktopReplacement = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    const desktopConsent = desktopReplacement.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.")
-    await expect.poll(async () => await desktopConsent.isVisible().catch(() => false) || await page.evaluate(async id =>
-      (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId === id), ownerId), { timeout: 30_000 }).toBe(true)
-    if (await desktopConsent.isVisible().catch(() => false)) {
-      await desktopConsent.check()
-      await desktopReplacement.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
-    }
-    await expect.poll(async () => page.evaluate(async () =>
-      (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId)), { timeout: 30_000 }).toBe(ownerId)
+    await page.waitForURL(url => url.origin === appOrigin && url.pathname !== "/identity/return", { timeout: 30_000 })
+    await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden({ timeout: 30_000 })
     await expect.poll(async () => page.evaluate(async () =>
       (await import("/src/storage.ts")).defaultStorage.loadPersonalRoot().then(root => root?.photo?.avatarData ?? null)),
     { timeout: 30_000 }).toBe(source)
