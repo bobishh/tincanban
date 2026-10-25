@@ -318,15 +318,19 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     let delayedDescriptorRequests = 0
     await desktop.route(`${rusty.origin}/.well-known/mesh-lighthouse`, async route => {
       delayedDescriptorRequests += 1
-      await new Promise(resolve => setTimeout(resolve, 6_500))
-      await route.continue()
+      const startedAt = performance.now()
+      const response = await route.fetch()
+      // Include real service latency instead of adding another 6.5s to it.
+      const remainingDelay = 6_500 - (performance.now() - startedAt)
+      if (remainingDelay > 0) await new Promise(resolve => setTimeout(resolve, remainingDelay))
+      await route.fulfill({ response })
     }, { times: 1 })
     try { await connectRusty(desktop, rusty.origin) }
     catch (cause) {
       // A test readiness failure need not create an application exception.
       const message = (cause instanceof Error ? cause.message : "Rusty profile delivery failed")
         .replace(/(https?:\/\/[^\s?#]+)[?#][^\s]*/gu, "$1<redacted>")
-      throw new Error(`${message}; captured rusty.sync exceptions: ${JSON.stringify(exceptionDetails(desktopSpans))}`)
+      throw new Error(`${message}; captured rusty.sync exceptions: ${JSON.stringify(exceptionDetails(desktopSpans))}`, { cause })
     }
     expect(delayedDescriptorRequests).toBe(1)
     await expect.poll(() => identityRustyPinOrigins(phonePortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
@@ -336,7 +340,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     catch (cause) {
       const phases = phoneLogs.filter(log => log.body?.stringValue === "identity.browser_signin")
         .map(log => ({ phase: attribute(log, "sync.phase"), outcome: attribute(log, "identity.signin.outcome") }))
-      throw new Error(`${cause instanceof Error ? cause.message : "Phone callback failed"}; phases: ${JSON.stringify(phases)}; errors: ${JSON.stringify(exceptionDetails(phoneSpans))}`)
+      throw new Error(`${cause instanceof Error ? cause.message : "Phone callback failed"}; phases: ${JSON.stringify(phases)}; errors: ${JSON.stringify(exceptionDetails(phoneSpans))}`, { cause })
     }
     try {
       await expect(phone.getByRole("region", { name: "Bo Job search", exact: true })).toBeVisible({ timeout: 60_000 })
