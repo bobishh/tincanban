@@ -1,6 +1,8 @@
 import { beforeEach, expect, test, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope } from "../domain/identity"
-import { BrowserIdentityStore, createIdentityAuthorityView, publicKeyId } from "@meta-uber/mesh-identity"
+import { adoptApprovedApplicationDevice } from "../domain/identity"
+import { BrowserIdentityStore, createDeviceAuthorizationApproval, createDeviceAuthorizationRequest, createIdentityAuthorityView,
+  createDeviceRevocation, createRecoverableIdentity, issueDeviceAuthorization, publicKeyId, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import * as rustyPrincipalClient from "@meta-uber/mesh-replication/rusty-principal-grant"
 import { createPeerAdvertisement } from "@meta-uber/mesh-workspace"
@@ -17,6 +19,7 @@ import { createPersonalRoot } from "../domain/personalRoot"
 import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { certHashDefault } from "../domain/proofs"
 import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+import type { WorkspaceGrant } from "../domain/model"
 
 const token = (byte: number) => Buffer.alloc(32, byte).toString("base64url")
 const config: BlindReplicaConfig = { origin: "https://rusty.example", scopeId: token(1), workspaceId: "board",
@@ -71,6 +74,65 @@ async function fixture() {
   return { owner, authority, recipient, createAccess, registerGrant, ...created }
 }
 
+async function formerOwnerAppGrantFixture() {
+  const owner = (await createRecoverableIdentity("better", "Bo")).profile
+  const formerApp = (await createRecoverableIdentity("better", "Former app")).profile
+  const currentCandidate = await bootstrapIdentity("Current app")
+  const applicationOrigin = "https://boards.example"
+  const formerChallenge = "a".repeat(64)
+  const currentChallenge = "b".repeat(64)
+  const expiresAt = Date.now() + 90_000
+  const formerRequest = await createDeviceAuthorizationRequest(formerApp, { applicationOrigin,
+    challenge: formerChallenge, expiresAt })
+  const formerCertificate = await issueDeviceAuthorization(owner, formerRequest,
+    { applicationOrigin, challenge: formerChallenge })
+  const currentRequest = await createDeviceAuthorizationRequest(currentCandidate, { applicationOrigin,
+    challenge: currentChallenge, expiresAt })
+  const currentApproval = await createDeviceAuthorizationApproval(owner, currentRequest, {
+    applicationOrigin, challenge: currentChallenge, certificates: [owner.certificate],
+  })
+  const current = await adoptApprovedApplicationDevice(currentApproval, currentRequest, currentCandidate)
+  const certificates = [owner.certificate, formerCertificate, current.certificate]
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  const view = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, await rootIdentityProfileState(root))
+  await mergeIdentityAuthorityView(view)
+  const scopeAuthoritySnapshot = { genesis: await signEnvelope(owner.privateKeys.devicePrivateKey!, {
+    kind: "scope-genesis", version: 1, scopeId: "board",
+    creator: { personId: owner.identity.personId, publicKey: owner.identity.publicKey, certificates }, controlEpoch: 1,
+  }, owner.device.deviceId), grants: [], grantIssuers: [], revocations: [], controlTransfers: [] }
+  const authority = { version: 1 as const, workspaceId: "board", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: certificates, epoch: 1, updatedAt: "", transportSecret: token(7),
+    scopeAuthoritySnapshot }
+  vi.spyOn(rustyTransport, "ensureRustyWorkspaceScopeAuthority").mockImplementation(async (_profile, _access, snapshot) => ({
+    workspaceId: "board", controllerPersonId: owner.identity.personId, controllerPublicKey: owner.identity.publicKey,
+    controlEpoch: 1, snapshot: structuredClone(snapshot),
+  }))
+  const registerGrant = vi.spyOn(rustyPrincipalClient, "registerRustyResourcePrincipalGrant").mockImplementation(async options => {
+    const role = options.workspaceGrant.payload.role
+    const actions: ("read" | "write")[] = role === "visitor" ? ["read"] : ["read", "write"]
+    const payload = { kind: "rusty-resource-principal-grant" as const, version: 1 as const,
+      serviceId: await publicKeyId(options.servicePublicKey), origin: options.origin, workspaceId: options.workspaceId,
+      resourceKind: "scope" as const, resourceId: options.storageScopeId, scopeId: options.storageScopeId,
+      ownerPersonId: options.identity.personId, subjectPersonId: options.subjectIdentity.personId,
+      subjectPublicKey: options.subjectIdentity.publicKey, grantId: options.workspaceGrant.payload.grantId,
+      policyEpoch: options.workspaceGrant.payload.accessEpoch ?? 1,
+      readTokenHash: await sha256Base64Url(new TextEncoder().encode(options.readToken)),
+      ...(role !== "visitor" ? { writeTokenHash: await sha256Base64Url(new TextEncoder().encode(options.writeToken!)) } : {}),
+      actions, workspaceGrant: options.workspaceGrant, scopeAuthority: structuredClone(options.expectedScopeAuthoritySnapshot) }
+    const principalGrant = await options.signAuthorization(payload)
+    return { principalGrant, scopeAuthority: options.validateSnapshot(options.expectedScopeAuthoritySnapshot) }
+  })
+  const recipient = await new BrowserIdentityStore({ storageKey: crypto.randomUUID(), storage: (() => {
+    const values = new Map<string, string>()
+    return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) } }
+  })() }).bootstrap("Ray")
+  const grantPayload = { kind: "workspace-grant", version: 1, grantId: crypto.randomUUID(), workspaceId: "board",
+    personId: recipient.identity.personId, role: "editor", accessEpoch: 7 } satisfies WorkspaceGrant["payload"]
+  const grant = await signEnvelope(formerApp.privateKeys.devicePrivateKey, grantPayload, formerApp.device.deviceId)
+  return { owner, current, formerApp, authority, certificates, root, recipient, grant, registerGrant }
+}
+
 test("Given different identities, when editor and visitor receive owner-attested storage, then only editor receives writing access and both keep private progress", async () => {
   const { authority, access, recipient, createAccess } = await fixture()
   const editor = selectBoardStorageAccess(access, config.writeToken, "editor")!
@@ -87,6 +149,89 @@ test("Given different identities, when editor and visitor receive owner-attested
   expect(reader.writeToken).toBe("")
   expect(parseReplicaConfig(JSON.stringify(reader)).boardAccess?.mode).toBe("read")
   expect(selectBoardStorageAccess(access, "", "editor")).toBeUndefined()
+})
+
+test("Given an unchanged editor grant signed by another active Bo app device, when current Bo reattests Rusty, then preserve the grant and sign storage access with the current device", async () => {
+  const { current, authority, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  expect(current.identity.personId).toBe(authority.ownerPersonId)
+  expect(current.device.deviceId).not.toBe(grant.signerKeyId)
+
+  const access = await createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => authority, async () => {})
+
+  expect(access.authorization.payload.workspaceGrant).toEqual(grant)
+  expect(access.authorization.payload).toMatchObject({ subjectPersonId: recipient.identity.personId,
+    subjectPublicKey: recipient.identity.publicKey, grantId: grant.payload.grantId, policyEpoch: 7, actions: ["read", "write"] })
+  expect(access.authorization.signerKeyId).toBe(current.device.deviceId)
+  expect(access.principalGrant?.signerKeyId).toBe(current.device.deviceId)
+  expect(registerGrant).toHaveBeenCalledWith(expect.objectContaining({ deviceId: current.device.deviceId,
+    devicePublicKey: current.device.publicKey, workspaceGrant: grant, subjectIdentity: {
+      personId: recipient.identity.personId, publicKey: recipient.identity.publicKey, displayName: "",
+    } }))
+})
+
+test("Given a revoked former Bo device, when its old workspace grant is presented, then refuse reattestation before Rusty registration", async () => {
+  const { owner, current, formerApp, authority, certificates, root, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  const evidence = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, evidence, formerApp.device.deviceId, await rootIdentityProfileState(root))
+  const revokedView = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] },
+    await rootIdentityProfileState(root))
+  await mergeIdentityAuthorityView(revokedView)
+
+  await expect(createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => authority, async () => {})).rejects.toThrow(/revoked/i)
+  expect(registerGrant).not.toHaveBeenCalled()
+})
+
+test("Given a verified grant authority that is revoked locally during Rusty setup, when reattesting, then abort before principal registration", async () => {
+  const { owner, current, formerApp, authority, certificates, root, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  const evidence = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, evidence, formerApp.device.deviceId, await rootIdentityProfileState(root))
+  const revokedView = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] },
+    await rootIdentityProfileState(root))
+  vi.mocked(rustyTransport.ensureRustyWorkspaceScopeAuthority).mockImplementation(async (_profile, _access, snapshot) => {
+    await mergeIdentityAuthorityView(revokedView)
+    return { workspaceId: "board", controllerPersonId: owner.identity.personId,
+      controllerPublicKey: owner.identity.publicKey, controlEpoch: 1, snapshot: structuredClone(snapshot) }
+  })
+
+  await expect(createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => authority, async () => {})).rejects.toThrow(/identity authority changed/i)
+  expect(registerGrant).not.toHaveBeenCalled()
+})
+
+test("Given a foreign, forged, or modified former-device grant, when reattesting, then refuse it before Rusty registration", async () => {
+  const { current, authority, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  const foreign = (await createRecoverableIdentity("better", "Foreign signer")).profile
+  const foreignGrant = await signEnvelope(foreign.privateKeys.devicePrivateKey, grant.payload, foreign.device.deviceId)
+  const invalidGrants = [
+    { ...grant, signature: token(9) },
+    { ...grant, payload: { ...grant.payload, role: "visitor" as const } },
+    { ...grant, payload: { ...grant.payload, personId: await publicKeyId(foreign.identity.publicKey) } },
+    foreignGrant,
+  ]
+
+  for (const invalidGrant of invalidGrants) {
+    await expect(createBoardStorageAccess(current, config, invalidGrant, recipient.identity.publicKey,
+      async () => authority, async () => {})).rejects.toThrow()
+  }
+  expect(registerGrant).not.toHaveBeenCalled()
+})
+
+test("Given Rusty registration loses its first acknowledgement, when the same grant is retried, then preserve its exact scope", async () => {
+  const { current, authority, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  registerGrant.mockRejectedValueOnce(new Error("Lost Rusty registration acknowledgement"))
+  const create = () => createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => authority, async () => {})
+
+  await expect(create()).rejects.toThrow("Lost Rusty registration acknowledgement")
+  const retried = await create()
+
+  expect(registerGrant).toHaveBeenCalledTimes(2)
+  expect(registerGrant.mock.calls[0]![0].workspaceGrant).toEqual(grant)
+  expect(registerGrant.mock.calls[1]![0].workspaceGrant).toEqual(grant)
+  expect(retried.authorization.payload.workspaceGrant).toEqual(grant)
+  expect(retried.authorization.payload.actions).toEqual(["read", "write"])
 })
 
 test("Given an owner's attestation, when an editor forwards it with owner offline, then another editor verifies and installs it", async () => {

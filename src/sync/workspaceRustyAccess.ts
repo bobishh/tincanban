@@ -19,6 +19,7 @@ import { rustySignerCertificateChain } from "./rustySignerCertificates"
 import { registerRustyResourcePrincipalGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 import { fetchBlind } from "./rustyHttp"
+import { authorizeIdentityDataDevice } from "@meta-uber/mesh-identity"
 
 type Guard = () => Promise<void>
 type Role = "owner" | "editor" | "visitor"
@@ -38,13 +39,31 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
   grant: WorkspaceGrant, subjectPublicKey: string, readAuthority: ReadWorkspaceOwnerAuthority, guard: Guard): Promise<BoardStorageAccess> {
   await guard()
   assertOwnerConnectionCanBeAttested(config)
-  const { subjectPersonId, actions } = await validateParticipantGrant(profile, config, grant, subjectPublicKey)
-  const storedAuthority = await readAuthority()
+  const authorityView = await requireIdentityAuthorityView(profile.identity.personId)
+  const authorityFingerprint = canonicalizeJson(authorityView)
+  const ensureCurrent = async () => {
+    await guard()
+    const latest = await requireIdentityAuthorityView(profile.identity.personId)
+    if (canonicalizeJson(latest) !== authorityFingerprint) {
+      throw new Error("Identity authority changed while sharing Rusty storage; retry with current authority")
+    }
+  }
+  const readCurrentAuthority = async () => {
+    await ensureCurrent()
+    const value = await readAuthority()
+    await ensureCurrent()
+    return value
+  }
+  const activeDeviceKey = await authorizeIdentityDataDevice(authorityView, profile.device.deviceId)
+  if (activeDeviceKey !== profile.device.publicKey) throw new Error("Current Rusty owner device is not active in Identity authority")
+  const { subjectPersonId, actions } = await validateParticipantGrant(config, grant, subjectPublicKey, authorityView)
+  const storedAuthority = await readCurrentAuthority()
   const authoritySnapshot = (storedAuthority as { scopeAuthoritySnapshot?: unknown } | null)?.scopeAuthoritySnapshot
   if (!authoritySnapshot) throw new Error("Workspace scope authority is required before sharing Rusty storage")
   const acceptedAuthority = await ensureRustyWorkspaceScopeAuthority(profile,
-    { ...config, workspaceId: config.workspaceId }, authoritySnapshot, guard)
-  const context = await workspaceOwnerSigningContext(profile, config.workspaceId, "workspace-rusty-access", {}, readAuthority)
+    { ...config, workspaceId: config.workspaceId }, authoritySnapshot, ensureCurrent)
+  await ensureCurrent()
+  const context = await workspaceOwnerSigningContext(profile, config.workspaceId, "workspace-rusty-access", {}, readCurrentAuthority)
   const payload: BoardStorageAuthorization = { kind: "workspace-rusty-access", version: 2, workspaceId: config.workspaceId,
     ownerPersonId: profile.identity.personId, connection: readingConnection(config), readTokenHash: await hash(config.readToken),
     ...(actions.includes("write") ? { writeTokenHash: await hash(config.writeToken) } : {}), subjectPersonId,
@@ -55,8 +74,8 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
   const principalContext = await workspaceOwnerSigningContext(profile, config.workspaceId, "rusty-resource-principal-grant", {
     origin: config.origin, scopeId: config.scopeId, resourceId: config.scopeId, ownerPersonId: profile.identity.personId,
     subjectPersonId, grantId: grant.payload.grantId, policyEpoch: grant.payload.accessEpoch ?? 1,
-  }, readAuthority)
-  const authorityView = await requireIdentityAuthorityView(profile.identity.personId)
+  }, readCurrentAuthority)
+  await ensureCurrent()
   const registered = await registerRustyResourcePrincipalGrant({
     origin: config.origin,
     servicePublicKey: config.servicePublicKey,
@@ -72,7 +91,7 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
     readToken: config.readToken,
     ...(actions.includes("write") ? { writeToken: config.writeToken } : {}),
     fetcher: (url, init) => fetchBlind(String(url), init ?? {}),
-    ensureCurrent: guard,
+    ensureCurrent,
     validateSnapshot: snapshot => {
       const validated = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
         scopeId: string; controller: { personId: string; publicKey: string }; controlEpoch: number
@@ -83,7 +102,9 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
     signAuthorization: payload => signWithContext(principalContext, payload),
   })
   const principalGrant = registered.principalGrant
-  return { mode: "write", authorization, certificates: await rustySignerCertificateChain(profile), principalGrant }
+  const certificates = await rustySignerCertificateChain(profile)
+  await ensureCurrent()
+  return { mode: "write", authorization, certificates, principalGrant }
 }
 
 function assertOwnerConnectionCanBeAttested(config: BlindReplicaConfig): void {
@@ -91,15 +112,17 @@ function assertOwnerConnectionCanBeAttested(config: BlindReplicaConfig): void {
   if (config.readToken === config.writeToken) throw new Error("Separate reading and writing tokens are required before sharing storage")
 }
 
-async function validateParticipantGrant(profile: LocalProfile, config: BlindReplicaConfig, grant: WorkspaceGrant,
-  subjectPublicKey: string): Promise<{ subjectPersonId: string; actions: ("read" | "write")[] }> {
+async function validateParticipantGrant(config: BlindReplicaConfig, grant: WorkspaceGrant,
+  subjectPublicKey: string, authorityView: Awaited<ReturnType<typeof requireIdentityAuthorityView>>): Promise<{ subjectPersonId: string; actions: ("read" | "write")[] }> {
   const role = grant?.payload?.role
   const subjectPersonId = grant?.payload?.personId
   const actions = role === "owner" || role === "editor" ? ["read", "write"] as ("read" | "write")[] :
     role === "visitor" ? ["read"] as ("read" | "write")[] : undefined
+  const grantSignerPublicKey = typeof grant?.signerKeyId === "string"
+    ? await authorizeIdentityDataDevice(authorityView, grant.signerKeyId) : undefined
   if (!actions || grant.payload.workspaceId !== config.workspaceId ||
-      await publicKeyId(subjectPublicKey) !== subjectPersonId || grant.signerKeyId !== profile.device.deviceId ||
-      !await verifyWorkspaceGrant(grant, profile.device.publicKey)) {
+      await publicKeyId(subjectPublicKey) !== subjectPersonId || !grantSignerPublicKey ||
+      !await verifyWorkspaceGrant(grant, grantSignerPublicKey)) {
     throw new Error("A verified participant grant is required before sharing Rusty storage")
   }
   return { subjectPersonId, actions }

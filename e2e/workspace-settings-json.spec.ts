@@ -10,6 +10,52 @@ async function createBlankWorkspace(page: Page) {
   await dialog.getByRole("button", { name: "Create" }).click()
 }
 
+async function importLegacyPriorityWorkspace(page: Page) {
+  await expect(page.getByRole("button", { name: "Open workspaces" })).toBeEnabled()
+  const fixture = await page.evaluate(async () => {
+    const { createWorkspaceDoc } = await import("/src/test/boardFixture.ts")
+    const { createDefaultPriorityPolicy } = await import("/src/domain/priority.ts")
+    const { exportWorkspaceBundleV2 } = await import("/src/domain/workspaceBundle.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const doc = createWorkspaceDoc("legacy-priority", "Legacy jobs", "fixture-owner", "job-search")
+    const board = Object.values(doc.entities).find(entity => entity.kind === "board")
+    if (!board || board.kind !== "board" || !board.preset) throw new Error("job-search board fixture unavailable")
+    const fields = Object.values(doc.entities).filter(entity => entity.kind === "field")
+    const policy = createDefaultPriorityPolicy(board, fields)
+    if (!policy) throw new Error("job-search priority fields unavailable")
+    const legacyPolicy = { ...policy, evaluator: "job-fit-v1" }
+    const automation = board.automation
+    if (!automation) throw new Error("job-search automation fixture unavailable")
+    board.priorityPolicy = legacyPolicy
+    delete board.automation
+
+    const bindings = board.preset.bindings
+    const priorityField = doc.entities[bindings["field.priority"]]
+    if (!priorityField || priorityField.kind !== "field" || priorityField.valueType !== "select") throw new Error("priority field unavailable")
+    const p1 = Object.values(priorityField.options).find(option => option.title === "P1")
+    if (!p1) throw new Error("P1 option unavailable")
+    const now = "2026-01-01T00:00:00.000Z"
+    doc.entities["legacy-card"] = {
+      id: "legacy-card", title: "Example Co — Backend Engineer", body: "Existing card description",
+      values: {
+        [bindings["field.company"]]: "Example Co",
+        [bindings["field.role"]]: "Backend Engineer",
+        [bindings["field.priority"]]: p1.id,
+        [bindings["field.sourceText"]]: "Retained source text",
+      },
+      placement: { parentId: bindings["status.lead"], rank: "0/1" },
+      archivedAt: null, createdAt: now, updatedAt: now,
+    }
+    const bundle = await exportWorkspaceBundleV2(A.from(doc))
+    return { bundle: Array.from(bundle), policy: legacyPolicy, automation }
+  })
+  await page.locator('input[type="file"][accept*=".tincanban"]').setInputFiles({
+    name: "legacy-priority.tincanban", mimeType: "application/vnd.tincanban+zip", buffer: Buffer.from(fixture.bundle),
+  })
+  await expect(page.getByRole("button", { name: /Open Example Co — Backend Engineer/ })).toBeVisible()
+  return fixture
+}
+
 test("Given a blank workspace, when invalid settings are repaired, then one apply persists all configuration", async ({ page }) => {
   await createBlankWorkspace(page)
   await page.getByRole("button", { name: "Settings" }).click()
@@ -86,4 +132,53 @@ test("Given a blank workspace, when invalid settings are repaired, then one appl
     await expect(reopened.getByLabel("Author *")).toBeVisible()
     await expect(reopened.getByLabel("Title *")).toHaveValue("")
   })
+})
+
+test("Given an imported inert priority policy, when automation is added in settings JSON, then policy and card values survive apply and reload", async ({ page }) => {
+  await page.goto("/")
+  const fixture = await importLegacyPriorityWorkspace(page)
+  const openCard = page.getByRole("button", { name: /Open Example Co — Backend Engineer/ })
+  await openCard.click()
+  const card = page.getByRole("dialog", { name: "Item overview" })
+  await expect(card.getByText("Retained source text", { exact: true })).toBeVisible()
+  await card.getByRole("button", { name: "Close detail" }).click()
+
+  await page.getByRole("button", { name: "Settings" }).click()
+  const dialog = page.getByRole("dialog", { name: "Settings" })
+  await dialog.getByRole("tab", { name: "Workspace", exact: true }).click()
+  await dialog.getByText("settings.json", { exact: true }).click()
+  const editor = dialog.getByLabel("Workspace settings JSON")
+  const config = JSON.parse(await editor.inputValue())
+  expect(config.board.priorityPolicy).toEqual(fixture.policy)
+  expect(config.board.automation).toBeUndefined()
+
+  await test.step("Reject a changed unsupported evaluator", async () => {
+    config.board.priorityPolicy.evaluator = "job-fit-v2"
+    await editor.fill(JSON.stringify(config, null, 2))
+    await expect(dialog.getByText("/board/priorityPolicy/evaluator", { exact: true })).toBeVisible()
+    await expect(dialog.getByRole("button", { name: "Apply JSON" })).toBeDisabled()
+  })
+
+  await test.step("Add only automation settings and preserve the imported policy", async () => {
+    config.board.priorityPolicy = fixture.policy
+    config.board.automation = fixture.automation
+    await editor.fill(JSON.stringify(config, null, 2))
+    await expect(dialog.getByRole("button", { name: "Apply JSON" })).toBeEnabled()
+    await dialog.getByRole("button", { name: "Apply JSON" }).click()
+    await expect(dialog).toBeHidden()
+  })
+
+  await page.reload()
+  await expect(page.getByRole("button", { name: /Open Example Co — Backend Engineer/ })).toBeVisible()
+  await page.getByRole("button", { name: /Open Example Co — Backend Engineer/ }).click()
+  const restoredCard = page.getByRole("dialog", { name: "Item overview" })
+  await expect(restoredCard.getByText("Retained source text", { exact: true })).toBeVisible()
+  await restoredCard.getByRole("button", { name: "Close detail" }).click()
+  await page.getByRole("button", { name: "Settings" }).click()
+  const savedSettings = page.getByRole("dialog", { name: "Settings" })
+  await savedSettings.getByRole("tab", { name: "Workspace", exact: true }).click()
+  await savedSettings.getByText("settings.json", { exact: true }).click()
+  const saved = JSON.parse(await savedSettings.getByLabel("Workspace settings JSON").inputValue())
+  expect(saved.board.priorityPolicy).toEqual(fixture.policy)
+  expect(saved.board.automation).toEqual(fixture.automation)
 })

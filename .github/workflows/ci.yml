@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: f81e20e9c0c5bc565169a761aa1f2a1bfbde0a30
+  RUSTY_REVISION: b0397e82be99ca4aa1c60fd22ba60adaf49d95e3
 
 jobs:
   verify:
@@ -382,7 +382,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: bobishh/identity
-          ref: 97292d0b24cfdf119f7f6ef38e4cadda6b7b4e1b
+          ref: b1a5c3f696a53d7cc1900673f2553d32372d8793
           path: .ci/identity-provider
           ssh-key: ${{ secrets.IDENTITY_DEPLOY_KEY }}
           submodules: recursive

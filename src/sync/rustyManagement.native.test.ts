@@ -8,7 +8,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore, type WasmVerifiedHistoryArchiveCoverage } from "@meta-uber/mesh-transport/wasm"
-import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson,
+  resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -55,7 +56,8 @@ import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-a
 import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locator-preparation"
 import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
-import { verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { createDeviceAuthorizationRequest, createIdentityAuthorityView, createRecoverableIdentity,
+  emptyIdentityProfileState, issueDeviceAuthorization, verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
 import { ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
 import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { peerStore } from "./peerStore"
@@ -67,6 +69,11 @@ import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHis
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
+import { publishRustyIdentityAuthorityView } from "@meta-uber/mesh-replication/rusty-identity-authority"
+import { createRustyScopeEnrollmentClient, type RustyScopeEnrollmentJournal } from "@meta-uber/mesh-replication/rusty-scope-enrollment"
+import { publishRustyScopeAuthoritySnapshot, type ScopeAuthorityValidation } from "@meta-uber/mesh-replication/rusty-scope-authority"
+import { registerRustyResourcePrincipalGrant, type RustyWorkspaceMembershipGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory())
@@ -125,6 +132,80 @@ test("Given actual Rusty and an SDK authority snapshot missing serde defaults, W
     await rm(service.stateDirectory, { recursive: true, force: true })
   }
 }, 45_000)
+
+test("Given an unchanged grant from a former active same-person app device, when the current certified owner app registers it, then SDK and Rusty preserve write access under the current signer", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const owner = (await createRecoverableIdentity("better", "Native owner")).profile
+  const formerApp = (await createRecoverableIdentity("better", "Former owner app")).profile
+  const candidate = (await createRecoverableIdentity("better", "Current owner app")).profile
+  const applicationOrigin = "https://boards.example"
+  const challenge = "a".repeat(64)
+  const expiresAt = Date.now() + 90_000
+  const formerRequest = await createDeviceAuthorizationRequest(formerApp, { applicationOrigin, challenge, expiresAt })
+  const formerCertificate = await issueDeviceAuthorization(owner, formerRequest, { applicationOrigin, challenge })
+  const currentRequest = await createDeviceAuthorizationRequest(candidate, { applicationOrigin, challenge: "b".repeat(64), expiresAt })
+  const currentCertificate = await issueDeviceAuthorization(owner, currentRequest, {
+    applicationOrigin, challenge: "b".repeat(64),
+  })
+  const certificates = [owner.certificate, formerCertificate, currentCertificate]
+  const authorityView = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] },
+    emptyIdentityProfileState(owner.identity.personId))
+  const service = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    const workspaceId = crypto.randomUUID()
+    const scopeId = `scope-${crypto.randomUUID()}`
+    const readToken = toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    const writeToken = toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId, readToken, writeToken }
+    const signOwner = <T extends { kind: string }>(payload: T) => signEnvelope(owner.privateKeys.devicePrivateKey!, payload,
+      owner.device.deviceId, "MATCH/1")
+    await publishRustyIdentityAuthorityView({ ...access, identity: owner.identity, deviceId: owner.device.deviceId,
+      devicePublicKey: owner.device.publicKey, view: authorityView, signAuthorization: signOwner })
+    const enrollmentJournal = createMemoryEnrollmentJournal()
+    const enrollment = createRustyScopeEnrollmentClient({ scopePurpose: "workspace", access,
+      identity: owner.identity, deviceId: owner.device.deviceId, devicePublicKey: owner.device.publicKey,
+      certificates: [owner.certificate], ensureCurrent: () => {}, getManagementCapability: async () => undefined,
+      ensureManagementCurrent: () => {}, signAuthorization: payload => signOwner(payload), journal: enrollmentJournal })
+    await enrollment.enroll({ minimumWriterVersion: 2, allowLegacyUnmanagedScope: true })
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(formerApp.privateKeys.devicePrivateKey!, {
+      kind: "scope-genesis", version: 1, scopeId: workspaceId,
+      creator: { personId: owner.identity.personId, publicKey: owner.identity.publicKey, certificates }, controlEpoch: 1,
+    }, formerApp.device.deviceId, "MATCH/1"), grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
+    const validateSnapshot = (snapshot: unknown): ScopeAuthorityValidation => {
+      const validated = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
+        scopeId: string; controller: { personId: string; publicKey: string }; controlEpoch: number
+      }
+      return { workspaceId: validated.scopeId, controllerPersonId: validated.controller.personId,
+        controllerPublicKey: validated.controller.publicKey, controlEpoch: validated.controlEpoch, snapshot }
+    }
+    await publishRustyScopeAuthoritySnapshot({ ...access, workspaceId, identity: owner.identity, authorityView,
+      deviceId: owner.device.deviceId, devicePublicKey: owner.device.publicKey, scopeAuthority: scopeAuthoritySnapshot,
+      validateSnapshot, mergeSnapshots: (_current, incoming) => incoming, signAuthorization: signOwner })
+    const recipient = (await createRecoverableIdentity("better", "Native editor")).profile
+    const grantPayload = {
+      kind: "workspace-grant", version: 1, grantId: crypto.randomUUID(), workspaceId,
+      personId: recipient.identity.personId, role: "editor", accessEpoch: 7,
+    } satisfies RustyWorkspaceMembershipGrant["payload"]
+    const workspaceGrant = await signEnvelope(formerApp.privateKeys.devicePrivateKey!, grantPayload, formerApp.device.deviceId)
+    const registered = await registerRustyResourcePrincipalGrant({ origin: access.origin, servicePublicKey: access.servicePublicKey,
+      storageScopeId: access.scopeId, workspaceId, expectedScopeAuthoritySnapshot: scopeAuthoritySnapshot,
+      identity: owner.identity, authorityView, deviceId: candidate.device.deviceId,
+      devicePublicKey: candidate.device.publicKey, subjectIdentity: recipient.identity, workspaceGrant,
+      readToken, writeToken, ensureCurrent: () => {}, validateSnapshot, signAuthorization: payload =>
+        signEnvelope(candidate.privateKeys.devicePrivateKey!, payload, candidate.device.deviceId, "MATCH/1") })
+
+    expect(registered.principalGrant.payload.workspaceGrant).toEqual(workspaceGrant)
+    expect(registered.principalGrant.payload).toMatchObject({ ownerPersonId: owner.identity.personId,
+      subjectPersonId: recipient.identity.personId, grantId: workspaceGrant.payload.grantId, policyEpoch: 7, actions: ["read", "write"] })
+    expect(registered.principalGrant.signerKeyId).toBe(candidate.device.deviceId)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 90_000)
 
 test("Given an owner with Rusty credentials but no local workspace ledger, when its replica pulls, then read the signed Rusty ledger without control-plane writes", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory())
@@ -194,6 +275,22 @@ test("Given an owner with Rusty credentials but no local workspace ledger, when 
 }, 45_000)
 
 afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
+
+function createMemoryEnrollmentJournal(): RustyScopeEnrollmentJournal {
+  const requests = new Map<string, string>()
+  return {
+    read: async binding => {
+      const body = requests.get(binding.scopeId)
+      return body === undefined ? undefined : { body }
+    },
+    prepare: async (binding, body) => { requests.set(binding.scopeId, body) },
+    replace: async (binding, previousBody, nextBody) => {
+      if (requests.get(binding.scopeId) !== previousBody) throw new Error("Enrollment retry journal changed")
+      requests.set(binding.scopeId, nextBody)
+    },
+    complete: async (binding, body) => { requests.set(binding.scopeId, body) },
+  }
+}
 
 async function unusedLoopbackPort(): Promise<number> {
   const listener = createServer()

@@ -190,7 +190,8 @@ function validatePolicy(draft: Record<string, unknown>, doc: WorkspaceDocumentV2
     errors.push(...parsed.error.issues.map(issue => ({ path: `/priorityPolicy/${issue.path.join("/")}`.replace(/\/$/, ""), message: issue.message })))
     return
   }
-  errors.push(...validatePriorityPolicy(parsed.data, doc, typeof draft.boardId === "string" ? draft.boardId : ""))
+  const boardId = typeof draft.boardId === "string" ? draft.boardId : ""
+  errors.push(...validatePriorityPolicy(parsed.data, doc, boardId, { preserveExistingUnsupported: true }))
   if (!Array.isArray(draft.fields)) return
   const ids = new Set(draft.fields.map(value => record(value) && typeof value.id === "string" ? value.id : ""))
   parsed.data.rules.forEach((rule, index) => { if (!ids.has(rule.fieldId)) errors.push({ path: `/priorityPolicy/rules/${index}/fieldId`, message: "Rule field must remain on this board" }) })

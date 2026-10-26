@@ -32,10 +32,11 @@ export async function initializePersonalRootCatalog(storage: WorkspaceStorage, p
     }
     root.workspaces ??= {}
     created = current === null
-    const newlyAdded = created
+    const sameIdentityRoot = root.identity.personId === profile.identity.personId
+    const newlyAdded = sameIdentityRoot
       ? reconcilePersonalRootWorkspaces(root, workspaces.filter(workspace => ownerById.get(workspace.id) === profile.identity.personId))
       : []
-    const removedStaleGenesisRefs = !created && root.identity.personId === profile.identity.personId
+    const removedStaleGenesisRefs = !created && sameIdentityRoot
       ? pruneForeignGenesisWorkspaceRefs(root, ownerById).length > 0
       : false
     const presentationRepaired = current !== null && (root.identity.displayName !== current.identity.displayName ||
