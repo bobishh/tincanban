@@ -1,11 +1,41 @@
 import { beforeEach, expect, it } from "vitest"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, verifyEnvelope } from "../domain/identity"
 import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
-import { createPeerAdvertisement, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceSuccessionPolicy, createWorkspaceSuccessionVote } from "./meshRecords"
+import { createPeerAdvertisement, createWorkspaceGrant as createMeshWorkspaceGrant, createWorkspaceDeparture, createWorkspaceDeviceRevocation, createWorkspaceSuccessionPolicy, createWorkspaceSuccessionVote } from "./meshRecords"
 import { meshRecordSigning, workspaceRecordSigning } from "./meshRecordSigning"
-import type { WorkspaceMeshCredential } from "./peerStore"
+import type { PeerStore, WorkspaceMeshCredential } from "./peerStore"
 
 beforeEach(() => resetIdentityStorageForTest())
+
+it("Given unchanged owner authority, when the editor device list refreshes after signer preparation, then issuing a grant still succeeds", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1,
+    transportSecret: "secret", updatedAt: new Date().toISOString() }
+  let peers: Awaited<ReturnType<PeerStore["listPeers"]>> = []
+  const signing = await meshRecordSigning(owner, credential, { kind: "owner" }, {
+    getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null, listPeers: async () => peers,
+  })
+  peers = [{ workspaceId: "workspace", personId: "editor", deviceId: "editor-device", endpoint: "endpoint",
+    transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString() }]
+  const grant = await createMeshWorkspaceGrant(owner, "workspace", "visitor", "visitor", 1, signing)
+  expect(await verifyEnvelope(grant, owner.device.publicKey)).toBe(true)
+})
+
+it("Given a prepared owner signer, when editor membership changes, then a succession policy with the old editor set is still rejected", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const credential: WorkspaceMeshCredential = { version: 1, workspaceId: "workspace", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1,
+    transportSecret: "secret", updatedAt: new Date().toISOString() }
+  let peers: Awaited<ReturnType<PeerStore["listPeers"]>> = []
+  const signing = await meshRecordSigning(owner, credential, { kind: "owner" }, {
+    getWorkspaceCredential: async () => credential, getWorkspaceAuthority: async () => null, listPeers: async () => peers,
+  })
+  peers = [{ workspaceId: "workspace", personId: "editor", deviceId: "editor-device", endpoint: "endpoint",
+    transportSecret: "secret", role: "editor", lastSeen: new Date().toISOString() }]
+  await expect(createWorkspaceSuccessionPolicy(owner, "workspace", null, [], 1, new Date().toISOString(), signing))
+    .rejects.toThrow(/editor membership changed/i)
+})
 
 it("Given a visitor's valid membership, when leaving, then permit the participant signer without owner rights", async () => {
   const owner = await bootstrapIdentity("Owner")

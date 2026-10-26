@@ -93,7 +93,16 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
     const create = page.getByRole("dialog", { name: "Create workspace" })
     await create.getByLabel("Title", { exact: true }).fill("Original restored board")
     await create.getByRole("button", { name: "Create", exact: true }).click()
-    await page.getByRole("region", { name: "Original restored board", exact: true }).waitFor()
+    await page.getByRole("region", { name: "Original restored board", exact: true }).waitFor().catch(async cause => {
+      const snapshot = await page.evaluate(async () => {
+        const app = (await import("/src/state.ts")).useTincanban()
+        return { activeTitle: app.activeWorkspace.title,
+          available: app.availableWorkspaces.value.map(workspace => workspace.title),
+          alerts: [...document.querySelectorAll('[role="alert"]')].map(node => node.textContent),
+          creating: document.querySelector('.workspace-create-dialog form')?.getAttribute('aria-busy') }
+      })
+      throw new Error(`Source board creation did not complete: ${cause}; ${JSON.stringify(snapshot)}`)
+    })
     await page.getByRole("button", { name: "Add item to To do" }).click()
     const item = page.getByRole("dialog", { name: "Item details" })
     await item.getByLabel("Title *").fill("Recovered card")

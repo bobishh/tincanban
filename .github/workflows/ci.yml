@@ -432,6 +432,7 @@ jobs:
           path: |
             test-results-automation-worker/
             test-results-identity-bootstrap/
+            test-results-identity-cold-catalog/
             test-results/
           retention-days: 1
 

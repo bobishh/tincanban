@@ -62,11 +62,12 @@ export async function meshRecordSigning(profile: LocalProfile, expected: Workspa
       store.getWorkspaceCredential(workspaceId), store.getWorkspaceAuthority(workspaceId), store.listPeers(workspaceId),
     ])
     if (!credential || credentialRevision(credential) !== expectedRevision) throw new Error("Workspace record credential changed while signing")
-    const state = meshRustRuntime().state
     assertMeshRecordMembership(credential, authority, profile)
     assertMeshRecordOperation(credential, operation, peers, profile, payload)
+    // Live editor membership constrains succession-policy payloads above; it is
+    // not an authority revision for an unrelated owner grant or advertisement.
     return canonicalAuthorityJson({ credential: expectedRevision, authority: authority ? credentialRevision(authority) : null,
-      eligibleEditors: state.eligibleEditorPersonIds(peers), removalPeer: operation.kind === "device-revocation"
+      removalPeer: operation.kind === "device-revocation"
         ? peers.filter(peer => peer.deviceId === operation.deviceId).map(peer => [peer.personId, peer.revokedAt ?? null]) : null })
   }
   const purposes = operation.kind === "owner" ? ownerPurposes : operation.kind === "advertisement" ? ["peer-advertisement"]
