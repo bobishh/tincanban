@@ -267,9 +267,7 @@ test("Given a previously accepted storage grant, when scope control transfers, t
 
 test("Given an active owner app device missing from immutable scope history, when its explicit root-bound attestation arrives, then accept it", async () => {
   const { owner, current, authority, recipient } = await formerOwnerAppGrantFixture()
-  const originalSnapshot = authority.scopeAuthoritySnapshot as { genesis: { payload: { creator: {
-    personId: string; publicKey: string; certificates: unknown[]
-  } } }; [key: string]: unknown }
+  const originalSnapshot = authority.scopeAuthoritySnapshot
   const oldController = { ...originalSnapshot.genesis.payload.creator, certificates: [owner.certificate] }
   authority.scopeAuthoritySnapshot = { ...originalSnapshot, genesis: await signEnvelope(owner.privateKeys.devicePrivateKey!, {
     ...originalSnapshot.genesis.payload, creator: oldController,

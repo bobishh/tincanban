@@ -15,6 +15,22 @@ async function profile(page: Page): Promise<PublicProfile> {
 
 type PageFailure = { label: string; event: "crash" } | { label: string; event: "pageerror"; name: string }
 
+type ReconnectDiagnostic = {
+  label: string
+  event: "workspace.frame.rejected" | "mesh.rusty.inventory.failed"
+  workspaceId?: string
+  peerId?: string
+  reason?: string
+  entityType?: string
+  entityId?: string
+  operation?: string
+  phase?: string
+  errorName?: string
+  errorMessage?: string
+}
+
+type RustyHttpFailure = { label: string; method: string; path: string; status: number; message?: string }
+
 function logPageFailure(page: Page, label: string, failures: PageFailure[]) {
   page.on("crash", () => {
     const failure = { label, event: "crash" } as const
@@ -25,6 +41,68 @@ function logPageFailure(page: Page, label: string, failures: PageFailure[]) {
     const failure = { label, event: "pageerror", name: error.name } as const
     failures.push(failure)
     console.error(`[owner-reconnect.page] ${JSON.stringify(failure)}`)
+  })
+}
+
+function captureReconnectDiagnostics(
+  page: Page,
+  label: string,
+  events: ReconnectDiagnostic[],
+  rustyOrigin: string | undefined,
+  rustyFailures: RustyHttpFailure[],
+  pendingRustyResponses: Promise<void>[],
+) {
+  page.on("console", message => {
+    const match = message.text().match(/\[tincanban\.mesh\]\s+(\{.*\})/)
+    if (!match) return
+    let record: Record<string, unknown>
+    try { record = JSON.parse(match[1]) as Record<string, unknown> }
+    catch { return }
+    const event = record.event
+    if (event !== "workspace.frame.rejected" && event !== "mesh.rusty.inventory.failed") return
+    const diagnostic: ReconnectDiagnostic = {
+      label,
+      event,
+      ...(typeof record.workspaceId === "string" ? { workspaceId: record.workspaceId } : {}),
+      ...(typeof record.peerId === "string" ? { peerId: record.peerId } : {}),
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+      ...(typeof record.entityType === "string" ? { entityType: record.entityType } : {}),
+      ...(typeof record.entityId === "string" ? { entityId: record.entityId } : {}),
+      ...(typeof record.operation === "string" ? { operation: record.operation } : {}),
+      ...(typeof record.phase === "string" ? { phase: record.phase } : {}),
+    }
+    if (record.error && typeof record.error === "object") {
+      const error = record.error as Record<string, unknown>
+      if (typeof error.name === "string") diagnostic.errorName = error.name
+      if (typeof error.message === "string") diagnostic.errorMessage = error.message.slice(0, 240)
+    }
+    events.push(diagnostic)
+    console.error(`[owner-reconnect.diagnostic] ${JSON.stringify(diagnostic)}`)
+  })
+
+  if (!rustyOrigin) return
+  page.on("response", response => {
+    const pending = (async () => {
+      const url = new URL(response.url())
+      const request = response.request()
+      if (url.origin !== rustyOrigin || request.method() !== "GET" ||
+          !/^\/v2\/scopes\/[^/]+\/objects$/.test(url.pathname) || response.status() < 400) return
+      const failure: RustyHttpFailure = {
+        label,
+        method: request.method(),
+        path: `${url.pathname}${url.search}`,
+        status: response.status(),
+      }
+      try {
+        const body: unknown = await response.json()
+        if (body && typeof body === "object" && "message" in body && typeof body.message === "string") {
+          failure.message = body.message.slice(0, 240)
+        }
+      } catch { /* Keep status and path when the error response is not JSON. */ }
+      rustyFailures.push(failure)
+      console.error(`[owner-reconnect.rusty-http] ${JSON.stringify(failure)}`)
+    })()
+    pendingRustyResponses.push(pending)
   })
 }
 
@@ -179,18 +257,31 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
   const wrongOwner = await wrongOwnerContext.newPage()
   const participant = await participantContext.newPage()
   const pageFailures: PageFailure[] = []
+  const reconnectDiagnostics: ReconnectDiagnostic[] = []
+  const rustyHttpFailures: RustyHttpFailure[] = []
+  const pendingRustyResponses: Promise<void>[] = []
+  const fixtureDevices: Record<string, { personId: string; deviceId: string }> = {}
   logPageFailure(page, "original-owner", pageFailures)
   logPageFailure(ownerDevice, "returning-owner-device", pageFailures)
   logPageFailure(wrongOwner, "wrong-identity", pageFailures)
   logPageFailure(participant, "retained-participant", pageFailures)
+  captureReconnectDiagnostics(page, "original-owner", reconnectDiagnostics, rusty?.origin, rustyHttpFailures, pendingRustyResponses)
+  captureReconnectDiagnostics(ownerDevice, "returning-owner-device", reconnectDiagnostics, rusty?.origin, rustyHttpFailures, pendingRustyResponses)
+  captureReconnectDiagnostics(wrongOwner, "wrong-identity", reconnectDiagnostics, rusty?.origin, rustyHttpFailures, pendingRustyResponses)
+  captureReconnectDiagnostics(participant, "retained-participant", reconnectDiagnostics, rusty?.origin, rustyHttpFailures, pendingRustyResponses)
   let wrongOwnerContextClosed = false
+  let originalWorkspaceId: string | undefined
   try {
     // Enroll this current owner Identity device before creating the board to reconnect.
     // It has the active Identity authority but no local copy of that later board.
     await enrollDevice(page, ownerDevice)
+    const initialOwnerProfile = await profile(page)
+    const returningOwnerProfile = await profile(ownerDevice)
+    fixtureDevices["initial-owner"] = { personId: initialOwnerProfile.identity.personId, deviceId: initialOwnerProfile.device.deviceId }
+    fixtureDevices["returning-owner-device"] = { personId: returningOwnerProfile.identity.personId, deviceId: returningOwnerProfile.device.deviceId }
     await ownerDevice.goto("about:blank")
     await createJobSearchWorkspace(page, "Original board")
-    const originalWorkspaceId = await page.evaluate(async () =>
+    originalWorkspaceId = await page.evaluate(async () =>
       (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
     await addLead(page, "Owner restored")
     if (rusty) await connectRusty(page, rusty.origin)
@@ -208,6 +299,8 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
     await page.getByRole("button", { name: "Approve access", exact: true }).click()
     await expect(join.getByText("Connected to Original board", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(participant.getByRole("button", { name: "Open Owner restored — Engineer" })).toBeVisible({ timeout: 30_000 })
+    const participantProfile = await profile(participant)
+    fixtureDevices["retained-participant"] = { personId: participantProfile.identity.personId, deviceId: participantProfile.device.deviceId }
     const sourceReady = () => storageVersion === "none"
       ? participantReconnectSourceReadyWithoutRusty(participant, originalWorkspaceId)
       : participantReconnectSourceReady(participant, originalWorkspaceId)
@@ -227,6 +320,8 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
 
     await wrongOwner.goto("/")
     await ensureJobSearchWorkspace(wrongOwner)
+    const wrongOwnerProfile = await profile(wrongOwner)
+    fixtureDevices["wrong-identity"] = { personId: wrongOwnerProfile.identity.personId, deviceId: wrongOwnerProfile.device.deviceId }
     const wrongOwnerBefore = await localReconnectState(wrongOwner)
     const participantBeforeWrongOwner = await localReconnectState(participant)
     await wrongOwner.goto(returnLink)
@@ -326,11 +421,23 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
     const memberRole = participant.getByRole("dialog", { name: "Device sync" })
       .locator(".mesh-member").filter({ hasText: /· You/ }).locator(".mesh-member-role")
     await expect(memberRole).toHaveText("editor")
+    const returningOwnerDeviceId = fixtureDevices["returning-owner-device"]?.deviceId
+    expect(returningOwnerDeviceId).toBeTruthy()
+    expect(reconnectDiagnostics.filter(diagnostic =>
+      diagnostic.label === "retained-participant" && diagnostic.event === "workspace.frame.rejected" &&
+      diagnostic.peerId === returningOwnerDeviceId,
+    )).toEqual([])
   } finally {
     await participantContext.close()
     if (!wrongOwnerContextClosed) await wrongOwnerContext.close()
     await ownerDeviceContext.close()
     if (rusty) await rusty.close()
+    await Promise.allSettled(pendingRustyResponses)
+    await test.info().attach("owner-reconnect-targeted-diagnostics.json", {
+      body: Buffer.from(JSON.stringify({ storageVersion, workspaceId: originalWorkspaceId, fixtureDevices,
+        events: reconnectDiagnostics, rustyHttpFailures }, null, 2)),
+      contentType: "application/json",
+    })
   }
   expect(pageFailures).toEqual([])
 })
