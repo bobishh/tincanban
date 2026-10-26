@@ -45,6 +45,12 @@ async function approveApplicationDevice(page: Page, appOrigin: string, personId:
   localBoardChoice?: "add" | "stay", afterApproval?: () => Promise<void>): Promise<void> {
   await page.addInitScript(({ expectedOrigin }) => {
     if (location.origin !== expectedOrigin || location.pathname !== "/identity/return") return
+    const saveFailureKey = "tincanban.e2e.signin-save-failure"
+    sessionStorage.removeItem(saveFailureKey)
+    const observeSaveFailure = () => {
+      if (document.querySelector(".save-state-error")) sessionStorage.setItem(saveFailureKey, "true")
+    }
+    new MutationObserver(observeSaveFailure).observe(document, { subtree: true, childList: true, attributes: true })
     const pendingKey = "tincanban.identity-browser-signin.pending.v1"
     const pendingRaw = sessionStorage.getItem(pendingKey)
     let pendingChallenge: string | undefined
@@ -447,6 +453,8 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     }
     await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     await expect(phone.getByRole("button", { name: /Open Bo private opportunity/u })).toBeVisible()
+    await expect(phone.locator(".save-state-error")).toHaveCount(0)
+    expect(await phone.evaluate(() => sessionStorage.getItem("tincanban.e2e.signin-save-failure"))).toBeNull()
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id))
       .not.toBe(anonymous.id)
     const profile = await phone.evaluate(async () => {

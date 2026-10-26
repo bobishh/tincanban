@@ -8,12 +8,13 @@ import { describeUserAgent, deviceDisplayName, isKeeper, type MeshMemberView } f
 import EnrollmentRequest from "./EnrollmentRequest.vue"
 import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import MyDeviceRemovalControl from "./MyDeviceRemovalControl.vue"
+import OwnerReconnectDialog from "./OwnerReconnectDialog.vue"
 import DialogWindow from "./DialogWindow.vue"
 import type { useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
 import { myDeviceRemovalComplete } from "../app/useMyDeviceRemoval"
 import { syncDialogConnectionStatus } from "./syncDialogConnectionStatus"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import type { SyncStep, SuccessionView } from "../app/syncTypes"
+import type { SyncStep, SuccessionView, OwnerReconnectReview } from "../app/syncTypes"
 
 const props = defineProps<{
   workspaceId?: string
@@ -59,6 +60,7 @@ const props = defineProps<{
   retryAt?: number
   networkOnline?: boolean
   live?: boolean
+  ownerReconnectReview?: OwnerReconnectReview | null
 
 }>()
 
@@ -83,6 +85,9 @@ const emit = defineEmits<{
   (e: "declineDevice"): void
   (e: "acceptAndJoin"): void
   (e: "reconnectDevice"): void
+  (e: "startOwnerReconnect"): void
+  (e: "approveOwnerReconnect"): void
+  (e: "cancelOwnerReconnect"): void
   (e: "stop"): void
 }>()
 
@@ -194,6 +199,11 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
     <section class="dialog dialog-window-content sync-dialog">
       <DeviceSyncProblems v-if="blindReplication" :controller="blindReplication" />
 
+      <OwnerReconnectDialog v-if="step.startsWith('owner-reconnect-')" :step="step" :invite-url="inviteUrl"
+        :qr-code="qrCode" :copy-notice="copyNotice" :error="error" :review="ownerReconnectReview ?? null"
+        @copy="emit('copy', $event)" @approve="emit('approveOwnerReconnect')"
+        @cancel="emit('cancelOwnerReconnect')" @dismiss="emit('dismiss')" />
+
       <section v-for="request in visiblePendingJoins" :key="request.id" class="join-request" aria-label="Access request">
         <h3>{{ request.name }} wants to join</h3>
         <code>{{ request.personId.slice(0, 12) }}</code>
@@ -299,6 +309,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </section>
         </div>
         <div class="dialog-actions sync-primary-actions">
+          <button v-if="currentRole === 'editor' || currentRole === 'visitor'" class="button" type="button" @click="emit('startOwnerReconnect')">Connect owner device</button>
           <button v-if="canManageMesh" class="button" type="button" @click="emit('selectSyncWorkspace')">Add someone</button>
           <button class="button" type="button" @click="emit('selectSyncAll')">Add my device</button>
         </div>

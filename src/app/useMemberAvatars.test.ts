@@ -52,6 +52,53 @@ it("Given a saved identity photo while startup checks are pending, when the work
   } finally { scope.stop() }
 })
 
+it("Given sign-in refreshed Bo while the guest board is still active, when browser return is pending, then defer photo writes until the selected board is ready", async () => {
+  const guestIdentity = { personId: "guest", publicKey: "guest-public-key", displayName: "Guest" }
+  const current = shallowRef({ identity: guestIdentity })
+  const guestDoc = { id: "guest-untitled", title: "Untitled", updatedAt: "2026-10-26T00:00:00.000Z", ownerPersonId: guestIdentity.personId, entities: {} }
+  const ownerDoc = { id: "bo-job-search", title: "Job search", updatedAt: "2026-10-26T00:00:00.000Z", ownerPersonId: ownerIdentity.personId, entities: {} }
+  const contextReady = ref(false)
+  const saveState = ref<"idle" | "saving" | "saved" | "error">("idle")
+  let activeDoc = guestDoc
+  const execute = vi.fn(async (workspaceId: string) => {
+    saveState.value = "saving"
+    try {
+      if (workspaceId === guestDoc.id) throw new Error("Workspace profile grant is unavailable")
+      if (workspaceId === ownerDoc.id) throw new Error("Local board write failed")
+    } catch (error) {
+      saveState.value = "error"
+      throw error
+    }
+    saveState.value = "saved"
+  })
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: guestDoc.id }]),
+    getCurrentProfile: () => current.value,
+    getActiveDoc: () => activeDoc, readWorkspaceDoc: async () => activeDoc,
+    executeWorkspaceCommandAsync: execute,
+  } as unknown as ReturnType<typeof useTincanban>
+  const guestSnapshot = structuredClone(guestDoc)
+  const scope = effectScope()
+  const avatars = scope.run(() => useMemberAvatars(workspace, contextReady))!
+  try {
+    current.value = { identity: ownerIdentity }
+    workspace.docVersion.value += 1
+    await vi.waitFor(() => expect(avatars.currentAvatar.value).toBe(photo.avatarData))
+
+    expect({ writes: execute.mock.calls, saveState: saveState.value, guestDoc }).toEqual({
+      writes: [], saveState: "idle", guestDoc: guestSnapshot,
+    })
+
+    activeDoc = ownerDoc
+    workspace.availableWorkspaces.value = [{ id: ownerDoc.id, title: ownerDoc.title, updatedAt: ownerDoc.updatedAt }]
+    contextReady.value = true
+    workspace.docVersion.value += 1
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(ownerDoc.id, expect.objectContaining({ kind: "setMemberAvatar" })))
+    expect(saveState.value).toBe("error")
+    expect(avatars.avatarNotice.value).toMatch(/sharing to some workspaces is pending/i)
+  } finally { scope.stop() }
+})
+
 it("Given signed photo history with a missing root shadow, when avatar preferences reconcile, then publish the recovered photo", async () => {
   const { bootstrapIdentity } = await import("../domain/identity")
   const { createPersonalRoot } = await import("../domain/personalRoot")

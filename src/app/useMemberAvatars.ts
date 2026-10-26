@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, watch, type Ref } from "vue"
 import { identityNameIsProvided } from "../domain/identityNameChoice"
 import { memberAvatarData, memberProfileEntityId } from "../domain/avatarData"
 import { defaultStorage } from "../storage"
@@ -35,12 +35,12 @@ async function readProfileChoices(root: PersonalRootDocumentV1, ownerIsCurrent: 
 }
 
 function photoProjector(workspace: ReturnType<typeof useTincanban>, isOwnerCurrent: (ownerId: string) => boolean,
-  setNotice: (value: string) => void) {
+  canProject: () => boolean, setNotice: (value: string) => void) {
   async function projectOne(workspaceId: string, value: IdentityPhoto, ownerId: string): Promise<"complete" | "failed" | "stale"> {
-    if (!isOwnerCurrent(ownerId)) return "stale"
+    if (!isOwnerCurrent(ownerId) || !canProject()) return "stale"
     try {
       const doc = await workspace.readWorkspaceDoc(workspaceId)
-      if (!isOwnerCurrent(ownerId)) return "stale"
+      if (!isOwnerCurrent(ownerId) || !canProject()) return "stale"
       const entity = doc.entities[memberProfileEntityId(ownerId)]
       if (entity?.kind === "member_profile") {
         const projected = parseIdentityPhoto(JSON.parse(entity.data))
@@ -51,7 +51,7 @@ function photoProjector(workspace: ReturnType<typeof useTincanban>, isOwnerCurre
     } catch { return isOwnerCurrent(ownerId) ? "failed" : "stale" }
   }
   return async (value: IdentityPhoto, all: boolean, ownerId: string): Promise<void> => {
-    if (!workspace.ready.value || !isOwnerCurrent(ownerId)) return
+    if (!workspace.ready.value || !isOwnerCurrent(ownerId) || !canProject()) return
     const active = workspace.getActiveDoc()?.id
     const ids = all ? workspace.availableWorkspaces.value.map(item => item.id) : active ? [active] : []
     let failed = 0
@@ -100,7 +100,7 @@ function logProfileReadFailure(cause: unknown): void {
 }
 
 /** One identity preference; signed workspace profiles carry its public projection. */
-export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
+export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>, contextReady?: Readonly<Ref<boolean>>) {
   const photo = ref<IdentityPhoto>()
   const avatarNotice = ref("")
   const profileLoadError = ref("")
@@ -132,7 +132,8 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     return running
   }
   function ownerIsCurrent(ownerId: string): boolean { return !disposed && personId() === ownerId }
-  const projectPhoto = photoProjector(workspace, ownerIsCurrent, value => { avatarNotice.value = value })
+  const canProject = () => contextReady?.value ?? true
+  const projectPhoto = photoProjector(workspace, ownerIsCurrent, canProject, value => { avatarNotice.value = value })
   async function updateProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
     const { name, picture, revision, nameProvided, storedPhoto } = await readProfileChoices(root, () => ownerIsCurrent(ownerId))
     if (!ownerIsCurrent(ownerId)) return { conflicted: false }
@@ -197,7 +198,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>) {
     void workspace.docVersion.value
     const doc = workspace.getActiveDoc()
     const entity = doc?.entities[memberProfileEntityId(personId() ?? "")]
-    return `${workspace.ready.value}:${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
+    return `${workspace.ready.value}:${contextReady?.value ?? true}:${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
   }, () => { void serial(reconcilePhoto) }, { immediate: true })
   const unsubscribe = subscribeIdentityDevicePreferences(owner => {
     if (disposed || owner !== personId()) return

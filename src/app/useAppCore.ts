@@ -94,6 +94,12 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
   const sync = useDeviceSync({
     displayName: () => identityName.value,
     identityChanged: tincanban.refreshIdentity,
+    ownerReconnect: {
+      expectedOwner: async input => (await import("./ownerReconnectFlow")).expectedOwnerForReconnect(input),
+      readSource: async input => (await import("./ownerReconnectFlow")).readOwnerReconnectSource(input),
+      commit: async input => (await import("./ownerReconnectFlow")).persistVerifiedOwnerReconnect(input),
+      title: async workspace => (await import("./ownerReconnectFlow")).verifiedOwnerReconnectTitle(workspace),
+    },
     workspace: {
       subscribe: listener => subscribeWorkspaceAndChat(tincanban.subscribeLocalChanges, listener),
       subscribeWorkspace: listener => subscribeWorkspaceAndChatScoped(tincanban.subscribeLocalChanges, listener),

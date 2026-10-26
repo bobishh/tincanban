@@ -24,6 +24,7 @@ import { meshTrace } from "./meshTrace"
 import { createDeviceSyncJoinApproval } from "./deviceSyncJoinApproval"
 import { AuthorityFingerprintTracker } from "./authorityFingerprint"
 import { createPeerHistoryReadActions } from "./peerHistoryRequestRouting"
+import { createDeviceSyncOwnerReconnect, type OwnerReconnectAdapter } from "./deviceSyncOwnerReconnect"
 export type DeviceSyncOptions = {
   workspace: WorkspaceReplica
   workspaceStore?: WorkspaceSetStore
@@ -34,11 +35,10 @@ export type DeviceSyncOptions = {
   displayName?: () => string
   identityChanged?: () => Promise<void>
   workspaceOwner?: (id: string) => Promise<string>
+  ownerReconnect?: OwnerReconnectAdapter
 }
 
-export function createDeviceSyncController(options: DeviceSyncOptions) {
-  return new DeviceSyncController(options).api()
-}
+export function createDeviceSyncController(options: DeviceSyncOptions) { return new DeviceSyncController(options).api() }
 
 export class DeviceSyncController {
   private readonly state = createDeviceSyncState()
@@ -53,6 +53,7 @@ export class DeviceSyncController {
   private readonly workspaceOwner?: (id: string) => Promise<string>
   private readonly displayName?: () => string
   private readonly identityChanged?: () => Promise<void>
+  private readonly ownerReconnectFlow: ReturnType<typeof createDeviceSyncOwnerReconnect>
   private readonly leavingWorkspaceIds = new Set<string>()
   private readonly directPeerSessions = new Map<string, LiveWorkspaceSync>()
   private readonly markNetworkOnline = () => { this.state.networkOnline.value = true }
@@ -68,15 +69,13 @@ export class DeviceSyncController {
   private readonly authorityFingerprint = new AuthorityFingerprintTracker(); private readonly keeperOperations = createKeeperOperations(() => this.ensureDurableMesh(), () => this.workspaceHostContext())
 
   constructor(options: DeviceSyncOptions) {
-    this.workspace = options.workspace
-    this.workspaceStore = options.workspaceStore
-    this.origin = options.origin
-    this.transport = options.transport ?? irohTransport
-    this.availableWorkspaces = options.availableWorkspaces ?? ref([])
-    this.activeWorkspaceId = options.activeWorkspaceId
-    this.workspaceOwner = options.workspaceOwner
-    this.displayName = options.displayName
-    this.identityChanged = options.identityChanged
+    this.workspace = options.workspace; this.workspaceStore = options.workspaceStore
+    this.origin = options.origin; this.transport = options.transport ?? irohTransport
+    this.availableWorkspaces = options.availableWorkspaces ?? ref([]); this.activeWorkspaceId = options.activeWorkspaceId
+    this.workspaceOwner = options.workspaceOwner; this.displayName = options.displayName; this.identityChanged = options.identityChanged
+    this.ownerReconnectFlow = createDeviceSyncOwnerReconnect({ state: this.state, origin: this.origin, availableWorkspaces: this.availableWorkspaces,
+      activeWorkspaceId: this.activeWorkspaceId, workspaceOwner: this.workspaceOwner, store: () => this.meshWorkspaceStore ?? this.workspaceStore,
+      getProfile: () => this.getProfile(), ensureDurableMesh: () => this.ensureDurableMesh(), adapter: options.ownerReconnect, nextRun: () => ++this.run, currentRun: () => this.run })
     this.meshWorkspaceStore = this.workspaceStore ? { ...this.workspaceStore } : undefined
     if (typeof window !== "undefined") this.listenForNetworkChanges()
   }
@@ -192,7 +191,7 @@ export class DeviceSyncController {
 
   private async shutdown() {
     this.run += 1
-    this.wakeRetry?.()
+    this.wakeRetry?.(); await this.ownerReconnectFlow.close()
     if (typeof window !== "undefined") {
       window.removeEventListener("online", this.markNetworkOnline)
       window.removeEventListener("offline", this.markNetworkOffline)
@@ -289,22 +288,20 @@ export class DeviceSyncController {
 
   private async close() {
     this.run += 1
-    this.wakeRetry?.()
+    this.wakeRetry?.(); await this.ownerReconnectFlow.close()
     this.state.isOpen.value = false
     this.state.step.value = "idle"
     this.state.qrCode.value = ""
     this.state.inviteUrl.value = ""
     this.state.copyNotice.value = ""
     this.state.error.value = ""
-    this.state.authCode.value = ""
-    this.state.parsedInvite.value = null
+    this.state.authCode.value = ""; this.state.parsedInvite.value = null; this.state.ownerReconnectReview.value = null
     await this.handoffDirectNode("Pairing closed")
   }
 
   private async dismiss() {
-    if (this.state.step.value !== "error") { this.state.isOpen.value = false; return }
-    clearPairingLocation()
-    await this.close()
+    if (this.state.step.value.startsWith("owner-reconnect-") || this.state.step.value === "error") { clearPairingLocation(); await this.close(); return }
+    this.state.isOpen.value = false
   }
 
   private open() {
@@ -440,6 +437,7 @@ export class DeviceSyncController {
   }
 
   private async showInviteStep(invite: ScopedInvitation) {
+    if (invite.kind === "owner-reconnect") return this.ownerReconnectFlow.connect(invite)
     if (invite.kind === "device-enrollment") {
       const profile = await this.getProfile()
       this.state.replacementPersonId.value = undefined
@@ -509,7 +507,7 @@ export class DeviceSyncController {
   api() {
     const state = this.state
     return {
-      isOpen: state.isOpen, isEnabled: state.isEnabled, pendingJoins: state.pendingJoins, decideJoin: this.joinApproval.decideJoin,
+      isOpen: state.isOpen, isEnabled: state.isEnabled, pendingJoins: state.pendingJoins, decideJoin: this.joinApproval.decideJoin, ownerReconnectReview: state.ownerReconnectReview,
       isLive: state.isLive, isWorkspaceLive: (id: string) => (state.directLive.value && state.liveWorkspaceIds.value.includes(id)) || state.meshLiveWorkspaceIds.value.includes(id),
       isWorkspaceAccessRevoked: (id: string) => state.revokedWorkspaceIds.value.includes(id), meshPeers: state.meshPeers, meshDiagnostic: state.meshDiagnostic,
       meshRetryAt: state.meshRetryAt, networkOnline: state.networkOnline, meshSuccession: state.meshSuccession, localDeviceId: state.localDeviceId,
@@ -518,6 +516,8 @@ export class DeviceSyncController {
       selectedWorkspaceId: state.selectedWorkspaceId, selectedWorkspaceIds: state.selectedWorkspaceIds, invitationWorkspaceTitle: state.invitationWorkspaceTitle,
       invitationWorkspaces: state.invitationWorkspaces, availableWorkspaces: this.availableWorkspaces, open: () => this.open(),
       selectSyncAll: () => this.selectSyncAll(), selectSyncWorkspace: () => this.selectSyncWorkspace(), generateWorkspaceInvite: () => this.generateWorkspaceInvite(),
+      startOwnerReconnect: () => this.ownerReconnectFlow.startHost(), approveOwnerReconnect: () => this.ownerReconnectFlow.approve(),
+      cancelOwnerReconnect: async () => { await this.ownerReconnectFlow.cancel(); await this.dismiss() },
       provisionKeeperPairing: this.keeperOperations.provision,
       cancelKeeperPairing: async (pairing: KeeperPairing, operationId: string) => (await import("./keeperPairingWithdrawal")).cancelKeeperPairing(pairing, operationId, () => this.ensureDurableMesh()),
       approveEnrollment: () => this.approveEnrollment(), declineEnrollment: () => this.declineEnrollment(), enrollmentDeviceName: state.enrollmentDeviceName, enrollmentSameIdentity: state.enrollmentSameIdentity, enrollmentConflict: state.enrollmentConflict,

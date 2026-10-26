@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { ref } from "vue"
 import { createRecoverableIdentity, createDeviceAuthorizationApproval, createIdentityProfileOperation,
   emptyIdentityProfileState, publicKeyId, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
   browserSignInFailureMessage, clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
   shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn, readPendingRustyConnectionIntent,
-  writePendingRustyConnectionIntent, clearPendingRustyConnectionIntent } from "./identityBrowserSignIn"
+  writePendingRustyConnectionIntent, clearPendingRustyConnectionIntent, createIdentityBrowserSignInReturn } from "./identityBrowserSignIn"
 
 describe("Identity browser sign-in", () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
   it("keeps unexpected aborts visible with a fresh-sign-in action", () => {
     expect(browserSignInFailureMessage(new DOMException("storage unavailable", "AbortError")))
       .toBe("Identity sign-in was interrupted. Select Sign in to try again.")
@@ -41,6 +44,49 @@ describe("Identity browser sign-in", () => {
     await expect(completion.finish("/boards/current")).resolves.toBe(true)
     expect(completion.phase.value).toBe("complete")
     expect(paths).toEqual(["/boards/current", "/boards/current"])
+  })
+
+  it("Given a coherent existing context, when the return dialog closes before completion, then keep the context ready", () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {}, closePortal: () => {} })
+
+    expect(result.contextReady.value).toBe(true)
+    result.close()
+    expect(result.contextReady.value).toBe(true)
+    expect(result.returning.value).toBe(false)
+  })
+
+  it("Given a return that adopts identity before failing board selection, when dialog closes, then keep workspace projection gated", async () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
+      closePortal: () => {}, loadBoards: async () => { throw new Error("board selection failed") } })
+
+    await expect(result.complete("/boards/current")).rejects.toThrow("board selection failed")
+    expect(result.contextReady.value).toBe(false)
+    result.close()
+    expect(result.contextReady.value).toBe(false)
+  })
+
+  it("Given a return flow, when refresh and board selection finish, then open workspace projection only after route restoration", async () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const stages: string[] = []
+    const result = createIdentityBrowserSignInReturn({ showPortal,
+      refreshIdentity: async () => { stages.push(`refresh:${result.contextReady.value}`) }, closePortal: () => {},
+      loadBoards: async () => { stages.push(`boards:${result.contextReady.value}`) },
+      resolveReturnPath: path => { stages.push(`restore:${result.contextReady.value}`); return path } })
+
+    expect(result.contextReady.value).toBe(true)
+    const complete = result.complete("/boards/current")
+    expect(result.contextReady.value).toBe(false)
+    await complete
+    stages.push(`ready:${result.contextReady.value}`)
+    expect(stages).toEqual(["refresh:false", "boards:false", "restore:false", "ready:true"])
   })
 
   it("Given a cancelled sign-in, when the dialog closes, then neither pending request nor stale return can reopen it", () => {

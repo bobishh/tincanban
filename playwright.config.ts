@@ -3,6 +3,7 @@ import { defineConfig } from "@playwright/test"
 const port = Number(process.env.TINCANBAN_E2E_PORT ?? 4244)
 
 const networkSpecs = [
+  "**/owner-reconnect.spec.ts",
   "**/shared-board-rusty-access.spec.ts",
   "**/attachment-session-recovery.spec.ts",
   "**/attachments-rusty.spec.ts",

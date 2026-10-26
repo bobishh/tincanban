@@ -47,6 +47,14 @@ and behavior tests. See [architecture guidance](AGENTS.md).
 - [MetaMesh](https://github.com/bobishh/meta-mesh): identity, transport, and replication SDK.
 - [Rusty](https://github.com/bobishh/rusty): optional storage for encrypted objects and signed receipts.
 
+## Existing owner devices
+
+A participant retaining a board can open **Sync → Connect owner device** to show
+an expiring QR code and link. Open that link on a device already signed in to the
+board's owner Identity and confirm the connection. The verified copy keeps its
+workspace ID, ownership and participant roles, and joins the owner's catalog.
+The source needs its retained board history and scoped storage key material.
+
 ## Workflow connections
 
 Start **Connect board** from a Reflux Job search workflow. Tincanban lets the same

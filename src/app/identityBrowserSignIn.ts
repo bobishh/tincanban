@@ -68,11 +68,14 @@ export function createIdentityBrowserSignInReturn(options: {
   const hasPendingRequest = window.sessionStorage.getItem(identityBrowserSignInPendingKey) !== null
   const hasReturn = window.sessionStorage.getItem(identityBrowserSignInReturnKey) !== null
   const returning = ref(shouldResumeIdentityBrowserSignIn(window.location.pathname, hasPendingRequest, hasReturn))
+  const contextReady = ref(true)
   options.showPortal.value = returning.value
   return {
     returning,
+    contextReady,
     close() { returning.value = false; options.closePortal() },
     async complete(returnPath: string, request?: DeviceAuthorizationRequest) {
+      contextReady.value = false
       const refreshStarted = performance.now()
       recordIdentityBrowserSignIn("refresh", "started")
       try {
@@ -98,6 +101,7 @@ export function createIdentityBrowserSignInReturn(options: {
         recordIdentityBrowserSignIn("restore", "failed", { errorCode: "restore_failed", elapsedMs: performance.now() - restoreStarted })
         throw error
       }
+      contextReady.value = true
       returning.value = false
       options.showPortal.value = false
     },

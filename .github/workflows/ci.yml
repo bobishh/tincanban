@@ -382,7 +382,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: bobishh/identity
-          ref: b1a5c3f696a53d7cc1900673f2553d32372d8793
+          ref: 1829ede0a2ebd27532e8e9ccfee8ec09638bc69c
           path: .ci/identity-provider
           ssh-key: ${{ secrets.IDENTITY_DEPLOY_KEY }}
           submodules: recursive
@@ -395,6 +395,10 @@ jobs:
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.rusty.config.ts --reporter=list
+      - name: Verify retained owner board reconnect
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+        run: npx playwright test --project=owner-reconnect --reporter=list --output=test-results/owner-reconnect
       - name: Verify Identity redirect trace continuity
         env:
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
