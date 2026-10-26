@@ -19,8 +19,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
   let identity = "", session = 0
-  let running: Promise<void> | undefined
-  let automaticCompaction: Promise<void> | undefined
+  let running: Promise<void> | undefined, automaticCompaction: Promise<void> | undefined
   let disposed = false
   const automaticHistoryCompactions = new Set<string>()
   const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, deviceSyncIssues, attachmentCoverage }, {
@@ -29,8 +28,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const deviceAccess = createDeviceAccessRefresh(tincanban, state, runtime,
     (owner, epoch) => identity === owner && session === epoch && !disposed)
   const { personId, profileBinding, replica, fetchAttachment } = runtime
-  const { busy: actionBusy, protect } = createPrivateReplicaUserActions(() => Promise.all([running, automaticCompaction]),
-    () => runtime.captureSession(tincanban.activeWorkspace.id))
+  const { busy: actionBusy, protect, syncNow: requestSyncNow } = createPrivateReplicaUserActions(
+    () => Promise.all([running, automaticCompaction]), () => runtime.captureSession(tincanban.activeWorkspace.id),
+    () => syncNow(true), () => { void maybeCompactActiveHistory(identity, session) })
   const canCompact = (owner: string, epoch: number) => identity === owner && session === epoch && !disposed && !busy.value && !actionBusy.value && !automaticCompaction && !hasActiveTextEditor()
   async function maybeCompactActiveHistory(owner: string, epoch: number) {
     if (!canCompact(owner, epoch)) return
@@ -133,7 +133,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   onBeforeUnmount(() => { disposed = true; stop(); stopTriggers(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, actionBusy, error, notice, historyNotices,
-    ...protect(actions), exportAutomationAccess, syncNow: () => syncNow(), fetchAttachment }
+    ...protect(actions), exportAutomationAccess, syncNow: requestSyncNow, fetchAttachment }
 }
 
 /** Automatic archive work waits while the user is editing; replica delivery keeps running. */

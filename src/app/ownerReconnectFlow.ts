@@ -17,6 +17,9 @@ import { workspaceSet, type PeerHistoryObjectReader, type WorkspaceSetStore } fr
 import { capturePeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
 import { readLocal, writeLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
+import { defaultStorage } from "../storage"
+import { recoveryProjectionAccess } from "../sync/workspaceHistoryRecoveryAdmission"
+import type { WorkspaceWriteAuthorityEvidence } from "../product-replica"
 
 const receiptPrefix = "tincanban.owner-reconnect-receipt.v1:"
 
@@ -330,6 +333,24 @@ export async function persistVerifiedOwnerReconnect(input: {
     await replica.validate(snapshot, history)
     await input.ensureCurrent()
     await replica.receive(snapshot, true, history)
+    await input.ensureCurrent()
+    const currentAuthority = await peerStore.getWorkspaceAuthority(workspaceId)
+    const { authority } = recoveryProjectionAccess({
+      authority: verified.workspaceAuthority.authority as WorkspaceWriteAuthorityEvidence,
+      scopeAuthoritySnapshot: verified.scopeAuthoritySnapshot,
+      snapshot: { workspaceId, savedAt: new Date().toISOString() },
+    }, currentAuthority, { authority: null, credential: null })
+    if (authority.ownerPersonId !== profile.identity.personId || authority.ownerPublicKey !== profile.identity.publicKey) {
+      throw new Error("Verified board authority is not owned by the current Identity")
+    }
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context => context.write(async () => {
+      await input.ensureCurrent()
+      await peerStore.putWorkspaceAuthority(authority)
+      const durable = await peerStore.getWorkspaceAuthority(workspaceId)
+      if (durable?.ownerPersonId !== profile.identity.personId || durable.ownerPublicKey !== profile.identity.publicKey) {
+        throw new Error("The board owner changed during reconnect; use its current owner Identity")
+      }
+    }))
     await input.ensureCurrent()
     if (!store.recordVerifiedOwnerWorkspace) throw new Error("Owner board catalog is unavailable")
     await store.recordVerifiedOwnerWorkspace(workspaceId)

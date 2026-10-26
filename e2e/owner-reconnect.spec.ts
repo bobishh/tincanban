@@ -13,6 +13,21 @@ async function profile(page: Page): Promise<PublicProfile> {
   })
 }
 
+type PageFailure = { label: string; event: "crash" } | { label: string; event: "pageerror"; name: string }
+
+function logPageFailure(page: Page, label: string, failures: PageFailure[]) {
+  page.on("crash", () => {
+    const failure = { label, event: "crash" } as const
+    failures.push(failure)
+    console.error(`[owner-reconnect.page] ${JSON.stringify(failure)}`)
+  })
+  page.on("pageerror", error => {
+    const failure = { label, event: "pageerror", name: error.name } as const
+    failures.push(failure)
+    console.error(`[owner-reconnect.page] ${JSON.stringify(failure)}`)
+  })
+}
+
 async function enrollDevice(hostPage: Page, recipient: Page) {
   await hostPage.getByRole("button", { name: "Sync", exact: true }).click()
   const host = hostPage.getByRole("dialog", { name: "Device sync" })
@@ -143,6 +158,12 @@ test(`Given a participant copy and a current owner Identity device with retained
   const ownerDevice = await ownerDeviceContext.newPage()
   const wrongOwner = await wrongOwnerContext.newPage()
   const participant = await participantContext.newPage()
+  const pageFailures: PageFailure[] = []
+  logPageFailure(page, "original-owner", pageFailures)
+  logPageFailure(ownerDevice, "returning-owner-device", pageFailures)
+  logPageFailure(wrongOwner, "wrong-identity", pageFailures)
+  logPageFailure(participant, "retained-participant", pageFailures)
+  let wrongOwnerContextClosed = false
   try {
     // Enroll this current owner Identity device before creating the board to reconnect.
     // It has the active Identity authority but no local copy of that later board.
@@ -174,6 +195,7 @@ test(`Given a participant copy and a current owner Identity device with retained
     }
     await join.getByRole("button", { name: "Close", exact: true }).first().click()
     await host.getByRole("button", { name: "Close", exact: true }).first().click()
+    await page.close()
 
     await participant.getByRole("button", { name: "Sync", exact: true }).click()
     const participantSync = participant.getByRole("dialog", { name: "Device sync" })
@@ -189,6 +211,8 @@ test(`Given a participant copy and a current owner Identity device with retained
     await expect(wrongOwnerSync.getByRole("alert")).toContainText(/owner|Identity/i, { timeout: 30_000 })
     await expect.poll(() => localReconnectState(wrongOwner)).toEqual(wrongOwnerBefore)
     await expect.poll(() => localReconnectState(participant)).toEqual(participantBeforeWrongOwner)
+    await wrongOwnerContext.close()
+    wrongOwnerContextClosed = true
 
     await ownerDevice.goto(baseURL!)
     const ownerBeforeChallenge = await localReconnectState(ownerDevice)
@@ -228,17 +252,28 @@ test(`Given a participant copy and a current owner Identity device with retained
     await expect(ownerDevice.getByRole("region", { name: "Original board", exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(ownerDevice.getByRole("button", { name: "Open Owner restored — Engineer" })).toBeVisible({ timeout: 30_000 })
     await ownerDevice.getByRole("button", { name: "Sync", exact: true }).click()
-    await expect(ownerDevice.getByRole("dialog", { name: "Device sync" })
-      .locator(".mesh-member.is-selected .mesh-member-role")).toHaveText("owner")
+    const ownerSyncAfterReload = ownerDevice.getByRole("dialog", { name: "Device sync" })
+    await expect(ownerSyncAfterReload.locator(".mesh-member.is-selected .mesh-member-role")).toHaveText("owner")
+    const ownerRustyPanel = ownerDevice.getByRole("region", { name: "Rusty", exact: true })
+    const ownerBoardStatus = ownerRustyPanel.locator(".rusty-connections").first().locator("li .reading-explanation")
+    await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+    await ownerRustyPanel.getByRole("button", { name: "Sync now", exact: true }).click()
+    await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+    await ownerSyncAfterReload.getByRole("button", { name: "Close", exact: true }).click()
+
+    await addLead(ownerDevice, "Owner sync after reconnect")
+    await expect(participant.getByRole("button", { name: "Open Owner sync after reconnect — Engineer" }))
+      .toBeVisible({ timeout: 30_000 })
 
     await participant.getByRole("button", { name: "Sync", exact: true }).click()
     const memberRole = participant.getByRole("dialog", { name: "Device sync" }).locator(".mesh-member.is-selected .mesh-member-role")
     await expect(memberRole).toHaveText("editor")
   } finally {
     await participantContext.close()
-    await wrongOwnerContext.close()
+    if (!wrongOwnerContextClosed) await wrongOwnerContext.close()
     await ownerDeviceContext.close()
     await rusty.close()
   }
+  expect(pageFailures).toEqual([])
 })
 }

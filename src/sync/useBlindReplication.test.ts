@@ -100,6 +100,34 @@ it("Given background Rusty sync is pending, when an owner requests recovery, the
   } finally { release?.() }
 })
 
+it("Given an identity sync captured the prior profile revision, when the owner requests Sync now during that pass, then wait for a fresh upload of the current revision", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  let profileRevision = "before-photo-update"
+  const capturedRevisions: string[] = []
+  let release!: () => void
+  runtime.identitySync.mockImplementationOnce(async () => {
+    capturedRevisions.push(profileRevision)
+    await new Promise<boolean>(resolve => { release = () => resolve(true) })
+    return true
+  })
+  runtime.identitySync.mockImplementation(async () => { capturedRevisions.push(profileRevision); return true })
+  const controller = f.start()
+  let requested: Promise<void> | undefined
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    expect(capturedRevisions).toEqual(["before-photo-update"])
+    profileRevision = "after-photo-update"
+    requested = controller.syncNow()
+    release()
+    await requested
+    expect(capturedRevisions).toEqual(["before-photo-update", "after-photo-update"])
+  } finally {
+    release?.()
+    await requested?.catch(() => {})
+  }
+})
+
 it.each(["workspace", "identity"] as const)("Given recovery is queued behind sync, when the %s changes, then reject the old request without a recovery write", async changed => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)

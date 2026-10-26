@@ -337,7 +337,9 @@ function createAdmittedSnapshot(workspaceId: string, original: StoredWorkspaceSn
 }
 
 /** Project freshly admitted control without restoring stale owners or replacing current transport secrets. */
-export function recoveryProjectionAccess(admitted: WorkspaceHistoryRecoveryAdmission,
+export function recoveryProjectionAccess(admitted: Pick<WorkspaceHistoryRecoveryAdmission, "authority" | "scopeAuthoritySnapshot"> & {
+  snapshot: Pick<StoredWorkspaceSnapshot, "workspaceId" | "savedAt">
+},
   currentAuthority: WorkspaceRecoveryCurrentAuthority | null,
   backupControl: { authority: WorkspaceAuthorityRecord | null; credential: WorkspaceMeshCredential | null },
   currentCredential?: WorkspaceMeshCredential | null): { authority: WorkspaceAuthorityRecord; credential: WorkspaceMeshCredential | null } {

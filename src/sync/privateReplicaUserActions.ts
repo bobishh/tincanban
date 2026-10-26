@@ -2,7 +2,8 @@ import { ref } from "vue"
 import type { createPrivateReplicationActions } from "./privateReplicationActions"
 
 /** Reserve one user request without disabling controls for background I/O. */
-export function createPrivateReplicaUserActions(waitForBackground: () => Promise<unknown>, captureSession: () => () => void) {
+export function createPrivateReplicaUserActions(waitForBackground: () => Promise<unknown>, captureSession: () => () => void,
+  syncNow: () => Promise<void>, afterSync: () => void) {
   const busy = ref(false)
   function manual<Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>) {
     return async (...args: Args): Promise<Result> => {
@@ -26,5 +27,6 @@ export function createPrivateReplicaUserActions(waitForBackground: () => Promise
       remove: manual(actions.remove),
     }
   }
-  return { busy, protect }
+  const runSyncNow = manual(syncNow)
+  return { busy, protect, syncNow: () => runSyncNow().then(result => { afterSync(); return result }) }
 }

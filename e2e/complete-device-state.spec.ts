@@ -13,6 +13,44 @@ async function profile(page: Page): Promise<PublicProfile> {
   })
 }
 
+async function profileSyncDiagnostic(page: Page, expectedPhoto: string | null, origin: string) {
+  return page.evaluate(async ({ expectedPhoto, origin }) => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { readLocal } = await import("/src/localDb.ts")
+    const { getIdentityReplicaConfigurations, getPrivateReplicaProgress } = await import("/src/sync/privateReplicaRepository.ts")
+    const { readIdentityStateRevision } = await import("/src/identityStateRevision.ts")
+    const local = await readLocal("tincanban.local_profile.v1")
+    const identity = local ? JSON.parse(local).identity : null
+    const root = await defaultStorage.loadPersonalRoot()
+    const configs = identity ? await getIdentityReplicaConfigurations(identity.personId) : []
+    const config = configs.find(value => value.origin === origin)
+    const progress = config && identity ? await getPrivateReplicaProgress(identity.personId, config) : undefined
+    const hash = async (value: string | undefined) => value ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))))
+      .map(byte => byte.toString(16).padStart(2, "0")).join("") : null
+    const revision = await readIdentityStateRevision()
+    const profileState = root?.profileState
+    const row = [...document.querySelectorAll(".rusty-profile-connection")]
+      .find(element => element.querySelector(".technical-value")?.textContent?.trim() === origin)
+    const safeText = (value: string) => value.replace(/https?:\/\/[^\s"']+/g, "[url]")
+      .replace(/[A-Za-z0-9_-]{43,}/g, "[opaque]").slice(0, 500)
+    return {
+      path: location.pathname,
+      matchingPerson: Boolean(identity && root?.identity.personId === identity.personId),
+      profileRevision: revision,
+      profileOperationCount: profileState?.operations.length ?? null,
+      profileStateHash: await hash(profileState ? JSON.stringify(profileState) : undefined),
+      photoHash: await hash(root?.photo?.avatarData ?? undefined),
+      photoMatchesLatest: root?.photo?.avatarData === expectedPhoto,
+      identityReplicaCount: configs.length,
+      deliveryStatus: row?.querySelector(".reading-explanation")?.textContent?.trim() ?? "missing",
+      deliveryError: safeText(row?.querySelector('[role="alert"]')?.textContent ?? ""),
+      alerts: [...document.querySelectorAll('[role="alert"]')].map(element => safeText(element.textContent ?? "")).filter(Boolean).slice(0, 12),
+      replica: progress ? { cursor: progress.cursor, acknowledgedRevision: progress.uploadedRevision ?? null,
+        acknowledgedCurrentRevision: progress.uploadedRevision === revision, hasReceipt: Boolean(progress.lastUploaded), pending: Boolean(progress.pending) } : null,
+    }
+  }, { expectedPhoto, origin })
+}
+
 async function enrollDevice(hostPage: Page, recipient: Page) {
   await hostPage.getByRole("button", { name: "Sync", exact: true }).click()
   const host = hostPage.getByRole("dialog", { name: "Device sync" })
@@ -120,11 +158,25 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
   }
 })
 
-test("Given an acknowledged profile photo update, when the source closes and the enrolled device cold-starts, then the latest saved photo wins", async ({ page, playwright, baseURL }) => {
+test("Given an acknowledged profile photo update, when the source closes and the enrolled device cold-starts, then the latest saved photo wins", async ({ page, playwright, baseURL }, testInfo) => {
   test.setTimeout(120_000)
-  const mobileBrowser = await (process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
+  const requestedPhoneBrowser = process.env.IDENTITY_E2E_PHONE_BROWSER
+  if (requestedPhoneBrowser && requestedPhoneBrowser !== "chromium" && requestedPhoneBrowser !== "webkit") {
+    throw new Error("IDENTITY_E2E_PHONE_BROWSER must be chromium or webkit")
+  }
+  const mobileBrowser = await (requestedPhoneBrowser === "chromium" ? playwright.chromium : requestedPhoneBrowser === "webkit" ? playwright.webkit :
+    process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
   const context = await mobileBrowser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const phone = await context.newPage()
+  const phoneConsoleErrors: string[] = []
+  const identityRequests: Array<{ method: string; path: string; status?: number }> = []
+  const safeDiagnosticText = (value: string) => value.replace(/https?:\/\/[^\s"']+/g, "[url]")
+    .replace(/[A-Za-z0-9_-]{43,}/g, "[opaque]").slice(0, 500)
+  phone.on("console", message => {
+    if (message.type() === "error") phoneConsoleErrors.push(safeDiagnosticText(message.text()))
+  })
+  phone.on("pageerror", error => phoneConsoleErrors.push(`${error.name}: ${safeDiagnosticText(error.message)}`))
+  let latestSource: string | null = null
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   const hostProfile = await profile(page)
@@ -168,12 +220,15 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
     await page.getByRole("button", { name: "Save profile", exact: true }).click()
     await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
-    const latestSource = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    latestSource = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    if (!latestSource) throw new Error("Saved profile photo is missing")
     await page.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
 
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
+    const acknowledgedSourceState = await profileSyncDiagnostic(page, latestSource, rusty.origin)
+    await testInfo.attach("source-identity-acknowledgment.json", { body: JSON.stringify(acknowledgedSourceState), contentType: "application/json" })
     await page.goto("about:blank")
     // Workspace projection may arrive while its private Identity read is pending.
     const identityReadGate = new Promise<void>(resolve => { releaseIdentityRead = resolve })
@@ -184,6 +239,19 @@ test("Given an acknowledged profile photo update, when the source closes and the
         await identityReadGate
       }
       await route.continue()
+    })
+    phone.on("request", request => {
+      if (request.url().startsWith(`${rusty.origin}/v2/scopes/${identityScopeId}/objects`)) {
+        identityRequests.push({ method: request.method(), path: "/v2/scopes/[identity-scope]/objects" })
+      }
+    })
+    phone.on("response", response => {
+      if (response.url().startsWith(`${rusty.origin}/v2/scopes/${identityScopeId}/objects`)) {
+        const request = response.request()
+        const item = [...identityRequests].reverse().find(value => value.method === request.method() && value.status === undefined)
+        if (item) item.status = response.status()
+        else identityRequests.push({ method: request.method(), path: "/v2/scopes/[identity-scope]/objects", status: response.status() })
+      }
     })
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
@@ -205,6 +273,9 @@ test("Given an acknowledged profile photo update, when the source closes and the
   } finally {
     releaseIdentityRead()
     await phone.unrouteAll({ behavior: "wait" })
+    const phoneState = await profileSyncDiagnostic(phone, latestSource, rusty.origin)
+      .catch(error => ({ snapshotError: safeDiagnosticText(String(error)) }))
+    await testInfo.attach("phone-profile-diagnostic.json", { body: JSON.stringify({ phoneState, identityRequests, phoneConsoleErrors }), contentType: "application/json" })
     await context.close(); await mobileBrowser.close(); await rusty.close()
   }
 })
