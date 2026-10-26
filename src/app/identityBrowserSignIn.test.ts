@@ -10,6 +10,41 @@ import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendin
 describe("Identity browser sign-in", () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
+  it("Given a configured catalog service and a cold Identity profile, when ordinary sign-in starts, then its exact service key is included for Identity approval", async () => {
+    const app = (await createRecoverableIdentity("better", "Fresh app")).profile
+    const service = (await createRecoverableIdentity("better", "Catalog service")).profile
+    const origin = "https://catalog.example"
+    const fetcher = vi.fn(async () => Response.json({ protocolVersions: [2], publicOrigin: origin,
+      service: { publicKey: service.identity.publicKey, serviceId: service.identity.personId },
+      capabilities: { modes: ["blind"], applicationWrites: false, classification: false,
+        identityCatalogAccess: { version: 1 } } }))
+    vi.stubGlobal("fetch", fetcher)
+    const { pending } = await createIdentityBrowserSignIn({ profile: app,
+      portalOrigin: "https://identity.example", applicationOrigin: "https://boards.example",
+      returnPath: "/", catalogOrigin: origin })
+    expect(pending.request.payload).toMatchObject({ version: 3, personId: null,
+      includeIdentityCatalogAccess: true, rustyServicePins: [{ origin,
+        serviceId: await publicKeyId(service.identity.publicKey), servicePublicKey: service.identity.publicKey }] })
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it("Given catalog discovery is unavailable, when sign-in starts, then fail before redirect and allow a fresh retry", async () => {
+    const app = (await createRecoverableIdentity("better", "Fresh app")).profile
+    const service = (await createRecoverableIdentity("better", "Catalog service")).profile
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Network unavailable"))
+      .mockResolvedValueOnce(Response.json({ protocolVersions: [2], publicOrigin: "https://catalog.example",
+        service: { publicKey: service.identity.publicKey, serviceId: service.identity.personId },
+        capabilities: { modes: ["blind"], applicationWrites: false, classification: false } }))
+    vi.stubGlobal("fetch", fetcher)
+    const options = { profile: app,
+      portalOrigin: "https://identity.example", applicationOrigin: "https://boards.example",
+      returnPath: "/", catalogOrigin: "https://catalog.example" }
+    await expect(createIdentityBrowserSignIn(options)).rejects.toThrow("Network unavailable")
+    await expect(createIdentityBrowserSignIn(options)).resolves.toMatchObject({ pending: {
+      request: { payload: { rustyServicePins: [{ origin: options.catalogOrigin }] } },
+    } })
+  })
+
   it("keeps unexpected aborts visible with a fresh-sign-in action", () => {
     expect(browserSignInFailureMessage(new DOMException("storage unavailable", "AbortError")))
       .toBe("Identity sign-in was interrupted. Select Sign in to try again.")
@@ -190,9 +225,12 @@ describe("Identity browser sign-in", () => {
     const service = (await createRecoverableIdentity("better", "Rusty service")).profile
     const pin = { origin: "https://rusty.example", serviceId: await publicKeyId(service.identity.publicKey),
       servicePublicKey: service.identity.publicKey }
+    const fetcher = vi.fn(async () => { throw new Error("Explicit pin must not be rediscovered") })
+    vi.stubGlobal("fetch", fetcher)
     const { pending } = await createIdentityBrowserSignIn({ profile: app, portalOrigin: "https://identity.example",
       applicationOrigin: "https://boards.example", returnPath: "/boards/current", personId: app.identity.personId,
-      rustyServicePins: [pin], challenge: "c".repeat(64) })
+      rustyServicePins: [pin], catalogOrigin: "https://ignored.example", challenge: "c".repeat(64) })
+    expect(fetcher).not.toHaveBeenCalled()
     expect(pending.request.payload.personId).toBe(app.identity.personId)
     expect(pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true, rustyServicePins: [pin] })
 

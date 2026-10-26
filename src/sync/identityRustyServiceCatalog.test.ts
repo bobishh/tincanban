@@ -12,6 +12,24 @@ import {
 import { readIdentityRustyServicePin, saveIdentityRustyServiceCatalogApproval } from "./identityRustyServiceCatalog"
 
 describe("durable Identity Rusty service catalog", () => {
+  it("Given ordinary sign-in chooses the Identity in the portal, when its requested service is approved, then retain that verified pin for the chosen person", async () => {
+    const manager = (await createRecoverableIdentity("better", "Chosen Identity")).profile
+    const app = (await createRecoverableIdentity("better", "Guest app")).profile
+    const service = (await createRecoverableIdentity("better", "Catalog service")).profile
+    const pin = { origin: "https://signin-catalog.example", serviceId: await publicKeyId(service.identity.publicKey),
+      servicePublicKey: service.identity.publicKey }
+    const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example",
+      challenge: "f".repeat(64), expiresAt: Date.now() + 60_000, personId: null,
+      includeIdentityCatalogAccess: true, rustyServicePins: [pin] })
+    const empty = emptyIdentityProfileState(manager.identity.personId)
+    const operation = await createIdentityRustyServicePinOperation(manager, empty, pin, [manager.certificate])
+    const profileState = await readIdentityProfileState({ ...empty, operations: operation ? [operation] : [] },
+      manager.identity, [manager.certificate])
+    const approval = await createDeviceAuthorizationApproval(manager, request, { applicationOrigin: "https://boards.example",
+      challenge: request.payload.challenge, certificates: [manager.certificate], profileState, revocations: [], includeProfileState: true })
+    await saveIdentityRustyServiceCatalogApproval(request, approval, app)
+    await expect(readIdentityRustyServicePin(manager.identity.personId, pin.origin, app)).resolves.toEqual(pin)
+  })
   it("Given signed Identity approval, when the request expires and app reloads, then resolve the same pin from retained proof", async () => {
     const manager = (await createRecoverableIdentity("better", "Identity manager")).profile
     const app = (await createRecoverableIdentity("better", "App device")).profile

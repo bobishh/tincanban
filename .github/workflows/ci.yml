@@ -410,6 +410,12 @@ jobs:
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.identity-bootstrap.config.ts --reporter=list
+      - name: Verify cold Identity catalog discovery with source closed
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+          IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
+          IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
+        run: npx playwright test --config playwright.identity-cold-catalog.config.ts --reporter=list
       - name: Verify public board lifecycle with native storage
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse

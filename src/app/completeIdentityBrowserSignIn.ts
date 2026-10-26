@@ -13,12 +13,16 @@ import { readPendingLocalWorkspaceOwnershipIntent, transferLocallyOwnedWorkspace
 import { installIdentityCatalogAccess, readIdentityCatalogAccess, type IdentityCatalogBinding } from "../sync/identityCatalogAccess"
 import { useTincanban } from "../state"
 import { retainIdentityCatalogPublisherAuthorization } from "../sync/identityCatalogPublisher"
+import { recordIdentityBrowserSignIn } from "./identityBrowserSignIn"
 
 async function approvedCatalogs(approval: DeviceAuthorizationApproval, request: DeviceAuthorizationRequest, profile: LocalProfile) {
   if (request.payload.version !== 3) return []
   const recipient = { ...profile, identity: approval.identity, certificate: approval.certificate }
   const opened = await openApprovedIdentityCatalogAccess(approval, request, recipient, { expectedExistingProfile: profile })
-  if (opened.status === "unavailable") throw new Error("Your boards could not be checked. Select Sign in to retry; local boards have not changed.")
+  if (opened.status === "unavailable") {
+    recordIdentityBrowserSignIn("catalog", "failed", { errorCode: "catalog_unavailable" })
+    throw new Error("Your boards could not be checked. Select Sign in to retry; local boards have not changed.")
+  }
   const entries: Array<{ access: Uint8Array; binding: IdentityCatalogBinding }> = []
   for (const entry of opened.entries) {
     const pin = approval.rustyServicePins?.find(candidate => candidate.serviceId === entry.serviceId)

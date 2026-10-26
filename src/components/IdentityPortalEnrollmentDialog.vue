@@ -75,7 +75,8 @@ async function beginBrowserSignIn() {
   try {
     const returnPath = browserSignInReturnPath.value ?? `${window.location.pathname}${window.location.search}`
     const { pending, portalUrl } = await createIdentityBrowserSignIn({ profile: props.profile,
-      portalOrigin: props.portalOrigin, applicationOrigin: window.location.origin, returnPath })
+      portalOrigin: props.portalOrigin, applicationOrigin: window.location.origin, returnPath,
+      catalogOrigin: import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined })
     if (attempt !== browserSignInAttempt) return
     browserSignInReturnPath.value = pending.returnPath
     activeBrowserSignInChallenge = pending.request.payload.challenge

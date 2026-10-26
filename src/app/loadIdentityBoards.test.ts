@@ -107,3 +107,22 @@ it("Given an edited Untitled active beside a saved board, when sign-in resumes, 
     expect(state.switchWorkspace).not.toHaveBeenCalled()
   } finally { Automerge.free(edited); Automerge.free(saved) }
 })
+
+it("Given sign-in added only a member profile to the empty starter, when a saved board is restored, then select the saved board", async () => {
+  const state = app()
+  const seed = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("guest-default", "Untitled", "bo", "blank"))
+  const empty = Automerge.change(seed, draft => {
+    draft.entities["member-profile:bo"] = { id: "member-profile:bo", kind: "member_profile", personId: "bo",
+      data: JSON.stringify({ avatarData: null, changedAt: "2026-10-26T11:00:00.000Z" }), title: "Member profile",
+      placement: { parentId: null, rank: "0/1" }, archivedAt: null,
+      createdAt: "2026-10-26T11:00:00.000Z", updatedAt: "2026-10-26T11:00:00.000Z" }
+  })
+  const saved = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("job-search", "Saved board", "bo", "blank"))
+  state.availableWorkspaces.value = [{ id: "guest-default" }, { id: "job-search" }]
+  state.readWorkspaceDoc.mockImplementation(async id => (id === "guest-default" ? empty : saved) as never)
+  try {
+    await loadIdentityBoards(state as never)
+    expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+    expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+  } finally { Automerge.free(empty); Automerge.free(saved) }
+})

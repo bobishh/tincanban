@@ -29,7 +29,7 @@ export async function saveIdentityRustyServiceCatalogApproval(
   const requestedPins = "rustyServicePins" in request.payload ? (request.payload.rustyServicePins ?? []) : []
   if (!requestedPins.length || !verified.rustyServicePins) return
   const personId = verified.identity.personId
-  if (request.payload.personId !== personId) throw new Error("Rusty service approval belongs to another Identity")
+  if (request.payload.personId !== null && request.payload.personId !== personId) throw new Error("Rusty service approval belongs to another Identity")
   if (!verified.authorityView) throw new Error("Rusty service approval is missing its signed authority view")
   await mergeIdentityAuthorityView(verified.authorityView)
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -79,7 +79,8 @@ async function verifySavedServicePin(catalog: CatalogState, personId: string, or
   expectedExistingProfile?: LocalProfile): Promise<IdentityRustyServicePin | null> {
   const approval = await verifyRetainedDeviceAuthorizationApproval(catalog.approval, catalog.request,
     expectedExistingProfile ? { expectedExistingProfile } : {})
-  if (approval.identity.personId !== personId || catalog.request.payload.personId !== personId) {
+  if (approval.identity.personId !== personId ||
+      (catalog.request.payload.personId !== null && catalog.request.payload.personId !== personId)) {
     throw new Error("Saved Identity service approval belongs to another Identity")
   }
   const pin = approval.rustyServicePins?.find(candidate => candidate.origin === origin)

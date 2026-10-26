@@ -2,6 +2,7 @@ import { canonicalizeJson, createDeviceAuthorizationRequest, encodeDeviceAuthori
   parseDeviceAuthorizationApproval, type DeviceAuthorizationApproval, type DeviceAuthorizationRequest,
   type IdentityRustyServicePin, type LocalProfile } from "@meta-uber/mesh-identity"
 import { safeReturnPath, validOrigin } from "./identityBrowserSignInNavigation"
+import { discoverRustyService } from "@meta-uber/mesh-replication/rusty-management"
 
 export type PendingIdentityBrowserSignIn = {
   request: DeviceAuthorizationRequest
@@ -22,6 +23,7 @@ export async function createIdentityBrowserSignIn(options: {
   challenge?: string
   personId?: string | null
   rustyServicePins?: IdentityRustyServicePin[]
+  catalogOrigin?: string
 }): Promise<{ pending: PendingIdentityBrowserSignIn; portalUrl: string }> {
   const now = options.now ?? Date.now()
   const portal = new URL(options.portalOrigin)
@@ -31,6 +33,11 @@ export async function createIdentityBrowserSignIn(options: {
     throw new Error("Identity sign-in requires a secure app and portal origin")
   }
   const returnPath = safeReturnPath(options.returnPath)
+  let rustyServicePins = options.rustyServicePins
+  if (rustyServicePins === undefined && options.catalogOrigin?.trim()) {
+    const service = await discoverRustyService(options.catalogOrigin.trim())
+    rustyServicePins = [{ origin: service.origin, serviceId: service.serviceId, servicePublicKey: service.servicePublicKey }]
+  }
   const challenge = options.challenge ?? Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("")
   const request = await createDeviceAuthorizationRequest(options.profile, {
     applicationOrigin: application.origin,
@@ -38,7 +45,7 @@ export async function createIdentityBrowserSignIn(options: {
     expiresAt: now + 120_000,
     personId: options.personId ?? null,
     includeIdentityCatalogAccess: true,
-    ...(options.rustyServicePins ? { rustyServicePins: options.rustyServicePins } : {}),
+    ...(rustyServicePins ? { rustyServicePins } : {}),
   })
   const pending: PendingIdentityBrowserSignIn = {
     request,

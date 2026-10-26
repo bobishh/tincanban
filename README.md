@@ -56,6 +56,12 @@ error; select **Sign in** to retry. An untouched
 `Untitled` starter does not replace a restored board as the selected board.
 Edited starters remain available and keep their current selection.
 
+When `VITE_PUBLIC_BOARD_ORIGIN` is configured, sign-in discovers that Rusty service
+and includes its exact address and key for approval in Identity. This lets an
+older enrolled Identity profile find an existing catalog while its other devices
+are closed. Identity retains the approved service pin in its signed profile;
+discovery alone grants no access and does not connect a board to storage.
+
 ## Existing owner devices
 
 A participant retaining a board can open **Sync → Connect owner device** to show

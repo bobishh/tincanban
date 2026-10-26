@@ -10,19 +10,19 @@ export async function startRustyService(owner: unknown, corsOrigin: string) {
   })
 }
 
-export async function startIdentityRustyService(corsOrigin: string) {
+export async function startIdentityRustyService(corsOrigin: string, listenAddress?: string) {
   const origins = [...new Set([corsOrigin, process.env.IDENTITY_E2E_ORIGIN].filter(Boolean))].join(",")
   return startRustyServiceWithEnvironment(corsOrigin, {
     RUSTY_IDENTITY_AUTHORITY_ENFORCEMENT: "strict",
     RUSTY_CORS_ORIGINS: origins,
-  })
+  }, listenAddress)
 }
 
-async function startRustyServiceWithEnvironment(corsOrigin: string, env: Record<string, string>) {
+async function startRustyServiceWithEnvironment(corsOrigin: string, env: Record<string, string>, listenAddress = "127.0.0.1:0") {
   const directory = await mkdtemp(join(tmpdir(), "rusty-mobile-"))
   let child: ChildProcess
   const origin = await new Promise<string>((ready, reject) => {
-    child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, "127.0.0.1:0"], {
+    child = spawn(resolve(process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse"), [directory, listenAddress], {
       env,
     })
     child.stderr?.on("data", chunk => { process.stderr.write(chunk) })

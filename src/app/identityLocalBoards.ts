@@ -73,8 +73,18 @@ export function selectedIdentityLocalBoardIds(
   return plan.ownedBoards.filter(board => selected.has(board.workspaceId)).map(board => board.workspaceId)
 }
 
-export function isUntouchedDefaultBoard(doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
-  if (doc.title !== "Untitled" || Automerge.getAllChanges(doc).length !== 1) return false
+function isUntouchedDefaultBoard(doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
+  return Automerge.getAllChanges(doc).length === 1 && matchesDefaultSeed(doc)
+}
+
+/** Automatic member-profile publication does not make the starter a preferred board after sign-in. */
+export function isEmptyDefaultBoard(doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
+  return matchesDefaultSeed({ ...doc, entities: Object.fromEntries(Object.entries(doc.entities)
+    .filter(([, entity]) => !hasEntityKind(entity, "member_profile"))) })
+}
+
+function matchesDefaultSeed(doc: WorkspaceDocumentV2): boolean {
+  if (doc.title !== "Untitled") return false
   const boards = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "board"))
   if (boards.length !== 1 || boards[0]?.title !== "Untitled" || boards[0].preset?.key !== "blank") return false
   try {
