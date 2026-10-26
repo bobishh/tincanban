@@ -114,6 +114,24 @@ async function participantReconnectSourceReady(page: Page, workspaceId: string):
   }, workspaceId)
 }
 
+async function participantReconnectSourceReadyWithoutRusty(page: Page, workspaceId: string): Promise<boolean> {
+  return page.evaluate(async id => {
+    const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+    const { peerStore } = await import("/src/sync/peerStore.ts")
+    const profile = await bootstrapIdentity()
+    const [credential, authority, stored, configurations] = await Promise.all([
+      peerStore.getWorkspaceCredential(id), peerStore.getWorkspaceAuthority(id), defaultStorage.loadWorkspaceDoc(id),
+      getReplicaConfigurations(profile.identity.personId),
+    ])
+    return Boolean(credential && authority && stored?.doc.id === id && stored.doc.ownerPersonId === credential.ownerPersonId &&
+      authority.workspaceId === id && authority.ownerPersonId === credential.ownerPersonId &&
+      credential.localGrant?.payload.workspaceId === id && credential.localGrant.payload.personId === profile.identity.personId &&
+      !configurations.some(config => config.workspaceId === id))
+  }, workspaceId)
+}
+
 async function retainLegacyOwnerAccess(ownerPage: Page, participantPage: Page, workspaceId: string) {
   const access = await ownerPage.evaluate(async id => {
     const { bootstrapIdentity, sha256Base64Url, signEnvelope } = await import("/src/domain/identity.ts")
@@ -145,13 +163,15 @@ async function retainLegacyOwnerAccess(ownerPage: Page, participantPage: Page, w
   }, { id: workspaceId, ownerAccess: access })
 }
 
-for (const storageVersion of [1, 2] as const) {
-test(`Given a participant copy and a current owner Identity device with retained v${storageVersion} storage access, when owner reconnect is offered, then wrong identities write nothing and the owner restores the same board`, async ({ page, browser, baseURL }) => {
+for (const storageVersion of [1, 2, "none"] as const) {
+const storageDescription = storageVersion === "none" ? "without Rusty storage access" : `with retained v${storageVersion} storage access`
+test(`Given a participant copy and a current owner Identity device ${storageDescription}, when owner reconnect is offered, then wrong identities write nothing and the owner restores the same board`, async ({ page, browser, baseURL }) => {
   test.setTimeout(180_000)
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   const initialOwner = await profile(page)
-  const rusty = await startRustyService({ identity: initialOwner.identity, allowedControllerDeviceIds: [initialOwner.device.deviceId] }, baseURL!)
+  const rusty = storageVersion === "none" ? undefined : await startRustyService(
+    { identity: initialOwner.identity, allowedControllerDeviceIds: [initialOwner.device.deviceId] }, baseURL!)
   const ownerDeviceContext = await browser.newContext()
   const wrongOwnerContext = await browser.newContext()
   const participantContext = await browser.newContext()
@@ -173,7 +193,7 @@ test(`Given a participant copy and a current owner Identity device with retained
     const originalWorkspaceId = await page.evaluate(async () =>
       (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
     await addLead(page, "Owner restored")
-    await connectRusty(page, rusty.origin)
+    if (rusty) await connectRusty(page, rusty.origin)
 
     await participant.goto("/")
     await ensureJobSearchWorkspace(participant)
@@ -188,10 +208,13 @@ test(`Given a participant copy and a current owner Identity device with retained
     await page.getByRole("button", { name: "Approve access", exact: true }).click()
     await expect(join.getByText("Connected to Original board", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(participant.getByRole("button", { name: "Open Owner restored — Engineer" })).toBeVisible({ timeout: 30_000 })
-    await expect.poll(() => participantReconnectSourceReady(participant, originalWorkspaceId), { timeout: 30_000 }).toBe(true)
+    const sourceReady = () => storageVersion === "none"
+      ? participantReconnectSourceReadyWithoutRusty(participant, originalWorkspaceId)
+      : participantReconnectSourceReady(participant, originalWorkspaceId)
+    await expect.poll(sourceReady, { timeout: 30_000 }).toBe(true)
     if (storageVersion === 1) {
       await retainLegacyOwnerAccess(page, participant, originalWorkspaceId)
-      await expect.poll(() => participantReconnectSourceReady(participant, originalWorkspaceId), { timeout: 30_000 }).toBe(true)
+      await expect.poll(sourceReady, { timeout: 30_000 }).toBe(true)
     }
     await join.getByRole("button", { name: "Close", exact: true }).first().click()
     await host.getByRole("button", { name: "Close", exact: true }).first().click()
@@ -246,33 +269,68 @@ test(`Given a participant copy and a current owner Identity device with retained
     }, originalWorkspaceId)
     expect(restored).toMatchObject({ ids: [originalWorkspaceId],
       rootReference: { workspaceId: originalWorkspaceId, documentId: originalWorkspaceId, forgotten: false },
-      ownerPersonId: restored.currentPersonId, ownerConfigCount: 1 })
+      ownerPersonId: restored.currentPersonId, ownerConfigCount: storageVersion === "none" ? 0 : 1 })
 
     await ownerDevice.reload()
     await expect(ownerDevice.getByRole("region", { name: "Original board", exact: true })).toBeVisible({ timeout: 30_000 })
     await expect(ownerDevice.getByRole("button", { name: "Open Owner restored — Engineer" })).toBeVisible({ timeout: 30_000 })
     await ownerDevice.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerSyncAfterReload = ownerDevice.getByRole("dialog", { name: "Device sync" })
-    await expect(ownerSyncAfterReload.locator(".mesh-member.is-selected .mesh-member-role")).toHaveText("owner")
-    const ownerRustyPanel = ownerDevice.getByRole("region", { name: "Rusty", exact: true })
-    const ownerBoardStatus = ownerRustyPanel.locator(".rusty-connections").first().locator("li .reading-explanation")
-    await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
-    await ownerRustyPanel.getByRole("button", { name: "Sync now", exact: true }).click()
-    await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+    await expect(ownerDevice.getByRole("img", { name: "Workspace role: owner", exact: true })).toBeVisible()
+    const ownerMemberRole = ownerSyncAfterReload.locator(".mesh-member").filter({ hasText: /· You/ }).locator(".mesh-member-role")
+    await expect(ownerMemberRole).toHaveText("owner")
+    if (rusty) {
+      const ownerRustyPanel = ownerDevice.getByRole("region", { name: "Rusty", exact: true })
+      const ownerBoardStatus = ownerRustyPanel.locator(".rusty-connections").first().locator("li .reading-explanation")
+      await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+      await ownerRustyPanel.getByRole("button", { name: "Sync now", exact: true }).click()
+      await expect(ownerBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+    }
     await ownerSyncAfterReload.getByRole("button", { name: "Close", exact: true }).click()
 
     await addLead(ownerDevice, "Owner sync after reconnect")
     await expect(participant.getByRole("button", { name: "Open Owner sync after reconnect — Engineer" }))
       .toBeVisible({ timeout: 30_000 })
 
+    if (rusty) {
+      const ownerWorkspaceUrl = ownerDevice.url()
+      await ownerDevice.goto("about:blank")
+      await addLead(participant, "Ray sync after owner offline")
+      await participant.getByRole("button", { name: "Sync", exact: true }).click()
+      const participantSync = participant.getByRole("dialog", { name: "Device sync" })
+      const rayRustyPanel = participantSync.getByRole("region", { name: "Rusty", exact: true })
+      const rayBoardStatus = rayRustyPanel.locator(".rusty-connections").first().locator("li .reading-explanation")
+      const rayBoardLastSync = rayRustyPanel.locator(".rusty-connections").first().locator("li time")
+      await expect(rayBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+      await expect(rayBoardLastSync).toHaveAttribute("datetime")
+      const priorRaySync = Date.parse(await rayBoardLastSync.getAttribute("datetime") ?? "")
+      expect(Number.isFinite(priorRaySync)).toBe(true)
+      await rayRustyPanel.getByRole("button", { name: "Sync now", exact: true }).click()
+      await expect(rayBoardStatus).toHaveText("Synced", { timeout: 30_000 })
+      await expect.poll(async () => Date.parse(await rayBoardLastSync.getAttribute("datetime") ?? ""),
+        { timeout: 30_000 }).toBeGreaterThan(priorRaySync)
+      await participantSync.getByRole("button", { name: "Close", exact: true }).click()
+
+      await ownerDevice.goto(ownerWorkspaceUrl)
+      await expect(ownerDevice.getByRole("region", { name: "Original board", exact: true })).toBeVisible({ timeout: 30_000 })
+      await ownerDevice.getByRole("button", { name: "Sync", exact: true }).click()
+      const returningOwnerSync = ownerDevice.getByRole("dialog", { name: "Device sync" })
+      await ownerDevice.getByRole("region", { name: "Rusty", exact: true })
+        .getByRole("button", { name: "Sync now", exact: true }).click()
+      await expect(ownerDevice.getByRole("button", { name: "Open Ray sync after owner offline — Engineer" }))
+        .toBeVisible({ timeout: 30_000 })
+      await returningOwnerSync.getByRole("button", { name: "Close", exact: true }).click()
+    }
+
     await participant.getByRole("button", { name: "Sync", exact: true }).click()
-    const memberRole = participant.getByRole("dialog", { name: "Device sync" }).locator(".mesh-member.is-selected .mesh-member-role")
+    const memberRole = participant.getByRole("dialog", { name: "Device sync" })
+      .locator(".mesh-member").filter({ hasText: /· You/ }).locator(".mesh-member-role")
     await expect(memberRole).toHaveText("editor")
   } finally {
     await participantContext.close()
     if (!wrongOwnerContextClosed) await wrongOwnerContext.close()
     await ownerDeviceContext.close()
-    await rusty.close()
+    if (rusty) await rusty.close()
   }
   expect(pageFailures).toEqual([])
 })

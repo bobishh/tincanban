@@ -53,7 +53,9 @@ A participant retaining a board can open **Sync → Connect owner device** to sh
 an expiring QR code and link. Open that link on a device already signed in to the
 board's owner Identity and confirm the connection. The verified copy keeps its
 workspace ID, ownership and participant roles, and joins the owner's catalog.
-The source needs its retained board history and scoped storage key material.
+The source needs its retained board history and signed participant access.
+A configured Rusty connection is transferred with its current owner proof; a
+board without Rusty can reconnect directly between devices.
 
 ## Workflow connections
 

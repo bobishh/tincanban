@@ -20,6 +20,7 @@ import { withLocalStateWriteLock } from "../localStateLock"
 import { defaultStorage } from "../storage"
 import { recoveryProjectionAccess } from "../sync/workspaceHistoryRecoveryAdmission"
 import type { WorkspaceWriteAuthorityEvidence } from "../product-replica"
+import type { DurableMesh } from "../sync/durableMesh"
 
 const receiptPrefix = "tincanban.owner-reconnect-receipt.v1:"
 
@@ -73,8 +74,7 @@ type ParticipantBoard = {
   document: Uint8Array
   role: Awaited<ReturnType<typeof workspaceRole>>
 }
-type ParticipantStorage = { grant: WorkspaceGrant; replicaConfig: OwnerReconnectSourceState["replicaConfig"];
-  ownerStorageProof: OwnerReconnectSourceState["ownerStorageProof"]; scopeAuthoritySnapshot: unknown }
+type ParticipantStorage = Pick<OwnerReconnectSourceState, "grant" | "replicaConfig" | "ownerStorageProof" | "scopeAuthoritySnapshot">
 type ParticipantBoardAuthorization = Pick<ParticipantBoard, "authority" | "role">
 
 export function verifiedOwnerReconnectTitle(workspace: unknown): string {
@@ -103,6 +103,7 @@ export async function readOwnerReconnectSource(input: {
   workspaceId: string
   title: string
   store: WorkspaceSetStore
+  mesh: Pick<DurableMesh, "invitationPayload">
   ensureCurrent(): void | Promise<void>
 }): Promise<OwnerReconnectSourceState> {
   await input.ensureCurrent()
@@ -111,6 +112,8 @@ export async function readOwnerReconnectSource(input: {
   if (!input.store.readAuthorization) throw new Error("Signed board history is unavailable on this device")
   const workspaceAuthority = await exportAuthorizationBundle(board.document, input.profile)
   const storage = await readParticipantStorage(input, board)
+  const [meshEnvelope] = await input.mesh.invitationPayload([input.workspaceId])
+  if (!meshEnvelope) throw new Error("Current board mesh connection is unavailable")
   const meshSnapshot = await workspaceSet(input.store, [{ id: input.workspaceId, title: input.title }]).snapshot()
   const entries = meshRustRuntime().state.decodeWorkspaceSet(meshSnapshot, [input.workspaceId]) as WorkspaceEntry[]
   if (entries.length !== 1 || entries[0]?.id !== input.workspaceId) throw new Error("Board snapshot changed during reconnect preparation")
@@ -131,11 +134,11 @@ export async function readOwnerReconnectSource(input: {
   return {
     workspace: entries[0],
     workspaceAuthority,
+    meshEnvelope,
     workspaceAccessSnapshot,
     scopeAuthoritySnapshot: board.authority.scopeAuthoritySnapshot ?? storage.scopeAuthoritySnapshot,
     grant: storage.grant,
-    replicaConfig: storage.replicaConfig,
-    ownerStorageProof: storage.ownerStorageProof,
+    ...(storage.replicaConfig ? { replicaConfig: storage.replicaConfig, ownerStorageProof: storage.ownerStorageProof } : {}),
     history: createHistorySource(input),
   }
 }
@@ -167,8 +170,13 @@ async function readParticipantStorage(input: Parameters<typeof readOwnerReconnec
   assertParticipantRole(board.role)
   const role = board.role
   const config = (await getReplicaConfigurations(input.profile.identity.personId))
-    .find(value => value.workspaceId === input.workspaceId && !value.removalPending && value.boardAccess)
-  if (!config?.boardAccess) throw new Error("Owner storage access is unavailable on this participant copy")
+    .find(value => value.workspaceId === input.workspaceId && !value.removalPending)
+  if (!config) {
+    const grant = requireSourceGrant(board.credential.localGrant, input.workspaceId, input.profile.identity.personId)
+    assertGrantMatchesBoard(board.authority.ownerPersonId, grant, board.credential, input.workspaceId)
+    return { grant, scopeAuthoritySnapshot: board.authority.scopeAuthoritySnapshot }
+  }
+  if (!config.boardAccess) throw new Error("Owner storage access is unavailable on this participant copy")
   const boardAccess = parseBoardStorageAccess(config.boardAccess)
   await verifyReconnectStorageAccess(config, boardAccess, board, role, input)
   const access = boardAccess.authorization.payload
@@ -303,6 +311,7 @@ export async function persistVerifiedOwnerReconnect(input: {
   store: WorkspaceSetStore
   workspaceId: string
   verified: VerifiedOwnerReconnectWorkspace
+  mesh: Pick<DurableMesh, "validateInvitation" | "receiveInvitation">
   history: OwnerReconnectHistoryReader
   ensureCurrent(): void | Promise<void>
 }): Promise<void> {
@@ -326,7 +335,9 @@ export async function persistVerifiedOwnerReconnect(input: {
     await input.ensureCurrent()
     const entry = { ...(verified.workspace as WorkspaceEntry), authorization: verified.workspaceAuthority }
     if (entry.id !== workspaceId || typeof entry.bytes !== "string") throw new Error("Verified board snapshot is malformed")
-    const { incoming, hasExisting } = await prepareOwnerReplicaConfig(profile, workspaceId, verified)
+    await input.mesh.validateInvitation([verified.meshEnvelope], [workspaceId], profile, [])
+    await input.ensureCurrent()
+    const storage = verified.replicaConfig ? await prepareOwnerReplicaConfig(profile, workspaceId, verified) : undefined
     const snapshot = meshRustRuntime().state.encodeWorkspaceSet([entry])
     const replica = workspaceSet(store, [{ id: workspaceId }])
     const history = workspaceHistoryReader(input.history)
@@ -352,10 +363,12 @@ export async function persistVerifiedOwnerReconnect(input: {
       }
     }))
     await input.ensureCurrent()
+    await input.mesh.receiveInvitation([verified.meshEnvelope], [workspaceId], profile, [])
+    await input.ensureCurrent()
     if (!store.recordVerifiedOwnerWorkspace) throw new Error("Owner board catalog is unavailable")
     await store.recordVerifiedOwnerWorkspace(workspaceId)
     await input.ensureCurrent()
-    if (!hasExisting) await setReplicaPreference(profile.identity.personId, incoming)
+    if (storage && !storage.hasExisting) await setReplicaPreference(profile.identity.personId, storage.incoming)
     await input.ensureCurrent()
     await store.activate(workspaceId)
     const receipt: OwnerReconnectReceipt = { version: 1, invitationId, workspaceId, offerDigest: verified.offerDigest }

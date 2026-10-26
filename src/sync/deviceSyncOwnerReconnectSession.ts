@@ -7,16 +7,19 @@ import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 import { userMessage, type DeviceSyncState } from "./deviceSyncState"
 import type { WorkspaceSetStore } from "./workspaceSet"
+import type { DurableMesh } from "./durableMesh"
 import { clearPairingLocation, showInviteQr } from "./deviceSyncInviteView"
 
 export type OwnerReconnectAdapter = {
   expectedOwner(input: { workspaceId: string; store: WorkspaceSetStore }): Promise<{ personId: string; publicKey: string }>
   readSource(input: { profile: LocalProfile; peer: OwnerReconnectAuthenticatedPeer; workspaceId: string; title: string; store: WorkspaceSetStore;
-    ensureCurrent(): void | Promise<void> }): Promise<OwnerReconnectSourceState>
+    mesh: Pick<OwnerReconnectMesh, "invitationPayload">; ensureCurrent(): void | Promise<void> }): Promise<OwnerReconnectSourceState>
   commit(input: { invitationId: string; profile: LocalProfile; store: WorkspaceSetStore; workspaceId: string;
-    verified: VerifiedOwnerReconnectWorkspace; history: OwnerReconnectHistoryReader; ensureCurrent(): void | Promise<void> }): Promise<void>
+    verified: VerifiedOwnerReconnectWorkspace; mesh: Pick<OwnerReconnectMesh, "validateInvitation" | "receiveInvitation">; history: OwnerReconnectHistoryReader; ensureCurrent(): void | Promise<void> }): Promise<void>
   title(workspace: unknown): string | Promise<string>
 }
+
+type OwnerReconnectMesh = Pick<DurableMesh, "invitationPayload" | "validateInvitation" | "receiveInvitation">
 
 type Options = {
   state: DeviceSyncState
@@ -26,7 +29,7 @@ type Options = {
   workspaceOwner?: (id: string) => Promise<string>
   store(): WorkspaceSetStore | undefined
   getProfile(): Promise<LocalProfile>
-  ensureDurableMesh(): Promise<unknown>
+  ensureDurableMesh(): Promise<OwnerReconnectMesh | undefined>
   adapter?: OwnerReconnectAdapter
   nextRun(): number
   currentRun(): number
@@ -73,7 +76,8 @@ async function startOwnerReconnectHost(options: Options, session: Session) {
   options.state.inviteUrl.value = ""
   options.state.qrCode.value = ""
   try {
-    await options.ensureDurableMesh()
+    const mesh = await options.ensureDurableMesh()
+    if (!mesh) throw new Error("Board mesh connection is unavailable")
     const profile = await options.getProfile()
     const owner = await options.workspaceOwner?.(workspaceId)
     if (!owner || owner === profile.identity.personId) throw new Error("Only a participant copy can connect its owner device")
@@ -89,7 +93,7 @@ async function startOwnerReconnectHost(options: Options, session: Session) {
     const host = await startBrowserOwnerReconnectHost({ profile, authorityView, origin: options.origin(), workspaceId, expectedOwner,
       readSource: peer => {
         if (peer.workspaceId !== workspaceId) throw new Error("Owner reconnect changed board")
-        return options.adapter!.readSource({ profile, peer, workspaceId, title, store, ensureCurrent })
+        return options.adapter!.readSource({ profile, peer, workspaceId, title, store, mesh, ensureCurrent })
       }, ensureCurrent, signal: abort.signal })
     if (options.currentRun() !== run) { await host.close(); return }
     session.host = host
@@ -171,7 +175,9 @@ async function commitOwnerReconnect(options: Options, invitation: OwnerReconnect
   options.state.ownerReconnectReview.value = { workspaceId: verified.workspaceId,
     title: await options.adapter!.title(verified.workspace), sourcePersonId: verified.sourcePersonId, sourceRole: verified.sourceRole }
   options.state.step.value = "owner-reconnect-committing"
-  await options.adapter!.commit({ invitationId: invitation.invitationId, profile, store,
+  const mesh = await options.ensureDurableMesh()
+  if (!mesh) throw new Error("Board mesh connection is unavailable")
+  await options.adapter!.commit({ mesh, invitationId: invitation.invitationId, profile, store,
     workspaceId: invitation.workspaceId, verified, history, ensureCurrent })
 }
 
