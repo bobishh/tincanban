@@ -299,8 +299,8 @@ async function findScopeControllerSigner<T extends { kind: string }>(envelope: S
   }
   const matches: ScopeControllerSigner[] = []
   for (const candidate of candidates) {
-    const certificateChains = [candidate.certificates]
-    if (additionalCertificates?.length) certificateChains.push(additionalCertificates)
+    const certificateChains = [candidate.certificates, additionalCertificates]
+      .filter((chain): chain is DeviceCertificate[] => chain !== undefined)
     for (const certificates of certificateChains) {
       try {
         const key = await verifyDeviceChain({ personId: candidate.personId, publicKey: candidate.publicKey,
