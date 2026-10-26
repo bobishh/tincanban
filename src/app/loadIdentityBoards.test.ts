@@ -26,7 +26,7 @@ function app() {
   return { getCurrentProfile: () => ({ identity: { personId: "bo" } }), refreshIdentity: vi.fn(),
     activeWorkspace: { id: "guest-default" }, availableWorkspaces: { value: [{ id: "job-search" }] },
     readWorkspaceDoc: vi.fn(async (id: string) => ({ id, entities: { board: { id: `board-${id}`, kind: "board" } } })),
-    switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn() }
+    switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn(), getActiveDoc: () => null }
 }
 it("Given an owned catalog on Rusty and only the guest default active, when sign-in loads boards, then activate the existing board after both pulls", async () => {
   const state = app()
@@ -46,7 +46,7 @@ it("Given catalog lookup fails, when sign-in loads boards, then expose failure w
 
 it("Given a slow catalog pull, when the user opens a new board during loading, then the completed pull preserves that newer selection", async () => {
   const state = app()
-  state.availableWorkspaces.value = [{ id: "job-search" }, { id: "user-selected" }]
+  state.availableWorkspaces.value = [{ id: "job-search" }]
   f.identityPull.mockImplementationOnce(async () => { state.activeWorkspace.id = "user-selected"; return true })
   await loadIdentityBoards(state as never, "/boards/board-job-search")
   expect(state.switchWorkspace).not.toHaveBeenCalled()

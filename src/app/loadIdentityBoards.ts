@@ -55,11 +55,17 @@ async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog:
   const available = app.availableWorkspaces.value
   const route = parseBoardRouteUrl(returnPath)
   const loaded = await readLoadedWorkspaceRoutes(app, available, guard)
-  const selectionChanged = app.activeWorkspace.id !== initialWorkspaceId
+  if (app.activeWorkspace.id !== initialWorkspaceId) {
+    // A newly created board may not be in the directory snapshot read above.
+    // Its committed active projection takes precedence over this older lookup.
+    const current = app.getActiveDoc()
+    if (current) recordSelectedBoard(isEmptyDefaultBoard(current))
+    return
+  }
   const saved = loaded.filter(workspace => !workspace.emptyDefault)
-  const eligible = !selectionChanged && saved.length ? saved : loaded
+  const eligible = saved.length ? saved : loaded
   const activeAvailable = eligible.some(workspace => workspace.workspaceId === app.activeWorkspace.id)
-  const requested = !selectionChanged && route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
+  const requested = route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
   const selected = requested ?? (activeAvailable ? app.activeWorkspace.id : eligible[0]?.workspaceId)
   if (selected) {
     if (selected !== app.activeWorkspace.id) await app.switchWorkspace(selected)
@@ -67,9 +73,11 @@ async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog:
   else if (emptyCatalog) await app.createWorkspaceAsync("Untitled", "blank")
   else throw new Error("Your boards are known, but their contents could not be loaded. Retry loading boards.")
   guard()
-  recordIdentityBrowserSignIn("selection", "completed", {
-    selection: !selected || eligible.find(workspace => workspace.workspaceId === selected)?.emptyDefault ? "empty_default" : "saved",
-  })
+  recordSelectedBoard(!selected || eligible.find(workspace => workspace.workspaceId === selected)?.emptyDefault)
+}
+
+function recordSelectedBoard(emptyDefault: boolean | undefined): void {
+  recordIdentityBrowserSignIn("selection", "completed", { selection: emptyDefault ? "empty_default" : "saved" })
 }
 
 async function readLoadedWorkspaceRoutes(app: App,
