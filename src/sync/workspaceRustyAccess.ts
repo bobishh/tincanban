@@ -150,7 +150,7 @@ export async function verifyBoardStorageAccess(config: BlindReplicaConfig, works
   await assertWorkspaceGrantBinding(config, workspaceId, role, payload, grantIssuer, subjectPersonId, subjectPublicKey)
   await assertPrincipalGrantBinding(config, workspaceId, record, principalGrant, payload)
   assertBoardAccessConnection(config, workspaceId, role, access.mode, record.payload)
-  await verifyOwnerAttestations(record, principalGrant, payload, authority, state)
+  await verifyOwnerAttestations(record, principalGrant, payload, authority, state, access.certificates)
   await verifyStorageTokens(config, access.mode, record.payload)
 }
 
@@ -252,9 +252,10 @@ function assertBoardAccessConnection(config: BlindReplicaConfig, workspaceId: st
 }
 
 async function verifyOwnerAttestations(record: BoardStorageAccess["authorization"], principalGrant: NonNullable<BoardStorageAccess["principalGrant"]>,
-  payload: BoardStorageAuthorization, authority: BoardAuthority, state: ReturnType<typeof meshRustRuntime>["state"]): Promise<void> {
+  payload: BoardStorageAuthorization, authority: BoardAuthority, state: ReturnType<typeof meshRustRuntime>["state"],
+  signerCertificates: DeviceCertificate[]): Promise<void> {
   const grantPayload = principalGrant.payload
-  const ownerKey = await findScopeControllerSigner(record, payload.scopeAuthority)
+  const ownerKey = await findScopeControllerSigner(record, payload.scopeAuthority, signerCertificates)
   if (ownerKey.personId !== payload.ownerPersonId || ownerKey.personId !== grantPayload.ownerPersonId ||
       !await verifyEnvelope(principalGrant, ownerKey.signingPublicKey) || !await verifyEnvelope(record, ownerKey.signingPublicKey)) {
     throw new Error("Invalid historical workspace storage signer")
@@ -277,7 +278,8 @@ async function verifyStorageTokens(config: BlindReplicaConfig, mode: BoardStorag
 type ScopeController = { personId: string; publicKey: string; certificates: DeviceCertificate[] }
 type ScopeControllerSigner = ScopeController & { signingPublicKey: string }
 
-async function findScopeControllerSigner<T extends { kind: string }>(envelope: SignedEnvelope<T>, snapshot: unknown): Promise<ScopeControllerSigner> {
+async function findScopeControllerSigner<T extends { kind: string }>(envelope: SignedEnvelope<T>, snapshot: unknown,
+  additionalCertificates?: DeviceCertificate[]): Promise<ScopeControllerSigner> {
   const raw = snapshot as { genesis?: { payload?: { creator?: unknown } }; controlTransfers?: Array<{ payload?: { toController?: unknown } }>;
     successionTransfers?: Array<{ claim?: { payload?: unknown } }> }
   const candidates: ScopeController[] = []
@@ -297,11 +299,15 @@ async function findScopeControllerSigner<T extends { kind: string }>(envelope: S
   }
   const matches: ScopeControllerSigner[] = []
   for (const candidate of candidates) {
-    try {
-      const key = await verifyDeviceChain({ personId: candidate.personId, publicKey: candidate.publicKey,
-        deviceId: envelope.signerKeyId, certificates: candidate.certificates })
-      if (await verifyEnvelope(envelope, key)) matches.push({ ...candidate, signingPublicKey: key })
-    } catch { /* Nonmatching controller identity is expected while checking validated history. */ }
+    const certificateChains = [candidate.certificates]
+    if (additionalCertificates?.length) certificateChains.push(additionalCertificates)
+    for (const certificates of certificateChains) {
+      try {
+        const key = await verifyDeviceChain({ personId: candidate.personId, publicKey: candidate.publicKey,
+          deviceId: envelope.signerKeyId, certificates })
+        if (await verifyEnvelope(envelope, key)) matches.push({ ...candidate, signingPublicKey: key })
+      } catch { /* Nonmatching controller identity is expected while checking validated history. */ }
+    }
   }
   const distinct = new Map(matches.map(candidate => [`${candidate.personId}\u0000${candidate.publicKey}`, candidate]))
   if (distinct.size !== 1) throw new Error("Workspace grant signer is not uniquely present in the signed controller history")

@@ -5,7 +5,7 @@ import { BrowserIdentityStore, createDeviceAuthorizationApproval, createDeviceAu
   createDeviceRevocation, createRecoverableIdentity, issueDeviceAuthorization, publicKeyId, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import * as rustyPrincipalClient from "@meta-uber/mesh-replication/rusty-principal-grant"
-import { createPeerAdvertisement } from "@meta-uber/mesh-workspace"
+import { createPeerAdvertisement, createWorkspaceDeviceRevocation } from "@meta-uber/mesh-workspace"
 import { createWorkspaceGrant } from "../domain/proofs"
 import * as rustyTransport from "./rustyIdentityTransport"
 import { parseReplicaConfig } from "./blindReplicaConfig"
@@ -262,6 +262,46 @@ test("Given a previously accepted storage grant, when scope control transfers, t
 
   expect((await getReplicaConfigurations(recipient.identity.personId))[0]).toMatchObject({
     workspaceId: "board", origin: config.origin, boardAccess: { mode: "write" }, writeToken: config.writeToken,
+  })
+})
+
+test("Given an active owner app device missing from immutable scope history, when its explicit root-bound attestation arrives, then accept it", async () => {
+  const { owner, current, authority, recipient } = await formerOwnerAppGrantFixture()
+  const originalSnapshot = authority.scopeAuthoritySnapshot as { genesis: { payload: { creator: {
+    personId: string; publicKey: string; certificates: unknown[]
+  } } }; [key: string]: unknown }
+  const oldController = { ...originalSnapshot.genesis.payload.creator, certificates: [owner.certificate] }
+  authority.scopeAuthoritySnapshot = { ...originalSnapshot, genesis: await signEnvelope(owner.privateKeys.devicePrivateKey!, {
+    ...originalSnapshot.genesis.payload, creator: oldController,
+  }, owner.device.deviceId) }
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor")
+  const access = await createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => authority, async () => {})
+  const forwarded = selectBoardStorageAccess(access, config.writeToken, "editor")!
+  const tampered = structuredClone(forwarded)
+  tampered.boardAccess!.certificates[0] = { ...tampered.boardAccess!.certificates[0]!, signature: token(9) }
+  await expect(receiveBoardStorageAccess(recipient.identity.personId, "board", authority, "editor", [tampered], async () => {},
+    recipient.identity.publicKey)).rejects.toThrow()
+  const missingChain = structuredClone(forwarded)
+  missingChain.boardAccess!.certificates = []
+  await expect(receiveBoardStorageAccess(recipient.identity.personId, "board", authority, "editor", [missingChain], async () => {},
+    recipient.identity.publicKey)).rejects.toThrow()
+  const stranger = (await createRecoverableIdentity("better", "Unrelated signer")).profile
+  const wrongRoot = structuredClone(forwarded)
+  wrongRoot.boardAccess!.certificates = [stranger.certificate]
+  await expect(receiveBoardStorageAccess(recipient.identity.personId, "board", authority, "editor", [wrongRoot], async () => {},
+    recipient.identity.publicKey)).rejects.toThrow()
+  const revokedRecord = await createWorkspaceDeviceRevocation(owner, "board", owner.identity.personId,
+    current.device.deviceId, ["head"], [owner.certificate])
+  const revokedAuthority = { ...authority, catalog: { deviceRevocations: [revokedRecord] } }
+  await expect(receiveBoardStorageAccess(recipient.identity.personId, "board", revokedAuthority, "editor", [forwarded], async () => {},
+    recipient.identity.publicKey)).rejects.toThrow(/revoked/i)
+
+  await receiveBoardStorageAccess(recipient.identity.personId, "board", authority, "editor", [forwarded], async () => {},
+    recipient.identity.publicKey)
+
+  expect((await getReplicaConfigurations(recipient.identity.personId))[0]).toMatchObject({
+    workspaceId: "board", boardAccess: { mode: "write" },
   })
 })
 
