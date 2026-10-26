@@ -605,6 +605,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
   const mime = `From: hiring@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <review-${crypto.randomUUID()}@example.test>\r\nSubject: Application received\r\nContent-Type: text/plain\r\n\r\nWe received your application. No role or vacancy URL.`;
   const sourceMessageId = mime.match(/Message-ID: ([^\r\n]+)/i)![1]!;
   const eventId = await blindHash(new TextEncoder().encode(`${integrationId}:email:${sourceMessageId}`));
+  let scheduleEarlierAlarm: ((time: number) => Promise<void>) | undefined;
   await worker.email({ from: "owner@example.test", to: `${integrationId}@example.test`,
     rawSize: new TextEncoder().encode(mime).byteLength, raw: new Response(mime).body!,
     setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
@@ -648,6 +649,16 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     expect(bound.status).toBe(200);
     expect(await bound.json()).toMatchObject({ bindingId: binding.bindingId, duplicate: false });
     expect(replica.serialize()).toBe(originalReplica);
+    await runInDurableObject(stub, async (instance, ctx) => {
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
+      const schedule = Reflect.get(executionFixture(instance), "scheduleEarlierAlarm");
+      if (typeof schedule !== "function") throw new Error("Durable Object alarm scheduler is unavailable");
+      scheduleEarlierAlarm = schedule as (time: number) => Promise<void>;
+      setExecutionFixture(instance, "scheduleEarlierAlarm", async (time: number) => {
+        await ctx.storage.setAlarm(Math.max(time, Date.now() + 10 * 60_000));
+      });
+    });
     const wrongAction = await postApplicationReview("retry", bindRequest, bindBody, testEnv);
     expect(wrongAction.status).toBe(401);
     for (const changedBody of [
@@ -669,6 +680,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     await runInDurableObject(stub, async (instance, ctx) => {
       setExecutionFixture(instance, "env", testEnv);
       setExecutionFixture(instance, "refreshReplica", async () => replica);
+      expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now() + 5 * 60_000);
       expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       await ctx.storage.deleteAlarm();
@@ -683,9 +695,19 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     await runInDurableObject(stub, async (instance, ctx) => {
       expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
+      if (scheduleEarlierAlarm) setExecutionFixture(instance, "scheduleEarlierAlarm", scheduleEarlierAlarm);
+      await instance.alarm();
+      expect((await instance.getEvent(eventId))?.status).toBe("review");
       await ctx.storage.deleteAlarm();
     });
-  } finally { sync.mockRestore(); }
+  } finally {
+    try {
+      if (scheduleEarlierAlarm) await runInDurableObject(stub, async (instance, ctx) => {
+        try { setExecutionFixture(instance, "scheduleEarlierAlarm", scheduleEarlierAlarm); }
+        finally { await ctx.storage.deleteAlarm(); }
+      });
+    } finally { sync.mockRestore(); }
+  }
 });
 
 it("Given a signed owner mail binding with distinct legacy routing and definition IDs, When current source and workflow match, Then accept without changing the card", async () => {
