@@ -49,10 +49,14 @@ and behavior tests. See [architecture guidance](AGENTS.md).
 
 ## Sign in and restore boards
 
-Sign in loads the approved Identity catalog and the existing board copies from its
-configured Rusty services. Another stored copy must exist; Identity alone does not
-contain board history or attachments. If loading is interrupted, the app shows an
-error; select **Sign in** to retry. An untouched
+Sign in saves the approved app device independently of board loading. The app then
+loads the approved Identity catalog and existing board copies from its configured
+Rusty services. Another stored copy must exist; Identity alone does not contain
+board history or attachments. If loading is interrupted, the app stays signed in;
+select **Retry loading boards**. Installed catalog access resumes after reload
+without another sign-in. If Identity could not deliver catalog access, retry asks
+Identity for a fresh catalog approval; the saved device approval remains valid.
+An untouched
 `Untitled` starter does not replace a restored board as the selected board.
 Edited starters remain available and keep their current selection.
 

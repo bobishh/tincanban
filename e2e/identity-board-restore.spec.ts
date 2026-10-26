@@ -85,9 +85,34 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
       rusty = await startIdentityRustyService(new URL(baseURL!).origin, new URL(process.env.IDENTITY_CATALOG_E2E_ORIGIN!).host)
     }
     await page.goto(baseURL!)
+    const initialAppPersonId = await page.evaluate(async () => {
+      const app = (await import("/src/state.ts")).useTincanban()
+      await app.whenReady()
+      return app.getCurrentProfile()!.identity.personId
+    })
     await page.getByRole("button", { name: "Sign in", exact: true }).click()
+    // Hold the old startup projection after it is visible but before readiness.
+    // Approval must not race that projection and later lose the selected board.
+    await page.route("**/src/statePersistence.ts", async route => {
+      const response = await route.fetch()
+      const original = await response.text()
+      const marker = 'await step("workspace-migrations"'
+      if (!original.includes(marker)) throw new Error("Startup acceptance gate marker is missing")
+      const gate = 'if (window.location.pathname === "/identity/return") await new Promise(resolve => { window.__releaseIdentityStartup = resolve }); '
+      await route.fulfill({ response, body: original.replace(marker, `${gate}${marker}`) })
+    })
     await approve(page)
+    await page.waitForFunction(() => typeof (window as unknown as { __releaseIdentityStartup?: unknown }).__releaseIdentityStartup === "function")
+    await page.evaluate(async () => {
+      await import("/src/components/IdentityPortalEnrollmentDialog.vue")
+      await new Promise(resolve => requestAnimationFrame(resolve))
+    })
+    await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toHaveCount(0)
+    expect(await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().getCurrentProfile()!.identity.personId)).toBe(initialAppPersonId)
+    await page.evaluate(() => (window as unknown as { __releaseIdentityStartup(): void }).__releaseIdentityStartup())
+    await page.unroute("**/src/statePersistence.ts")
     await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden({ timeout: 30_000 })
+    await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
     await page.getByRole("button", { name: "New workspace", exact: true }).click()
     const create = page.getByRole("dialog", { name: "Create workspace" })
@@ -153,18 +178,32 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
         }
       })
       await target.route(`${rusty.origin}/v2/scopes/**`, route => new URL(fresh.url()).origin === new URL(baseURL!).origin ? route.abort() : route.continue())
+      if (coldProfile) await target.route(`${rusty.origin}/v2/identity/catalog-access/request`, route => route.abort())
       await fresh.goto(baseURL!)
       if (coldProfile) await fresh.getByRole("button", { name: "Menu", exact: true }).click()
       await fresh.getByRole("button", { name: "Sign in", exact: true }).click().catch(async cause => {
         throw new Error(`${cause}; ${JSON.stringify({ pageErrors, page: await fresh.locator("body").innerText() })}`)
       })
       await approve(fresh)
-      await expect(fresh.getByRole("alert")).toContainText(/could not finish loading your boards/i, { timeout: 30_000 })
+      if (coldProfile) {
+        await expect(fresh.getByRole("alert").filter({ hasText: /signed in.*catalog could not be received/i })).toBeVisible({ timeout: 30_000 })
+        await expect(fresh.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden()
+        await fresh.reload()
+        await expect(fresh.getByRole("alert").filter({ hasText: /signed in.*catalog could not be received/i })).toBeVisible({ timeout: 30_000 })
+        expect(await fresh.evaluate(async () => (await import("/src/state.ts")).useTincanban().getCurrentProfile()!.certificate.payload.canEnrollDevices)).toBe(false)
+        await target.unroute(`${rusty.origin}/v2/identity/catalog-access/request`)
+        await fresh.getByRole("button", { name: "Retry loading boards", exact: true }).click()
+        await approve(fresh)
+      }
+      await expect(fresh.getByRole("alert").filter({ hasText: /signed in.*boards/i })).toBeVisible({ timeout: 30_000 })
+      await expect(fresh.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden()
+      await expect(fresh.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0)
+      await fresh.reload()
+      await expect(fresh.getByRole("alert").filter({ hasText: /signed in.*boards/i })).toBeVisible({ timeout: 30_000 })
       expect(selectedKinds).toEqual([])
       await target.unroute(`${rusty.origin}/v2/scopes/**`)
       await fresh.setViewportSize({ width: 390, height: 844 })
-      await fresh.getByRole("dialog", { name: "Identity profile", exact: true }).getByRole("button", { name: "Sign in", exact: true }).click()
-      await approve(fresh)
+      await fresh.getByRole("button", { name: "Retry loading boards", exact: true }).click()
       await expect(fresh.getByRole("region", { name: "Original restored board", exact: true })).toBeVisible({ timeout: 30_000 }).catch(async cause => {
         const snapshot = await fresh.evaluate(async () => {
           const storage = (await import("/src/storage.ts")).defaultStorage
@@ -180,6 +219,8 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
         throw new Error(`${cause instanceof Error ? cause.message : cause}; ${JSON.stringify({ catalogResponses, snapshot })}`)
       })
       await expect(fresh.getByRole("button", { name: "Open Recovered card", exact: true })).toBeVisible()
+      await fresh.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
+      await expect.poll(() => selectedKinds).toContain("saved")
       await fresh.reload()
       await expect(fresh.getByRole("region", { name: "Original restored board", exact: true })).toBeVisible({ timeout: 30_000 })
       await expect(fresh.getByRole("button", { name: "Open Recovered card", exact: true })).toBeVisible()

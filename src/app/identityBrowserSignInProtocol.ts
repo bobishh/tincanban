@@ -35,8 +35,10 @@ export async function createIdentityBrowserSignIn(options: {
   const returnPath = safeReturnPath(options.returnPath)
   let rustyServicePins = options.rustyServicePins
   if (rustyServicePins === undefined && options.catalogOrigin?.trim()) {
-    const service = await discoverRustyService(options.catalogOrigin.trim())
-    rustyServicePins = [{ origin: service.origin, serviceId: service.serviceId, servicePublicKey: service.servicePublicKey }]
+    try {
+      const service = await discoverRustyService(options.catalogOrigin.trim())
+      rustyServicePins = [{ origin: service.origin, serviceId: service.serviceId, servicePublicKey: service.servicePublicKey }]
+    } catch { /* Catalog discovery can be retried after Identity approves this app device. */ }
   }
   const challenge = options.challenge ?? Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, "0")).join("")
   const request = await createDeviceAuthorizationRequest(options.profile, {

@@ -13,8 +13,9 @@ import { parseBoardRouteUrl, resolveEligibleBoardRoute, type EligibleBoardRoute 
 
 type App = ReturnType<typeof useTincanban>
 
-/** One sign-in completes only after its catalog and existing workspace contents are available. */
+/** Load boards for an already approved Identity; failed delivery remains independently retryable. */
 export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<void> {
+  const initialWorkspaceId = app.activeWorkspace.id
   const profile = app.getCurrentProfile()
   if (!profile) throw new Error("Signed-in profile is unavailable")
   const guard = () => {
@@ -26,7 +27,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<vo
     for (const config of await getIdentityReplicaConfigurations(profile.identity.personId)) {
       guard()
       if (!await createIdentityReplica(config, profile, guard, { includeRecoveryEvidence: false }).pull()) {
-        throw new Error("Your board catalog is still loading. Select Sign in to retry.")
+        throw new Error("Your board catalog is still loading. Retry loading boards.")
       }
     }
     await app.refreshIdentity()
@@ -41,29 +42,30 @@ export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<vo
       if (!ids.has(config.workspaceId)) continue
       guard()
       if (!await createBlindReplica(config, app, guard, async () => {}).pull()) {
-        throw new Error("Your boards are still loading. Select Sign in to retry.")
+        throw new Error("Your boards are still loading. Retry loading boards.")
       }
     }
     guard()
     await refreshAvailableWorkspaces()
-    await restoreBoardSelection(app, returnPath, ids.size === 0, guard)
+    await restoreBoardSelection(app, returnPath, ids.size === 0, initialWorkspaceId, guard)
   })
 }
 
-async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog: boolean, guard: () => void): Promise<void> {
+async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog: boolean, initialWorkspaceId: string, guard: () => void): Promise<void> {
   const available = app.availableWorkspaces.value
   const route = parseBoardRouteUrl(returnPath)
   const loaded = await readLoadedWorkspaceRoutes(app, available, guard)
+  const selectionChanged = app.activeWorkspace.id !== initialWorkspaceId
   const saved = loaded.filter(workspace => !workspace.emptyDefault)
-  const eligible = saved.length ? saved : loaded
+  const eligible = !selectionChanged && saved.length ? saved : loaded
   const activeAvailable = eligible.some(workspace => workspace.workspaceId === app.activeWorkspace.id)
-  const requested = route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
+  const requested = !selectionChanged && route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
   const selected = requested ?? (activeAvailable ? app.activeWorkspace.id : eligible[0]?.workspaceId)
   if (selected) {
     if (selected !== app.activeWorkspace.id) await app.switchWorkspace(selected)
   }
   else if (emptyCatalog) await app.createWorkspaceAsync("Untitled", "blank")
-  else throw new Error("Your boards are known, but their contents could not be loaded. Select Sign in to retry.")
+  else throw new Error("Your boards are known, but their contents could not be loaded. Retry loading boards.")
   guard()
   recordIdentityBrowserSignIn("selection", "completed", {
     selection: !selected || eligible.find(workspace => workspace.workspaceId === selected)?.emptyDefault ? "empty_default" : "saved",

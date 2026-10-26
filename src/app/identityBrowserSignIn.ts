@@ -62,7 +62,7 @@ export function createIdentityBrowserSignInReturn(options: {
   showPortal: Ref<boolean>
   refreshIdentity(): Promise<void>
   closePortal(): void
-  loadBoards?(returnPath: string): Promise<void>
+  loadBoards?(returnPath: string): Promise<void | "approval_required">
   resolveReturnPath?(returnPath: string): string
   resumeRustyConnection?(origin: string, workspaceId: string): Promise<void>
   reportRustyConnectionFailure?(origin: string, cause: unknown): void
@@ -71,10 +71,42 @@ export function createIdentityBrowserSignInReturn(options: {
   const hasReturn = window.sessionStorage.getItem(identityBrowserSignInReturnKey) !== null
   const returning = ref(shouldResumeIdentityBrowserSignIn(window.location.pathname, hasPendingRequest, hasReturn))
   const contextReady = ref(true)
+  const boardLoading = ref(false)
+  const boardLoadError = ref("")
+  const boardCatalogApprovalRequired = ref(false)
+  let boardLoad: Promise<void> | undefined
+
+  function retryBoards(returnPath = `${window.location.pathname}${window.location.search}`): Promise<void> {
+    if (boardLoad) return boardLoad
+    boardLoading.value = true
+    boardLoadError.value = ""
+    boardCatalogApprovalRequired.value = false
+    boardLoad = (async () => {
+      try {
+        if (await options.loadBoards?.(returnPath) === "approval_required") {
+          boardCatalogApprovalRequired.value = true
+          throw new Error("Your board catalog could not be received from Identity.")
+        }
+        window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
+        recordIdentityBrowserSignIn("restore", "completed")
+      } catch (cause) {
+        boardLoadError.value = `Signed in. Your boards have not finished loading. ${cause instanceof Error ? cause.message : ""}`.trim()
+      } finally {
+        contextReady.value = true
+        boardLoading.value = false
+        boardLoad = undefined
+      }
+    })()
+    return boardLoad
+  }
   options.showPortal.value = returning.value
   return {
     returning,
     contextReady,
+    boardLoading,
+    boardLoadError,
+    boardCatalogApprovalRequired,
+    retryBoards,
     close() { returning.value = false; options.closePortal() },
     async complete(returnPath: string, request?: DeviceAuthorizationRequest) {
       contextReady.value = false
@@ -94,18 +126,10 @@ export function createIdentityBrowserSignInReturn(options: {
         catch (cause) { options.reportRustyConnectionFailure?.(intent.origin, cause) }
         finally { clearPendingRustyConnectionIntent(window.sessionStorage) }
       }
-      await options.loadBoards?.(returnPath)
-      const restoreStarted = performance.now()
-      try {
-        window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
-        recordIdentityBrowserSignIn("restore", "completed", { elapsedMs: performance.now() - restoreStarted })
-      } catch (error) {
-        recordIdentityBrowserSignIn("restore", "failed", { errorCode: "restore_failed", elapsedMs: performance.now() - restoreStarted })
-        throw error
-      }
-      contextReady.value = true
+      window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
       returning.value = false
       options.showPortal.value = false
+      await retryBoards(returnPath)
     },
   }
 }
@@ -170,7 +194,7 @@ export function clearPendingRustyConnectionIntent(storage: Pick<Storage, "remove
 
 export type IdentityBrowserSignInCompletionPhase = "idle" | "pending" | "failed" | "complete"
 
-/** Keep UI pending until profile refresh and route restoration complete. */
+/** Report profile refresh failures separately from the resumable board loader. */
 export function createApprovedSignInCompletion(complete: (returnPath: string, request?: DeviceAuthorizationRequest) => Promise<void>) {
   const phase = ref<IdentityBrowserSignInCompletionPhase>("idle")
   const error = ref<string | null>(null)
@@ -186,7 +210,7 @@ export function createApprovedSignInCompletion(complete: (returnPath: string, re
       return true
     } catch (cause) {
       phase.value = "failed"
-      error.value = `Identity approval was saved, but the app could not finish loading your boards. ${cause instanceof Error ? cause.message : ""} Select Sign in to retry.`
+      error.value = `Identity approval was saved, but the app could not refresh your profile. ${cause instanceof Error ? cause.message : ""} Reload the app to retry.`
       return false
     }
   }

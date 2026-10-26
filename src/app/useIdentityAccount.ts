@@ -34,7 +34,14 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
   const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
   const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal,
     refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close,
-    loadBoards: async returnPath => (await import("./loadIdentityBoards")).loadIdentityBoards(app.workspace, returnPath),
+    loadBoards: async returnPath => {
+      const loader = await import("./identityBoardLoading")
+      try { await loader.resumeIdentityBoardLoading(app.workspace, returnPath) }
+      catch (cause) {
+        if (cause instanceof loader.IdentityCatalogApprovalRequired) return "approval_required"
+        throw cause
+      }
+    },
     resolveReturnPath: path => resolveIdentitySignInReturnPath(path, app.workspace.activeBoard.value),
     resumeRustyConnection: async (origin, workspaceId) => {
       await app.workspace.whenReady()
@@ -43,6 +50,18 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
     reportRustyConnectionFailure: (origin, cause) => {
       app.ui.state.notice.value = `Identity linked ${origin}, but Rusty setup is pending. Retry Add Rusty to finish. ${cause instanceof Error ? cause.message : ""}`.trim()
     } })
+  watch(() => [app.workspace.ready.value, currentIdentityProfile.value?.identity.personId, browserSignInReturn.returning.value],
+    async ([ready, , returning]) => {
+      const profile = currentIdentityProfile.value
+      if (!ready || returning || !profile || browserSignInReturn.boardLoading.value) return
+      const loader = await import("./identityBoardLoading")
+      if (await loader.hasPendingIdentityBoardLoading(profile) && currentIdentityProfile.value === profile &&
+          !browserSignInReturn.returning.value && !browserSignInReturn.boardLoading.value) void browserSignInReturn.retryBoards()
+    }, { immediate: true })
+  function retryIdentityBoards() {
+    if (browserSignInReturn.boardCatalogApprovalRequired.value) beginHeaderSignIn()
+    else void browserSignInReturn.retryBoards()
+  }
   return { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
-    beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn }
+    beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards }
 }

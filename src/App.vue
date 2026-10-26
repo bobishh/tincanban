@@ -35,7 +35,7 @@ import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
-import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityBoardLoadingNotice, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
@@ -56,7 +56,7 @@ const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressR
 const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
-  beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn } = useIdentityAccount(app, showSettings)
+  beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
@@ -297,6 +297,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     </DialogWindow>
     <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
     <AutomationConnectionDialog v-if="connectingAutomation && ready.value" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="currentIdentityProfile" :boards="availableWorkspaces" :describe="describeAutomationBoard" :export-packet="exportAutomationConnection" @sign-in="beginHeaderSignIn" />
+    <IdentityBoardLoadingNotice v-if="browserSignInReturn.boardLoading.value || browserSignInReturn.boardLoadError.value" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -505,7 +506,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 
   </TincanbanPageLayout>
   <BuildFooter />
-  <IdentityPortalEnrollmentDialog v-if="showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
+  <IdentityPortalEnrollmentDialog v-if="ready.value && showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
     :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :initial-mode="identityPortalMode" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
 </template>
 

@@ -14,14 +14,15 @@ import { installIdentityCatalogAccess, readIdentityCatalogAccess, type IdentityC
 import { useTincanban } from "../state"
 import { retainIdentityCatalogPublisherAuthorization } from "../sync/identityCatalogPublisher"
 import { recordIdentityBrowserSignIn } from "./identityBrowserSignIn"
+import { beginIdentityBoardLoading, confirmIdentityCatalogInstalled } from "./identityBoardLoading"
 
 async function approvedCatalogs(approval: DeviceAuthorizationApproval, request: DeviceAuthorizationRequest, profile: LocalProfile) {
-  if (request.payload.version !== 3) return []
+  if (request.payload.version !== 3) return { available: true, entries: [] }
   const recipient = { ...profile, identity: approval.identity, certificate: approval.certificate }
   const opened = await openApprovedIdentityCatalogAccess(approval, request, recipient, { expectedExistingProfile: profile })
   if (opened.status === "unavailable") {
     recordIdentityBrowserSignIn("catalog", "failed", { errorCode: "catalog_unavailable" })
-    throw new Error("Your boards could not be checked. Select Sign in to retry; local boards have not changed.")
+    return { available: false, entries: [] }
   }
   const entries: Array<{ access: Uint8Array; binding: IdentityCatalogBinding }> = []
   for (const entry of opened.entries) {
@@ -31,10 +32,10 @@ async function approvedCatalogs(approval: DeviceAuthorizationApproval, request: 
     await readIdentityCatalogAccess(entry.access, recipient, binding)
     entries.push({ access: entry.access, binding })
   }
-  return entries
+  return { available: true, entries }
 }
 
-/** Finish an approved browser sign-in before returning control to the UI. */
+/** Save verified approval independently of catalog delivery and board synchronization. */
 export async function completeIdentityBrowserSignIn(
   approval: DeviceAuthorizationApproval,
   request: DeviceAuthorizationRequest,
@@ -42,7 +43,6 @@ export async function completeIdentityBrowserSignIn(
   workspaceId?: string,
   localBoardChoice?: IdentityLocalBoardChoice,
 ): Promise<LocalProfile> {
-  const catalogs = await approvedCatalogs(approval, request, currentProfile)
   const replacing = approval.identity.personId !== currentProfile.identity.personId
   const pending = replacing ? await readPendingLocalWorkspaceOwnershipIntent(currentProfile, approval.identity.personId) : []
   const localPlan = replacing ? await readIdentityLocalBoardPlan(currentProfile, approval.identity.personId) : null
@@ -57,6 +57,7 @@ export async function completeIdentityBrowserSignIn(
         workspaceIds: selected, workspaceStore: { read: app.readWorkspaceBytes, readAuthorityHeads: app.readWorkspaceHeads }, ensureCurrent })
     }
   })
+  const pendingBoards = await beginIdentityBoardLoading(adopted)
   await saveIdentityRustyServiceCatalogApproval(request, approval, currentProfile)
   await initializePersonalRootCatalog(defaultStorage, adopted)
   if (approval.profileState) {
@@ -70,8 +71,16 @@ export async function completeIdentityBrowserSignIn(
   const ensureCurrent = () => {
     if (!isCurrentIdentityProfile(adopted)) throw new Error("Identity changed while loading its boards")
   }
-  for (const entry of catalogs) await installIdentityCatalogAccess(entry.access, adopted, entry.binding, ensureCurrent)
   if (request.payload.version === 3) await retainIdentityCatalogPublisherAuthorization(adopted, approval)
+  try {
+    const catalogs = await approvedCatalogs(approval, request, currentProfile)
+    if (catalogs.available) {
+      for (const entry of catalogs.entries) await installIdentityCatalogAccess(entry.access, adopted, entry.binding, ensureCurrent)
+      await confirmIdentityCatalogInstalled(adopted, pendingBoards)
+    }
+  } catch {
+    recordIdentityBrowserSignIn("catalog", "failed", { errorCode: "catalog_failed" })
+  }
   await publishIdentityNameToChat(workspaceId)
   return adopted
 }

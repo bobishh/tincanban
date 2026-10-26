@@ -28,7 +28,7 @@ describe("Identity browser sign-in", () => {
     expect(fetcher).toHaveBeenCalledOnce()
   })
 
-  it("Given catalog discovery is unavailable, when sign-in starts, then fail before redirect and allow a fresh retry", async () => {
+  it("Given catalog discovery is unavailable, when sign-in starts, then sign in without inventing a service pin and rediscover on retry", async () => {
     const app = (await createRecoverableIdentity("better", "Fresh app")).profile
     const service = (await createRecoverableIdentity("better", "Catalog service")).profile
     const fetcher = vi.fn().mockRejectedValueOnce(new TypeError("Network unavailable"))
@@ -39,7 +39,9 @@ describe("Identity browser sign-in", () => {
     const options = { profile: app,
       portalOrigin: "https://identity.example", applicationOrigin: "https://boards.example",
       returnPath: "/", catalogOrigin: "https://catalog.example" }
-    await expect(createIdentityBrowserSignIn(options)).rejects.toThrow("Network unavailable")
+    const first = await createIdentityBrowserSignIn(options)
+    expect(first.pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true })
+    expect("rustyServicePins" in first.pending.request.payload && first.pending.request.payload.rustyServicePins?.length).toBeFalsy()
     await expect(createIdentityBrowserSignIn(options)).resolves.toMatchObject({ pending: {
       request: { payload: { rustyServicePins: [{ origin: options.catalogOrigin }] } },
     } })
@@ -72,7 +74,7 @@ describe("Identity browser sign-in", () => {
 
     await expect(completion.finish("/boards/current")).resolves.toBe(false)
     expect(completion.phase.value).toBe("failed")
-    expect(completion.error.value).toContain("Select Sign in to retry")
+    expect(completion.error.value).toContain("Reload the app to retry")
     await expect(completion.finish("/boards/current")).resolves.toBe(false)
     expect(paths).toEqual(["/boards/current"])
     completion.reset()
@@ -93,27 +95,28 @@ describe("Identity browser sign-in", () => {
     expect(result.returning.value).toBe(false)
   })
 
-  it("Given a return that adopts identity before failing board selection, when dialog closes, then keep workspace projection gated", async () => {
+  it("Given an approved identity and failed board loading, when returning, then finish sign-in and expose a separate retry", async () => {
     vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
       history: { state: null, replaceState: vi.fn() } })
     const showPortal = ref(true)
     const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
       closePortal: () => {}, loadBoards: async () => { throw new Error("board selection failed") } })
 
-    await expect(result.complete("/boards/current")).rejects.toThrow("board selection failed")
-    expect(result.contextReady.value).toBe(false)
-    result.close()
-    expect(result.contextReady.value).toBe(false)
+    await expect(result.complete("/boards/current")).resolves.toBeUndefined()
+    expect(result.contextReady.value).toBe(true)
+    expect(showPortal.value).toBe(false)
+    expect(result.boardLoadError.value).toContain("board selection failed")
+    expect(result.returning.value).toBe(false)
   })
 
-  it("Given a return flow, when refresh and board selection finish, then open workspace projection only after route restoration", async () => {
+  it("Given a return flow, when refresh and board selection finish, then close approval before board loading and restore the selected route afterward", async () => {
     vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
       history: { state: null, replaceState: vi.fn() } })
     const showPortal = ref(true)
     const stages: string[] = []
     const result = createIdentityBrowserSignInReturn({ showPortal,
       refreshIdentity: async () => { stages.push(`refresh:${result.contextReady.value}`) }, closePortal: () => {},
-      loadBoards: async () => { stages.push(`boards:${result.contextReady.value}`) },
+      loadBoards: async () => { expect(showPortal.value).toBe(false); stages.push(`boards:${result.contextReady.value}`) },
       resolveReturnPath: path => { stages.push(`restore:${result.contextReady.value}`); return path } })
 
     expect(result.contextReady.value).toBe(true)
@@ -121,7 +124,7 @@ describe("Identity browser sign-in", () => {
     expect(result.contextReady.value).toBe(false)
     await complete
     stages.push(`ready:${result.contextReady.value}`)
-    expect(stages).toEqual(["refresh:false", "boards:false", "restore:false", "ready:true"])
+    expect(stages).toEqual(["refresh:false", "restore:false", "boards:false", "restore:false", "ready:true"])
   })
 
   it("Given a cancelled sign-in, when the dialog closes, then neither pending request nor stale return can reopen it", () => {

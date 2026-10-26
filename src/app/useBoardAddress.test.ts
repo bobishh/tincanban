@@ -5,6 +5,27 @@ import { createBoardAddressController } from "./useBoardAddress"
 const doc = (id: string, boardId: string, title: string) => ({ id, title, entities: { [boardId]: { id: boardId, kind: "board", title } } })
 
 describe("private board address integration", () => {
+  it("Given an address lookup still reading the old board, when user navigation selects another board, then the late lookup cannot switch back", async () => {
+    const history = historyAt("/boards/old/untitled")
+    let active = "old-workspace"
+    let release!: (value: WorkspaceDocumentV2) => void
+    const switchWorkspace = vi.fn(async (id: string) => { active = id })
+    const integration = createBoardAddressController({
+      getAvailableWorkspaces: () => [{ id: "old-workspace" }, { id: "new-workspace" }],
+      getActiveWorkspaceId: () => active,
+      getActiveBoard: () => ({ id: active === "old-workspace" ? "old" : "new", title: active }),
+      getIdentityId: () => "person-1",
+      readWorkspaceDoc: () => new Promise(resolve => { release = resolve }),
+      switchWorkspace,
+    }, history)
+    const resolving = integration.resolveAddress()
+    active = "new-workspace"
+    integration.syncActiveBoard(active)
+    release(doc("old-workspace", "old", "Untitled") as unknown as WorkspaceDocumentV2)
+    await resolving
+    expect(switchWorkspace).not.toHaveBeenCalled()
+    expect(history.location().pathname).toBe("/boards/new/new-workspace")
+  })
   it("reveals a saved preview only when the current identity already has the exact active board", () => {
     const history = historyAt("/boards/board-target/old-title?message=m#message-m")
     const integration = createBoardAddressController({

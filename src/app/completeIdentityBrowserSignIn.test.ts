@@ -69,17 +69,22 @@ it("Given the current app key already holds its manager certificate, when that s
   expect((await defaultStorage.loadPersonalRoot())?.photo?.avatarData).toBe(avatarData)
 })
 
-it("Given a valid approval but unavailable catalog service, when completing sign-in, then retain the previous active Identity and local boards", async () => {
+it("Given a valid approval but unavailable catalog service, when completing sign-in, then save the approved Identity and leave catalog loading retryable", async () => {
   const app = await bootstrapIdentity("Local app")
   const owner = (await createRecoverableIdentity("better", "Owner")).profile
   const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge: "d".repeat(64),
     expiresAt: Date.now() + 120_000, includeIdentityCatalogAccess: true })
+  const initial = emptyIdentityProfileState(owner.identity.personId)
+  const name = await createIdentityProfileOperation(owner, initial, "name", "Owner")
+  const profileState = await readIdentityProfileState({ ...initial, operations: [name] }, owner.identity)
   const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example",
-    challenge: request.payload.challenge, profileState: emptyIdentityProfileState(owner.identity.personId),
+    challenge: request.payload.challenge, profileState,
     certificates: [owner.certificate], revocations: [], includeProfileState: true, identityCatalogAccessUnavailable: true })
-  await expect(completeIdentityBrowserSignIn(approval, request, app)).rejects.toThrow(/boards could not be checked/)
-  expect(await bootstrapIdentity()).toBe(app)
-  expect(isCurrentIdentityProfile(app)).toBe(true)
+  const adopted = await completeIdentityBrowserSignIn(approval, request, app)
+  expect(adopted.identity.personId).toBe(owner.identity.personId)
+  expect(await identityEnrollmentConfirmed(adopted)).toBe(true)
+  clearInMemoryProfileForReloadTest()
+  expect((await bootstrapIdentity()).identity.personId).toBe(owner.identity.personId)
 })
 
 it("Given an empty new Identity catalog and null-person request, when completing sign-in, then retain the active approved app profile without another root key", async () => {

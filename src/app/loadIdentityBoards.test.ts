@@ -44,6 +44,14 @@ it("Given catalog lookup fails, when sign-in loads boards, then expose failure w
   expect(state.switchWorkspace).not.toHaveBeenCalled()
 })
 
+it("Given a slow catalog pull, when the user opens a new board during loading, then the completed pull preserves that newer selection", async () => {
+  const state = app()
+  state.availableWorkspaces.value = [{ id: "job-search" }, { id: "user-selected" }]
+  f.identityPull.mockImplementationOnce(async () => { state.activeWorkspace.id = "user-selected"; return true })
+  await loadIdentityBoards(state as never, "/boards/board-job-search")
+  expect(state.switchWorkspace).not.toHaveBeenCalled()
+})
+
 it("Given two available boards and a deep link to the inactive one, when sign-in loads boards, then activate that exact board", async () => {
   const state = app()
   state.activeWorkspace.id = "workspace-a"

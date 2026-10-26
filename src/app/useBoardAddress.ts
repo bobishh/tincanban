@@ -32,13 +32,17 @@ export type BoardAddressStatus = "idle" | "resolving" | "available" | "unavailab
 export function createBoardAddressController(runtime: BoardAddressRuntime, history: BoardAddressHistory) {
   const location = () => history.location()
   const eligibleWorkspaceIds = () => new Set(runtime.getAvailableWorkspaces().map(workspace => workspace.id))
+  let navigation = 0
 
   async function resolveAddress(): Promise<BoardAddressStatus> {
+    const resolving = ++navigation
+    const initialWorkspaceId = runtime.getActiveWorkspaceId()
     const route = currentRoute()
     if (!route) return isBoardAddressPath(location().pathname) ? unavailable("") : "idle"
     const identityId = runtime.getIdentityId()
     if (!identityId) return unavailable(route.boardId)
     const targetWorkspaceId = await findTargetWorkspace(route, identityId)
+    if (resolving !== navigation || runtime.getActiveWorkspaceId() !== initialWorkspaceId || currentRoute()?.boardId !== route.boardId) return "idle"
     if (!targetWorkspaceId || !await activateTarget(targetWorkspaceId, route, identityId)) return unavailable(route.boardId)
     const activeBoard = runtime.getActiveBoard()!
     rememberBoardRouteHint(identityId, activeBoard.id, targetWorkspaceId)
@@ -105,6 +109,7 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
   }
 
   function syncActiveBoard(workspaceId: string) {
+    navigation++
     const board = runtime.getActiveBoard()
     if (!board || !eligibleWorkspaceIds().has(workspaceId)) return
     const identityId = runtime.getIdentityId()
