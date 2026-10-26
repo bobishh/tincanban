@@ -232,7 +232,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :active-workspace-id="activeWorkspace.id"
       :importing="workspaceImportState.busy" :import-error="workspaceImportState.error"
       :read-owner="async (id: string) => (await app.workspace.readWorkspaceDoc(id)).ownerPersonId"
-      :current-person-id="chat.personId.value" :current-identity-name="chat.displayName.value" :known-people="chat.members.value"
+      :current-person-id="currentIdentityProfile?.identity.personId ?? ''" :current-identity-name="currentIdentityProfile?.identity.displayName ?? ''" :known-people="chat.members.value"
       :rename-workspace="handleRenameWorkspace" :archive-workspace="handleArchiveWorkspace" :restore-workspace="handleRestoreWorkspace"
       :create-workspace="handleCreateWorkspace"
       :can-rename-workspace="canRenameWorkspace"

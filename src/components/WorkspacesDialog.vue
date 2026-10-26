@@ -32,6 +32,8 @@ const emit = defineEmits<{
 }>()
 
 const isCreating = ref(false)
+// Directory drafts belong to this opened window, not to later board selection.
+const windowWorkspaceId = ref(props.activeWorkspaceId)
 const creatingWorkspace = ref(false)
 const editingId = ref("")
 const editingTitle = ref("")
@@ -194,7 +196,7 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
 </script>
 
 <template>
-  <DialogWindow :window-id="`workspaces:${currentPersonId || 'local'}`" :workspace-id="activeWorkspaceId" :title="isCreating ? 'Create workspace' : 'Workspaces'" :busy="importing || creatingWorkspace" @close="emit('close')">
+  <DialogWindow :window-id="`workspaces:${currentPersonId || 'local'}`" :workspace-id="windowWorkspaceId" :title="isCreating ? 'Create workspace' : 'Workspaces'" :busy="importing || creatingWorkspace" @close="emit('close')">
     <section v-if="!isCreating" class="dialog dialog-window-content workspace-directory-content">
       <section class="board-directory" aria-label="Board discovery">
         <label class="board-directory-search">Search boards<input v-model="query" type="search" aria-label="Search boards" placeholder="Title or owner" /></label>
