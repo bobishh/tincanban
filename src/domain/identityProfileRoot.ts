@@ -3,7 +3,8 @@ import type { LocalProfile } from "./identity"
 import { resolveLocalSigningContext } from "./localSigningContext"
 import { identityProfileRevision } from "./identityProfileRevision"
 import { createIdentityProfileOperation, emptyIdentityProfileState, identityProfileValue, mergeIdentityProfileState,
-  observeLegacyIdentityProfile, readIdentityProfileState, type IdentityProfileState, type ProfileField, type ProfileValue } from "./identityProfileState"
+  observeLegacyIdentityProfile, readIdentityProfileState, type IdentityProfileState, type ProfilePresentationField,
+  type ProfileValue } from "./identityProfileState"
 
 /** Migration retains original observations without inventing an author, counter or timestamp order. */
 export async function rootIdentityProfileState(root: PersonalRootDocumentV1): Promise<IdentityProfileState> {
@@ -55,7 +56,8 @@ export function projectIdentityProfileRoot(root: PersonalRootDocumentV1, state: 
 }
 
 export async function editIdentityProfileRoot(root: PersonalRootDocumentV1, profile: LocalProfile,
-  field: ProfileField, value: ProfileValue, ensureCurrent: () => void = () => {}): Promise<PersonalRootDocumentV1> {
+  field: ProfilePresentationField, value: Exclude<ProfileValue, { origin: string; serviceId: string; servicePublicKey: string }>,
+  ensureCurrent: () => void = () => {}): Promise<PersonalRootDocumentV1> {
   root = structuredClone(root)
   if (root.identity.personId !== profile.identity.personId || root.identity.publicKey !== profile.identity.publicKey) throw new Error("Identity catalog is unavailable")
   const state = await rootIdentityProfileState(root)

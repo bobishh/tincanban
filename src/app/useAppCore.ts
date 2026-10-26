@@ -80,7 +80,8 @@ function useAppUiState() {
 }
 
 function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>) {
-  const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile() })
+  const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile(),
+    readWorkspaceDoc: id => tincanban.readWorkspaceDoc(id) })
   configureChat(
     async id => (await tincanban.readWorkspaceDoc(id)).ownerPersonId,
     async id => workspaceChatRoomId(await tincanban.readWorkspaceDoc(id)),
@@ -93,6 +94,12 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
   const sync = useDeviceSync({
     displayName: () => identityName.value,
     identityChanged: tincanban.refreshIdentity,
+    ownerReconnect: {
+      expectedOwner: async input => (await import("./ownerReconnectFlow")).expectedOwnerForReconnect(input),
+      readSource: async input => (await import("./ownerReconnectFlow")).readOwnerReconnectSource(input),
+      commit: async input => (await import("./ownerReconnectFlow")).persistVerifiedOwnerReconnect(input),
+      title: async workspace => (await import("./ownerReconnectFlow")).verifiedOwnerReconnectTitle(workspace),
+    },
     workspace: {
       subscribe: listener => subscribeWorkspaceAndChat(tincanban.subscribeLocalChanges, listener),
       subscribeWorkspace: listener => subscribeWorkspaceAndChatScoped(tincanban.subscribeLocalChanges, listener),

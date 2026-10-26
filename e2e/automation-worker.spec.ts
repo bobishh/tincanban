@@ -6,6 +6,7 @@ import { join, resolve } from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 const operatorToken = "automation-e2e-provisioning-token-with-at-least-32-bytes"
 const integrationId = "e2e"
@@ -208,6 +209,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
 })
 
 async function connectBlindRusty(page: Page, origin: string): Promise<void> {
+  await approveRustyForFixture(page, origin)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
 
   const panel = page.getByRole("region", { name: "Rusty", exact: true })

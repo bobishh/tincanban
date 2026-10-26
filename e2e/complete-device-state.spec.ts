@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 type PublicProfile = { identity: { personId: string }; device: { deviceId: string; publicKey: string; displayName: string } }
 
@@ -10,6 +11,44 @@ async function profile(page: Page): Promise<PublicProfile> {
     if (!raw) throw new Error("Local identity profile was not saved")
     return JSON.parse(raw) as PublicProfile
   })
+}
+
+async function profileSyncDiagnostic(page: Page, expectedPhoto: string | null, origin: string) {
+  return page.evaluate(async ({ expectedPhoto, origin }) => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { readLocal } = await import("/src/localDb.ts")
+    const { getIdentityReplicaConfigurations, getPrivateReplicaProgress } = await import("/src/sync/privateReplicaRepository.ts")
+    const { readIdentityStateRevision } = await import("/src/identityStateRevision.ts")
+    const local = await readLocal("tincanban.local_profile.v1")
+    const identity = local ? JSON.parse(local).identity : null
+    const root = await defaultStorage.loadPersonalRoot()
+    const configs = identity ? await getIdentityReplicaConfigurations(identity.personId) : []
+    const config = configs.find(value => value.origin === origin)
+    const progress = config && identity ? await getPrivateReplicaProgress(identity.personId, config) : undefined
+    const hash = async (value: string | undefined) => value ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))))
+      .map(byte => byte.toString(16).padStart(2, "0")).join("") : null
+    const revision = await readIdentityStateRevision()
+    const profileState = root?.profileState
+    const row = [...document.querySelectorAll(".rusty-profile-connection")]
+      .find(element => element.querySelector(".technical-value")?.textContent?.trim() === origin)
+    const safeText = (value: string) => value.replace(/https?:\/\/[^\s"']+/g, "[url]")
+      .replace(/[A-Za-z0-9_-]{43,}/g, "[opaque]").slice(0, 500)
+    return {
+      path: location.pathname,
+      matchingPerson: Boolean(identity && root?.identity.personId === identity.personId),
+      profileRevision: revision,
+      profileOperationCount: profileState?.operations.length ?? null,
+      profileStateHash: await hash(profileState ? JSON.stringify(profileState) : undefined),
+      photoHash: await hash(root?.photo?.avatarData ?? undefined),
+      photoMatchesLatest: root?.photo?.avatarData === expectedPhoto,
+      identityReplicaCount: configs.length,
+      deliveryStatus: row?.querySelector(".reading-explanation")?.textContent?.trim() ?? "missing",
+      deliveryError: safeText(row?.querySelector('[role="alert"]')?.textContent ?? ""),
+      alerts: [...document.querySelectorAll('[role="alert"]')].map(element => safeText(element.textContent ?? "")).filter(Boolean).slice(0, 12),
+      replica: progress ? { cursor: progress.cursor, acknowledgedRevision: progress.uploadedRevision ?? null,
+        acknowledgedCurrentRevision: progress.uploadedRevision === revision, hasReceipt: Boolean(progress.lastUploaded), pending: Boolean(progress.pending) } : null,
+    }
+  }, { expectedPhoto, origin })
 }
 
 async function enrollDevice(hostPage: Page, recipient: Page) {
@@ -32,6 +71,7 @@ async function enrollDevice(hostPage: Page, recipient: Page) {
 }
 
 async function connectRusty(page: Page, origin: string) {
+  await approveRustyForFixture(page, origin)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
 
   const panel = page.getByRole("region", { name: "Rusty", exact: true })
@@ -118,15 +158,30 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
   }
 })
 
-test("Given an acknowledged profile photo update, when the source closes and the enrolled device cold-starts, then the latest saved photo wins", async ({ page, playwright, baseURL }) => {
+test("Given an acknowledged profile photo update, when the source closes and the enrolled device cold-starts, then the latest saved photo wins", async ({ page, playwright, baseURL }, testInfo) => {
   test.setTimeout(120_000)
-  const mobileBrowser = await (process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
+  const requestedPhoneBrowser = process.env.IDENTITY_E2E_PHONE_BROWSER
+  if (requestedPhoneBrowser && requestedPhoneBrowser !== "chromium" && requestedPhoneBrowser !== "webkit") {
+    throw new Error("IDENTITY_E2E_PHONE_BROWSER must be chromium or webkit")
+  }
+  const mobileBrowser = await (requestedPhoneBrowser === "chromium" ? playwright.chromium : requestedPhoneBrowser === "webkit" ? playwright.webkit :
+    process.platform === "darwin" ? playwright.webkit : playwright.chromium).launch()
   const context = await mobileBrowser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const phone = await context.newPage()
+  const phoneConsoleErrors: string[] = []
+  const identityRequests: Array<{ method: string; path: string; status?: number }> = []
+  const safeDiagnosticText = (value: string) => value.replace(/https?:\/\/[^\s"']+/g, "[url]")
+    .replace(/[A-Za-z0-9_-]{43,}/g, "[opaque]").slice(0, 500)
+  phone.on("console", message => {
+    if (message.type() === "error") phoneConsoleErrors.push(safeDiagnosticText(message.text()))
+  })
+  phone.on("pageerror", error => phoneConsoleErrors.push(`${error.name}: ${safeDiagnosticText(error.message)}`))
+  let latestSource: string | null = null
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   const hostProfile = await profile(page)
   const rusty = await startRustyService({ identity: hostProfile.identity, allowedControllerDeviceIds: [hostProfile.device.deviceId] }, baseURL!)
+  let releaseIdentityRead = () => {}
   try {
     await enrollDevice(page, phone)
     await phone.goto("about:blank")
@@ -136,10 +191,20 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await phone.goto(baseURL!)
     await expect.poll(() => phone.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const { getIdentityReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
       const current = await bootstrapIdentity()
-      return (await getReplicaConfigurations(current.identity.personId)).some(config => config.origin === origin)
+      return (await getIdentityReplicaConfigurations(current.identity.personId))
+        .some(config => config.origin === origin)
     }, rusty.origin), { timeout: 30_000 }).toBe(true)
+    const identityScopeId = await phone.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getIdentityReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const current = await bootstrapIdentity()
+      const config = (await getIdentityReplicaConfigurations(current.identity.personId))
+        .find(config => config.origin === origin)
+      if (!config) throw new Error("Private Identity connection was not received")
+      return config.scopeId
+    }, rusty.origin)
     await phone.goto("about:blank")
     await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "Settings", exact: true }).click()
@@ -155,24 +220,64 @@ test("Given an acknowledged profile photo update, when the source closes and the
     await page.getByRole("dialog", { name: "Crop profile photo" }).getByRole("button", { name: "Use photo", exact: true }).click()
     await page.getByRole("button", { name: "Save profile", exact: true }).click()
     await expect(page.getByRole("status").filter({ hasText: "Profile saved." })).toBeVisible()
-    const latestSource = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    latestSource = await page.getByRole("img", { name: "Your profile photo" }).getAttribute("src")
+    if (!latestSource) throw new Error("Saved profile photo is missing")
     await page.getByRole("button", { name: "Dismiss", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
 
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
+    const acknowledgedSourceState = await profileSyncDiagnostic(page, latestSource, rusty.origin)
+    await testInfo.attach("source-identity-acknowledgment.json", { body: JSON.stringify(acknowledgedSourceState), contentType: "application/json" })
     await page.goto("about:blank")
+    // Workspace projection may arrive while its private Identity read is pending.
+    const identityReadGate = new Promise<void>(resolve => { releaseIdentityRead = resolve })
+    let blockedIdentityReads = 0
+    await phone.route(`${rusty.origin}/v2/scopes/${identityScopeId}/objects**`, async route => {
+      if (route.request().method() === "GET") {
+        blockedIdentityReads++
+        await identityReadGate
+      }
+      await route.continue()
+    })
+    phone.on("request", request => {
+      if (request.url().startsWith(`${rusty.origin}/v2/scopes/${identityScopeId}/objects`)) {
+        identityRequests.push({ method: request.method(), path: "/v2/scopes/[identity-scope]/objects" })
+      }
+    })
+    phone.on("response", response => {
+      if (response.url().startsWith(`${rusty.origin}/v2/scopes/${identityScopeId}/objects`)) {
+        const request = response.request()
+        const item = [...identityRequests].reverse().find(value => value.method === request.method() && value.status === undefined)
+        if (item) item.status = response.status()
+        else identityRequests.push({ method: request.method(), path: "/v2/scopes/[identity-scope]/objects", status: response.status() })
+      }
+    })
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
     await phone.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(phone.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", latestSource!, { timeout: 30_000 })
-    const saved = await phone.evaluate(async () => {
+    const savedProfile = () => phone.evaluate(async () => {
       const { defaultStorage } = await import("/src/storage.ts")
-      return await defaultStorage.loadPersonalRoot()
+      const saved = await defaultStorage.loadPersonalRoot()
+      return { photo: saved?.photo?.avatarData, name: saved?.identity.displayName }
     })
-    expect(saved?.photo?.avatarData).toBe(latestSource)
-    expect(saved?.identity.displayName).toBe("Latest owner profile")
-  } finally { await context.close(); await mobileBrowser.close(); await rusty.close() }
+    await expect.poll(() => blockedIdentityReads).toBeGreaterThan(0)
+    expect((await savedProfile()).photo).not.toBe(latestSource)
+    releaseIdentityRead()
+    await expect.poll(savedProfile, { timeout: 30_000 })
+      .toEqual({ photo: latestSource, name: "Latest owner profile" })
+    await phone.reload()
+    await expect.poll(savedProfile, { timeout: 30_000 })
+      .toEqual({ photo: latestSource, name: "Latest owner profile" })
+  } finally {
+    releaseIdentityRead()
+    await phone.unrouteAll({ behavior: "wait" })
+    const phoneState = await profileSyncDiagnostic(phone, latestSource, rusty.origin)
+      .catch(error => ({ snapshotError: safeDiagnosticText(String(error)) }))
+    await testInfo.attach("phone-profile-diagnostic.json", { body: JSON.stringify({ phoneState, identityRequests, phoneConsoleErrors }), contentType: "application/json" })
+    await context.close(); await mobileBrowser.close(); await rusty.close()
+  }
 })
 
 test("Given an older recipient receives an owner-signed approval with an unknown required component, when enrollment preflights and installs, then upgrade is required and saved identity stays intact", async ({ page, browser }) => {
@@ -188,9 +293,14 @@ test("Given an older recipient receives an owner-signed approval with an unknown
     const approval = await page.evaluate(async target => {
       const { bootstrapIdentity, signEnvelope, toBase64Url } = await import("/src/domain/identity.ts")
       const { createDeviceEnrollmentInvite } = await import("/vendor/meta-mesh/packages/mesh-pairing/src/index.ts")
+      const { createIdentityAuthorityView } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
       const { InvitationService } = await import("/src/sync/invitations.ts")
       const { enrollmentPayload } = await import("/src/sync/enrollment.ts")
       const { defaultStorage } = await import("/src/storage.ts")
+      const { certHashDefault, defaultProofStore } = await import("/src/domain/proofs.ts")
+      const { registerDeviceInRoot } = await import("/src/domain/personalRoot.ts")
+      const { rootIdentityProfileState } = await import("/src/domain/identityProfileRoot.ts")
+      const { mergeIdentityAuthorityView, requireIdentityAuthorityView } = await import("/src/sync/identityAuthorityStore.ts")
       const { useTincanban } = await import("/src/test/stateFixture.ts")
       const owner = await bootstrapIdentity()
       const invite = createDeviceEnrollmentInvite("fixture-enrollment-endpoint", "fixture-enrollment-secret", owner)
@@ -200,8 +310,19 @@ test("Given an older recipient receives an owner-signed approval with an unknown
       if (!claim.ok) throw new Error(claim.error)
       const approved = await invitations.approveEnrollment(invite.invitationId, target.device, owner)
       if (!approved.ok) throw new Error(approved.error)
-      const root = await defaultStorage.loadPersonalRoot()
+      const certificateHash = await certHashDefault(approved.certificate)
+      await defaultProofStore.putCertificate(certificateHash, approved.certificate)
+      const root = await defaultStorage.updatePersonalRootForIdentity(owner.identity.personId, current => {
+        if (!current) throw new Error("Owner personal root unavailable")
+        registerDeviceInRoot(current, { ...target.device, certificateHash, addedAt: new Date().toISOString() })
+        return current
+      })
       if (!root) throw new Error("Owner personal root unavailable")
+      const currentAuthority = await requireIdentityAuthorityView(owner.identity.personId)
+      const authority = await createIdentityAuthorityView(owner.identity,
+        { certificates: [...currentAuthority.certificates, approved.certificate], revocations: currentAuthority.revocations },
+        await rootIdentityProfileState(root))
+      await mergeIdentityAuthorityView(authority)
       const workspaceId = useTincanban().activeWorkspace.id
       const workspaces = [{ id: workspaceId, title: "Enrollment fixture" }]
       const meshWorkspaces = [{ version: 1, workspaceId, ownerPersonId: owner.identity.personId,

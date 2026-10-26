@@ -9,6 +9,10 @@ import { initializePersonalRootCatalog } from "./statePersonalRoot"
 import { refreshAvailableWorkspaces, resetStateForTest } from "./statePersistence"
 import { stateRuntime } from "./stateContext"
 
+vi.mock("./sync/localWorkspaceOwnership", () => {
+  throw new Error("Heavy local ownership recovery module loaded without a pending intent")
+})
+
 describe("identity-scoped local workspace catalog", () => {
   beforeEach(() => {
     resetIdentityStorageForTest()
@@ -37,6 +41,73 @@ describe("identity-scoped local workspace catalog", () => {
 
     expect(stateRuntime.availableWorkspaces.value.map(item => item.id)).toEqual(["owned", "invited-visitor"])
     expect(stateRuntime.archivedWorkspaces.value).toEqual([])
+  })
+
+  it("Given an existing same-Identity root, when catalog initialization repeats, then register retained owned docs once and preserve exclusions and tombstones", async () => {
+    const profile = await bootstrapIdentity("Current identity")
+    const root = createPersonalRoot(profile, "certificate")
+    registerWorkspaceInRoot(root, "forgotten-owned", "forgotten-owned", "import")
+    root.workspaces["forgotten-owned"]!.forgotten = true
+    let savedRoot = root
+    let writes = 0
+    const owners = new Map([
+      ["retained-owned", profile.identity.personId],
+      ["forgotten-owned", profile.identity.personId],
+      ["archived-owned", profile.identity.personId],
+      ["foreign-owned", "another-identity"],
+    ])
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([
+        { id: "retained-owned", title: "Retained" },
+        { id: "forgotten-owned", title: "Forgotten" },
+        { id: "foreign-owned", title: "Foreign" },
+        { id: "stale-anonymous", title: "Anonymous" },
+      ]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([{ id: "archived-owned", title: "Archived" }]),
+      loadWorkspaceDoc: vi.fn(async (id: string) => owners.has(id) ? { doc: { ownerPersonId: owners.get(id) } } : null),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
+        const previous = savedRoot
+        const next = await update(previous)
+        if (JSON.stringify(next) !== JSON.stringify(previous)) writes++
+        savedRoot = next!
+        return savedRoot
+      }),
+    } as unknown as WorkspaceStorage
+
+    await initializePersonalRootCatalog(storage, profile)
+
+    expect(Object.keys(savedRoot.workspaces).sort()).toEqual(["archived-owned", "forgotten-owned", "retained-owned"])
+    expect(savedRoot.workspaces["retained-owned"]).toEqual({
+      workspaceId: "retained-owned", documentId: "retained-owned", grantHash: "genesis", forgotten: false,
+    })
+    expect(savedRoot.workspaces["archived-owned"]).toEqual({
+      workspaceId: "archived-owned", documentId: "archived-owned", grantHash: "genesis", forgotten: false,
+    })
+    expect(savedRoot.workspaces["forgotten-owned"]).toEqual({
+      workspaceId: "forgotten-owned", documentId: "forgotten-owned", grantHash: "import", forgotten: true,
+    })
+    expect(writes).toBe(1)
+
+    await initializePersonalRootCatalog(storage, profile)
+
+    expect(Object.keys(savedRoot.workspaces).sort()).toEqual(["archived-owned", "forgotten-owned", "retained-owned"])
+    expect(writes).toBe(1)
+  })
+
+  it("does not reconcile local documents into a root for another Identity", async () => {
+    const profile = await bootstrapIdentity("Current identity")
+    const otherIdentity = { ...profile.identity, personId: "another-identity" }
+    const otherRoot = createPersonalRoot({ ...profile, identity: otherIdentity }, "certificate")
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([{ id: "current-owned", title: "Current" }]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
+      loadWorkspaceDoc: vi.fn().mockResolvedValue({ doc: { ownerPersonId: profile.identity.personId } }),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof otherRoot | null) => Promise<typeof otherRoot | null>) => update(otherRoot)),
+    } as unknown as WorkspaceStorage
+
+    await initializePersonalRootCatalog(storage, profile)
+
+    expect(otherRoot.workspaces).toEqual({})
   })
 
   it("fails closed when legacy root omits its workspace map", async () => {
@@ -68,6 +139,22 @@ describe("identity-scoped local workspace catalog", () => {
       ["stale-old-owner", "old-identity"],
     ]))).toEqual(["stale-old-owner"])
     expect(Object.keys(root.workspaces).sort()).toEqual(["not-yet-downloaded", "owned", "visitor-invite"])
+  })
+
+  it("initializes a normal root without loading the transfer recovery module when no intent exists", async () => {
+    const profile = await bootstrapIdentity("Ordinary startup")
+    profile.device.deviceId = crypto.randomUUID()
+    const root = createPersonalRoot(profile, "certificate")
+    const storage = {
+      listWorkspaces: vi.fn().mockResolvedValue([]),
+      listArchivedWorkspaces: vi.fn().mockResolvedValue([]),
+      loadWorkspaceDoc: vi.fn(),
+      updatePersonalRootForIdentity: vi.fn(async (_personId: string, update: (current: typeof root | null) => Promise<typeof root | null>) => {
+        return await update(root)
+      }),
+    } as unknown as WorkspaceStorage
+
+    await expect(initializePersonalRootCatalog(storage, profile)).resolves.toBeUndefined()
   })
 
   it("Given a signed profile history, when initializing an existing root for an adopted device, then preserve its validated name shadow and history", async () => {

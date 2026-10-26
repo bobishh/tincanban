@@ -5,7 +5,8 @@ import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 
 export type ScopeEnrollmentBinding = {
   origin: string; scopeId: string; servicePublicKey: string; personId: string; deviceId: string;
-  readTokenHash: string; writeTokenHash: string; revoked: boolean; minimumWriterVersion?: 2;
+  readTokenHash: string; writeTokenHash: string; revoked: boolean; scopePurpose?: "workspace" | "person-identity";
+  minimumWriterVersion?: 2;
 }
 export type ScopeEnrollmentIntent = { version: 1; binding: ScopeEnrollmentBinding; body: string }
 const profileKey = "tincanban.local_profile.v1"
@@ -21,11 +22,13 @@ function exactFields(value: unknown, required: string[], optional: string[] = []
 }
 
 function validateBinding(binding: ScopeEnrollmentBinding): void {
-  exactFields(binding, ["origin", "scopeId", "servicePublicKey", "personId", "deviceId", "readTokenHash", "writeTokenHash", "revoked"], ["minimumWriterVersion"])
+  exactFields(binding, ["origin", "scopeId", "servicePublicKey", "personId", "deviceId", "readTokenHash", "writeTokenHash", "revoked"],
+    ["minimumWriterVersion", "scopePurpose"])
   if (blindOrigin(binding.origin) !== binding.origin ||
     [binding.personId, binding.deviceId, binding.scopeId].some(value => typeof value !== "string" || !/^[A-Za-z0-9:_-]{1,128}$/.test(value)) ||
     [binding.servicePublicKey, binding.readTokenHash, binding.writeTokenHash].some(value => decodeBlindBytes(value).length !== 32) ||
-    typeof binding.revoked !== "boolean" || (binding.minimumWriterVersion !== undefined && binding.minimumWriterVersion !== 2)) {
+    typeof binding.revoked !== "boolean" || (binding.minimumWriterVersion !== undefined && binding.minimumWriterVersion !== 2) ||
+    (binding.scopePurpose !== undefined && binding.scopePurpose !== "workspace" && binding.scopePurpose !== "person-identity")) {
     throw new Error("Invalid saved Rusty enrollment binding")
   }
 }

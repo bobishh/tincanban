@@ -4,12 +4,13 @@ import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { PublicBoardDeliveryPolicyCache, PublicBoardDeliveryPolicyEvidence } from "../public/publicDeliveryPolicy"
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { deleteLocal, readLocal, writeLocal } from "../localDb"
-import { createBrowserBoardPublication } from "./publicBoardPublication"
 import { parsePublicationRecord, publicationRecordKey, reconcilePublicationRecord, type PublicationIntentAction, type PublicationRecord } from "../domain/publicationState"
+
 
 export class PublicBoardSourceChangedError extends Error {
   constructor() { super("Board source changed during publication preparation") }
 }
+
 
 export interface PublicBoardAccessInput {
   origin: string
@@ -289,7 +290,7 @@ async function persistPublicationIntent(ctx: PublicBoardAccessOperations, captur
   const key = publicationRecordKey(ctx.input.origin, captured.workspaceId, captured.boardId, captured.profile)
   const current = parsePublicationRecord(await readLocal(key))
   assertNoUncertainPublicationIntent(current)
-  const publication = action === "unpublish" ? undefined : await createBrowserBoardPublication(captured.document, captured.workspaceId, captured.boardId)
+  const publication = action === "unpublish" ? undefined : await (await import("./publicBoardPublication")).createBrowserBoardPublication(captured.document, captured.workspaceId, captured.boardId)
   const projection = publication ? jsonProjection(publication.projection) : null
   const projectionHash = await sha256Base64Url(new TextEncoder().encode(projection ? canonicalizeJson(projection) : "null"))
   const intent = { operationId: crypto.randomUUID(), action, expectedRevision, projection, projectionHash,

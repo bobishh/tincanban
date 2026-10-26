@@ -1,4 +1,4 @@
-import { hasEntityKind } from "./model"
+import { hasEntityKind, isItem } from "./model"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
@@ -193,6 +193,66 @@ describe("workspace settings transaction", () => {
       path: "/board/priorityPolicy/rules/0/fieldId",
       message: "Rule field must be active on this board",
     })
+  })
+
+  it("preserves an unchanged unsupported priority policy while adding automation settings", async () => {
+    doc = Automerge.from(createWorkspaceDoc("jobs-legacy-policy", "Jobs", profile.identity.personId, "job-search"))
+    let settings = projectWorkspaceSettings(doc)
+    const board = doc.entities[settings.board.boardId]
+    if (!hasEntityKind(board, "board")) throw new Error("board missing")
+    const fields = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "field"))
+    const legacyPolicy = { ...createDefaultPriorityPolicy(board, fields)!, evaluator: "job-fit-v1" }
+    const existingAutomation = board.automation
+    if (!existingAutomation) throw new Error("job-search fixture needs automation settings")
+
+    const firstColumnId = settings.board.columns[0]?.id
+    if (!firstColumnId) throw new Error("job-search fixture needs a column")
+    const created = await executeCommand(doc, {
+      kind: "createItem", parentId: firstColumnId, title: "Keep this card", body: "Existing card data",
+    }, profile)
+    if (!created.ok) throw new Error(JSON.stringify(created.error))
+    doc = created.value.newDoc
+    const itemBefore = Object.values(doc.entities).find(isItem)
+    if (!itemBefore) throw new Error("created card missing")
+
+    doc = Automerge.change(doc, mutable => {
+      const currentBoard = mutable.entities[settings.board.boardId]
+      if (!hasEntityKind(currentBoard, "board")) throw new Error("board missing")
+      currentBoard.priorityPolicy = legacyPolicy as typeof currentBoard.priorityPolicy
+      delete currentBoard.automation
+    })
+    const policyBefore = doc.entities[settings.board.boardId]
+    if (!hasEntityKind(policyBefore, "board")) throw new Error("board missing")
+    const storedPolicy = policyBefore.priorityPolicy
+
+    settings = projectWorkspaceSettings(doc)
+    settings.board.automation = existingAutomation
+    const settingsJson = JSON.parse(JSON.stringify(settings)) as typeof settings
+    expect(validateWorkspaceSettingsDraft(settingsJson, doc).valid).toBe(true)
+    const result = await executeCommand(doc, { kind: "updateWorkspaceSettings", settings: settingsJson, expectedHeads: Automerge.getHeads(doc) }, profile)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const savedBoard = result.value.newDoc.entities[settings.board.boardId]
+    if (!hasEntityKind(savedBoard, "board")) throw new Error("saved board missing")
+    expect(savedBoard.automation).toEqual(existingAutomation)
+    expect(savedBoard.priorityPolicy).toEqual(storedPolicy)
+    expect(result.value.newDoc.entities[itemBefore.id]).toEqual(itemBefore)
+
+    const editedPolicy = projectWorkspaceSettings(result.value.newDoc)
+    editedPolicy.board.priorityPolicy!.evaluator = "job-fit-v2"
+    expect(validateWorkspaceSettingsDraft(editedPolicy, result.value.newDoc).errors).toContainEqual(expect.objectContaining({
+      path: "/board/priorityPolicy/evaluator",
+      message: expect.stringContaining("Unsupported priority evaluator"),
+    }))
+
+    const removedReference = projectWorkspaceSettings(result.value.newDoc)
+    const priorityFieldId = removedReference.board.priorityPolicy!.priorityFieldId
+    removedReference.board.fields = removedReference.board.fields.filter(field => field.id !== priorityFieldId)
+    expect(validateWorkspaceSettingsDraft(removedReference, result.value.newDoc).errors).toContainEqual(expect.objectContaining({
+      path: "/board/priorityPolicy/priorityFieldId",
+      message: expect.stringContaining("remain on this board"),
+    }))
   })
 
   it.each([

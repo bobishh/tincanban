@@ -1,21 +1,27 @@
 import { afterEach, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { RustyScopePurposeError } from "@meta-uber/mesh-replication/rusty-scope-purpose"
 import * as localDb from "../localDb"
 import { readLocal, writeLocal } from "../localDb"
-import { getIdentityReplicaConfigurations, getReplicaConfigurations, setReplicaPreference } from "./privateReplicaRepository"
+import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getReplicaConfigurations, setReplicaPreference } from "./privateReplicaRepository"
 import { prepareReplicaCredentialFreeze } from "./replicaCredentialFreeze"
 import type { IdentityReplicaConfig } from "./blindReplication"
+import type { EnsureRustyPersonScopeOptions } from "./rustyIdentityTransport"
 
 const service = { origin: "https://rusty.example", servicePublicKey: "A".repeat(43), scopeManagement: 1 as const }
 const remote = vi.hoisted(() => ({
   status: vi.fn(async () => ({ capability: null as unknown, migrationPending: false })),
   update: vi.fn(async () => ({ payload: { revision: 1 } })),
+  personPolicy: vi.fn(async (...args: unknown[]) => { void args; return { payload: { revision: 1 } } }),
   retry: vi.fn(async () => ({ payload: { revision: 1 } })),
   approve: vi.fn(async (config: IdentityReplicaConfig) => { void config; return 1 }),
+  classifyPersonScope: vi.fn(async (options: EnsureRustyPersonScopeOptions) => { void options }),
 }))
 vi.mock("./rustyManagementClient", () => ({ readRustyManagementStatus: remote.status, updateRustyManagementPolicy: remote.update,
-  retryRustyManagementUpdate: remote.retry }))
+  retryRustyManagementUpdate: remote.retry, ensureRustyPersonPolicy: remote.personPolicy }))
 vi.mock("./rustyEnrollment", () => ({ approveRustyScope: remote.approve }))
+vi.mock("./rustyIdentityTransport", () => ({ ensureRustyPersonIdentityScope: remote.classifyPersonScope,
+  ensureRustyIdentityAuthorityPublished: vi.fn(async () => ({})) }))
 
 import { ensureIdentityReplicaConnection, identityReplicaSetupKey } from "./identityReplicaConnection"
 
@@ -23,8 +29,10 @@ afterEach(() => {
   resetIdentityStorageForTest()
   remote.status.mockReset().mockResolvedValue({ capability: null, migrationPending: false })
   remote.update.mockReset().mockResolvedValue({ payload: { revision: 1 } })
+  remote.personPolicy.mockReset().mockResolvedValue({ payload: { revision: 1 } })
   remote.retry.mockClear()
   remote.approve.mockReset().mockResolvedValue(1)
+  remote.classifyPersonScope.mockReset().mockResolvedValue(undefined)
 })
 
 it("Given a forgotten profile scope, When the owner explicitly adds Rusty again, Then generate a distinct scope while retaining its tombstone", async () => {
@@ -35,6 +43,22 @@ it("Given a forgotten profile scope, When the owner explicitly adds Rusty again,
   const fresh = await ensureIdentityReplicaConnection(service, profile, () => {}, { allowNewScopeAfterRemoval: true })
   expect(fresh.scopeId).not.toBe(old.scopeId)
   expect(fresh.contentKey).not.toBe(old.contentKey)
+  expect(await getIdentityReplicaConfigurations(profile.identity.personId)).toEqual([fresh])
+})
+
+it("Given Rusty lost the saved Identity scope policy, when the owner explicitly reconnects, then tombstone it and provision a fresh scope", async () => {
+  const profile = await bootstrapIdentity("Missing Rusty profile scope")
+  const old = await ensureIdentityReplicaConnection(service, profile, () => {})
+  remote.classifyPersonScope.mockRejectedValueOnce(new RustyScopePurposeError(400, "scope-unavailable",
+    "Rusty scope classification failed with HTTP 400"))
+
+  const fresh = await ensureIdentityReplicaConnection(service, profile, () => {}, { allowNewScopeAfterRemoval: true })
+  const state = await exportPrivateReplicaState(profile.identity.personId)
+  const retired = state.entries.find(entry => entry.scopeId === old.scopeId)
+
+  expect(fresh.scopeId).not.toBe(old.scopeId)
+  expect(fresh.contentKey).not.toBe(old.contentKey)
+  expect(retired?.operations.at(-1)).toMatchObject({ purpose: "identity", config: null })
   expect(await getIdentityReplicaConfigurations(profile.identity.personId)).toEqual([fresh])
 })
 
@@ -58,6 +82,18 @@ it("Given a Rusty connection, when private profile setup succeeds, then register
   expect(await readLocal(await identityReplicaSetupKey(profile.identity.personId, service.origin))).toBeNull()
   await ensureIdentityReplicaConnection(service, profile, () => {})
   expect(remote.approve).toHaveBeenCalledTimes(1)
+  expect(remote.classifyPersonScope).toHaveBeenCalledTimes(2)
+  expect(remote.classifyPersonScope.mock.calls.map(([options]) => options.access.scopeId)).toEqual([result.scopeId, result.scopeId])
+})
+
+it("Given a newly approved Identity device, when Add Rusty initializes private storage, then explicitly establish person policy after publishing its authority view", async () => {
+  const profile = await bootstrapIdentity("First Rusty connection")
+  const orderedService = { ...service, personManagement: 1 as const }
+
+  await ensureIdentityReplicaConnection(orderedService, profile, () => {})
+
+  expect(remote.personPolicy).toHaveBeenCalledWith(orderedService, profile, true,
+    expect.objectContaining({ allowLegacyMigration: true, ensureCurrent: expect.any(Function) }))
 })
 
 it("Given storage enrollment lost its reply, when setup retries, then retain and reuse exact scope, tokens and content key", async () => {

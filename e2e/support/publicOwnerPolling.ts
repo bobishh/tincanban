@@ -3,24 +3,47 @@ import { writeFile } from "node:fs/promises"
 
 /** Exercise a real owner status poll while its unsaved Body draft receives keyboard input. */
 export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, boardId: string, info: TestInfo) {
-  const isOwnerPoll = (response: Response) => response.url() === `${origin}/v1/public/challenges` &&
+  const isOwnerChallenge = (response: Response) => response.url() === `${origin}/v1/public/challenges` &&
     response.ok() && response.request().postDataJSON()?.boardId === boardId
+  const isOwnerStatusRead = (response: Response) => response.url() === `${origin}/v1/public/boards/${encodeURIComponent(boardId)}` &&
+    response.request().method() === "GET" && response.ok()
   if (await page.getByRole("button", { name: "Menu", exact: true }).isVisible()) {
     await page.getByRole("button", { name: "Menu", exact: true }).click()
     await page.getByRole("dialog").getByRole("button", { name: "Settings", exact: true }).click()
   } else await page.getByRole("button", { name: "Settings", exact: true }).click()
   const settings = page.getByRole("dialog", { name: "Settings", exact: true })
+  const ownerStatusRead = page.waitForResponse(isOwnerStatusRead, { timeout: 20_000 })
   await settings.getByRole("tab", { name: "Workspace", exact: true }).click()
   const accessPanel = settings.getByRole("region", { name: "Public board access", exact: true })
-  // The status request settles before its debounced comparison begins. Observe the combined
-  // queued/running state across that gap so initial attachment reads stay outside measurement.
-  await Promise.all([
-    page.waitForResponse(isOwnerPoll, { timeout: 20_000 }),
-    expect(accessPanel).toHaveAttribute("data-public-sync-pending", "true", { timeout: 20_000 }),
-  ])
+  // Challenge issuance starts the owner status read; the board response completes it.
+  await ownerStatusRead
+  const settledPublicStatus = "Public · Changes sync automatically."
+  await expect(accessPanel.getByRole("status")).toHaveText(settledPublicStatus, { timeout: 20_000 })
+  // The status read queues a debounced comparison. Require the visible controls to
+  // remain idle longer than that debounce so it cannot overlap the draft measurement.
+  await page.waitForFunction(({ selector, quietMs, expectedStatus }) => {
+    const panel = document.querySelector(selector)
+    if (!panel) return false
+    return new Promise<boolean>(resolve => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const idle = () => panel.getAttribute("data-public-sync-pending") === "false" &&
+        panel.querySelector('[role="status"]')?.textContent?.trim() === expectedStatus
+      const observer = new MutationObserver(() => arm())
+      const finish = () => {
+        if (timer) clearTimeout(timer)
+        observer.disconnect()
+        resolve(idle())
+      }
+      const arm = () => {
+        if (timer) clearTimeout(timer)
+        timer = undefined
+        if (idle()) timer = setTimeout(finish, quietMs)
+      }
+      observer.observe(panel, { attributes: true, childList: true, characterData: true, subtree: true })
+      arm()
+    })
+  }, { selector: '[aria-label="Public board access"]', quietMs: 400, expectedStatus: settledPublicStatus }, { timeout: 20_000 })
   await expect(accessPanel).toHaveAttribute("data-public-sync-pending", "false", { timeout: 20_000 })
-  const accessStatus = accessPanel.getByRole("status")
-  await expect(accessStatus).toHaveText("Public · Changes sync automatically.", { timeout: 20_000 })
   await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Item details", exact: true })
@@ -61,7 +84,7 @@ export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, 
     return state.docVersion.value
   })
   let polls = 0
-  const onResponse = (response: Response) => { if (isOwnerPoll(response)) polls++ }
+  const onResponse = (response: Response) => { if (isOwnerChallenge(response)) polls++ }
   page.on("response", onResponse)
   try {
     const draft = "draft body ".repeat(8)

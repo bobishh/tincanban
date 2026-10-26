@@ -86,10 +86,9 @@ export async function createSignedChatRecord(workspaceId: string, kind: ChatReco
   const policy = await chatSigningAuthority(workspaceId, profile, kind, access)
   const signingContext = await resolveLocalSigningContext(profile, kind, { workspaceId: policy.scope }, {
     certificates: chain,
+    expectedAuthority: policy.revision,
     currentAuthority: async () => (await chatSigningAuthority(workspaceId, profile, kind, access)).revision,
   })
-  if (signingContext.authorityRevision !== canonicalizeJson([profile.certificate.signature, policy.revision]))
-    throw new Error("Signing context identity or authority is stale")
   const record = await createChatRecord(profile, policy.authority, policy.scope, kind, text, revision, context, signingContext)
   return verifyChatRecord(record, policy.scope, await access.readOwner(workspaceId), workspaceId)
 }

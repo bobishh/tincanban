@@ -83,8 +83,8 @@ export async function prepareAutomationActivation<
     definition: await signWithContext(definitionContext, definition) }
 }
 
-function configuredActivation<A extends AutomationAuthorization, B extends { workspaceId: string }>(
-  input: AutomationActivationInput<A, B>, bindings: ReturnType<typeof selectAutomationBindings>,
+function configuredActivation(
+  input: { doc: WorkspaceDocumentV2; configuration?: AutomationConfiguration }, bindings: ReturnType<typeof selectAutomationBindings>,
 ) {
   const { doc } = input
   const board = doc.entities[bindings.boardId]
@@ -120,6 +120,15 @@ async function validateWorkerIdentity(profile: LocalProfile, worker: AutomationW
     throw new Error("Worker identity certificate is invalid")
   }
   if (!isAutomationOrigin(worker.origin)) throw new Error("Worker public identity must include its service origin")
+}
+
+export function automationBoardDescription(doc: WorkspaceDocumentV2, configuration?: AutomationConfiguration) {
+  const bindings = selectAutomationBindings(doc)
+  configuredActivation({ doc, configuration }, bindings)
+  const board = doc.entities[bindings.boardId]!
+  return { title: board.title, columns: Object.values(bindings.columns).map(id => doc.entities[id!]!.title),
+    fields: Object.values(bindings.fieldIds).map(id => doc.entities[id]!.title),
+    fingerprint: canonicalizeJson([doc.id, bindings, configuration, hasEntityKind(board, "board") ? board.automation : null]) }
 }
 
 function selectAutomationBindings(doc: WorkspaceDocumentV2) {

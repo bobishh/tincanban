@@ -1,9 +1,10 @@
+import { generateIdentityRecovery } from "@meta-uber/mesh-identity/recovery"
 import { beforeEach, expect, it } from "vitest"
-import { generateIdentityRecovery, identitySeedFromPrivateKey, sealIdentitySeed } from "@meta-uber/mesh-identity"
+import { identitySeedFromPrivateKey, sealIdentitySeed } from "@meta-uber/mesh-identity"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { openIdentityDeviceRecovery, parseIdentityRecoveryFile, sealIdentityDeviceRecovery } from "./identityDeviceRecoveryCodec"
 
 beforeEach(() => resetIdentityStorageForTest())

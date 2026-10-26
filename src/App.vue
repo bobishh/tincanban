@@ -21,6 +21,10 @@ import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
 import ReleaseUpgradeNotice from "./components/ReleaseUpgradeNotice.vue"
+import ConnectedIdentityProfile from "./components/ConnectedIdentityProfile.vue"
+import IdentityAccountControls from "./components/IdentityAccountControls.vue"
+import { useIdentityAccount } from "./app/useIdentityAccount"
+import { useAutomationConnection } from "./app/useAutomationConnection"
 import type { saveIdentityName as identityNameSaverType } from "./app/identityName"
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, type Component, watch } from "vue"
 import type { NarrativeFoldSources } from "./domain/commandTypes"
@@ -29,24 +33,14 @@ import { useAppViewState } from "./app/useAppViewState"
 import { useBoardAddress } from "./app/useBoardAddress"
 import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
-import { configuredIdentityPortalOrigin } from "./app/identityPortalConfig"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
-import { createIdentityPortalFlow, createWorkspaceInviteAction } from "./app/identityPortalFlow"
-import { createIdentityBrowserSignInReturn } from "./app/identityBrowserSignIn"
+import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
 import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
+const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
 const showRustyStatus = ref(new URLSearchParams(window.location.hash.slice(1)).has("rusty-status"))
-function closeRustyStatus() {
-  showRustyStatus.value = false
-  if (window.opener) window.close()
-  const url = new URL(window.location.href)
-  const hash = new URLSearchParams(url.hash.slice(1))
-  hash.delete("rusty-status")
-  url.hash = hash.toString()
-  window.history.replaceState(window.history.state, "", url)
-}
 const boardAddress = useBoardAddress(app.workspace)
 const routeContent = ref<HTMLElement | null>(null)
 type IdentityNameSaver = typeof identityNameSaverType
@@ -61,10 +55,9 @@ const boardAddressResolved = computed(() => boardAddress.status.value !== "resol
 const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressResolved.value)
 const conversations = useObjectConversations(app)
 const showSettings = ref(false)
-const showIdentityPortal = ref(false), identityPortalOrigin = configuredIdentityPortalOrigin(import.meta.env.VITE_IDENTITY_ORIGIN as string | undefined)
-const currentIdentityProfile = computed(() => { void app.workspace.docVersion.value; return app.workspace.getCurrentProfile() })
-const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
-const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal, refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close })
+const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
+  beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn } = useIdentityAccount(app, showSettings)
+const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
   showSettings.value = false
@@ -125,6 +118,7 @@ const { publicAccess, publicDelivery } = useAppPublicBoards(app, uiReady)
 const identityOwnerActions = createIdentityOwnerActions({ gate: identityPortalFlow.gate, portalOrigin: identityPortalOrigin, publicAccess,
   getProfile: app.workspace.getCurrentProfile, getBoard: () => ({ boardId: activeBoard.value?.id ?? "", workspaceId: activeWorkspace.id, sourceHeads: [...currentDocHeads.value] }),
   isOwner: () => confirmedRole.value === "owner", addMyDevice: sync.selectSyncAll, isSyncChooserOpen: () => sync.isOpen.value && (sync.step.value === "chooser" || sync.step.value === "members") })
+function beginIdentityDeviceEnrollment() { return beginDeviceEnrollment(identityOwnerActions.addMyDevice) }
 const publicAccessWithIdentity = { ...publicAccess, setPublic: identityOwnerActions.setPublic }
 function openCard(item: Parameters<typeof openBoardItem>[0], event: MouseEvent) { conversations.openCard(item, event); recordUsageAction("item_open") }
 function toggleCardTask(item: Parameters<typeof openBoardItem>[0], markdown: string) { void updateItemMarkdown(item, markdown) }
@@ -146,7 +140,7 @@ function boardCardPresentation(item: Parameters<typeof cardNotes>[0], column: Pa
     discussion: conversations.cardDiscussions.value.get(item.id), moved: movedItemId.value === item.id,
     ageLevel: age?.level, ageLabel: age?.label }
 }
-const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileLoadError, retryProfileLoad, profileConflicts, profileRevision, identityNameProvided } = useMemberAvatars(app.workspace)
+const { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileLoadError, retryProfileLoad, profileConflicts, profileRevision, identityNameProvided } = useMemberAvatars(app.workspace, browserSignInReturn.contextReady)
 function saveProfile(draft: { name?: string; avatarData?: string | null; revision?: string }) {
   if (draft.name !== undefined) return saveIdentityName(draft.name, activeWorkspace.id, app.workspace.refreshIdentity, { avatarData: draft.avatarData, expectedRevision: draft.revision })
   if (draft.avatarData !== undefined) return saveAvatar(draft.avatarData, draft.revision)
@@ -188,8 +182,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       <div class="top-actions top-actions-desktop" :inert="!uiReady || undefined">
         <button class="button button-quiet" type="button" aria-label="Workspace chat" :disabled="!boardAddressResolved" @click="chat.open.value = true">Chat<span v-if="chat.unread.value"> · {{ chat.unread.value }}</span></button>
         <button class="button button-quiet" type="button" @click="openConnections()">Sync</button>
-        <button v-if="identityPortalOrigin" class="button button-quiet" type="button" :disabled="!app.workspace.getCurrentProfile()" @click="showIdentityPortal = true">Identity</button>
-        <button class="button button-quiet" type="button" aria-label="Settings" @click="showSettings = true">Settings</button>
+        <IdentityAccountControls :portal-enabled="Boolean(identityPortalOrigin)" :signed-in="identitySignedIn" :person-id="currentIdentityProfile?.identity.personId" @sign-in="beginHeaderSignIn" @settings="showSettings = true" />
         <button v-if="canEditBoard" class="button button-quiet" type="button" :disabled="!boardAddressResolved" @click="isEditingBoard = !isEditingBoard">{{ isEditingBoard ? "Done" : "Edit board" }}</button>
         <button v-if="isEditingBoard" class="button button-primary" type="button" :disabled="!boardAddressResolved" @click="showEntitySettings = true">Edit {{ entityName }}</button>
         <a v-if="hasExperimentalMcp" class="button button-quiet agent-guide-desktop" href="/agent">Agent guide</a>
@@ -224,10 +217,10 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :active-workspace-title="workspaceLabel"
       :is-editing-board="isEditingBoard && boardAddressResolved"
       :can-edit-board="canEditBoard && boardAddressResolved"
-      :entity-name="entityName"
+      :entity-name="entityName" :show-sign-in="Boolean(identityPortalOrigin) && !identitySignedIn" :sign-in-ready="Boolean(currentIdentityProfile)"
       @close="closeMobileMenu"
       @open-workspaces="showWorkspaces = true"
-      @open-settings="showSettings = true"
+      @open-settings="showSettings = true" @sign-in="beginHeaderSignIn"
       @toggle-board-edit="isEditingBoard = !isEditingBoard"
       @open-entity-settings="showEntitySettings = true"
       @open-sync="openConnections()"
@@ -267,7 +260,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       @apply-workspace-settings="applyWorkspaceSettings"
     >
       <template #identity>
-        <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
+        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginIdentityDeviceEnrollment" />
+        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginIdentityDeviceEnrollment : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''" :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
           :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
             :inspect-file="inspectPrivateRecovery" :restore="restorePrivateRecovery" :has-workspace-copy="hasWorkspaceCopy"
@@ -290,7 +284,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     </SchemaEditorDialog>
     <DialogWindow v-else-if="showSettings" window-id="settings-profile" :workspace-id="activeWorkspace.id" title="Settings" aria-label="Settings" @close="showSettings = false">
       <section class="dialog dialog-window-content">
-        <IdentitySettingsPanel :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
+        <ConnectedIdentityProfile v-if="identityPortalOrigin && identitySignedIn && currentIdentityProfile" :name="currentIdentityProfile.identity.displayName" :person-id="currentIdentityProfile.identity.personId" :avatar-data="currentAvatar" :portal-origin="identityPortalOrigin" @refresh="beginHeaderSignIn" @connect="beginIdentityDeviceEnrollment" />
+        <IdentitySettingsPanel v-else :connect-device="identityPortalOrigin ? beginIdentityDeviceEnrollment : undefined" :workspace-id="activeWorkspace.id" :display-name="app.workspace.getCurrentProfile()?.identity.displayName ?? ''"
           :avatar-data="currentAvatar" :save-avatar="saveAvatar" :save-name="(name: string) => saveIdentityName(name, activeWorkspace.id, app.workspace.refreshIdentity)"
           :name-provided="identityNameProvided" :name-options="profileConflicts.names" :photo-options="profileConflicts.photos" :profile-revision="profileRevision || undefined" :profile-load-error="profileLoadError" :retry-profile-load="retryProfileLoad" :save-profile="saveProfile">
           <WorkspacePrivateRecoveryPanel :selected-workspace-title="activeWorkspace.title" :create-backup="createPrivateRecovery" :create-unavailable-reason="privateRecoveryUnavailableReason"
@@ -300,7 +295,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
         <p v-if="avatarNotice" role="status">{{ avatarNotice }}</p>
       </section>
     </DialogWindow>
-    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="closeRustyStatus" />
+    <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
+    <AutomationConnectionDialog v-if="connectingAutomation && ready.value" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="currentIdentityProfile" :boards="availableWorkspaces" :describe="describeAutomationBoard" :export-packet="exportAutomationConnection" @sign-in="beginHeaderSignIn" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -461,6 +457,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :qr-code="sync.qrCode.value"
       :invite-url="sync.inviteUrl.value"
       :copy-notice="sync.copyNotice.value"
+      :owner-reconnect-review="sync.ownerReconnectReview.value" @start-owner-reconnect="sync.startOwnerReconnect"
+      @approve-owner-reconnect="sync.approveOwnerReconnect" @cancel-owner-reconnect="sync.cancelOwnerReconnect"
       :error="sync.error.value" :can-reconnect-device="sync.canReconnectDevice.value" @reconnect-device="sync.reconnectDevice"
       :auth-code="sync.authCode.value"
       :invitation-workspace-title="sync.invitationWorkspaceTitle.value"
@@ -496,6 +494,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       @promote-peer="promoteWorkspacePeer"
       @request-enrollment="sync.requestEnrollment"
       :enrollment-device-name="sync.enrollmentDeviceName.value"
+      :enrollment-same-identity="sync.enrollmentSameIdentity.value"
       @approve-device="sync.approveEnrollment"
       @decline-device="sync.declineEnrollment"
       @accept-and-join="sync.acceptWorkspaceJoin"
@@ -507,7 +506,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   </TincanbanPageLayout>
   <BuildFooter />
   <IdentityPortalEnrollmentDialog v-if="showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
-    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :workspaces="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :export-current-workspace="exportWorkspace" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
+    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :initial-mode="identityPortalMode" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
 </template>
 
 <style>

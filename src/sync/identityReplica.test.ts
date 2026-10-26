@@ -4,7 +4,7 @@ import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope } from "..
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { createIdentityReplicaRecord, type readIdentityReplicaRecord } from "./identityReplicaProtocol"
 import { encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"

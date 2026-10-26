@@ -5,6 +5,9 @@ import { readLocal } from "../localDb"
 export const identityEnrollmentPrefix = "tincanban.identity.enrollment.v1."
 
 export async function identityEnrollmentConfirmed(profile: LocalProfile): Promise<boolean> {
+  // An approved app-device certificate is the durable sign-in fact. The receipt
+  // below belongs to the separate full-device enrollment flow.
+  if (profile.certificate.payload.canEnrollDevices === false && profile.certificate.payload.issuerCertificateHash) return true
   const raw = await readLocal(`${identityEnrollmentPrefix}${profile.identity.personId}`)
   if (!raw) return false
   try {

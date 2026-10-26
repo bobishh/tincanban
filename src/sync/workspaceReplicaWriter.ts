@@ -178,7 +178,7 @@ async function runWriterTransition(app: WriterApp, config: BlindReplicaConfig, p
   await createWorkspaceAttachmentIndex(owner, intent.config, guardIdentity).read()
   await guard()
   if (!intent.confirmed || intent.confirmed.payload.revision < config.policyRevision || intent.confirmed.payload.minimumWriterVersion !== 2) {
-    await approveRustyScope(intent.config, profile, false, { minimumWriterVersion: 2, ensureCurrent: guard,
+    await approveRustyScope(intent.config, profile, false, { scopePurpose: "workspace", minimumWriterVersion: 2, ensureCurrent: guard,
       confirmed: async receipt => {
         await guard()
         intent = await confirmReplicaWriterUpgrade(owner, intent, receipt, guardIdentity)

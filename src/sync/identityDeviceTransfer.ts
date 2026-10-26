@@ -16,6 +16,7 @@ import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/
 import { projectLegacyEnrollmentCatalog } from "./legacyEnrollmentCatalog"
 import { readIdentityStateRevision } from "../identityStateRevision"
 import { projectRedundantDeviceCertificates } from "./identityDeviceTransferCertificateProjection"
+import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 export { readIdentityDeviceTransfer, requireEnrollmentTransfer, type DeviceWorkspaceTransfer } from "./identityDeviceTransferReader"
 
 async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ kind: "workspace-profile"; workspaceId: string; record: unknown }[]> {
@@ -38,9 +39,15 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
   enrollment?: DeviceWorkspaceTransfer): Promise<IdentityDeviceState> {
   personalRoot = structuredClone(personalRoot)
   certificates = structuredClone(certificates)
+  const authorityView = await requireIdentityAuthorityView(personalRoot.identity.personId)
+  if (authorityView.identityPublicKey !== personalRoot.identity.publicKey) throw new Error("Identity authority view does not match the local root")
   const projected = await projectRedundantDeviceCertificates(personalRoot, certificates)
   personalRoot = projected.root
   certificates = projected.certificates
+  const coveredCertificates = new Set(authorityView.certificates.map(certificate => canonicalizeJson(certificate)))
+  if (certificates.some(certificate => !coveredCertificates.has(canonicalizeJson(certificate)))) {
+    throw new Error("Local certificate catalog is newer than the stored Identity authority view")
+  }
   personalRoot = projectIdentityProfileRoot(personalRoot, await rootIdentityProfileState(personalRoot))
   enrollment = structuredClone(enrollment)
   certificates = await canonicalCertificates(certificates)
@@ -65,6 +72,7 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
     privateConnections: component(replicas.version === 5 ? identityDeviceStateSchemas.privateConnections : replicas.version === 4 ? "private-rusty-connections@4" : "private-rusty-connections@3", replicas),
     ownerCapabilities: component(identityDeviceStateSchemas.ownerCapabilities, { personId, capabilities }),
     recoveryEvidence: component(identityDeviceStateSchemas.recoveryEvidence, recovery),
+    identityAuthority: component(identityDeviceStateSchemas.identityAuthority, { personId, authorityView }),
   } }
   const normalized = decodeIdentityDeviceState(encodeIdentityDeviceState(manifest), personId)
   await readIdentityDeviceTransfer(normalized, personId)

@@ -10,6 +10,7 @@ const schemas = {
   privateConnections: "private-rusty-connections@3",
   ownerCapabilities: "owner-capabilities@2",
   recoveryEvidence: "identity-recovery-evidence@1",
+  identityAuthority: "identity-authority-view@1",
 } as const
 
 function component(schema: string, value: Record<string, unknown>, required = true) {
@@ -28,6 +29,9 @@ function state(): IdentityDeviceStateInput {
       privateConnections: component(schemas.privateConnections, { version: 3, personId, clock: {}, entries: [] }),
       ownerCapabilities: component(schemas.ownerCapabilities, { personId, capabilities: [{ service: "opaque-service", scope: "board-1", operations: ["manage"] }] }),
       recoveryEvidence: component(schemas.recoveryEvidence, { personId, envelopes: [{ kind: "identity-recovery-envelope", version: 1, ciphertext: "opaque-envelope", salt: "opaque-salt" }] }),
+      identityAuthority: component(schemas.identityAuthority, { personId, authorityView: { kind: "mesh-identity-authority-view", version: 1,
+        personId, identityPublicKey: "public-key", certificates: [], revocations: [],
+        revocationHead: { revision: 0, recordHash: "genesis-hash" }, viewDigest: "view-digest" } }),
     },
   }
 }

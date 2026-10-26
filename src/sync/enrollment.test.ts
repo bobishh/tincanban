@@ -1,16 +1,29 @@
+import { confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, signEnvelope, toBase64Url,
+  verifyEnvelope } from "../domain/identity"
 import { createPersonalRoot, registerDeviceInRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
 import { InvitationService, resetInvitationStorageForTest } from "./invitations"
 import { createDeviceEnrollmentInvite } from "@meta-uber/mesh-pairing"
-import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest } from "./enrollment"
+import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, preflightSamePersonWorkspaceBootstrap,
+  readEnrollmentRequest } from "./enrollment"
 import { createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { defaultStorage } from "../storage"
 import { keyId, verifyDeviceChain } from "./meshRecords"
 import { resolveSigningContext } from "../domain/signingContext"
 import * as local from "../localDb"
 import { reactive } from "vue"
+import { assertActiveIdentityEnrollmentDevice } from "./enrollment"
+import { createSamePersonWorkspaceBootstrap } from "./enrollment"
+import { createIdentityAuthorityView, createDeviceRevocation, publicKeyId, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
+import { emptyIdentityProfileState } from "../domain/identityProfileState"
+import { rootIdentityProfileState } from "../domain/identityProfileRoot"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+import { parsePrivateReplicaConfig, parseReplicaConfig } from "./blindReplicaConfig"
+import * as rustyCatalog from "./identityRustyServiceCatalog"
+import { persistThenReceiveSamePersonWorkspace } from "./deviceSyncSamePersonWorkspace"
+import { getReplicaConfigurations } from "./privateReplicaRepository"
 
 async function fixture(photo?: { avatarData: string | null; changedAt: string },
   workspaceView: (value: { id: string; title: string }[]) => { id: string; title: string }[] = value => value) {
@@ -32,6 +45,7 @@ async function fixture(photo?: { avatarData: string | null; changedAt: string },
   registerWorkspaceInRoot(root, "ws", "ws", "genesis")
   root.displayNamePreset = "Owner preset"
   if (photo) root.photo = photo
+  await confirmIdentityAuthorityFixture(root, [owner.certificate, result.certificate])
   const context = await resolveSigningContext({ profile: owner, certificates: [owner.certificate], purpose: "device-enrollment-approval",
     binding: { invitationId: invite.invitationId, recipientDeviceId: result.certificate.payload.deviceId }, authorityRevision: "fixture",
     current: async () => ({ personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision: "fixture" }) })
@@ -44,6 +58,89 @@ async function fixture(photo?: { avatarData: string | null; changedAt: string },
 beforeEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest(); resetInvitationStorageForTest() })
 
 describe("device enrollment boundary", () => {
+  it("Given optional mesh fields, when signing a workspace bootstrap, then the actual JSON wire payload verifies", async () => {
+    const owner = await bootstrapIdentity("Owner")
+    const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+    const targetKeys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const targetPublicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", targetKeys.publicKey)))
+    const targetDeviceId = await keyId(targetPublicKey)
+    const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+      owner.identity.personId, targetDeviceId, targetPublicKey, await certHashDefault(owner.certificate))
+    const authorityView = await createIdentityAuthorityView(owner.identity,
+      { certificates: [owner.certificate, certificate], revocations: [] }, await rootIdentityProfileState(root))
+    await mergeIdentityAuthorityView(authorityView)
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    const serviceKey = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const servicePublicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", serviceKey.publicKey)))
+    const origin = "https://rusty.example"
+    const serviceId = await publicKeyId(servicePublicKey)
+    vi.spyOn(rustyCatalog, "readIdentityRustyServicePin").mockResolvedValue({ origin, serviceId, servicePublicKey })
+    const storage = parseReplicaConfig(JSON.stringify({ origin, scopeId: "s".repeat(43), workspaceId: "ws",
+      servicePublicKey, contentKey: "c".repeat(43), readToken: "r".repeat(43), writeToken: "w".repeat(43),
+      keyEpoch: 1, policyRevision: 1, minimumWriterVersion: 2, cursor: 9, lastUploaded: "l".repeat(43) }))
+    const parsedIdentityStorage = parsePrivateReplicaConfig(JSON.stringify({ purpose: "identity", personId: owner.identity.personId,
+      origin, scopeId: "i".repeat(43), servicePublicKey, contentKey: "c".repeat(43), readToken: "r".repeat(43),
+      writeToken: "w".repeat(43), keyEpoch: 1, policyRevision: 1, cursor: 8, lastUploaded: "l".repeat(43) }), owner.identity.personId)
+    if (parsedIdentityStorage.purpose !== "identity") throw new Error("Invalid identity replica test fixture")
+    const identityStorage = parsedIdentityStorage
+    const bytes = await createSamePersonWorkspaceBootstrap({ invite, profile: owner,
+      recipientDeviceId: certificate.payload.deviceId, recipientPublicKey: certificate.payload.devicePublicKey,
+      authorityView, workspace: { id: "ws", title: "Board", reference: {
+        workspaceId: "ws", documentId: "ws", grantHash: "genesis", forgotten: false } },
+      meshWorkspaces: [{ version: 1, workspaceId: "ws", ownerPersonId: owner.identity.personId,
+        ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], grants: [], storage: [storage], identityStorage: [identityStorage],
+      snapshot: new TextEncoder().encode("[]") })
+    const wire = JSON.parse(new TextDecoder().decode(bytes)) as Parameters<typeof verifyEnvelope>[0]
+    expect(await verifyEnvelope(wire, owner.device.publicKey)).toBe(true)
+    expect(JSON.stringify(wire)).not.toContain("optionalMeshField")
+  })
+
+  it("Given a crash after local access CAS, when the same approved bootstrap retries after reload, then retain profile and local workspace and finish mesh delivery", async () => {
+    const owner = await bootstrapIdentity("Retrying same-person bootstrap")
+    const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+    registerWorkspaceInRoot(root, "ws", "ws", "approved-grant")
+    registerWorkspaceInRoot(root, "local", "local-document", "local-grant")
+    root.displayNamePreset = "Preserved profile"
+    await defaultStorage.savePersonalRoot(root)
+    const authorityView = await createIdentityAuthorityView(owner.identity,
+      { certificates: [owner.certificate], revocations: [] }, await rootIdentityProfileState(root))
+    await mergeIdentityAuthorityView(authorityView)
+    const invite = createDeviceEnrollmentInvite("endpoint", "secret", owner)
+    const serviceKey = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const servicePublicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", serviceKey.publicKey)))
+    const origin = "https://rusty.example"
+    const serviceId = await publicKeyId(servicePublicKey)
+    vi.spyOn(rustyCatalog, "readIdentityRustyServicePin").mockResolvedValue({ origin, serviceId, servicePublicKey })
+    const randomKey = () => toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    const storage = parseReplicaConfig(JSON.stringify({ origin, scopeId: "s".repeat(43), workspaceId: "ws",
+      servicePublicKey, contentKey: "c".repeat(43), readToken: "r".repeat(43), writeToken: "w".repeat(43),
+      keyEpoch: 1, policyRevision: 1, minimumWriterVersion: 2, cursor: 0, lastUploaded: "" }))
+    const identityStorage = parsePrivateReplicaConfig(JSON.stringify({ purpose: "identity", personId: owner.identity.personId,
+      origin, scopeId: "i".repeat(43), servicePublicKey, contentKey: randomKey(), readToken: randomKey(),
+      writeToken: randomKey(), keyEpoch: 1, policyRevision: 1, cursor: 0, lastUploaded: "" }), owner.identity.personId)
+    if (identityStorage.purpose !== "identity") throw new Error("Invalid test Identity replica config")
+    const bytes = await createSamePersonWorkspaceBootstrap({ invite, profile: owner, recipientDeviceId: owner.device.deviceId,
+      recipientPublicKey: owner.device.publicKey, authorityView, workspace: { id: "ws", title: "Board", reference: {
+        workspaceId: "ws", documentId: "ws", grantHash: "approved-grant", forgotten: false } },
+      meshWorkspaces: [{ workspaceId: "ws", ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey }],
+      grants: [], storage: [storage], identityStorage: [identityStorage], snapshot: new TextEncoder().encode("[]") })
+    const prepared = await preflightSamePersonWorkspaceBootstrap(bytes, invite, owner, authorityView)
+    const delivery = vi.fn().mockRejectedValueOnce(new Error("simulated crash before mesh credential receive"))
+    const durableMesh = { receiveInvitation: delivery }
+
+    await expect(persistThenReceiveSamePersonWorkspace(owner, prepared, () => {}, durableMesh)).rejects.toThrow("simulated crash")
+    clearInMemoryProfileForReloadTest()
+    const reloaded = await bootstrapIdentity()
+    expect(reloaded.identity.personId).toBe(owner.identity.personId)
+    await persistThenReceiveSamePersonWorkspace(reloaded, prepared, () => {}, durableMesh)
+
+    expect(delivery).toHaveBeenCalledTimes(2)
+    const persistedRoot = await defaultStorage.loadPersonalRoot(root.rootId)
+    expect(persistedRoot?.displayNamePreset).toBe("Preserved profile")
+    expect(persistedRoot?.workspaces.local).toEqual(root.workspaces.local)
+    expect((await getReplicaConfigurations(owner.identity.personId)).map(config => config.workspaceId)).toEqual(["ws"])
+  })
+
   it("Given complete portable state, when authoring enrollment, then use the same required manifest as ongoing device sync", async () => {
     const { owner, guest, invite, bytes } = await fixture()
     const raw = JSON.parse(new TextDecoder().decode(bytes))
@@ -111,6 +208,35 @@ describe("device enrollment boundary", () => {
     const forged = JSON.parse(new TextDecoder().decode(bytes))
     forged.payload.displayName = "Forged"
     await expect(readEnrollmentRequest(new TextEncoder().encode(JSON.stringify(forged)), invite)).rejects.toThrow("Invalid")
+  })
+
+  it("Given Identity already authorized an app key without enrollment rights, when bootstrapping the same person's device, then require that exact active certificate and current view", async () => {
+    const { owner, guest, root } = await fixture()
+    const target = await signEnvelope(owner.privateKeys.identityPrivateKey!, {
+      kind: "device-certificate" as const, version: 1 as const, personId: owner.identity.personId,
+      deviceId: guest.device.deviceId, devicePublicKey: guest.device.publicKey, issuerCertificateHash: null,
+      canEnrollDevices: false,
+    }, owner.identity.personId)
+    const certificates = [owner.certificate, target]
+    const view = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] },
+      await rootIdentityProfileState(root))
+    const known = await createIdentityAuthorityView(owner.identity, { certificates: [owner.certificate], revocations: [] },
+      await rootIdentityProfileState(root))
+
+    await expect(assertActiveIdentityEnrollmentDevice(known, view, owner.identity.personId,
+      guest.device.deviceId, guest.device.publicKey)).resolves.toMatchObject({ authorityView: { viewDigest: view.viewDigest }, certificates: [target] })
+    await expect(assertActiveIdentityEnrollmentDevice(known, known, owner.identity.personId,
+      guest.device.deviceId, guest.device.publicKey)).rejects.toThrow(/certificate/i)
+    await expect(assertActiveIdentityEnrollmentDevice(known, view, owner.identity.personId,
+      guest.device.deviceId, "different-public-key")).rejects.toThrow(/device key/i)
+
+    const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+    const revocation = await createDeviceRevocation(owner, authority, guest.device.deviceId,
+      emptyIdentityProfileState(owner.identity.personId))
+    const revoked = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] },
+      await rootIdentityProfileState(root))
+    await expect(assertActiveIdentityEnrollmentDevice(known, revoked, owner.identity.personId,
+      guest.device.deviceId, guest.device.publicKey)).rejects.toThrow(/revoked/i)
   })
 
   it("Given a reactive enrollment invitation from the device dialog, when requesting enrollment, then sign its exact original binding", async () => {

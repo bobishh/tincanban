@@ -1,0 +1,100 @@
+import { beforeEach, expect, it } from "vitest"
+import { createDeviceAuthorizationApproval, createDeviceAuthorizationRequest, createIdentityProfileOperation,
+  createRecoverableIdentity, emptyIdentityProfileState, readIdentityProfileState } from "@meta-uber/mesh-identity"
+import { bootstrapIdentity, clearInMemoryProfileForReloadTest, isCurrentIdentityProfile, resetIdentityStorageForTest } from "../domain/identity"
+import { defaultStorage } from "../storage"
+import { initializePersonalRootCatalog } from "../statePersonalRoot"
+import { completeIdentityBrowserSignIn } from "./completeIdentityBrowserSignIn"
+import { identityEnrollmentConfirmed } from "./identityEnrollmentReceipt"
+
+beforeEach(resetIdentityStorageForTest)
+
+it("Given an approved signed profile photo, when browser sign-in completes, then reload retains the same person and photo", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Photo Owner")).profile
+  const initial = emptyIdentityProfileState(owner.identity.personId)
+  const name = await createIdentityProfileOperation(owner, initial, "name", "Photo Owner")
+  const named = await readIdentityProfileState({ ...initial, operations: [name] }, owner.identity)
+  const avatarData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA"
+  const photo = await createIdentityProfileOperation(owner, named, "photo", { avatarData, changedAt: new Date().toISOString() })
+  const profileState = await readIdentityProfileState({ ...named, operations: [...named.operations, photo] }, owner.identity)
+  const challenge = "a".repeat(64)
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge, expiresAt: Date.now() + 120_000 })
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example", challenge,
+    certificates: [owner.certificate], revocations: [], profileState, includeProfileState: true })
+  const adopted = await completeIdentityBrowserSignIn(approval, request, app)
+  expect(await identityEnrollmentConfirmed(adopted)).toBe(true)
+  expect(isCurrentIdentityProfile(adopted)).toBe(true)
+  clearInMemoryProfileForReloadTest()
+  const restored = await bootstrapIdentity()
+  expect(restored.identity.personId).toBe(owner.identity.personId)
+  expect((await defaultStorage.loadPersonalRoot())?.photo?.avatarData).toBe(avatarData)
+})
+
+it("Given substituted profile evidence, when completing sign-in, then keep the original local identity", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Owner")).profile
+  const challenge = "b".repeat(64)
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge, expiresAt: Date.now() + 120_000 })
+  const profileState = emptyIdentityProfileState(owner.identity.personId)
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example", challenge,
+    certificates: [owner.certificate], revocations: [], profileState, includeProfileState: true })
+  await expect(completeIdentityBrowserSignIn({ ...approval, profileState: { ...profileState, personId: "another-person" } }, request, app)).rejects.toThrow()
+  expect((await bootstrapIdentity()).identity.personId).toBe(app.identity.personId)
+})
+
+it("Given the current app key already holds its manager certificate, when that same device signs in again, then preserve its exact certificate and signed photo", async () => {
+  const manager = await bootstrapIdentity("Existing manager app")
+  const initial = emptyIdentityProfileState(manager.identity.personId)
+  const name = await createIdentityProfileOperation(manager, initial, "name", "Existing manager app")
+  const named = await readIdentityProfileState({ ...initial, operations: [name] }, manager.identity,
+    [manager.certificate])
+  const avatarData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA"
+  const photo = await createIdentityProfileOperation(manager, named, "photo", {
+    avatarData, changedAt: "2026-10-25T00:00:00.000Z",
+  })
+  const profileState = await readIdentityProfileState({ ...named, operations: [...named.operations, photo] }, manager.identity,
+    [manager.certificate])
+  await initializePersonalRootCatalog(defaultStorage, manager)
+  const challenge = "c".repeat(64)
+  const request = await createDeviceAuthorizationRequest(manager, { applicationOrigin: "https://boards.example", challenge,
+    expiresAt: Date.now() + 120_000, personId: manager.identity.personId })
+  const approval = await createDeviceAuthorizationApproval(manager, request, { applicationOrigin: "https://boards.example",
+    challenge, certificates: [manager.certificate], profileState, revocations: [], includeProfileState: true })
+
+  const adopted = await completeIdentityBrowserSignIn(approval, request, manager)
+  expect(adopted.identity.personId).toBe(manager.identity.personId)
+  expect(adopted.certificate).toEqual(manager.certificate)
+  expect(adopted.certificate.payload.canEnrollDevices).toBe(true)
+  expect((await defaultStorage.loadPersonalRoot())?.photo?.avatarData).toBe(avatarData)
+})
+
+it("Given a valid approval but unavailable catalog service, when completing sign-in, then retain the previous active Identity and local boards", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Owner")).profile
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge: "d".repeat(64),
+    expiresAt: Date.now() + 120_000, includeIdentityCatalogAccess: true })
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example",
+    challenge: request.payload.challenge, profileState: emptyIdentityProfileState(owner.identity.personId),
+    certificates: [owner.certificate], revocations: [], includeProfileState: true, identityCatalogAccessUnavailable: true })
+  await expect(completeIdentityBrowserSignIn(approval, request, app)).rejects.toThrow(/boards could not be checked/)
+  expect(await bootstrapIdentity()).toBe(app)
+  expect(isCurrentIdentityProfile(app)).toBe(true)
+})
+
+it("Given an empty new Identity catalog and null-person request, when completing sign-in, then retain the active approved app profile without another root key", async () => {
+  const app = await bootstrapIdentity("Local app")
+  const owner = (await createRecoverableIdentity("better", "Owner")).profile
+  const request = await createDeviceAuthorizationRequest(app, { applicationOrigin: "https://boards.example", challenge: "e".repeat(64),
+    expiresAt: Date.now() + 120_000, includeIdentityCatalogAccess: true })
+  const initial = emptyIdentityProfileState(owner.identity.personId)
+  const name = await createIdentityProfileOperation(owner, initial, "name", "Owner")
+  const profileState = await readIdentityProfileState({ ...initial, operations: [name] }, owner.identity)
+  const approval = await createDeviceAuthorizationApproval(owner, request, { applicationOrigin: "https://boards.example",
+    challenge: request.payload.challenge, profileState,
+    certificates: [owner.certificate], revocations: [], includeProfileState: true })
+  const adopted = await completeIdentityBrowserSignIn(approval, request, app)
+  expect(adopted.identity.personId).toBe(owner.identity.personId)
+  expect(isCurrentIdentityProfile(adopted)).toBe(true)
+  expect(adopted.privateKeys.identityPrivateKey).toBeUndefined()
+})

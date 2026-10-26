@@ -18,7 +18,10 @@ const runtime = vi.hoisted(() => ({
   cleanup: [] as Array<() => void>,
   chatListeners: new Set<(event: ChatChange) => void>(),
   calls: [] as Array<{ purpose: string; config: unknown; profile?: LocalProfile; guard: () => void }>,
+  identityInitialPushes: [] as IdentityReplicaConfig[],
+  replicaOperations: [] as string[],
   identitySync: vi.fn(async () => true),
+  identityInitialPush: vi.fn(async () => true),
   workspaceSync: vi.fn(async () => true),
   maintenance: vi.fn<(app: unknown, config: BlindReplicaConfig, guard: () => void, reload: () => Promise<void>) => Promise<void>>().mockResolvedValue(undefined),
   provision: vi.fn(),
@@ -48,11 +51,16 @@ vi.mock("vue", async original => ({ ...await original<typeof Vue>(),
 }))
 vi.mock("./identityReplicaStore", () => ({ createIdentityReplica: (config: IdentityReplicaConfig, profile: LocalProfile, guard: () => void) => {
   runtime.calls.push({ purpose: "identity", config: structuredClone({ ...config }), profile, guard })
-  return { sync: async () => { guard(); const result = await runtime.identitySync(); guard(); return result } }
+  return {
+    push: async () => { runtime.replicaOperations.push("identity-initial-push"); runtime.identityInitialPushes.push(structuredClone(config));
+      guard(); const result = await runtime.identityInitialPush(); guard(); return result },
+    sync: async () => { runtime.replicaOperations.push("identity-sync"); guard(); const result = await runtime.identitySync(); guard(); return result },
+  }
 } }))
 vi.mock("./blindReplicaStore", () => ({ createBlindReplica: (config: BlindReplicaConfig, _app: unknown, guard: () => void) => {
   runtime.calls.push({ purpose: "workspace", config: structuredClone({ ...config }), guard })
-  return { sync: async () => { guard(); const result = await runtime.workspaceSync(); guard(); return result } }
+  return { sync: async () => { runtime.replicaOperations.push("workspace-sync"); guard();
+    const result = await runtime.workspaceSync(); guard(); return result } }
 } }))
 vi.mock("./provisionIdentityReplica", () => ({ provisionIdentityReplica: runtime.provision }))
 vi.mock("./rustyDeviceAccess", () => ({ migrateRustyDeviceAccess: (...args: unknown[]) => runtime.migrate(...args) }))
@@ -90,6 +98,34 @@ it("Given background Rusty sync is pending, when an owner requests recovery, the
     expect(runtime.recoverConflict).toHaveBeenCalledOnce()
     expect(controller.actionBusy.value).toBe(false)
   } finally { release?.() }
+})
+
+it("Given an identity sync captured the prior profile revision, when the owner requests Sync now during that pass, then wait for a fresh upload of the current revision", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  let profileRevision = "before-photo-update"
+  const capturedRevisions: string[] = []
+  let release!: () => void
+  runtime.identitySync.mockImplementationOnce(async () => {
+    capturedRevisions.push(profileRevision)
+    await new Promise<boolean>(resolve => { release = () => resolve(true) })
+    return true
+  })
+  runtime.identitySync.mockImplementation(async () => { capturedRevisions.push(profileRevision); return true })
+  const controller = f.start()
+  let requested: Promise<void> | undefined
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    expect(capturedRevisions).toEqual(["before-photo-update"])
+    profileRevision = "after-photo-update"
+    requested = controller.syncNow()
+    release()
+    await requested
+    expect(capturedRevisions).toEqual(["before-photo-update", "after-photo-update"])
+  } finally {
+    release?.()
+    await requested?.catch(() => {})
+  }
 })
 
 it.each(["workspace", "identity"] as const)("Given recovery is queued behind sync, when the %s changes, then reject the old request without a recovery write", async changed => {
@@ -131,7 +167,10 @@ it("Given an idle Rusty connection, when only typing presence changes, then skip
 afterEach(() => {
   for (const cleanup of runtime.cleanup.splice(0)) cleanup()
   runtime.calls.length = 0
+  runtime.identityInitialPushes.length = 0
+  runtime.replicaOperations.length = 0
   runtime.identitySync.mockReset().mockResolvedValue(true)
+  runtime.identityInitialPush.mockReset().mockResolvedValue(true)
   runtime.workspaceSync.mockReset().mockResolvedValue(true)
   runtime.maintenance.mockReset().mockResolvedValue(undefined)
   runtime.provision.mockReset()
@@ -294,7 +333,7 @@ it("Given board and personal Rusty connections, when removal receives confirmed 
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   await controller.remove(f.workspace)
-  expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true)
+  expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true, { scopePurpose: "workspace" })
   expect(await getReplicaConfigurations(f.personId)).toEqual([])
   expect(controller.identityConfigs.value[0]?.scopeId).toBe(f.identity.scopeId)
 })
@@ -329,12 +368,14 @@ it("Given only a personal Rusty connection, when the app starts, then its normal
 it("Given an existing board Rusty connection lacks private delivery, when the normal loop starts, then provision and start a separate personal replica", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)
-  runtime.provision.mockImplementationOnce(async () => { await setReplicaPreference(f.personId, f.identity) })
+  runtime.provision.mockImplementationOnce(async () => { await setReplicaPreference(f.personId, f.identity); return f.identity })
   const controller = f.start()
   await vi.waitFor(() => expect(runtime.identitySync).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.provision).toHaveBeenCalledTimes(1)
-  expect(runtime.calls.map(call => call.purpose)).toEqual(["identity", "workspace"])
+  expect(runtime.calls.map(call => call.purpose)).toEqual(["identity", "identity", "workspace"])
+  expect(runtime.identityInitialPushes[0]).toMatchObject(f.identity)
+  expect(runtime.replicaOperations.indexOf("identity-initial-push")).toBeLessThan(runtime.replicaOperations.indexOf("identity-sync"))
 })
 
 it("Given private scope migration is unavailable, then expose its actual setup failure while existing board replication continues", async () => {

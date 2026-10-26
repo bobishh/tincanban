@@ -8,7 +8,8 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore, type WasmVerifiedHistoryArchiveCoverage } from "@meta-uber/mesh-transport/wasm"
-import { adoptEnrolledIdentity, bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
+import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson,
+  resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -55,7 +56,11 @@ import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-a
 import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locator-preparation"
 import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
-import { verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { createDeviceAuthorizationRequest, createIdentityAuthorityView, createRecoverableIdentity,
+  emptyIdentityProfileState, issueDeviceAuthorization, verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
+import { initializePersonalRootCatalog } from "../statePersonalRoot"
+import { peerStore } from "./peerStore"
 import { createWorkspaceHistoryPreparation } from "./historyPreparationRepository"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
 import { receiveBrowserHistoryBaseline, type BrowserHistoryBaselineReceivePorts } from "./browserHistoryBaselineReceive"
@@ -63,6 +68,12 @@ import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBas
 import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority } from "../../workers/automation/src/historyBaseline"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
+import { publishRustyIdentityAuthorityView } from "@meta-uber/mesh-replication/rusty-identity-authority"
+import { createRustyScopeEnrollmentClient, type RustyScopeEnrollmentJournal } from "@meta-uber/mesh-replication/rusty-scope-enrollment"
+import { publishRustyScopeAuthoritySnapshot, type ScopeAuthorityValidation } from "@meta-uber/mesh-replication/rusty-scope-authority"
+import { registerRustyResourcePrincipalGrant, type RustyWorkspaceMembershipGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory())
@@ -77,7 +88,209 @@ function initializeNativeAutomerge(): Promise<void> {
     .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
 }
 
+test("Given actual Rusty and an SDK authority snapshot missing serde defaults, When its authority is published and read again, Then Rust accepts the SDK hash, returns a receipt-only reply, and no-op read performs no PUT", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("SDK Rusty contract owner")
+  await initializePersonalRootCatalog(defaultStorage, profile)
+  const service = await startRusty(profile)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    await ensureRustyPersonPolicy(discovery, profile, true, { allowLegacyMigration: true })
+    const workspaceId = crypto.randomUUID()
+    const scopeId = `opaque-${crypto.randomUUID()}`
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId,
+      readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+      writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+    access.policyRevision = await approveRustyScope(access, profile, false,
+      { minimumWriterVersion: 2, scopePurpose: "workspace" })
+    await initializeNativeAutomerge()
+    const doc = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(workspaceId, "SDK contract board", profile.identity.personId, "blank"))
+    await recordGenesisAuthority(doc, profile)
+    const stored = await peerStore.getWorkspaceAuthority(workspaceId)
+    const full = (stored as { scopeAuthoritySnapshot?: { genesis?: unknown } } | null)?.scopeAuthoritySnapshot
+    if (!full?.genesis) throw new Error("Workspace genesis authority was not persisted")
+    const incomplete = { genesis: full.genesis }
+    let authorityPuts = 0
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input))
+      if (init?.method === "PUT" && url.pathname === `/v2/scopes/${scopeId}/authority`) authorityPuts += 1
+      return fetch(input, init)
+    }
+    const connection = { ...access, workspaceId }
+    const first = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
+    expect(first.receipt).toMatchObject({ payload: { kind: "rusty-scope-authority-receipt" } })
+    expect(first.snapshot).toMatchObject({ grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] })
+    expect(authorityPuts).toBe(1)
+    const second = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
+    expect(second.receipt).toBeUndefined()
+    expect(authorityPuts).toBe(1)
+    Automerge.free(doc)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 45_000)
+
+test("Given an unchanged grant from a former active same-person app device, when the current certified owner app registers it, then SDK and Rusty preserve write access under the current signer", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const owner = (await createRecoverableIdentity("better", "Native owner")).profile
+  const formerApp = (await createRecoverableIdentity("better", "Former owner app")).profile
+  const candidate = (await createRecoverableIdentity("better", "Current owner app")).profile
+  const applicationOrigin = "https://boards.example"
+  const challenge = "a".repeat(64)
+  const expiresAt = Date.now() + 90_000
+  const formerRequest = await createDeviceAuthorizationRequest(formerApp, { applicationOrigin, challenge, expiresAt })
+  const formerCertificate = await issueDeviceAuthorization(owner, formerRequest, { applicationOrigin, challenge })
+  const currentRequest = await createDeviceAuthorizationRequest(candidate, { applicationOrigin, challenge: "b".repeat(64), expiresAt })
+  const currentCertificate = await issueDeviceAuthorization(owner, currentRequest, {
+    applicationOrigin, challenge: "b".repeat(64),
+  })
+  const certificates = [owner.certificate, formerCertificate, currentCertificate]
+  const authorityView = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] },
+    emptyIdentityProfileState(owner.identity.personId))
+  const service = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    const workspaceId = crypto.randomUUID()
+    const scopeId = `scope-${crypto.randomUUID()}`
+    const readToken = toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    const writeToken = toBase64Url(crypto.getRandomValues(new Uint8Array(32)))
+    const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId, readToken, writeToken }
+    const signOwner = <T extends { kind: string }>(payload: T) => signEnvelope(owner.privateKeys.devicePrivateKey!, payload,
+      owner.device.deviceId, "MATCH/1")
+    await publishRustyIdentityAuthorityView({ ...access, identity: owner.identity, deviceId: owner.device.deviceId,
+      devicePublicKey: owner.device.publicKey, view: authorityView, signAuthorization: signOwner })
+    const enrollmentJournal = createMemoryEnrollmentJournal()
+    const enrollment = createRustyScopeEnrollmentClient({ scopePurpose: "workspace", access,
+      identity: owner.identity, deviceId: owner.device.deviceId, devicePublicKey: owner.device.publicKey,
+      certificates: [owner.certificate], ensureCurrent: () => {}, getManagementCapability: async () => undefined,
+      ensureManagementCurrent: () => {}, signAuthorization: payload => signOwner(payload), journal: enrollmentJournal })
+    await enrollment.enroll({ minimumWriterVersion: 2, allowLegacyUnmanagedScope: true })
+    const scopeAuthoritySnapshot = { genesis: await signEnvelope(formerApp.privateKeys.devicePrivateKey!, {
+      kind: "scope-genesis", version: 1, scopeId: workspaceId,
+      creator: { personId: owner.identity.personId, publicKey: owner.identity.publicKey, certificates }, controlEpoch: 1,
+    }, formerApp.device.deviceId, "MATCH/1"), grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [] }
+    const validateSnapshot = (snapshot: unknown): ScopeAuthorityValidation => {
+      const validated = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
+        scopeId: string; controller: { personId: string; publicKey: string }; controlEpoch: number
+      }
+      return { workspaceId: validated.scopeId, controllerPersonId: validated.controller.personId,
+        controllerPublicKey: validated.controller.publicKey, controlEpoch: validated.controlEpoch, snapshot }
+    }
+    await publishRustyScopeAuthoritySnapshot({ ...access, workspaceId, identity: owner.identity, authorityView,
+      deviceId: owner.device.deviceId, devicePublicKey: owner.device.publicKey, scopeAuthority: scopeAuthoritySnapshot,
+      validateSnapshot, mergeSnapshots: (_current, incoming) => incoming, signAuthorization: signOwner })
+    const recipient = (await createRecoverableIdentity("better", "Native editor")).profile
+    const grantPayload = {
+      kind: "workspace-grant", version: 1, grantId: crypto.randomUUID(), workspaceId,
+      personId: recipient.identity.personId, role: "editor", accessEpoch: 7,
+    } satisfies RustyWorkspaceMembershipGrant["payload"]
+    const workspaceGrant = await signEnvelope(formerApp.privateKeys.devicePrivateKey!, grantPayload, formerApp.device.deviceId)
+    const registered = await registerRustyResourcePrincipalGrant({ origin: access.origin, servicePublicKey: access.servicePublicKey,
+      storageScopeId: access.scopeId, workspaceId, expectedScopeAuthoritySnapshot: scopeAuthoritySnapshot,
+      identity: owner.identity, authorityView, deviceId: candidate.device.deviceId,
+      devicePublicKey: candidate.device.publicKey, subjectIdentity: recipient.identity, workspaceGrant,
+      readToken, writeToken, ensureCurrent: () => {}, validateSnapshot, signAuthorization: payload =>
+        signEnvelope(candidate.privateKeys.devicePrivateKey!, payload, candidate.device.deviceId, "MATCH/1") })
+
+    expect(registered.principalGrant.payload.workspaceGrant).toEqual(workspaceGrant)
+    expect(registered.principalGrant.payload).toMatchObject({ ownerPersonId: owner.identity.personId,
+      subjectPersonId: recipient.identity.personId, grantId: workspaceGrant.payload.grantId, policyEpoch: 7, actions: ["read", "write"] })
+    expect(registered.principalGrant.signerKeyId).toBe(candidate.device.deviceId)
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 90_000)
+
+test("Given an owner with Rusty credentials but no local workspace ledger, when its replica pulls, then read the signed Rusty ledger without control-plane writes", async () => {
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Remote workspace authority owner")
+  const service = await startRusty(profile)
+  const workspaceId = crypto.randomUUID()
+  const access = { origin: service.origin, servicePublicKey: (await discoverBlindKeeper(service.origin)).servicePublicKey,
+    scopeId: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+    readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
+    writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
+  try {
+    access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2, scopePurpose: "workspace" })
+    const snapshot = {
+      genesis: await signEnvelope(profile.privateKeys.devicePrivateKey!, {
+        kind: "scope-genesis", version: 1, scopeId: workspaceId,
+        creator: { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
+          certificates: [profile.certificate] }, controlEpoch: 1,
+      }, profile.device.deviceId),
+      grants: [], grantIssuers: [], revocations: [], controlTransfers: [], successionTransfers: [],
+    }
+    await ensureRustyWorkspaceScopeAuthority(profile, { ...access, workspaceId }, snapshot, () => {})
+    expect(await peerStore.getWorkspaceAuthority(workspaceId)).toBeNull()
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+
+    const config = { ...access, workspaceId, keyEpoch: 1,
+      contentKey: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), cursor: 0, lastUploaded: "" }
+    await setReplicaPreference(profile.identity.personId, config)
+    const selected = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === workspaceId)!
+    const app = { getCurrentProfile: () => profile, readWorkspaceBytes: async () => new Uint8Array(),
+      readWorkspaceDoc: async () => undefined, mergeAuthorizedWorkspace: async () => {}, causalReviewError: { value: undefined } }
+    const requests: Array<{ method: string; path: string }> = []
+    const nativeFetch = globalThis.fetch
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = new URL(typeof input === "string" || input instanceof URL ? input.toString() : input.url)
+      requests.push({ method: (init?.method ?? "GET").toUpperCase(), path: requestUrl.pathname })
+      return nativeFetch(input, init)
+    })
+
+    const replica = createBlindReplica(selected, app as never, () => {}, async () => {})
+    await expect(replica.pull()).resolves.toBe(true)
+    expect(requests.some(request => request.method === "GET" &&
+      request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/authority/status`)).toBe(true)
+    expect(requests.some(request => request.method === "GET" &&
+      request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/objects`)).toBe(true)
+    expect(requests.filter(request => request.method === "PUT")).toEqual([])
+    expect(await peerStore.getWorkspaceAuthority(workspaceId)).toMatchObject({ ownerPersonId: profile.identity.personId,
+      scopeAuthoritySnapshot: snapshot })
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+
+    resetIdentityStorageForTest()
+    const reader = await bootstrapIdentity("Different workspace identity")
+    expect(reader.identity.personId).not.toBe(profile.identity.personId)
+    await setReplicaPreference(reader.identity.personId, config)
+    const readerConfig = (await getReplicaConfigurations(reader.identity.personId)).find(value => value.workspaceId === workspaceId)!
+    const readerApp = { ...app, getCurrentProfile: () => reader }
+    requests.length = 0
+    const readerReplica = createBlindReplica(readerConfig, readerApp as never, () => {}, async () => {})
+    await expect(readerReplica.pull()).rejects.toThrow(/current Identity/u)
+    expect(requests.some(request => request.path === `/v2/scopes/${encodeURIComponent(access.scopeId)}/objects`)).toBe(false)
+    expect(requests.filter(request => request.method === "PUT")).toEqual([])
+  } finally {
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 45_000)
+
 afterEach(() => { resetIdentityStorageForTest(); vi.unstubAllGlobals() })
+
+function createMemoryEnrollmentJournal(): RustyScopeEnrollmentJournal {
+  const requests = new Map<string, string>()
+  return {
+    read: async binding => {
+      const body = requests.get(binding.scopeId)
+      return body === undefined ? undefined : { body }
+    },
+    prepare: async (binding, body) => { requests.set(binding.scopeId, body) },
+    replace: async (binding, previousBody, nextBody) => {
+      if (requests.get(binding.scopeId) !== previousBody) throw new Error("Enrollment retry journal changed")
+      requests.set(binding.scopeId, nextBody)
+    },
+    complete: async (binding, body) => { requests.set(binding.scopeId, body) },
+  }
+}
 
 async function unusedLoopbackPort(): Promise<number> {
   const listener = createServer()
@@ -105,7 +318,7 @@ function verifyNativeArchive(input: unknown): Promise<unknown> {
 }
 
 async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>,
-  options: { port?: number; stateDirectory?: string; controllers?: string[] } = {}) {
+  options: { port?: number; stateDirectory?: string } = {}) {
   const port = options.port ?? await unusedLoopbackPort()
   const stateDirectory = options.stateDirectory ?? await mkdtemp(resolve(tmpdir(), "tincanban-rusty-native-"))
   const origin = `http://127.0.0.1:${port}`
@@ -114,10 +327,6 @@ async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>
     env: {
       ...process.env,
       RUSTY_PUBLIC_ORIGIN: origin,
-      RUSTY_TRUSTED_OWNER: JSON.stringify({
-        identity: profile.identity,
-        allowedControllerDeviceIds: options.controllers ?? [profile.device.deviceId],
-      }),
       RUSTY_LOG: "off",
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -942,7 +1151,7 @@ test("Given a floor-1 workspace scope, when its owner completes the real writer 
     const access = { origin: discovery.origin, servicePublicKey: discovery.servicePublicKey,
       scopeId: `writer-${crypto.randomUUID()}`, readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))),
       writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
-    access.policyRevision = await approveRustyScope(access, profile)
+    access.policyRevision = await approveRustyScope(access, profile, false, { scopePurpose: "workspace" })
     expect(access.policyRevision).toBe(1)
 
     const contentKey = crypto.getRandomValues(new Uint8Array(32))
@@ -996,7 +1205,7 @@ test("Given a floor-1 workspace scope, when its owner completes the real writer 
   }
 }, 20_000)
 
-test("Given an approved person policy, when controller pins are removed and an independent owner device creates a scope, then the browser client needs no primary device or its ancestry", async () => {
+test("Given an approved person policy, when Rusty restarts and an independent owner device creates a scope, then the browser client needs no primary device or its ancestry", async () => {
   resetIdentityStorageForTest()
   const owner = await bootstrapIdentity("Person policy owner")
   let process = await startRusty(owner)
@@ -1007,19 +1216,20 @@ test("Given an approved person policy, when controller pins are removed and an i
     expect(person?.payload.kind).toBe("rusty-person-management-capability")
     const port = Number(new URL(process.origin).port), stateDirectory = process.stateDirectory
     await stopRusty(process.child)
-    process = await startRusty(owner, { port, stateDirectory, controllers: [] })
+    process = await startRusty(owner, { port, stateDirectory })
 
     resetIdentityStorageForTest()
-    const fresh = await bootstrapIdentity("Independent owner device")
+    const fresh = await bootstrapRawIdentity("Independent owner device")
     if (!owner.privateKeys.identityPrivateKey) throw new Error("Fixture owner has no root key")
     const certificate = await signEnvelope(owner.privateKeys.identityPrivateKey, { kind: "device-certificate" as const, version: 1 as const,
       personId: owner.identity.personId, deviceId: fresh.device.deviceId, devicePublicKey: fresh.device.publicKey,
       issuerCertificateHash: null, canEnrollDevices: true }, owner.identity.personId)
     await defaultProofStore.putCertificate(await certHashDefault(certificate), certificate)
     await adoptEnrolledIdentity(owner.identity, certificate)
-    const independent = await bootstrapIdentity()
+    const independent = await bootstrapRawIdentity()
     expect(independent.privateKeys.identityPrivateKey).toBeUndefined()
     expect(independent.certificate.payload.issuerCertificateHash).toBeNull()
+    await confirmIdentityAuthorityFixture(createPersonalRoot(independent, await certHashDefault(certificate)), [owner.certificate, certificate])
     const confirmed = await ensureRustyPersonPolicy(discovery, independent, true)
     expect(confirmed).toEqual(person)
 
@@ -1078,20 +1288,22 @@ test("Given a cold enrolled device without its workspace, when its identity-scop
     expect(JSON.stringify(portablePreferences)).not.toContain('"progress"')
 
     resetIdentityStorageForTest()
-    const temporaryRecipient = await bootstrapIdentity("Enrolled native recipient")
+    const temporaryRecipient = await bootstrapRawIdentity("Enrolled native recipient")
     const ownerCertificateHash = await certHashDefault(owner.certificate)
     const recipientCertificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
       owner.identity.personId, temporaryRecipient.device.deviceId, temporaryRecipient.device.publicKey, ownerCertificateHash)
     await defaultProofStore.putCertificate(ownerCertificateHash, owner.certificate)
     await defaultProofStore.putCertificate(await certHashDefault(recipientCertificate), recipientCertificate)
     await adoptEnrolledIdentity(owner.identity, recipientCertificate)
-    const recipient = await bootstrapIdentity()
+    const recipient = await bootstrapRawIdentity()
     expect(recipient.identity.personId).toBe(owner.identity.personId)
     expect(recipient.privateKeys.identityPrivateKey).toBeUndefined()
+    await confirmIdentityAuthorityFixture(createPersonalRoot(recipient, await certHashDefault(recipientCertificate)), [owner.certificate, recipientCertificate])
 
     olderRoot.devices[recipient.device.deviceId] = { deviceId: recipient.device.deviceId, publicKey: recipient.device.publicKey,
       displayName: recipient.device.displayName, certificateHash: await certHashDefault(recipientCertificate), addedAt: "2026-10-14T07:00:00.000Z" }
     await defaultStorage.savePersonalRoot(olderRoot)
+    await ensureRustyIdentityAuthorityPublished({ profile: recipient, access: sourceConfig })
 
     await deleteLocal(`tincanban.private-replica-state.v2.${owner.identity.personId}`)
     await deleteLocal(`tincanban.rusty-management.v1.${owner.identity.personId}`)

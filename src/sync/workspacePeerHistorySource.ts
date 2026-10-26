@@ -7,11 +7,28 @@ import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaseli
 import { exportPrivateReplicaState } from "./privateReplicaRepository"
 import { workspaceHistoryRecoverySources } from "./workspaceHistoryRecoverySources"
 import { workspacePeerHistoryRecoverySources } from "./workspacePeerHistoryRecoverySources"
+import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
+import { assertParticipantStorageAccess } from "./workspaceRustyGuard"
+import type { BlindReplicaConfig } from "./blindReplication"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { StoredReceivedHistoryBaseline } from "../storageJournal"
 import type { PeerHistoryDocumentRequest } from "./peerHistoryTransport"
 import type { PeerHistoryBaselineDescriptor } from "./workspaceSet"
 
-type Inputs = { getProfile(): LocalProfile | null | undefined }
+type Inputs = { getProfile(): LocalProfile | null | undefined; readWorkspaceDoc?(id: string): Promise<WorkspaceDocumentV2> }
+
+function recoveryScopeFetcher(config: BlindReplicaConfig, profile: LocalProfile,
+  input: Inputs, guard: () => void) {
+  return createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent: async () => {
+    guard()
+    if (config.boardAccess) {
+      if (!input.readWorkspaceDoc) throw new Error("Participant workspace access cannot be revalidated")
+      await assertParticipantStorageAccess({ getCurrentProfile: () => input.getProfile() ?? null,
+        readWorkspaceDoc: input.readWorkspaceDoc }, config)
+    }
+    guard()
+  } })
+}
 
 /** Data ports for an already authenticated and currently authorized device channel. Keys never leave these sender-side ports. */
 export function createWorkspacePeerHistorySource(input: Inputs) {
@@ -106,7 +123,8 @@ export function createWorkspacePeerHistorySource(input: Inputs) {
         await ensureCurrent()
         if (bytes) return bytes
       }
-      const archive = await workspaceHistoryRecoverySources(workspaceId, wire, ensureCurrent)
+      const archive = await workspaceHistoryRecoverySources(workspaceId, wire, ensureCurrent,
+        config => recoveryScopeFetcher(config, profile, input, guard))
       try {
         for (const source of archive.sources) {
           const payload = (JSON.parse(new TextDecoder().decode(source.signedJson)) as {

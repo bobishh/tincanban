@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { DeviceCertificate, PersonalRootDocumentV1 } from "../domain/model"
-import { publicKeyId, certificateHash, verifyDeviceCertificateChain } from "@meta-uber/mesh-identity"
+import { publicKeyId, certificateHash, verifyDeviceCertificateChain, verifyIdentityAuthorityView } from "@meta-uber/mesh-identity"
 import type { ChatRecord } from "../chat/records"
 import { verifyPrivateProfileObservation } from "../chat/privateProfileObservation"
 import { parsePrivateReplicaWire } from "./privateReplicaPreferences"
@@ -56,10 +56,19 @@ export async function readIdentityDeviceTransfer(value: unknown, personId: strin
   const references = referenceSchema.parse(manifest.components.workspaceReferences.value)
   const profiles = profileSchema.parse(manifest.components.profileObservations.value)
   const capabilities = capabilitySchema.parse(manifest.components.ownerCapabilities.value)
+  const authorityValue = manifest.components.identityAuthority.value.authorityView
+  const authorityView = await verifyIdentityAuthorityView(authorityValue)
   const replicas = parsePrivateReplicaWire(manifest.components.privateConnections.value)
   const recoveryEvidence = { personId, envelopes: validateIdentityRecoveryEvidence(personId, manifest.components.recoveryEvidence.value) }
   if (catalog.personalRoot.identity.personId !== personId || catalog.certificates.some(cert => cert.payload.personId !== personId)) {
     throw new Error("Device-state catalog identity mismatch")
+  }
+  if (authorityView.personId !== personId || authorityView.identityPublicKey !== catalog.personalRoot.identity.publicKey) {
+    throw new Error("Device-state Identity authority view binding mismatch")
+  }
+  const authorityCertificates = new Set(authorityView.certificates.map(certificate => canonicalizeJson(certificate)))
+  if (catalog.certificates.some(certificate => !authorityCertificates.has(canonicalizeJson(certificate)))) {
+    throw new Error("Device-state certificate is not covered by the Identity authority view")
   }
   const personalRoot = await restoreCatalog(catalog.personalRoot, references.workspaces, profiles.observations,
     manifest.components.profileObservations.schema)
@@ -80,7 +89,7 @@ export async function readIdentityDeviceTransfer(value: unknown, personId: strin
     observations.push({ workspaceId: observation.workspaceId, record })
   }
   return { manifest, personalRoot, certificates: catalog.certificates, enrollment: references.enrollment,
-    replicas, capabilities: verifiedCapabilities, recoveryEvidence, observations }
+    replicas, capabilities: verifiedCapabilities, recoveryEvidence, observations, authorityView }
 }
 
 async function verifyCatalogCertificates(root: PersonalRootDocumentV1, certificates: DeviceCertificate[]): Promise<void> {

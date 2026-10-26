@@ -2,7 +2,7 @@ import { load, getHeads, getChangesMetaSince, free } from "@automerge/automerge/
 import { createArchiveRemote } from "@meta-uber/mesh-replication/history-archive-remote"
 import { defaultStorage } from "../storage"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
-import { fetchBlind } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import type { BlindReplicaConfig } from "./blindReplication"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
@@ -18,7 +18,7 @@ function descendsFromBasis(document: Uint8Array, basis: WasmVerifiedReceivedHist
 
 /** Cold cursors may encounter original snapshots retained before the installed compact epoch. */
 export async function isCoveredBlindHistoricalSnapshot(input: {
-  config: BlindReplicaConfig; owner: string; document: Uint8Array; guardIdentity(): void; ensureCurrent(): Promise<void>
+  config: BlindReplicaConfig; owner: string; document: Uint8Array; fetch: RustyFetch; guardIdentity(): void; ensureCurrent(): Promise<void>
 }): Promise<boolean> {
   const document = input.document.slice()
   await input.ensureCurrent()
@@ -39,7 +39,7 @@ export async function isCoveredBlindHistoricalSnapshot(input: {
         payload.storage.authority.servicePublicKey !== config.servicePublicKey || payload.storage.authority.policyRevision > config.policyRevision) {
       throw new Error("Historical snapshot archive differs from the pinned Rusty scope")
     }
-    const remote = createArchiveRemote(config, { fetch: fetchBlind, ensureCurrent: input.ensureCurrent })
+    const remote = createArchiveRemote(config, { fetch: input.fetch, ensureCurrent: input.ensureCurrent })
     await openWithReplicaContentKeys(config, payload.storage.keyEpoch, async contentKey => {
       const key = decodeBlindBytes(contentKey)
       const reader = (await import("./historyArchiveReader")).createHistoryArchiveReader({ basis: basis!,

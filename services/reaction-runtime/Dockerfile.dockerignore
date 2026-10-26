@@ -1,6 +1,12 @@
 **
 !package.json
 !package-lock.json
+!scripts/
+scripts/**
+!scripts/patch-otel-response-drain.mjs
+!patches/
+patches/**
+!patches/opentelemetry-0.223.0-response-drain.patch
 !release/
 !release/**
 !services/

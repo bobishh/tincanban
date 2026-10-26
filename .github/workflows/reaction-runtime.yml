@@ -7,6 +7,14 @@ on:
     paths:
       - 'services/reaction-runtime/**'
       - 'workers/automation/src/**'
+      - 'workers/automation/package.json'
+      - 'workers/automation/pnpm-lock.yaml'
+      - 'src/domain/**'
+      - 'src/product-replica/**'
+      - 'src/public/**'
+      - 'vendor/meta-mesh'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/reaction-runtime.yml'
 
 permissions:

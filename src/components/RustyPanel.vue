@@ -42,7 +42,12 @@ async function run(action: () => Promise<void>) {
   finally { pending.value = false }
 }
 async function connect() {
-  await run(async () => { await props.controller.attach(address.value, props.workspaceId); address.value = ""; adding.value = false })
+  await run(async () => {
+    const result = await props.controller.addRustyConnection(address.value, props.workspaceId)
+    if (result.kind === "identity-consent") { window.location.assign(result.portalUrl); return }
+    address.value = ""
+    adding.value = false
+  })
 }
 async function updateDeviceAccess(origin: string) {
   updatingOrigin.value = origin

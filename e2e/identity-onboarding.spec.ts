@@ -17,71 +17,62 @@ async function clearIdentityInvitations(page: import("@playwright/test").Page): 
   }).catch(() => undefined)
 }
 
-test("Given a pending Identity invitation, when sign-in is cancelled, then keep the guest profile and stop enrollment", async ({ page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
-  const browserErrors: string[] = []
-  page.on("pageerror", error => browserErrors.push(error.stack ?? error.message))
-  page.on("console", message => { if (message.type() === "error") browserErrors.push(message.text()) })
+test("Given a registered workspace owner, when Add another device is clicked once, then the existing enrollment QR and link open directly", async ({ page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
-  const before = await page.evaluate(async (portalOrigin: string) => {
+  await ensureJobSearchWorkspace(page)
+  await page.evaluate(async () => {
     const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
-    const controller = new AbortController()
-    let inviteUrl = ""
-    let hostError = ""
-    const host = (await import("/src/app/identityPortalEnrollment.ts")).startIdentityProfileHost({
-      profile, portalOrigin, signal: controller.signal,
-      onInvite: invite => { inviteUrl = invite }, onStatus: () => {},
-      onRequest: () => new Promise<"approve" | "reject">(resolve => controller.signal.addEventListener("abort", () => resolve("reject"), { once: true })),
-    })
-    void host.catch(error => { hostError = error instanceof Error ? `${error.name}: ${error.message}` : String(error) })
-    ;(window as unknown as { onboardingHost: { controller: AbortController; host: Promise<unknown>; invite(): string; error(): string } }).onboardingHost = {
-      controller, host, invite: () => inviteUrl, error: () => hostError,
-    }
-    const deadline = Date.now() + 10000
-    while (!inviteUrl && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 20))
-    return { personId: profile.identity.personId, inviteUrl, hostError }
-  }, identityOrigin)
-  try {
-    expect(before.inviteUrl, `${before.hostError}\n${browserErrors.join("\n")}`).toContain("#")
-    await page.getByRole("button", { name: "Identity", exact: true }).click()
-    const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
-    await dialog.getByLabel("Identity invitation").fill(before.inviteUrl)
-    await dialog.getByRole("button", { name: "Connect this device", exact: true }).click()
-    await expect(dialog.getByRole("status")).toContainText("Connecting", { timeout: 15000 })
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
-    await expect(dialog.getByRole("button", { name: "Connect this device", exact: true })).toBeEnabled({ timeout: 10000 })
-    const after = await page.evaluate(async () => ({
-      personId: (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId,
+    const prefix = (await import("/src/app/identityEnrollmentReceipt.ts")).identityEnrollmentPrefix
+    const { writeLocal } = await import("/src/localDb.ts")
+    const { certHashDefault } = await import("/src/domain/proofValidation.ts")
+    await writeLocal(prefix + profile.identity.personId, JSON.stringify({
+      personId: profile.identity.personId,
+      deviceId: profile.device.deviceId,
+      certificateHash: await certHashDefault(profile.certificate),
+      completedAt: new Date().toISOString(),
     }))
-    expect(after.personId).toBe(before.personId)
-  } finally {
-    await page.evaluate(() => {
-      const host = (window as unknown as { onboardingHost: { controller: AbortController } }).onboardingHost
-      host.controller.abort()
-    }).catch(() => {})
-    await page.evaluate(async () => {
-      await (window as unknown as { onboardingHost: { host: Promise<unknown> } }).onboardingHost.host.catch(() => undefined)
-    }).catch(() => {})
-    await clearIdentityInvitations(page)
-  }
+  })
+  await page.reload()
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
+
+  const dialog = page.getByRole("dialog", { name: "Device sync", exact: true })
+  await expect(dialog.getByRole("img", { name: "Pairing QR code" })).toBeVisible({ timeout: 30000 })
+  await expect(dialog.getByLabel("Pairing link")).toHaveValue(/\/pair#/u)
+  await expect(dialog.getByRole("button", { name: "Copy enrollment link", exact: true })).toBeEnabled()
+  await expect(dialog.getByText("Add your second device", { exact: true })).toBeVisible()
 })
 
-test("Given an invalid Identity invitation, when connecting, then show an error and keep local Identity", async ({ page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
+test("Given an anonymous local board, when Add another device needs Identity registration and is closed, then retain local data without an invitation input", async ({ page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   const personId = await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)
-  await page.getByRole("button", { name: "Identity", exact: true }).click()
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  await dialog.getByRole("button", { name: "Sign in", exact: true }).click()
-  await dialog.getByLabel("Identity invitation").fill("not-an-identity-invitation")
-  await dialog.getByRole("button", { name: "Connect this device", exact: true }).click()
-  await expect(dialog.getByRole("alert")).toContainText(/invalid/i)
-  expect(await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(personId)
-
+  await expect(dialog.getByRole("heading", { name: "Use your Identity profile", exact: true })).toBeVisible()
+  await expect(dialog.getByLabel("Identity invitation")).toHaveCount(0)
+  await expect(dialog.getByText(/full-Identity recovery transfer/u)).toHaveCount(0)
   await dialog.getByRole("button", { name: "Close", description: "Close window" }).click()
+  await expect(dialog).toHaveCount(0)
+  expect(await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)).toBe(personId)
+})
+
+test("Given Identity registration is declined, when the device is offline, then its local board remains editable", async ({ page }) => {
+  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
+  await page.goto("/")
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
+  await page.getByRole("button", { name: "Settings", exact: true }).click()
+  await page.getByRole("button", { name: "Add another device", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
+  await expect(dialog.getByRole("heading", { name: "Use your Identity profile", exact: true })).toBeVisible()
+  await dialog.getByRole("button", { name: "Close", description: "Close window" }).click()
+  const sync = page.getByRole("dialog", { name: "Device sync", exact: true })
+  await sync.getByRole("button", { name: "Close", description: "Close window" }).click()
   await ensureJobSearchWorkspace(page)
   await page.context().setOffline(true)
   await page.getByRole("button", { name: /Add lead to/ }).first().click()
@@ -194,7 +185,7 @@ test("Given an unregistered local profile, when Add my device requests registrat
     await backup.getByRole("button", { name: "Confirm and connect", exact: true }).click()
 
     mark("verify registration and resume action")
-    await expect(portal.getByText("Identity ID:", { exact: false })).toContainText(localPersonId, { timeout: 60000 })
+    await expect(portal.locator(".identity-id-badge")).toHaveAttribute("data-identity-id", localPersonId, { timeout: 60000 })
     await expect(enrollment).not.toBeVisible({ timeout: 60000 })
     await expect(sync.getByText("Add your second device", { exact: true })).toBeVisible({ timeout: 60000 })
     await expect(sync.getByRole("button", { name: "Copy enrollment link", exact: true })).toBeVisible()

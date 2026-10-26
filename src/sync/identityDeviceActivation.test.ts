@@ -1,12 +1,15 @@
 import { beforeEach, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
-import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
-import { certHashDefault, defaultProofStore } from "../domain/proofs"
+import { createPersonalRoot, registerDeviceInRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
+import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
 import { defaultStorage } from "../storage"
 import * as local from "../localDb"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { resumeIdentityDeviceActivation } from "./identityDeviceActivation"
 import { readIdentityStateRevision } from "../identityStateRevision"
+import { createIdentityAuthorityView, createIdentityEnrollmentDevice } from "@meta-uber/mesh-identity"
+import { rootIdentityProfileState } from "../domain/identityProfileRoot"
+import { mergeIdentityAuthorityView, readIdentityAuthorityView, identityAuthorityViewKey } from "./identityAuthorityStore"
 
 beforeEach(() => resetIdentityStorageForTest())
 
@@ -14,6 +17,9 @@ async function fixture() {
   const owner = await bootstrapIdentity("Owner")
   const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
   await defaultStorage.savePersonalRoot(root)
+  const authorityView = await createIdentityAuthorityView(owner.identity, { certificates: [owner.certificate], revocations: [] },
+    await rootIdentityProfileState(root))
+  await mergeIdentityAuthorityView(authorityView)
   const incoming = structuredClone(root)
   registerWorkspaceInRoot(incoming, "new-board", "new-board", "genesis")
   const transfer = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, [owner.certificate]), owner.identity.personId)
@@ -71,4 +77,29 @@ it("Given caller-owned derived fields differ from the manifest, when importing, 
   const actual = await defaultStorage.loadPersonalRoot(root.rootId)
   expect(actual?.identity.displayName).toBe("Owner")
   expect(actual?.workspaces["new-board"]).toBeDefined()
+})
+
+it("Given a newer verified authority catalog arrives on another device, when transfer activates, then merge the authority view atomically without lowering its frontier", async () => {
+  const { owner, root } = await fixture()
+  const previous = await readIdentityAuthorityView(owner.identity.personId)
+  expect(previous).not.toBeNull()
+  const app = await createIdentityEnrollmentDevice("Approved app")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+    owner.identity.personId, app.device.deviceId, app.device.publicKey, await certHashDefault(owner.certificate))
+  const incomingRoot = structuredClone(root)
+  registerDeviceInRoot(incomingRoot, { deviceId: app.device.deviceId, publicKey: app.device.publicKey,
+    displayName: "Approved app", certificateHash: await certHashDefault(certificate), addedAt: new Date().toISOString() })
+  const next = await createIdentityAuthorityView(owner.identity, { certificates: [owner.certificate, certificate], revocations: [] },
+    await rootIdentityProfileState(incomingRoot))
+  await mergeIdentityAuthorityView(next)
+  const manifest = await createIdentityDeviceTransfer(incomingRoot, [owner.certificate, certificate])
+  const transfer = await readIdentityDeviceTransfer(manifest, owner.identity.personId)
+  await local.writeLocal(identityAuthorityViewKey(owner.identity.personId), JSON.stringify(previous))
+
+  await applyIdentityDeviceTransfer(transfer, () => {})
+
+  await expect(readIdentityAuthorityView(owner.identity.personId)).resolves.toMatchObject({
+    revocationHead: previous!.revocationHead,
+    viewDigest: next.viewDigest,
+  })
 })

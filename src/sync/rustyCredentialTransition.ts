@@ -177,7 +177,7 @@ async function confirmTransitionPerson(phase: TransitionPhase, initial: Credenti
       { ensureCurrent: guard })
     await confirmCredentialTransitionWorker(pending, profile, worker.route, worker.scopeId, "frozen", frozen.proof, guardIdentity)
   }
-  for (const selected of pending.resources) await drainFrozenReplica(pending, selected.previous, guard)
+  for (const selected of pending.resources) await drainFrozenReplica(pending, selected.previous, profile, guard)
   await guard()
   let person = await ensureRustyPersonPolicy(service, profile, true, { ensureCurrent: guard })
   if (!person) throw new Error("Explicit person authority is required")
@@ -199,7 +199,8 @@ async function confirmTransitionScopes(phase: TransitionPhase, initial: Credenti
       continue
     }
     await guard()
-    await approveRustyScope(selected.next, profile, false, { requireExactRetry: true, expectedPolicyRevision: selected.previous.policyRevision,
+    await approveRustyScope(selected.next, profile, false, { scopePurpose: selected.next.purpose === "identity" ? "person-identity" : "workspace",
+      requireExactRetry: true, expectedPolicyRevision: selected.previous.policyRevision,
       ...(selected.previous.purpose === "identity" ? {} : { minimumWriterVersion: 2 }), ensureCurrent: guard,
       confirmed: async receipt => {
         await guard()

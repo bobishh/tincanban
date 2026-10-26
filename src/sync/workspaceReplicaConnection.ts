@@ -111,7 +111,7 @@ async function persistInitialSetup(context: ConnectionContext, profileRaw: strin
 async function finishEnrollment(context: ConnectionContext, setup: Setup, expected: string, profileRaw: string): Promise<{ setup: Setup; raw: string }> {
   if (setup.stage !== "enroll") return { setup, raw: expected }
   const enrolling = setup
-  await approveRustyScope(setup.config, context.profile, false, { ensureCurrent: context.guard,
+  await approveRustyScope(setup.config, context.profile, false, { scopePurpose: "workspace", ensureCurrent: context.guard,
     ...(setup.config.minimumWriterVersion === 2 ? { minimumWriterVersion: 2 as const } : {}), confirmed: async receipt => {
     context.guard()
     await assertReplicaCredentialsUnfrozen(context.personId, context.service)

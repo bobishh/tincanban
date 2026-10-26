@@ -4,9 +4,11 @@ import type { DeviceCertificate } from "./model"
 import { resolveSigningContext } from "./signingContext"
 import { readLocal } from "../localDb"
 import { assertClientReleaseWritable } from "../release/releaseCompatibility"
+import { assertLearnedIdentityDeviceActive } from "./identityAuthority"
 
 type LocalSigningOptions = {
   certificates?: DeviceCertificate[]
+  expectedAuthority?: string
   currentAuthority?: () => Promise<string>
   ensureCurrent?: () => void | Promise<void>
   expiresAt?: number
@@ -33,9 +35,15 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
   await options.ensureCurrent?.()
   await assertDurableIdentityProfile(snapshot)
   const authority = options.currentAuthority ? await options.currentAuthority() : ""
-  const revision = (current: LocalProfile, rights: string) => canonicalizeJson([current.certificate.signature, rights])
+  if (options.expectedAuthority !== undefined && authority !== options.expectedAuthority) {
+    throw new Error("Signing context authority is stale")
+  }
+  const certificates = options.certificates ?? await defaultProofStore.listCertificates()
+  const learnedAuthorityDigest = await assertLearnedIdentityDeviceActive(snapshot.identity.personId, snapshot.device.deviceId)
+  const revision = (current: LocalProfile, rights: string, learned: string | null) =>
+    canonicalizeJson([current.certificate.signature, rights, learned])
   return resolveSigningContext({ profile: snapshot, purpose, binding: scope, domain: options.domain, expiresAt: options.expiresAt,
-    certificates: options.certificates ?? await defaultProofStore.listCertificates(), authorityRevision: revision(snapshot, authority),
+    certificates, authorityRevision: revision(snapshot, authority, learnedAuthorityDigest),
     current: async () => {
       assertClientReleaseWritable(purpose)
       await options.ensureCurrent?.()
@@ -46,7 +54,8 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
       await options.ensureCurrent?.()
       await assertDurableIdentityProfile(snapshot)
       assertClientReleaseWritable(purpose)
-      return { personId: current.identity.personId, deviceId: current.device.deviceId, authorityRevision: revision(current, rights) }
+      const learned = await assertLearnedIdentityDeviceActive(snapshot.identity.personId, snapshot.device.deviceId)
+      return { personId: current.identity.personId, deviceId: current.device.deviceId, authorityRevision: revision(current, rights, learned) }
     },
   })
 }

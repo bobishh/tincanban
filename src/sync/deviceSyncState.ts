@@ -12,7 +12,9 @@ export type SyncStep =
   | "workspace-host-select" | "workspace-host" | "enroll-guest"
   | "enroll-guest-waiting" | "enroll-guest-done" | "workspace-guest"
   | "workspace-reconnect-confirm" | "workspace-merge-confirm" | "workspace-reconnecting" | "workspace-guest-waiting"
-  | "workspace-guest-done" | "synced" | "error"
+  | "workspace-guest-done" | "owner-reconnect-preparing" | "owner-reconnect-host"
+  | "owner-reconnect-connecting" | "owner-reconnect-authorize" | "owner-reconnect-review"
+  | "owner-reconnect-committing" | "owner-reconnect-done" | "synced" | "error"
 
 export type SyncPhase = "idle" | "preparing" | "ready" | "join-ready" | "joining" | "synced" | "error"
 
@@ -25,6 +27,8 @@ export type PendingJoin = {
   followOwner?: boolean
 }
 
+export type OwnerReconnectReview = { workspaceId: string; title: string; sourcePersonId: string; sourceRole: "editor" | "visitor" }
+
 export function createDeviceSyncState() {
   const isOpen = ref(false)
   const isEnabled = ref(false)
@@ -36,6 +40,7 @@ export function createDeviceSyncState() {
   const copyNotice = ref("")
   const error = ref("")
   const authCode = ref("")
+  const ownerReconnectReview = ref<OwnerReconnectReview | null>(null)
   const pendingJoins = ref<PendingJoin[]>([])
   const selectedWorkspaceId = ref("")
   const selectedWorkspaceIds = ref<string[]>([])
@@ -56,6 +61,7 @@ export function createDeviceSyncState() {
   const enrollmentConflict = ref<{ currentPersonId: string; currentName: string; targetPersonId: string } | null>(null)
   const replacementPersonId = ref<string | undefined>(undefined)
   const enrollmentDeviceName = ref("")
+  const enrollmentSameIdentity = ref(false)
   const isLive = computed(() => directLive.value || meshLiveWorkspaceIds.value.length > 0)
   const phase = computed<SyncPhase>(() => step.value === "error" ? "error" : step.value === "synced" ? "synced" : "idle")
   const title = computed(() => {
@@ -64,14 +70,17 @@ export function createDeviceSyncState() {
     if (step.value === "workspace-reconnect-confirm") return "Reconnect device"
     if (step.value === "workspace-merge-confirm") return "Merge local copy?"
     if (["workspace-guest", "workspace-guest-waiting", "workspace-guest-done"].includes(step.value)) return "Join workspace"
+    if (["owner-reconnect-preparing", "owner-reconnect-host"].includes(step.value)) return "Connect owner device"
+    if (["owner-reconnect-connecting", "owner-reconnect-authorize", "owner-reconnect-review",
+      "owner-reconnect-committing", "owner-reconnect-done"].includes(step.value)) return "Sync your existing board"
     return step.value === "synced" ? "Live sync on" : "Device sync"
   })
   return {
     isOpen, isEnabled, directLive, liveWorkspaceIds, step, qrCode, inviteUrl, copyNotice, error, authCode,
-    pendingJoins, selectedWorkspaceId, selectedWorkspaceIds, invitationWorkspaceTitle,
+    pendingJoins, selectedWorkspaceId, selectedWorkspaceIds, invitationWorkspaceTitle, ownerReconnectReview,
     invitationWorkspaces, parsedInvite, meshPeers, meshDiagnostic, meshRetryAt, networkOnline,
     localDeviceId, canRenewDevice, localUserAgent, meshLiveWorkspaceIds, revokedWorkspaceIds, ownershipRevision,
-    meshSuccession, enrollmentDeviceName, enrollmentConflict, replacementPersonId, isLive, phase, title,
+    meshSuccession, enrollmentDeviceName, enrollmentSameIdentity, enrollmentConflict, replacementPersonId, isLive, phase, title,
   }
 }
 

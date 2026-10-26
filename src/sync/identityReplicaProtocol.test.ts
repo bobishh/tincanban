@@ -3,7 +3,7 @@ import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identi
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { createIdentityReplicaRecord, readIdentityReplicaRecord } from "./identityReplicaProtocol"
 
 beforeEach(() => resetIdentityStorageForTest())

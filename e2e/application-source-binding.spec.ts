@@ -8,6 +8,7 @@ import { expect, test, type Page } from "./support/coverage"
 import { reviewRetainedEmail } from "./support/automationReviewChannel"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 const integrationId = "e2e"
 const operatorToken = "automation-e2e-provisioning-token-with-at-least-32-bytes"
@@ -370,6 +371,7 @@ async function inspectWorkspace(page: Page): Promise<WorkspaceBindings> {
 }
 
 async function connectRusty(page: Page, origin: string): Promise<void> {
+  await approveRustyForFixture(page, origin)
   await page.getByRole("button", { name: "Sync", exact: true }).click()
 
   const panel = page.getByRole("region", { name: "Rusty", exact: true })

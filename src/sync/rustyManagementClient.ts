@@ -10,6 +10,7 @@ import { RustyManagementRepository, validatePolicy, type ManagementBinding, type
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 import type { Context } from "@opentelemetry/api"
 import { createRustyManagementMutationClient, type RustyManagementMutationBinding } from "@meta-uber/mesh-replication/rusty-management-mutation"
+import { rustySignerCertificateChain } from "./rustySignerCertificates"
 
 export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string>; diagnosticContext?: Context }
 const path = (binding: ManagementBinding) => `${binding.origin}/v2/management/${binding.resourceKind}/${binding.resourceId}`
@@ -149,6 +150,7 @@ export async function readRustyManagementStatus(binding: ManagementBinding, prof
   const issuedAt = Date.now()
   const signing = await context(binding, profile, "rusty-management-policy-status", issuedAt + 120_000, guard)
   const evidence = signingEvidence(signing)
+  const certificates = await rustySignerCertificateChain(profile)
   const authorization = await signWithContext(signing, {
     kind: "rusty-management-policy-status", version: 1, serviceId: await sha256Base64Url(decodeBlindBytes(binding.servicePublicKey)),
     origin: binding.origin, personId: profile.identity.personId, deviceId: profile.device.deviceId,
@@ -159,7 +161,7 @@ export async function readRustyManagementStatus(binding: ManagementBinding, prof
   const response = await readBlindJson<RustyManagementStatusResponse>(await fetchBlind(`${path(binding)}/status`, {
     diagnosticContext: guard.diagnosticContext,
     method: "POST", cache: "no-store", signal: AbortSignal.timeout(15_000), headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version: 1, identity: evidence.identity, deviceId: profile.device.deviceId, certificates: evidence.certificates, authorization }),
+    body: JSON.stringify({ version: 1, identity: evidence.identity, deviceId: profile.device.deviceId, certificates, authorization }),
   }), 1024 * 1024)
   const verified = await verifyRustyManagementStatus(response, binding, { personId: profile.identity.personId, deviceId: profile.device.deviceId,
     resourceKind: binding.resourceKind, resourceId: binding.resourceId, operation: "management.update", minimumRevision }, authorization)
@@ -188,7 +190,7 @@ export async function updateRustyManagementPolicy(binding: ManagementBinding, pr
   await assertRestorationSupported(binding, policy.restoredDeviceIds, guard)
   const issuedAt = Date.now()
   const signing = await context(binding, profile, "rusty-management-policy-update", issuedAt + 120_000, guard)
-  return mutationClient(binding, profile, guard, signing).update(policy)
+  return mutationClient(binding, profile, guard, signing, await rustySignerCertificateChain(profile)).update(policy)
 }
 
 function policySnapshot(value: { operations: string[]; revokedDeviceIds: string[]; restoredDeviceIds?: string[] },
@@ -216,17 +218,17 @@ export async function retryRustyManagementUpdate(binding: ManagementBinding, pro
   // Verify the live key and certified chain even though retries reuse the original signature.
   const signing = await context(binding, profile, "rusty-management-policy-update", Date.now() + 120_000, guard)
   await assertDevice(profile, guard)
-  return mutationClient(binding, profile, guard, signing, true).retry()
+  return mutationClient(binding, profile, guard, signing, await rustySignerCertificateChain(profile), true).retry()
 }
 
 function mutationClient(binding: ManagementBinding, profile: LocalProfile, guard: ManagementClientGuard,
-  signing: Awaited<ReturnType<typeof context>>, retrying = false) {
+  signing: Awaited<ReturnType<typeof context>>, certificates: Awaited<ReturnType<typeof rustySignerCertificateChain>>, retrying = false) {
   const repository = repo(profile)
   const parentBinding: ManagementBinding = { ...binding, resourceKind: "person", resourceId: profile.identity.personId }
   return createRustyManagementMutationClient({
     binding: binding as RustyManagementMutationBinding,
     identity: signingEvidence(signing).identity, deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
-    certificates: signingEvidence(signing).certificates,
+    certificates,
     fetcher: (input, init) => fetchBlind(String(input), { ...init, diagnosticContext: guard.diagnosticContext }),
     allowUnparentedScopeCreation: true,
     ensureCurrent: () => assertDevice(profile, guard),

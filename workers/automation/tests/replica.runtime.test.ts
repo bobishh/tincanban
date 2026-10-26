@@ -605,6 +605,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
   const mime = `From: hiring@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <review-${crypto.randomUUID()}@example.test>\r\nSubject: Application received\r\nContent-Type: text/plain\r\n\r\nWe received your application. No role or vacancy URL.`;
   const sourceMessageId = mime.match(/Message-ID: ([^\r\n]+)/i)![1]!;
   const eventId = await blindHash(new TextEncoder().encode(`${integrationId}:email:${sourceMessageId}`));
+  let scheduleEarlierAlarm: ((time: number) => Promise<void>) | undefined;
   await worker.email({ from: "owner@example.test", to: `${integrationId}@example.test`,
     rawSize: new TextEncoder().encode(mime).byteLength, raw: new Response(mime).body!,
     setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
@@ -648,6 +649,16 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     expect(bound.status).toBe(200);
     expect(await bound.json()).toMatchObject({ bindingId: binding.bindingId, duplicate: false });
     expect(replica.serialize()).toBe(originalReplica);
+    await runInDurableObject(stub, async (instance, ctx) => {
+      setExecutionFixture(instance, "env", testEnv);
+      setExecutionFixture(instance, "refreshReplica", async () => replica);
+      const schedule = Reflect.get(executionFixture(instance), "scheduleEarlierAlarm");
+      if (typeof schedule !== "function") throw new Error("Durable Object alarm scheduler is unavailable");
+      scheduleEarlierAlarm = schedule as (time: number) => Promise<void>;
+      setExecutionFixture(instance, "scheduleEarlierAlarm", async (time: number) => {
+        await ctx.storage.setAlarm(Math.max(time, Date.now() + 10 * 60_000));
+      });
+    });
     const wrongAction = await postApplicationReview("retry", bindRequest, bindBody, testEnv);
     expect(wrongAction.status).toBe(401);
     for (const changedBody of [
@@ -669,6 +680,7 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     await runInDurableObject(stub, async (instance, ctx) => {
       setExecutionFixture(instance, "env", testEnv);
       setExecutionFixture(instance, "refreshReplica", async () => replica);
+      expect(await ctx.storage.getAlarm()).toBeGreaterThan(Date.now() + 5 * 60_000);
       expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       await ctx.storage.deleteAlarm();
@@ -683,9 +695,19 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
     await runInDurableObject(stub, async (instance, ctx) => {
       expect((await instance.getEvent(eventId))?.status).toBe("pending");
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
+      if (scheduleEarlierAlarm) setExecutionFixture(instance, "scheduleEarlierAlarm", scheduleEarlierAlarm);
+      await instance.alarm();
+      expect((await instance.getEvent(eventId))?.status).toBe("review");
       await ctx.storage.deleteAlarm();
     });
-  } finally { sync.mockRestore(); }
+  } finally {
+    try {
+      if (scheduleEarlierAlarm) await runInDurableObject(stub, async (instance, ctx) => {
+        try { setExecutionFixture(instance, "scheduleEarlierAlarm", scheduleEarlierAlarm); }
+        finally { await ctx.storage.deleteAlarm(); }
+      });
+    } finally { sync.mockRestore(); }
+  }
 });
 
 it("Given a signed owner mail binding with distinct legacy routing and definition IDs, When current source and workflow match, Then accept without changing the card", async () => {
@@ -1686,6 +1708,93 @@ it("Given a saved upload fenced by a newer Rusty checkpoint, when sync retries, 
   await expect(replica.sync()).resolves.toBeUndefined();
   expect(observedSequences).toEqual([0, 0, 7]);
   expect(JSON.parse(replica.serialize()).pending).toBeUndefined();
+});
+
+it("Given a checkpoint commits after Worker inventory, when a fresh upload is rejected, then admit its snapshot before retrying", async () => {
+  const data = await fixture();
+  let checkpointAvailable = false;
+  let checkpointObject: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const observedSequences: number[] = [];
+  const transport: ReplicaTransport = {
+    inventory: async (_access, after) => checkpointAvailable && after < 7
+      ? { objects: [{ objectId: await blindObjectId(checkpointObject!), sequence: 7 }], cursor: 7, hasMore: false }
+      : { objects: [], cursor: after, hasMore: false },
+    download: async (_access, objectId) => {
+      if (!checkpointObject || objectId !== await blindObjectId(checkpointObject)) throw new Error("Checkpoint object is missing");
+      return checkpointObject;
+    },
+    upload: async (access, object, requestId, observedSequence = 0) => {
+      observedSequences.push(observedSequence);
+      if (!checkpointAvailable) checkpointAvailable = true;
+      if (observedSequence < 7) throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+        { code: "checkpoint_generation_required", status: 409 });
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  const checkpoint = { version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial };
+  checkpointObject = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify(checkpoint)));
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  await replica.createLead("checkpoint-race", { company: "Acme", role: "Engineer" }, {});
+
+  await expect(replica.sync()).resolves.toBeUndefined();
+
+  expect(observedSequences).toEqual([0, 7]);
+  const completed = JSON.parse(replica.serialize());
+  expect(completed.blind.cursor).toBe(7);
+  expect(completed).not.toHaveProperty("pending");
+});
+
+it("Given checkpoint refresh fails after a rejected fresh upload, when a restored Worker retries, then preserve exact outbox until admission", async () => {
+  const data = await fixture();
+  let checkpointAvailable = false;
+  let refreshUnavailable = false;
+  let checkpointObject: Awaited<ReturnType<typeof encryptBlindObject>> | undefined;
+  const requests: Array<{ object: unknown; requestId: string; observedSequence: number }> = [];
+  const transport: ReplicaTransport = {
+    inventory: async (_access, after) => {
+      if (refreshUnavailable) throw new Error("Inventory unavailable during checkpoint refresh");
+      return checkpointAvailable && after < 7
+        ? { objects: [{ objectId: await blindObjectId(checkpointObject!), sequence: 7 }], cursor: 7, hasMore: false }
+        : { objects: [], cursor: after, hasMore: false };
+    },
+    download: async (_access, objectId) => {
+      if (!checkpointObject || objectId !== await blindObjectId(checkpointObject)) throw new Error("Checkpoint object is missing");
+      return checkpointObject;
+    },
+    upload: async (access, object, requestId, observedSequence = 0) => {
+      requests.push({ object: structuredClone(object), requestId: requestId!, observedSequence });
+      if (observedSequence < 7) {
+        checkpointAvailable = true;
+        if (requests.length === 1) refreshUnavailable = true;
+        throw Object.assign(new Error("checkpoint generation required; refresh storage inventory before uploading new objects"),
+          { code: "checkpoint_generation_required", status: 409 });
+      }
+      return signedReceipt(access, object, requestId);
+    },
+  };
+  const checkpoint = { version: 1, workspaceId: data.packet.workspaceId, ...data.packet.initial };
+  checkpointObject = await encryptBlindObject(data.packet.blind.scopeId, data.packet.blind.keyEpoch, data.key,
+    new TextEncoder().encode(JSON.stringify(checkpoint)));
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  await replica.createLead("checkpoint-refresh-restart", { company: "Acme", role: "Engineer" }, {});
+
+  await expect(replica.sync()).rejects.toThrow("Inventory unavailable during checkpoint refresh");
+  const saved = JSON.parse(replica.serialize()).pending;
+  expect(saved).toBeDefined();
+  expect(saved).toMatchObject({ object: requests[0]!.object, requestId: requests[0]!.requestId, observedSequence: 0 });
+
+  refreshUnavailable = false;
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, transport);
+  await expect(restored.sync()).resolves.toBeUndefined();
+
+  expect(requests.slice(0, 2).map(({ object, requestId, observedSequence }) => ({ object, requestId, observedSequence })))
+    .toEqual([requests[0], requests[0]]);
+  expect(requests[2]!.observedSequence).toBe(7);
+  expect(requests[2]!.requestId).not.toBe(requests[0]!.requestId);
+  const completed = JSON.parse(restored.serialize());
+  expect(completed.blind.cursor).toBe(7);
+  expect(completed).not.toHaveProperty("pending");
 });
 
 it("Given expired management history with newer local content and a saved upload, When Owner drains pending, Then retry exact ciphertext without pulling or capturing", async () => {

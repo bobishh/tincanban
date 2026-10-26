@@ -1,6 +1,7 @@
 import { cloneJsonData } from "./jsonData"
 import { hasEntityKind } from "./model"
 import type { Board, FieldDefinition, FieldValue, PriorityPolicy, PriorityRule, Item, WorkspaceDocumentV2 } from "./model"
+import { canonicalizeJson } from "./identityCrypto"
 
 function priorityOptionForScore(score: number, bands: Array<{ optionId: string; minScore: number }>): string | null {
   return [...bands].sort((a, b) => b.minScore - a.minScore).find(band => score >= band.minScore)?.optionId ?? null
@@ -76,10 +77,12 @@ export function validatePriorityPolicy(
   policy: PriorityPolicy | null | undefined,
   doc: WorkspaceDocumentV2 | undefined,
   boardId: string,
+  options: { preserveExistingUnsupported?: boolean } = {},
 ): Array<{ path: string; message: string }> {
   if (!policy) return []
   const errors: Array<{ path: string; message: string }> = []
-  if (policy.evaluator !== "weighted-rules-v1") errors.push({ path: "/priorityPolicy/evaluator", message: "Unsupported priority evaluator. Configure field rules or disable automatic priority." })
+  const preserveUnsupported = options.preserveExistingUnsupported === true && isUnchangedUnsupportedPolicy(policy, doc, boardId)
+  if (policy.evaluator !== "weighted-rules-v1" && !preserveUnsupported) errors.push({ path: "/priorityPolicy/evaluator", message: "Unsupported priority evaluator. Configure field rules or disable automatic priority." })
   if (policy.evaluator === "weighted-rules-v1" && !policy.rules.length) errors.push({ path: "/priorityPolicy/rules", message: "Add at least one priority rule" })
   if (!policy.bands.length) errors.push({ path: "/priorityPolicy/bands", message: "Add at least one priority band" })
   const ids = new Set<string>()
@@ -87,6 +90,15 @@ export function validatePriorityPolicy(
   validatePriorityOutputs(policy, doc, boardId, errors)
   validatePriorityBands(policy, errors)
   return errors
+}
+
+function isUnchangedUnsupportedPolicy(policy: PriorityPolicy, doc: WorkspaceDocumentV2 | undefined, boardId: string): boolean {
+  if (policy.evaluator === "weighted-rules-v1" || !doc) return false
+  const board = doc.entities[boardId]
+  if (!hasEntityKind(board, "board") || !board.priorityPolicy || board.priorityPolicy.evaluator === "weighted-rules-v1") return false
+  const proposed = { ...cloneJsonData(policy), sort: policy.sort ?? "fit_desc" }
+  const current = { ...cloneJsonData(board.priorityPolicy), sort: board.priorityPolicy.sort ?? "fit_desc" }
+  return canonicalizeJson(proposed) === canonicalizeJson(current)
 }
 
 function validatePriorityOutputs(policy: PriorityPolicy, doc: WorkspaceDocumentV2 | undefined, boardId: string, errors: Array<{ path: string; message: string }>): void {

@@ -146,7 +146,7 @@ export async function ownershipTransfersWithPending(store: PeerStore, workspaceI
   return raw.some(record => JSON.stringify(record) === JSON.stringify(proposal)) ? raw : [...raw, proposal]
 }
 
-async function applyOwnershipSteps(store: PeerStore, credential: WorkspaceMeshCredential, plan: OwnershipMergePlan,
+export async function applyOwnershipSteps(store: PeerStore, credential: WorkspaceMeshCredential, plan: OwnershipMergePlan,
   localPersonId: string) {
   let plannedCredential = credential
   let plannedPeers = await store.listPeers(credential.workspaceId)
@@ -159,7 +159,7 @@ async function applyOwnershipSteps(store: PeerStore, credential: WorkspaceMeshCr
     plannedCredential = adoption.credential
     plannedPeers = adoption.peers
   }
-  return plannedCredential
+  return { credential: plannedCredential, peers: plannedPeers }
 }
 
 function planIncomingSuccession(workspaceId: string, credential: WorkspaceMeshCredential,
@@ -203,7 +203,7 @@ export async function preflightScopeAuthoritySnapshot(store: PeerStore, workspac
   const snapshot = meshRustRuntime().state.mergeScopeAuthoritySnapshots(
     existingSnapshot ?? null, incoming, Date.now()) as ScopeAuthoritySnapshot
   const ownershipPlan = planOwnershipMerge(credential, incomingTransfers)
-  const plannedCredential = await applyOwnershipSteps(store, credential, ownershipPlan, localPersonId)
+  const { credential: plannedCredential } = await applyOwnershipSteps(store, credential, ownershipPlan, localPersonId)
   const ownershipSnapshot = planOwnershipScopeSnapshot(snapshot, existingSnapshot, ownershipPlan, plannedCredential)
   const successionPlan = planIncomingSuccession(workspaceId, plannedCredential, incomingCatalog)
   requireScopeSuccessionBridges(snapshot, successionPlan.transitions)
@@ -262,7 +262,7 @@ export async function confirmedOwnershipSnapshot(store: WorkspaceSetStore, works
 
 export async function createOwnershipProposal(profile: LocalProfile, workspaceId: string,
   target: { payload: { personId: string }; publicKey: string; certificates: DeviceCertificate[] }, credential: WorkspaceMeshCredential,
-  store: PeerStore, workspaceStore: WorkspaceSetStore) {
+  store: PeerStore, workspaceStore: Pick<WorkspaceSetStore, "readAuthorityHeads">) {
   if (!workspaceStore.readAuthorityHeads) throw new Error("Admitted workspace document unavailable for ownership signing")
   const heads = await workspaceStore.readAuthorityHeads(workspaceId)
   const transfer = await createWorkspaceOwnershipTransfer(profile, workspaceId, {

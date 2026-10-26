@@ -13,6 +13,7 @@ import { identityDeviceActivationKey as activationKey } from "./identityDeviceAc
 import { planIdentityProfileImport } from "./identityProfileProjectionQueue"
 import { resumeIdentityProfileProjections } from "./identityProfileProjection"
 import { planIdentityProfilePresentation } from "./identityProfilePresentationPlan"
+import { planIdentityAuthorityViewMerge } from "./identityAuthorityStore"
 import type { ManagementConflictResolver } from "./rustyManagementReconciliation"
 
 type Transfer = Awaited<ReturnType<typeof readIdentityDeviceTransfer>>
@@ -48,6 +49,7 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
     planIdentityRecoveryImport(personId, transfer.recoveryEvidence),
     planIdentityDeviceExtensionsImport(transfer.manifest),
     planIdentityProfileImport(transfer.personalRoot.identity, transfer.observations),
+    planIdentityAuthorityViewMerge(personId, transfer.authorityView),
   ])
   const profilePlan = planIdentityProfilePresentation(profileRaw ?? null, projectedRoot.identity, options.adoption)
   return { conditions: [...plans.flatMap(plan => plan.conditions), ...profilePlan.conditions,

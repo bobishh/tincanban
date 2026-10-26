@@ -1,7 +1,7 @@
 import { parsePrivateReplicaWire } from "./privateReplicaPreferences"
 
 type IdentityDeviceComponentName = "identityCatalog" | "profileObservations" | "workspaceReferences" |
-  "privateConnections" | "ownerCapabilities" | "recoveryEvidence"
+  "privateConnections" | "ownerCapabilities" | "recoveryEvidence" | "identityAuthority"
 export type IdentityDeviceComponent = { schema: string; required: boolean; value: Record<string, unknown> }
 export type IdentityDeviceStateInput = {
   kind: "identity-device-state"
@@ -18,6 +18,7 @@ const supportedSchemas: Record<IdentityDeviceComponentName, string> = {
   privateConnections: "private-rusty-connections@5",
   ownerCapabilities: "owner-capabilities@2",
   recoveryEvidence: "identity-recovery-evidence@1",
+  identityAuthority: "identity-authority-view@1",
 }
 const componentNames = Object.keys(supportedSchemas) as IdentityDeviceComponentName[]
 const legacySchemas: Partial<Record<IdentityDeviceComponentName, readonly string[]>> = {
@@ -88,6 +89,11 @@ export function validateOptionalIdentityComponent(name: string, component: Ident
 }
 
 function validateKnownComponentValue(name: IdentityDeviceComponentName, value: Record<string, unknown>, personId: string): void {
+  if (name === "identityAuthority") {
+    validateIdentityAuthorityComponent(value, personId)
+    inspectPortableData(value, `components.${name}`)
+    return
+  }
   if (identity(value) !== personId) throw new Error(`Identity mismatch in device-state component ${name}`)
   if (name === "privateConnections") {
     validatePortableConnectionProgress(value)
@@ -197,3 +203,14 @@ export function decodeIdentityDeviceState(input: Uint8Array | unknown, expectedP
 }
 
 export const identityDeviceStateSchemas = Object.freeze({ ...supportedSchemas })
+
+function validateIdentityAuthorityComponent(value: Record<string, unknown>, personId: string): void {
+    const view = value.authorityView
+    if (Object.keys(value).length !== 2 || value.personId !== personId || !isRecord(view) || view.personId !== personId ||
+        view.kind !== "mesh-identity-authority-view" || view.version !== 1 || typeof view.identityPublicKey !== "string" ||
+        !Array.isArray(view.certificates) || !Array.isArray(view.revocations) || !isRecord(view.revocationHead) ||
+        !Number.isSafeInteger(view.revocationHead.revision) || typeof view.revocationHead.recordHash !== "string" ||
+        typeof view.viewDigest !== "string") {
+      throw new Error("Invalid or mismatched Identity authority view component")
+    }
+}

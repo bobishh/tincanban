@@ -6,7 +6,6 @@ import { captureArchiveCoverageAuthority } from "@meta-uber/mesh-replication/his
 import type { useTincanban } from "../state"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
-import { fetchBlind } from "./rustyHttp"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import { readPublishedHistoryBaseline, readPreparedHistoryPublication, commitPreparedHistoryPublication } from "./historyBaselinePublicationRepository"
 import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaselineRepository"
@@ -17,7 +16,7 @@ import type { CaptureCheckpointPort } from "./historyBaselineCapture"
 
 type Input = { tincanban: ReturnType<typeof useTincanban>; config: BlindReplicaConfig; transitionId: string;
   previousBaselineId: string | null; scopeAuthority: unknown; ensureCurrent(): void | Promise<void>;
-  ensureNativeCurrent(): void; checkpointBeforeActivation?: CaptureCheckpointPort }
+  ensureNativeCurrent(): void; fetch: typeof fetch; checkpointBeforeActivation?: CaptureCheckpointPort }
 function heads(bytes: Uint8Array): string[] {
   const document = load(bytes)
   try { return getHeads(document).sort() } finally { free(document) }
@@ -46,7 +45,7 @@ export async function resumePublishedHistoryBaseline(input: Input) {
   const previous = active && active.baselineId !== publication.baselineId
     ? await reverifyActiveHistoryForWorkspace(config.workspaceId, input.tincanban.getCurrentProfile()!.identity.personId, input.ensureNativeCurrent) : null
   try {
-    const remote = createArchiveRemote(config, { fetch: fetchBlind, ensureCurrent: input.ensureCurrent })
+    const remote = createArchiveRemote(config, { fetch: input.fetch, ensureCurrent: input.ensureCurrent })
     return await openWithReplicaContentKeys(config, payload.storage.keyEpoch, async contentKey => {
       const key = decodeBlindBytes(contentKey)
       const candidate = await verifyReceivedWireHistoryBaseline({ wire: publication.wire,

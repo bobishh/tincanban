@@ -9,7 +9,7 @@ import { readWorkspaceBasisSnapshot } from "../storageJournal"
 import { defaultStorage } from "../storage"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { contentKeysForEpoch, openWithReplicaContentKeys } from "./replicaContentKeys"
-import { fetchBlind } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 import { peerStore } from "./peerStore"
 import { mergeCurrentBlindHistory } from "./blindCurrentHistory"
 import { receiveBrowserHistoryBaseline } from "./browserHistoryBaselineReceive"
@@ -18,6 +18,7 @@ import type { getPrivateReplicaProgress } from "./privateReplicaRepository"
 import type { createBlindSnapshotRevision } from "./blindSnapshotRevision"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import type { WireHistoryBaseline } from "../product-replica"
+import { WorkspaceUnavailableError } from "../workspaceAvailability"
 
 type ActiveRouteRepository = { recordActiveWireRoute(id: string, signedJson: Uint8Array, wire: WireHistoryBaseline): Promise<void> }
 
@@ -33,7 +34,7 @@ function persistCurrentWireRoute(repository: ActiveRouteRepository, previous: Wa
 
 export type ReceiveContext = { config: BlindReplicaConfig; tincanban: ReturnType<typeof useTincanban>; owner: string;
   guardIdentity: () => void; readReplicaProgress: () => ReturnType<typeof getPrivateReplicaProgress>;
-  readSnapshotRevision: ReturnType<typeof createBlindSnapshotRevision> }
+  readSnapshotRevision: ReturnType<typeof createBlindSnapshotRevision>; scopeFetch: RustyFetch }
 
 /** The history receiver shares the exact private replica generation and current-device guards. */
 export async function receiveBlindReplicaHistory(context: ReceiveContext, id: string, bytes: Uint8Array, authorization: unknown, history: unknown) {
@@ -59,7 +60,7 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
   if (previous) assertCurrentHistoryStorage(previous, config)
   const remote = createArchiveRemote({ origin: config.origin, scopeId: config.scopeId, servicePublicKey: config.servicePublicKey,
     readToken: config.readToken, writeToken: config.writeToken, policyRevision: config.policyRevision },
-    { fetch: fetchBlind, ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() } })
+    { fetch: context.scopeFetch, ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() } })
   const archiveFetch = { ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() },
     download: async (ciphertextId: string) => {
       guardIdentity(); await readReplicaProgress(); guardIdentity()
@@ -77,24 +78,8 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
     trustedScopeAuthority, previous, fetch: archiveFetch, ports: {
       workspaceTransaction: operation => defaultStorage.withWorkspaceTransaction(id, operation),
       ensureCurrent: async () => { guardIdentity(); await readReplicaProgress(); guardIdentity() },
-      readLocal: async () => {
-        guardIdentity()
-        const [localBytes, revision, historyRevision, progress] = await Promise.all([
-          tincanban.readWorkspaceBytes(id), readSnapshotRevision(id),
-          (async () => {
-            const publications = await import("./historyBaselinePublicationRepository")
-            return (await publications.readPublishedHistoryBaseline(id, config, guardIdentity))?.baselineId
-          })(), readReplicaProgress(),
-        ])
-        guardIdentity()
-        const document = load(localBytes)
-        let heads: string[]
-        try { heads = getHeads(document).sort() } finally { free(document) }
-        if (revision === undefined) throw new Error("Local workspace revision is unavailable during history receive")
-        return { bytes: localBytes.slice(), heads, revision,
-          catalogRevision: historyRevision ?? undefined,
-          pending: Boolean(progress.pending) }
-      },
+      readLocal: () => readHistoryReceiveLocalState({ id, config, previous, repository, tincanban, readReplicaProgress,
+        readSnapshotRevision, guardIdentity }),
       verify: async input => {
         const parsed = (await import("../product-replica")).parseWireHistoryBaseline(input.wire)
         const envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decodeBlindBytes(parsed.signedJson))) as {
@@ -153,6 +138,58 @@ export async function receiveBlindReplicaHistory(context: ReceiveContext, id: st
     } })
   } finally { if (ownedPrevious) previous?.free() }
   guardIdentity()
+}
+
+async function readHistoryReceiveLocalState(input: {
+  id: string; config: BlindReplicaConfig; previous?: WasmVerifiedReceivedHistoryBaseline; repository: ActiveRouteRepository & {
+    readActive(): Promise<{ baselineId?: string } | undefined>
+  }; tincanban: ReceiveContext["tincanban"]; readReplicaProgress: ReceiveContext["readReplicaProgress"]
+  readSnapshotRevision: ReceiveContext["readSnapshotRevision"]; guardIdentity: ReceiveContext["guardIdentity"]
+}) {
+  const { id, config, previous, repository, tincanban, readReplicaProgress, readSnapshotRevision, guardIdentity } = input
+  guardIdentity()
+  const progress = await readReplicaProgress()
+  guardIdentity()
+  if (progress.pending) throw new Error("Confirm the exact original Rusty outbox before receiving compacted history")
+
+  let localBytes: Uint8Array
+  try {
+    localBytes = await tincanban.readWorkspaceBytes(id)
+  } catch (error) {
+    if (!(error instanceof WorkspaceUnavailableError)) throw error
+    const [snapshot, causalEvidence, changes, storedRevision, activeBaseline, publication] = await Promise.all([
+      readWorkspaceBasisSnapshot(id), defaultStorage.hasCausalEvidence(id), defaultStorage.listChanges(id),
+      defaultStorage.readWorkspaceRevision(id), repository.readActive(),
+      (async () => {
+        const publications = await import("./historyBaselinePublicationRepository")
+        return publications.readPublishedHistoryBaseline(id, config, guardIdentity)
+      })(),
+    ])
+    guardIdentity()
+    if (previous || snapshot || causalEvidence || changes.length > 0 || storedRevision !== undefined || activeBaseline ||
+        publication || hasPriorReplicaState(progress)) throw error
+    return { bytes: new Uint8Array(), heads: [] as string[], revision: "absent-local-workspace",
+      catalogRevision: undefined, pending: false }
+  }
+
+  const [revision, historyRevision] = await Promise.all([
+    readSnapshotRevision(id),
+    (async () => {
+      const publications = await import("./historyBaselinePublicationRepository")
+      return (await publications.readPublishedHistoryBaseline(id, config, guardIdentity))?.baselineId
+    })(),
+  ])
+  guardIdentity()
+  const document = load(localBytes)
+  let heads: string[]
+  try { heads = getHeads(document).sort() } finally { free(document) }
+  if (revision === undefined) throw new Error("Local workspace revision is unavailable during history receive")
+  return { bytes: localBytes.slice(), heads, revision, catalogRevision: historyRevision ?? undefined, pending: false }
+}
+
+function hasPriorReplicaState(progress: Awaited<ReturnType<ReceiveContext["readReplicaProgress"]>>): boolean {
+  if (progress.generation !== 0 || progress.cursor !== 0 || progress.lastUploaded !== "") return true
+  return Object.keys(progress).some(key => !["version", "binding", "generation", "cursor", "lastUploaded"].includes(key))
 }
 
 function assertCurrentHistoryStorage(basis: NonNullable<Awaited<ReturnType<typeof defaultStorage.getVerifiedReceivedHistoryBaseline>>>, config: BlindReplicaConfig) {

@@ -1,5 +1,26 @@
 # Architecture and verification
 
+## Local verification and CI budget
+
+- Run development iterations and the main verification workload locally. Before
+  pushing, run the relevant CI-equivalent checks locally and inspect their results.
+- Batch verified changes into one release push. Do not push intermediate fixes
+  merely to discover failures in CI or repeatedly run the full remote matrix.
+- Use CI for the final release check and reproducible deployment artifacts. If it
+  fails, reproduce and fix the cause locally before another push; rerun only the
+  affected failed jobs when the source revision is unchanged.
+- Reuse successful evidence until code or an unresolved failure justifies another
+  run. Cancel only this task's obsolete runs; preserve unrelated work and processes.
+
+## Architecture
+
+- Keep maintained repository documentation in English. Translate current Russian
+  documentation; remove demonstrably obsolete documents and disposable agent
+  notes, handoffs, progress logs, and execution reports instead of preserving them
+  as repository artifacts. Keep task reports outside Git under the configured
+  deliverables directory. This does not apply to product content, localization,
+  learning materials, test fixtures, or third-party files.
+
 Apply the global working agreements. For changes to domain rules, module ownership,
 or cross-service contracts, read [codebase-design](.agents/skills/codebase-design/SKILL.md)
 and its [architecture review procedure](.agents/skills/codebase-design/ARCHITECTURE-REVIEW.md).

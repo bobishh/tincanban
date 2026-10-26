@@ -1,10 +1,15 @@
-import { describe, expect, it } from "vitest"
-import { createRecoverableIdentity, createDeviceAuthorizationApproval } from "@meta-uber/mesh-identity"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { ref } from "vue"
+import { createRecoverableIdentity, createDeviceAuthorizationApproval, createIdentityProfileOperation,
+  emptyIdentityProfileState, publicKeyId, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
   browserSignInFailureMessage, clearIdentityBrowserSignIn, captureIdentityBrowserSignInReturn, verifyIdentityBrowserSignInReturn,
-  shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn } from "./identityBrowserSignIn"
+  shouldResumeIdentityBrowserSignIn, writePendingIdentityBrowserSignIn, readPendingRustyConnectionIntent,
+  writePendingRustyConnectionIntent, clearPendingRustyConnectionIntent, createIdentityBrowserSignInReturn } from "./identityBrowserSignIn"
 
 describe("Identity browser sign-in", () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
   it("keeps unexpected aborts visible with a fresh-sign-in action", () => {
     expect(browserSignInFailureMessage(new DOMException("storage unavailable", "AbortError")))
       .toBe("Identity sign-in was interrupted. Select Sign in to try again.")
@@ -39,6 +44,49 @@ describe("Identity browser sign-in", () => {
     await expect(completion.finish("/boards/current")).resolves.toBe(true)
     expect(completion.phase.value).toBe("complete")
     expect(paths).toEqual(["/boards/current", "/boards/current"])
+  })
+
+  it("Given a coherent existing context, when the return dialog closes before completion, then keep the context ready", () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {}, closePortal: () => {} })
+
+    expect(result.contextReady.value).toBe(true)
+    result.close()
+    expect(result.contextReady.value).toBe(true)
+    expect(result.returning.value).toBe(false)
+  })
+
+  it("Given a return that adopts identity before failing board selection, when dialog closes, then keep workspace projection gated", async () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
+      closePortal: () => {}, loadBoards: async () => { throw new Error("board selection failed") } })
+
+    await expect(result.complete("/boards/current")).rejects.toThrow("board selection failed")
+    expect(result.contextReady.value).toBe(false)
+    result.close()
+    expect(result.contextReady.value).toBe(false)
+  })
+
+  it("Given a return flow, when refresh and board selection finish, then open workspace projection only after route restoration", async () => {
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+      history: { state: null, replaceState: vi.fn() } })
+    const showPortal = ref(true)
+    const stages: string[] = []
+    const result = createIdentityBrowserSignInReturn({ showPortal,
+      refreshIdentity: async () => { stages.push(`refresh:${result.contextReady.value}`) }, closePortal: () => {},
+      loadBoards: async () => { stages.push(`boards:${result.contextReady.value}`) },
+      resolveReturnPath: path => { stages.push(`restore:${result.contextReady.value}`); return path } })
+
+    expect(result.contextReady.value).toBe(true)
+    const complete = result.complete("/boards/current")
+    expect(result.contextReady.value).toBe(false)
+    await complete
+    stages.push(`ready:${result.contextReady.value}`)
+    expect(stages).toEqual(["refresh:false", "boards:false", "restore:false", "ready:true"])
   })
 
   it("Given a cancelled sign-in, when the dialog closes, then neither pending request nor stale return can reopen it", () => {
@@ -87,6 +135,7 @@ describe("Identity browser sign-in", () => {
     expect(new URLSearchParams(new URL(portalUrl).hash.slice(1)).has("device-request")).toBe(true)
     expect(portalUrl).not.toContain("privateKey")
     expect(pending.request.payload.devicePublicKey).toBe(app.device.publicKey)
+    expect(pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true })
     const storage = new Map<string, string>()
     writePendingIdentityBrowserSignIn({ setItem: (key, value) => storage.set(key, value) }, pending)
     const read = readPendingIdentityBrowserSignIn({ getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) })
@@ -94,6 +143,7 @@ describe("Identity browser sign-in", () => {
     expect(readPendingIdentityBrowserSignIn({ getItem: key => storage.get(key) ?? null, removeItem: key => storage.delete(key) })).toBeNull()
     const approval = await createDeviceAuthorizationApproval(owner, pending.request, {
       applicationOrigin: "https://boards.example", challenge: pending.request.payload.challenge,
+      profileState: emptyIdentityProfileState(owner.identity.personId), certificates: [owner.certificate], revocations: [], includeProfileState: true,
     })
     const encoded = btoa(JSON.stringify(approval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
     const result = await verifyIdentityBrowserSignInReturn({ hash: `#state=${"a".repeat(64)}&approval=${encoded}`,
@@ -108,6 +158,54 @@ describe("Identity browser sign-in", () => {
     const substituted = btoa(JSON.stringify(substitutedApproval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
     await expect(verifyIdentityBrowserSignInReturn({ hash: `#state=${"a".repeat(64)}&approval=${substituted}`,
       pending, currentProfile: app, applicationOrigin: "https://boards.example" })).rejects.toThrow(/approval|request/u)
+  })
+
+  it("Given an existing manager certificate, when the exact same device returns from Identity, then accept its signed profile approval", async () => {
+    const manager = (await createRecoverableIdentity("better", "Existing manager app")).profile
+    const challenge = "e".repeat(64)
+    const { pending } = await createIdentityBrowserSignIn({ profile: manager, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/boards/current", challenge,
+      personId: manager.identity.personId })
+    const initial = emptyIdentityProfileState(manager.identity.personId)
+    const avatarData = "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA"
+    const photo = await createIdentityProfileOperation(manager, initial, "photo", {
+      avatarData, changedAt: "2026-10-25T00:00:00.000Z",
+    })
+    const profileState = await readIdentityProfileState({ ...initial, operations: [photo] }, manager.identity,
+      [manager.certificate])
+    const approval = await createDeviceAuthorizationApproval(manager, pending.request, {
+      applicationOrigin: "https://boards.example", challenge, certificates: [manager.certificate], profileState,
+      revocations: [], includeProfileState: true,
+    })
+    const encoded = btoa(JSON.stringify(approval)).replace(/=/gu, "").replace(/\+/gu, "-").replace(/\//gu, "_")
+
+    await expect(verifyIdentityBrowserSignInReturn({ hash: `#state=${challenge}&approval=${encoded}`, pending,
+      currentProfile: manager, applicationOrigin: "https://boards.example" })).resolves.toMatchObject({
+      kind: "approved", replacesIdentity: false, approval: { certificate: manager.certificate },
+    })
+  })
+
+  it("Given Add Rusty requests Identity consent, When creating the browser request, Then bind the same Identity and exact Rusty service key", async () => {
+    const app = (await createRecoverableIdentity("better", "Current app")).profile
+    const service = (await createRecoverableIdentity("better", "Rusty service")).profile
+    const pin = { origin: "https://rusty.example", serviceId: await publicKeyId(service.identity.publicKey),
+      servicePublicKey: service.identity.publicKey }
+    const { pending } = await createIdentityBrowserSignIn({ profile: app, portalOrigin: "https://identity.example",
+      applicationOrigin: "https://boards.example", returnPath: "/boards/current", personId: app.identity.personId,
+      rustyServicePins: [pin], challenge: "c".repeat(64) })
+    expect(pending.request.payload.personId).toBe(app.identity.personId)
+    expect(pending.request.payload).toMatchObject({ version: 3, includeIdentityCatalogAccess: true, rustyServicePins: [pin] })
+
+    const storage = new Map<string, string>()
+    const adapter = { setItem: (key: string, value: string) => storage.set(key, value),
+      getItem: (key: string) => storage.get(key) ?? null, removeItem: (key: string) => storage.delete(key) }
+    const intent = { version: 1 as const, origin: pin.origin, serviceId: pin.serviceId,
+      workspaceId: "workspace-1", challenge: pending.request.payload.challenge }
+    writePendingRustyConnectionIntent(adapter, intent)
+    expect(readPendingRustyConnectionIntent(adapter, false)).toEqual(intent)
+    expect(readPendingRustyConnectionIntent(adapter)).toEqual(intent)
+    clearPendingRustyConnectionIntent(adapter)
+    expect(readPendingRustyConnectionIntent(adapter)).toBeNull()
   })
 
   it("Given a cancelled or substituted browser return, when callback handling runs, then leave identity approval unavailable", async () => {

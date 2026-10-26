@@ -15,6 +15,7 @@ import {
   type BlindObject,
   type RustyReplicaAccess,
   type RustyStorageReceipt,
+  type RustyFetch,
 } from "@meta-uber/mesh-replication/rusty-replica"
 
 export { decodeBlindBytes, encodeBlindBytes, type BlindObject }
@@ -32,14 +33,15 @@ export const blindProducerHeaders = (access: BlindAccess) => rustyProducerHeader
 export async function verifyBlindReceipt(receipt: BlindReceipt, access: BlindAccess, object: BlindObject, requestId: string): Promise<void> {
   return verifyRustyStorageReceipt(receipt, access, object, requestId)
 }
-export async function uploadBlindObject(access: BlindAccess, object: BlindObject, requestId: string = crypto.randomUUID(), observedSequence = 0): Promise<BlindReceipt> {
-  return uploadRustyObject(appAccess(access), object, requestId, observedSequence, fetchBlind)
+export async function uploadBlindObject(access: BlindAccess, object: BlindObject, requestId: string = crypto.randomUUID(), observedSequence = 0,
+  fetcher: RustyFetch = fetchBlind): Promise<BlindReceipt> {
+  return uploadRustyObject(appAccess(access), object, requestId, observedSequence, fetcher)
 }
-export async function inventoryBlindObjects(access: BlindAccess, after: number): ReturnType<typeof inventoryRustyObjects> {
-  return inventoryRustyObjects(appAccess(access), after, fetchBlind)
+export async function inventoryBlindObjects(access: BlindAccess, after: number, fetcher: RustyFetch = fetchBlind): ReturnType<typeof inventoryRustyObjects> {
+  return inventoryRustyObjects(appAccess(access), after, fetcher)
 }
-export async function downloadBlindObject(access: BlindAccess, id: string): Promise<BlindObject> {
-  return downloadRustyObject(appAccess(access), id, fetchBlind)
+export async function downloadBlindObject(access: BlindAccess, id: string, fetcher: RustyFetch = fetchBlind): Promise<BlindObject> {
+  return downloadRustyObject(appAccess(access), id, fetcher)
 }
 
 export async function discoverBlindKeeper(input: string): Promise<{ origin: string; servicePublicKey: string; serviceId: string; snapshotCheckpoints?: 1; snapshotWriteFence?: 1; scopeManagement?: 1; personManagement?: 1; deviceAccessRestoration?: 1; scopeEnrollmentRetry?: 1;

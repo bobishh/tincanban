@@ -1,3 +1,4 @@
+import { confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 import { beforeEach, expect, it, vi } from "vitest"
 import { createDeviceEnrollmentInvite } from "@meta-uber/mesh-pairing"
 import { bootstrapIdentity, canonicalizeJson, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
@@ -25,6 +26,7 @@ async function fixture(prepareManagement?: (owner: LocalProfile, guest: LocalPro
     purpose: "device-enrollment-approval", binding: { invitationId: invite.invitationId, recipientDeviceId: guest.device.deviceId },
     authorityRevision: "fixture", current: async () => ({ personId: owner.identity.personId, deviceId: owner.device.deviceId, authorityRevision: "fixture" }) })
   const restoreGuestState = await prepareManagement?.(owner, guest)
+  await confirmIdentityAuthorityFixture(root, [owner.certificate, certificate])
   const bytes = await enrollmentPayload(invite, owner, certificate, root, [{ id: "board", title: "Board" }], "board",
     [{ version: 1, workspaceId: "board", ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey,
       ownerCertificates: [owner.certificate], transportSecret: "A".repeat(43), epoch: 1, peers: [] }], [], new TextEncoder().encode("[]"), context)

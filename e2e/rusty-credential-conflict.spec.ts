@@ -1,6 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 test.use({ browserName: process.platform === "darwin" ? "webkit" : "chromium",
   viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
@@ -16,6 +17,7 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
   })
   const rusty = await startRustyService(owner, baseURL!)
   let releaseProfileRead: (() => void) | undefined
+  await approveRustyForFixture(page, rusty.origin)
   const openRusty = async () => {
     await page.getByRole("button", { name: "Menu", exact: true }).click()
     await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -31,19 +33,24 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
     await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
     const original = await page.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { readLocal } = await import("/src/localDb.ts")
+      const { scopeEnrollmentJournalKey } = await import("/src/sync/rustyEnrollmentJournal.ts")
       const repository = await import("/src/sync/privateReplicaRepository.ts")
       const { emptyPrivateReplicaState, changeReplicaPreference, portableReplicaState } = await import("/src/sync/privateReplicaPreferences.ts")
       const { identityDevicePreferencesChanged } = await import("/src/sync/identityDevicePreferenceEvents.ts")
       const personId = (await bootstrapIdentity()).identity.personId
       const config = (await repository.getReplicaConfigurations(personId)).find(value => value.origin === origin)!
       const profileScope = (await repository.getPrivateReplicaConfigurations(personId)).find(value => value.origin === origin && value.purpose === "identity")!.scopeId
+      const enrollmentIntent = await readLocal(await scopeEnrollmentJournalKey(personId, origin, config.scopeId))
       const competing = changeReplicaPreference(emptyPrivateReplicaState(personId, "offline-device"), {
         ...config, contentKey: "B".repeat(42) + "A",
       })
       await repository.receivePrivateReplicaState(personId, portableReplicaState(competing))
       identityDevicePreferencesChanged(personId)
-      return { personId, profileScope, keyEpoch: config.keyEpoch, contentKey: config.contentKey, scopeId: config.scopeId }
+      return { personId, profileScope, enrollmentIntentPending: enrollmentIntent !== null,
+        keyEpoch: config.keyEpoch, contentKey: config.contentKey, scopeId: config.scopeId }
     }, rusty.origin)
+    expect(original.enrollmentIntentPending).toBe(false)
     const conflict = page.getByRole("alert", { name: "Rusty settings conflict", exact: true })
     await expect(conflict).toBeVisible()
     const uploads = `${rusty.origin}/v2/scopes/${original.scopeId}/objects/**`

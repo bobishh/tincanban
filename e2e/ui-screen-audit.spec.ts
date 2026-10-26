@@ -106,14 +106,17 @@ test("Given all-board export is pending and fails, When retried, Then progress a
   await page.goto("/")
   await page.evaluate(async () => {
     let attempts = 0
+    let releaseFirstAttempt!: () => void
+    const firstAttemptGate = new Promise<void>(resolve => { releaseFirstAttempt = resolve })
     await (await import("/e2e/support/keeperDialog.ts")).mountWorkspaceFileActions(async () => undefined, async onProgress => {
       onProgress({ completed: 1, total: 2 })
       if (++attempts === 1) {
-        await new Promise(resolve => setTimeout(resolve, 300))
+        await firstAttemptGate
         throw new Error("The second board could not be read")
       }
       onProgress({ completed: 2, total: 2 })
     })
+    Object.assign(window, { releaseFirstAllBoardExport: () => releaseFirstAttempt() })
   })
   const sync = page.getByRole("region", { name: "Workspace files", exact: true })
   const exportAllButton = sync.locator(".sync-data-actions > button").nth(1)
@@ -121,6 +124,12 @@ test("Given all-board export is pending and fails, When retried, Then progress a
   await expect(exportAllButton).toHaveText("Exporting boards…")
   await expect(exportAllButton).toBeDisabled()
   await expect(sync.locator("[role='status']")).toContainText("Exporting board 1 of 2")
+  await expect(sync.getByRole("alert")).toHaveCount(0)
+  await page.evaluate(() => {
+    const release = (window as Window & { releaseFirstAllBoardExport?: () => void }).releaseFirstAllBoardExport
+    if (!release) throw new Error("The pending export gate was not installed")
+    release()
+  })
   await expect(sync.getByRole("alert")).toHaveText("The second board could not be read")
   await sync.getByRole("button", { name: "Retry all-board export", exact: true }).click()
   await expect(sync.getByRole("button", { name: "Export all boards", exact: true })).toBeEnabled()

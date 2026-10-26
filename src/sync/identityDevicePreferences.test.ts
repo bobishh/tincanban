@@ -11,7 +11,7 @@ import { persistReplicaCursor } from "./identityDevicePreferences"
 import { defaultStorage } from "../storage"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
-import { createIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { confirmIdentityAuthorityFixture, createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import * as identityDeviceTransfer from "./identityDeviceTransfer"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
@@ -66,6 +66,7 @@ it("Given a different participant, when the session exports mesh metadata, then 
   const store = { readMesh: vi.fn(async () => ({ version: 1, peers: [] })) } as unknown as WorkspaceSetStore
   expect(withIdentityDevicePreferences(store, profile, "other-person", "other-device")).toBe(store)
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(profile.certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [profile.certificate])
   const samePerson = withIdentityDevicePreferences(store, profile, profile.identity.personId, profile.device.deviceId)
   const packet = await samePerson.readMesh!("board")
   expect(packet).toHaveProperty("identityDevicePreferences")
@@ -247,6 +248,7 @@ it("Given an enrolled device without a root private key, when exporting private 
   await defaultProofStore.putCertificate(await certHashDefault(owner.certificate), owner.certificate)
   const profile = await adoptEnrolledIdentity(owner.identity, certificate)
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [owner.certificate, certificate])
   const session = withIdentityDevicePreferences({ readMesh: async () => ({ peers: [] }) } as unknown as WorkspaceSetStore,
     profile, profile.identity.personId, profile.device.deviceId)
 
@@ -272,6 +274,7 @@ it("Given authorization expires while metadata is read, when export resumes, the
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(profile.certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [profile.certificate])
   let current = true
   const store = { readMesh: async () => { current = false; return { peers: [] } } } as unknown as WorkspaceSetStore
   const session = withIdentityDevicePreferences(store, profile, profile.identity.personId, profile.device.deviceId, () => current)
@@ -291,6 +294,7 @@ it("Given a cached device profile whose durable key was replaced, when exporting
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(profile.certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [profile.certificate])
   const readMesh = vi.fn(async () => ({ peers: [] }))
   const session = withIdentityDevicePreferences({ readMesh } as unknown as WorkspaceSetStore,
     profile, profile.identity.personId, profile.device.deviceId)
@@ -304,6 +308,7 @@ it("Given the durable key changes during private settings signing, when crypto c
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(profile.certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [profile.certificate])
   const nativeSign = crypto.subtle.sign.bind(crypto.subtle)
   let replaced = false
   vi.spyOn(crypto.subtle, "sign").mockImplementation(async (...args) => {
@@ -325,6 +330,7 @@ it("Given shared metadata acquisition switches the active identity, when exporti
   resetIdentityStorageForTest()
   const profile = await bootstrapIdentity()
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, await certHashDefault(profile.certificate)))
+  await confirmIdentityAuthorityFixture((await defaultStorage.loadPersonalRoot())!, [profile.certificate])
   const readMesh = vi.fn(async () => {
     resetIdentityStorageForTest()
     await bootstrapIdentity("Replacement identity")

@@ -101,3 +101,9 @@ it.each(["devicePrivateKeyPkcs8", "identityPrivateKeyPkcs8"])(
     expect(await readLocal("tincanban.local_profile.v1")).toBe(changed)
   },
 )
+
+it("Given a caller's policy was superseded before signer preparation, when resolving its expected revision, then reject stale record metadata", async () => {
+  await expect(resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" }, {
+    expectedAuthority: "revision-1", currentAuthority: async () => "revision-2",
+  })).rejects.toThrow(/stale|authority/)
+})

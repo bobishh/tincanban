@@ -9,6 +9,13 @@ import { isAvatarDataUrl } from "../domain/avatarData"
 
 const maxRenameAttempts = 32
 
+export async function publishIdentityNameToChat(workspaceId?: string): Promise<void> {
+  const workspaces = await defaultStorage.listWorkspaces()
+  const ids = new Set(workspaces.map(workspace => workspace.id).filter(id => id.length > 0))
+  if (workspaceId) ids.add(workspaceId)
+  await Promise.allSettled([...ids].map(id => ensureChatProfile(id, { updateName: true })))
+}
+
 export async function saveIdentityName(name: string, workspaceId: string, refreshIdentity: () => Promise<void>,
   draft: { avatarData?: string | null; expectedRevision?: string } = {}) {
   draft = { ...draft }
@@ -37,7 +44,5 @@ export async function saveIdentityName(name: string, workspaceId: string, refres
   })
   identityDevicePreferencesChanged(profile.identity.personId)
   await refreshIdentity()
-  const workspaces = await defaultStorage.listWorkspaces()
-  const ids = [workspaceId, ...workspaces.map(workspace => workspace.id)].filter((id, index, all) => id && all.indexOf(id) === index)
-  await Promise.allSettled(ids.map(id => ensureChatProfile(id, { updateName: true })))
+  await publishIdentityNameToChat(workspaceId)
 }

@@ -7,7 +7,7 @@ import type { LocalProfile } from "../domain/identity"
 import type { AutomationWorkerIdentity } from "./automation"
 
 
-async function createOwnerRequest(profile: LocalProfile, input: AutomationOwnerRequestInput) {
+export async function createOwnerRequest(profile: LocalProfile, input: AutomationOwnerRequestInput) {
   const payload = structuredClone(input)
   const context = await resolveLocalSigningContext(profile, "automation-owner-request", {
     origin: payload.origin, workspaceId: payload.workspaceId, integrationId: payload.integrationId,

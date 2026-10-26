@@ -4,6 +4,7 @@ import { blindHash, canonicalBlindJson, blindProducerHeaders,
   type BlindAccess } from "./blindClient"
 
 import { fetchBlind, readBlindJson } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 
 const MAX_RESPONSE_BYTES = 32 * 1024
 const encoder = new TextEncoder()
@@ -118,12 +119,12 @@ export async function verifyBlindBlobCoverageReceipt(receiptInput: unknown, acce
 
 /** Ask Rusty which exact encrypted blob IDs exist, using read-only credentials. */
 export async function requestBlindBlobCoverage(accessInput: BlindAccess, objectsInput: unknown,
-  requestIdInput: string = crypto.randomUUID()): Promise<BlindBlobCoverageReceipt> {
+  requestIdInput: string = crypto.randomUUID(), fetcher: RustyFetch = fetchBlind): Promise<BlindBlobCoverageReceipt> {
   const access = captureAccess(accessInput)
   const objects = captureObjects(structuredClone(objectsInput))
   const requestId = captureRequestId(requestIdInput)
   const body = { version: 1 as const, requestId, objects }
-  const receipt = parseReceipt(await readBlindJson<unknown>(await fetchBlind(
+  const receipt = parseReceipt(await readBlindJson<unknown>(await fetcher(
     `${access.origin}/v2/scopes/${access.scopeId}/blob-coverage`, {
       method: "POST", signal: AbortSignal.timeout(15000),
       headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.readToken}`, "Content-Type": "application/json" },

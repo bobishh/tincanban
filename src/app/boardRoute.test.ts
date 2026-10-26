@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { boardRouteUrl, boardSlug, canonicalizeBoardRoute, createPrivateBoardRouteController, parseBoardRoute, readBoardRouteHint, rememberBoardRouteHint, resolveEligibleBoardRoute } from "./boardRoute"
+import { boardRouteUrl, boardSlug, canonicalizeBoardRoute, createPrivateBoardRouteController, parseBoardRoute, readBoardRouteHint, rememberBoardRouteHint, resolveEligibleBoardRoute, resolveIdentitySignInReturnPath } from "./boardRoute"
 
 describe("board routes", () => {
   it("parses legacy and slugged addresses while preserving message targets", () => {
@@ -30,6 +30,16 @@ describe("board routes", () => {
     const route = parseBoardRoute("/boards/target-board/label", "", "")!
     expect(resolveEligibleBoardRoute(route, [{ boardId: "other", workspaceId: "workspace-1" }])).toBeNull()
     expect(resolveEligibleBoardRoute(route, [{ boardId: "target-board", workspaceId: "workspace-2" }])).toEqual({ boardId: "target-board", workspaceId: "workspace-2" })
+  })
+
+  it("restores the requested eligible board with query and hash, and falls back from an unavailable board route", () => {
+    expect(resolveIdentitySignInReturnPath("/boards/board-b/old?filter=open#item-7", { id: "board-b", title: "Board B" }))
+      .toBe("/boards/board-b/board-b?filter=open#item-7")
+    expect(resolveIdentitySignInReturnPath("/boards/guest-board?filter=private#item", { id: "board-a", title: "Board A" }))
+      .toBe("/boards/board-a/board-a")
+    expect(resolveIdentitySignInReturnPath("/boards/guest-board", null)).toBe("/")
+    expect(resolveIdentitySignInReturnPath("/settings?tab=profile#photo", { id: "board-a", title: "Board A" }))
+      .toBe("/settings?tab=profile#photo")
   })
 
   it("keeps navigation hints separated by identity and treats malformed hints as absent", () => {

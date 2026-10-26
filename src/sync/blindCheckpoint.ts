@@ -4,6 +4,7 @@ import { signingEvidence, signWithContext } from "../domain/signingContext"
 import type { DeviceCertificate, PublicIdentity } from "../domain/model"
 import { blindHash, blindObjectId, blindProducerHeaders, canonicalBlindJson, discoverBlindKeeper, type BlindAccess } from "./blindClient"
 import { fetchBlind, readBlindJson } from "./rustyHttp"
+import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { RustyManagementRepository } from "./rustyManagementRepository"
@@ -65,7 +66,7 @@ function checkpointBindingMatches(payload: BlindCheckpointReceipt["payload"], ac
     payload.supersedesThrough === expected.expectedSequence && payload.sequence === expected.expectedSequence + 1 && Number.isSafeInteger(payload.sequence)
 }
 
-export async function submitBlindCheckpoint(access: BlindAccess, request: BlindCheckpointRequest): Promise<BlindCheckpointReceipt> {
+export async function submitBlindCheckpoint(access: BlindAccess, request: BlindCheckpointRequest, fetcher: RustyFetch = fetchBlind): Promise<BlindCheckpointReceipt> {
   access = { ...access }
   request = structuredClone(request)
   const binding = { origin: blindOrigin(access.origin), servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
@@ -76,7 +77,7 @@ export async function submitBlindCheckpoint(access: BlindAccess, request: BlindC
       deviceId: request.deviceId, resourceKind: "scope", resourceId: access.scopeId, operation: "snapshot.checkpoint", minimumRevision: 1 })
     if (request.authorization.payload.managementRevision !== cap.revision) throw new Error("Checkpoint management revision is stale")
   }
-  const receipt = await readBlindJson<BlindCheckpointReceipt>(await fetchBlind(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/checkpoint`, {
+  const receipt = await readBlindJson<BlindCheckpointReceipt>(await fetcher(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/checkpoint`, {
     method: "POST", signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json" },
     body: JSON.stringify(request),
   }), 16384)

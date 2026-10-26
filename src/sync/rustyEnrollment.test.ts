@@ -1,5 +1,6 @@
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "./identityAuthority.testSupport"
 import { afterEach, expect, test, vi } from "vitest"
-import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope } from "../domain/identity"
+import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url, verifyEnvelope } from "../domain/identity"
 import { approveRustyScope } from "./rustyEnrollment"
 import type { BlindAccess } from "./blindClient"
 import { RustyManagementRepository } from "./rustyManagementRepository"

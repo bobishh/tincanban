@@ -5,7 +5,8 @@ import {
 import { MeshReconnectPolicy } from "@meta-uber/mesh-runtime"
 import { meshNetworkConnection } from "@meta-uber/mesh-transport"
 import { defaultInvitationService, deriveTranscriptAuthCode } from "./invitations"
-import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest } from "./enrollment"
+import { createEnrollmentRequest, enrollmentPayload, installEnrollment, preflightEnrollment, readEnrollmentRequest,
+  type EnrollmentRequestInfo } from "./enrollment"
 import { defaultProofStore, certHashDefault } from "../domain/proofs"
 import { defaultStorage } from "../storage"
 import { registerDeviceInRoot } from "../domain/personalRoot"
@@ -13,8 +14,8 @@ import { fromBase64Url, type LocalProfile } from "../domain/identity"
 import { createPeerHistoryObjectReader, workspaceSet, type PeerHistoryObjectReader } from "./workspaceSet"
 import { createEnrollmentHistoryReader } from "./enrollmentHistoryReader"
 import { createEnrollmentHistoryAuthorizationGuard } from "./enrollmentHistoryAuthorization"
-import { readPeerHistoryRequestOrPairing } from "./peerHistoryTransport"
-import { awaitEnrollmentAcknowledgement, enrollmentRejection, sendEnrollmentRejection } from "./enrollmentAcknowledgement"
+import { acknowledgeEnrollmentDecline, awaitEnrollmentAcknowledgement, awaitEnrollmentDeclineAcknowledgement,
+  enrollmentDecline, rejectEnrollment, sendEnrollmentRejection } from "./enrollmentAcknowledgement"
 export { sendEnrollmentRejection } from "./enrollmentAcknowledgement"
 import { peerStore } from "./peerStore"
 import type { WorkspaceGrant } from "../domain/model"
@@ -26,10 +27,12 @@ import type { PairingContext } from "./deviceSyncContext"
 import { traceEnrollment, beginEnrollmentDiagnostic, endEnrollmentDiagnostic, enrollmentDiagnosticUrl,
   traceEnrollmentOperation, enrollmentErrorReason as errorReason } from "./enrollmentDiagnostics"
 import { offlineRetryDelay } from "./offlineRetry"
+import { approveSamePersonWorkspace, completeEnrollmentApproval, receiveSamePersonWorkspaceBootstrap, selectActiveWorkspace } from "./deviceSyncSamePersonWorkspace"
 import { meshIngressBudgetProfile } from "../iroh"
 import type { Context } from "@opentelemetry/api"
 
-type EnrollmentContext = PairingContext & {
+
+export type EnrollmentContext = PairingContext & {
   activeWorkspaceId?: () => string
   handoffNode: (reason: string) => Promise<void>
   identityChanged?: () => Promise<void>
@@ -64,6 +67,7 @@ export async function selectDeviceEnrollment(context: EnrollmentContext) {
     context.state.error.value = ""
     context.state.authCode.value = ""
     context.state.enrollmentDeviceName.value = ""
+    context.state.enrollmentSameIdentity.value = false
     if (!context.workspaceStore || !context.durableMesh) throw new Error("Device sync is unavailable.")
     const profile = await context.getProfile()
     const node = await pairingNode(context)
@@ -252,6 +256,7 @@ async function completeEnrollmentCandidate(context: EnrollmentContext, run: numb
   if (stopped()) return
   context.state.authCode.value = authCode
   context.state.enrollmentDeviceName.value = guest.displayName
+  context.state.enrollmentSameIdentity.value = Boolean(guest.identityAuthorityView)
   context.state.step.value = "enroll-host-pending"
   context.state.isOpen.value = true
   const approved = await waitForApproval(context, run)
@@ -284,24 +289,6 @@ async function waitForApproval(context: EnrollmentContext, run: number) {
   })
 }
 
-async function rejectEnrollment(stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>, secret: string) {
-  const error = new TextEncoder().encode(JSON.stringify({ error: "Device enrollment was declined or cancelled." }))
-  await stream.send(encodePairingFrame("enroll-approved", secret, error))
-  await stream.closeSend()
-}
-
-async function awaitEnrollmentDeclineAcknowledgement(connection: SyncConnection, secret: string) {
-  const acknowledgement = await connection.acceptStream()
-  decodePairingFrame(await acknowledgement.read(), "enroll-ack", secret)
-  await acknowledgement.closeSend()
-}
-
-async function acknowledgeEnrollmentDecline(connection: SyncConnection, secret: string) {
-  const acknowledgement = await connection.openStream()
-  await acknowledgement.send(encodePairingFrame("enroll-ack", secret, new Uint8Array()))
-  await acknowledgement.closeSend()
-}
-
 async function approveEnrollment(
   context: EnrollmentContext,
   run: number,
@@ -311,9 +298,13 @@ async function approveEnrollment(
   secret: string,
   invite: DeviceEnrollmentInvitation,
   profile: LocalProfile,
-  guest: { deviceId: string; publicKey: string; displayName: string },
+  guest: EnrollmentRequestInfo,
   diagnosticContext?: Context,
 ) {
+  if (guest.identityAuthorityView) {
+    await approveSamePersonWorkspace(context, run, node, stream, connection, secret, invite, profile, guest, diagnosticContext)
+    return
+  }
   const result = await defaultInvitationService.approveEnrollment(invite.invitationId, guest, profile)
   if (!result.ok) throw new Error(result.error)
   const certificateHash = await certHashDefault(result.certificate)
@@ -324,11 +315,26 @@ async function approveEnrollment(
     return current
   })
   if (!root) throw new Error("Personal identity is unavailable. Reload and try again.")
+  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
+  const [identitySdk, identityProfileRoot, enrollment, authorityStore] = await Promise.all([
+    import("@meta-uber/mesh-identity"), import("../domain/identityProfileRoot"), import("./enrollment"),
+    import("./identityAuthorityStore"),
+  ])
+  const currentAuthority = await authorityStore.requireIdentityAuthorityView(profile.identity.personId)
+  await enrollment.assertActiveIdentityEnrollmentDevice(currentAuthority, currentAuthority, profile.identity.personId,
+    profile.device.deviceId, profile.device.publicKey)
+  const enrollmentAuthority = await identitySdk.createIdentityAuthorityView(profile.identity,
+    { certificates: [...currentAuthority.certificates, result.certificate], revocations: currentAuthority.revocations },
+    await identityProfileRoot.rootIdentityProfileState(root))
+  const acceptedAuthority = await authorityStore.mergeIdentityAuthorityView(enrollmentAuthority, ensureCurrent)
+  await enrollment.assertActiveIdentityEnrollmentDevice(acceptedAuthority, acceptedAuthority, profile.identity.personId,
+    profile.device.deviceId, profile.device.publicKey)
+  await enrollment.assertActiveIdentityEnrollmentDevice(acceptedAuthority, acceptedAuthority, profile.identity.personId,
+    result.certificate.payload.deviceId, result.certificate.payload.devicePublicKey)
   const transfer = await transferableWorkspaces(context, profile)
   const workspaces = transfer.workspaces
   const ids = workspaces.map(item => item.id)
   const active = selectActiveWorkspace(context, ids)
-  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
   await context.durableMesh!.restoreEnrolledDevice(ids, profile.identity.personId, guest.deviceId, ensureCurrent)
   const { restoreEnrolledRustyAccess } = await import("./enrollmentDeviceRestoration")
   await restoreEnrolledRustyAccess(profile, guest.deviceId, ids, ensureCurrent, diagnosticContext)
@@ -346,34 +352,8 @@ async function approveEnrollment(
   await historyGuard()
   await stream.send(encodePairingFrame("enroll-approved", secret, payload))
   await stream.closeSend()
-  let ack: Awaited<ReturnType<SyncConnection["acceptStream"]>> | undefined
-  let acknowledgement: Uint8Array | undefined
-  for (let rounds = 0; rounds < 4096; rounds++) {
-    const incoming = await connection.acceptStream()
-    const frame = await readPeerHistoryRequestOrPairing(incoming)
-    await historyGuard()
-    if (await replica.servePeerHistoryBaselineRead(frame, incoming, guest.deviceId, historyGuard)) continue
-    if (await replica.servePeerHistoryDocumentRead(frame, incoming, guest.deviceId, historyGuard)) continue
-    if (await replica.servePeerHistoryObjectRead(frame, incoming, guest.deviceId, historyGuard)) continue
-    if (await replica.serveProofPage(frame, incoming, secret, historyGuard)) continue
-    ack = incoming
-    acknowledgement = frame
-    break
-  }
-  if (!ack || !acknowledgement) throw new Error("Enrollment proof reply limit exceeded")
-  if (inspectPairingFrame(acknowledgement).type === "enroll-rejected") {
-    const reason = enrollmentRejection(decodePairingFrame(acknowledgement, "enroll-rejected", secret))
-    await ack.send(encodePairingFrame("enroll-rejected-ack", secret, new Uint8Array()))
-    await ack.closeSend()
-    throw new Error(`The new device rejected enrollment: ${reason}`)
-  }
-  await replica.receive(await replica.resolveProofs(decodePairingFrame(acknowledgement, "enroll-ack", secret), connection, secret),
-    true, acknowledgementHistory)
-  await historyGuard()
-  await ack.send(encodePairingFrame("enroll-complete", secret, new Uint8Array()))
-  await ack.closeSend()
-  const confirmation = await connection.acceptStream()
-  decodePairingFrame(await confirmation.read(), "mesh-handoff-confirmed", secret)
+  await completeEnrollmentApproval(connection, replica, guest.deviceId, secret, historyGuard, acknowledgementHistory,
+    "The new device rejected enrollment")
   context.state.step.value = "enroll-host-done"
 }
 
@@ -393,10 +373,6 @@ async function transferableWorkspaces(context: EnrollmentContext, profile: Local
   return { workspaces, grants, ownerIds }
 }
 
-function selectActiveWorkspace(context: EnrollmentContext, ids: string[]) {
-  const requested = context.activeWorkspaceId?.()
-  return requested && ids.includes(requested) ? requested : ids[0]!
-}
 
 export async function requestDeviceEnrollment(context: EnrollmentContext, invite: DeviceEnrollmentInvitation) {
   const run = context.nextRun()
@@ -475,6 +451,14 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
   if (!isCurrent(context, run)) return
   context.state.step.value = "enroll-syncing"
   traceEnrollment(invite, "guest", "approved", run)
+  const approvalKind = (() => {
+    try { return (JSON.parse(new TextDecoder().decode(response)) as { payload?: { kind?: unknown } }).payload?.kind }
+    catch { return undefined }
+  })()
+  if (approvalKind === "device-workspace-bootstrap-approval") {
+    await receiveSamePersonWorkspaceBootstrap(context, run, node, connection, invite, profile, response)
+    return
+  }
   let prepared: Awaited<ReturnType<typeof preflightEnrollment>>
   let ids: string[]
   let replica: ReturnType<typeof workspaceSet>
@@ -519,11 +503,4 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
   context.state.step.value = "enroll-guest-done"
   traceEnrollment(invite, "guest", "completed", run, { workspaces: ids.length })
   if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/")
-}
-
-function enrollmentDecline(bytes: Uint8Array) {
-  try {
-    const value: unknown = JSON.parse(new TextDecoder().decode(bytes))
-    return value && typeof value === "object" && "error" in value && typeof value.error === "string" ? value.error : undefined
-  } catch { return undefined }
 }

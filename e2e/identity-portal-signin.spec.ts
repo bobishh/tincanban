@@ -15,7 +15,7 @@ test("Given local identity P and board, when replacing P with portal identity Q,
   test.setTimeout(120_000)
   const portalContext = await browser.newContext({ acceptDownloads: true })
   const portal = await portalContext.newPage()
-  const appUrl = process.env.TINCANBAN_E2E_ORIGIN ?? "http://127.0.0.1:4244"
+  const appUrl = process.env.TINCANBAN_E2E_ORIGIN ?? `http://127.0.0.1:${process.env.TINCANBAN_E2E_PORT ?? 4244}`
 
   async function createPortalIdentity() {
     await portal.goto(identityOrigin!)
@@ -44,9 +44,9 @@ test("Given local identity P and board, when replacing P with portal identity Q,
   }
 
   async function openAddDevice(invite: string) {
-    await page.getByRole("button", { name: "Identity", exact: true }).click()
+    await page.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("button", { name: "Add another device", exact: true }).click()
     const dialog = page.getByRole("dialog", { name: "Identity profile", exact: true })
-    await dialog.getByRole("button", { name: "Add another device", exact: true }).click()
     await dialog.getByLabel("Identity invitation").fill(invite)
     const samePerson = dialog.locator('input[name="replace-same-person"]')
     if (await samePerson.count()) await samePerson.check()

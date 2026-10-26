@@ -8,8 +8,10 @@ import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
-import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
-import { bootstrapIdentity, canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { certificateHash, profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
+import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { createPersonalRoot } from "../domain/personalRoot"
+import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "../sync/identityAuthority.testSupport"
 import { createAutomationWorkspaceGrant, createWorkspaceGrant } from "../domain/proofs"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
@@ -23,6 +25,11 @@ import { validatePublicBoardProjection } from "./publicSchema"
 import type { PublicBoardProjection } from "./publicSchema"
 
 vi.mock("../sync/workspaceAdmissionClient", () => ({ runWorkspaceAccess: async () => "owner" }))
+
+async function confirmProfileAuthority(profile: LocalProfile): Promise<void> {
+  const root = createPersonalRoot(profile, await certificateHash(profile.certificate))
+  await confirmIdentityAuthorityFixture(root, [profile.certificate])
+}
 
 type StagePublicAsset = (asset: { sha256: string; bytes: Uint8Array }) => Promise<void>
 
@@ -64,14 +71,13 @@ async function unusedLoopbackPort(): Promise<number> {
   return port
 }
 
-async function startRusty(owner: LocalProfile) {
+async function startRusty() {
   const port = await unusedLoopbackPort()
   const directory = await mkdtemp(resolve(tmpdir(), "tincanban-public-delivery-native-"))
   const origin = `http://127.0.0.1:${port}`
   const binary = resolve(process.cwd(), process.env.TINCANBAN_RUSTY_BINARY ?? "../mesh-lighthouse/target/debug/mesh-lighthouse")
   const child = spawn(binary, [directory, `127.0.0.1:${port}`], { env: {
     ...process.env, RUSTY_PUBLIC_ORIGIN: origin,
-    RUSTY_TRUSTED_OWNER: JSON.stringify({ identity: owner.identity, allowedControllerDeviceIds: [owner.device.deviceId] }),
     RUSTY_LOG: "off",
   }, stdio: ["ignore", "pipe", "pipe"] })
   let output = ""
@@ -121,7 +127,7 @@ test("Given a published board owned by another identity, when imported under the
   await initializeNativeAutomerge()
   stubWindow("http://localhost")
   const sourceOwner = await bootstrapIdentity("Published board owner")
-  const service = await startRusty(sourceOwner)
+  const service = await startRusty()
   try {
     const workspaceId = crypto.randomUUID()
     const workspace = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc(workspaceId, "Published fixture", sourceOwner.identity.personId, "blank"))
@@ -158,7 +164,9 @@ test("Given owner-approved editor and automation grants, when delivery runs with
   const owner = await bootstrapIdentity("Public board owner")
   const editor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Board editor")
   const automation = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Board automation")
-  const service = await startRusty(owner)
+  await confirmProfileAuthority(editor)
+  await confirmProfileAuthority(automation)
+  const service = await startRusty()
   let workspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
   let staleWorkspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
   try {

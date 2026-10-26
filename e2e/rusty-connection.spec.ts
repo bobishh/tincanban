@@ -6,6 +6,7 @@ import { join, resolve } from "node:path"
 import { expectFaviconColor } from "./support/favicon"
 import { createJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 
 test("Given connected private board storage, when approving inspection from Rusty, then show its checked status without credentials and retain an actionable access failure", async ({ page, context, baseURL }, info) => {
   test.setTimeout(90_000)
@@ -14,6 +15,7 @@ test("Given connected private board storage, when approving inspection from Rust
   const rusty = await startRustyService({}, baseURL!)
   const service = await context.newPage()
   try {
+    await approveRustyForFixture(page, rusty.origin)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const panel = page.getByRole("region", { name: "Rusty", exact: true })
     await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
@@ -87,6 +89,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
   const stop = async () => { const current = child!; const exited = new Promise<void>(done => current.once("exit", () => done())); current.kill("SIGTERM"); await exited; child = undefined }
   try {
     const origin = await start()
+    await approveRustyForFixture(page, origin)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
 
     const panel = page.getByRole("region", { name: "Rusty", exact: true })
@@ -243,9 +246,26 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
       }
       return false
     }, { key: beforeReset.removalKey, raw: beforeReset.removalRaw })).toBe(true)
+    const afterForget = await page.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const profile = await bootstrapIdentity()
+      return (await getPrivateReplicaConfigurations(profile.identity.personId))
+        .filter(config => config.origin === origin).map(({ purpose, scopeId }) => ({ purpose, scopeId }))
+    }, origin)
+    expect(afterForget).toEqual([])
     await start(new URL(origin).host)
     expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
+    await page.waitForTimeout(2000)
+    const reconnectScopes = await page.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const profile = await bootstrapIdentity()
+      return (await getPrivateReplicaConfigurations(profile.identity.personId)).filter(config => config.origin === origin)
+        .map(({ purpose, scopeId }) => ({ purpose, scopeId }))
+    }, origin)
+    expect(reconnectScopes.every(config => !beforeReset.scopes.includes(config.scopeId))).toBe(true)
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
     const afterReset = await page.evaluate(async origin => {

@@ -5,7 +5,8 @@ import { certHashDefault } from "../domain/proofs"
 import { defaultStorage } from "../storage"
 import * as local from "../localDb"
 import { readIdentityStateRevision } from "../identityStateRevision"
-import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { applyIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { planIdentityDeviceExtensionsImport } from "./identityDeviceExtensions"
 
 beforeEach(() => resetIdentityStorageForTest())
