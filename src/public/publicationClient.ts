@@ -40,7 +40,8 @@ function managementBinding(server: PublicationService, boardId: string): Managem
   return { origin: server.origin, servicePublicKey: server.serviceKey, resourceKind: "board", resourceId: boardId }
 }
 async function managementAuthority(server: PublicationService, boardId: string, profile: LocalProfile, operation: string): Promise<SignedEnvelope<RustyManagementCapability> | undefined> {
-  return resolveRustyManagementAuthority(managementBinding(server, boardId), profile, operation, server.scopeManagement)
+  return resolveRustyManagementAuthority(managementBinding(server, boardId), profile, operation, server.scopeManagement,
+    { provision: operation !== "publication.status" })
 }
 
 async function challenge(origin: string, boardId: string, profile: LocalProfile, certificates: DeviceCertificate[], serviceId: string, serviceKey: string,

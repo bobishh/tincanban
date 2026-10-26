@@ -47,6 +47,15 @@ and behavior tests. See [architecture guidance](AGENTS.md).
 - [MetaMesh](https://github.com/bobishh/meta-mesh): identity, transport, and replication SDK.
 - [Rusty](https://github.com/bobishh/rusty): optional storage for encrypted objects and signed receipts.
 
+## Sign in and restore boards
+
+Sign in loads the approved Identity catalog and the existing board copies from its
+configured Rusty services. Another stored copy must exist; Identity alone does not
+contain board history or attachments. If loading is interrupted, the app shows an
+error; select **Sign in** to retry. An untouched
+`Untitled` starter does not replace a restored board as the selected board.
+Edited starters remain available and keep their current selection.
+
 ## Existing owner devices
 
 A participant retaining a board can open **Sync → Connect owner device** to show

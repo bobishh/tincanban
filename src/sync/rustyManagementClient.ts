@@ -66,7 +66,7 @@ export function rustyManagementAuthorityRevision(binding: ManagementBinding,
 
 /** Confirm current server policy before a management action; known migration never falls back to older controller ancestry. */
 export async function resolveRustyManagementAuthority(binding: ManagementBinding, profile: LocalProfile, operation: string,
-  supported: boolean, guard: ManagementClientGuard = {}): Promise<SignedEnvelope<RustyManagementCapability> | undefined> {
+  supported: boolean, guard: ManagementClientGuard & { provision?: boolean } = {}): Promise<SignedEnvelope<RustyManagementCapability> | undefined> {
   binding = structuredClone(binding)
   profile = captureIdentityProfile(profile)
   validatePolicy({ resourceKind: binding.resourceKind, operations: [...new Set(["management.update", operation])].sort(), revokedDeviceIds: [] })
@@ -79,8 +79,11 @@ export async function resolveRustyManagementAuthority(binding: ManagementBinding
   const status = await readRustyManagementStatus(binding, profile, guard)
   if (status.migrationPending || (await repo(profile).read(binding))?.pending) throw new Error("Rusty management migration is pending; retry or review the saved request")
   if (!status.capability) {
-    const parent = await repo(profile).read({ ...binding, resourceKind: "person", resourceId: profile.identity.personId })
-    if (!parent?.capability) return undefined
+    if (!guard.provision) return undefined
+    const parentBinding: ManagementBinding = { ...binding, resourceKind: "person", resourceId: profile.identity.personId }
+    const parent = await readRustyManagementStatus(parentBinding, profile, guard)
+    if (parent.migrationPending) throw new Error("Rusty person policy migration is pending")
+    if (!parent.capability) return undefined
     const operations = binding.resourceKind === "scope" ? ["management.update", "scope.policy", "snapshot.checkpoint"] :
       ["management.update", "publication.status", "publication.publish", "publication.update", "publication.unpublish", "publication.stage-file"]
     const created = await updateRustyManagementPolicy(binding, profile, { operations, revokedDeviceIds: [] }, guard)

@@ -47,6 +47,6 @@ export async function migrateRustyDeviceAccess(app: Pick<ReturnType<typeof useTi
   await ensureRustyPersonPolicy(service, profile, true, { allowLegacyMigration: true, ensureCurrent: guardOwner })
   await guardOwner()
   await resolveRustyManagementAuthority({ origin, servicePublicKey: config.servicePublicKey,
-    resourceKind: "scope", resourceId: config.scopeId }, profile, "scope.policy", true, { ensureCurrent: guardOwner })
+    resourceKind: "scope", resourceId: config.scopeId }, profile, "scope.policy", true, { provision: true, ensureCurrent: guardOwner })
   await guardOwner()
 }

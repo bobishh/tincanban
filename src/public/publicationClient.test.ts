@@ -90,15 +90,17 @@ function json(value: unknown, status = 200): Response { return new Response(JSON
 async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const url = String(input)
   if (url.endsWith("/.well-known/mesh-lighthouse")) return json({ publicOrigin: origin, service: { serviceId: keeper.device.deviceId, publicKey: keeper.certificate.payload.devicePublicKey }, capabilities: { publicBoardPublication: { version: 1, presentationVersion, fieldConfigurationVersion: 1 }, ...(scopeManagement ? { scopeManagement: { version: 1 } } : {}) } })
-  if (url.endsWith(`/v2/management/board/${boardId}/status`)) {
+  if (url.endsWith(`/v2/management/board/${boardId}/status`) || url.endsWith(`/v2/management/person/${owner.identity.personId}/status`)) {
+    const person = url.includes("/management/person/")
+    const selectedCapability = person ? null : managementCapability
     managementStatusCount++
     const request = JSON.parse(String(init?.body)) as { authorization: SignedEnvelope<EnvelopePayload> }
-    const capabilityHash = managementCapability ? await hash(managementCapability) : null
-    return json({ capability: managementCapability, migrationPending: false, receipt: await signed({
+    const capabilityHash = selectedCapability ? await hash(selectedCapability) : null
+    return json({ capability: selectedCapability, migrationPending: false, receipt: await signed({
       kind: "rusty-management-policy-status-receipt", version: 1, serviceId: keeper.device.deviceId, origin,
-      personId: owner.identity.personId, deviceId: owner.device.deviceId, resourceKind: "board", resourceId: boardId,
+      personId: owner.identity.personId, deviceId: owner.device.deviceId, resourceKind: person ? "person" : "board", resourceId: person ? owner.identity.personId : boardId,
       requestId: request.authorization.payload.requestId as string, authorizationHash: await hash(request.authorization),
-      capabilityHash, revision: managementCapability?.payload.revision ?? 0, migrationPending: false, issuedAt: Date.now(),
+      capabilityHash, revision: selectedCapability?.payload.revision ?? 0, migrationPending: false, issuedAt: Date.now(),
     }) })
   }
   if (url.endsWith("/v1/public/challenges")) {
@@ -207,7 +209,7 @@ describe("publication client signed state and receipts", () => {
   it("Given advertised management with no migrated capability, When publishing, Then keep legacy compatibility without creating policy", async () => {
     scopeManagement = true
     await expect(publish()).resolves.toMatchObject({ revision: 1 })
-    expect(managementStatusCount).toBe(1)
+    expect(managementStatusCount).toBe(2)
     expect(challengeBody?.managementCapability).toBeUndefined()
     expect(mutationBody?.managementCapability).toBeUndefined()
     expect((mutationBody?.authorization as SignedEnvelope<EnvelopePayload>).payload.managementRevision).toBeUndefined()

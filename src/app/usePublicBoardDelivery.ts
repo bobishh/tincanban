@@ -47,9 +47,9 @@ async function currentEditorCredential(captured: DeliveryCapture, sameSource: (c
   return credentialState
 }
 async function readEditorCredential(captured: DeliveryCapture) {
-  const [peerStoreModule, meshBase, proofs, meshRecords] = await Promise.all([
+  const [peerStoreModule, meshBase, proofs, verifyWorkspaceGrant] = await Promise.all([
     import("../sync/peerStore"), import("../sync/durableMeshBase"), import("../domain/proofs"),
-    import("../sync/meshRecords"),
+    import("../sync/meshRecords").then(module => module.verifyWorkspaceGrant),
   ])
   const { peerStore } = peerStoreModule
   const [credential, authority] = await Promise.all([peerStore.getWorkspaceCredential(captured.workspaceId), peerStore.getWorkspaceAuthority(captured.workspaceId)])
@@ -61,7 +61,7 @@ async function readEditorCredential(captured: DeliveryCapture) {
   const owner = { personId: credential!.ownerPersonId, publicKey: credential!.ownerPublicKey,
     certificates: [...credential!.ownerCertificates, ...authority!.ownerCertificates] as LocalProfile["certificate"][] }
   try {
-    const role = await meshRecords.verifyWorkspaceGrant(grant!, { workspaceId: captured.workspaceId, personId: captured.profile.identity.personId,
+    const role = await verifyWorkspaceGrant(grant!, { workspaceId: captured.workspaceId, personId: captured.profile.identity.personId,
       ownerPersonId: owner.personId, ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates })
     if (role !== "editor") throw new PublicDeliveryAccessError()
   } catch (cause) { throw new PublicDeliveryAccessError(cause) }

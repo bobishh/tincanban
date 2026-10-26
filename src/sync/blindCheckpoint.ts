@@ -8,7 +8,7 @@ import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 import { rustyOrigin as blindOrigin } from "@meta-uber/mesh-replication/rusty-replica"
 import { decodeBlindBytes, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { RustyManagementRepository } from "./rustyManagementRepository"
-import { rustyManagementAuthorityRevision, type ManagementClientGuard } from "./rustyManagementClient"
+import { readRustyManagementStatus, rustyManagementAuthorityRevision, type ManagementClientGuard } from "./rustyManagementClient"
 import { verifyRustyManagementCapability, type RustyManagementCapability } from "./rustyManagementCapability"
 
 type CheckpointAuthorization = { kind: "rusty-snapshot-checkpoint"; version: 1; serviceId: string; origin: string; scopeId: string;
@@ -30,6 +30,10 @@ export async function prepareBlindCheckpoint(access: BlindAccess, object: BlindO
   if (service.servicePublicKey !== access.servicePublicKey) throw new Error("Rusty checkpoint service pin changed")
   const writerVersion = service.writerPolicy?.maximumWriterVersion === 2 ? 2 as const : undefined
   const binding = { origin: blindOrigin(access.origin), servicePublicKey: access.servicePublicKey, resourceKind: "scope" as const, resourceId: access.scopeId }
+  if (service.scopeManagement === 1) {
+    const status = await readRustyManagementStatus(binding, profile, guard)
+    if (status.migrationPending) throw new Error("Checkpoint policy migration is pending")
+  }
   const managementCapability = (await new RustyManagementRepository(profile.identity.personId).read(binding))?.capability
   const managementRevision = rustyManagementAuthorityRevision(binding, profile, "snapshot.checkpoint", managementCapability)
   const issuedAt = Date.now()

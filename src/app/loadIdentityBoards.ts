@@ -1,3 +1,4 @@
+import { isUntouchedDefaultBoard } from "./identityLocalBoards"
 import { connectAdoptedIdentityBoards } from "./connectAdoptedIdentityBoards"
 import type { useTincanban } from "../state"
 import { isCurrentIdentityProfile } from "../domain/identity"
@@ -47,31 +48,34 @@ export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<vo
     await refreshAvailableWorkspaces()
     const available = app.availableWorkspaces.value
     const route = parseBoardRouteUrl(returnPath)
-    const activeAvailable = available.some(workspace => workspace.id === app.activeWorkspace.id)
-    const requested = route ? await findRequestedWorkspace(app, route.boardId, available, guard) : null
+    const loaded = await readLoadedWorkspaceRoutes(app, available, guard)
+    const saved = loaded.filter(workspace => !workspace.untouchedDefault)
+    const eligible = saved.length ? saved : loaded
+    const activeAvailable = eligible.some(workspace => workspace.workspaceId === app.activeWorkspace.id)
+    const requested = route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
     if (requested && requested !== app.activeWorkspace.id) await app.switchWorkspace(requested)
     else if (requested || activeAvailable) return
-    else if (available[0]) await app.switchWorkspace(available[0].id)
+    else if (eligible[0]) await app.switchWorkspace(eligible[0].workspaceId)
     else if (!ids.size) await app.createWorkspaceAsync("Untitled", "blank")
     else throw new Error("Your boards are known, but their contents could not be loaded. Select Sign in to retry.")
     guard()
   })
 }
 
-async function findRequestedWorkspace(app: App, boardId: string,
-  available: readonly { id: string }[], guard: () => void): Promise<string | null> {
-  const eligible: EligibleBoardRoute[] = []
+async function readLoadedWorkspaceRoutes(app: App,
+  available: readonly { id: string }[], guard: () => void): Promise<Array<EligibleBoardRoute & { untouchedDefault: boolean }>> {
+  const eligible: Array<EligibleBoardRoute & { untouchedDefault: boolean }> = []
   for (const workspace of available) {
     guard()
     try {
       const document = await app.readWorkspaceDoc(workspace.id) as WorkspaceDocumentV2
       if (document.id !== workspace.id) continue
       const board = Object.values(document.entities).find(entity => hasEntityKind(entity, "board"))
-      if (board) eligible.push({ boardId: board.id, workspaceId: workspace.id })
+      if (board) eligible.push({ boardId: board.id, workspaceId: workspace.id, untouchedDefault: isUntouchedDefaultBoard(document) })
     } catch { /* Unreadable workspaces cannot be route targets. */ }
   }
   guard()
-  return resolveEligibleBoardRoute({ boardId, slug: "", search: "", hash: "" }, eligible)?.workspaceId ?? null
+  return eligible
 }
 
 async function stage(phase: "catalog" | "boards", operation: () => Promise<void>) {

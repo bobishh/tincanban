@@ -73,7 +73,7 @@ export function selectedIdentityLocalBoardIds(
   return plan.ownedBoards.filter(board => selected.has(board.workspaceId)).map(board => board.workspaceId)
 }
 
-function isUntouchedDefaultBoard(doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
+export function isUntouchedDefaultBoard(doc: Automerge.Doc<WorkspaceDocumentV2>): boolean {
   if (doc.title !== "Untitled" || Automerge.getAllChanges(doc).length !== 1) return false
   const boards = Object.values(doc.entities).filter(entity => hasEntityKind(entity, "board"))
   if (boards.length !== 1 || boards[0]?.title !== "Untitled" || boards[0].preset?.key !== "blank") return false

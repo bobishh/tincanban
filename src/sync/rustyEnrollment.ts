@@ -148,7 +148,7 @@ export async function approveRustyScope(access: BlindAccess, profile: LocalProfi
       await ensureCurrent()
       assertEnrollmentService(service, access, minimumWriterVersion)
       const supportsManagement = service.capabilities.scopeManagement === 1 || featureObject(service, "scopeManagement")?.version === 1
-      managementCapability = await resolveRustyManagementAuthority(binding, profile, "scope.policy", supportsManagement)
+      managementCapability = await resolveRustyManagementAuthority(binding, profile, "scope.policy", supportsManagement, { provision: true, ensureCurrent })
       assertAuthority = rustyManagementAuthorityRevision(binding, profile, "scope.policy", managementCapability)
       await ensureCurrent()
       return managementCapability

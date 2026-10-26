@@ -7,7 +7,7 @@ const identityProviderDirectory = process.env.IDENTITY_E2E_PROVIDER_DIR
 
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: ["identity-phone-board-discovery.spec.ts", "identity-browser-signin.spec.ts"],
+  testMatch: ["identity-phone-board-discovery.spec.ts", "identity-browser-signin.spec.ts", "identity-board-restore.spec.ts"],
   outputDir: process.env.IDENTITY_BOOTSTRAP_ARTIFACT_DIR ?? "test-results-identity-bootstrap",
   workers: 1,
   retries: 0,

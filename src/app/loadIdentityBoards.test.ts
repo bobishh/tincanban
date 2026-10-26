@@ -1,4 +1,8 @@
-import { beforeEach, expect, it, vi } from "vitest"
+import * as Automerge from "@automerge/automerge/slim"
+import { readFile } from "node:fs/promises"
+import { createWorkspaceDoc } from "../domain/seeds"
+import type { WorkspaceDocumentV2 } from "../domain/model"
+import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 const f = vi.hoisted(() => ({ identityPull: vi.fn(), workspacePull: vi.fn(), roots: vi.fn(),
   identityConfigs: vi.fn(), workspaceConfigs: vi.fn(), refreshCatalog: vi.fn() }))
 vi.mock("../sync/identityReplicaStore", () => ({ createIdentityReplica: () => ({ pull: f.identityPull }) }))
@@ -67,4 +71,39 @@ it("Given an old route for a board absent from the approved catalog, when sign-i
   await loadIdentityBoards(state as never, "/boards/guest-private-board")
 
   expect(state.switchWorkspace).not.toHaveBeenCalled()
+})
+
+
+beforeAll(async () => {
+  await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))
+})
+
+it("Given an untouched default active after an interrupted login and an existing saved board, when sign-in resumes at the default route, then open the saved board without deleting either document", async () => {
+  const state = app()
+  const empty = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("guest-default", "Untitled", "bo", "blank"))
+  const saved = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("job-search", "Saved board", "bo", "blank"))
+  const defaultBoard = Object.values(empty.entities).find(entity => entity.kind === "board")!
+  state.availableWorkspaces.value = [{ id: "guest-default" }, { id: "job-search" }]
+  state.readWorkspaceDoc.mockImplementation(async id => (id === "guest-default" ? empty : saved) as never)
+  try {
+    await loadIdentityBoards(state as never, `/boards/${defaultBoard.id}`)
+    expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+    expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+    expect(Object.values(empty.entities).some(entity => entity.id === defaultBoard.id)).toBe(true)
+  } finally { Automerge.free(empty); Automerge.free(saved) }
+})
+
+it("Given an edited Untitled active beside a saved board, when sign-in resumes, then retain that edited board", async () => {
+  const state = app()
+  const seed = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("guest-default", "Untitled", "bo", "blank"))
+  const edited = Automerge.change(seed, draft => {
+    Object.values(draft.entities).find(entity => entity.kind === "board")!.title = "Edited board"
+  })
+  const saved = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("job-search", "Saved board", "bo", "blank"))
+  state.availableWorkspaces.value = [{ id: "guest-default" }, { id: "job-search" }]
+  state.readWorkspaceDoc.mockImplementation(async id => (id === "guest-default" ? edited : saved) as never)
+  try {
+    await loadIdentityBoards(state as never)
+    expect(state.switchWorkspace).not.toHaveBeenCalled()
+  } finally { Automerge.free(edited); Automerge.free(saved) }
 })

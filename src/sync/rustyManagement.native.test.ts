@@ -67,6 +67,7 @@ import { receiveBrowserHistoryBaseline, type BrowserHistoryBaselineReceivePorts 
 import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority } from "../../workers/automation/src/historyBaseline"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
+import { readPublicBoardManagementState } from "../public/publicationClient"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 import { publishRustyIdentityAuthorityView } from "@meta-uber/mesh-replication/rusty-identity-authority"
@@ -1343,3 +1344,38 @@ test("Given a cold enrolled device without its workspace, when its identity-scop
     await rm(process.stateDirectory, { recursive: true, force: true })
   }
 }, 30_000)
+
+
+test("Given existing person and scope policies but a cold local policy cache, when publication status and a checkpoint are requested, then reads create no policies and checkpoint authorization comes from current signed server state", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Cold policy owner")
+  await defaultStorage.savePersonalRoot(createPersonalRoot(owner, await certHashDefault(owner.certificate)))
+  const service = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
+    const config = await ensureIdentityReplicaConnection(discovery, owner, () => {})
+    await deleteLocal(`tincanban.rusty-management.v1.${owner.identity.personId}`)
+    const originalFetch = globalThis.fetch
+    const mutations: string[] = []
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "PUT" && new URL(String(input)).pathname.startsWith("/v2/management/")) mutations.push(String(input))
+      return originalFetch(input, init)
+    })
+    expect((await readPublicBoardManagementState({ origin: service.origin, boardId: "cold-policy-board", profile: owner })).availability).toBe("missing")
+    expect(mutations).toEqual([])
+    await readRustyManagementStatus({ origin: service.origin, servicePublicKey: discovery.servicePublicKey,
+      resourceKind: "person", resourceId: owner.identity.personId }, owner)
+    expect((await readPublicBoardManagementState({ origin: service.origin, boardId: "cold-policy-board", profile: owner })).availability).toBe("missing")
+    expect(mutations).toEqual([])
+    const object = await encryptBlindObject(config.scopeId, 1, crypto.getRandomValues(new Uint8Array(32)), new Uint8Array([1]))
+    const request = await prepareBlindCheckpoint(config, object, 0, owner)
+    expect(request.managementCapability?.payload.revision).toBe(1)
+    expect((await submitBlindCheckpoint(config, request)).payload.sequence).toBe(1)
+    expect(mutations).toEqual([])
+  } finally {
+    vi.unstubAllGlobals()
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 45_000)
