@@ -205,16 +205,7 @@ async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
   await rusty.getByRole("button", { name: "Sync now", exact: true }).click()
   const profileStatus = page.locator(".rusty-profile-status")
   await expect(profileStatus).toBeVisible({ timeout: 30_000 })
-  await expect.poll(async () => {
-    const alerts = await profileStatus.locator('[role="alert"]').allTextContents()
-    const rows = await profileStatus.locator(".rusty-profile-connection").allTextContents()
-    const visibleAlerts = alerts.map(text => text.trim()).filter(Boolean)
-    const visibleRows = rows.map(text => text.trim())
-    return { terminal: visibleAlerts.length > 0 || visibleRows.some(text => /Synced|Sync paused|Check overdue|not configured|Removal pending/iu.test(text)),
-      alerts: visibleAlerts, rows: visibleRows }
-  }, { timeout: 30_000 }).toMatchObject({ terminal: true, alerts: [] })
-  const delivery = (await profileStatus.locator(".rusty-profile-connection").allTextContents())
-    .map(text => text.trim())
+  const delivery = await terminalProfileDelivery(profileStatus)
   if (!delivery.some(text => text.includes("Synced"))) {
     const configs = await page.evaluate(() => {
       return import("/src/state.ts").then(async ({ useTincanban }) => {
@@ -230,6 +221,35 @@ async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
     throw new Error(`Rusty profile delivery did not sync: ${JSON.stringify({ delivery, configKeyCounts: configs, recentRequests: traffic.slice(-16) })}`)
   }
 }
+
+type ProfileStatusReader = { locator(selector: string): { allTextContents(): Promise<string[]> } }
+
+/** Return the observed delivery; another background sync may start immediately afterward. */
+async function terminalProfileDelivery(profileStatus: ProfileStatusReader): Promise<string[]> {
+  let delivery: string[] = []
+  await expect.poll(async () => {
+    const alerts = await profileStatus.locator('[role="alert"]').allTextContents()
+    const rows = await profileStatus.locator(".rusty-profile-connection").allTextContents()
+    const visibleAlerts = alerts.map(text => text.trim()).filter(Boolean)
+    const visibleRows = rows.map(text => text.trim())
+    delivery = visibleRows
+    return { terminal: visibleAlerts.length > 0 || visibleRows.some(text => /Synced|Sync paused|Check overdue|not configured|Removal pending/iu.test(text)),
+      alerts: visibleAlerts, rows: visibleRows }
+  }, { timeout: 30_000 }).toMatchObject({ terminal: true, alerts: [] })
+  return delivery
+}
+
+test("Given a confirmed profile delivery followed by a new sync, when setup checks readiness, then retain the confirmed snapshot", async () => {
+  let rowReads = 0
+  const status = { locator: (selector: string) => ({ allTextContents: async () => selector === '[role="alert"]' ? [] :
+    [rowReads++ === 0 ? "Rusty Synced" : "Rusty Syncing"] }) }
+  expect(await terminalProfileDelivery(status)).toEqual(["Rusty Synced"])
+})
+
+test("Given an overdue profile delivery, when setup checks readiness, then retain that failure instead of reporting Synced", async () => {
+  const status = { locator: (selector: string) => ({ allTextContents: async () => selector === '[role="alert"]' ? [] : ["Rusty Check overdue"] }) }
+  expect(await terminalProfileDelivery(status)).toEqual(["Rusty Check overdue"])
+})
 
 function exceptionDetails(spans: Span[]): Array<{ type?: unknown; message?: string; locations: string[] }> {
   return spans.filter(span => span.name === "rusty.sync").flatMap(span => (span.events ?? [])
