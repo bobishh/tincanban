@@ -10,6 +10,7 @@ import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { BlindAccess } from "./blindClient"
 import { defaultProofStore } from "../domain/proofs"
 import { canonicalizeJson } from "../domain/identityCrypto"
+import { cloneJsonData } from "../domain/jsonData"
 import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 import type { LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -65,7 +66,7 @@ const encoder = new TextEncoder()
 
 /** Create the one scope-data request adapter. It refuses scope/origin/token mismatches before I/O. */
 export function createRustyIdentityScopeFetcher(options: RustyIdentityScopeFetcherOptions) {
-  const access = structuredClone(options.access)
+  const access = cloneJsonData(options.access)
   const fetcher = options.fetcher ?? fetchBlind
   const origin = new URL(access.origin).origin
   return async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
@@ -87,7 +88,7 @@ export function createRustyIdentityScopeFetcher(options: RustyIdentityScopeFetch
     if (principal && !principal.actions.includes(request.action)) throw new Error("Rusty principal grant does not permit this action")
     const view = await options.authorityView()
     const proof = await createRustyIdentityRequestProof({
-      origin, servicePublicKey: access.servicePublicKey, identity: structuredClone(options.identity), view,
+      origin, servicePublicKey: access.servicePublicKey, identity: cloneJsonData(options.identity), view,
       deviceId: options.deviceId, devicePublicKey: options.devicePublicKey, scopeId: access.scopeId, token: request.token,
       method: request.method, url: request.url, bodyBytes: request.body, action: request.action,
       grantId: principal?.grantId ?? null, policyEpoch: principal?.policyEpoch ?? access.policyRevision,
@@ -183,10 +184,10 @@ function tokenForAction(headers: Headers, action: "read" | "write", access: Blin
 
 /** Create a scope fetcher that refreshes Rusty's signed authority high-water before every data request. */
 export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityProfileFetcherOptions) {
-  const profile = structuredClone(options.profile)
+  const profile = cloneJsonData(options.profile)
   const metadata = options.access as BlindAccess & { workspaceId?: string; personId?: string;
     boardAccess?: { principalGrant?: { payload?: unknown } } }
-  const access = structuredClone(options.access)
+  const access = cloneJsonData(options.access)
   const principal = options.principal ?? principalForBoardStorageAccess(metadata.boardAccess)
   const workspace = options.workspace ?? (metadata.workspaceId && !metadata.personId ? {
     workspaceId: metadata.workspaceId,
@@ -229,8 +230,8 @@ export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityPro
 export async function ensureRustyIdentityAuthorityPublished(
   options: EnsureRustyIdentityAuthorityOptions,
 ): Promise<VerifiedIdentityAuthorityView> {
-  const profile = structuredClone(options.profile)
-  const access = structuredClone(options.access)
+  const profile = cloneJsonData(options.profile)
+  const access = cloneJsonData(options.access)
   const origin = new URL(access.origin).origin
   const fetcher = options.fetcher ?? fetchBlind
   await options.ensureCurrent?.()
@@ -247,8 +248,8 @@ export async function ensureRustyIdentityAuthorityPublished(
 
 /** Bind a private Identity replica to its immutable self-only Rusty scope purpose. */
 export async function ensureRustyPersonIdentityScope(options: EnsureRustyPersonScopeOptions): Promise<SignedEnvelope<Record<string, unknown> & { kind: string }>> {
-  const profile = structuredClone(options.profile)
-  const access = structuredClone(options.access)
+  const profile = cloneJsonData(options.profile)
+  const access = cloneJsonData(options.access)
   const authorityView = await ensureRustyIdentityAuthorityPublished(options)
   const receipt = await classifyRustyPersonIdentityScope({
     origin: access.origin, servicePublicKey: access.servicePublicKey, scopeId: access.scopeId,

@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest"
+import { reactive } from "vue"
 import { createIdentityAuthorityView } from "@meta-uber/mesh-identity"
 import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
 import type { RustyIdentityRequestProofPayload } from "@meta-uber/mesh-replication/rusty-identity-request-proof"
@@ -9,11 +10,40 @@ import { createPersonalRoot } from "../domain/personalRoot"
 import { certHashDefault } from "../domain/proofs"
 import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
-import { createRustyIdentityScopeFetcher,
+import { createRustyIdentityScopeFetcher, ensureRustyIdentityAuthorityPublished,
   type RustyIdentityScopeFetcherOptions } from "./rustyIdentityTransport"
 import { isRustyRequestFailure } from "./replicationErrors"
 
 beforeEach(() => resetIdentityStorageForTest())
+
+it.each(["profile", "access"] as const)("Given reactive %s settings, When refreshing Rusty authority, Then reach the transport without a cloning failure", async field => {
+  const f = await fixture()
+  const before = JSON.stringify({ profile: f.profile, access: f.base.access })
+  const fetcher = vi.fn(async () => { throw new Error("Authority transport unavailable") })
+  await expect(ensureRustyIdentityAuthorityPublished({
+    profile: field === "profile" ? reactive(f.profile) : f.profile,
+    access: field === "access" ? reactive(f.base.access) : f.base.access,
+    fetcher,
+  })).rejects.toThrow("Authority transport unavailable")
+  expect(fetcher).toHaveBeenCalledOnce()
+  expect(JSON.stringify({ profile: f.profile, access: f.base.access })).toBe(before)
+})
+
+it("Given reactive Rusty credentials, When sending a signed read, Then preserve the captured token and exact proof", async () => {
+  const f = await fixture()
+  const access = reactive({ ...f.base.access })
+  const fetcher = createRustyIdentityScopeFetcher({ ...f.base, access,
+    identity: reactive(f.profile.identity), fetcher: f.rawFetch })
+  access.readToken = "replacement-token"
+  await fetcher("https://rusty.example/v2/scopes/scope-1/inventory", {
+    headers: { Authorization: "Bearer read-token" },
+  })
+  const headers = new Headers(f.rawFetch.mock.calls[0]![1].headers)
+  const proof = JSON.parse(Buffer.from(headers.get("X-Rusty-Identity-Proof")!, "base64url").toString("utf8"))
+  expect(headers.get("Authorization")).toBe("Bearer read-token")
+  expect(proof.payload).toMatchObject({ action: "read", scopeId: "scope-1", personId: f.profile.identity.personId,
+    method: "GET", path: "/v2/scopes/scope-1/inventory" })
+})
 
 async function fixture() {
   const profile = await bootstrapIdentity("Owner")
