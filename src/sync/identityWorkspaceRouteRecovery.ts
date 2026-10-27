@@ -5,7 +5,7 @@ import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { adaptVerifiedWorkspaceAdvertisement } from "@meta-uber/mesh-replication/protocol"
 import type { WorkspaceGrant } from "../domain/model"
 import { isEnvelope, type MeshWorkspaceEnvelope } from "./durableMeshBase"
-import type { IdentityDeviceComponent } from "./identityDeviceStateCodec"
+import { validateOptionalIdentityComponent, type IdentityDeviceComponent } from "./identityDeviceStateCodec"
 import { mergePeerRecords, type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import type { DurableMesh } from "./durableMesh"
 import { departures, deviceRevocations, ownerAuthorities, ownershipTransfers, revocations,
@@ -14,6 +14,7 @@ import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshR
 
 const componentName = "workspaceRouteRecovery"
 const schema = "workspace-route-recovery@1"
+const packedSchema = "workspace-route-recovery@2"
 const key = (personId: string) => `tincanban.identity-workspace-routes.v1.${personId}`
 const valueSchema = z.object({ personId: z.string().min(1).max(128),
   envelopes: z.array(z.unknown()).max(512) }).strict()
@@ -137,27 +138,33 @@ async function normalize(personId: string, raw: unknown): Promise<WorkspaceRoute
 
 async function readComponent(manifest: Manifest): Promise<WorkspaceRouteRecovery> {
   const found: unknown[] = []
-  const accept = (name: string, component: IdentityDeviceComponent) => {
-    if (name !== componentName || component.schema !== schema || component.required) return
-    if (component.value.personId !== manifest.personId) throw new Error("Workspace route recovery identity mismatch")
-    found.push(...valueSchema.shape.envelopes.parse(component.value.envelopes))
+  const accept = async (name: string, component: IdentityDeviceComponent) => {
+    if (!isIdentityWorkspaceRouteRecoveryComponent(name, component)) return
+    const value = component.schema === packedSchema
+      ? await import("./identityWorkspaceRoutePacking").then(codec => codec.unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes))
+      : component.value
+    const checked = validateOptionalIdentityComponent(componentName, { schema, required: false, value: value as Record<string, unknown> })
+    if (checked.value.personId !== manifest.personId) throw new Error("Workspace route recovery identity mismatch")
+    found.push(...valueSchema.shape.envelopes.parse(checked.value.envelopes))
   }
   for (const [name, component] of Object.entries(manifest.components)) {
     if (name === "preservedExtensions" && component.schema === "preserved-identity-components@1") {
       const extensions = component.value.extensions as Array<{ name: string; component: IdentityDeviceComponent }>
-      for (const entry of extensions) accept(entry.name, entry.component)
-    } else accept(name, component)
+      for (const entry of extensions) await accept(entry.name, entry.component)
+    } else await accept(name, component)
   }
   return normalize(manifest.personId, { personId: manifest.personId, envelopes: found })
 }
 
 export function isIdentityWorkspaceRouteRecoveryComponent(name: string, component: IdentityDeviceComponent): boolean {
-  return name === componentName && component.schema === schema && !component.required
+  return name === componentName && [schema, packedSchema].includes(component.schema) && !component.required
 }
 
 export async function identityWorkspaceRouteRecoveryComponent(value: WorkspaceRouteRecovery): Promise<IdentityDeviceComponent> {
   const checked = await normalize(value.personId, value)
-  return { schema, required: false, value: checked }
+  validateOptionalIdentityComponent(componentName, { schema, required: false, value: checked })
+  const packed = await import("./identityWorkspaceRoutePacking").then(codec => codec.packWorkspaceRoutes(checked, maxCatalogBytes))
+  return { schema: packedSchema, required: false, value: packed }
 }
 
 async function decode(personId: string, raw: string | null): Promise<WorkspaceRouteRecovery> {

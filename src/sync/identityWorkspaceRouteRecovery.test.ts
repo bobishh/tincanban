@@ -10,9 +10,10 @@ import { peerStore } from "./peerStore"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 import { identityWorkspaceRouteRecoveryComponent, readIdentityWorkspaceRouteRecovery,
-  restoreIdentityWorkspaceRoutes, planIdentityWorkspaceRouteRecoveryImport } from "./identityWorkspaceRouteRecovery"
+  restoreIdentityWorkspaceRoutes, planIdentityWorkspaceRouteRecoveryImport, readIdentityWorkspaceRouteRecoveryComponent } from "./identityWorkspaceRouteRecovery"
 import { createPeerAdvertisement, createWorkspaceDeviceRevocation } from "./meshRecords"
 import { DurableMesh } from "./durableMesh"
+import { encodeIdentityDeviceState, decodeIdentityDeviceState, type IdentityDeviceComponent } from "./identityDeviceStateCodec"
 import type { SyncNode } from "./transport"
 
 beforeEach(async () => {
@@ -23,6 +24,46 @@ beforeEach(async () => {
   for (const key of await listLocalKeys()) if (key.startsWith("tincanban.identity-workspace-routes.v1.")) await deleteLocal(key)
 })
 afterEach(() => vi.unstubAllGlobals())
+
+async function decodedRoutes(component: IdentityDeviceComponent) {
+  return readIdentityWorkspaceRouteRecoveryComponent({ personId: component.value.personId as string,
+    components: { workspaceRouteRecovery: component } })
+}
+
+it("Given an older uncompressed component, when reading after upgrade, then retain its original connection", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const envelope = { version: 1, workspaceId: "legacy-route", ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "original", epoch: 1, peers: [] }
+  expect((await decodedRoutes({ schema: "workspace-route-recovery@1", required: false,
+    value: { personId: owner.identity.personId, envelopes: [envelope] } })).envelopes).toEqual([envelope])
+})
+
+it("Given forbidden private key material inside a packed optional component, when importing, then reject before creating a storage plan", async () => {
+  const { packWorkspaceRoutes } = await import("./identityWorkspaceRoutePacking")
+  const component = { schema: "workspace-route-recovery@2", required: false,
+    value: packWorkspaceRoutes({ personId: "owner", envelopes: [], privateKeys: { key: "forbidden" } }, 900 * 1024) }
+  await expect(decodedRoutes(component)).rejects.toThrow(/private keys/)
+})
+
+it("Given a nearly full portable profile and repeated owner proofs across boards, when exporting routes, then fit the existing manifest budget and restore every original connection", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  await confirmIdentityAuthorityFixture(root, [owner.certificate])
+  const manifest = await createIdentityDeviceTransfer(root, [owner.certificate])
+  manifest.components.retained = { schema: "retained-profile@1", required: false,
+    value: { personId: owner.identity.personId, text: "p".repeat(930 * 1024) } }
+  expect(encodeIdentityDeviceState(manifest).byteLength).toBeLessThan(1024 * 1024)
+  const envelopes = Array.from({ length: 200 }, (_, index) => ({ version: 1 as const,
+    workspaceId: `retained-board-${index}`, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+    transportSecret: `original-secret-${index}`, epoch: 1, peers: [], revocations: [] }))
+  manifest.components.workspaceRouteRecovery = await identityWorkspaceRouteRecoveryComponent({
+    personId: owner.identity.personId, envelopes })
+  const wire = encodeIdentityDeviceState(manifest)
+  const recovered = await readIdentityWorkspaceRouteRecoveryComponent(decodeIdentityDeviceState(wire, owner.identity.personId))
+  expect(recovered.envelopes).toEqual([...envelopes].sort((a, b) => a.workspaceId.localeCompare(b.workspaceId)))
+  expect(wire.byteLength).toBeLessThan(1024 * 1024)
+})
 
 it("Given an owner catalog already carries the original connection, when automatic sync first activates the recovered board, then reuse its secret instead of creating another mesh", async () => {
   const owner = await bootstrapIdentity("Owner")
@@ -99,12 +140,12 @@ it("Given a workspace credential and signed member route, when capturing private
 
   const state = await createIdentityDeviceTransfer(root, [profile.certificate], undefined, profile)
 
-  expect(state.components.workspaceRouteRecovery).toEqual({ schema: "workspace-route-recovery@1", required: false,
-    value: { personId: profile.identity.personId, envelopes: [{ version: 1, workspaceId,
+  expect(state.components.workspaceRouteRecovery).toMatchObject({ schema: "workspace-route-recovery@2", required: false })
+  expect(await readIdentityWorkspaceRouteRecoveryComponent(state)).toEqual({ personId: profile.identity.personId, envelopes: [{ version: 1, workspaceId,
       ownerPersonId: profile.identity.personId, ownerPublicKey: profile.identity.publicKey,
       ownerCertificates: [profile.certificate], transportSecret: "original-workspace-secret", epoch: 7, peers: [bundle],
       revocations: [], deviceRevocations: [], departures: [], ownerHistory: [], ownershipTransfers: [],
-      successionVotes: [], successionClaims: [] }] } })
+      successionVotes: [], successionClaims: [] }] })
 })
 
 it("Given a signed route envelope in same-person state, when activation runs on an empty peer store, then retain it pending without trusting peer rows", async () => {
@@ -123,7 +164,7 @@ it("Given a signed route envelope in same-person state, when activation runs on 
   await peerStore.upsertPeer({ workspaceId, deviceId: "ray-device", personId: "ray-person", endpoint: "ray-endpoint",
     transportSecret: "original-secret", role: "editor", lastSeen: now, advertisement: bundle })
   const state = await createIdentityDeviceTransfer(root, [profile.certificate], undefined, profile)
-  const envelope = (state.components.workspaceRouteRecovery as unknown as { value: { envelopes: unknown[] } }).value.envelopes[0]
+  const envelope = (await readIdentityWorkspaceRouteRecoveryComponent(state)).envelopes[0]
 
   await peerStore.clear()
   await applyIdentityDeviceTransfer(await readIdentityDeviceTransfer(state, profile.identity.personId), () => {})
@@ -151,7 +192,7 @@ it("Given repeated authority snapshots with changing signed routes, when compact
   const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId, envelopes: [
     { ...base, peers: [older] }, { ...base, peers: [newer] }, { ...base, peers: [older] },
   ] })
-  const value = component.value as { envelopes: Array<{ peers: unknown[] }> }
+  const value = (await decodedRoutes(component)) as { envelopes: Array<{ peers: unknown[] }> }
 
   expect(value.envelopes).toHaveLength(1)
   expect(value.envelopes[0]!.peers).toEqual([newer])
@@ -176,7 +217,7 @@ it("Given compatible signed scope snapshots from before and after a grant update
 
   const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId,
     envelopes: [envelope(oldGrant), envelope(newGrant)] })
-  const envelopes = (component.value as { envelopes: Array<{ scopeAuthoritySnapshot: { grants: unknown[] } }> }).envelopes
+  const envelopes = ((await decodedRoutes(component)) as { envelopes: Array<{ scopeAuthoritySnapshot: { grants: unknown[] } }> }).envelopes
 
   expect(envelopes).toHaveLength(1)
   expect(envelopes[0]!.scopeAuthoritySnapshot.grants).toEqual(expect.arrayContaining([oldGrant, newGrant]))
@@ -204,7 +245,7 @@ it("Given a workspace revocation and a newer compatible scope ledger, when resto
   const workspaceRevocation = { payload: { personId: "revoked-member", epoch: 2 } }
   const envelopes = [makeEnvelope(earlierGrant, []), makeEnvelope(laterGrant, [workspaceRevocation])]
   const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId, envelopes: envelopes as never[] })
-  const recovered = (component.value as { envelopes: Array<{ revocations: unknown[]; scopeAuthoritySnapshot: { grants: unknown[] } }> }).envelopes
+  const recovered = ((await decodedRoutes(component)) as { envelopes: Array<{ revocations: unknown[]; scopeAuthoritySnapshot: { grants: unknown[] } }> }).envelopes
   expect(recovered).toHaveLength(2)
   expect(recovered.map(value => value.revocations)).toEqual(expect.arrayContaining([[], [workspaceRevocation]]))
   for (const envelope of recovered) {
@@ -237,7 +278,7 @@ it("Given signed snapshots with incompatible genesis, when recovery tries to com
     await envelope(owner), await envelope(stranger),
   ] })
 
-  const envelopes = (component.value as { envelopes: Array<unknown> }).envelopes
+  const envelopes = ((await decodedRoutes(component)) as { envelopes: Array<unknown> }).envelopes
   expect(envelopes).toHaveLength(2)
   const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(), receiveInvitation: async () => {} } as never
   await expect(restoreIdentityWorkspaceRoutes({ mesh, envelopes: envelopes as never[], workspaceIds: [workspaceId], profile: owner,
@@ -261,7 +302,7 @@ it("Given an expired but signed route lease, when compacting recovery state, the
     ownerCertificates: [owner.certificate], transportSecret: "bootstrap-secret", epoch: 2, peers: [bundle], revocations: [],
   }] })
 
-  expect((component.value as { envelopes: Array<{ peers: unknown[] }> }).envelopes[0]!.peers).toEqual([bundle])
+  expect(((await decodedRoutes(component)) as { envelopes: Array<{ peers: unknown[] }> }).envelopes[0]!.peers).toEqual([bundle])
 })
 
 it("Given an existing workspace credential with another transport secret, when restoring its saved route, then preserve the credential and refuse invitation delivery", async () => {

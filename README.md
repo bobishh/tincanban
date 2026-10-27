@@ -67,7 +67,10 @@ Edited starters remain available and keep their current selection.
 Private Identity recovery state also retains signed workspace contacts and the
 workspace transport credential. A restored device checks that evidence against
 workspace authority before reconnecting to participants. A saved address is a
-bootstrap contact, not proof that a device is online. Direct peer delivery does
+bootstrap contact, not proof that a device is online. The optional contact component
+uses bounded compression while retaining support for earlier JSON snapshots;
+decompressed data still passes the same signature and authority checks.
+Direct peer delivery does
 not wait for Rusty access registration; unavailable storage retries independently.
 Legacy participant storage settings stay pending until the owner supplies current
 signed access, preserving local edits in the meantime.
