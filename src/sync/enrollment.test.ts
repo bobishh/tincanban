@@ -58,7 +58,7 @@ async function fixture(photo?: { avatarData: string | null; changedAt: string },
 beforeEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest(); resetInvitationStorageForTest() })
 
 describe("device enrollment boundary", () => {
-  it("Given optional mesh fields, when signing a workspace bootstrap, then the actual JSON wire payload verifies", async () => {
+  it.each([true, false])("Given optional mesh fields and Rusty connection %s, when signing a workspace bootstrap, then the actual JSON wire payload verifies", async withStorage => {
     const owner = await bootstrapIdentity("Owner")
     const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
     const targetKeys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
@@ -88,14 +88,14 @@ describe("device enrollment boundary", () => {
       authorityView, workspace: { id: "ws", title: "Board", reference: {
         workspaceId: "ws", documentId: "ws", grantHash: "genesis", forgotten: false } },
       meshWorkspaces: [{ version: 1, workspaceId: "ws", ownerPersonId: owner.identity.personId,
-        ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], grants: [], storage: [storage], identityStorage: [identityStorage],
+        ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], grants: [], storage: withStorage ? [storage] : [], identityStorage: withStorage ? [identityStorage] : [],
       snapshot: new TextEncoder().encode("[]") })
     const wire = JSON.parse(new TextDecoder().decode(bytes)) as Parameters<typeof verifyEnvelope>[0]
     expect(await verifyEnvelope(wire, owner.device.publicKey)).toBe(true)
     expect(JSON.stringify(wire)).not.toContain("optionalMeshField")
   })
 
-  it("Given a crash after local access CAS, when the same approved bootstrap retries after reload, then retain profile and local workspace and finish mesh delivery", async () => {
+  it.each([true, false])("Given a crash after local access CAS and Rusty connection %s, when the same approved bootstrap retries after reload, then retain profile and local workspace and finish mesh delivery", async withStorage => {
     const owner = await bootstrapIdentity("Retrying same-person bootstrap")
     const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
     registerWorkspaceInRoot(root, "ws", "ws", "approved-grant")
@@ -123,7 +123,7 @@ describe("device enrollment boundary", () => {
       recipientPublicKey: owner.device.publicKey, authorityView, workspace: { id: "ws", title: "Board", reference: {
         workspaceId: "ws", documentId: "ws", grantHash: "approved-grant", forgotten: false } },
       meshWorkspaces: [{ workspaceId: "ws", ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey }],
-      grants: [], storage: [storage], identityStorage: [identityStorage], snapshot: new TextEncoder().encode("[]") })
+      grants: [], storage: withStorage ? [storage] : [], identityStorage: withStorage ? [identityStorage] : [], snapshot: new TextEncoder().encode("[]") })
     const prepared = await preflightSamePersonWorkspaceBootstrap(bytes, invite, owner, authorityView)
     const delivery = vi.fn().mockRejectedValueOnce(new Error("simulated crash before mesh credential receive"))
     const durableMesh = { receiveInvitation: delivery }
@@ -138,7 +138,7 @@ describe("device enrollment boundary", () => {
     const persistedRoot = await defaultStorage.loadPersonalRoot(root.rootId)
     expect(persistedRoot?.displayNamePreset).toBe("Preserved profile")
     expect(persistedRoot?.workspaces.local).toEqual(root.workspaces.local)
-    expect((await getReplicaConfigurations(owner.identity.personId)).map(config => config.workspaceId)).toEqual(["ws"])
+    expect((await getReplicaConfigurations(owner.identity.personId)).map(config => config.workspaceId)).toEqual(withStorage ? ["ws"] : [])
   })
 
   it("Given complete portable state, when authoring enrollment, then use the same required manifest as ongoing device sync", async () => {

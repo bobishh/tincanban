@@ -1,3 +1,4 @@
+import { planIdentityPeerRecoveryImport } from "./identityPeerRecoveryCatalog"
 import type { PersonalRootDocumentV1 } from "../domain/model"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { compareAndSwapLocal, readLocal, type LocalStatePlan } from "../localDb"
@@ -48,6 +49,7 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
     new RustyManagementRepository(personId).planImport(transfer.capabilities, options.resolveManagementConflict),
     planIdentityRecoveryImport(personId, transfer.recoveryEvidence),
     planIdentityDeviceExtensionsImport(transfer.manifest),
+    planIdentityPeerRecoveryImport(transfer.manifest),
     planIdentityProfileImport(transfer.personalRoot.identity, transfer.observations),
     planIdentityAuthorityViewMerge(personId, transfer.authorityView),
   ])

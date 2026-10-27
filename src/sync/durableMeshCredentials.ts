@@ -251,6 +251,16 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
     }))
   }
 
+  /** An owner copy must listen even before any other device has supplied a route. */
+  async prepareOwnerWorkspaceTransfer(workspaceId: string): Promise<string> {
+    await this.addOwnerWorkspace(workspaceId)
+    if (this.stopped) await this.resumeAll(await this.startInstanceNode())
+    await this.waitUntilListening()
+    if (!this.node) throw new Error("Owner workspace transport is unavailable")
+    await this.ensureOwnerWorkspaces([workspaceId], this.node.endpointId, await this.options.getProfile())
+    return this.node.endpointId
+  }
+
   protected async encodeOwnerWorkspaceOffer(workspaceId: string) {
     const [envelope] = await this.invitationPayload([workspaceId])
     const workspaces = z.array(z.unknown()).length(1).parse(JSON.parse(new TextDecoder().decode(

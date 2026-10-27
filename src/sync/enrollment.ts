@@ -42,7 +42,7 @@ const workspaceBootstrapSchema = z.object({
       grantHash: text, forgotten: z.boolean() }).strict() }).strict(),
     workspaces: z.array(z.object({ id: text, title: text }).strict()).length(1), activeWorkspaceId: text,
     meshWorkspaces: z.array(z.unknown()).length(1), grants: z.array(z.unknown()).max(1),
-    storage: z.array(z.unknown()).min(1).max(32), identityStorage: z.array(z.unknown()).min(1).max(32),
+    storage: z.array(z.unknown()).max(32), identityStorage: z.array(z.unknown()).max(32),
     snapshot: z.string().min(1) }).strict(),
   signerKeyId: text, signature: text,
 }).strict()
@@ -135,7 +135,7 @@ function assertSamePersonBootstrapStoragePairing(input: SamePersonWorkspaceBoots
   const identityMatchesWorkspace = input.identityStorage.every(config => config.personId === input.profile.identity.personId &&
     config.purpose === "identity" && input.storage.some(workspaceConfig => workspaceConfig.origin === config.origin &&
       workspaceConfig.servicePublicKey === config.servicePublicKey && workspaceConfig.scopeId !== config.scopeId))
-  if (input.storage.length < 1 || input.storage.some(config => config.workspaceId !== input.workspace.id) ||
+  if (input.storage.some(config => config.workspaceId !== input.workspace.id) ||
       workspaceOrigins.size !== input.storage.length || input.identityStorage.length !== workspaceOrigins.size ||
       identityOrigins.size !== input.identityStorage.length || !identityMatchesWorkspace) {
     throw new Error("Invalid same-person workspace bootstrap")

@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { createRustyIdentityRequestProof, type RustyIdentityRequestProofPayload } from "@meta-uber/mesh-replication/rusty-identity-request-proof"
 import { authorizeIdentityDataDevice, createLocalRootIdentityAuthorityView, mergeIdentityAuthorityViews,
   publicKeyId, verifyIdentityAuthorityView, type VerifiedIdentityAuthorityView, type PublicIdentity, type SignedEnvelope } from "@meta-uber/mesh-identity"
@@ -184,7 +185,7 @@ function tokenForAction(headers: Headers, action: "read" | "write", access: Blin
 
 /** Create a scope fetcher that refreshes Rusty's signed authority high-water before every data request. */
 export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityProfileFetcherOptions) {
-  const profile = cloneJsonData(options.profile)
+  const profile = captureIdentityProfile(options.profile)
   const metadata = options.access as BlindAccess & { workspaceId?: string; personId?: string;
     boardAccess?: { principalGrant?: { payload?: unknown } } }
   const access = cloneJsonData(options.access)
@@ -230,7 +231,7 @@ export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityPro
 export async function ensureRustyIdentityAuthorityPublished(
   options: EnsureRustyIdentityAuthorityOptions,
 ): Promise<VerifiedIdentityAuthorityView> {
-  const profile = cloneJsonData(options.profile)
+  const profile = captureIdentityProfile(options.profile)
   const access = cloneJsonData(options.access)
   const origin = new URL(access.origin).origin
   const fetcher = options.fetcher ?? fetchBlind
@@ -248,7 +249,7 @@ export async function ensureRustyIdentityAuthorityPublished(
 
 /** Bind a private Identity replica to its immutable self-only Rusty scope purpose. */
 export async function ensureRustyPersonIdentityScope(options: EnsureRustyPersonScopeOptions): Promise<SignedEnvelope<Record<string, unknown> & { kind: string }>> {
-  const profile = cloneJsonData(options.profile)
+  const profile = captureIdentityProfile(options.profile)
   const access = cloneJsonData(options.access)
   const authorityView = await ensureRustyIdentityAuthorityPublished(options)
   const receipt = await classifyRustyPersonIdentityScope({

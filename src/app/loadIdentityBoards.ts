@@ -14,7 +14,7 @@ import { parseBoardRouteUrl, resolveEligibleBoardRoute, type EligibleBoardRoute 
 type App = ReturnType<typeof useTincanban>
 
 /** Load boards for an already approved Identity; failed delivery remains independently retryable. */
-export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<void> {
+export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: (workspaceIds: string[]) => Promise<void>): Promise<void> {
   const initialWorkspaceId = app.activeWorkspace.id
   const profile = app.getCurrentProfile()
   if (!profile) throw new Error("Signed-in profile is unavailable")
@@ -38,16 +38,38 @@ export async function loadIdentityBoards(app: App, returnPath = "/"): Promise<vo
     const root = await defaultStorage.loadPersonalRoot()
     if (!root || root.identity.personId !== profile.identity.personId) throw new Error("Your board catalog is unavailable")
     const ids = new Set(Object.values(root.workspaces).filter(reference => !reference.forgotten).map(reference => reference.workspaceId))
+    let storageFailure: unknown
     for (const config of await getReplicaConfigurations(profile.identity.personId)) {
       if (!ids.has(config.workspaceId)) continue
       guard()
-      if (!await createBlindReplica(config, app, guard, async () => {}).pull()) {
-        throw new Error("Your boards are still loading. Retry loading boards.")
+      try {
+        if (!await createBlindReplica(config, app, guard, async () => {}).pull()) {
+          throw new Error("Your boards are still loading. Retry loading boards.")
+        }
+      } catch (cause) {
+        guard()
+        if (!recoverPeers) throw cause
+        storageFailure = cause
       }
     }
     guard()
+    let waitingForPeers = false
+    if (recoverPeers) {
+      const missing = async () => {
+        const absent: string[] = []
+        for (const id of ids) {
+          guard()
+          try { await app.readWorkspaceDoc(id) } catch { absent.push(id) }
+        }
+        return absent
+      }
+      await recoverPeers(await missing())
+      guard()
+      waitingForPeers = (await missing()).length > 0
+    }
     await refreshAvailableWorkspaces()
     await restoreBoardSelection(app, returnPath, ids.size === 0, initialWorkspaceId, guard)
+    if (waitingForPeers) throw storageFailure ?? new Error("Your boards are waiting for an available peer or stored copy. Retry loading boards.")
   })
 }
 

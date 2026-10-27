@@ -20,6 +20,8 @@ import { createEnrollmentHistoryReader } from "./enrollmentHistoryReader"
 import { awaitEnrollmentAcknowledgement, enrollmentRejection } from "./enrollmentAcknowledgement"
 import { peerStore } from "./peerStore"
 import type { SyncConnection, SyncNode } from "./transport"
+import type { DurableMesh } from "./durableMesh"
+import type { WorkspaceSetStore } from "./workspaceSet"
 import type { EnrollmentContext } from "./deviceSyncEnrollment"
 import { traceEnrollment, traceEnrollmentOperation } from "./enrollmentDiagnostics"
 
@@ -36,19 +38,45 @@ export async function approveSamePersonWorkspace(context: EnrollmentContext, run
   stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>, connection: SyncConnection, secret: string,
   invite: DeviceEnrollmentInvitation, profile: LocalProfile, guest: EnrollmentRequestInfo,
   diagnosticContext?: Context) {
-  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Enrollment session is no longer current") }
-  const authorityView = await currentSamePersonEnrollmentAuthority(invite, profile, guest, ensureCurrent)
   const workspaceId = selectActiveWorkspace(context, context.availableWorkspaces.map(item => item.id))
   const workspace = context.availableWorkspaces.find(item => item.id === workspaceId)
   if (!workspace || !context.durableMesh) throw new Error("Selected workspace is unavailable for device sync")
   if (await context.workspaceOwner?.(workspaceId) !== profile.identity.personId) {
     throw new Error("Only the current workspace owner can add this Identity device")
   }
+  await serveApprovedIdentityWorkspace({ profile, workspace, mesh: context.durableMesh,
+    store: context.meshWorkspaceStore ?? context.workspaceStore!, endpoint: node.endpointId,
+    getProfile: context.getProfile, isCurrent: () => isCurrent(context, run), stream, connection, invite, guest })
+  context.state.step.value = "enroll-host-done"
+  void diagnosticContext
+}
+
+type WorkspaceTransferSession = {
+  profile: LocalProfile
+  mesh: DurableMesh
+  store: WorkspaceSetStore
+  endpoint?: string
+  getProfile(): Promise<LocalProfile>
+  isCurrent(): boolean
+  connection: SyncConnection
+  invite: DeviceEnrollmentInvitation
+}
+
+/** Reuse the signed bootstrap for an already approved Identity device, including boards without storage. */
+export async function serveApprovedIdentityWorkspace(input: WorkspaceTransferSession & {
+  workspace: { id: string; title: string }
+  stream: Awaited<ReturnType<SyncConnection["acceptStream"]>>
+  guest: EnrollmentRequestInfo
+}) {
+  const { profile, workspace, mesh, store, endpoint, connection, invite, stream, guest } = input
+  const workspaceId = workspace.id
+  const secret = invite.secret
+  const ensureCurrent = () => { if (!input.isCurrent()) throw new Error("Identity workspace transfer was cancelled") }
+  const authorityView = await currentSamePersonEnrollmentAuthority(invite, profile, guest, ensureCurrent)
   const root = await defaultStorage.loadPersonalRoot()
   const reference = root?.identity.personId === profile.identity.personId ? root.workspaces[workspaceId] : undefined
   if (!reference || reference.forgotten) throw new Error("Selected workspace is not in the current Identity catalog")
   const storage = (await getReplicaConfigurations(profile.identity.personId)).filter(config => config.workspaceId === workspaceId)
-  if (!storage.length) throw new Error("Connect selected workspace to Rusty before adding this device")
   const identityStorage = (await getIdentityReplicaConfigurations(profile.identity.personId)).filter(config =>
     storage.some(workspaceConfig => workspaceConfig.origin === config.origin &&
       workspaceConfig.servicePublicKey === config.servicePublicKey))
@@ -61,19 +89,18 @@ export async function approveSamePersonWorkspace(context: EnrollmentContext, run
     }
   }
   await assertStorageUnfrozen()
-  await context.durableMesh.ensureOwnerWorkspaces([workspaceId], node.endpointId, profile)
-  const grant = await context.durableMesh.enrollmentGrant(workspaceId, profile)
+  await mesh.ensureOwnerWorkspaces([workspaceId], endpoint ?? await mesh.prepareOwnerWorkspaceTransfer(workspaceId), profile)
+  const grant = await mesh.enrollmentGrant(workspaceId, profile)
   const grants = grant ? [grant] : []
   ensureCurrent()
-  const meshWorkspaces = await context.durableMesh.invitationPayload([workspaceId])
-  const authorities = await context.durableMesh.validateInvitation(meshWorkspaces, [workspaceId], profile, grants)
-  if (!authorities.has(workspaceId)) throw new Error("Current workspace scope authority is required for device sync")
+  const meshWorkspaces = await mesh.invitationPayload([workspaceId])
+  const authorities = await mesh.validateInvitation(meshWorkspaces, [workspaceId], profile, grants)
+  if (storage.length && !authorities.has(workspaceId)) throw new Error("Current workspace scope authority is required for device sync")
   ensureCurrent()
-  const store = context.meshWorkspaceStore ?? context.workspaceStore!
   const replica = workspaceSet(store, [workspace])
   const snapshot = await replica.snapshot()
   const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: [workspaceId], profile,
-    remoteDeviceId: guest.deviceId, isCurrent: () => isCurrent(context, run), readProfile: context.getProfile,
+    remoteDeviceId: guest.deviceId, isCurrent: input.isCurrent, readProfile: input.getProfile,
     readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
   const acknowledgementHistory = createEnrollmentHistoryReader(store, [workspaceId], guest.deviceId, historyGuard)
   await historyGuard()
@@ -86,8 +113,6 @@ export async function approveSamePersonWorkspace(context: EnrollmentContext, run
   await stream.closeSend()
   await completeEnrollmentApproval(connection, replica, guest.deviceId, secret, historyGuard, acknowledgementHistory,
     "The new device rejected workspace sync")
-  context.state.step.value = "enroll-host-done"
-  void diagnosticContext
 }
 
 async function currentSamePersonEnrollmentAuthority(invite: DeviceEnrollmentInvitation, profile: LocalProfile,
@@ -149,47 +174,66 @@ export async function completeEnrollmentApproval(connection: SyncConnection, rep
 
 export async function receiveSamePersonWorkspaceBootstrap(context: EnrollmentContext, run: number, node: SyncNode,
   connection: SyncConnection, invite: DeviceEnrollmentInvitation, profile: LocalProfile, bytes: Uint8Array) {
+  if (!context.durableMesh || !context.workspaceStore) throw new Error("Device sync is unavailable")
+  await receiveApprovedIdentityWorkspace({ profile, mesh: context.durableMesh,
+    store: context.meshWorkspaceStore ?? context.workspaceStore, endpoint: node.endpointId, connection, invite, bytes,
+    getProfile: context.getProfile, isCurrent: () => isCurrent(context, run), received: async workspaceId => {
+      await context.workspaceStore!.activate(workspaceId)
+      await context.identityChanged?.()
+    }, handoff: async () => {
+      await context.handoffNode("Enrollment finished")
+      await context.durableMesh!.waitUntilListening()
+    } })
+  context.state.step.value = "enroll-guest-done"
+  traceEnrollment(invite, "guest", "completed", run, { workspaces: 1 })
+  if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/")
+}
+
+/** Verify history before activating credentials; the same retained offer can retry after interruption. */
+export async function receiveApprovedIdentityWorkspace(input: WorkspaceTransferSession & {
+  bytes: Uint8Array
+  expectedWorkspaceId?: string
+  received?(workspaceId: string): Promise<void>
+  handoff?(): Promise<void>
+}) {
+  const { profile, mesh, store, endpoint, connection, invite, bytes } = input
   const requestView = await readIdentityAuthorityView(profile.identity.personId)
   if (!requestView) throw new Error("Current Identity authority view is required for same-person device sync")
   const prepared = await preflightSamePersonWorkspaceBootstrap(bytes, invite, profile, requestView)
   const workspaceId = prepared.workspace.id
+  if (input.expectedWorkspaceId && workspaceId !== input.expectedWorkspaceId) throw new Error("Identity peer returned another workspace")
   const workspaceIds = [workspaceId]
-  const ensureCurrent = () => { if (!isCurrent(context, run)) throw new Error("Device enrollment was cancelled") }
+  const ensureCurrent = () => { if (!input.isCurrent()) throw new Error("Identity workspace transfer was cancelled") }
   ensureCurrent()
-  if (!context.durableMesh || !context.workspaceStore) throw new Error("Device sync is unavailable")
-  const scopes = await context.durableMesh.validateInvitation(prepared.meshWorkspaces, workspaceIds, profile, prepared.grants)
-  if (!scopes.has(workspaceId)) throw new Error("Current workspace authority is required for device sync")
-  const store = context.meshWorkspaceStore ?? context.workspaceStore
+  const scopes = await mesh.validateInvitation(prepared.meshWorkspaces, workspaceIds, profile, prepared.grants)
+  if (prepared.storage.length && !scopes.has(workspaceId)) throw new Error("Current workspace authority is required for device sync")
   const replica = workspaceSet(store, [{ id: workspaceId, title: prepared.workspace.title }])
   const snapshot = await replica.resolveProofs(prepared.snapshot, connection, invite.secret)
   const historyReader = createPeerHistoryObjectReader(connection, ensureCurrent, scopes)
   await replica.validate(snapshot, historyReader)
   ensureCurrent()
   const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds, profile,
-    remoteDeviceId: invite.issuerDeviceId, isCurrent: () => isCurrent(context, run), readProfile: context.getProfile,
+    remoteDeviceId: invite.issuerDeviceId, isCurrent: input.isCurrent, readProfile: input.getProfile,
     readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
   await mergeIdentityAuthorityView(prepared.authorityView, ensureCurrent)
   await traceEnrollmentOperation(invite, "guest.receive-workspace", () => replica.receive(snapshot, true, historyReader))
-  await persistThenReceiveSamePersonWorkspace(profile, prepared, ensureCurrent, context.durableMesh)
+  await persistThenReceiveSamePersonWorkspace(profile, prepared, ensureCurrent, mesh)
   await historyGuard()
-  await context.workspaceStore.activate(workspaceId)
   const envelope = prepared.meshWorkspaces[0] as { ownerPersonId?: unknown }
   if (envelope.ownerPersonId === profile.identity.personId) {
-    await context.durableMesh.ensureOwnerWorkspaces(workspaceIds, node.endpointId, profile)
+    if (endpoint) await mesh.ensureOwnerWorkspaces(workspaceIds, endpoint, profile)
+    else await mesh.prepareOwnerWorkspaceTransfer(workspaceId)
   }
-  await context.identityChanged?.()
+  await input.received?.(workspaceId)
   const ack = await connection.openStream()
   await ack.send(encodePairingFrame("enroll-ack", invite.secret, await replica.snapshot()))
   await ack.closeSend()
   await awaitEnrollmentAcknowledgement(connection, ack, replica, invite.secret, ensureCurrent)
-  await context.handoffNode("Enrollment finished")
-  await context.durableMesh.waitUntilListening()
+  await input.handoff?.()
   const confirmation = await connection.openStream()
   await confirmation.send(encodePairingFrame("mesh-handoff-confirmed", invite.secret, new Uint8Array()))
   await confirmation.closeSend()
-  context.state.step.value = "enroll-guest-done"
-  traceEnrollment(invite, "guest", "completed", run, { workspaces: 1 })
-  if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/")
+  return workspaceId
 }
 
 export async function persistThenReceiveSamePersonWorkspace(profile: LocalProfile,

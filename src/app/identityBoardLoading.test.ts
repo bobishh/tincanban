@@ -27,7 +27,7 @@ it("Given installed catalog access and an interrupted pull, when reloaded and re
   profile = await bootstrapIdentity()
   expect(await hasPendingIdentityBoardLoading(profile)).toBe(true)
   await resumeIdentityBoardLoading(app as never, "/boards/original")
-  expect(f.loadBoards).toHaveBeenLastCalledWith(app, "/boards/original")
+  expect(f.loadBoards).toHaveBeenLastCalledWith(app, "/boards/original", undefined)
   expect(await hasPendingIdentityBoardLoading(profile)).toBe(false)
 })
 

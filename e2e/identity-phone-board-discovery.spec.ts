@@ -42,7 +42,7 @@ async function createOwnerIdentity(portal: Page): Promise<string> {
 }
 
 async function approveApplicationDevice(page: Page, appOrigin: string, personId: string,
-  localBoardChoice?: "add" | "stay", afterApproval?: () => Promise<void>): Promise<void> {
+  localBoardChoice?: "add" | "stay", afterApproval?: () => Promise<void>, expectBoardPending = false): Promise<void> {
   await page.addInitScript(({ expectedOrigin }) => {
     if (location.origin !== expectedOrigin || location.pathname !== "/identity/return") return
     const saveFailureKey = "tincanban.e2e.signin-save-failure"
@@ -93,7 +93,7 @@ async function approveApplicationDevice(page: Page, appOrigin: string, personId:
     throw new Error(`Identity callback did not finish: ${JSON.stringify(snapshot)}`)
   }
   const callbackAlert = await page.getByRole("alert").allTextContents()
-  if (callbackAlert.length) throw new Error(`Identity callback rejected: ${callbackAlert.join("; ")}`)
+  if (callbackAlert.length && !expectBoardPending) throw new Error(`Identity callback rejected: ${callbackAlert.join("; ")}`)
   const callbackCheck = await page.evaluate(() => {
     try { return JSON.parse(sessionStorage.getItem("tincanban.e2e.identity-callback-check") ?? "null") }
     catch { return null }
@@ -583,4 +583,131 @@ function traceSpans(payload: OtlpTraces): Span[] {
 function attribute(record: LogRecord, key: string): unknown {
   const value = record.attributes?.find(item => item.key === key)?.value
   return value && Object.values(value)[0]
+}
+
+for (const interrupt of [false, true]) {
+test(`Given an approved phone and an owner board with no Rusty copy${interrupt ? " after a connection failure" : ""}, when sign-in loads its private catalog, then recover the original board through P2P and retain it after reload`, async ({ page: desktop, context, browser, baseURL }) => {
+  test.setTimeout(240_000)
+  const appOrigin = new URL(baseURL!).origin
+  const portal = await context.newPage()
+  const phoneContext = await browser.newContext()
+  const phone = await phoneContext.newPage()
+  const phonePortal = await phoneContext.newPage()
+  const rusty = await startIdentityRustyService(`${appOrigin},${identityOrigin}`)
+  const diagnostics: string[] = []
+  for (const [label, target] of [["source", desktop], ["phone", phone]] as const) {
+    target.on("console", message => { if (/identity.peer-recovery|workspace transfer|bootstrap/i.test(message.text())) diagnostics.push(`${label}: ${message.text()}`) })
+  }
+  try {
+    const personId = await createOwnerIdentity(portal)
+    await desktop.goto(baseURL!)
+    await expect(desktop.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(desktop, appOrigin, personId)
+    await enrollPhoneManager(portal, phonePortal, personId)
+    // Connect only the starter. The later board has no Rusty connection or stored copy.
+    await connectRusty(desktop, rusty.origin)
+    await createJobSearchWorkspace(desktop, "P2P only board")
+    const workspaceId = await desktop.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    await desktop.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Add lead to Lead", exact: true }).click()
+    const item = desktop.getByRole("dialog", { name: "Add item" })
+    await item.getByLabel("Company *").fill("Retained only by source")
+    await item.getByLabel("Role *").fill("P2P recovery")
+    await item.getByRole("button", { name: "Create item", exact: true }).click()
+    await expect(desktop.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible()
+    await expect.poll(() => desktop.evaluate(async id => {
+      const profile = (await import("/src/domain/identity.ts")).bootstrapIdentity()
+      const configs = await (await import("/src/sync/privateReplicaRepository.ts")).getReplicaConfigurations((await profile).identity.personId)
+      const sources = await (await import("/src/sync/identityPeerRecoveryCatalog.ts")).readIdentityPeerRecovery((await profile).identity.personId)
+      return { copies: configs.filter(config => config.workspaceId === id).length, source: sources.some(source => source.workspaceId === id) }
+    }, workspaceId), { timeout: 30_000 }).toEqual({ copies: 0, source: true })
+    if (!interrupt) {
+      const invite = await desktop.evaluate(async id => {
+        const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
+        return (await (await import("/src/sync/identityPeerRecoveryCatalog.ts")).readIdentityPeerRecovery(profile.identity.personId))
+          .find(source => source.workspaceId === id)!.invite
+      }, workspaceId)
+      const strangerContext = await browser.newContext()
+      try {
+        const stranger = await strangerContext.newPage()
+        await stranger.goto(baseURL!)
+        await expect(stranger.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+        const denied = await stranger.evaluate(async invitation => {
+          const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+          const { irohTransport } = await import("/src/sync/irohTransport.ts")
+          const { meshNetworkConnection } = await import("/vendor/meta-mesh/packages/mesh-transport/src/index.ts")
+          const { encodePairingFrame } = await import("/vendor/meta-mesh/packages/mesh-pairing/src/index.ts")
+          const { createEnrollmentRequest } = await import("/src/sync/enrollment.ts")
+          const node = await irohTransport.start(crypto.getRandomValues(new Uint8Array(32)))
+          try {
+            const { meshIngressBudgetProfile } = await import("/src/iroh.ts")
+            const connection = meshNetworkConnection(await node.dial(invitation.issuerEndpoint), meshIngressBudgetProfile())
+            const stream = await connection.openStream()
+            await stream.send(encodePairingFrame("enroll-request", invitation.secret, await createEnrollmentRequest(invitation, await bootstrapIdentity())))
+            await stream.closeSend()
+            try { await stream.read(); return false } catch { return true }
+          } finally { await node.close("Foreign recovery check complete") }
+        }, invite)
+        expect(denied).toBe(true)
+        expect(await desktop.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot().some(event =>
+          event.event === "identity.peer-recovery.failed" && event.reason === "Recovery requires an already approved Identity device"))).toBe(true)
+      } finally { await strangerContext.close() }
+    }
+    if (interrupt) await phone.route(`${appOrigin}/src/sync/irohTransport.ts*`, async route => {
+      const response = await route.fetch()
+      const source = await response.text()
+      await route.fulfill({ response, body: source + `
+        const originalStart = irohTransport.start;
+        irohTransport.start = async (...args) => {
+          const node = await originalStart(...args);
+          const originalDial = node.dial.bind(node);
+          node.dial = async endpoint => {
+            const profile = await (await import('/src/domain/identity.ts')).bootstrapIdentity();
+            const sources = await (await import('/src/sync/identityPeerRecoveryCatalog.ts')).readIdentityPeerRecovery(profile.identity.personId);
+            if (sessionStorage.getItem('e2e.peer-recovery-released') !== 'true' && sources.some(source => source.invite.issuerEndpoint === endpoint)) {
+              sessionStorage.setItem('e2e.peer-recovery-failed', 'true');
+              throw new Error('Fixture dropped the recovery connection');
+            }
+            return originalDial(endpoint);
+          };
+          return node;
+        };
+      ` })
+    })
+    await phone.goto(baseURL!)
+    await expect(phone.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(phone, appOrigin, personId, undefined, undefined, interrupt)
+    if (interrupt) {
+      await expect(phone.getByRole("button", { name: "Retry loading boards", exact: true })).toBeVisible({ timeout: 15_000 })
+      expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().getCurrentProfile()?.identity.personId)).toBe(personId)
+      await phone.evaluate(() => sessionStorage.setItem("e2e.peer-recovery-released", "true"))
+      await phone.getByRole("button", { name: "Retry loading boards", exact: true }).click()
+    }
+    await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 90_000 })
+    expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
+    await expect.poll(() => phone.evaluate(async id => {
+      const events = (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()
+      return events.some(event => event.event === "identity.peer-recovery.completed" && event.workspaceId === id)
+    }, workspaceId), { timeout: 30_000 }).toBe(true)
+    expect(await phone.evaluate(async id => {
+      const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
+      return (await (await import("/src/sync/privateReplicaRepository.ts")).getReplicaConfigurations(profile.identity.personId))
+        .filter(config => config.workspaceId === id).length
+    }, workspaceId)).toBe(0)
+    await phone.getByRole("button", { name: /Open Retained only by source/u }).click()
+    await phone.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Edit", exact: true }).click()
+    const edit = phone.getByRole("dialog", { name: "Edit item" })
+    await edit.getByLabel("Role *").fill("Changed through P2P")
+    await edit.getByRole("button", { name: "Save changes", exact: true }).click()
+    await expect(desktop.getByRole("button", { name: /Open Retained only by source — Changed through P2P/u })).toBeVisible({ timeout: 45_000 })
+    await desktop.close()
+    await phone.setViewportSize({ width: 390, height: 844 })
+    await phone.reload()
+    await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 30_000 })
+    expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
+  } finally {
+    console.log("P2P recovery diagnostics", diagnostics)
+    await Promise.allSettled([phoneContext.close(), rusty.close()])
+  }
+})
+
 }

@@ -1,3 +1,4 @@
+import { cloneJsonData } from "./jsonData"
 import {
   BrowserIdentityStore,
   identitySeedFromPrivateKey,
@@ -41,8 +42,8 @@ export type LocalProfile = MeshLocalProfile & {
 
 /** Snapshot mutable profile data without cloning browser-owned CryptoKey handles. */
 export function captureIdentityProfile(profile: LocalProfile): LocalProfile {
-  return { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
-    certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
+  return { ...profile, identity: cloneJsonData(profile.identity), device: cloneJsonData(profile.device),
+    certificate: cloneJsonData(profile.certificate), privateKeys: { ...profile.privateKeys } }
 }
 
 const profileStorageKey = "tincanban.local_profile.v1"

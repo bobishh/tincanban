@@ -238,3 +238,20 @@ describe("Local identity, signing, and bootstrap (Requirement 1.2)", () => {
     }
   })
 })
+
+it("Given a reactive local profile, when capturing it for a signed transport, then freeze JSON metadata and preserve usable browser CryptoKeys", async () => {
+  resetIdentityStorageForTest()
+  const { reactive } = await import("vue")
+  const { captureIdentityProfile } = await import("./identity")
+  const profile = await bootstrapIdentity("Signed transport")
+  const reactiveProfile = reactive(profile)
+  const captured = captureIdentityProfile(reactiveProfile)
+  reactiveProfile.identity.displayName = "Changed later"
+  expect(captured.identity.displayName).toBe("Signed transport")
+  expect(captured.privateKeys.devicePrivateKey).toBe(profile.privateKeys.devicePrivateKey)
+  const message = new TextEncoder().encode("real-key")
+  const signature = await crypto.subtle.sign("Ed25519", captured.privateKeys.devicePrivateKey!, message)
+  const { fromBase64Url } = await import("./identity")
+  const publicKey = await crypto.subtle.importKey("raw", fromBase64Url(captured.device.publicKey), "Ed25519", true, ["verify"])
+  expect(await crypto.subtle.verify("Ed25519", publicKey, signature, message)).toBe(true)
+})

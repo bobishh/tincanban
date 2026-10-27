@@ -31,7 +31,7 @@ export class IdentityCatalogApprovalRequired extends Error {
 }
 
 /** Resume installed access after reload; an unavailable manager grant requires a separate catalog approval. */
-export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTincanban>, returnPath = "/"): Promise<void> {
+export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTincanban>, returnPath = "/", recoverPeers?: (workspaceIds: string[]) => Promise<void>): Promise<void> {
   const profile = app.getCurrentProfile()
   if (!profile) return
   const raw = await readLocal(keyFor(profile))
@@ -42,7 +42,7 @@ export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTinca
   }
   assertCurrent(profile)
   if (pending.stage === "access") throw new IdentityCatalogApprovalRequired()
-  await (await import("./loadIdentityBoards")).loadIdentityBoards(app, returnPath)
+  await (await import("./loadIdentityBoards")).loadIdentityBoards(app, returnPath, recoverPeers)
   await compareAndSwapLocal({ conditions: [{ key: keyFor(profile), value: raw }],
     writes: [{ key: keyFor(profile), value: null }] }, () => assertCurrent(profile))
 }

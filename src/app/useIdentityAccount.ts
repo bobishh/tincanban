@@ -36,7 +36,7 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
     refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close,
     loadBoards: async returnPath => {
       const loader = await import("./identityBoardLoading")
-      try { await loader.resumeIdentityBoardLoading(app.workspace, returnPath) }
+      try { await loader.resumeIdentityBoardLoading(app.workspace, returnPath, app.collaboration.device.sync.recoverIdentityWorkspaces) }
       catch (cause) {
         if (cause instanceof loader.IdentityCatalogApprovalRequired) return "approval_required"
         throw cause

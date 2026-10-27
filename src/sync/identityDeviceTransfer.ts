@@ -1,3 +1,4 @@
+import { exportIdentityPeerRecovery } from "./identityPeerRecoveryCatalog"
 import type { DeviceCertificate, PersonalRootDocumentV1 } from "../domain/model"
 import { canonicalizeJson } from "../domain/identity"
 import { certificateHash } from "@meta-uber/mesh-identity"
@@ -53,14 +54,14 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
   certificates = await canonicalCertificates(certificates)
   personalRoot = await projectLegacyEnrollmentCatalog(personalRoot, certificates)
   const personId = personalRoot.identity.personId
-  const [replicas, capabilities, recovery, profiles, extensions] = await Promise.all([
+  const [replicas, capabilities, recovery, profiles, extensions, peerRecovery] = await Promise.all([
     exportPrivateReplicaState(personId), new RustyManagementRepository(personId).export(), exportIdentityRecoveryEvidence(personId),
-    ownProfileObservations(personalRoot), exportIdentityDeviceExtensions(personId),
+    ownProfileObservations(personalRoot), exportIdentityDeviceExtensions(personId), exportIdentityPeerRecovery(personId),
   ])
   const { workspaces, photo, displayNamePreset, profileState, ...catalog } = personalRoot
   const component = (schema: string, value: Record<string, unknown>) => ({ schema, required: true, value })
   const manifest: IdentityDeviceState = { kind: "identity-device-state", version: 1, personId, components: {
-    ...extensions,
+    ...extensions, ...peerRecovery,
     identityCatalog: component(identityDeviceStateSchemas.identityCatalog, { personId, personalRoot: { ...catalog, workspaces: {} }, certificates }),
     profileObservations: component(identityDeviceStateSchemas.profileObservations, { personId, observations: [
       { kind: "identity-profile", displayName: personalRoot.identity.displayName, ...(photo ? { photo } : {}),

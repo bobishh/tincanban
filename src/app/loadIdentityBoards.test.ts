@@ -134,3 +134,37 @@ it("Given sign-in added only a member profile to the empty starter, when a saved
     expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
   } finally { Automerge.free(empty); Automerge.free(saved) }
 })
+
+it("Given the catalog knows an owner board and its Rusty copy is unavailable, when an approved peer supplies its history, then complete board loading through that peer", async () => {
+  const state = app()
+  state.availableWorkspaces.value = []
+  f.workspacePull.mockRejectedValueOnce(new Error("Rusty board unavailable"))
+  state.readWorkspaceDoc.mockImplementation(async id => {
+    if (!state.availableWorkspaces.value.some(workspace => workspace.id === id)) throw new Error("Board not retained")
+    return { id, entities: { board: { id: `board-${id}`, kind: "board" } } }
+  })
+  const recover = vi.fn(async (ids: string[]) => {
+    expect(ids).toEqual(["job-search"])
+    state.availableWorkspaces.value = [{ id: "job-search" }]
+  })
+  await loadIdentityBoards(state as never, "/", recover)
+  expect(recover).toHaveBeenCalledOnce()
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+})
+
+it("Given one saved board loads and another peer stays offline, when recovery remains pending, then select the loaded board and retain the retry for the missing board", async () => {
+  const state = app()
+  state.availableWorkspaces.value = [{ id: "job-search" }]
+  f.workspaceConfigs.mockResolvedValue([])
+  f.roots.mockResolvedValue({ identity: { personId: "bo" }, workspaces: {
+    "job-search": { workspaceId: "job-search", forgotten: false }, missing: { workspaceId: "missing", forgotten: false },
+  } })
+  state.readWorkspaceDoc.mockImplementation(async id => {
+    if (id === "missing") throw new Error("Peer offline")
+    return { id, entities: { board: { id: `board-${id}`, kind: "board" } } }
+  })
+  await expect(loadIdentityBoards(state as never, "/", async () => {})).rejects.toThrow(/waiting for an available peer/)
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+})

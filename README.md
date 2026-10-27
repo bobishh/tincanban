@@ -51,8 +51,12 @@ and behavior tests. See [architecture guidance](AGENTS.md).
 
 Sign in saves the approved app device independently of board loading. The app then
 loads the approved Identity catalog and existing board copies from its configured
-Rusty services. Another stored copy must exist; Identity alone does not contain
-board history or attachments. If loading is interrupted, the app stays signed in;
+Rusty services. The private catalog also discovers open devices of the same
+Identity. If a board has no available Rusty copy, an approved device can receive
+its signed history directly from an open owner device. This does not require
+connecting that board to Rusty. Catalog discovery still needs an available
+Identity catalog or a previously received peer address. Another copy must exist;
+Identity alone does not contain board history or attachments. If loading is interrupted, the app stays signed in;
 select **Retry loading boards**. Installed catalog access resumes after reload
 without another sign-in. If Identity could not deliver catalog access, retry asks
 Identity for a fresh catalog approval; the saved device approval remains valid.
