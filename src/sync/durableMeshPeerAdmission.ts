@@ -30,7 +30,7 @@ function assertPeerAdmissionContext(workspaceId: string, context: PeerAdmissionC
 }
 
 async function verifyPeerBundle(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle, previous: Awaited<ReturnType<PeerStore["getPeer"]>>,
-  trace: PeerAdmissionTrace): Promise<{ bundle: WorkspaceMemberBundle; verified: Awaited<ReturnType<typeof verifyWorkspaceMemberBundle>> }> {
+  trace: PeerAdmissionTrace, allowStaleRoute = false): Promise<{ bundle: WorkspaceMemberBundle; verified: Awaited<ReturnType<typeof verifyWorkspaceMemberBundle>> }> {
   const selected = await trace("peer.grant.plan", {}, () => meshRustRuntime().state.planMemberGrant({
     kind: "prefer", previous: previous?.advertisement ?? null, incoming: raw,
   }))
@@ -41,15 +41,14 @@ async function verifyPeerBundle(credential: WorkspaceMeshCredential, raw: Worksp
     ownerPublicKey: credential.ownerPublicKey,
     ownerCertificates: credential.ownerCertificates as DeviceCertificate[],
     ownerHistory: ownerAuthorities(credential).slice(1),
+    allowStaleRoute,
   }))
   return { bundle, verified }
 }
 
-async function persistPeerLocalGrant(local: { grantId?: string; grant?: unknown; credential?: unknown },
+async function persistPeerLocalCredential(local: { credential?: unknown },
   context: PeerAdmissionContext, trace: PeerAdmissionTrace): Promise<void> {
-  if (!local.grantId || !local.grant || !local.credential) return
-  await context.authorityContext.write(() => trace("peer.local-grant.persist", {},
-    () => defaultProofStore.putGrant(local.grantId!, local.grant as WorkspaceGrant)))
+  if (!local.credential) return
   await context.authorityContext.write(() => trace("peer.local-credential.persist", {},
     () => context.store.putWorkspaceCredential(local.credential as WorkspaceMeshCredential)))
 }
@@ -59,6 +58,7 @@ export async function persistVerifiedPeerBundle(input: {
   credential: WorkspaceMeshCredential
   raw: WorkspaceMemberBundle
   batch?: { index: number; total: number }
+  allowStaleRoute?: boolean
   context: PeerAdmissionContext
 }): Promise<void> {
   let { credential, raw } = input
@@ -70,7 +70,7 @@ export async function persistVerifiedPeerBundle(input: {
   const persist = <T>(operation: () => Promise<T>) => context.authorityContext.write(operation)
   credential = await trace("peer.credential.read", {}, () => context.store.getWorkspaceCredential(credential.workspaceId)) ?? credential
   const previous = await trace("peer.previous.read", {}, () => context.store.getPeer(credential.workspaceId, raw.advertisement.payload.deviceId))
-  const planned = await verifyPeerBundle(credential, raw, previous, trace)
+  const planned = await verifyPeerBundle(credential, raw, previous, trace, input.allowStaleRoute)
   raw = planned.bundle
   const { verified } = planned
   const ownerCertificates = await trace("peer.certificates.merge", {}, () => [...new Map([
@@ -88,12 +88,19 @@ export async function persistVerifiedPeerBundle(input: {
   if (await trace("peer.grant-revocation.check", {}, () => isGrantRevoked(credential, payload.personId, raw.grant as WorkspaceGrant | undefined))) {
     throw new Error("Workspace member is revoked")
   }
+  if (raw.grant) {
+    const grant = raw.grant as WorkspaceGrant
+    const saved = await defaultProofStore.getGrant(grant.payload.grantId)
+    if (canonicalizeJson(saved) !== canonicalizeJson(grant)) {
+      await persist(() => trace("peer.grant.persist", {}, () => defaultProofStore.putGrant(grant.payload.grantId, grant)))
+    }
+  }
   const profile = await trace("peer.profile.read", {}, () => context.getProfile())
   const local = await trace("peer.local-grant.plan", {}, () => meshRustRuntime().state.planMemberGrant({
     kind: "persistLocal", credential, localPersonId: profile.identity.personId, grant: raw.grant ?? null,
     ownerCertificates, updatedAt: new Date().toISOString(),
   }))
-  await persistPeerLocalGrant(local, context, trace)
+  await persistPeerLocalCredential(local, context, trace)
   const record = await trace("peer.record.build", {}, () => ({
     workspaceId: route.scopeId, personId: route.personId, deviceId: route.deviceId, instanceId: route.instanceId,
     endpoint: route.endpoint, transportSecret: credential.transportSecret, role: verified.role, lastSeen: route.issuedAt,

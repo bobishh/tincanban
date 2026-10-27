@@ -65,7 +65,7 @@ export function lazyIdentityPeerRecovery(context: () => Context, initialize: () 
   const unsubscribe = subscribeIdentityDevicePreferences(() => { if (context().state.isEnabled.value) void start() })
   return {
     start,
-    recover: async (ids: string[]) => { if (!disposed) await (await load())?.recover(ids) },
+    recover: async (ids: string[], options?: { routesOnly?: boolean }) => { if (!disposed) await (await load())?.recover(ids, options) },
     close: async (permanent = false) => {
       if (permanent) { disposed = true; unsubscribe() }
       await (recovery ?? await loading)?.close()

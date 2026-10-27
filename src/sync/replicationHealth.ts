@@ -1,5 +1,5 @@
 import type { BlindReplicaConfig } from "./blindReplication"
-export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "paused" | "error"; lastSyncedAt?: number; error?: string; errorKind?: "unavailable" | "access" | "response" }
+export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "paused" | "error" | "access-pending"; lastSyncedAt?: number; error?: string; errorKind?: "unavailable" | "access" | "response" }
 export type ConnectionPresence = "connected" | "reconnecting" | "offline" | "empty"
 const replicaConfirmationLifetime = 45_000
 export const replicaKey = (config: Pick<BlindReplicaConfig, "origin" | "scopeId">) => `${config.origin}/${config.scopeId}`
@@ -8,6 +8,7 @@ export const syncTime = (timestamp: number) => new Date(timestamp).toLocaleTimeS
 export function replicaStatus(config: Pick<BlindReplicaConfig, "removalPending">, health: ReplicaHealth | undefined, now: number): string {
   if (config.removalPending) return "Removal pending"
   if (!health) return "Not checked"
+  if (health.phase === "access-pending") return "Waiting for access"
   if (health.phase === "syncing") return "Syncing"
   if (health.phase === "catching-up") return "Catching up"
   if (health.phase === "paused") return "Sync paused"

@@ -25,6 +25,19 @@ beforeEach(() => {
   mocks.resume.mockResolvedValue({ ...config, minimumWriterVersion: 2 })
 })
 
+test("Given retained legacy participant access, when storage resolves, then wait for owner reissue without constructing a failing client or discarding settings", async () => {
+  const { resolvePrivateReplica } = await import("./privateReplicaFactory")
+  const legacy = { ...config, boardAccess: { authorization: { payload: { version: 1 } } } } as BlindReplicaConfig
+  const session = { owner: "editor", guard: vi.fn(), configs: ref([legacy]), cache: new Map(), reload: vi.fn(async () => {}) }
+  const app = { getCurrentProfile: () => ({ identity: { personId: "editor" } }) }
+  await expect(resolvePrivateReplica(app as never, legacy, session as never)).rejects.toMatchObject({ code: "participant_storage_access_pending" })
+  expect(mocks.create).not.toHaveBeenCalled()
+  expect(session.configs.value).toEqual([legacy])
+  const upgraded = { ...legacy, boardAccess: { authorization: { payload: { version: 2 } } } } as BlindReplicaConfig
+  await expect(resolvePrivateReplica(app as never, upgraded, session as never)).resolves.toBeDefined()
+  expect(mocks.create).toHaveBeenCalledOnce()
+})
+
 test("Given no durable writer transition, when a legacy replica resolves and syncs, then maintenance is queued after ordinary sync instead of awaited", async () => {
   const { resolvePrivateReplica } = await import("./privateReplicaFactory")
   const sync = vi.fn(async () => true)

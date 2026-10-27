@@ -1,4 +1,5 @@
 import { isIdentityPeerRecoveryComponent } from "./identityPeerRecoveryCatalog"
+import { isIdentityWorkspaceRouteRecoveryComponent } from "./identityWorkspaceRouteRecovery"
 import { z } from "zod"
 import { canonicalizeJson } from "../domain/identity"
 import { readLocal, type LocalStatePlan } from "../localDb"
@@ -39,7 +40,8 @@ export function readIdentityDeviceExtensions(manifest: IdentityDeviceState): Ext
     } else entries.push({ name, component: validateOptionalIdentityComponent(name, component) })
   }
   return normalize(manifest.personId, { personId: manifest.personId, extensions: entries })
-    .filter(entry => !isIdentityPeerRecoveryComponent(entry.name, entry.component))
+    .filter(entry => !isIdentityPeerRecoveryComponent(entry.name, entry.component) &&
+      !isIdentityWorkspaceRouteRecoveryComponent(entry.name, entry.component))
 }
 
 function storedExtensions(personId: string, raw: string | null): Extension[] {

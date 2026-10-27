@@ -11,7 +11,7 @@ import { createWorkspaceDeparture, type WorkspaceDeparture, createWorkspaceDevic
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { defaultStorage, isWorkspaceAuthorityMutation, type WorkspaceAuthorityMutationContext } from "../storage"
 import { deviceRevocations, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, isDeviceRevoked, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
-import { DurableMeshCredentials } from "./durableMeshCredentials"
+import { DurableMeshCredentials, type InvitationInstallOptions } from "./durableMeshCredentials"
 import { workspaceSet } from "./workspaceSet"
 import { meshTrace } from "./meshTrace"
 import { assertKeeperGrantGeneration, emptyRevocationGeneration, reconcilePriorPersonRevocation } from "./revocationGeneration"
@@ -83,12 +83,12 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     return this.authorityClassifications.classifyStored(workspaceId, this.store, this.options.workspaceStore,
       () => this.trace("workspace.reclassify.reused", { workspaceId }))
   }
-  protected async mergePeerBundles(credential: WorkspaceMeshCredential, bundles: WorkspaceMemberBundle[]) {
+  protected async mergePeerBundles(credential: WorkspaceMeshCredential, bundles: WorkspaceMemberBundle[], options: InvitationInstallOptions = {}) {
     for (const [index, bundle] of bundles.entries()) {
       try {
         await this.traceSlowPhase("peer.bundle", credential.workspaceId,
           { bundleIndex: index, bundleCount: bundles.length },
-          () => this.putVerifiedBundle(credential, bundle, { index, total: bundles.length }))
+          () => this.putVerifiedBundle(credential, bundle, { index, total: bundles.length }, options))
       } catch {
         // Peer catalogs are gossip. Reject one invalid member without letting it
         // tear down an authenticated session between other valid members.
@@ -96,16 +96,15 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     }
   }
   protected async putVerifiedBundle(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle,
-    batch?: { index: number; total: number }) {
+    batch?: { index: number; total: number }, options: InvitationInstallOptions = {}) {
     return defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId,
-      context => this.putVerifiedBundleLocked(credential, raw, batch, context))
+      context => this.putVerifiedBundleLocked(credential, raw, batch, context, options))
   }
   private async putVerifiedBundleLocked(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle,
-    batch: { index: number; total: number } | undefined, authorityContext: WorkspaceAuthorityMutationContext) {
-    return persistVerifiedPeerBundle({ credential, raw, batch, context: {
-      store: this.store,
-      getProfile: () => this.options.getProfile(),
-      authorityContext,
+    batch: { index: number; total: number } | undefined, authorityContext: WorkspaceAuthorityMutationContext,
+    options: InvitationInstallOptions = {}) {
+    return persistVerifiedPeerBundle({ credential, raw, batch, allowStaleRoute: options.mode === "identity-recovery", context: {
+      store: this.store, getProfile: () => this.options.getProfile(), authorityContext,
       trace: (phase, detail, operation) => this.traceSlowPhase(phase, credential.workspaceId, detail, operation),
     } })
   }

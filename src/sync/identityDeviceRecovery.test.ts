@@ -1,5 +1,6 @@
+import "fake-indexeddb/auto"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity } from "./identityAuthority.testSupport"
-import { beforeEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { createIdentityRecovery, resetIdentityStorageForTest } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
@@ -10,8 +11,10 @@ import { getReplicaConfigurations } from "./privateReplicaRepository"
 import { createIdentityDeviceRecovery, restoreIdentityDeviceRecovery } from "./identityDeviceRecovery"
 import { identityDeviceActivationKey } from "./identityDeviceActivationState"
 import { recoverPendingIdentityDeviceActivation } from "./identityDeviceActivationLoader"
+import { peerStore } from "./peerStore"
 
-beforeEach(() => resetIdentityStorageForTest())
+beforeEach(async () => { resetIdentityStorageForTest(); await peerStore.clear() })
+afterEach(async () => { await peerStore.clear() })
 
 async function source() {
   const owner = await bootstrapIdentity("Backup owner")

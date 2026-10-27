@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createRecoverableIdentity } from "@meta-uber/mesh-identity"
 import { createWorkspaceGrant, createWorkspaceRevocation, createWorkspaceDeparture } from "./meshRecords"
-import { readWorkspaceParticipants } from "./workspaceParticipants"
+import { readWorkspaceParticipantGrant, readWorkspaceParticipants } from "./workspaceParticipants"
 import type * as AuthorizationModule from "./changeAuthorization"
 import type { WorkspaceAuthorityRecord } from "./peerStore"
 import type { WorkspaceGrant } from "../domain/model"
@@ -56,4 +56,24 @@ test("Given a member left and later received a newer access generation, when rea
   expect((await readWorkspaceParticipants("board")).map(person => person.personId)).not.toContain(editor.identity.personId)
   stored.grants.push(await createWorkspaceGrant(owner, "board", editor.identity.personId, "visitor", 2))
   expect(await readWorkspaceParticipants("board")).toContainEqual({ personId: editor.identity.personId, role: "visitor" })
+})
+
+test("Given an admitted peer carries a grant missing from local proof storage, when resolving access, then verify and use it as candidate evidence", async () => {
+  const { owner, editor } = await fixture()
+  const candidate = await createWorkspaceGrant(owner, "board", editor.identity.personId, "visitor", 2)
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId, candidate)).toEqual(candidate)
+})
+
+test("Given a peer grant is older than the latest saved grant, when resolving access, then use the latest verified epoch", async () => {
+  const { owner, editor } = await fixture()
+  const latest = await createWorkspaceGrant(owner, "board", editor.identity.personId, "visitor", 2)
+  stored.grants.push(latest)
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId, stored.grants[0])).toEqual(latest)
+})
+
+test("Given the candidate membership grant is revoked, when resolving access, then return no active grant", async () => {
+  const { owner, editor } = await fixture()
+  const candidate = stored.grants.find(grant => grant.payload.personId === editor.identity.personId)!
+  stored.authority!.catalog = { revocations: [await createWorkspaceRevocation(owner, "board", editor.identity.personId, 2, ["history-head"])] }
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId, candidate)).toBeUndefined()
 })

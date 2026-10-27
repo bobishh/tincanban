@@ -1,4 +1,3 @@
-import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked } from "./durableMeshBase"
 import { type LocalProfile} from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { isMeshNetworkFailure, meshNetworkConnection as networkConnection, meshNetworkIO as networkIO } from "@meta-uber/mesh-transport"
@@ -12,11 +11,12 @@ import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshR
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import type { SyncConnection, SyncNode } from "./transport"
-import { liveAutomergeWorkspaceSync, type LiveWorkspaceSync, type PeerHistoryBaselineDescriptor} from "./workspaceSet"
+import { type LiveWorkspaceSync, type PeerHistoryBaselineDescriptor} from "./workspaceSet"
 import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMISSION_CAPABILITY, uniqueCertificates, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, revocations, isGrantRevoked,
+  departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked,
   type MeshPeerView, type MeshSuccessionView, type SessionEntry } from "./durableMeshBase"
 import { DurableMeshHandshake } from "./durableMeshHandshake"
-import { participantWorkspaceStore } from "./participantWorkspaceStore"
+import { participantWorkspaceSession } from "./participantWorkspaceStore"
 import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
 import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
@@ -25,6 +25,7 @@ import { MeshDialRouteSelector, routeLeaseFields } from "./durableMeshDialRoutes
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
+  private readonly rustyAccessMaintenance = new WeakMap<SyncConnection, ReturnType<typeof participantWorkspaceSession>["maintenance"]>()
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
   private readonly dirtyWorkspacePublishes = new Set<string>()
   private authorityReadFailure = 0
@@ -273,16 +274,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     create: input => {
       const credential = input.credential as WorkspaceMeshCredential
       const stage = `Workspace ${input.workspaceId.slice(0, 8)} from ${input.deviceId.slice(0, 8)}`
-      const { store, guard: ensurePeerHistoryCurrent } = participantWorkspaceStore(this.options.workspaceStore, { workspaceId: input.workspaceId, deviceId: input.deviceId,
+      const created = participantWorkspaceSession(this.options.workspaceStore, { workspaceId: input.workspaceId, deviceId: input.deviceId,
         remotePersonId: input.remotePersonId, transportSecret: credential.transportSecret, profile: input.profile, store: this.store,
         profileProvider: () => this.options.getProfile(), assertSession: () => {
           if (this.stopped || this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection !== input.connection) {
             throw new Error("Direct peer session is no longer current")
           }
-        } }, this.identityPreferenceConnections.has(input.connection))
-      const session = liveAutomergeWorkspaceSync(input.connection, credential.transportSecret,
-        store,
-        input.workspaceId, input.profile.device.deviceId, input.deviceId, error => {
+        } }, this.identityPreferenceConnections.has(input.connection), input.connection, error => {
           if (error) {
             this.trace("document.rejected", { connectionId: input.connectionId, workspaceId: input.workspaceId,
               peerId: input.deviceId, instanceId: input.instanceId, reason: error.message }, "warn", error)
@@ -292,8 +290,6 @@ export class DurableMeshSessions extends DurableMeshHandshake {
             this.options.onDiagnostic?.("")
           }
         }, {
-          remoteDeviceId: input.deviceId,
-          ensureCurrent: ensurePeerHistoryCurrent,
           ownerWorkspaceOfferFrame: input.ownerWorkspaceOfferFrame,
           onOwnerWorkspaceOffer: input.ownerWorkspaceOfferFrame && input.remotePersonId === input.profile.identity.personId
             ? bytes => this.receiveOwnerWorkspaceOffer(bytes, input.remotePersonId,
@@ -304,7 +300,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
             ? (stream, frame) => this.respondToBlobRequest(input.workspaceId, input.deviceId, credential.transportSecret, stream, frame)
             : undefined,
         })
-      return { session }
+      this.rustyAccessMaintenance.set(input.connection, created.maintenance)
+      return created
     },
     runtime: () => this.runtime(),
     key: (workspaceId, deviceId, instanceId) => this.peerKey(workspaceId, deviceId, instanceId),
@@ -324,7 +321,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       await this.notify()
     },
     notify: () => this.notify(),
-    publishRecovered: (key, entry) => this.publishRecoveredSession(key, entry as SessionEntry),
+    publishRecovered: (key, entry) => this.stopped || this.sessions.get(key) !== entry
+      ? Promise.resolve() : this.publishCurrentSession(key, entry as SessionEntry),
     stableSession: key => this.clearRouteReconnect(key),
     protocolFailure: (stage, error) => this.reportProtocolFailure(stage, error),
     networkFailure: (key, error) => { this.recordRouteFailure(key, error) },
@@ -336,9 +334,14 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     remotePersonId = "", ownerWorkspaceSupported = false,
     ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined = undefined,
     blobTransferSupported = false, remoteEndpoint = "") {
-    return this.browserSessions.install({ workspaceId, deviceId, instanceId, remoteIssuedAt, remoteRouteSequence,
-      direction, connection, heartbeatSupported, connectionId, ownershipReceiptSupported,
-      remotePersonId, ownerWorkspaceSupported, ownerWorkspaceOfferFrame, blobTransferSupported, remoteEndpoint })
+    try {
+      return await this.browserSessions.install({ workspaceId, deviceId, instanceId, remoteIssuedAt, remoteRouteSequence,
+        direction, connection, heartbeatSupported, connectionId, ownershipReceiptSupported,
+        remotePersonId, ownerWorkspaceSupported, ownerWorkspaceOfferFrame, blobTransferSupported, remoteEndpoint })
+    } finally {
+      const current = this.sessions.get(this.peerKey(workspaceId, deviceId, instanceId))
+      if (current?.connection === connection) this.rustyAccessMaintenance.get(connection)?.start()
+    }
   }
 
   private async respondToBlobRequest(workspaceId: string, deviceId: string, secret: string,
@@ -396,14 +399,13 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         store: this.store, revokedWorkspaceIds: (credentials, profile) => this.revokedWorkspaceIds(credentials, profile) }) }
   }
 
-  protected async publishRecoveredSession(key: string, entry: SessionEntry) {
-    if (this.stopped || this.sessions.get(key) !== entry) return
+  protected async publishCurrentSession(key: string, entry: SessionEntry, failureCause = "recovery publish failed") {
     try {
       await entry.session.publish()
     } catch (error) {
       const networkFailure = this.recordRouteFailure(key, error)
       if (!networkFailure) this.report(`Publish ${entry.deviceId.slice(0, 6)}`, error)
-      await entry.evict("recovery publish failed")
+      await entry.evict(failureCause)
     }
   }
 
@@ -435,14 +437,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         const started = performance.now()
         this.trace("workspace.publish.started", { workspaceId: workspaceId, sessions: sessions.length })
         try {
-          await Promise.allSettled(sessions.map(async ([key, entry]) => {
-            try { await entry.session.publish() }
-            catch (error) {
-              const networkFailure = this.recordRouteFailure(key, error)
-              if (!networkFailure) this.report(`Publish ${entry.deviceId.slice(0, 6)}`, error)
-              await entry.evict("publish failed")
-            }
-          }))
+          await Promise.allSettled(sessions.map(([key, entry]) => this.publishCurrentSession(key, entry, "publish failed")))
           try { await this.broadcastWorkspaceGossip(workspaceId) }
           catch (error) {
             this.trace("gossip.broadcast.failed", {

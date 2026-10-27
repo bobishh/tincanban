@@ -10,6 +10,7 @@ import { validateIdentityRecoveryEvidence } from "./identityRecoveryState"
 import { decodeIdentityDeviceState, IdentityDeviceStateUpgradeRequiredError } from "./identityDeviceStateCodec"
 import { deviceCertificateSchema, deviceWorkspaceTransferSchema, personalRootTransferSchema } from "./identityDeviceTransferSchemas"
 import { readIdentityDeviceExtensions } from "./identityDeviceExtensions"
+import { readIdentityWorkspaceRouteRecoveryComponent } from "./identityWorkspaceRouteRecovery"
 import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { canonicalizeJson } from "../domain/identity"
 import type { IdentityProfileState } from "../domain/identityProfileState"
@@ -54,6 +55,11 @@ export async function readIdentityDeviceTransfer(value: unknown, personId: strin
   readIdentityDeviceExtensions(manifest)
   const catalog = catalogSchema.parse(manifest.components.identityCatalog.value)
   const references = referenceSchema.parse(manifest.components.workspaceReferences.value)
+  const routeRecovery = await readIdentityWorkspaceRouteRecoveryComponent(manifest)
+  if (routeRecovery.envelopes.some(envelope => !references.workspaces.some(reference =>
+    reference.workspaceId === envelope.workspaceId && !reference.forgotten))) {
+    throw new Error("Workspace route recovery is missing its workspace reference")
+  }
   const profiles = profileSchema.parse(manifest.components.profileObservations.value)
   const capabilities = capabilitySchema.parse(manifest.components.ownerCapabilities.value)
   const authorityValue = manifest.components.identityAuthority.value.authorityView
@@ -88,7 +94,7 @@ export async function readIdentityDeviceTransfer(value: unknown, personId: strin
     const record = await verifyPrivateProfileObservation(observation.record, personalRoot.identity)
     observations.push({ workspaceId: observation.workspaceId, record })
   }
-  return { manifest, personalRoot, certificates: catalog.certificates, enrollment: references.enrollment,
+  return { manifest, personalRoot, certificates: catalog.certificates, enrollment: references.enrollment, routeRecovery,
     replicas, capabilities: verifiedCapabilities, recoveryEvidence, observations, authorityView }
 }
 

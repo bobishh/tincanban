@@ -1,4 +1,4 @@
-import { isRustyRequestFailure, ReplicaProgressConflictError } from "./replicationErrors"
+import { isRustyRequestFailure, ReplicaProgressConflictError, ParticipantStorageAccessPendingError } from "./replicationErrors"
 import type { Ref } from "vue"
 import type { PrivateReplicaConfig } from "./blindReplication"
 import { replicaKey, type ReplicaHealth } from "./replicationHealth"
@@ -33,15 +33,24 @@ export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses
       : { phase: "synced", lastSyncedAt: Date.now() } }
   } catch (cause) {
     if (!isCurrent()) return
-    if (isRustyRequestFailure(cause)) {
-      const failure = connectionFailure(cause)
-      statuses.value = { ...statuses.value, [key]: { phase: "error", lastSyncedAt: previous?.lastSyncedAt, ...failure } }
-      return failure.error
-    }
-    statuses.value = { ...statuses.value, [key]: { phase: "paused", lastSyncedAt: previous?.lastSyncedAt } }
-    if (deviceIssues) deviceIssues.value = { ...deviceIssues.value,
-      [key]: deviceSyncIssue(config) }
+    return recordReplicaFailure(config, statuses, cause, previous?.lastSyncedAt, deviceIssues)
   }
+}
+function recordReplicaFailure(config: PrivateReplicaConfig, statuses: Ref<Record<string, ReplicaHealth>>,
+  cause: unknown, lastSyncedAt: number | undefined, deviceIssues?: Ref<Record<string, string>>): string | undefined {
+  const key = replicaKey(config)
+  if (cause instanceof ParticipantStorageAccessPendingError) {
+    statuses.value = { ...statuses.value, [key]: { phase: "access-pending" } }
+    return
+  }
+  if (isRustyRequestFailure(cause)) {
+    const failure = connectionFailure(cause)
+    statuses.value = { ...statuses.value, [key]: { phase: "error", lastSyncedAt, ...failure } }
+    return failure.error
+  }
+  statuses.value = { ...statuses.value, [key]: { phase: "paused", lastSyncedAt } }
+  if (deviceIssues) deviceIssues.value = { ...deviceIssues.value,
+    [key]: deviceSyncIssue(config) }
 }
 
 async function retryReplicaSync(operation: () => Promise<boolean | void>): Promise<boolean | void> {

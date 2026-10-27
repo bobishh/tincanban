@@ -13,3 +13,13 @@ export async function ensureJobSearchWorkspace(page: Page): Promise<void> {
   if (await page.getByRole("button", { name: /Add lead to/ }).count()) return
   await createJobSearchWorkspace(page)
 }
+
+export async function addJobSearchLead(page: Page, company: string): Promise<void> {
+  await page.getByRole("region", { name: "Lead", exact: true })
+    .getByRole("button", { name: "Add lead to Lead", exact: true }).click()
+  const create = page.getByRole("dialog", { name: "Add item" })
+  await create.getByLabel("Company *").fill(company)
+  await create.getByLabel("Role *").fill("Engineer")
+  await create.getByRole("button", { name: "Create item", exact: true }).click()
+  await page.getByRole("button", { name: "Close detail", exact: true }).click()
+}

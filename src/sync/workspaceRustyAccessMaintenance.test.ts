@@ -1,0 +1,67 @@
+import { afterEach, expect, test, vi } from "vitest"
+import { createWorkspaceRustyAccessMaintenance } from "./workspaceRustyAccessMaintenance"
+
+afterEach(() => vi.useRealTimers())
+
+test("Given one service is ready and another unavailable, when preparation completes partially, then publish ready access and retain retry", async () => {
+  vi.useFakeTimers()
+  const prepare = vi.fn().mockResolvedValueOnce({ changed: true, failures: [new Error("Second service unavailable")] })
+    .mockResolvedValue({ changed: false, failures: [] })
+  const publish = vi.fn(async () => {}), failed = vi.fn()
+  const maintenance = createWorkspaceRustyAccessMaintenance({ prepare, publish, failed })
+  maintenance.start()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(publish).toHaveBeenCalledOnce()
+  expect(failed).toHaveBeenCalledOnce()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(prepare).toHaveBeenCalledTimes(2)
+  maintenance.stop()
+})
+
+test("Given unavailable optional storage, when access maintenance retries, then keep failures outside the peer session and publish after recovery", async () => {
+  vi.useFakeTimers()
+  const failure = new Error("Storage unavailable")
+  const prepare = vi.fn<() => Promise<{ changed: boolean; failures: unknown[] }>>().mockRejectedValueOnce(failure).mockResolvedValueOnce({ changed: true, failures: [] }).mockResolvedValue({ changed: false, failures: [] })
+  const publish = vi.fn(async () => {}), failed = vi.fn()
+  const maintenance = createWorkspaceRustyAccessMaintenance({ prepare, publish, failed })
+  maintenance.start()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(failed).toHaveBeenCalledWith(failure)
+  expect(publish).not.toHaveBeenCalled()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(prepare).toHaveBeenCalledTimes(2)
+  expect(publish).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(15_000)
+  expect(prepare).toHaveBeenCalledTimes(3)
+  expect(publish).toHaveBeenCalledTimes(1)
+  maintenance.stop()
+})
+
+test("Given access was prepared but publication failed, when retry runs, then retain delivery intent even if preparation is unchanged", async () => {
+  vi.useFakeTimers()
+  const prepare = vi.fn<() => Promise<{ changed: boolean; failures: unknown[] }>>().mockResolvedValueOnce({ changed: true, failures: [] }).mockResolvedValue({ changed: false, failures: [] })
+  const publish = vi.fn<() => Promise<void>>().mockRejectedValueOnce(new Error("Stream busy")).mockResolvedValue(undefined)
+  const maintenance = createWorkspaceRustyAccessMaintenance({ prepare, publish, failed: vi.fn() })
+  maintenance.start()
+  await vi.advanceTimersByTimeAsync(1000)
+  expect(publish).toHaveBeenCalledTimes(2)
+  maintenance.stop()
+})
+
+test("Given preparation is in flight, when its session closes, then never publish or schedule more work", async () => {
+  vi.useFakeTimers()
+  let finish!: (result: { changed: boolean; failures: unknown[] }) => void
+  const prepare = vi.fn(() => new Promise<{ changed: boolean; failures: unknown[] }>(resolve => { finish = resolve }))
+  const publish = vi.fn(async () => {}), failed = vi.fn()
+  const maintenance = createWorkspaceRustyAccessMaintenance({ prepare, publish, failed })
+  maintenance.start()
+  maintenance.start()
+  expect(prepare).toHaveBeenCalledTimes(1)
+  maintenance.stop()
+  finish({ changed: true, failures: [] })
+  await vi.advanceTimersByTimeAsync(120_000)
+  expect(publish).not.toHaveBeenCalled()
+  expect(prepare).toHaveBeenCalledTimes(1)
+  expect(failed).not.toHaveBeenCalled()
+  expect(vi.getTimerCount()).toBe(0)
+})

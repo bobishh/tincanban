@@ -20,7 +20,7 @@ const servers = [
   },
 ]
 export default defineConfig({
-  testDir: "./e2e", testMatch: ["rusty-connection.spec.ts", "rusty-mobile.spec.ts", "rusty-credential-conflict.spec.ts", "shared-board-rusty-access.spec.ts"], workers: 1, retries: 0,
+  testDir: "./e2e", testMatch: ["rusty-connection.spec.ts", "rusty-mobile.spec.ts", "rusty-credential-conflict.spec.ts", "shared-board-rusty-access.spec.ts", "identity-rusty-owner-restore.spec.ts"], workers: 1, retries: 0,
   use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
   webServer: servers,
 })

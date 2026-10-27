@@ -7,6 +7,18 @@ import type { BlindReplicaConfig } from "./blindReplication"
 
 const config = { origin: "https://rusty.example", scopeId: "scope", workspaceId: "board" } as BlindReplicaConfig
 
+test("Given legacy participant access, when owner reissue is pending, then stop claiming storage sync and resume after fresh access arrives", async () => {
+  const { ParticipantStorageAccessPendingError } = await import("./replicationErrors")
+  const statuses = ref<Record<string, ReplicaHealth>>({ [replicaKey(config)]: { phase: "synced", lastSyncedAt: Date.now() } })
+  const issues = ref<Record<string, string>>({ [replicaKey(config)]: "Old retry error" })
+  await recordReplicaHealth(config, statuses, async () => { throw new ParticipantStorageAccessPendingError() }, () => true, issues)
+  expect(statuses.value[replicaKey(config)]).toEqual({ phase: "access-pending" })
+  expect(replicaStatus(config, statuses.value[replicaKey(config)], Date.now())).toBe("Waiting for access")
+  expect(issues.value).toEqual({})
+  await recordReplicaHealth(config, statuses, async () => true, () => true, issues)
+  expect(replicaStatus(config, statuses.value[replicaKey(config)], Date.now())).toBe("Synced")
+})
+
 test("Given a local persistence error, when sync stops, then report a device problem without blaming Rusty or exposing its exception", async () => {
   const statuses = ref<Record<string, ReplicaHealth>>({})
   const issues = ref<Record<string, string>>({})

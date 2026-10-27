@@ -12,9 +12,10 @@ import { hasEntityKind, type WorkspaceDocumentV2 } from "../domain/model"
 import { parseBoardRouteUrl, resolveEligibleBoardRoute, type EligibleBoardRoute } from "./boardRoute"
 
 type App = ReturnType<typeof useTincanban>
+export type IdentityWorkspaceRecovery = (workspaceIds: string[], options?: { routesOnly?: boolean }) => Promise<void>
 
 /** Load boards for an already approved Identity; failed delivery remains independently retryable. */
-export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: (workspaceIds: string[]) => Promise<void>): Promise<void> {
+export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
   const initialWorkspaceId = app.activeWorkspace.id
   const profile = app.getCurrentProfile()
   if (!profile) throw new Error("Signed-in profile is unavailable")
@@ -38,6 +39,8 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
     const root = await defaultStorage.loadPersonalRoot()
     if (!root || root.identity.personId !== profile.identity.personId) throw new Error("Your board catalog is unavailable")
     const ids = new Set(Object.values(root.workspaces).filter(reference => !reference.forgotten).map(reference => reference.workspaceId))
+    await recoverPeers?.([...ids], { routesOnly: true })
+    guard()
     let storageFailure: unknown
     for (const config of await getReplicaConfigurations(profile.identity.personId)) {
       if (!ids.has(config.workspaceId)) continue
@@ -63,7 +66,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
         }
         return absent
       }
-      await recoverPeers(await missing())
+      await recoverPeers([...ids])
       guard()
       waitingForPeers = (await missing()).length > 0
     }

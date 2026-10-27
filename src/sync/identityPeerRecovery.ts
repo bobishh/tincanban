@@ -7,6 +7,8 @@ import { meshIngressBudgetProfile } from "../iroh"
 import { getIdentityReplicaConfigurations } from "./privateReplicaRepository"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { readIdentityPeerRecovery, saveIdentityPeerRecovery, type IdentityPeerRecoverySource } from "./identityPeerRecoveryCatalog"
+import { readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
+import { peerStore } from "./peerStore"
 import { createEnrollmentRequest, readEnrollmentRequest } from "./enrollment"
 import { receiveApprovedIdentityWorkspace, serveApprovedIdentityWorkspace } from "./deviceSyncSamePersonWorkspace"
 import { startPersistentNode } from "./persistentNode"
@@ -103,23 +105,32 @@ export class IdentityPeerRecovery {
     return this.pending
   }
 
-  async recover(workspaceIds: string[]): Promise<void> {
+  async recover(workspaceIds: string[], options: { routesOnly?: boolean } = {}): Promise<void> {
     await this.start()
     if (this.pending) await this.pending
     this.retryAt.clear()
-    this.pending = this.recoverNow(workspaceIds).finally(() => { this.pending = undefined })
+    this.pending = this.recoverNow(workspaceIds, options.routesOnly === true).finally(() => { this.pending = undefined })
     await this.pending
   }
 
-  private async recoverNow(workspaceIds: string[]) {
+  private async recoverNow(workspaceIds: string[], routesOnly = false) {
     const profile = this.profile
     const node = this.node
     if (!profile || !node) return
     const generation = this.generation
     const isCurrent = () => this.current(generation, profile)
     const candidates = await readIdentityPeerRecovery(profile.identity.personId)
+    const routeRecovery = await readIdentityWorkspaceRouteRecovery(profile.identity.personId)
     for (const workspaceId of new Set(workspaceIds)) {
       if (!isCurrent()) return
+      try {
+        await restoreIdentityWorkspaceRoutes({ mesh: this.options.mesh, envelopes: routeRecovery.envelopes,
+          workspaceIds: [workspaceId], profile, readCredential: id => peerStore.getWorkspaceCredential(id) })
+      } catch (error) {
+        meshTrace("identity.workspace-routes.pending", { workspaceId,
+          reason: error instanceof Error ? error.message : String(error) }, "warn")
+      }
+      if (routesOnly) continue
       try { await this.options.store.read(workspaceId); continue }
       catch { /* A catalog reference is not a retained board copy. */ }
       for (const source of candidates.filter(source => source.workspaceId === workspaceId &&

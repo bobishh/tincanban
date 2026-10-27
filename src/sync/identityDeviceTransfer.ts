@@ -1,5 +1,6 @@
 import { exportIdentityPeerRecovery } from "./identityPeerRecoveryCatalog"
 import type { DeviceCertificate, PersonalRootDocumentV1 } from "../domain/model"
+import type { LocalProfile } from "../domain/identity"
 import { canonicalizeJson } from "../domain/identity"
 import { certificateHash } from "@meta-uber/mesh-identity"
 import { chatStore } from "../chat/store"
@@ -18,6 +19,9 @@ import { projectLegacyEnrollmentCatalog } from "./legacyEnrollmentCatalog"
 import { readIdentityStateRevision } from "../identityStateRevision"
 import { projectRedundantDeviceCertificates } from "./identityDeviceTransferCertificateProjection"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
+import { captureIdentityWorkspaceRouteRecovery, exportIdentityWorkspaceRouteRecovery,
+  identityWorkspaceRouteRecoveryComponent } from "./identityWorkspaceRouteRecovery"
+import { peerStore } from "./peerStore"
 export { readIdentityDeviceTransfer, requireEnrollmentTransfer, type DeviceWorkspaceTransfer } from "./identityDeviceTransferReader"
 
 async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ kind: "workspace-profile"; workspaceId: string; record: unknown }[]> {
@@ -37,7 +41,7 @@ async function ownProfileObservations(root: PersonalRootDocumentV1): Promise<{ k
 
 /** Capture the actual declared state sources; storage credentials and policy evidence have separate owners. */
 export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDocumentV1, certificates: DeviceCertificate[],
-  enrollment?: DeviceWorkspaceTransfer): Promise<IdentityDeviceState> {
+  enrollment?: DeviceWorkspaceTransfer, routeProfile?: LocalProfile): Promise<IdentityDeviceState> {
   personalRoot = structuredClone(personalRoot)
   certificates = structuredClone(certificates)
   const authorityView = await requireIdentityAuthorityView(personalRoot.identity.personId)
@@ -54,14 +58,20 @@ export async function createIdentityDeviceTransfer(personalRoot: PersonalRootDoc
   certificates = await canonicalCertificates(certificates)
   personalRoot = await projectLegacyEnrollmentCatalog(personalRoot, certificates)
   const personId = personalRoot.identity.personId
-  const [replicas, capabilities, recovery, profiles, extensions, peerRecovery] = await Promise.all([
+  if (routeProfile && routeProfile.identity.personId !== personId) throw new Error("Workspace routes belong to another Identity")
+  const [replicas, capabilities, recovery, profiles, extensions, peerRecovery, routeRecovery] = await Promise.all([
     exportPrivateReplicaState(personId), new RustyManagementRepository(personId).export(), exportIdentityRecoveryEvidence(personId),
     ownProfileObservations(personalRoot), exportIdentityDeviceExtensions(personId), exportIdentityPeerRecovery(personId),
+    routeProfile ? captureIdentityWorkspaceRouteRecovery(peerStore, Object.values(personalRoot.workspaces)
+      .filter(reference => !reference.forgotten).map(reference => reference.workspaceId), routeProfile)
+      .then(async value => ({ workspaceRouteRecovery: await identityWorkspaceRouteRecoveryComponent(value) })) :
+      exportIdentityWorkspaceRouteRecovery(personId, Object.values(personalRoot.workspaces)
+        .filter(reference => !reference.forgotten).map(reference => reference.workspaceId)),
   ])
   const { workspaces, photo, displayNamePreset, profileState, ...catalog } = personalRoot
   const component = (schema: string, value: Record<string, unknown>) => ({ schema, required: true, value })
   const manifest: IdentityDeviceState = { kind: "identity-device-state", version: 1, personId, components: {
-    ...extensions, ...peerRecovery,
+    ...extensions, ...peerRecovery, ...routeRecovery,
     identityCatalog: component(identityDeviceStateSchemas.identityCatalog, { personId, personalRoot: { ...catalog, workspaces: {} }, certificates }),
     profileObservations: component(identityDeviceStateSchemas.profileObservations, { personId, observations: [
       { kind: "identity-profile", displayName: personalRoot.identity.displayName, ...(photo ? { photo } : {}),

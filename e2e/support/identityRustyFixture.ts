@@ -38,3 +38,20 @@ export async function approveRustyForFixture(page: Page, origin: string): Promis
     await mergeIdentityAuthorityView(authorityView)
   }, origin)
 }
+
+export async function readStoredBoardAccess(page: Page, workspaceId: string) {
+  return page.evaluate(async id => {
+    const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+    const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+    const profile = await bootstrapIdentity()
+    const config = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === id)
+    const access = config?.boardAccess
+    return {
+      personId: profile.identity.personId,
+      scopeId: config?.scopeId ?? null,
+      version: access?.authorization.payload.version ?? null,
+      subjectPersonId: access?.authorization.payload.subjectPersonId ?? null,
+      mode: access?.mode ?? null,
+    }
+  }, workspaceId)
+}

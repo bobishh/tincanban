@@ -1,4 +1,4 @@
-import { canonicalizeJson, type LocalProfile } from "../domain/identity"
+import { canonicalizeJson, sha256Base64Url, type LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { defaultStorage } from "../storage"
 import { defaultProofStore } from "../domain/proofs"
@@ -19,6 +19,8 @@ import { withPrivateReplicaOperation } from "./privateReplicaOperation"
 import { createRustyIdentityProfileScopeFetcher } from "./rustyIdentityTransport"
 import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type BlindAccess } from "./blindClient"
 import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
+import { captureIdentityWorkspaceRouteRecovery } from "./identityWorkspaceRouteRecovery"
+import { peerStore } from "./peerStore"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
 export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void,
@@ -30,6 +32,15 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
   profile = { ...profile, identity: structuredClone(profile.identity), device: structuredClone(profile.device),
     certificate: structuredClone(profile.certificate), privateKeys: { ...profile.privateKeys } }
   const personId = profile.identity.personId
+  const identityRevision = async () => {
+    ensureCurrent()
+    const [revision, root] = await Promise.all([readIdentityStateRevision(), defaultStorage.loadPersonalRoot()])
+    if (root?.identity.personId !== personId) throw new Error("Private identity catalog is unavailable")
+    const routes = await captureIdentityWorkspaceRouteRecovery(peerStore, Object.values(root.workspaces)
+      .filter(reference => !reference.forgotten).map(reference => reference.workspaceId), profile)
+    ensureCurrent()
+    return `${revision}:${await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(routes)))}`
+  }
   const scopeFetch = createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent })
   const transport = {
     inventory: (access: BlindAccess, after: number) => inventoryBlindObjects(access, after, scopeFetch),
@@ -76,7 +87,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     repository: { read: () => getPrivateReplicaProgress(personId, config), commit: async (expected, next) => {
       await persistPrivateReplicaState(personId, config, expected, next, ensureCurrent)
     } },
-    revision: readIdentityStateRevision,
+    revision: identityRevision,
     capture: async () => {
       await guard()
       const cap = await authority()
@@ -88,7 +99,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
       })
       const certificates = [profile.certificate, ...await defaultProofStore.listCertificates()]
         .filter(certificate => certificate.payload.personId === personId)
-      return createIdentityReplicaRecord(context, config, await createIdentityDeviceTransfer(root, certificates), cap.revision)
+      return createIdentityReplicaRecord(context, config, await createIdentityDeviceTransfer(root, certificates, undefined, profile), cap.revision)
     },
     merge: async transfer => {
       await guard()

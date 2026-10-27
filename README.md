@@ -64,6 +64,14 @@ An untouched
 `Untitled` starter does not replace a restored board as the selected board.
 Edited starters remain available and keep their current selection.
 
+Private Identity recovery state also retains signed workspace contacts and the
+workspace transport credential. A restored device checks that evidence against
+workspace authority before reconnecting to participants. A saved address is a
+bootstrap contact, not proof that a device is online. Direct peer delivery does
+not wait for Rusty access registration; unavailable storage retries independently.
+Legacy participant storage settings stay pending until the owner supplies current
+signed access, preserving local edits in the meantime.
+
 When `VITE_PUBLIC_BOARD_ORIGIN` is configured, sign-in discovers that Rusty service
 and includes its exact address and key for approval in Identity. This lets an
 older enrolled Identity profile find an existing catalog while its other devices

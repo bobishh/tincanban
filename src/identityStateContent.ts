@@ -12,6 +12,7 @@ export function tracksIdentityContent(key: string): boolean {
   return ["tincanban.v1.personal_roots", "tincanban.local_profile.v1", "tincanban.v1.proof_store", "tincanban.identity_recovery.v1"].includes(key) ||
     ["tincanban.private-replica-state.v2.", "tincanban.rusty-management.v1.", "tincanban.identity-recovery-evidence.v1.",
       "tincanban.identity-device-extensions.v1.", "tincanban.identity-peer-recovery.v1.",
+      "tincanban.identity-workspace-routes.v1.",
       "tincanban.identity-profile-projections.v1."].some(prefix => key.startsWith(prefix))
 }
 

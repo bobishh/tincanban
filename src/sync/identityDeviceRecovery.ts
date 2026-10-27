@@ -72,7 +72,7 @@ export async function createIdentityDeviceRecovery(security: IdentitySecurity = 
       const beforeProfiles = await profileRevisions(root)
       const certificates = [profile.certificate, ...await defaultProofStore.listCertificates()]
         .filter(certificate => certificate.payload.personId === profile.identity.personId)
-      const manifest = await createIdentityDeviceTransfer(root, certificates)
+      const manifest = await createIdentityDeviceTransfer(root, certificates, undefined, profile)
       const recoveryPlan = await planIdentityRecoveryImport(profile.identity.personId, { personId: profile.identity.personId, envelopes: [envelope] })
       const evidence = validateIdentityRecoveryEvidence(profile.identity.personId, manifest.components.recoveryEvidence.value)
       manifest.components.recoveryEvidence.value = { personId: profile.identity.personId,

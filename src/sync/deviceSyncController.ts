@@ -525,7 +525,7 @@ export class DeviceSyncController {
       canReconnectDevice: computed(() => canReconnectDevice(state)), reconnectDevice: () => reconnectWorkspaceDevice({ state,
         stop: () => this.stopLiveSync(), resetMesh: async () => { await (this.durableMesh ?? await this.durableMeshPromise)?.dispose(); this.durableMesh = undefined; this.durableMeshPromise = undefined },
         identityChanged: this.identityChanged, refreshProfile: () => this.getProfile(), join: () => this.acceptWorkspaceJoin() }),
-      joinFromLocation: (raw: string) => isWorkspacePairingLocation(raw, url => { void this.prepareJoin(url) }), startDurableMesh: () => this.startDurableMesh(), recoverIdentityWorkspaces: (ids: string[]) => this.identityPeerRecovery.recover(ids), stopLiveSync: () => this.stopLiveSync(), addOwnerWorkspace: (id: string) => this.addOwnerWorkspace(id),
+      joinFromLocation: (raw: string) => isWorkspacePairingLocation(raw, url => { void this.prepareJoin(url) }), startDurableMesh: () => this.startDurableMesh(), recoverIdentityWorkspaces: (ids: string[], options?: { routesOnly?: boolean }) => this.identityPeerRecovery.recover(ids, options), stopLiveSync: () => this.stopLiveSync(), addOwnerWorkspace: (id: string) => this.addOwnerWorkspace(id),
       fetchBlob: async (workspaceId: string, descriptor: BlobDescriptor) => (await this.ensureDurableMesh())?.fetchBlob(workspaceId, descriptor),
       ...createPeerHistoryReadActions({ durableMesh: () => this.durableMesh, durableMeshPromise: () => this.durableMeshPromise,
         directPeerSessions: () => new Set([...this.directPeerSessions.values(), ...(this.liveSession ? [this.liveSession] : [])]) }),

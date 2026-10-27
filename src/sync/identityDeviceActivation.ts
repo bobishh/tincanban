@@ -1,4 +1,5 @@
 import { planIdentityPeerRecoveryImport } from "./identityPeerRecoveryCatalog"
+import { planIdentityWorkspaceRouteRecoveryImport } from "./identityWorkspaceRouteRecovery"
 import type { PersonalRootDocumentV1 } from "../domain/model"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
 import { compareAndSwapLocal, readLocal, type LocalStatePlan } from "../localDb"
@@ -50,6 +51,7 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
     planIdentityRecoveryImport(personId, transfer.recoveryEvidence),
     planIdentityDeviceExtensionsImport(transfer.manifest),
     planIdentityPeerRecoveryImport(transfer.manifest),
+    planIdentityWorkspaceRouteRecoveryImport(transfer.manifest),
     planIdentityProfileImport(transfer.personalRoot.identity, transfer.observations),
     planIdentityAuthorityViewMerge(personId, transfer.authorityView),
   ])

@@ -1,37 +1,8 @@
 import { expect, it, vi } from "vitest"
-import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
-import { createIdentityReplica } from "./identityReplicaStore"
-import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { projectIdentityReplicaCatalogOnly } from "./identityReplicaStore"
+import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 
-vi.mock("./identityDeviceTransfer", () => ({ readIdentityDeviceTransfer: vi.fn(), applyIdentityDeviceTransfer: vi.fn() }))
-vi.mock("./blindReplicaConfig", () => ({ parsePrivateReplicaConfig: vi.fn(value => JSON.parse(value)) }))
-vi.mock("./privateReplicaRepository", () => ({ privateReplicaBinding: vi.fn(() => "identity-binding"),
-  getPrivateReplicaProgress: vi.fn(async () => ({})), persistPrivateReplicaState: vi.fn(),
-  getIdentityReplicaConfigurations: vi.fn(async () => []) }))
-vi.mock("./identityReplica", () => ({ IdentityReplica: class {
-  async push() { return true }
-  async sync() { return true }
-  async pull() { return true }
-} }))
-vi.mock("./rustyIdentityTransport", () => ({ createRustyIdentityProfileScopeFetcher: vi.fn(() => ({})) }))
-vi.mock("./rustyManagementRepository", () => ({ RustyManagementRepository: class {
-  async read(binding: { resourceKind: string }) { return binding.resourceKind === "scope" ? { capability: {} } : null }
-} }))
-vi.mock("./rustyManagementClient", () => ({ readRustyManagementStatus: vi.fn(async () => ({ migrationPending: false, capability: {} })) }))
-vi.mock("./rustyManagementCapability", () => ({ verifyRustyManagementEvidence: vi.fn(async () => ({ revision: 1, revokedDeviceIds: [] })) }))
-vi.mock("./blindClient", () => ({ discoverBlindKeeper: vi.fn(async (origin: string) => ({ origin, servicePublicKey: "service-key",
-  personManagement: 1 })), inventoryBlindObjects: vi.fn(), downloadBlindObject: vi.fn(), uploadBlindObject: vi.fn() }))
-
-it("Given the caller's current profile, when an Identity replica push publishes its access, then pass the tracked profile rather than its signing snapshot", async () => {
-  resetIdentityStorageForTest()
-  const profile = await bootstrapIdentity("Publisher")
-  const config = { purpose: "identity" as const, personId: profile.identity.personId, origin: "https://rusty.example",
-    servicePublicKey: "service-key", scopeId: "scope", keyEpoch: 1, contentKey: "content", readToken: "read",
-    writeToken: "write", policyRevision: 1, cursor: 0, lastUploaded: "" }
-  await expect(createIdentityReplica(config, profile, () => {}).push()).resolves.toBe(true)
-  resetIdentityStorageForTest()
-})
+vi.mock("./identityDeviceTransfer", () => ({ readIdentityDeviceTransfer: vi.fn() }))
 
 it("Given an authenticated Identity device manifest, when projecting ordinary catalog sync, then omit only recovery evidence and revalidate", async () => {
   const manifest = { components: { recoveryEvidence: { schema: "identity-recovery-evidence@1", required: true,

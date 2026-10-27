@@ -400,10 +400,11 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     }
     const localGrant = credential.localGrant as WorkspaceGrant | undefined
     const agent = (typeof navigator !== "undefined" ? navigator.userAgent : "").trim().slice(0, 256) || null
+    const signing = await meshRecordSigning(profile, credential, { kind: "advertisement" }, this.store)
     const reusable = meshRustRuntime().state.canReuseMemberBundle({ bundle: bundle ?? null,
       currentPeer: current ?? null, credential, localPersonId: profile.identity.personId,
       localPublicKey: profile.identity.publicKey, expectedDeviceName: profile.device.displayName.slice(0, 256),
-      expectedUserAgent: agent, endpoint, instanceId: this.instanceId, certificates,
+      expectedUserAgent: agent, endpoint, instanceId: this.instanceId, certificates: signing.certificates,
       localGrant: localGrant ?? null, nowMs: Date.now(), renewMs: DurableMeshBase.ROUTE_RENEW_MS })
     if (reusable) return bundle
     const sequenceStore = this.store as PeerStore & {
@@ -414,7 +415,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       : Date.now()
     const now = Date.now()
     const next = await createPeerAdvertisement(profile, credential.workspaceId, endpoint, {
-      signing: await meshRecordSigning(profile, credential, { kind: "advertisement" }, this.store),
+      signing,
       certificates,
       grant: localGrant,
       ownerPublicKey: credential.ownerPublicKey,

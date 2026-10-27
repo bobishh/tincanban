@@ -7,6 +7,7 @@ import { getPrivateReplicaConfigurations, getPrivateReplicaConflictSummaries, pe
 import { provisionIdentityReplicas } from "./provisionIdentityReplicas"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
+import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 
 type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
@@ -72,6 +73,9 @@ const constructing = new WeakMap<Session["cache"], Map<string, Promise<Replica>>
 
 export function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   session.guard()
+  if (config.purpose !== "identity" && config.boardAccess?.authorization.payload.version === 1) {
+    return Promise.reject(new ParticipantStorageAccessPendingError())
+  }
   const { cursor, lastUploaded, ...credentials } = config
   void cursor; void lastUploaded
   const key = canonicalizeJson([session.owner, session.epoch ?? null, credentials])

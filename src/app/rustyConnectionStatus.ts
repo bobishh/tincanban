@@ -9,7 +9,7 @@ export type RustyConnectionState = {
   errors: string[]
 }
 
-const priority = ["Removal pending", "Access required", "Response rejected", "Unavailable", "Sync paused",
+const priority = ["Removal pending", "Access required", "Waiting for access", "Response rejected", "Unavailable", "Sync paused",
   "Setup required", "Not connected", "Not checked", "Syncing", "Catching up", "Check overdue", "Synced"]
 
 /** One server indicator; every required delivery must confirm before it says Synced. */

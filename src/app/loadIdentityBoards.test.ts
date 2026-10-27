@@ -28,6 +28,17 @@ function app() {
     readWorkspaceDoc: vi.fn(async (id: string) => ({ id, entities: { board: { id: `board-${id}`, kind: "board" } } })),
     switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn(), getActiveDoc: () => null }
 }
+it("Given a restored private catalog, when loading board data, then restore original mesh access before publishing boards and recover routes for already loaded copies", async () => {
+  const state = app()
+  const phases: string[] = []
+  f.workspacePull.mockImplementationOnce(async () => { phases.push("board"); return true })
+  const recover = vi.fn(async (_ids: string[], options?: { routesOnly?: boolean }) => {
+    phases.push(options?.routesOnly ? "routes" : "peers")
+  })
+  await loadIdentityBoards(state as never, "/", recover)
+  expect(phases).toEqual(["routes", "board", "peers"])
+  expect(recover).toHaveBeenLastCalledWith(["job-search"])
+})
 it("Given an owned catalog on Rusty and only the guest default active, when sign-in loads boards, then activate the existing board after both pulls", async () => {
   const state = app()
   await loadIdentityBoards(state as never)
@@ -143,12 +154,13 @@ it("Given the catalog knows an owner board and its Rusty copy is unavailable, wh
     if (!state.availableWorkspaces.value.some(workspace => workspace.id === id)) throw new Error("Board not retained")
     return { id, entities: { board: { id: `board-${id}`, kind: "board" } } }
   })
-  const recover = vi.fn(async (ids: string[]) => {
+  const recover = vi.fn(async (ids: string[], options?: { routesOnly?: boolean }) => {
     expect(ids).toEqual(["job-search"])
+    if (options?.routesOnly) return
     state.availableWorkspaces.value = [{ id: "job-search" }]
   })
   await loadIdentityBoards(state as never, "/", recover)
-  expect(recover).toHaveBeenCalledOnce()
+  expect(recover).toHaveBeenCalledTimes(2)
   expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
   expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
 })

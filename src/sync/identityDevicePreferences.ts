@@ -62,7 +62,7 @@ export function withIdentityDevicePreferences(store: WorkspaceSetStore, profile:
       if (!await privateExchangeAllowed()) return mesh
       const payload: PreferencePayload = { kind: "identity-device-preferences", version: 3, personId: signer.identity.personId,
         certificates: signingEvidence(context).certificates,
-        state: await createIdentityDeviceTransfer(root, [signer.certificate, ...certificates]) }
+        state: await createIdentityDeviceTransfer(root, [signer.certificate, ...certificates], undefined, signer) }
       ensureCurrent()
       if (!await privateExchangeAllowed()) return mesh
       const record = await signWithContext(context, payload)

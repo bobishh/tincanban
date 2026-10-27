@@ -5,11 +5,12 @@ import { BrowserIdentityStore, createDeviceAuthorizationApproval, createDeviceAu
   createDeviceRevocation, createRecoverableIdentity, issueDeviceAuthorization, publicKeyId, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import * as rustyPrincipalClient from "@meta-uber/mesh-replication/rusty-principal-grant"
-import { createPeerAdvertisement, createWorkspaceDeviceRevocation } from "@meta-uber/mesh-workspace"
+import { createPeerAdvertisement, createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "@meta-uber/mesh-workspace"
 import { createWorkspaceGrant } from "../domain/proofs"
 import * as rustyTransport from "./rustyIdentityTransport"
 import { parseReplicaConfig } from "./blindReplicaConfig"
 import { getReplicaConfigurations, setReplicaPreference, persistPrivateReplicaProgress } from "./privateReplicaRepository"
+import * as privateReplicaRepository from "./privateReplicaRepository"
 import { createBoardStorageAccess, receiveBoardStorageAccess, selectBoardStorageAccess } from "./workspaceRustyAccess"
 import type { BlindReplicaConfig } from "./blindReplication"
 import { withWorkspaceRustyAccess } from "./workspaceRustyExchange"
@@ -20,13 +21,19 @@ import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { certHashDefault } from "../domain/proofs"
 import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 import type { WorkspaceGrant } from "../domain/model"
+import * as workspaceParticipants from "./workspaceParticipants"
+import * as identityAuthorityStore from "./identityAuthorityStore"
 
 const token = (byte: number) => Buffer.alloc(32, byte).toString("base64url")
 const config: BlindReplicaConfig = { origin: "https://rusty.example", scopeId: token(1), workspaceId: "board",
   servicePublicKey: token(2), contentKey: token(3), readToken: token(4), writeToken: token(5),
   keyEpoch: 1, policyRevision: 1, minimumWriterVersion: 2, cursor: 93, lastUploaded: token(6) }
 
-beforeEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest() })
+beforeEach(() => {
+  vi.restoreAllMocks()
+  resetIdentityStorageForTest()
+  vi.spyOn(workspaceParticipants, "readWorkspaceParticipantGrant").mockImplementation(async (_id, _personId, candidate) => candidate)
+})
 
 async function fixture() {
   const owner = await bootstrapIdentity()
@@ -359,6 +366,7 @@ test("Given a live authorized visitor session, when mesh metadata publishes afte
     getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "visitor", advertisement }) } as unknown as PeerStore
   const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
     { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId, remoteDeviceId: recipient.device.deviceId, peers, guard })
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
   const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
   expect(packet.boardStorageAccess).toHaveLength(1)
   expect(packet.boardStorageAccess[0]!.writeToken).toBe("")
@@ -375,6 +383,192 @@ test("Given a live authorized visitor session, when mesh metadata publishes afte
   await expect(sender.readMesh!("other-board")).rejects.toThrow("workspace")
 })
 
+test("Given Rusty registration is pending or offline, when mesh metadata is read, then publish P2P metadata and disclose access only after retry", async () => {
+  const { owner, authority, recipient, registerGrant } = await fixture()
+  registerGrant.mockClear()
+  registerGrant.mockRejectedValueOnce(new Error("Rusty is offline"))
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "visitor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://visitor",
+    grant, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "visitor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const mesh = { version: 1, peers: [{ deviceId: "known-peer" }] }
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+  expect(registerGrant).not.toHaveBeenCalled()
+  const firstAttempt = await sender.prepareRustyAccess("board")
+  expect(firstAttempt.changed).toBe(false)
+  expect(firstAttempt.failures).toEqual([expect.objectContaining({
+    message: `Rusty access preparation failed for ${config.origin}`,
+    cause: expect.objectContaining({ message: "Rusty is offline" }),
+  })])
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
+  const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
+  expect(packet.boardStorageAccess).toHaveLength(1)
+  expect(packet.boardStorageAccess[0]!.boardAccess!.principalGrant?.payload).toMatchObject({
+    workspaceGrant: grant, subjectPersonId: recipient.identity.personId, policyEpoch: 4,
+  })
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: false, failures: [] })
+  await sender.readMesh!("board")
+  expect(registerGrant).toHaveBeenCalledTimes(2)
+  expect(registerGrant.mock.calls[0]![0].workspaceGrant).toEqual(grant)
+  expect(registerGrant.mock.calls[1]![0].workspaceGrant).toEqual(grant)
+
+  const restarted = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+  await expect(restarted.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
+  expect(registerGrant).toHaveBeenCalledTimes(3)
+  expect(registerGrant.mock.calls[2]![0].workspaceGrant).toEqual(grant)
+})
+
+test("Given optional Identity authority is missing, when mesh metadata is read, then publish base metadata", async () => {
+  const { owner, authority, recipient } = await fixture()
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const mesh = { version: 1, peers: [{ deviceId: "known-peer" }] }
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+  vi.spyOn(identityAuthorityStore, "requireIdentityAuthorityView").mockRejectedValue(
+    new Error("Current Identity authority view is required before private Rusty access"))
+
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+})
+
+test("Given malformed optional Rusty access, when mesh metadata is read, then publish base metadata", async () => {
+  const { owner, authority, recipient } = await fixture()
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  vi.spyOn(privateReplicaRepository, "getReplicaConfigurations").mockResolvedValue([
+    { ...config, boardAccess: { malformed: true } } as unknown as BlindReplicaConfig,
+  ])
+  const mesh = { version: 1, peers: [{ deviceId: "known-peer" }] }
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+})
+
+test("Given optional Rusty read falls back after session replacement, when returning base metadata, then reject the stale session", async () => {
+  const { owner } = await fixture()
+  const mesh = { version: 1, peers: [{ deviceId: "known-peer" }] }
+  let guardCalls = 0
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: "peer", remoteDeviceId: "device",
+      peers: {} as PeerStore, guard: async () => { if (++guardCalls === 2) throw new Error("session replaced") } })
+  vi.spyOn(privateReplicaRepository, "getReplicaConfigurations").mockRejectedValue(new Error("optional config unavailable"))
+
+  await expect(sender.readMesh!("board")).rejects.toThrow("session replaced")
+  expect(guardCalls).toBe(2)
+})
+
+test("Given a session guard fails during optional authority lookup, when metadata read continues, then reject the stale session", async () => {
+  const { owner } = await fixture()
+  let guardCalls = 0
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: "peer", remoteDeviceId: "device",
+      peers: {} as PeerStore, guard: async () => { if (++guardCalls === 2) throw new Error("session revoked") } })
+  vi.spyOn(privateReplicaRepository, "getReplicaConfigurations").mockResolvedValue([config])
+
+  await expect(sender.readMesh!("board")).rejects.toThrow("session revoked")
+})
+
+test("Given two Rusty services and one is unavailable, when preparation retries, then retain and publish the service that is ready", async () => {
+  const { owner, authority, recipient, registerGrant } = await fixture()
+  registerGrant.mockClear()
+  const original = registerGrant.getMockImplementation()!
+  registerGrant.mockImplementation(async options => {
+    if (options.origin === config.origin) throw new Error("First Rusty service is offline")
+    return original(options)
+  })
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "visitor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://visitor",
+    grant, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "visitor", advertisement }) } as unknown as PeerStore
+  const second: BlindReplicaConfig = { ...config, origin: "https://rusty-two.example", scopeId: token(21),
+    servicePublicKey: token(22), readToken: token(23), writeToken: token(24) }
+  await setReplicaPreference(owner.identity.personId, config)
+  await setReplicaPreference(owner.identity.personId, second)
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  const result = await sender.prepareRustyAccess("board")
+  expect(result.changed).toBe(true)
+  expect(result.failures).toEqual([expect.objectContaining({
+    message: `Rusty access preparation failed for ${config.origin}`,
+    cause: expect.objectContaining({ message: "First Rusty service is offline" }),
+  })])
+  const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
+  expect(packet.boardStorageAccess).toHaveLength(1)
+  expect(packet.boardStorageAccess[0]!.origin).toBe(second.origin)
+  expect(registerGrant).toHaveBeenCalledTimes(2)
+})
+
+test("Given the owner changes saved Rusty credentials during registration, when preparation finishes, then reject the stale access and publish no capability", async () => {
+  const { owner, authority, recipient, registerGrant } = await fixture()
+  registerGrant.mockClear()
+  const original = registerGrant.getMockImplementation()!
+  registerGrant.mockImplementation(async options => {
+    await setReplicaPreference(owner.identity.personId, { ...config, readToken: token(25), policyRevision: 2 })
+    return original(options)
+  })
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor",
+    grant, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  await expect(sender.prepareRustyAccess("board")).rejects.toThrow(/configuration changed/)
+  await expect(sender.readMesh!("board")).resolves.toEqual({ version: 1, peers: [] })
+  expect(registerGrant).toHaveBeenCalledTimes(1)
+})
+
+test("Given workspace authority changes during registration, when preparation finishes, then discard the staged access", async () => {
+  const { owner, authority, recipient, registerGrant } = await fixture()
+  registerGrant.mockClear()
+  let currentAuthority = authority
+  const original = registerGrant.getMockImplementation()!
+  registerGrant.mockImplementation(async options => {
+    const result = await original(options)
+    currentAuthority = { ...authority, epoch: 2, updatedAt: new Date().toISOString() }
+    return result
+  })
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor",
+    grant, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => currentAuthority, getWorkspaceAuthority: async () => currentAuthority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  await expect(sender.prepareRustyAccess("board")).rejects.toThrow(/membership or Rusty configuration changed/)
+  await expect(sender.readMesh!("board")).resolves.toEqual({ version: 1, peers: [] })
+})
+
 test("Given a signed visitor membership, when owner prepares Rusty access, then bind a read-only principal grant to that exact person and policy epoch", async () => {
   const { owner, authority, recipient, registerGrant } = await fixture()
   const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "visitor", 4)
@@ -389,6 +583,7 @@ test("Given a signed visitor membership, when owner prepares Rusty access, then 
     { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
       remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
 
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
   const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
   const authorization = packet.boardStorageAccess[0]!.boardAccess!.authorization
 
@@ -438,6 +633,7 @@ test("Given a signed workspace authority snapshot absent from the mesh credentia
     { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
       remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
 
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
   const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
   expect(packet.boardStorageAccess[0]!.boardAccess!.principalGrant?.payload.scopeAuthority).toEqual(authority.scopeAuthoritySnapshot)
   expect(registerGrant).toHaveBeenCalledTimes(1)
@@ -455,6 +651,7 @@ test("Given an editor membership, when owner prepares Rusty access, then grant r
     { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
       remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
 
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: true, failures: [] })
   const packet = await sender.readMesh!("board") as { boardStorageAccess: BlindReplicaConfig[] }
   expect(packet.boardStorageAccess[0]!.boardAccess!.principalGrant?.payload).toMatchObject({
     subjectPersonId: recipient.identity.personId,
@@ -466,6 +663,107 @@ test("Given an editor membership, when owner prepares Rusty access, then grant r
   const principalGrant = JSON.stringify(packet.boardStorageAccess[0]!.boardAccess!.principalGrant)
   expect(principalGrant).not.toContain(config.readToken)
   expect(principalGrant).not.toContain(config.writeToken)
+})
+
+test("Given a cached Rusty attestation and a newer workspace revocation, when metadata is read again, then disclose no storage access", async () => {
+  const { owner, authority, recipient } = await fixture()
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  let currentAuthority: typeof authority & { catalog?: unknown } = authority
+  const peers = { getWorkspaceCredential: async () => currentAuthority, getWorkspaceAuthority: async () => currentAuthority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+  await sender.prepareRustyAccess("board")
+  expect(await sender.readMesh!("board")).toHaveProperty("boardStorageAccess")
+
+  const revocation = await createWorkspaceRevocation(owner, "board", recipient.identity.personId, 5, ["head"])
+  currentAuthority = { ...authority, catalog: { revocations: [revocation] } }
+  vi.mocked(workspaceParticipants.readWorkspaceParticipantGrant).mockResolvedValueOnce(undefined)
+  const metadata = await sender.readMesh!("board") as Record<string, unknown>
+  expect(metadata).not.toHaveProperty("boardStorageAccess")
+})
+
+test("Given a cached editor attestation and a newer visitor grant, when metadata is read again, then do not disclose the old writing capability", async () => {
+  const { owner, authority, recipient } = await fixture()
+  const editorGrant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant: editorGrant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => ({ version: 1, peers: [] }) } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: owner, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+  await sender.prepareRustyAccess("board")
+
+  const visitorGrant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "visitor", 5)
+  vi.mocked(workspaceParticipants.readWorkspaceParticipantGrant).mockResolvedValueOnce(visitorGrant)
+  const metadata = await sender.readMesh!("board") as Record<string, unknown>
+  expect(metadata).not.toHaveProperty("boardStorageAccess")
+})
+
+test("Given a cached access and a revoked owner device, when metadata is read, then retain P2P metadata and disclose no Rusty capability", async () => {
+  const { owner, current, authority, recipient } = await formerOwnerAppGrantFixture()
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate] })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const mesh = { version: 1, peers: [{ deviceId: "known-peer" }] }
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: current, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+  await sender.prepareRustyAccess("board")
+  expect(await sender.readMesh!("board")).toHaveProperty("boardStorageAccess")
+
+  const authorityView = await import("./identityAuthorityStore").then(module => module.requireIdentityAuthorityView(owner.identity.personId))
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  const profileState = await rootIdentityProfileState(root)
+  const identityAuthority = await verifyIdentityDeviceAuthority(owner.identity,
+    { certificates: authorityView.certificates, revocations: authorityView.revocations })
+  const revocation = await createDeviceRevocation(owner, identityAuthority, current.device.deviceId, profileState)
+  const revokedView = await createIdentityAuthorityView(owner.identity,
+    { certificates: authorityView.certificates, revocations: [revocation] }, profileState)
+  await mergeIdentityAuthorityView(revokedView)
+
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+  await expect(sender.prepareRustyAccess("board")).rejects.toThrow(/revoked/i)
+})
+
+test("Given owner-device revocation during principal registration, when preparation finishes, then discard staged access", async () => {
+  const { owner, current, authority, recipient, root, registerGrant } = await formerOwnerAppGrantFixture()
+  const originalRegister = registerGrant.getMockImplementation()!
+  registerGrant.mockImplementation(async options => {
+    const registered = await originalRegister(options)
+    const view = await import("./identityAuthorityStore").then(module => module.requireIdentityAuthorityView(owner.identity.personId))
+    const evidence = await verifyIdentityDeviceAuthority(owner.identity,
+      { certificates: view.certificates, revocations: view.revocations })
+    const profileState = await rootIdentityProfileState(root)
+    const revocation = await createDeviceRevocation(owner, evidence, current.device.deviceId, profileState)
+    const revokedView = await createIdentityAuthorityView(owner.identity,
+      { certificates: view.certificates, revocations: [revocation] }, profileState)
+    await mergeIdentityAuthorityView(revokedView)
+    return registered
+  })
+  const grant = await createWorkspaceGrant(owner, "board", recipient.identity.personId, "editor", 4)
+  const advertisement = await createPeerAdvertisement(recipient, { workspaceId: "board", endpoint: "iroh://editor", grant,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: authority.ownerCertificates })
+  const peers = { getWorkspaceCredential: async () => authority, getWorkspaceAuthority: async () => authority,
+    getPeer: async () => ({ personId: recipient.identity.personId, deviceId: recipient.device.deviceId, role: "editor", advertisement }) } as unknown as PeerStore
+  await setReplicaPreference(owner.identity.personId, config)
+  const mesh = { version: 1, peers: [] }
+  const sender = withWorkspaceRustyAccess({ readMesh: async () => mesh } as unknown as WorkspaceSetStore,
+    { workspaceId: "board", profile: current, remotePersonId: recipient.identity.personId,
+      remoteDeviceId: recipient.device.deviceId, peers, guard: async () => {} })
+
+  await expect(sender.prepareRustyAccess("board")).rejects.toThrow(/revoked/i)
+  await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
+  expect(registerGrant).toHaveBeenCalledTimes(1)
 })
 
 test.each([false, true])("Given an owner peer and Rusty configured=%s, when exchanging workspace metadata, then do not require a participant grant or share storage", async configured => {
@@ -481,6 +779,7 @@ test.each([false, true])("Given an owner peer and Rusty configured=%s, when exch
     { workspaceId: "board", profile: owner, remotePersonId: owner.identity.personId,
       remoteDeviceId: owner.device.deviceId, peers, guard: async () => {} })
 
+  await expect(sender.prepareRustyAccess("board")).resolves.toMatchObject({ changed: false, failures: [] })
   await expect(sender.readMesh!("board")).resolves.toEqual(mesh)
   expect(registerGrant).not.toHaveBeenCalled()
 })

@@ -1,6 +1,7 @@
 import { compareAndSwapLocal, readLocal, writeLocal } from "../localDb"
 import { isCurrentIdentityProfile, type LocalProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
+import type { IdentityWorkspaceRecovery } from "./loadIdentityBoards"
 
 type PendingBoardLoading = { version: 1; attempt: string; stage: "access" | "boards" }
 const keyFor = (profile: LocalProfile) =>
@@ -31,7 +32,7 @@ export class IdentityCatalogApprovalRequired extends Error {
 }
 
 /** Resume installed access after reload; an unavailable manager grant requires a separate catalog approval. */
-export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTincanban>, returnPath = "/", recoverPeers?: (workspaceIds: string[]) => Promise<void>): Promise<void> {
+export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTincanban>, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
   const profile = app.getCurrentProfile()
   if (!profile) return
   const raw = await readLocal(keyFor(profile))

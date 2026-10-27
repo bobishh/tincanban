@@ -713,6 +713,32 @@ describe("DurableMesh peer catalog gossip", () => {
     await mesh.dispose()
   })
 
+  it("Given an admitted session, when UI notification fails, then storage maintenance still starts for that current session", async () => {
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => ({ device: { deviceId: "local" } } as never),
+      store: { getWorkspaceCredential: async () => ({ workspaceId: "workspace", transportSecret: "secret" }),
+        listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [], listPeers: async () => [] } as never })
+    const internal = meshHooks(mesh)
+    const maintenance = { start: vi.fn(), stop: vi.fn() }
+    const connection = { close: vi.fn(async () => {}) }
+    const notificationError = new Error("UI projection unavailable")
+    internal.browserSessions.host.create = vi.fn(() => ({
+      session: { publish: async () => {}, close: async () => {}, done: new Promise<never>(() => {}) },
+    }))
+    ;(mesh as unknown as { rustyAccessMaintenance: WeakMap<object, typeof maintenance> })
+      .rustyAccessMaintenance.set(connection, maintenance)
+    internal.notify = vi.fn(async () => { throw notificationError })
+    try {
+      await expect(internal.installSession("workspace", "remote", "slot-0", "2026-10-27", 1,
+        "incoming", connection)).rejects.toThrow(notificationError)
+      expect(internal.sessions.get("workspace:remote:slot-0")?.connection).toBe(connection)
+      expect(maintenance.start).toHaveBeenCalledOnce()
+    } finally {
+      internal.notify = async () => {}
+      await mesh.dispose()
+    }
+  })
+
   it("accepts independent sibling instances without replacing their connections or sharing Automerge state", async () => {
     const credential = { workspaceId: "workspace", transportSecret: "secret" }
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
