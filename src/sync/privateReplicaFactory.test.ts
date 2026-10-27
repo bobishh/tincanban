@@ -1,6 +1,7 @@
 import { ref } from "vue"
 import { beforeEach, expect, test, vi } from "vitest"
 import type { BlindReplicaConfig } from "./blindReplication"
+import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 
 const mocks = vi.hoisted(() => ({
   pending: vi.fn(), create: vi.fn(), resume: vi.fn(), configurations: vi.fn(), conflicts: vi.fn(), persist: vi.fn(),
@@ -30,7 +31,7 @@ test("Given retained legacy participant access, when storage resolves, then wait
   const legacy = { ...config, boardAccess: { authorization: { payload: { version: 1 } } } } as BlindReplicaConfig
   const session = { owner: "editor", guard: vi.fn(), configs: ref([legacy]), cache: new Map(), reload: vi.fn(async () => {}) }
   const app = { getCurrentProfile: () => ({ identity: { personId: "editor" } }) }
-  await expect(resolvePrivateReplica(app as never, legacy, session as never)).rejects.toMatchObject({ code: "participant_storage_access_pending" })
+  await expect(resolvePrivateReplica(app as never, legacy, session as never)).rejects.toBeInstanceOf(ParticipantStorageAccessPendingError)
   expect(mocks.create).not.toHaveBeenCalled()
   expect(session.configs.value).toEqual([legacy])
   const upgraded = { ...legacy, boardAccess: { authorization: { payload: { version: 2 } } } } as BlindReplicaConfig

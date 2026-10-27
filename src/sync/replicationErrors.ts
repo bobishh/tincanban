@@ -3,10 +3,7 @@ import { RustyResponseError } from "@meta-uber/mesh-replication/rusty-replica"
 const requestFailures = new WeakSet<Error>()
 
 /** Retain legacy settings until their owner supplies current signed storage access. */
-export class ParticipantStorageAccessPendingError extends Error {
-  readonly code = "participant_storage_access_pending"
-  constructor() { super("Waiting for current storage access from the board owner"); this.name = "ParticipantStorageAccessPendingError" }
-}
+export class ParticipantStorageAccessPendingError extends Error {}
 
 /** Preserve HTTP error identity and protocol fields while recording its actual source. */
 export function rustyRequestFailure(cause: unknown, status?: number): Error {

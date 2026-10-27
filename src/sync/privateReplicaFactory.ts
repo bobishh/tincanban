@@ -74,7 +74,7 @@ const constructing = new WeakMap<Session["cache"], Map<string, Promise<Replica>>
 export function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   session.guard()
   if (config.purpose !== "identity" && config.boardAccess?.authorization.payload.version === 1) {
-    return Promise.reject(new ParticipantStorageAccessPendingError())
+    return Promise.reject(new ParticipantStorageAccessPendingError("Waiting for board storage access"))
   }
   const { cursor, lastUploaded, ...credentials } = config
   void cursor; void lastUploaded

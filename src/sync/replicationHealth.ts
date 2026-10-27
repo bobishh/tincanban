@@ -31,11 +31,12 @@ export function replicationPresence(device: ConnectionPresence, configs: BlindRe
 }
 
 export function replicationSummary(configs: BlindReplicaConfig[], health: Record<string, ReplicaHealth>, workspaceId: string, now: number): string {
-  return configs.filter(config => config.workspaceId === workspaceId).map(config => {
+  const selected = configs.filter(config => config.workspaceId === workspaceId)
+  return selected.map(config => {
     const state = health[replicaKey(config)]
     const status = replicaStatus(config, state, now)
     const label = status === "Synced" ? `synced at ${syncTime(state!.lastSyncedAt!)}` : status.toLowerCase()
-    const name = configs.filter(value => value.workspaceId === workspaceId).length > 1 ? `Rusty (${new URL(config.origin).host})` : "Rusty"
+    const name = selected.length > 1 ? `Rusty (${new URL(config.origin).host})` : "Rusty"
     return `${name} ${label}`
   }).join("; ")
 }
