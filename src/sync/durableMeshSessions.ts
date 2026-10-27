@@ -208,8 +208,10 @@ export class DurableMeshSessions extends DurableMeshHandshake {
   }
 
   protected async requireDialCredential(peer: WorkspacePeerRecord): Promise<WorkspaceMeshCredential> {
+    // Routes may retain an older secret after recovery. Workspace credentials
+    // select the key; the signed handshake still admits current membership.
     const credential = await this.store.getWorkspaceCredential(peer.workspaceId)
-    if (!credential || credential.transportSecret !== peer.transportSecret) throw new Error("Mesh credential unavailable")
+    if (!credential) throw new Error("Mesh credential unavailable")
     return credential
   }
 

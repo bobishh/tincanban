@@ -122,6 +122,37 @@ beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modu
 
 
 describe("DurableMesh peer catalog gossip", () => {
+  it("Given a recovered board and a route with an old cached secret, when dialing, then use the current workspace credential and still require its signed handshake", async () => {
+    const credential = { workspaceId: "recovered", transportSecret: "current-secret" }
+    let saved: typeof credential | null = credential
+    const peer = { workspaceId: "recovered", deviceId: "editor", instanceId: "remote", transportSecret: "old-secret" }
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => ({} as never), store: { getWorkspaceCredential: async () => saved } as never })
+    const internal = mesh as unknown as {
+      node?: SyncNode
+      openPeerConnection: () => Promise<unknown>
+      exchangeOutgoingHandshake: (...args: unknown[]) => Promise<unknown>
+      handleDialFailure: (...args: unknown[]) => Promise<void>
+      connectPeer: (peer: object, route: object, signal: AbortSignal, routeSignal: AbortSignal) => Promise<unknown>
+    }
+    internal.node = {} as SyncNode
+    const connection = {}
+    internal.openPeerConnection = vi.fn(async () => connection)
+    internal.exchangeOutgoingHandshake = vi.fn(async () => { throw new Error("Signed peer authorization rejected") })
+    internal.handleDialFailure = vi.fn(async () => {})
+    try {
+      await expect(internal.connectPeer(peer, {}, new AbortController().signal, new AbortController().signal))
+        .rejects.toThrow("Signed peer authorization rejected")
+      expect(internal.exchangeOutgoingHandshake).toHaveBeenCalledWith(connection, peer, credential, expect.any(String))
+      saved = null
+      await expect(internal.connectPeer(peer, {}, new AbortController().signal, new AbortController().signal))
+        .rejects.toThrow("Mesh credential unavailable")
+      expect(internal.exchangeOutgoingHandshake).toHaveBeenCalledTimes(1)
+    } finally {
+      internal.node = undefined
+      await mesh.dispose()
+    }
+  })
   it.each(["credential", "connection"])("Given a dial from an older runtime, When the node changes during %s, Then its failure cannot close or penalize the replacement", async phase => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
       workspaceStore: {} as never, getProfile: async () => ({} as never) })

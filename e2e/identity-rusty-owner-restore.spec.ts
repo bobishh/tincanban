@@ -266,6 +266,18 @@ test("Given Bo closed the old owner device, when a newly approved Bo app device 
     await addLead(ray, "Ray edit after owner recovery")
     await expect(newOwner.getByRole("button", { name: "Open Ray edit after owner recovery — Engineer", exact: true }))
       .toBeVisible({ timeout: 45_000 })
+    // Older releases copied the workspace secret into route records. A retained
+    // route can outlive that copy; the signed handshake uses current board access.
+    await newOwner.evaluate(async id => {
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      const peers = await peerStore.listPeers(id)
+      const editor = peers.find(peer => peer.role === "editor")
+      if (!editor) throw new Error("Recovered editor route is unavailable")
+      await peerStore.upsertPeer({ ...editor, transportSecret: "obsolete-route-cache", lastSeen: new Date().toISOString() })
+      if ((await peerStore.getPeer(id, editor.deviceId))?.transportSecret !== "obsolete-route-cache") {
+        throw new Error("Legacy route fixture was not retained")
+      }
+    }, workspaceId)
     await newOwner.reload()
     await expect(newOwner.getByRole("button", { name: "Open Retained opportunity — Engineer", exact: true }))
       .toBeVisible({ timeout: 45_000 })
@@ -274,6 +286,9 @@ test("Given Bo closed the old owner device, when a newly approved Bo app device 
     await expect(newOwner.getByRole("button", { name: "Open Ray edit after owner recovery — Engineer", exact: true }))
       .toBeVisible({ timeout: 30_000 })
     await expect(newOwner.getByLabel(/^Devices connected/u)).toBeVisible({ timeout: 45_000 })
+    await addLead(ray, "Ray edit after legacy route reload")
+    await expect(newOwner.getByRole("button", { name: "Open Ray edit after legacy route reload — Engineer", exact: true }))
+      .toBeVisible({ timeout: 45_000 })
     expect(await newOwner.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id))
       .toBe(workspaceId)
   } finally {
