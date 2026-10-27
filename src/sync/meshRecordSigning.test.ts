@@ -60,6 +60,36 @@ it("Given a prepared participant signer, when its stored grant changes, then ref
   await expect(signing.sign({ kind: "workspace-departure", workspaceId: "workspace" })).rejects.toThrow(/changed|stale/i)
 })
 
+it("Given authority advances while preparing an advertisement signer, when preparation retries, then sign against the fresh authority", async () => {
+  const profile = await bootstrapIdentity("Owner")
+  let reads = 0
+  const signing = await workspaceRecordSigning(profile, "workspace", async () =>
+    ++reads === 1 ? "before-refresh" : "after-refresh", ["peer-advertisement"])
+  const record = await signing.sign({ kind: "peer-advertisement", workspaceId: "workspace" })
+  expect(await verifyEnvelope(record, profile.device.publicKey)).toBe(true)
+})
+
+it("Given authority never stabilizes during signer preparation, when preparation runs, then fail within a bounded read budget", async () => {
+  const profile = await bootstrapIdentity("Owner")
+  let reads = 0
+  await expect(workspaceRecordSigning(profile, "workspace", async () => {
+    if (++reads > 10) throw new Error("Authority read budget exceeded")
+    return String(reads)
+  }, ["peer-advertisement"]))
+    .rejects.toThrow("Workspace record authority changed while signing")
+  expect(reads).toBeLessThanOrEqual(10)
+})
+
+it("Given authority is revoked during signer preparation, when the store rejects access, then preserve that rejection without retry", async () => {
+  const profile = await bootstrapIdentity("Owner")
+  let reads = 0
+  await expect(workspaceRecordSigning(profile, "workspace", async () => {
+    if (++reads > 1) throw new Error("Device access revoked")
+    return "approved"
+  }, ["peer-advertisement"])).rejects.toThrow("Device access revoked")
+  expect(reads).toBe(2)
+})
+
 it("Given an identity-only advertisement signer, when asked to sign an owner action or another scope, then refuse", async () => {
   const profile = await bootstrapIdentity("Joining device")
   const signing = await workspaceRecordSigning(profile, "workspace", async () => "unjoined-route", ["peer-advertisement"])

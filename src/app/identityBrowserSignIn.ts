@@ -76,6 +76,11 @@ export function createIdentityBrowserSignInReturn(options: {
   const boardCatalogApprovalRequired = ref(false)
   let boardLoad: Promise<void> | undefined
 
+  function restoreReturnPath(returnPath: string) {
+    window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
+    window.dispatchEvent(new Event("popstate"))
+  }
+
   function retryBoards(returnPath = `${window.location.pathname}${window.location.search}`): Promise<void> {
     if (boardLoad) return boardLoad
     boardLoading.value = true
@@ -87,7 +92,7 @@ export function createIdentityBrowserSignInReturn(options: {
           boardCatalogApprovalRequired.value = true
           throw new Error("Your board catalog could not be received from Identity.")
         }
-        window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
+        restoreReturnPath(returnPath)
         recordIdentityBrowserSignIn("restore", "completed")
       } catch (cause) {
         boardLoadError.value = `Signed in. Your boards have not finished loading. ${cause instanceof Error ? cause.message : ""}`.trim()
@@ -126,7 +131,7 @@ export function createIdentityBrowserSignInReturn(options: {
         catch (cause) { options.reportRustyConnectionFailure?.(intent.origin, cause) }
         finally { clearPendingRustyConnectionIntent(window.sessionStorage) }
       }
-      window.history.replaceState(window.history.state, "", options.resolveReturnPath?.(returnPath) ?? returnPath)
+      restoreReturnPath(returnPath)
       returning.value = false
       options.showPortal.value = false
       await retryBoards(returnPath)

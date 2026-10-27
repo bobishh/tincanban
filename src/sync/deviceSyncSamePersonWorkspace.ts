@@ -216,8 +216,11 @@ export async function receiveApprovedIdentityWorkspace(input: WorkspaceTransferS
     remoteDeviceId: invite.issuerDeviceId, isCurrent: input.isCurrent, readProfile: input.getProfile,
     readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
   await mergeIdentityAuthorityView(prepared.authorityView, ensureCurrent)
-  await traceEnrollmentOperation(invite, "guest.receive-workspace", () => replica.receive(snapshot, true, historyReader))
+  // History has validated. Install its verified access before merge publishes the
+  // board to observers that immediately reclassify, edit, or share it.
   await persistThenReceiveSamePersonWorkspace(profile, prepared, ensureCurrent, mesh)
+  ensureCurrent()
+  await traceEnrollmentOperation(invite, "guest.receive-workspace", () => replica.receive(snapshot, true, historyReader))
   await historyGuard()
   const envelope = prepared.meshWorkspaces[0] as { ownerPersonId?: unknown }
   if (envelope.ownerPersonId === profile.identity.personId) {

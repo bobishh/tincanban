@@ -99,7 +99,10 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
       const marker = 'await step("workspace-migrations"'
       if (!original.includes(marker)) throw new Error("Startup acceptance gate marker is missing")
       const gate = 'if (window.location.pathname === "/identity/return") await new Promise(resolve => { window.__releaseIdentityStartup = resolve }); '
-      await route.fulfill({ response, body: original.replace(marker, `${gate}${marker}`) })
+      const headers = response.headers()
+      delete headers.etag
+      headers["cache-control"] = "no-store"
+      await route.fulfill({ response, headers, body: original.replace(marker, `${gate}${marker}`) })
     })
     await approve(page)
     await page.waitForFunction(() => typeof (window as unknown as { __releaseIdentityStartup?: unknown }).__releaseIdentityStartup === "function")
@@ -210,7 +213,10 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
           const root = await storage.loadPersonalRoot()
           const replicas = await import("/src/sync/privateReplicaRepository.ts")
           const profile = (await import("/src/state.ts")).useTincanban().getCurrentProfile()!
-          return { references: Object.values(root?.workspaces ?? {}).map(reference => ({ id: reference.workspaceId, forgotten: reference.forgotten })),
+          const app = (await import("/src/state.ts")).useTincanban()
+          return { pathname: window.location.pathname, active: app.activeWorkspace.id,
+            board: app.activeBoard.value?.id,
+            references: Object.values(root?.workspaces ?? {}).map(reference => ({ id: reference.workspaceId, forgotten: reference.forgotten })),
             loaded: (await storage.listWorkspaces()).map(workspace => ({ id: workspace.id, title: workspace.title })),
             catalogs: (await replicas.getIdentityReplicaConfigurations(profile.identity.personId)).map(config => ({ scope: config.scopeId, cursor: config.cursor })),
             boards: (await replicas.getReplicaConfigurations(profile.identity.personId)).map(config => ({ workspace: config.workspaceId, cursor: config.cursor })),

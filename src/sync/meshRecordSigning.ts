@@ -16,13 +16,7 @@ export async function workspaceRecordSigning(profile: LocalProfile, workspaceId:
   assertPayload?: (payload: Record<string, unknown>) => void): Promise<WorkspaceRecordSigner> {
   profile = captureIdentityProfile(profile)
   purposes = purposes.slice()
-  const revision = await currentAuthority()
-  const unchanged = async (payload?: Record<string, unknown>) => {
-    if (await currentAuthority(payload) !== revision) throw new Error("Workspace record authority changed while signing")
-    return revision
-  }
-  const options = { currentAuthority: unchanged }
-  const proof = await resolveLocalSigningContext(profile, "workspace-record-proof", { workspaceId }, options)
+  const { proof, unchanged } = await prepareRecordProof(profile, workspaceId, currentAuthority)
   const evidence = signingEvidence(proof)
   return Object.freeze({ personId: profile.identity.personId, deviceId: profile.device.deviceId, publicKey: profile.identity.publicKey,
     get certificates() { return structuredClone(evidence.certificates) },
@@ -36,6 +30,27 @@ export async function workspaceRecordSigning(profile: LocalProfile, workspaceId:
       return signWithContext(context, snapshot)
     },
   })
+}
+
+async function prepareRecordProof(profile: LocalProfile, workspaceId: string,
+  currentAuthority: (payload?: Record<string, unknown>) => Promise<string>) {
+  for (let attempt = 0; ; attempt++) {
+    const revision = await currentAuthority()
+    const changed = new Error("Workspace record authority changed while signing")
+    const unchanged = async (payload?: Record<string, unknown>) => {
+      if (await currentAuthority(payload) !== revision) throw changed
+      return revision
+    }
+    try {
+      const proof = await resolveLocalSigningContext(profile, "workspace-record-proof", { workspaceId },
+        { currentAuthority: unchanged })
+      return { proof, unchanged }
+    } catch (error) {
+      // No record was signed. Reprepare only our stale snapshot, never a denied
+      // credential; after returning the signer its captured authority stays fixed.
+      if (error !== changed || attempt === 2) throw error
+    }
+  }
 }
 
 const ownerPurposes = ["workspace-revocation", "workspace-succession-policy", "workspace-ownership-transfer", "workspace-grant"]

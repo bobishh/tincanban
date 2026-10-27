@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { ref } from "vue"
+import { createBoardAddressController } from "./useBoardAddress"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 import { createRecoverableIdentity, createDeviceAuthorizationApproval, createIdentityProfileOperation,
   emptyIdentityProfileState, publicKeyId, readIdentityProfileState } from "@meta-uber/mesh-identity"
 import { createApprovedSignInCompletion, createIdentityBrowserSignIn, readPendingIdentityBrowserSignIn,
@@ -84,7 +86,7 @@ describe("Identity browser sign-in", () => {
   })
 
   it("Given a coherent existing context, when the return dialog closes before completion, then keep the context ready", () => {
-    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+    vi.stubGlobal("window", { dispatchEvent: vi.fn(), sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
       history: { state: null, replaceState: vi.fn() } })
     const showPortal = ref(true)
     const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {}, closePortal: () => {} })
@@ -96,7 +98,7 @@ describe("Identity browser sign-in", () => {
   })
 
   it("Given an approved identity and failed board loading, when returning, then finish sign-in and expose a separate retry", async () => {
-    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+    vi.stubGlobal("window", { dispatchEvent: vi.fn(), sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
       history: { state: null, replaceState: vi.fn() } })
     const showPortal = ref(true)
     const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
@@ -110,7 +112,7 @@ describe("Identity browser sign-in", () => {
   })
 
   it("Given a return flow, when refresh and board selection finish, then close approval before board loading and restore the selected route afterward", async () => {
-    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
+    vi.stubGlobal("window", { dispatchEvent: vi.fn(), sessionStorage: { getItem: () => null }, location: { pathname: "/boards/current" },
       history: { state: null, replaceState: vi.fn() } })
     const showPortal = ref(true)
     const stages: string[] = []
@@ -143,6 +145,41 @@ describe("Identity browser sign-in", () => {
     expect(shouldResumeIdentityBrowserSignIn("/boards/current", true, true)).toBe(false)
     expect(shouldResumeIdentityBrowserSignIn("/identity/return", true, false)).toBe(false)
     expect(shouldResumeIdentityBrowserSignIn("/identity/return", true, true)).toBe(true)
+  })
+
+  it("Given a board address was unavailable before restoration, when board loading restores that same address, then its view resolves without another data change", async () => {
+    let loaded = false
+    const events = new EventTarget()
+    const location = { pathname: "/boards/restored/board", search: "", hash: "" }
+    const history = {
+      state: null,
+      replaceState: vi.fn((_state: unknown, _title: string, url: string) => { location.pathname = url }),
+      pushState: vi.fn(),
+    }
+    vi.stubGlobal("window", { sessionStorage: { getItem: () => null }, location, history,
+      dispatchEvent: events.dispatchEvent.bind(events) })
+    const board = { id: "restored", title: "Board" }
+    const controller = createBoardAddressController({
+      getAvailableWorkspaces: () => loaded ? [{ id: "workspace" }] : [],
+      getActiveWorkspaceId: () => "workspace",
+      getActiveBoard: () => loaded ? board : null,
+      getIdentityId: () => "owner",
+      readWorkspaceDoc: async () => ({ id: "workspace", entities: { restored: { ...board, kind: "board" } } }) as unknown as WorkspaceDocumentV2,
+      switchWorkspace: async () => {},
+    }, { location: () => location, ...history,
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events) })
+    let visible = await controller.resolveAddress()
+    expect(visible).toBe("unavailable")
+    const stop = controller.start(() => { void controller.resolveAddress().then(value => { visible = value }) })
+    try {
+      const result = createIdentityBrowserSignInReturn({ showPortal: ref(false),
+        refreshIdentity: async () => {}, closePortal: () => {},
+        loadBoards: async () => { loaded = true } })
+      await result.retryBoards(location.pathname)
+      expect(result.boardLoadError.value).toBe("")
+      await vi.waitFor(() => expect(visible).toBe("available"))
+    } finally { stop() }
   })
 
   it("Given request B supersedes request A, when late callback A arrives, then B stays pending for its own state", async () => {
