@@ -24,7 +24,7 @@ test("Given a long participant name, when the participant list narrows, then nam
   const row = page.getByRole("dialog", { name: "Device sync" }).locator(".mesh-member").first()
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 844 })
-    await expect(row.locator("small")).toContainText("known device")
+    await expect(row.locator("small")).toContainText("device")
     expect(await row.evaluate(element => {
       const bounds = element.getBoundingClientRect()
       return [...element.querySelectorAll<HTMLElement>("strong, small, .mesh-member-role")].every(text => {

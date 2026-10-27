@@ -146,7 +146,7 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
     if (!await page.getByRole("dialog", { name: "Device sync" }).isVisible()) await page.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(page.getByRole("dialog", { name: "Device sync" }).getByRole("region", { name: "Rusty", exact: true })).toContainText("Synced", { timeout: 45_000 })
     await panel.getByRole("button", { name: "Sync now", exact: true }).click()
-    await expect(page.locator(".rusty-profile-connection").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator(".rusty-connection").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
     const state = await source.storageState({ indexedDB: true })
     state.origins = state.origins.filter(origin => origin.origin === identityOrigin)
     state.cookies = []

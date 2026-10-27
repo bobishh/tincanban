@@ -203,7 +203,7 @@ async function connectRusty(page: Page, rustyOrigin: string): Promise<void> {
   await expect(rusty.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
     .toBeVisible({ timeout: 30_000 })
   await rusty.getByRole("button", { name: "Sync now", exact: true }).click()
-  const profileStatus = page.locator(".rusty-profile-status")
+  const profileStatus = rusty.locator(".rusty-server")
   await expect(profileStatus).toBeVisible({ timeout: 30_000 })
   const delivery = await terminalProfileDelivery(profileStatus)
   if (!delivery.some(text => text.includes("Synced"))) {
@@ -229,7 +229,7 @@ async function terminalProfileDelivery(profileStatus: ProfileStatusReader): Prom
   let delivery: string[] = []
   await expect.poll(async () => {
     const alerts = await profileStatus.locator('[role="alert"]').allTextContents()
-    const rows = await profileStatus.locator(".rusty-profile-connection").allTextContents()
+    const rows = await profileStatus.locator(".rusty-connection").allTextContents()
     const visibleAlerts = alerts.map(text => text.trim()).filter(Boolean)
     const visibleRows = rows.map(text => text.trim())
     delivery = visibleRows

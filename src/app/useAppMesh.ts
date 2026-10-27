@@ -1,4 +1,5 @@
 import { computed, onScopeDispose, ref, watch, type Ref } from "vue"
+import type { WorkspaceParticipant } from "../sync/workspaceParticipants"
 import { replicationPresence, replicationSummary } from "../sync/replicationHealth"
 import type { BlindReplicationController } from "./blindReplication"
 import type { WorkspaceRole } from "../domain/permissions"
@@ -62,15 +63,34 @@ export function useAppMesh(context: MeshContext) {
     if (sync.localDeviceId.value) ids.add(sync.localDeviceId.value)
     return Math.max(1, ids.size)
   })
+  const participants = ref<WorkspaceParticipant[]>([])
+  let participantWorkspace = ""
+  let participantRead = 0
+  async function refreshParticipants() {
+    const workspaceId = activeWorkspace.id
+    const read = ++participantRead
+    if (participantWorkspace !== workspaceId) { participants.value = []; participantWorkspace = workspaceId }
+    if (!sync.isOpen.value) return
+    try {
+      const { readWorkspaceParticipants } = await import("../sync/workspaceParticipants")
+      const people = await readWorkspaceParticipants(workspaceId)
+      if (read === participantRead && activeWorkspace.id === workspaceId) participants.value = people
+    } catch { /* Presence cannot confer membership when durable access is unavailable. */ }
+  }
+  watch([() => activeWorkspace.id, sync.isOpen,
+    () => sync.meshPeers.value.filter(peer => peer.workspaceId === activeWorkspace.id)
+      .map(peer => `${peer.personId}:${peer.role}:${peer.revokedAt ?? ""}`).sort().join("|"),
+    () => chat.members.value.map(person => person.personId).sort().join("|"), currentWorkspaceOwnerId, currentRole], () => { void refreshParticipants() }, { immediate: true })
+  onScopeDispose(() => { participantRead++ })
   const revokingPeer = ref("")
   const peerAccessError = ref("")
   const meshMembers = computed(() => {
     const peers = sync.meshPeers.value.filter(peer => peer.workspaceId === activeWorkspace.id && !peer.revokedAt)
     const selfId = chat.personId.value
-    const personIds = new Set(peers.map(peer => peer.personId))
+    const personIds = new Set([...peers.map(peer => peer.personId), ...participants.value.map(person => person.personId)])
     if (selfId) personIds.add(selfId)
     return [...personIds].map(personId => createMeshMember(personId, peers, selfId, sync, chat, currentWorkspaceOwnerId.value, currentRole.value,
-      devicePresence.value === "reconnecting"))
+      devicePresence.value === "reconnecting", participants.value.find(person => person.personId === personId)?.role ?? "visitor"))
       .sort((a, b) => Number(b.self) - Number(a.self) || Number(b.role === "owner") - Number(a.role === "owner") || a.name.localeCompare(b.name))
   })
   const activeSuccession = computed(() => sync.meshSuccession.value.find(item => item.workspaceId === activeWorkspace.id))
@@ -116,7 +136,7 @@ export function useAppMesh(context: MeshContext) {
   return { promoteWorkspacePeer, devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, onlineWorkspaceDevices, revokingPeer, peerAccessError, meshMembers, activeSuccession, canClaimSuccession, transferringOwnership, leavingMesh, transferWorkspaceOwnership, leaveWorkspaceMesh, setWorkspaceSuccessor, voteForWorkspaceSuccessor, claimWorkspaceSuccession, revokeWorkspacePeer }
 }
 
-function createMeshMember(personId: string, peers: ReturnType<typeof useDeviceSync>["meshPeers"]["value"], selfId: string, sync: ReturnType<typeof useDeviceSync>, chat: ReturnType<typeof useWorkspaceChat>, ownerId: string, currentRole: WorkspaceRole, reconnecting: boolean) {
+function createMeshMember(personId: string, peers: ReturnType<typeof useDeviceSync>["meshPeers"]["value"], selfId: string, sync: ReturnType<typeof useDeviceSync>, chat: ReturnType<typeof useWorkspaceChat>, ownerId: string, currentRole: WorkspaceRole, reconnecting: boolean, retainedRole: "owner" | "editor" | "visitor") {
   const devices = peers.filter(peer => peer.personId === personId)
   const self = personId === selfId
   const pendingRemote = reconnecting && !self
@@ -129,7 +149,7 @@ function createMeshMember(personId: string, peers: ReturnType<typeof useDeviceSy
     description: describeUserAgent(peer.userAgent || (self && peer.deviceId === sync.localDeviceId.value ? localUserAgent : undefined)), tabs: peer.instances ?? 1,
   }))
   if (self && sync.localDeviceId.value && !deviceList.some(device => device.deviceId === sync.localDeviceId.value)) deviceList.push({ deviceId: sync.localDeviceId.value, name: "This device", online: true, reconnecting: false, lastSeen: new Date().toISOString(), userAgent: localUserAgent, description: describeUserAgent(localUserAgent), tabs: 1 })
-  const peerRole = devices[0]?.role ?? "visitor"
+  const peerRole = devices[0]?.role ?? retainedRole
   return { personId, name: self ? chat.displayName.value || "You" : chat.members.value.find(member => member.personId === personId)?.name ?? `Participant · ${personId.slice(0, 6)}`, role: self ? currentRole : personId === ownerId ? "owner" as const : peerRole === "owner" ? "editor" as const : peerRole, online: deviceList.some(device => device.online), reconnecting: awaitingRemote(pendingRemote, deviceList.some(device => device.online)), onlineDevices: deviceList.filter(device => device.online).length, devices: deviceList.length, deviceList, self }
 }
 

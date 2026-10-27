@@ -16,8 +16,13 @@ for (const width of [1280, 390]) test(`Given a board at ${width}px, when Sync op
   await expect(dialog.getByRole("button", { name: /(?:Start|Stop) live sync/ })).toHaveCount(0)
   await expect(dialog.getByRole("button", { name: "Export .tincanban", exact: true })).toHaveCount(0)
   await expect(dialog.getByRole("region", { name: "Ownership succession" })).toHaveCount(0)
+  await expect(dialog.getByRole("region", { name: "Selected mesh member" })).toHaveCount(0)
   await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
   await expect(dialog.getByText("This device", { exact: true })).toBeVisible()
+  await expect(dialog.locator(".mesh-member").filter({ hasText: "You" })).toHaveAttribute("aria-expanded", "true")
+  await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
+  await expect(dialog.getByRole("region", { name: "Selected mesh member" })).toHaveCount(0)
+  await expect(dialog.locator(".mesh-member").filter({ hasText: "You" })).toHaveAttribute("aria-expanded", "false")
   await expect(dialog.getByRole("button", { name: "Remove my device", exact: true })).toHaveCount(0)
   await page.screenshot({ animations: "disabled", path: info.outputPath(`sync-${width}.png`) })
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
@@ -49,4 +54,44 @@ test("Given Rusty is unavailable, when connecting, then pending and failure pres
   await expect(panel.getByRole("alert")).toBeVisible()
   await expect(panel.getByRole("button", { name: "Connect", exact: true })).toBeEnabled()
   await expect(dialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
+})
+
+test("Given a restored board has signed participant access without saved peer devices, when opening Sync after reload, then retain the offline participant and collapsible empty device list", async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/")
+  await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
+  await page.evaluate(async () => {
+    const { useTincanban } = await import("/src/state.ts")
+    const { createRecoverableIdentity } = await import("/vendor/meta-mesh/packages/mesh-identity/src/index.ts")
+    const { createWorkspaceGrant } = await import("/src/sync/meshRecords.ts")
+    const { defaultProofStore } = await import("/src/domain/proofs.ts")
+    const { signEnvelope } = await import("/src/domain/identity.ts")
+    const { receiveChat } = await import("/src/chat/service.ts")
+    const { workspaceChatRoomId } = await import("/src/app/workspaceMetadata.ts")
+    const app = useTincanban(), doc = app.getActiveDoc()!, owner = app.getCurrentProfile()!
+    const editor = (await createRecoverableIdentity("better", "Ray")).profile
+    const grant = await createWorkspaceGrant(owner, doc.id, editor.identity.personId, "editor")
+    await defaultProofStore.putGrant(grant.payload.grantId, grant)
+    const signed = await signEnvelope(editor.privateKeys.devicePrivateKey, { kind: "chat-profile", version: 1,
+      workspaceId: workspaceChatRoomId(doc), personId: editor.identity.personId, deviceId: editor.device.deviceId,
+      id: `${editor.device.deviceId}:${crypto.randomUUID()}`, createdAt: new Date().toISOString(), text: "Ray", revision: 1,
+    }, editor.device.deviceId)
+    await receiveChat(doc.id, { version: 1, profiles: [{ signed, publicKey: editor.identity.publicKey,
+      certificates: [editor.certificate], authority: { publicKey: owner.identity.publicKey,
+        certificates: [owner.certificate], grant } }], messages: [], typing: [] }, true)
+  })
+  await page.reload()
+  await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
+  await page.getByRole("button", { name: "Menu", exact: true }).click()
+  await page.getByRole("button", { name: "Sync", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "Device sync" })
+  const participant = dialog.locator(".mesh-member").filter({ hasText: "Ray" })
+  await expect(participant).toContainText("0 devices")
+  await expect(participant).toContainText("editor")
+  await participant.click()
+  await expect(dialog.getByRole("list", { name: "Devices for Ray" }).getByRole("listitem")).toHaveCount(0)
+  await expect(participant).toHaveAttribute("aria-expanded", "true")
+  await participant.click()
+  await expect(dialog.getByRole("region", { name: "Selected mesh member" })).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath("restored-participant.png"), animations: "disabled" })
 })

@@ -62,7 +62,7 @@ for (const width of [1280, 390]) test(`Given my two device labels at ${width}px 
   await old.getByRole("button", { name: "Retry device removal", exact: true }).click()
   await confirm.getByRole("button", { name: "Confirm removal of my device", exact: true }).click()
   await expect(sync.locator(".mesh-device-list")).not.toContainText("Device old-devi")
-  await expect(sync.locator(".mesh-member")).toContainText("1 known device")
+  await expect(sync.locator(".mesh-member")).toContainText("1 device")
   await sync.getByText("Removed device records (1)", { exact: true }).click()
   const history = sync.locator(".removed-device-history")
   await expect(history).toContainText("Device old-devi")

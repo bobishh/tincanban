@@ -1,7 +1,7 @@
 import { expect, test } from "vitest"
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
 import { replicaKey, replicaStatus, replicationPresence, type ReplicaHealth } from "./replicationHealth"
-import { profileDeliveryStates } from "./profileDeliveryHealth"
+import { rustyConnectionStates } from "../app/rustyConnectionStatus"
 const board = { origin: "https://rusty.example", scopeId: "one", workspaceId: "board" } as BlindReplicaConfig
 const other = { ...board, scopeId: "two", workspaceId: "other" }
 const now = 100_000
@@ -44,22 +44,22 @@ test("Given a prior successful sync, when a request fails or confirmation expire
 
 const personal = { origin: board.origin, scopeId: "person-scope", personId: "person-1", purpose: "identity" } as IdentityReplicaConfig
 
-test("Given a synced board and no personal Rusty scope, when profile delivery is shown, then it stays unconfigured", () => {
- const rows = profileDeliveryStates([board], [], { [replicaKey(board)]: healthy }, "board", now)
- expect(rows).toEqual([{ key: board.origin, origin: board.origin, status: "Profile delivery not configured" }])
+test("Given a synced board and no personal Rusty scope, when server status is shown, then setup remains required", () => {
+ const rows = rustyConnectionStates([board], [], { [replicaKey(board)]: healthy }, "board", true, now)
+ expect(rows).toMatchObject([{ origin: board.origin, status: "Setup required" }])
 })
 
 test("Given board and profile scopes on one Rusty origin, when only board has a successful pass, then profile is not called synced", () => {
- const rows = profileDeliveryStates([board], [personal], { [replicaKey(board)]: healthy }, "board", now)
+ const rows = rustyConnectionStates([board], [personal], { [replicaKey(board)]: healthy }, "board", true, now)
  expect(rows).toHaveLength(1)
  expect(rows[0].status).toBe("Not checked")
 })
 
-test("Given a personal scope, when its pass fails or expires, then profile delivery reports that independent state", () => {
- expect(profileDeliveryStates([board], [personal], { [replicaKey(personal)]: { phase: "error", error: "offline" } }, "board", now)[0])
-   .toMatchObject({ status: "Unavailable", error: "offline" })
- expect(profileDeliveryStates([board], [personal], { [replicaKey(personal)]: healthy }, "board", now + 60_000)[0].status)
+test("Given a personal scope, when its pass fails or expires, then the single server status reports the delivery failure", () => {
+ expect(rustyConnectionStates([board], [personal], { [replicaKey(personal)]: { phase: "error", error: "offline" } }, "board", true, now)[0])
+   .toMatchObject({ status: "Unavailable", errors: ["offline"] })
+ expect(rustyConnectionStates([board], [personal], { [replicaKey(personal)]: healthy, [replicaKey(board)]: healthy }, "board", true, now + 60_000)[0].status)
    .toBe("Check overdue")
- expect(profileDeliveryStates([board], [{ ...personal, removalPending: true }], { [replicaKey(personal)]: healthy }, "board", now)[0].status)
+ expect(rustyConnectionStates([board], [{ ...personal, removalPending: true }], { [replicaKey(personal)]: healthy }, "board", true, now)[0].status)
    .toBe("Removal pending")
 })

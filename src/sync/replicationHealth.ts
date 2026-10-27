@@ -1,7 +1,7 @@
 import type { BlindReplicaConfig } from "./blindReplication"
 export type ReplicaHealth = { phase: "syncing" | "catching-up" | "synced" | "paused" | "error"; lastSyncedAt?: number; error?: string; errorKind?: "unavailable" | "access" | "response" }
 export type ConnectionPresence = "connected" | "reconnecting" | "offline" | "empty"
-export const replicaConfirmationLifetime = 45_000
+const replicaConfirmationLifetime = 45_000
 export const replicaKey = (config: Pick<BlindReplicaConfig, "origin" | "scopeId">) => `${config.origin}/${config.scopeId}`
 export const syncTime = (timestamp: number) => new Date(timestamp).toLocaleTimeString()
 

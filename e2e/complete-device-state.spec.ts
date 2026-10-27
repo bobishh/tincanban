@@ -29,7 +29,7 @@ async function profileSyncDiagnostic(page: Page, expectedPhoto: string | null, o
       .map(byte => byte.toString(16).padStart(2, "0")).join("") : null
     const revision = await readIdentityStateRevision()
     const profileState = root?.profileState
-    const row = [...document.querySelectorAll(".rusty-profile-connection")]
+    const row = [...document.querySelectorAll(".rusty-server")]
       .find(element => element.querySelector(".technical-value")?.textContent?.trim() === origin)
     const safeText = (value: string) => value.replace(/https?:\/\/[^\s"']+/g, "[url]")
       .replace(/[A-Za-z0-9_-]{43,}/g, "[opaque]").slice(0, 500)

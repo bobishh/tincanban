@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { BlindReplicationController, RustyRemovalProgress } from "../app/blindReplication"
-import { profileDeliveryStates, replicaKey, replicaStatus, syncTime } from "../app/blindReplication"
+import { syncTime } from "../app/blindReplication"
+import { rustyConnectionStates } from "../app/rustyConnectionStatus"
 import { deviceDisplayName } from "../ui/deviceInfo"
 import RustyMark from "./RustyMark.vue"
 import RustyCredentialConflictRecovery from "./RustyCredentialConflictRecovery.vue"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
-const address = ref("")
+const configuredOrigin: unknown = import.meta.env.VITE_PUBLIC_BOARD_ORIGIN
+const address = ref(typeof configuredOrigin === "string" ? configuredOrigin : "")
 const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)
@@ -31,10 +33,25 @@ const profileConflicts = computed(() => {
     .filter(conflict => conflict.identityState)
     .map(conflict => [conflict.origin, conflict] as const)).values()]
 })
-const profileRecords = computed(() => profileDeliveryStates(props.controller.configs.value, props.controller.identityConfigs.value,
-  props.controller.statuses.value, props.workspaceId, props.controller.now.value))
-const resetOrigins = computed(() => [...new Set([...records.value, ...boardConflicts.value, ...profileConflicts.value,
-  ...profileRecords.value, ...savedOperations.value].map(value => value.origin))])
+const connections = computed(() => rustyConnectionStates(props.controller.configs.value, props.controller.identityConfigs.value,
+  props.controller.statuses.value, props.workspaceId, props.owner, props.controller.now.value))
+const servers = computed(() => {
+  const rows = new Map(connections.value.map(connection => [connection.origin, connection]))
+  for (const value of [...boardConflicts.value, ...profileConflicts.value, ...savedOperations.value]) {
+    if (!rows.has(value.origin)) rows.set(value.origin, { origin: value.origin, status: "Not checked", errors: [] })
+  }
+  return [...rows.values()].map(row => ({ ...row,
+    status: conflictsFor(row.origin).length ? "Settings conflict"
+      : savedOperations.value.some(operation => operation.origin === row.origin) ? "Recovery pending"
+      : props.controller.profilePermissionUpdates?.value.includes(row.origin) ? "Access required" : row.status,
+    name: rows.size === 1 ? "Rusty" : new URL(row.origin).host,
+  }))
+})
+function configsFor(origin: string) { return records.value.filter(config => config.origin === origin) }
+function conflictsFor(origin: string) {
+  return [...new Map([...boardConflicts.value, ...profileConflicts.value]
+    .filter(conflict => conflict.origin === origin).map(conflict => [conflict.scopeId, conflict])).values()]
+}
 async function run(action: () => Promise<void>) {
   pending.value = true
   failure.value = ""
@@ -65,96 +82,80 @@ async function forget() {
 </script>
 <template>
   <section class="rusty-panel" aria-label="Rusty">
-    <div class="rusty-heading"><RustyMark compact /><h3>Rusty</h3></div>
-    <p class="dialog-copy">Keeps an encrypted copy available when other participants are offline. Only the owner can add servers.</p>
-    <p v-if="!owner && !records.length && !boardConflicts.length" class="dialog-copy">No Rusty connection has reached this device for this board yet. Connect to a board participant to receive shared storage access.</p>
-    <div v-for="conflict in boardConflicts" :key="`board/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
-      <p>Rusty sync is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
-      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
-    </div>
-    <section v-for="operation in owner ? savedOperations : []" :key="`operation/${operation.origin}`" class="rusty-conflict" aria-label="Saved Rusty operation">
-      <p>{{ operation.origin }}: {{ operation.kind === 'device-revocation' ? 'Device removal is unfinished. Board and profile sync are paused on this server.' : 'Connection recovery is unfinished.' }} Saved data and the original operation are retained.</p>
-      <p v-if="operation.kind === 'device-revocation'">Device: {{ deviceDisplayName({ deviceId: operation.deviceId, name: controller.registeredDevices?.value.find(device => device.deviceId === operation.deviceId)?.displayName }) }}</p>
-      <p v-if="operation.progress">Next step: {{ removalSteps[operation.progress.phase] }}.</p>
-      <details v-if="operation.progress"><summary>Recovery details</summary><p>{{ operation.progress.confirmedScopes }} / {{ operation.progress.scopeCount }} storage updates confirmed. {{ operation.progress.frozenWorkers }} / {{ operation.progress.workerCount }} automations paused; {{ operation.progress.rotatedWorkers }} updated. Device revocation confirmed: {{ operation.progress.personConfirmed ? 'yes' : 'no' }}.</p></details>
-      <p v-if="operation.signerDeviceId !== controller.currentDeviceId.value">Continue on the device that started this operation.</p>
-      <button class="button" type="button" :disabled="busy || operation.signerDeviceId !== controller.currentDeviceId.value" @click="run(() => controller.resumeRustyOperation(operation.origin))">Resume Rusty operation</button>
-    </section>
-    <ul v-if="records.length" class="rusty-connections">
-      <li v-for="config in records" :key="`${config.origin}/${config.scopeId}`">
-        <div class="rusty-connection"><strong class="technical-value">{{ config.origin }}</strong><span class="reading-explanation">{{ replicaStatus(config, controller.statuses.value[replicaKey(config)], controller.now.value) }}</span>
-          <small v-if="config.boardAccess">{{ config.boardAccess.mode === 'read' ? 'Board access · read only' : 'Board access · read and write' }}</small>
-          <small v-if="controller.statuses.value[replicaKey(config)]?.lastSyncedAt">Last sync: <time :datetime="new Date(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!).toISOString()">{{ syncTime(controller.statuses.value[replicaKey(config)]!.lastSyncedAt!) }}</time></small>
-          <small v-if="controller.statuses.value[replicaKey(config)]?.error" role="alert">{{ controller.statuses.value[replicaKey(config)]!.error }}</small>
-        </div>
-        <button v-if="owner" class="button button-quiet" type="button" :disabled="busy" @click="run(() => controller.remove(config))">{{ config.removalPending ? 'Retry removal' : 'Remove' }}</button>
+    <ul v-if="servers.length" class="rusty-connections">
+      <li v-for="server in servers" :key="server.origin">
+        <details class="rusty-server">
+          <summary class="rusty-connection">
+            <RustyMark compact /><strong>{{ server.name }}</strong>
+            <span class="rusty-status" :class="{ 'is-synced': server.status === 'Synced' }" role="status">{{ server.status }}</span>
+            <span class="rusty-chevron" aria-hidden="true">⌄</span>
+          </summary>
+          <div class="rusty-server-details">
+            <code class="technical-value">{{ server.origin }}</code>
+            <time v-if="server.lastSyncedAt" :datetime="new Date(server.lastSyncedAt).toISOString()">{{ syncTime(server.lastSyncedAt) }}</time>
+            <p v-for="message in server.errors" :key="message" role="alert">{{ message }}</p>
+            <p v-if="controller.profileSetupErrors.value[server.origin]" role="alert">{{ controller.profileSetupErrors.value[server.origin] }}</p>
+            <div v-for="conflict in conflictsFor(server.origin)" :key="conflict.scopeId" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">
+              <p>Connection paused. Saved changes are retained. Every previous key and saved upload stays available.</p>
+              <RustyCredentialConflictRecovery :origin="server.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
+            </div>
+            <section v-for="operation in owner ? savedOperations.filter(value => value.origin === server.origin) : []" :key="operation.origin" class="rusty-conflict" aria-label="Saved Rusty operation">
+              <p>{{ operation.kind === 'device-revocation' ? 'Device removal pending' : 'Connection recovery pending' }}</p>
+              <p v-if="operation.kind === 'device-revocation'">{{ deviceDisplayName({ deviceId: operation.deviceId, name: controller.registeredDevices?.value.find(device => device.deviceId === operation.deviceId)?.displayName }) }}</p>
+              <p v-if="operation.progress">{{ removalSteps[operation.progress.phase] }}</p>
+              <details v-if="operation.progress"><summary>Recovery details</summary><p>{{ operation.progress.confirmedScopes }} / {{ operation.progress.scopeCount }} storage updates confirmed. {{ operation.progress.frozenWorkers }} / {{ operation.progress.workerCount }} automations paused; {{ operation.progress.rotatedWorkers }} updated. Device revocation confirmed: {{ operation.progress.personConfirmed ? 'yes' : 'no' }}.</p></details>
+              <p v-if="operation.signerDeviceId !== controller.currentDeviceId.value">Continue on the device that started this operation.</p>
+              <button class="button" type="button" :disabled="busy || operation.signerDeviceId !== controller.currentDeviceId.value" @click="run(() => controller.resumeRustyOperation(operation.origin))">Resume</button>
+            </section>
+            <button v-if="owner && controller.profilePermissionUpdates?.value.includes(server.origin)" class="button" type="button" :disabled="busy" @click="updateDeviceAccess(server.origin)">{{ updatingOrigin === server.origin ? 'Updating…' : 'Update access' }}</button>
+            <button v-if="owner && (!configsFor(server.origin).length || server.status === 'Setup required')" class="button" type="button" :disabled="busy" @click="address = server.origin; connect()">Connect</button>
+            <button v-for="config in owner ? configsFor(server.origin) : []" :key="config.scopeId" class="button button-quiet" type="button" :disabled="busy" @click="run(() => controller.remove(config))">{{ config.removalPending ? 'Retry removal' : 'Disconnect this board' }}</button>
+            <section v-if="forgettingOrigin === server.origin" class="rusty-local-access" aria-label="Forget local Rusty access">
+              <p>Forget {{ server.origin }} for all your boards on this device? Saved data and an audit copy of old settings stay saved. Server data and other participants are unchanged.</p>
+              <button class="button button-danger" type="button" :disabled="busy" @click="forget">Confirm forget Rusty</button>
+              <button class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = ''">Cancel</button>
+            </section>
+            <button v-else class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = server.origin">Forget Rusty on this device</button>
+          </div>
+        </details>
       </li>
     </ul>
-    <div v-if="profileRecords.length" class="rusty-profile-status" aria-label="Profile delivery">
-      <h4>Profile photo and settings</h4>
-      <ul class="rusty-connections">
-        <li v-for="profile in profileRecords" :key="profile.key" class="rusty-profile-connection">
-          <div class="rusty-connection"><strong class="technical-value">{{ profile.origin }}</strong><span class="reading-explanation">{{ profile.status }}</span>
-            <small v-if="profile.lastSyncedAt">Last sync: <time :datetime="new Date(profile.lastSyncedAt).toISOString()">{{ syncTime(profile.lastSyncedAt) }}</time></small>
-            <small v-if="profile.error" role="alert">{{ profile.error }}</small>
-            <small v-if="profile.status === 'Profile delivery not configured' && controller.profileSetupErrors.value[profile.origin]" role="alert">{{ controller.profileSetupErrors.value[profile.origin] }}</small>
-          </div>
-          <div v-if="owner && controller.profilePermissionUpdates?.value.includes(profile.origin)" class="rusty-access-update">
-            <p class="dialog-copy">Allow your approved devices to manage this Rusty connection. Your boards and saved files stay unchanged.</p>
-            <button class="button" type="button" :disabled="busy" @click="updateDeviceAccess(profile.origin)">{{ updatingOrigin === profile.origin ? 'Updating device access…' : 'Update device access' }}</button>
-          </div>
-        </li>
-      </ul>
-    </div>
-    <div v-for="conflict in profileConflicts" :key="`profile/${conflict.origin}`" class="rusty-conflict" role="alert" aria-label="Rusty profile settings conflict">
-      <p>Profile delivery is paused for {{ conflict.origin }} because devices saved different connection settings. Your saved changes are retained.</p>
-      <RustyCredentialConflictRecovery :origin="conflict.origin" :scope-id="conflict.scopeId" :workspace-id="workspaceId" :owner="owner" :disabled="busy" :recover="controller.recoverCredentialConflict" />
-    </div>
+    <div v-else class="rusty-empty"><RustyMark compact /><strong>Rusty</strong><span>P2P only</span></div>
     <div class="rusty-actions">
-    <section v-for="origin in resetOrigins" :key="`forget/${origin}`" class="rusty-local-access" aria-label="Forget local Rusty access">
-      <button v-if="forgettingOrigin !== origin" class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = origin">Forget Rusty on this device</button>
-      <template v-else>
-        <p>Forget {{ origin }} for all your boards and profile on this device? This abandons unfinished Rusty operations. Board data, profile, files, and an audit copy of old settings stay saved. Server data and other participants are unchanged.</p>
-        <button class="button button-danger" type="button" :disabled="busy" @click="forget">Confirm forget Rusty</button>
-        <button class="button button-quiet" type="button" :disabled="busy" @click="forgettingOrigin = ''">Cancel</button>
-      </template>
-    </section>
-    <button v-if="owner && !adding" class="button" type="button" :disabled="busy" @click="adding = true">Add Rusty</button>
-    <form v-if="owner && adding" @submit.prevent="connect">
-      <label for="rusty-address">Address</label>
-      <div class="rusty-connect"><input id="rusty-address" v-model="address" aria-label="Address" placeholder="rusty.example" autocomplete="url" required /><button class="button" type="submit" :disabled="busy">Connect</button></div>
-      <button class="button button-quiet" type="button" :disabled="busy" @click="adding = false">Cancel</button>
-    </form>
-    <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="busy" @click="run(controller.syncNow)">Sync now</button>
+      <button v-if="records.some(config => !config.removalPending)" class="button button-quiet" type="button" :disabled="busy" @click="run(controller.syncNow)">Sync now</button>
+      <button v-if="owner && !adding && !servers.length" class="button" type="button" :disabled="busy" @click="adding = true">Add Rusty</button>
+      <details v-if="owner && servers.length && !adding" class="rusty-additional"><summary>Connection settings</summary><button class="button" type="button" :disabled="busy" @click="adding = true">Add Rusty</button></details>
+      <form v-if="owner && adding" @submit.prevent="connect">
+        <label for="rusty-address">Address</label>
+        <div class="rusty-connect"><input id="rusty-address" v-model="address" aria-label="Address" placeholder="rusty.example" autocomplete="url" required /><button class="button" type="submit" :disabled="busy">Connect</button></div>
+        <button class="button button-quiet" type="button" :disabled="busy" @click="adding = false">Cancel</button>
+      </form>
     </div>
-    <p v-if="failure" class="reading-explanation" role="alert">{{ failure }}</p>
-
+    <p v-if="failure" role="alert">{{ failure }}</p>
   </section>
 </template>
-<style src="../styles/design-system/reading-fonts.css"></style>
 <style scoped>
 .rusty-panel { display: grid; align-content: start; gap: var(--space-2); }
-form > .button { justify-self: start; }
-.rusty-actions { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-2); }
-.rusty-actions > form, .rusty-local-access:has(> p) { flex-basis: 100%; }
-.rusty-heading { display: flex; align-items: center; gap: var(--space-2); }
-h3, h4, p { margin: 0; }
+.rusty-connections { padding: 0; margin: 0; list-style: none; }
+.rusty-connections > li + li { margin-top: var(--space-2); }
+.rusty-server { border: 1px solid var(--line); }
+.rusty-connection { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-2); min-block-size: var(--control-size); padding: var(--space-2); cursor: pointer; list-style: none; }
+.rusty-connection::-webkit-details-marker { display: none; }
+.rusty-status { min-inline-size: 10ch; text-align: end; }
+.rusty-status.is-synced { color: var(--success, #166534); }
+.rusty-chevron { transition: transform .15s; }
+.rusty-server[open] > summary .rusty-chevron { transform: rotate(180deg); }
+.rusty-server-details { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2); border-top: 1px solid var(--line); }
+.rusty-server-details > code, .rusty-server-details > p, .rusty-conflict, .rusty-local-access { flex-basis: 100%; }
+.technical-value { overflow-wrap: anywhere; min-width: 0; }
+.rusty-actions, .rusty-empty { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.rusty-actions > form { flex-basis: 100%; }
+.rusty-additional > .button { margin-top: var(--space-2); }
+p { margin: 0; }
 form { display: grid; gap: var(--space-1); }
 .rusty-connect { display: flex; gap: var(--space-2); }
-input, textarea { min-width: 0; width: 100%; box-sizing: border-box; }
-.rusty-connect input { flex: 1; }
-textarea { min-height: 5rem; }
-.rusty-connections { padding: 0; margin: 0; list-style: none; }
-li { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; padding-block: var(--space-2); }
-.rusty-connection { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-3); row-gap: var(--space-1); min-width: 0; }
-.rusty-connection strong { overflow-wrap: anywhere; }
-.rusty-connection span { color: var(--muted); font-size: .85rem; }
-.rusty-profile-status { display: grid; gap: var(--space-1); padding-top: var(--space-2); border-top: 1px solid var(--soft); }
-.rusty-profile-connection, .rusty-access-update, .rusty-local-access { display: grid; gap: var(--space-2); }
-.rusty-local-access > .button { justify-self: start; }
-.rusty-panel .button { min-height: var(--control-size-compact); padding: var(--space-1) var(--space-3); font-size: .85rem; }
-.rusty-conflict { border: 1px solid var(--warning, #b45309); border-radius: 8px; padding: var(--space-2); }
-.rusty-conflict p { margin: 0; }
-.rusty-access-update > .button { justify-self: start; }
+input { min-width: 0; width: 100%; box-sizing: border-box; flex: 1; }
+.rusty-panel .button { min-height: var(--control-size-compact); padding: var(--space-1) var(--space-3); }
+.rusty-conflict { border: 1px solid var(--warning, #b45309); padding: var(--space-2); }
 @media (max-width: 480px) { .rusty-connect { flex-direction: column; } }
 </style>

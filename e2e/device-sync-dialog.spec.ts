@@ -103,7 +103,7 @@ test("Given desktop participants and many devices, when selecting people and res
   await expect(dialog.getByRole("list", { name: "Devices for Workspace owner" }).getByRole("listitem")).toHaveCount(1)
   await expect(dialog.locator(".mesh-device-status")).toHaveText("No connection")
   const ownerDevice = dialog.getByRole("list", { name: "Devices for Workspace owner" }).getByRole("listitem")
-  await ownerDevice.getByText("Connection details", { exact: true }).click()
+  await ownerDevice.getByText("Details", { exact: true }).click()
   await expect(ownerDevice.getByText("owner-browser", { exact: true })).toBeVisible()
   await expect(ownerDevice.getByText(/Last seen/)).toBeVisible()
   await dialog.screenshot({ path: testInfo.outputPath("sync-desktop-offline-device.png") })

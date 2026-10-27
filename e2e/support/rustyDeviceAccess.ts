@@ -16,10 +16,11 @@ declare global {
 }
 
 export function mountRustyDeviceAccess(mode: "success" | "failure" | "pending" = "success", owner = true,
-  conflicts: PreferenceConflict[] = [], connections: "board" | "identity" | "board-and-identity" | "none" = "board") {
+  conflicts: PreferenceConflict[] = [], connections: "board" | "identity" | "board-and-identity" | "none" = "board",
+  delivery?: "synced" | "unavailable" | "pending") {
   const fixture: FixtureState = { calls: [], revocations: [] }
   window.rustyDeviceAccessFixture = fixture
-  const profilePermissionUpdates = ref([origin])
+  const profilePermissionUpdates = ref(delivery ? [] : [origin])
   const controller = {
     configs: ref(connections === "identity" || connections === "none" ? [] : [{ origin, workspaceId: "board", scopeId: "board-scope", servicePublicKey: "service-key",
       readToken: "read-token", writeToken: "write-token", policyRevision: 1, keyEpoch: 1,
@@ -27,7 +28,11 @@ export function mountRustyDeviceAccess(mode: "success" | "failure" | "pending" =
     identityConfigs: ref(connections === "board" || connections === "none" ? [] : [{ purpose: "identity", personId: "person", origin, scopeId: "identity-scope",
       servicePublicKey: "service-key", readToken: "read-token", writeToken: "write-token", keyEpoch: 1,
       policyRevision: 1, contentKey: "identity-content-key", cursor: 0, lastUploaded: "" }]),
-    profileSetupErrors: ref({}), statuses: ref({}), now: ref(Date.now()),
+    profileSetupErrors: ref({}), statuses: ref(delivery ? {
+      [`${origin}/board-scope`]: { phase: "synced", lastSyncedAt: Date.now() },
+      [`${origin}/identity-scope`]: delivery === "unavailable" ? { phase: "error", errorKind: "unavailable", error: "Server unavailable" }
+        : delivery === "pending" ? { phase: "syncing" } : { phase: "synced", lastSyncedAt: Date.now() },
+    } : {}), now: ref(Date.now()),
     preferenceConflicts: ref(conflicts),
     registeredDevices: ref([{ deviceId: "local-device", displayName: "This device", addedAt: "2026-01-01T00:00:00.000Z" },
       { deviceId: "other-device", displayName: "Travel laptop", addedAt: "2026-02-01T00:00:00.000Z" }]),

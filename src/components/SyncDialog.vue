@@ -143,7 +143,7 @@ const peopleMembers = computed(() => (props.meshMembers ?? []).filter(member => 
 const removedDeviceRecords = computed(() => props.myDeviceRemoval?.jobs.value.filter(myDeviceRemovalComplete) ?? [])
 
 watch(peopleMembers, members => {
-  if (!members.some(member => member.personId === selectedMemberId.value)) selectedMemberId.value = members.find(member => member.self)?.personId ?? members[0]?.personId ?? ""
+  if (!members.some(member => member.personId === selectedMemberId.value)) selectedMemberId.value = ""
 }, { immediate: true })
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
@@ -218,7 +218,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <div>
         <p class="mesh-connection-summary" :class="{ 'is-warning': connectionStatus.warning }" role="status">
           <strong>{{ connectionStatus.title }}</strong>
-          · {{ connectionStatus.message }}
         </p>
         <section v-if="networkOnline !== false && rejectedSource" class="sync-error" role="status" aria-label="Changes rejected">
           <p><strong>Changes rejected by this board.</strong>
@@ -230,7 +229,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <p v-else>Source device is not currently listed among known members.</p>
         </section>
         <p v-else-if="networkOnline !== false && meshDiagnostic && (meshMembers || []).some(member => !member.self)" class="sync-error" role="status">{{ workspaceConnected ? "Sync issue:" : "Reconnect:" }} {{ meshDiagnostic }}</p>
-        <p class="mesh-member-help">Select a person to see their devices.</p>
         <div class="sync-participant-browser">
         <div class="mesh-member-list" role="list" aria-label="Mesh members">
           <button
@@ -240,10 +238,11 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
             :class="{ 'is-selected': selectedMemberId === member.personId }"
             type="button"
             :aria-pressed="selectedMemberId === member.personId"
-            @click="selectedMemberId = member.personId"
+            :aria-expanded="selectedMemberId === member.personId"
+            @click="selectedMemberId = selectedMemberId === member.personId ? '' : member.personId"
           >
             <ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" /><span class="mesh-member-presence" :class="member.online ? 'is-online' : member.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
-            <span class="mesh-member-name"><strong>{{ member.name }}</strong><small>{{ member.devices }} known {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small>
+            <span class="mesh-member-name"><strong>{{ member.name }}</strong><small>{{ member.devices }} {{ member.devices === 1 ? 'device' : 'devices' }}{{ member.self ? ' · You' : '' }}</small>
               <span class="mesh-member-role">{{ member.role }}{{ member.personId === succession?.successorPersonId ? ' · Named successor' : '' }}</span>
             </span>
           </button>
@@ -258,7 +257,6 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
                 <span class="mesh-device-presence" :class="device.online ? 'is-online' : device.reconnecting ? 'is-reconnecting' : 'is-offline'" aria-hidden="true"></span>
                 <strong>{{ deviceDisplayName(device) }}</strong>
               </div>
-              <small v-if="!deviceDisplayName(device).includes(device.description || 'Browser / OS unknown')" class="mesh-device-platform">{{ device.description || 'Browser / OS unknown' }}</small>
               <div class="mesh-device-actions">
                 <small class="mesh-device-status">{{ deviceConnectionLabel(device) }}</small>
                 <MyDeviceRemovalControl v-if="selectedMember.self && device.deviceId !== localDeviceId && myDeviceRemoval"
@@ -268,7 +266,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
                   :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
               </div>
               <details class="mesh-device-details">
-                <summary>Connection details</summary>
+                <summary>Details</summary>
+                <small>{{ device.description || 'Browser / OS unknown' }}</small>
                 <code>{{ device.deviceId }}</code>
                 <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
                 <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
