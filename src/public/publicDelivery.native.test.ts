@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
-import { effectScope } from "vue"
+import { effectScope, ref } from "vue"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { certificateHash, profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
@@ -30,6 +30,8 @@ import { readLocal, writeLocal } from "../localDb"
 import { peerStore } from "../sync/peerStore"
 import { createWorkspaceOwnershipTransfer } from "../sync/meshRecords"
 import { usePublicBoardDelivery } from "../app/usePublicBoardDelivery"
+import { usePublicBoardAccess } from "../app/usePublicBoardAccess"
+import { parsePublicationRecord, publicationRecordKey } from "../domain/publicationState"
 
 vi.mock("../sync/workspaceAdmissionClient", () => ({ runWorkspaceAccess: async () => "owner" }))
 
@@ -129,6 +131,75 @@ async function stopRusty(child: ChildProcess): Promise<void> {
   child.kill("SIGKILL")
   if (!await exited(2_000)) throw new Error("Rusty process did not exit; preserving its state directory")
 }
+
+test("Given an interrupted owner update and newer admitted cards, when authenticated status confirms the old base, then retry current content and reject the delayed old CAS request", async () => {
+  await initializeNativeAutomerge()
+  stubWindow("http://localhost")
+  const owner = await bootstrapIdentity("Recovering publisher")
+  const workspaceId = crypto.randomUUID()
+  const seed = createWorkspaceDoc(workspaceId, "Recover publication", owner.identity.personId, "job-search")
+  const board = Object.values(seed.entities).find(entity => entity.kind === "board")!
+  if (board.kind !== "board") throw new Error("Expected fixture board")
+  const columnId = board.preset!.bindings["status.applied"]!
+  const now = new Date().toISOString()
+  for (let index = 0; index < 82; index++) {
+    const id = `existing-${index}`
+    seed.entities[id] = { id, title: `Existing ${index}`, body: "", values: {},
+      placement: { parentId: columnId, rank: `${index}/1` }, archivedAt: null, createdAt: now, updatedAt: now }
+  }
+  let workspace = Automerge.from(seed)
+  await recordGenesisAuthority(workspace, owner)
+  const authority = (await peerStore.getWorkspaceAuthority(workspaceId))!
+  const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+  const service = await startRusty()
+  const scope = effectScope()
+  try {
+    stubWindow(service.origin)
+    await publishBoardSnapshot({ origin: service.origin, boardId: board.id, workspaceId, document: workspace, profile: owner,
+      action: "publish", expectedRevision: 0 })
+    const originalFetch = globalThis.fetch.bind(globalThis)
+    let delayed: { url: string; init: RequestInit } | undefined
+    vi.stubGlobal("fetch", async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!delayed && init?.method === "PUT" && String(url) === `${service.origin}/v1/public/boards/${board.id}`) {
+        delayed = { url: String(url), init }
+        throw new Error("Simulated interrupted publication before remote commit")
+      }
+      return originalFetch(url, init)
+    })
+    const version = ref(1)
+    const access = scope.run(() => usePublicBoardAccess({ origin: () => service.origin, connected: () => true,
+      workspaceId: () => workspaceId, boardId: () => board.id, boardTitle: () => board.title, document: () => workspace,
+      owner: () => true, profile: () => owner, sourceVersion: () => version.value,
+      sourceHeads: () => Automerge.getHeads(workspace), debounceMs: 0 }))!
+    await vi.waitFor(() => expect(delayed).toBeDefined(), { timeout: 10_000 })
+    await vi.waitFor(() => expect(access.busy.value).toBe(false))
+    const key = publicationRecordKey(service.origin, workspaceId, board.id, owner)
+    expect(parsePublicationRecord(await readLocal(key))?.intent).toMatchObject({ action: "update", expectedRevision: 1 })
+    expect((await readPublicBoardManagementState({ origin: service.origin, boardId: board.id, profile: owner })).revision).toBe(1)
+
+    workspace = Automerge.change(workspace, "Admitted latest email receipt", draft => {
+      draft.entities.elearnio = { id: "elearnio", title: "elearnio", body: "Current application receipt", values: {},
+        placement: { parentId: columnId, rank: "83/1" }, archivedAt: null, createdAt: now, updatedAt: now }
+    })
+    version.value++
+    await vi.waitFor(() => expect(access.revision.value).toBe(2), { timeout: 15_000 })
+    expect(access.error.value).toBe("")
+    expect(parsePublicationRecord(await readLocal(key))?.intent?.confirmed).toBe(true)
+    const stale = await originalFetch(delayed!.url, delayed!.init)
+    expect(stale.ok).toBe(false)
+    expect(await stale.text()).toContain("Publication revision conflict")
+    const current = await readPublicBoardManagementState({ origin: service.origin, boardId: board.id, profile: owner })
+    expect(current.revision).toBe(2)
+    expect(current.projection?.cards).toHaveLength(83)
+    expect(current.projection?.cards.find(card => card.id === "elearnio")?.title).toBe("elearnio")
+  } finally {
+    scope.stop()
+    credential.mockRestore()
+    Automerge.free(workspace)
+    await stopRusty(service.child)
+    await rm(service.directory, { recursive: true, force: true })
+  }
+}, 60_000)
 
 test.each([false, true])("Given an owner-published board and durable editor authority without connection credentials (ownership transferred: %s), when a card is admitted locally, then browser delivery updates the same public board", async transferred => {
   await initializeNativeAutomerge()

@@ -183,6 +183,50 @@ describe("public board owner access", () => {
     expect(mocks.publish.mock.calls[0]?.[0].deliveryPolicy).toBeUndefined()
   })
 
+  it("Given a saved failed update of an already public board, when authenticated status confirms its unchanged base, then automatically publish all current admitted cards after restart", async () => {
+    const doc = createWorkspaceDoc("workspace-a", "Job search", "person-a", "job-search")
+    const board = Object.values(doc.entities).find(entity => entity.kind === "board")!
+    if (board.kind !== "board") throw new Error("Expected fixture board")
+    const columnId = board.preset!.bindings["status.applied"]!
+    const now = new Date().toISOString()
+    for (let index = 0; index < 82; index++) {
+      const id = `existing-${index}`
+      doc.entities[id] = { id, title: `Existing ${index}`, body: "", values: {},
+        placement: { parentId: columnId, rank: `${index}/1` }, archivedAt: null, createdAt: now, updatedAt: now }
+    }
+    mocks.useActualPublication = true
+    const previous = await createBrowserBoardPublication(doc, doc.id, board.id)
+    expect(previous.projection.cards).toHaveLength(82)
+    const previousHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(JSON.parse(JSON.stringify(previous.projection)))))
+    doc.entities.elearnio = { id: "elearnio", title: "elearnio", body: "Current application receipt", values: {},
+      placement: { parentId: columnId, rank: "83/1" }, archivedAt: null, createdAt: now, updatedAt: now }
+    document.value = doc as never
+    boardId.value = board.id
+    sourceHeads.value = ["current-admitted-head"]
+    const key = publicationRecordKey(origin.value, doc.id, board.id, profile.value as never)
+    await mocks.writeLocal(key, JSON.stringify({ version: 1, origin: origin.value, workspaceId: doc.id, boardId: board.id,
+      ownerPersonId: "person-a", ownerIntent: "published", confirmedRevision: 12, confirmedHash: previousHash,
+      remoteAvailability: "published", intent: { operationId: "failed-old-update", action: "update", expectedRevision: 12,
+        projection: previous.projection, projectionHash: previousHash, sourceHeads: ["old-head"] } }))
+    mocks.read.mockResolvedValue({ revision: 12, published: true, availability: "published", hash: previousHash,
+      deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
+    mocks.compare.mockResolvedValue(true)
+    mocks.publish.mockImplementation(async input => {
+      expect(input).toMatchObject({ action: "update", expectedRevision: 12, sourceHeads: ["current-admitted-head"] })
+      expect(input.preparedProjection.cards).toHaveLength(83)
+      expect(input.preparedProjection.cards.find((card: { id: string }) => card.id === "elearnio")?.title).toBe("elearnio")
+      const pending = parsePublicationRecord(await mocks.readLocal(key))!
+      expect(pending.intent?.operationId).not.toBe("failed-old-update")
+      return { revision: 13, hash: pending.intent!.projectionHash, url: "https://app.test/boards/current" }
+    })
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    await vi.advanceTimersByTimeAsync(20)
+    await vi.waitFor(() => expect(access.revision.value).toBe(13))
+    expect(mocks.publish).toHaveBeenCalledOnce()
+    expect(access.error.value).toBe("")
+  })
+
   it("skips attachment rechecks after an identity presentation refresh with unchanged board heads", async () => {
     const access = create()
     await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
@@ -575,7 +619,7 @@ describe("public board owner access", () => {
     await expect(operation).rejects.toThrow(/no longer current/)
   })
 
-  it("Given a publication outcome is uncertain and status advanced, then keep its saved intent instead of replacing it", async () => {
+  it("Given an update lost a revision race, when authenticated status advanced, then retry current admitted source against the latest revision", async () => {
     mocks.read.mockResolvedValueOnce({ revision: 4, published: true, hash: "old", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
       .mockResolvedValueOnce({ revision: 7, published: true, hash: "latest", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
     mocks.compare.mockResolvedValue(true)
@@ -591,7 +635,10 @@ describe("public board owner access", () => {
     await vi.advanceTimersByTimeAsync(1_900)
     await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledTimes(2))
     await vi.advanceTimersByTimeAsync(20)
-    expect(mocks.publish).toHaveBeenCalledOnce()
-    expect(access.error.value).toMatch(/uncertain outcome/i)
+    await vi.waitFor(() => expect(access.revision.value).toBe(8))
+    expect(mocks.publish).toHaveBeenCalledTimes(2)
+    expect(mocks.publish.mock.calls[1]![0]).toMatchObject({ action: "update", expectedRevision: 7, sourceHeads: ["head-a"] })
+    expect(access.revision.value).toBe(8)
+    expect(access.error.value).toBe("")
   })
 })

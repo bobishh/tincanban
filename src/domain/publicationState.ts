@@ -48,6 +48,7 @@ export function parsePublicationRecord(raw: string | null): PublicationRecord | 
   } catch { return undefined }
 }
 
+/** Remote state must come from the authenticated, integrity-checked publication reader. */
 export function reconcilePublicationRecord(record: PublicationRecord | undefined, remote: {
   revision: number; published: boolean; availability?: PublicationAvailability; hash?: string; projection?: PublicBoardProjection
 }): { published: boolean; withdrawn: boolean; recoveryNeeded: boolean; revision: number; hash: string; record?: PublicationRecord } {
@@ -91,19 +92,29 @@ function observedRemoteWithdrawal(record: PublicationRecord, revision: number, h
 }
 function observedRemoteState(record: PublicationRecord | undefined, remote: { revision: number; published: boolean; hash?: string; projection?: PublicBoardProjection },
   availability: PublicationAvailability) {
-  const ownerConfirmed = confirmPublishedIntent(record, remote)
+  const ownerConfirmed = reconcilePublishedIntent(record, remote)
   const observed = ownerConfirmed ? { ...ownerConfirmed, remoteAvailability: availability } : undefined
-  const confirmed = remote.published && observed ? { ...observed, confirmedRevision: remote.revision,
+  const pendingUpdate = observed?.intent?.action === "update" && !observed.intent.confirmed
+  const confirmed = remote.published && observed && !pendingUpdate ? { ...observed, confirmedRevision: remote.revision,
     confirmedHash: remote.hash ?? observed.confirmedHash, ...(remote.projection ? { confirmedProjection: remote.projection } : {}) } : observed
   return { published: remote.published, withdrawn: !remote.published && remote.revision > 0,
     recoveryNeeded: false, revision: remote.revision, hash: remote.hash ?? "",
     record: confirmed }
 }
-function confirmPublishedIntent(record: PublicationRecord | undefined,
+function reconcilePublishedIntent(record: PublicationRecord | undefined,
   remote: { revision: number; published: boolean; hash?: string }): PublicationRecord | undefined {
   const intent = record?.intent
   if (!record || !intent || intent.confirmed || intent.action === "unpublish" || !remote.published ||
-      intent.expectedRevision + 1 !== remote.revision || intent.projectionHash !== remote.hash) return record
-  const confirmedIntent = { ...intent, confirmed: true, confirmedBy: "status" as const }
-  return { ...record, intent: confirmedIntent }
+      remote.revision < Math.max(record.confirmedRevision, intent.expectedRevision)) return record
+  if (intent.expectedRevision + 1 === remote.revision && intent.projectionHash === remote.hash) {
+    return { ...record, intent: { ...intent, confirmed: true, confirmedBy: "status" as const } }
+  }
+  if (intent.action !== "update" || !remote.hash) return record
+  const unchangedBase = remote.revision === record.confirmedRevision && remote.hash === record.confirmedHash
+  if (!unchangedBase && remote.revision === intent.expectedRevision) return record
+  // A current base can be retried under CAS. An advanced revision makes this
+  // older CAS attempt unable to commit, even if another request won the race.
+  const retryable = { ...record }
+  delete retryable.intent
+  return retryable
 }
