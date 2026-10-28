@@ -50,17 +50,17 @@ function photoProjector(workspace: ReturnType<typeof useTincanban>, isOwnerCurre
       return isOwnerCurrent(ownerId) ? "complete" : "stale"
     } catch { return isOwnerCurrent(ownerId) ? "failed" : "stale" }
   }
-  return async (value: IdentityPhoto, all: boolean, ownerId: string): Promise<void> => {
+  return async (value: IdentityPhoto, ownerId: string): Promise<void> => {
     if (!workspace.ready.value || !isOwnerCurrent(ownerId) || !canProject()) return
     const active = workspace.getActiveDoc()?.id
-    const ids = all ? workspace.availableWorkspaces.value.map(item => item.id) : active ? [active] : []
+    const ids = [...new Set([...(active ? [active] : []), ...workspace.availableWorkspaces.value.map(item => item.id)])]
     let failed = 0
     for (const workspaceId of ids) {
       const result = await projectOne(workspaceId, value, ownerId)
       if (result === "stale") return
       if (result === "failed") failed++
     }
-    setNotice(failed ? "Photo saved. Sharing to some workspaces is pending; reopen them to retry." : "")
+    setNotice(failed ? "Photo saved. Sharing to some workspaces is pending; retrying automatically." : "")
   }
 }
 
@@ -110,6 +110,8 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>, con
   let disposed = false
   let queue = Promise.resolve()
   let photoOwner = ""
+  let projectionRetry: ReturnType<typeof setTimeout> | undefined
+  let retryDelay = 5_000
   const personId = () => workspace.getCurrentProfile()?.identity.personId
   const memberAvatars = computed<Record<string, string>>(() => {
     void workspace.docVersion.value
@@ -133,7 +135,15 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>, con
   }
   function ownerIsCurrent(ownerId: string): boolean { return !disposed && personId() === ownerId }
   const canProject = () => contextReady?.value ?? true
-  const projectPhoto = photoProjector(workspace, ownerIsCurrent, canProject, value => { avatarNotice.value = value })
+  const projectPhoto = photoProjector(workspace, ownerIsCurrent, canProject, value => {
+    avatarNotice.value = value
+    clearTimeout(projectionRetry)
+    projectionRetry = undefined
+    if (!value) { retryDelay = 5_000; return }
+    if (disposed) return
+    projectionRetry = setTimeout(() => { projectionRetry = undefined; void serial(reconcilePhoto) }, retryDelay)
+    retryDelay = Math.min(retryDelay * 2, 60_000)
+  })
   async function updateProfileChoices(root: PersonalRootDocumentV1, ownerId: string) {
     const { name, picture, revision, nameProvided, storedPhoto } = await readProfileChoices(root, () => ownerIsCurrent(ownerId))
     if (!ownerIsCurrent(ownerId)) return { conflicted: false }
@@ -169,7 +179,7 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>, con
       if (!ownerIsCurrent(id)) return
       photo.value = chosen
       if (conflicted) { avatarNotice.value = "Photo changes need a choice in Settings → Identity."; return }
-      if (stored) await projectPhoto(stored, false, id)
+      if (stored) await projectPhoto(stored, id)
     } catch (cause) {
       logProfileReadFailure(cause)
       clearProfileChoices()
@@ -191,20 +201,21 @@ export function useMemberAvatars(workspace: ReturnType<typeof useTincanban>, con
       const saved = await saveIdentityPhoto(profile, avatarData, undefined, expectedRevision)
       if (personId() !== profile.identity.personId) throw new Error("Identity changed while saving photo")
       photoOwner = profile.identity.personId; photo.value = saved
-      await projectPhoto(saved, true, profile.identity.personId)
+      await projectPhoto(saved, profile.identity.personId)
     })
   }
   const stop = watch(() => {
     void workspace.docVersion.value
     const doc = workspace.getActiveDoc()
     const entity = doc?.entities[memberProfileEntityId(personId() ?? "")]
-    return `${workspace.ready.value}:${contextReady?.value ?? true}:${personId() ?? ""}:${doc?.id ?? ""}:${entity?.kind === "member_profile" ? entity.data : ""}`
+    const workspaceIds = workspace.availableWorkspaces.value.map(item => item.id).sort().join(",")
+    return `${workspace.ready.value}:${contextReady?.value ?? true}:${personId() ?? ""}:${doc?.id ?? ""}:${workspaceIds}:${entity?.kind === "member_profile" ? entity.data : ""}`
   }, () => { void serial(reconcilePhoto) }, { immediate: true })
   const unsubscribe = subscribeIdentityDevicePreferences(owner => {
     if (disposed || owner !== personId()) return
     void serial(reconcilePhoto)
   })
-  onScopeDispose(() => { disposed = true; stop(); unsubscribe() })
+  onScopeDispose(() => { disposed = true; clearTimeout(projectionRetry); stop(); unsubscribe() })
   return { memberAvatars, currentAvatar, saveAvatar, avatarNotice, profileLoadError, retryProfileLoad,
     profileConflicts, profileRevision, identityNameProvided }
 }

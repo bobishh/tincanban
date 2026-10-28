@@ -229,8 +229,8 @@ test("Given Bo closed the old owner device, when a newly approved Bo app device 
     expect(restoredOwner.personId).toBe(ownerPersonId)
     expect(restoredOwner.deviceId).not.toBe(oldOwnerDeviceId)
     expect(await workspaceConnectionFingerprint(newOwner, workspaceId)).toBe(originalConnection)
-    expect(await newOwner.evaluate(async id =>
-      (await import("/src/sync/workspaceParticipants.ts")).readWorkspaceParticipants(id), workspaceId))
+    await expect.poll(() => newOwner.evaluate(async id =>
+      (await import("/src/sync/workspaceParticipants.ts")).readWorkspaceParticipants(id), workspaceId), { timeout: 30_000 })
       .toContainEqual({ personId: editorPersonId, role: "editor" })
     const scopeId = await newOwner.evaluate(async id => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")

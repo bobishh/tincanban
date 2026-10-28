@@ -41,6 +41,8 @@ type ReadinessWaiter = {
 const readinessWaiters = new Set<ReadinessWaiter>();
 
 export function resetStateForTest(): void {
+  stateRuntime.workspaceSelectionVersion++;
+  stateRuntime.workspaceSelectionPending = null;
   clearPendingItemMoves();
   stateRuntime.activeDoc = null;
   stateRuntime.currentProfile = null;

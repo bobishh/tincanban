@@ -204,8 +204,9 @@ test("Given a joined workspace with local data, when an editor leaves the mesh, 
     await expect(guestDialog.getByRole("button", { name: "Leave mesh" })).toHaveCount(0)
 
     const localMembers = guestDialog.getByRole("list", { name: "Mesh members" }).getByRole("button")
-    await expect(localMembers).toHaveCount(1)
-    await expect(localMembers).toContainText("You")
+    await expect(localMembers).toHaveCount(2)
+    await expect(localMembers.filter({ hasText: "You" })).toHaveCount(1)
+    await expect(localMembers.filter({ hasText: "owner" })).toHaveCount(1)
     await expect(guest.getByRole("button", { name: /Add lead to/ })).toHaveCount(0)
     await expect(guestDialog.getByRole("button", { name: "Leave mesh" })).toHaveCount(0)
     await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()

@@ -77,7 +77,7 @@ test("Given Device sync, When participants open, Then succession actions stay be
   await expect(sync.getByRole("button", { name: "Leave mesh", exact: true })).toBeVisible()
   await expect(sync.getByText("Technical details", { exact: true })).toHaveCount(0)
   await expect(sync.locator(".mesh-device-ua")).toHaveCount(0)
-
+  await sync.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: "Bo" }).click()
   await expect(sync.getByRole("button", { name: "Enable editor quorum" })).toBeDisabled()
 })
 
@@ -86,8 +86,10 @@ test("Given backup creation is pending or fails, When Export is selected, Then d
   await page.goto("/")
   await page.evaluate(async () => {
     let attempts = 0
+    let release!: () => void
+    Object.assign(window, { releaseWorkspaceExport: () => release() })
     await (await import("/e2e/support/keeperDialog.ts")).mountWorkspaceFileActions(async () => {
-      await new Promise(resolve => setTimeout(resolve, 300))
+      if (!attempts) await new Promise<void>(resolve => { release = resolve })
       if (++attempts === 1) throw new Error("Backup storage unavailable")
     })
   })
@@ -96,6 +98,7 @@ test("Given backup creation is pending or fails, When Export is selected, Then d
   await exportButton.click()
   await expect(exportButton).toHaveText("Exporting…")
   await expect(exportButton).toBeDisabled()
+  await page.evaluate(() => (window as unknown as { releaseWorkspaceExport: () => void }).releaseWorkspaceExport())
   await expect(sync.getByRole("alert")).toHaveText("Backup storage unavailable")
   await sync.getByRole("button", { name: "Retry export", exact: true }).click()
   await expect(sync.getByRole("button", { name: "Export .tincanban", exact: true })).toBeEnabled()

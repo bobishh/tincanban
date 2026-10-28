@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest"
 import { publicBoardOrigin, withPublicBoardOrigin } from "./publicBoardLink"
 
 describe("public board source links", () => {
+  it("keeps original addresses readable through the configured publication server while rejecting an invalid explicit destination", () => {
+    expect(publicBoardOrigin("", "https://rusty.example")).toBe("https://rusty.example")
+    expect(publicBoardOrigin("?message=m", "https://rusty.example")).toBe("https://rusty.example")
+    expect(publicBoardOrigin("?rusty=javascript:bad", "https://rusty.example")).toBe("")
+    expect(publicBoardOrigin("", "http://untrusted.example")).toBe("")
+  })
   it("Given a board on a connected Rusty, when sharing its link, then retain its exact server across reload and canonicalization", () => {
     const path = withPublicBoardOrigin("/boards/board/job-search?view=all#card", "https://rusty.example")
     const url = new URL(path, "https://app.example")

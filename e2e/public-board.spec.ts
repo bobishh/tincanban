@@ -202,20 +202,20 @@ for (const width of [390, 1440]) test(`Given a job-search publication at ${width
 })
 
 
-test("Given a board link without its Rusty address, when an anonymous visitor opens it, then explain how to get a complete public link without private startup", async ({ page }) => {
+test("Given the original board address without a server parameter, when an anonymous visitor opens it, then read its publication without private startup", async ({ page }) => {
   const getWasmRequests = await monitorPrivateStartup(page)
+  await page.route(api, route => route.fulfill({ json: { boardId, revision: 1, projection: snapshot } }))
   await page.goto(`/boards/${boardId}`)
-  await expect(page.getByRole("alert")).toContainText("Ask the board owner for its public link")
-  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
   expect(getWasmRequests()).toBe(0)
 })
 
 
-test("Given this browser knows a private board route, when its explicit public link opens, then use the link's Rusty without starting the private app", async ({ page }) => {
+test("Given this browser knows another private board, when a public board opens, then read the shared address without private startup", async ({ page }) => {
   const getWasmRequests = await monitorPrivateStartup(page)
   await page.addInitScript(boardId => {
     localStorage.setItem("tincanban.board-route-index.v1", JSON.stringify({ version: 1, activeIdentityId: "known-owner",
-      identities: { "known-owner": { [boardId]: "known-workspace" } } }))
+      identities: { "known-owner": { [boardId + "-other"]: "known-workspace" } } }))
   }, boardId)
   await page.route(api, route => route.fulfill({ json: { boardId, revision: 1, projection: snapshot } }))
   await page.goto(publicPath)
@@ -223,4 +223,15 @@ test("Given this browser knows a private board route, when its explicit public l
   expect(getWasmRequests()).toBe(0)
   expect(await page.evaluate(() => (window as typeof window & { __publicProbe: unknown }).__publicProbe))
     .toEqual({ workers: 0, wasm: 0, idbOpen: 0 })
+})
+
+test("Given an obsolete local route hint for a public board, when private access is unavailable, then read its public copy instead of rejecting the address", async ({ page }) => {
+  await page.addInitScript(boardId => {
+    localStorage.setItem("tincanban.board-route-index.v1", JSON.stringify({ version: 1, activeIdentityId: "previous-identity",
+      identities: { "previous-identity": { [boardId]: "unavailable-workspace" } } }))
+  }, boardId)
+  await page.route(api, route => route.fulfill({ json: { boardId, revision: 1, projection: snapshot } }))
+  await page.goto(`/boards/${boardId}`)
+  await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole("button", { name: "Edit board", exact: true })).toHaveCount(0)
 })

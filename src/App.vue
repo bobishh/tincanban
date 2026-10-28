@@ -35,7 +35,7 @@ import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
-import { CausalChangeReview, ColumnDialog, IdentityBoardLoadingNotice, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentityBoardLoadingNotice, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 
 const app = useAppController()
 const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
@@ -153,7 +153,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
     <StartupStatus v-if="startupCoverVisible" expanded :message="startupMessage" :view-only="false" :error="null" />
   </Transition>
-  <TincanbanPageLayout :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || workspaceDialogBusy || undefined" :busy="!uiReady && !startupError">
+  <PublicBoardApp v-if="boardAddress.publicFallback.value" v-bind="boardAddress.publicFallback.value" />
+  <TincanbanPageLayout v-else :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || workspaceDialogBusy || undefined" :busy="!uiReady && !startupError">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
         <span class="brand-presence">
@@ -511,8 +512,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 </template>
 
 <style>
-.board-address-unavailable { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
-.board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
+.board-address-unavailable, .board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
 .board-address-unavailable h1 { margin: 0 0 var(--space-2); }
 .board-address-unavailable p { margin: 0 0 var(--space-4); }
 .startup-concealed { visibility: hidden; }

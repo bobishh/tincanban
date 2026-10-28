@@ -16,8 +16,15 @@ import {
 import { stateRuntime } from "./stateContext";
 import { writeLocal } from "./localDb";
 
+let selectionCommit = Promise.resolve()
+
 export function createWorkspaceActions() {
   return {
+    captureWorkspaceSelection: () => {
+      const workspaceId = stateRuntime.activeWorkspaceMeta.id, version = stateRuntime.workspaceSelectionVersion
+      const pending = stateRuntime.workspaceSelectionPending !== null
+      return { isCurrent: () => !pending && stateRuntime.workspaceSelectionVersion === version && stateRuntime.activeWorkspaceMeta.id === workspaceId }
+    },
     createWorkspaceAsync,
     importWorkspaceAsNew,
     switchWorkspace,
@@ -34,87 +41,111 @@ async function createWorkspaceAsync(
   storage = defaultStorage,
   creationDraft?: WorkspaceCreationDraft,
 ) {
-  const profile = await requireProfile();
-  const id = crypto.randomUUID();
-  const cleanTitle = title.trim();
-  if (creationDraft) {
-    const { validateBoardSchemaDraft } = await import("./domain/schema")
-    const validation = validateBoardSchemaDraft(creationDraft)
-    if (!validation.valid) throw new Error(validation.errors[0]?.message ?? "Board configuration is invalid")
-  }
-  const initialDocument = creationDraft
-    ? await import("./domain/workspaceCreation").then(({ createWorkspaceDocFromDraft }) => createWorkspaceDocFromDraft(id, cleanTitle, profile.identity.personId, presetKey, creationDraft))
-    : createWorkspaceDoc(id, cleanTitle, profile.identity.personId, presetKey)
-  const doc = Automerge.from<WorkspaceDocumentV2>(initialDocument)
-  let transferred = false
-  try {
-    const authorizations = await recordGenesisAuthority(doc, profile);
-    await storage.withWorkspaceTransaction(id, async transaction => {
-      const existing = await transaction.loadWorkspaceDoc()
-      if (existing) {
-        Automerge.free(existing.doc)
-        throw new Error("Workspace already exists")
-      }
-      await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
-    });
-    await addWorkspaceToPersonalRoot(id, "genesis", storage);
-    await saveActiveWorkspaceId(id);
-    transferred = true
-    updateReactiveState(doc);
-    await refreshAvailableWorkspaces(storage);
-    stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: id });
-    return doc;
-  } finally { if (!transferred) Automerge.free(doc) }
+  return withWorkspaceSelection(async selectionVersion => {
+    const profile = await requireProfile();
+    const id = crypto.randomUUID();
+    const cleanTitle = title.trim();
+    if (creationDraft) {
+      const { validateBoardSchemaDraft } = await import("./domain/schema")
+      const validation = validateBoardSchemaDraft(creationDraft)
+      if (!validation.valid) throw new Error(validation.errors[0]?.message ?? "Board configuration is invalid")
+    }
+    const initialDocument = creationDraft
+      ? await import("./domain/workspaceCreation").then(({ createWorkspaceDocFromDraft }) => createWorkspaceDocFromDraft(id, cleanTitle, profile.identity.personId, presetKey, creationDraft))
+      : createWorkspaceDoc(id, cleanTitle, profile.identity.personId, presetKey)
+    const doc = Automerge.from<WorkspaceDocumentV2>(initialDocument)
+    let transferred = false
+    try {
+      const authorizations = await recordGenesisAuthority(doc, profile);
+      await storage.withWorkspaceTransaction(id, async transaction => {
+        const existing = await transaction.loadWorkspaceDoc()
+        if (existing) {
+          Automerge.free(existing.doc)
+          throw new Error("Workspace already exists")
+        }
+        await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
+      });
+      await addWorkspaceToPersonalRoot(id, "genesis", storage);
+      await activateSelectedWorkspace(doc, selectionVersion)
+      transferred = true
+      await refreshAvailableWorkspaces(storage);
+      stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: id });
+      return doc;
+    } finally { if (!transferred) Automerge.free(doc) }
+  })
 }
 
 async function importWorkspaceAsNew(
   source: WorkspaceDocumentV2,
   storage = defaultStorage,
 ): Promise<Automerge.Doc<WorkspaceDocumentV2>> {
-  const profile = await requireProfile();
-  const { forkWorkspaceDocumentV2 } = await import("./domain/workspaceBundle");
-  const copied = forkWorkspaceDocumentV2(
-    source,
-    crypto.randomUUID(),
-    profile.identity.personId,
-  );
-  if (!copied.ok) throw new Error(copied.error.message);
-  const doc = copied.value;
-  let transferred = false
-  try {
-    const authorizations = await recordGenesisAuthority(doc, profile);
-    await storage.withWorkspaceTransaction(doc.id, async transaction => {
-      const existing = await transaction.loadWorkspaceDoc()
-      if (existing) {
-        Automerge.free(existing.doc)
-        throw new Error("Workspace already exists")
-      }
-      await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
-    });
-    await addWorkspaceToPersonalRoot(doc.id, "genesis", storage);
-    await saveActiveWorkspaceId(doc.id);
-    transferred = true
-    updateReactiveState(doc);
-    await refreshAvailableWorkspaces(storage);
-    stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: doc.id });
-    return doc;
-  } finally { if (!transferred) Automerge.free(doc) }
+  return withWorkspaceSelection(async selectionVersion => {
+    const profile = await requireProfile();
+    const { forkWorkspaceDocumentV2 } = await import("./domain/workspaceBundle");
+    const copied = forkWorkspaceDocumentV2(
+      source,
+      crypto.randomUUID(),
+      profile.identity.personId,
+    );
+    if (!copied.ok) throw new Error(copied.error.message);
+    const doc = copied.value;
+    let transferred = false
+    try {
+      const authorizations = await recordGenesisAuthority(doc, profile);
+      await storage.withWorkspaceTransaction(doc.id, async transaction => {
+        const existing = await transaction.loadWorkspaceDoc()
+        if (existing) {
+          Automerge.free(existing.doc)
+          throw new Error("Workspace already exists")
+        }
+        await transaction.commitWorkspace(doc, Automerge.save(doc), authorizations);
+      });
+      await addWorkspaceToPersonalRoot(doc.id, "genesis", storage);
+      await activateSelectedWorkspace(doc, selectionVersion)
+      transferred = true
+      await refreshAvailableWorkspaces(storage);
+      stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: doc.id });
+      return doc;
+    } finally { if (!transferred) Automerge.free(doc) }
+  })
 }
 
 export async function switchWorkspace(
   workspaceId: string,
   storage = defaultStorage,
 ): Promise<void> {
-  const loaded = await storage.loadWorkspaceDoc(workspaceId);
-  if (!loaded) return;
-  const doc = loaded.doc;
-  let transferred = false
-  try {
-    if (doc.archivedAt) return;
-    await saveActiveWorkspaceId(workspaceId);
-    transferred = true
-    updateReactiveState(doc);
-  } finally { if (!transferred) Automerge.free(doc) }
+  return withWorkspaceSelection(async selectionVersion => {
+    const loaded = await storage.loadWorkspaceDoc(workspaceId);
+    if (!loaded) return;
+    const doc = loaded.doc;
+    let transferred = false
+    try {
+      if (doc.archivedAt) return;
+      transferred = await activateSelectedWorkspace(doc, selectionVersion)
+    } finally { if (!transferred) Automerge.free(doc) }
+  })
+}
+
+async function withWorkspaceSelection<T>(operation: (version: number) => Promise<T>): Promise<T> {
+  const version = ++stateRuntime.workspaceSelectionVersion
+  stateRuntime.workspaceSelectionPending = version
+  try { return await operation(version) }
+  finally {
+    if (stateRuntime.workspaceSelectionPending === version) stateRuntime.workspaceSelectionPending = null
+  }
+}
+
+async function activateSelectedWorkspace(doc: Automerge.Doc<WorkspaceDocumentV2>, version: number): Promise<boolean> {
+  const activate = async () => {
+    if (version !== stateRuntime.workspaceSelectionVersion) return false
+    await saveActiveWorkspaceId(doc.id)
+    if (version !== stateRuntime.workspaceSelectionVersion) return false
+    updateReactiveState(doc)
+    return true
+  }
+  const result = selectionCommit.then(activate, activate)
+  selectionCommit = result.then(() => undefined, () => undefined)
+  return result
 }
 
 async function getWorkspaceRole(

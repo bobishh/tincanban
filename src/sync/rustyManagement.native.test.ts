@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { WasmStateCore, type WasmVerifiedHistoryArchiveCoverage } from "@meta-uber/mesh-transport/wasm"
-import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson,
+import { adoptEnrolledIdentity, bootstrapIdentity as bootstrapRawIdentity, canonicalizeJson, createIdentityRecovery,
   resetIdentityStorageForTest, signEnvelope, toBase64Url } from "../domain/identity"
 import { createPersonalRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { createWorkspaceDoc } from "../test/boardFixture"
@@ -21,6 +21,7 @@ import { exportPrivateReplicaState, getIdentityReplicaConfigurations, getPrivate
 import { RustyManagementRepository } from "./rustyManagementRepository"
 import { ensureIdentityReplicaConnection } from "./identityReplicaConnection"
 import { createIdentityReplica } from "./identityReplicaStore"
+import { exportIdentityRecoveryEvidence } from "./identityRecoveryState"
 import { approveRustyScope } from "./rustyEnrollment"
 import { blindObjectId, discoverBlindKeeper, inventoryBlindObjects, uploadBlindObject, downloadBlindObject } from "./blindClient"
 import { decodeBlindBytes, encryptBlindObject, decryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
@@ -319,7 +320,7 @@ function verifyNativeArchive(input: unknown): Promise<unknown> {
 }
 
 async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>,
-  options: { port?: number; stateDirectory?: string } = {}) {
+  options: { port?: number; stateDirectory?: string; maxScopeBytes?: number } = {}) {
   const port = options.port ?? await unusedLoopbackPort()
   const stateDirectory = options.stateDirectory ?? await mkdtemp(resolve(tmpdir(), "tincanban-rusty-native-"))
   const origin = `http://127.0.0.1:${port}`
@@ -329,6 +330,7 @@ async function startRusty(profile: Awaited<ReturnType<typeof bootstrapIdentity>>
       ...process.env,
       RUSTY_PUBLIC_ORIGIN: origin,
       RUSTY_LOG: "off",
+      ...(options.maxScopeBytes === undefined ? {} : { RUSTY_MAX_SCOPE_BYTES: String(options.maxScopeBytes) }),
     },
     stdio: ["ignore", "pipe", "pipe"],
   })
@@ -1247,6 +1249,96 @@ test("Given an approved person policy, when Rusty restarts and an independent ow
     await rm(process.stateDirectory, { recursive: true, force: true })
   }
 }, 20_000)
+
+test("Given eight Identity snapshots exhaust Rusty's quota, when a checkpoint reply is lost and Rusty restarts, then recover the pending upload and cold-restore the complete signed profile", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Identity checkpoint owner")
+  let service = await startRusty(owner)
+  const originalFetch = globalThis.fetch
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
+    const config = await ensureIdentityReplicaConnection(discovery, owner, () => {})
+    const emptyRoot = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+    await defaultStorage.savePersonalRoot(emptyRoot)
+    const photo = await saveIdentityPhoto(owner, "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA")
+    await createIdentityRecovery()
+    const expectedRecovery = await exportIdentityRecoveryEvidence(owner.identity.personId)
+    expect(expectedRecovery.envelopes).toHaveLength(1)
+    const portable = await createIdentityDeviceTransfer((await defaultStorage.loadPersonalRoot())!, [owner.certificate])
+    portable.components.futureSettings = { schema: "future-settings@1", required: false, value: { marker: "Retain opaque state" } }
+    await applyIdentityDeviceTransfer(await readIdentityDeviceTransfer(portable, owner.identity.personId), () => {})
+    const expectedExtensions = await exportIdentityDeviceExtensions(owner.identity.personId)
+    const source = createIdentityReplica(config, owner, () => {})
+    const workspaceIds: string[] = []
+    for (let index = 0; index < 8; index++) {
+      const root = (await defaultStorage.loadPersonalRoot())!
+      const id = crypto.randomUUID()
+      workspaceIds.push(id)
+      registerWorkspaceInRoot(root, id, id, "genesis")
+      await defaultStorage.savePersonalRoot(root)
+      await source.push()
+    }
+    expect(await inventoryBlindObjects(config, 0)).toMatchObject({ objectCount: 8 })
+    const objectsDirectory = resolve(service.stateDirectory, "scopes", config.scopeId, "objects")
+    const stored = await Promise.all((await readdir(objectsDirectory)).map(name => readFile(resolve(objectsDirectory, name))))
+    const maxScopeBytes = stored.reduce((total, bytes) => total + bytes.length, 1024)
+    await stopRusty(service.child)
+    service = await startRusty(owner, { port: Number(new URL(service.origin).port), stateDirectory: service.stateDirectory, maxScopeBytes })
+    const expectedProfile = (await defaultStorage.loadPersonalRoot())!.profileState
+    let checkpointAttempts = 0
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      const response = await originalFetch(input, init)
+      if (init?.method === "POST" && path.endsWith("/checkpoint")) {
+        checkpointAttempts++
+        if (checkpointAttempts === 1 && response.ok) throw new TypeError("Checkpoint reply lost")
+      }
+      return response
+    })
+    const root = (await defaultStorage.loadPersonalRoot())!
+    const pendingWorkspace = crypto.randomUUID()
+    workspaceIds.push(pendingWorkspace)
+    registerWorkspaceInRoot(root, pendingWorkspace, pendingWorkspace, "genesis")
+    await defaultStorage.savePersonalRoot(root)
+    await expect(source.push()).rejects.toThrow("Storage capacity exceeded")
+    const pending = (await getPrivateReplicaProgress(owner.identity.personId, config)).pending
+    expect(pending).toBeDefined()
+    await deleteLocal("tincanban.identity_recovery.v1")
+    await deleteLocal(`tincanban.identity-recovery-evidence.v1.${owner.identity.personId}`)
+    await createIdentityReplica(config, owner, () => {}, { includeRecoveryEvidence: false }).pull()
+    expect((await getPrivateReplicaProgress(owner.identity.personId, config)).cursor).toBe(8)
+    expect((await exportIdentityRecoveryEvidence(owner.identity.personId)).envelopes).toEqual([])
+    await expect(source.sync()).rejects.toThrow("Checkpoint reply lost")
+    expect(await exportIdentityRecoveryEvidence(owner.identity.personId)).toEqual(expectedRecovery)
+    expect((await getPrivateReplicaProgress(owner.identity.personId, config)).pending).toEqual(pending)
+    expect(await inventoryBlindObjects(config, 0)).toMatchObject({ objectCount: 1, maxSequence: 9 })
+    vi.stubGlobal("fetch", originalFetch)
+    await stopRusty(service.child)
+    service = await startRusty(owner, { port: Number(new URL(service.origin).port), stateDirectory: service.stateDirectory, maxScopeBytes })
+    await createIdentityReplica(config, owner, () => {}).sync()
+    expect((await getPrivateReplicaProgress(owner.identity.personId, config)).pending).toBeUndefined()
+    expect((await inventoryBlindObjects(config, 0)).objectCount).toBeLessThanOrEqual(2)
+    const preferences = await exportPrivateReplicaState(owner.identity.personId)
+    await deleteLocal(`tincanban.private-replica-state.v2.${owner.identity.personId}`)
+    await receivePrivateReplicaState(owner.identity.personId, preferences)
+    await defaultStorage.savePersonalRoot(emptyRoot)
+    await deleteLocal(`tincanban.identity-device-extensions.v1.${owner.identity.personId}`)
+    await deleteLocal(`tincanban.identity-recovery-evidence.v1.${owner.identity.personId}`)
+    const restoredConfig = (await getIdentityReplicaConfigurations(owner.identity.personId))[0]!
+    expect(await createIdentityReplica(restoredConfig, owner, () => {}).pull()).toBe(true)
+    const restored = (await defaultStorage.loadPersonalRoot())!
+    expect(restored.photo).toEqual(photo)
+    expect(restored.profileState).toEqual(expectedProfile)
+    expect(Object.keys(restored.workspaces).sort()).toEqual(workspaceIds.sort())
+    expect(await exportIdentityDeviceExtensions(owner.identity.personId)).toEqual(expectedExtensions)
+    expect(await exportIdentityRecoveryEvidence(owner.identity.personId)).toEqual(expectedRecovery)
+  } finally {
+    vi.stubGlobal("fetch", originalFetch)
+    await stopRusty(service.child)
+    await rm(service.stateDirectory, { recursive: true, force: true })
+  }
+}, 60_000)
 
 test("Given a cold enrolled device without its workspace, when its identity-scoped replica pulls from native Rusty, then restore photo, opaque components and original signed profiles without source capture", async () => {
   resetIdentityStorageForTest()

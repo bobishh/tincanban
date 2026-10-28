@@ -11,7 +11,7 @@ import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure }
 import { isNativeKeeperRoute } from "./durableMeshSessions"
 import { defaultStorage } from "../storage"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
-import { mergeSuccessionState } from "./durableMeshOwnershipScope"
+import { mergeSuccessionState, persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import type { SyncConnection, SyncNode } from "./transport"
 import type { WorkspaceMeshCredential, WorkspacePeerRecord } from "./peerStore"
@@ -49,6 +49,7 @@ type TestSession = Omit<Partial<SessionEntry>, "connection" | "session"> & {
   session?: Partial<LiveWorkspaceSync>
 }
 type MeshTestHooks = {
+  installInvitationWorkspace: (workspaceId: string, envelope: object, profile: LocalProfile, grant?: unknown) => Promise<void>
   node?: unknown
   acceptor?: unknown
   adoptedNode?: { endpointId: string; accept: () => Promise<unknown>; close: () => Promise<void> }
@@ -122,6 +123,54 @@ beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modu
 
 
 describe("DurableMesh peer catalog gossip", () => {
+  it("Given a retained current owner ledger, when an older invitation snapshot is replayed, then the SDK merge keeps current rights without invalidating recovery", async () => {
+    const workspaceId = crypto.randomUUID(), current = { marker: "current" }, previous = { marker: "old" }
+    const putWorkspaceAuthority = vi.fn()
+    const store = { getWorkspaceAuthority: async () => ({ workspaceId, ownerPersonId: "current-owner",
+      ownerPublicKey: "current-key", scopeAuthoritySnapshot: current }), putWorkspaceAuthority }
+    const merge = vi.spyOn(meshRustRuntime().state, "mergeScopeAuthoritySnapshots").mockReturnValue(current)
+    const validate = vi.spyOn(meshRustRuntime().state, "validateScopeAuthority").mockImplementation(snapshot => ({
+      scopeId: workspaceId, controller: (snapshot as typeof current).marker === "current"
+        ? { personId: "current-owner", publicKey: "current-key" } : { personId: "old-owner", publicKey: "old-key" },
+    }))
+    try {
+      const revision = await defaultStorage.readWorkspaceRevision(workspaceId)
+      await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context =>
+        persistScopeAuthoritySnapshot(store as never, workspaceId, previous as never, context.write))
+      expect(await defaultStorage.readWorkspaceRevision(workspaceId)).toBe(revision)
+      expect(putWorkspaceAuthority).not.toHaveBeenCalled()
+      expect(merge).toHaveBeenCalledWith(current, previous, expect.any(Number))
+    } finally { merge.mockRestore(); validate.mockRestore() }
+  })
+  it("Given retained invitation rights, when the same invitation is replayed, then recovery source revision stays stable but changed rights invalidate it", async () => {
+    const workspaceId = crypto.randomUUID()
+    const snapshot = { genesis: {}, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] }
+    let credential = { workspaceId, ownerPersonId: "owner", ownerPublicKey: "key", epoch: 1, updatedAt: "old" }
+    let authority = { ...credential, scopeAuthoritySnapshot: snapshot }
+    const putCredential = vi.fn(async (next: typeof credential) => { credential = next })
+    const putAuthority = vi.fn(async (next: typeof authority) => { authority = next })
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => ({} as never), store: { getWorkspaceCredential: async () => credential,
+        getWorkspaceAuthority: async () => authority, putWorkspaceCredential: putCredential,
+        putWorkspaceAuthority: putAuthority } as never })
+    const plan = vi.spyOn(meshRustRuntime().state, "planInvitationCredential")
+      .mockImplementation(input => ({ ...credential, updatedAt: (input as { updatedAt: string }).updatedAt }))
+    const merge = vi.spyOn(meshRustRuntime().state, "mergeScopeAuthoritySnapshots").mockReturnValue(snapshot)
+    const validate = vi.spyOn(meshRustRuntime().state, "validateScopeAuthority")
+      .mockReturnValue({ scopeId: workspaceId, controller: { personId: "owner", publicKey: "key" } })
+    const actions = vi.spyOn(meshRustRuntime().state, "planAuthorityImport").mockReturnValue([])
+    try {
+      const before = await defaultStorage.readWorkspaceRevision(workspaceId)
+      await meshHooks(mesh).installInvitationWorkspace(workspaceId, { scopeAuthoritySnapshot: snapshot }, { identity: { personId: "owner" } } as LocalProfile)
+      expect(await defaultStorage.readWorkspaceRevision(workspaceId)).toBe(before)
+      expect(putCredential).not.toHaveBeenCalled()
+      expect(putAuthority).not.toHaveBeenCalled()
+      plan.mockReturnValue({ ...credential, epoch: 2, updatedAt: "newer" })
+      await meshHooks(mesh).installInvitationWorkspace(workspaceId, { scopeAuthoritySnapshot: snapshot }, { identity: { personId: "owner" } } as LocalProfile)
+      expect(await defaultStorage.readWorkspaceRevision(workspaceId)).not.toBe(before)
+      expect(putCredential).toHaveBeenCalledOnce()
+    } finally { plan.mockRestore(); merge.mockRestore(); validate.mockRestore(); actions.mockRestore(); await mesh.dispose() }
+  })
   it("Given a recovered board and a route with an old cached secret, when dialing, then use the current workspace credential and still require its signed handshake", async () => {
     const credential = { workspaceId: "recovered", transportSecret: "current-secret" }
     let saved: typeof credential | null = credential

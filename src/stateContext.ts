@@ -18,6 +18,8 @@ export type StateRuntime = {
   startupStage: Ref<"starting" | "reading" | "updating" | "history" | "access">;
   saveState: Ref<"idle" | "saving" | "saved" | "error">;
   docVersion: Ref<number>;
+  workspaceSelectionVersion: number;
+  workspaceSelectionPending: number | null;
   availableWorkspaces: Ref<WorkspaceSummary[]>;
   archivedWorkspaces: Ref<WorkspaceSummary[]>;
   causalReview: Ref<Array<{ hash: string; status: { type: "quarantined" | "pending"; reason: string };
@@ -48,6 +50,8 @@ export const stateRuntime: StateRuntime = {
   startupStage: ref("starting"),
   saveState: ref("idle"),
   docVersion: ref(0),
+  workspaceSelectionVersion: 0,
+  workspaceSelectionPending: null,
   availableWorkspaces: ref([]),
   archivedWorkspaces: ref([]),
   causalReview: ref([]),

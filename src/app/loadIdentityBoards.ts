@@ -16,7 +16,7 @@ export type IdentityWorkspaceRecovery = (workspaceIds: string[], options?: { rou
 
 /** Load boards for an already approved Identity; failed delivery remains independently retryable. */
 export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
-  const initialWorkspaceId = app.activeWorkspace.id
+  const initialSelection = app.captureWorkspaceSelection()
   const profile = app.getCurrentProfile()
   if (!profile) throw new Error("Signed-in profile is unavailable")
   const guard = () => {
@@ -71,16 +71,17 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
       waitingForPeers = (await missing()).length > 0
     }
     await refreshAvailableWorkspaces()
-    await restoreBoardSelection(app, returnPath, ids.size === 0, initialWorkspaceId, guard)
+    await restoreBoardSelection(app, returnPath, ids.size === 0, initialSelection, guard)
     if (waitingForPeers) throw storageFailure ?? new Error("Your boards are waiting for an available peer or stored copy. Retry loading boards.")
   })
 }
 
-async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog: boolean, initialWorkspaceId: string, guard: () => void): Promise<void> {
+async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog: boolean,
+  initialSelection: ReturnType<App["captureWorkspaceSelection"]>, guard: () => void): Promise<void> {
   const available = app.availableWorkspaces.value
   const route = parseBoardRouteUrl(returnPath)
   const loaded = await readLoadedWorkspaceRoutes(app, available, guard)
-  if (app.activeWorkspace.id !== initialWorkspaceId) {
+  if (!initialSelection.isCurrent()) {
     // A newly created board may not be in the directory snapshot read above.
     // Its committed active projection takes precedence over this older lookup.
     const current = app.getActiveDoc()

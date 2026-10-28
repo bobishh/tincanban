@@ -6,7 +6,7 @@ import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
 import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { createIdentityReplicaRecord, type readIdentityReplicaRecord } from "./identityReplicaProtocol"
-import { encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes, encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"
 import { IdentityReplica } from "./identityReplica"
 import type { IdentityReplicaConfig } from "./blindReplication"
@@ -84,6 +84,28 @@ it("Given Rusty retained an encrypted identity package, when its source closes, 
   expect(sender.capture).toHaveBeenCalledTimes(1)
   expect(receiver.progress().cursor).toBe(1)
   expect(JSON.stringify(f.objects)).not.toContain("avatarData")
+})
+
+it.each([0, 8])("Given eight Identity snapshots including one corrupt object and saved cursor %i, when maintenance cannot admit every state, then preserve every stored object without preparing a checkpoint", async cursor => {
+  const f = await fixture()
+  for (let index = 0; index < 8; index++) {
+    const object = await encryptPurposeBoundObject({ purpose: "identity-state", subjectId: f.config.personId,
+      scopeId: f.config.scopeId, keyEpoch: 1 }, decodeBlindBytes(f.config.contentKey),
+    new TextEncoder().encode(canonicalBlindJson(f.record)))
+    if (index === 7) object.ciphertext = encodeBlindBytes(new Uint8Array(32))
+    f.objects.push({ objectId: await blindObjectId(object), sequence: index + 1, object })
+  }
+  const prepareCheckpoint = vi.fn(async () => { throw new Error("Unsafe checkpoint") })
+  const checkpoint = vi.fn(async () => { throw new Error("Unsafe replacement") })
+  const store = f.store("reader")
+  await store.repository.commit(0, { ...store.progress(), generation: 1, cursor })
+  const transport = { ...f.transport, checkpoint, inventory: async (access: unknown, after: number) => ({
+    ...await f.transport.inventory(access, after), objectCount: f.objects.length, maxSequence: 8,
+  }) }
+  await expect(new IdentityReplica(f.config, "reader", { ...store, prepareCheckpoint }, transport).sync()).rejects.toThrow()
+  expect(prepareCheckpoint).not.toHaveBeenCalled()
+  expect(checkpoint).not.toHaveBeenCalled()
+  expect(f.objects).toHaveLength(8)
 })
 
 it("Given a cold identity replica retains the epoch-one key, when it reads the epoch-one signed package under active epoch two, then admit without source capture", async () => {

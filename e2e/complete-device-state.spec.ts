@@ -78,7 +78,7 @@ async function connectRusty(page: Page, origin: string) {
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill(origin)
   await panel.getByRole("button", { name: "Connect", exact: true }).click()
-  const boardConnection = panel.getByRole("listitem").filter({ has: page.getByRole("button", { name: "Remove", exact: true }) })
+  const boardConnection = panel.locator(".rusty-connection").first()
   await expect(boardConnection.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
   await expect(panel.getByRole("button", { name: "Sync now", exact: true })).toBeEnabled()
   return panel

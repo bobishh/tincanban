@@ -92,6 +92,7 @@ async function forget() {
           <div class="rusty-server-details">
             <code class="technical-value">{{ server.origin }}</code>
             <time v-if="server.lastSyncedAt" :datetime="new Date(server.lastSyncedAt).toISOString()">{{ syncTime(server.lastSyncedAt) }}</time>
+            <p v-for="config in owner ? [] : configsFor(server.origin).filter(value => value.boardAccess)" :key="config.scopeId">{{ config.boardAccess?.mode === 'write' ? 'Board access · read and write' : 'Board access · read only' }}</p>
             <p v-for="message in server.errors" :key="message" role="alert">{{ message }}</p>
             <p v-if="controller.profileSetupErrors.value[server.origin]" role="alert">{{ controller.profileSetupErrors.value[server.origin] }}</p>
             <div v-for="conflict in conflictsFor(server.origin)" :key="conflict.scopeId" class="rusty-conflict" role="alert" aria-label="Rusty settings conflict">

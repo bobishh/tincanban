@@ -1,6 +1,6 @@
 import { load, free } from "@automerge/automerge/slim"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import type { LocalProfile } from "../domain/identity"
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { WorkspaceWriteAuthorityEvidence, IncomingAuthorizationBundle } from "../product-replica"
 import { defaultStorage } from "../storage"
@@ -59,6 +59,10 @@ export async function rememberAdmittedRustyWorkspaceAuthority(config: BlindRepli
       revocations: evidence.revocations, departures: evidence.departures,
       deviceRevocations: evidence.deviceRevocations.map(entry => ({ record: entry.record, authority: entry.signer })) } }
   ensureCurrent()
-  await defaultStorage.withWorkspaceAuthorityMutation(config.workspaceId,
-    context => context.write(() => { ensureCurrent(); return peerStore.putWorkspaceAuthority(record) }))
+  await defaultStorage.withWorkspaceAuthorityMutation(config.workspaceId, async context => {
+    const saved = await peerStore.getWorkspaceAuthority(config.workspaceId)
+    ensureCurrent()
+    if (canonicalizeJson(saved) === canonicalizeJson(record)) return
+    await context.write(() => { ensureCurrent(); return peerStore.putWorkspaceAuthority(record) })
+  })
 }

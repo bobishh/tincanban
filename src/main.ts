@@ -27,10 +27,12 @@ if (window.location.pathname === "/service-login") {
   void import("./app/ServiceLoginApp.vue").then(({ default: ServiceLoginApp }) => createApp(ServiceLoginApp as Component).mount("#app"))
 } else if (isBoardAddressPath(window.location.pathname) && !boardRoute) {
   mountPublicBoardRoute({ boardId: "", slug: "", search: window.location.search, hash: window.location.hash })
-} else if (boardRoute && new URLSearchParams(boardRoute.search).has("rusty")) {
+} else if (boardRoute && new URLSearchParams(boardRoute.search).has("rusty") && !hintedPrivateWorkspace) {
   mountPublicBoardRoute(boardRoute)
 } else if (boardRoute && !privateRouteIndexExists) {
   mountPublicBoardRoute(boardRoute)
+} else if (boardRoute && !hintedPrivateWorkspace) {
+  void isPublicBoardRoute(boardRoute).then(isPublic => isPublic ? mountPublicBoardRoute(boardRoute) : mountPrivateApp())
 } else {
   mountPrivateApp()
 }
@@ -38,13 +40,24 @@ if (window.location.pathname === "/service-login") {
 function mountPublicBoardRoute(route: NonNullable<typeof boardRoute>) {
   void import("./public/PublicBoardApp.vue").then(({ default: PublicBoardApp }) => createApp(PublicBoardApp as Component, {
     boardId: route.boardId,
-    origin: publicBoardOrigin(route.search),
+    origin: publicBoardOrigin(route.search, import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined),
     boardSlug: route.slug,
     canonicalizeBoardRoute: (title: string) => {
       canonicalizeBoardRoute({ pathname: window.location.pathname, search: window.location.search, hash: window.location.hash,
         state: window.history.state, replaceState: (state, pageTitle, url) => window.history.replaceState(state, pageTitle, url) }, route.boardId, title)
     },
   }).mount("#app"))
+}
+
+async function isPublicBoardRoute(route: NonNullable<typeof boardRoute>): Promise<boolean> {
+  const origin = publicBoardOrigin(route.search, import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined)
+  if (!origin) return false
+  try {
+    const response = await fetch(`${origin}/v1/public/boards/${encodeURIComponent(route.boardId)}`, {
+      cache: "no-store", credentials: "omit", redirect: "error", signal: AbortSignal.timeout(10_000),
+    })
+    return response.ok
+  } catch { return false }
 }
 
 function mountPrivateApp() {

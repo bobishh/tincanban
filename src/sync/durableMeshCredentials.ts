@@ -1,4 +1,4 @@
-import { type LocalProfile, toBase64Url } from "../domain/identity"
+import { canonicalizeJson, type LocalProfile, toBase64Url } from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
 import { mayOfferFutureKeeperWorkspace, saveOwnerKeeper } from "./ownerKeeper"
@@ -19,6 +19,7 @@ import { DurableMeshBase } from "./durableMeshBase"
 import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { workspaceRecordSigning } from "./meshRecordSigning"
+import { persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
 import { ownerKeeperOfferPolicy, ownerWorkspaceOfferSchema } from "./durableMeshOwnerOfferPolicy"
 import { captureWorkspaceRouteEnvelopes, readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
 export { ownerKeeperOfferPolicy } from "./durableMeshOwnerOfferPolicy"
@@ -444,15 +445,12 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
         credential = meshRustRuntime().state.planInvitationCredential({ workspaceId, envelope,
           previousCredential: previous ?? null, previousAuthority: previousAuthority ?? null,
           localPersonId: profile.identity.personId, localGrant: localGrant ?? null,
-          updatedAt: new Date().toISOString() }) as WorkspaceMeshCredential
-        await context.write(() => this.store.putWorkspaceCredential(credential))
+          updatedAt: previous?.updatedAt ?? new Date().toISOString() }) as WorkspaceMeshCredential
+        if (canonicalizeJson(credential) !== canonicalizeJson(previous)) await context.write(() => this.store.putWorkspaceCredential(credential))
       })
     if (envelope.scopeAuthoritySnapshot) {
-      meshRustRuntime().state.validateScopeAuthority(envelope.scopeAuthoritySnapshot, Date.now())
-      const authority = await this.store.getWorkspaceAuthority(workspaceId)
-      if (!authority) throw new Error("Workspace authority disappeared during invitation install")
-      await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
-        context => context.write(() => this.store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: envelope.scopeAuthoritySnapshot! })))
+      await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context =>
+        persistScopeAuthoritySnapshot(this.store, workspaceId, envelope.scopeAuthoritySnapshot, context.write))
     }
     await this.mergeInvitationCatalog(credential, envelope, options)
   }

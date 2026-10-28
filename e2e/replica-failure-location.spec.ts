@@ -39,6 +39,7 @@ test("Given a Rusty network request fails, when Device sync opens, then show a s
   const dialog = page.getByRole("dialog", { name: "Device sync" })
   const rusty = dialog.getByRole("region", { name: "Rusty", exact: true })
   await expect(rusty).toContainText("Unavailable")
+  await rusty.locator(".rusty-connection").click()
   await expect(rusty.getByRole("alert")).toContainText("Rusty connection unavailable. Retry sync.")
   await expect(dialog.getByRole("region", { name: "Device sync problem" })).toHaveCount(0)
   await expect(dialog).not.toContainText("raw-private-transport-detail")

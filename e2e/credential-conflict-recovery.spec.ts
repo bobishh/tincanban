@@ -3,11 +3,12 @@ import { expect, test } from './support/coverage'
 test('Given a frozen Rusty origin, when recovery fails and is retried from another board, then retain recovery and resume the original operation', async ({ page }) => {
   await page.goto('/')
   await page.evaluate(async () => (await import('/e2e/support/credentialConflict.ts')).mountPendingRustyOperation())
-  await page.getByRole('button', { name: 'Resume Rusty operation', exact: true }).click()
+  await page.locator('.rusty-connection').click()
+  await page.getByRole('button', { name: 'Resume', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('Server offline; saved operation retained')
-  await page.getByRole('button', { name: 'Resume Rusty operation', exact: true }).click()
+  await page.getByRole('button', { name: 'Resume', exact: true }).click()
   await expect(page.getByRole('status', { name: 'Recovery result' })).toHaveText('https://rusty.example resumed; new connections: 0')
-  await expect(page.getByRole('button', { name: 'Resume Rusty operation', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0)
 })
 
 test('Given a paused conflict, when the Owner explicitly recovers, then send the exact scope and show completion', async ({ page }) => {

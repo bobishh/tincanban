@@ -217,7 +217,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         <p v-if="leavingMesh" class="dialog-copy" role="status">Leaving workspace mesh…</p>
         <div>
         <p class="mesh-connection-summary" :class="{ 'is-warning': connectionStatus.warning }" role="status">
-          <strong>{{ connectionStatus.title }}</strong>
+          <strong>{{ connectionStatus.title }}</strong><span> · {{ connectionStatus.message }}</span>
         </p>
         <section v-if="networkOnline !== false && rejectedSource" class="sync-error" role="status" aria-label="Changes rejected">
           <p><strong>Changes rejected by this board.</strong>

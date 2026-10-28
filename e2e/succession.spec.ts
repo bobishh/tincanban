@@ -19,7 +19,7 @@ async function inviteEditor(host: Page, guest: Page) {
 async function selectMember(dialog: ReturnType<Page["getByRole"]>, text: string) {
   const member = dialog.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: text }).first()
   await expect(member).toBeVisible({ timeout: 30_000 })
-  await member.click()
+  if (await member.getAttribute("aria-pressed") !== "true") await member.click()
 }
 
 async function addLead(page: Page, company: string) {
@@ -50,6 +50,7 @@ test("Given an owner names an editor successor, when the editor claims successio
 
     await successor.getByRole("button", { name: "Sync", exact: true }).click()
     const successorDialog = successor.getByRole("dialog", { name: "Device sync" })
+    await selectMember(successorDialog, "You")
 
     await expect(successorDialog.getByRole("button", { name: "Claim ownership" })).toBeVisible({ timeout: 30_000 })
     await page.close()
@@ -78,15 +79,18 @@ test("Given editor quorum recovery, when a majority votes, then one vote stays p
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     const ownerDialog = page.getByRole("dialog", { name: "Device sync" })
 
+    await selectMember(ownerDialog, "You")
     await ownerDialog.getByRole("button", { name: "Enable editor quorum" }).click()
     await expect(ownerDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible()
 
     await first.getByRole("button", { name: "Sync", exact: true }).click()
     const firstDialog = first.getByRole("dialog", { name: "Device sync" })
+    await selectMember(firstDialog, "You")
 
     await expect(firstDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible({ timeout: 30_000 })
     await second.getByRole("button", { name: "Sync", exact: true }).click()
     const secondDialog = second.getByRole("dialog", { name: "Device sync" })
+    await selectMember(secondDialog, "You")
 
     await expect(secondDialog.getByText("Editor quorum: 2 of 2.")).toBeVisible({ timeout: 30_000 })
     for (const dialog of [firstDialog, secondDialog]) {
@@ -109,7 +113,7 @@ test("Given editor quorum recovery, when a majority votes, then one vote stays p
     const candidate = secondDialog.getByRole("list", { name: "Mesh members" }).getByRole("button")
       .filter({ hasText: "editor", hasNotText: "You" }).first()
     await expect(candidate).toBeVisible({ timeout: 30_000 })
-    await candidate.click()
+    if (await candidate.getAttribute("aria-pressed") !== "true") await candidate.click()
 
     await secondDialog.getByRole("button", { name: /^Vote for / }).click()
 

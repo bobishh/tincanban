@@ -45,7 +45,7 @@
 .guest-workspace-list { margin: var(--space-2) 0 var(--space-4) var(--space-4); padding: 0; }
 .guest-workspace-list li { margin: var(--space-1) 0; font-weight: 650; }
 
-.mesh-connection-summary { margin: 0 0 var(--space-4); min-block-size: 1.4em; color: var(--ink); font-size: 1rem; line-height: 1.4; overflow-wrap: anywhere; }
+.mesh-connection-summary { margin: 0 0 var(--space-4); min-block-size: 2.8em; color: var(--ink); font-size: 1rem; line-height: 1.4; overflow-wrap: anywhere; }
 .mesh-member-role { justify-self: start; max-width: 100%; }
 .sync-recovery-note { display: grid; gap: var(--space-1); }
 .sync-recovery-note p { margin: 0; }

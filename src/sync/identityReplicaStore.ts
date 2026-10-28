@@ -21,6 +21,7 @@ import { inventoryBlindObjects, downloadBlindObject, uploadBlindObject, type Bli
 import { readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { captureIdentityWorkspaceRouteRecovery } from "./identityWorkspaceRouteRecovery"
 import { peerStore } from "./peerStore"
+import { prepareBlindCheckpoint, submitBlindCheckpoint, type BlindCheckpointRequest } from "./blindCheckpoint"
 
 /** Production ports keep private person state outside workspace/Worker replication adapters. */
 export function createIdentityReplica(config: IdentityReplicaConfig, profile: LocalProfile, ensureCurrent: () => void,
@@ -47,6 +48,7 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
     download: (access: BlindAccess, id: string) => downloadBlindObject(access, id, scopeFetch),
     upload: (access: BlindAccess, object: Parameters<typeof uploadBlindObject>[1], requestId: string, observedSequence = 0) =>
       uploadBlindObject(access, object, requestId, observedSequence, scopeFetch),
+    checkpoint: (access: BlindAccess, request: BlindCheckpointRequest) => submitBlindCheckpoint(access, request, scopeFetch),
   }
   const management: ManagementBinding = { origin: config.origin, servicePublicKey: config.servicePublicKey,
     resourceKind: "scope", resourceId: config.scopeId }
@@ -106,6 +108,12 @@ export function createIdentityReplica(config: IdentityReplicaConfig, profile: Lo
       const selected = options.includeRecoveryEvidence === false ? await projectIdentityReplicaCatalogOnly(transfer, personId) : transfer
       if (await applyIdentityDeviceTransfer(selected, ensureCurrent)) identityDevicePreferencesChanged(personId)
     }, authorize, guard,
+    ...(options.includeRecoveryEvidence === false ? {} : {
+      prepareCheckpoint: async (object: Parameters<typeof prepareBlindCheckpoint>[1], expectedSequence: number) => {
+        await guard()
+        return prepareBlindCheckpoint(config, object, expectedSequence, profile, { ensureCurrent: guard })
+      },
+    }),
   }, transport)
   const refresh = async () => {
     ensureCurrent()

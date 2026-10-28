@@ -110,8 +110,8 @@ test("Given a portal-enrolled phone, when desktop refreshes and publishes the Id
     await expect(phoneReplacement).toBeHidden({ timeout: 30_000 })
     await expect.poll(async () => phone.evaluate(async () =>
       (await import("/src/domain/identity.ts")).bootstrapIdentity().then(profile => profile.identity.personId)), { timeout: 30_000 }).toBe(ownerId)
-    // Ordinary sign-in has finished loading the existing catalog and workspace.
-    await expect(phone.getByRole("region", { name: "Job search", exact: true })).toBeVisible()
+    // Board delivery may finish after the approved Identity profile is installed.
+    await expect(phone.getByRole("region", { name: "Job search", exact: true })).toBeVisible({ timeout: 45_000 })
     await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     const phoneBeforeBootstrap = await localIdentityWorkspaceState(phone)
     expect(Object.keys(phoneBeforeBootstrap.workspaceReferences).length).toBeGreaterThan(0)

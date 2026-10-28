@@ -7,8 +7,9 @@ export function validPublicBoardOrigin(origin: string): boolean {
   } catch { return false }
 }
 
-export function publicBoardOrigin(search: string): string {
+export function publicBoardOrigin(search: string, defaultOrigin = ""): string {
   const values = new URLSearchParams(search).getAll("rusty")
+  if (!values.length) return validPublicBoardOrigin(defaultOrigin) ? defaultOrigin : ""
   return values.length === 1 && validPublicBoardOrigin(values[0]!) ? values[0]! : ""
 }
 

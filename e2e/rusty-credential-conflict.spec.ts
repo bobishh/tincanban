@@ -51,6 +51,7 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
         keyEpoch: config.keyEpoch, contentKey: config.contentKey, scopeId: config.scopeId }
     }, rusty.origin)
     expect(original.enrollmentIntentPending).toBe(false)
+    await panel.locator(".rusty-connection").click()
     const conflict = page.getByRole("alert", { name: "Rusty settings conflict", exact: true })
     await expect(conflict).toBeVisible()
     const uploads = `${rusty.origin}/v2/scopes/${original.scopeId}/objects/**`
@@ -75,6 +76,7 @@ test("Given a phone with conflicting Rusty credentials, when snapshot confirmati
     await expect(conflict.getByRole("button", { name: "Recover connection", exact: true })).toBeEnabled()
     await page.reload()
     await openRusty()
+    await page.getByRole("region", { name: "Rusty", exact: true }).locator(".rusty-connection").first().click()
     await expect(conflict).toBeVisible()
     await page.unroute(uploads)
     await conflict.getByRole("button", { name: "Recover connection", exact: true }).tap()

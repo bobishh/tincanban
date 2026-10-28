@@ -11,6 +11,9 @@ export async function mountReplicaFailure(mode: "local" | "network") {
     readToken: "B".repeat(43), writeToken: "C".repeat(43), servicePublicKey: "D".repeat(43),
     policyRevision: 1, keyEpoch: 1, cursor: 0, lastUploaded: "" }
   state.configs.value = [config]
+  const identity = { ...config, purpose: "identity" as const, personId: "fixture-person", scopeId: "fixture-identity" }
+  state.identityConfigs.value = [identity]
+  state.statuses.value = { [`${identity.origin}/${identity.scopeId}`]: { phase: "synced", lastSyncedAt: Date.now() } }
   let failed = false
   const syncNow = async () => {
     state.busy.value = true

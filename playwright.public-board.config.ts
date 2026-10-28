@@ -20,6 +20,7 @@ export default defineConfig({
       : `npm run dev -- --host 127.0.0.1 --port ${webPort}`,
     port: webPort, reuseExistingServer: false,
     env: {
+      VITE_PUBLIC_BOARD_ORIGIN: publicOrigin,
       VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "",
     },
   },

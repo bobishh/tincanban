@@ -29,6 +29,67 @@ beforeEach(() => {
   preferences.listeners.clear()
 })
 
+it("Given a restored Identity photo and two shared boards, when only one board is open, then publish the photo to both without switching boards", async () => {
+  const active = { id: "active-board", entities: {} }
+  const background = { id: "background-board", entities: {} }
+  const execute = vi.fn(async () => {})
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: active.id }, { id: background.id }]),
+    getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => active,
+    readWorkspaceDoc: async (id: string) => id === active.id ? active : background,
+    executeWorkspaceCommandAsync: execute,
+  } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope()
+  scope.run(() => useMemberAvatars(workspace))
+  try {
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(background.id, { kind: "setMemberAvatar", ...photo }))
+    expect(execute).toHaveBeenCalledWith(active.id, { kind: "setMemberAvatar", ...photo })
+    expect(workspace.getActiveDoc()).toBe(active)
+  } finally { scope.stop() }
+})
+
+it("Given an unchanged saved photo, when another board becomes available in the background, then publish its profile without switching boards", async () => {
+  const active = { id: "active-board", entities: { [`member-profile:${ownerId}`]: { kind: "member_profile", data: JSON.stringify(photo) } } }
+  const background = { id: "background-board", entities: {} }
+  const availableWorkspaces = ref([{ id: active.id }])
+  const execute = vi.fn(async () => {})
+  const workspace = {
+    ready: ref(true), docVersion: ref(1), availableWorkspaces,
+    getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => active,
+    readWorkspaceDoc: async (id: string) => id === active.id ? active : background,
+    executeWorkspaceCommandAsync: execute,
+  } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope()
+  scope.run(() => useMemberAvatars(workspace))
+  try {
+    await vi.waitFor(() => expect(storage.loadPersonalRoot).toHaveBeenCalled())
+    expect(execute).not.toHaveBeenCalled()
+    availableWorkspaces.value.push({ id: background.id })
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith(background.id, { kind: "setMemberAvatar", ...photo }))
+    expect(workspace.docVersion.value).toBe(1)
+    expect(workspace.getActiveDoc()).toBe(active)
+  } finally { scope.stop() }
+})
+
+it("Given a saved photo whose board write fails once, when storage recovers, then retry automatically without reopening the board", async () => {
+  vi.useFakeTimers()
+  const doc = { id: "workspace", entities: {} }
+  const execute = vi.fn().mockRejectedValueOnce(new Error("Storage temporarily busy")).mockResolvedValue(undefined)
+  const workspace = { ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
+    getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => doc,
+    readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
+  const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
+  try {
+    await vi.waitFor(() => expect(avatars.avatarNotice.value).toMatch(/sharing.*pending/i))
+    const attempts = execute.mock.calls.length
+    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.waitFor(() => {
+      expect(execute.mock.calls.length).toBeGreaterThan(attempts)
+      expect(avatars.avatarNotice.value).toBe("")
+    })
+  } finally { scope.stop(); vi.useRealTimers() }
+})
+
 it("Given a saved identity photo while startup checks are pending, when the workspace becomes ready, then publish the photo without another upload", async () => {
   const ready = ref(false)
   const doc = { id: "workspace", entities: {} }

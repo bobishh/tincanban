@@ -1,8 +1,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue"
 import { hasEntityKind, type Board, type WorkspaceDocumentV2 } from "../domain/model"
 import type { useTincanban } from "../state"
-import { boardRouteUrl, canonicalizeBoardRoute, isBoardAddressPath, parseBoardRoute, readBoardRouteHint, rememberBoardRouteHint } from "./boardRoute"
+import { boardRouteUrl, isBoardAddressPath, parseBoardRoute, readBoardRouteHint, rememberBoardRouteHint } from "./boardRoute"
 import { pairingLocationClearedEvent } from "../sync/deviceSyncInviteView"
+import { publicBoardOrigin } from "../public/publicBoardLink"
 
 type WorkspaceAddressApi = Pick<ReturnType<typeof useTincanban>, "ready" | "availableWorkspaces" | "activeWorkspace" |
   "activeBoard" | "docVersion" | "getCurrentProfile" | "readWorkspaceDoc" | "switchWorkspace">
@@ -19,7 +20,7 @@ export interface BoardAddressHistory {
 export interface BoardAddressRuntime {
   getAvailableWorkspaces(): readonly { id: string }[]
   getActiveWorkspaceId(): string
-  getActiveBoard(): { id: string; title: string } | null
+  getActiveBoard(): { id: string; title: string; publicationOrigin?: string } | null
   getIdentityId(): string | null
   getHintedWorkspaceId?(boardId: string): string | null
   readWorkspaceDoc(workspaceId: string): Promise<WorkspaceDocumentV2>
@@ -46,8 +47,7 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
     if (!targetWorkspaceId || !await activateTarget(targetWorkspaceId, route, identityId)) return unavailable(route.boardId)
     const activeBoard = runtime.getActiveBoard()!
     rememberBoardRouteHint(identityId, activeBoard.id, targetWorkspaceId)
-    const afterSwitch = location()
-    canonicalizeBoardRoute({ ...afterSwitch, state: null, replaceState: (state, title, url) => history.replaceState(state, title, url) }, activeBoard.id, activeBoard.title)
+    replaceActiveAddress(activeBoard)
     return "available"
   }
 
@@ -60,8 +60,7 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
     const activeBoard = runtime.getActiveBoard()
     if (!identityId || !eligibleWorkspaceIds().has(workspaceId) || activeBoard?.id !== route.boardId) return "resolving"
     rememberBoardRouteHint(identityId, activeBoard.id, workspaceId)
-    const current = location()
-    canonicalizeBoardRoute({ ...current, state: null, replaceState: (state, title, url) => history.replaceState(state, title, url) }, activeBoard.id, activeBoard.title)
+    replaceActiveAddress(activeBoard)
     return "available"
   }
 
@@ -116,10 +115,21 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
     if (identityId) rememberBoardRouteHint(identityId, board.id, workspaceId)
     const current = location()
     const route = parseBoardRoute(current.pathname, current.search, current.hash)
-    const url = boardRouteUrl(board.id, board.title, current)
+    const url = activeAddress(board)
     if (route?.boardId === board.id) {
-      canonicalizeBoardRoute({ ...current, state: null, replaceState: (state, title, next) => history.replaceState(state, title, next) }, board.id, board.title)
+      replaceActiveAddress(board)
     } else if (current.pathname === "/" || route) history.pushState(null, "", url)
+  }
+
+  function activeAddress(board: NonNullable<ReturnType<BoardAddressRuntime["getActiveBoard"]>>) {
+    const current = location(), search = new URLSearchParams(current.search)
+    if (board.publicationOrigin) search.set("rusty", board.publicationOrigin)
+    else search.delete("rusty")
+    return boardRouteUrl(board.id, board.title, { search: search.size ? `?${search}` : "", hash: current.hash })
+  }
+  function replaceActiveAddress(board: NonNullable<ReturnType<BoardAddressRuntime["getActiveBoard"]>>) {
+    const current = location(), url = activeAddress(board)
+    if (url !== `${current.pathname}${current.search}${current.hash}`) history.replaceState(null, "", url)
   }
 
   return {
@@ -202,6 +212,11 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
 
   return {
     status: computed(() => status.value),
+    publicFallback: computed(() => {
+      if (status.value !== "unavailable" || !unavailableBoardId.value) return null
+      const origin = publicBoardOrigin(window.location.search, import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined)
+      return origin ? { boardId: unavailableBoardId.value, origin } : null
+    }),
     unavailableBoardId: computed(() => unavailableBoardId.value),
     retry: resolveCurrentAddress,
     navigateToActiveBoard,

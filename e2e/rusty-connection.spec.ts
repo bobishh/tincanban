@@ -198,16 +198,21 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await start(new URL(origin).host)
     expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
     // Reload resumes the pending revocation; its background retry can finish before a manual click.
-    await expect(panel.getByText(origin, { exact: true })).toHaveCount(0, { timeout: 30_000 })
+    await expect(panel.getByText("Removal pending", { exact: true })).toHaveCount(0, { timeout: 30_000 })
+    await expect(panel.getByText("Not connected", { exact: true })).toBeVisible({ timeout: 30_000 })
     expect(JSON.parse(await readFile(join(directory, "scopes", scope!, "policy.json"), "utf8")).revoked).toBe(true)
     // When the owner reconnects by address, a fresh scope stores the preserved local board.
-    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
-    await panel.getByLabel("Address", { exact: true }).fill(origin)
+    await panel.locator(".rusty-connection").first().click()
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
-    const newScope = (await readdir(join(directory, "scopes"))).find(value => value !== scope)
+    const newScope = await page.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      return (await getReplicaConfigurations((await bootstrapIdentity()).identity.personId)).find(value => value.origin === origin)?.scopeId
+    }, origin)
     expect(newScope).toBeTruthy()
+    expect(newScope).not.toBe(scope)
     expect((await readdir(join(directory, "scopes", newScope!, "objects"))).length).toBeGreaterThan(0)
     // Given an operator erases server storage, explicitly abandon frozen local intent before adding fresh scopes.
     await expect(syncButton).toBeEnabled()
@@ -227,6 +232,7 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     }, origin)
     await stop()
     for (const entry of await readdir(directory)) if (entry !== "service-key") await rm(join(directory, entry), { recursive: true, force: true })
+    if (await panel.locator(".rusty-server").first().getAttribute("open") === null) await panel.locator(".rusty-connection").first().click()
     await panel.getByRole("button", { name: "Forget Rusty on this device", exact: true }).click()
     await panel.getByRole("button", { name: "Cancel", exact: true }).click()
     expect(await page.evaluate(async origin => {

@@ -319,6 +319,30 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     saveSnapshot.mockRestore()
   })
 
+  it("Given an earlier board creation finishes late, when a newer selection has completed, then retain both boards and keep the newer board selected after reload", async () => {
+    const app = useTincanban(), original = defaultStorage.withWorkspaceTransaction.bind(defaultStorage)
+    let release!: () => void, entered!: () => void
+    const blocked = new Promise<void>(resolve => { entered = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let first = true
+    const transaction = vi.spyOn(defaultStorage, "withWorkspaceTransaction").mockImplementation(async (id, operation) => {
+      if (first) { first = false; entered(); await gate }
+      return original(id, operation)
+    })
+    const earlier = app.createWorkspaceAsync("Earlier creation", "blank")
+    await blocked
+    try {
+      const newer = await app.createWorkspaceAsync("Newer selection", "blank")
+      release()
+      const older = await earlier
+      expect(app.activeWorkspace.id).toBe(newer.id)
+      expect((await defaultStorage.loadWorkspaceDoc(older.id))?.doc.title).toBe("Earlier creation")
+      await hydrate()
+      expect(app.activeWorkspace.id).toBe(newer.id)
+      Automerge.free(older)
+    } finally { release(); await earlier; transaction.mockRestore() }
+  })
+
   it("Given a format 2 owner board, when tincanban starts, then migration is signed and durable", async () => {
     const profile = useTincanban().getCurrentProfile()!
     type LegacyEntityFixture = {

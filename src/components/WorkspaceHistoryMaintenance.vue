@@ -41,7 +41,6 @@ async function compact() {
     <button class="button button-quiet" type="button" :disabled="!owner || busy" @click="compact">
       {{ busy ? "Archiving history…" : "Archive older history" }}
     </button>
-    <p v-if="controller.busy.value && !busy" role="status" class="dialog-copy">Waiting for Rusty sync to finish…</p>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <p v-else-if="notice && !busy" class="dialog-copy" role="status">{{ notice }}</p>
   </section>

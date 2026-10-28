@@ -24,10 +24,35 @@ beforeEach(() => {
 })
 function app() {
   return { getCurrentProfile: () => ({ identity: { personId: "bo" } }), refreshIdentity: vi.fn(),
+    workspaceSelectionVersion: { value: 0 },
+    workspaceSelectionPending: { value: false },
+    captureWorkspaceSelection() {
+      const workspaceId = this.activeWorkspace.id, version = this.workspaceSelectionVersion.value
+      const pending = this.workspaceSelectionPending.value
+      return { isCurrent: () => !pending && this.workspaceSelectionVersion.value === version && this.activeWorkspace.id === workspaceId }
+    },
     activeWorkspace: { id: "guest-default" }, availableWorkspaces: { value: [{ id: "job-search" }] },
     readWorkspaceDoc: vi.fn(async (id: string) => ({ id, entities: { board: { id: `board-${id}`, kind: "board" } } })),
     switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn(), getActiveDoc: () => null }
 }
+it("Given creation is pending during sign-in loading, when its selection intent changes before the board becomes active, then do not create or select a background default", async () => {
+  const state = app()
+  state.availableWorkspaces.value = []
+  f.roots.mockResolvedValue({ identity: { personId: "bo" }, workspaces: {} })
+  f.identityPull.mockImplementationOnce(async () => { state.workspaceSelectionVersion.value++; return true })
+  await loadIdentityBoards(state as never)
+  expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+  expect(state.switchWorkspace).not.toHaveBeenCalled()
+})
+it("Given board creation already runs when sign-in loading starts, when the empty catalog finishes loading, then preserve the pending user selection", async () => {
+  const state = app()
+  state.workspaceSelectionPending.value = true
+  state.availableWorkspaces.value = []
+  f.roots.mockResolvedValue({ identity: { personId: "bo" }, workspaces: {} })
+  await loadIdentityBoards(state as never)
+  expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+  expect(state.switchWorkspace).not.toHaveBeenCalled()
+})
 it("Given a restored private catalog, when loading board data, then restore original mesh access before publishing boards and recover routes for already loaded copies", async () => {
   const state = app()
   const phases: string[] = []

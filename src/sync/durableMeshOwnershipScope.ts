@@ -238,16 +238,19 @@ function planOwnershipScopeSnapshot(snapshot: ScopeAuthoritySnapshot, existingSn
 export async function persistScopeAuthoritySnapshot(store: PeerStore, workspaceId: string, snapshot: ScopeAuthoritySnapshot | undefined,
   write: ScopedAuthorityWrite) {
   if (!snapshot) return
-  const validated = meshRustRuntime().state.validateScopeAuthority(snapshot, Date.now()) as {
-    scopeId: string; controller: { personId: string; publicKey: string }
-  }
   const authority = await store.getWorkspaceAuthority(workspaceId)
   if (!authority) throw new Error("Workspace authority disappeared during scope authority import")
+  const merged = authority.scopeAuthoritySnapshot
+    ? meshRustRuntime().state.mergeScopeAuthoritySnapshots(authority.scopeAuthoritySnapshot, snapshot, Date.now()) as ScopeAuthoritySnapshot
+    : snapshot
+  const validated = meshRustRuntime().state.validateScopeAuthority(merged, Date.now()) as {
+    scopeId: string; controller: { personId: string; publicKey: string }
+  }
   if (validated.scopeId !== workspaceId || validated.controller.personId !== authority.ownerPersonId ||
     validated.controller.publicKey !== authority.ownerPublicKey)
     throw new Error("Scope authority snapshot does not match current workspace owner")
-  if (canonicalizeJson(authority.scopeAuthoritySnapshot ?? null) === canonicalizeJson(snapshot ?? null)) return
-  await write(() => store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: snapshot }))
+  if (canonicalizeJson(authority.scopeAuthoritySnapshot ?? null) === canonicalizeJson(merged)) return
+  await write(() => store.putWorkspaceAuthority({ ...authority, scopeAuthoritySnapshot: merged }))
 }
 
 export async function confirmedOwnershipSnapshot(store: WorkspaceSetStore, workspaceId: string, transfer: WorkspaceOwnershipTransfer,

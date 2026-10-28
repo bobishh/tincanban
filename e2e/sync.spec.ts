@@ -144,3 +144,60 @@ test("Given paired browser profiles, when either peer changes a card, then the o
     await peerContext.close()
   }
 })
+
+test("Given a shared board and no Rusty, when an Identity photo arrives on another board and its first shared write fails, then retry delivers the photo through P2P without switching boards", async ({ page, browser }) => {
+  test.setTimeout(90_000)
+  const participantContext = await browser.newContext()
+  const participant = await participantContext.newPage()
+  try {
+    await page.goto("/")
+    await ensureJobSearchWorkspace(page)
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const host = page.getByRole("dialog", { name: "Device sync" })
+    await host.getByRole("button", { name: "Add someone", exact: true }).click()
+    await host.getByRole("button", { name: "Generate link", exact: true }).click()
+    await participant.goto(await host.getByLabel("Pairing link").inputValue())
+    const join = participant.getByRole("dialog", { name: "Device sync" })
+    await join.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await host.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(join.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await join.getByRole("button", { name: "Close", exact: true }).click()
+    if (await host.getByRole("button", { name: "Close", exact: true }).isVisible()) {
+      await host.getByRole("button", { name: "Close", exact: true }).click()
+    }
+    await participant.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { defaultStorage } = await import("/src/storage.ts")
+      const app = useTincanban()
+      const sharedId = app.activeWorkspace.id
+      await app.createWorkspaceAsync("Other board", "blank")
+      const original = defaultStorage.withWorkspaceTransaction.bind(defaultStorage)
+      let failNext = true
+      defaultStorage.withWorkspaceTransaction = async (id, operation) => {
+        if (id === sharedId && failNext) {
+          failNext = false
+          throw new Error("Temporary shared profile write failure")
+        }
+        return original(id, operation)
+      }
+    })
+    await expect(participant.getByRole("region", { name: "Other board", exact: true })).toBeVisible()
+    const source = await participant.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { saveIdentityPhoto } = await import("/src/app/identityPhoto.ts")
+      const canvas = document.createElement("canvas")
+      canvas.width = canvas.height = 128
+      const paint = canvas.getContext("2d")!
+      paint.fillStyle = "#2563eb"
+      paint.fillRect(0, 0, 128, 128)
+      const image = canvas.toDataURL("image/jpeg", 0.8)
+      await saveIdentityPhoto(useTincanban().getCurrentProfile()!, image)
+      return image
+    })
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    await expect(page.getByRole("region", { name: "Rusty", exact: true })).toContainText("P2P only")
+    await expect(page.locator(".mesh-member .participant-avatar-photo")).toHaveCount(0)
+    await expect(page.locator(".mesh-member .participant-avatar-photo")).toHaveAttribute("src", source, { timeout: 30_000 })
+    await expect(participant.getByRole("region", { name: "Other board", exact: true })).toBeVisible()
+  } finally { await participantContext.close() }
+})

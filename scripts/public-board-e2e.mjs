@@ -25,6 +25,7 @@ const previewBuild = process.env.TINCANBAN_PUBLIC_E2E_PREVIEW === "1"
 if (previewBuild) {
   const build = spawnSync("npm", ["run", "build"], { stdio: "inherit", env: {
     ...process.env,
+    VITE_PUBLIC_BOARD_ORIGIN: keeperOrigin,
     VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_BROWSER_KEY: "",
   } })
   if (build.status !== 0) process.exit(build.status ?? 1)

@@ -5,6 +5,20 @@ import { createBoardAddressController } from "./useBoardAddress"
 const doc = (id: string, boardId: string, title: string) => ({ id, title, entities: { [boardId]: { id: boardId, kind: "board", title } } })
 
 describe("private board address integration", () => {
+  it("Given a board's publication location, when its address is copied and boards switch, then retain its locator and never carry it into another board", () => {
+    const history = historyAt("/boards/published/old?message=m#message-m")
+    let board: { id: string; title: string; publicationOrigin?: string } = { id: "published", title: "Published", publicationOrigin: "https://rusty.example" }
+    const integration = createBoardAddressController({
+      getAvailableWorkspaces: () => [{ id: "workspace" }], getActiveWorkspaceId: () => "workspace",
+      getActiveBoard: () => board, getIdentityId: () => "person", readWorkspaceDoc: vi.fn(), switchWorkspace: vi.fn(),
+    }, history)
+    integration.syncActiveBoard("workspace")
+    expect(new URLSearchParams(history.location().search).get("rusty")).toBe("https://rusty.example")
+    expect(new URLSearchParams(history.location().search).get("message")).toBe("m")
+    board = { id: "private", title: "Private" }
+    integration.syncActiveBoard("workspace")
+    expect(new URLSearchParams(history.location().search).has("rusty")).toBe(false)
+  })
   it("Given an address lookup still reading the old board, when user navigation selects another board, then the late lookup cannot switch back", async () => {
     const history = historyAt("/boards/old/untitled")
     let active = "old-workspace"

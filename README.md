@@ -77,8 +77,13 @@ signed access, preserving local edits in the meantime.
 
 Identity supplies its approved Rusty services during sign-in. The optional
 `VITE_PUBLIC_BOARD_ORIGIN` hint remains supported for older Identity profiles
-that have not approved their catalog service yet. It does not select or enable
-a board's publication server.
+that have not approved their catalog service yet and for reading original public
+board addresses. It does not select or enable a board's publication server.
+
+Identity delivery replaces redundant encrypted snapshots after eight retained
+copies, once every stored state has been verified and merged. The replacement
+preserves signed profile history, recovery evidence, and unknown optional
+components. An incomplete or rejected state prevents replacement.
 
 ## Public boards
 
@@ -90,10 +95,11 @@ With several connections, choose a publication server explicitly. Its address is
 saved in the owner-signed board state so other authorized devices and automations
 update the same public copy.
 
-Share **Open public board**, which includes the Rusty address in its `rusty` query
-parameter. Visitors need no Identity or local board data. Private board addresses
-stay unchanged; a link without its publication server cannot locate an anonymous
-copy and asks for the complete public link.
+Copy the board address from the browser. Its publication location is included
+automatically; visitors need no Identity or local board data. Existing devices
+retain normal verified editing access at the same address. Original addresses
+without a server parameter remain readable through the configured publication
+server. Local navigation hints never deny an available public copy.
 
 Changes reach the public copy while an authorized client or automation is running.
 Disconnecting Rusty pauses delivery; the last published copy stays public until
