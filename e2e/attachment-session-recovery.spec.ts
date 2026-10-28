@@ -238,6 +238,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       text.startsWith('[tincanban.mesh] ') && text.includes('"event":"workspace.join.host.failed"')) console.error(text)
   })
   const editor = await editorContext.newPage()
+  const attachEditorBackupProgress = await captureHistoryBackupProgress(editor, testInfo)
   let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined
   let ownerClosed = false
   let identityRecoveryBytes: Buffer | undefined
@@ -259,9 +260,8 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   async function makeWorkspaceRecovery() {
     const sync = await openSettingsFromSync(editor, "Identity")
     const backups = sync.getByRole("region", { name: "Private workspace recovery" })
-    const downloadEvent = editor.waitForEvent("download", { timeout: 60_000 })
-    await backups.getByRole("button", { name: "Create private recovery backup", exact: true }).click()
-    const download = await downloadEvent
+    const download = await downloadPrivateWorkspaceRecovery(editor, backups)
+      .catch(async error => { await attachEditorBackupProgress(); throw error })
     const fileBytes = await readFile((await download.path())!)
     const recoveryWords = await backups.getByLabel("Recovery words", { exact: true }).inputValue()
     if (!workspaceRecoveryBytes) {
@@ -320,12 +320,23 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       (await (await import("/src/storage.ts")).defaultStorage.ensureHistoryProgress(id)).baselineId, workspaceId)
     await owner.evaluate(async () => {
       const storage = await import("/src/storage.ts")
-      const target = storage.defaultStorage as typeof storage.defaultStorage & { __originalClaim?: typeof storage.defaultStorage.claimHistoryTransitionId }
+      const target = storage.defaultStorage as typeof storage.defaultStorage & {
+        __originalClaim?: typeof storage.defaultStorage.claimHistoryTransitionId; __capacityClaimAttempted?: boolean
+      }
       target.__originalClaim = target.claimHistoryTransitionId.bind(target)
-      target.claimHistoryTransitionId = async () => { throw new DOMException("Injected storage capacity failure", "QuotaExceededError") }
+      target.__capacityClaimAttempted = false
+      target.claimHistoryTransitionId = async () => {
+        target.__capacityClaimAttempted = true
+        throw new DOMException("Injected storage capacity failure", "QuotaExceededError")
+      }
     })
     try {
       await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
+      // Archive work first waits for the current replica pass. Keep the fault
+      // installed until that write is actually attempted, then verify its UI error.
+      await expect.poll(() => owner.evaluate(async () =>
+        ((await import("/src/storage.ts")).defaultStorage as { __capacityClaimAttempted?: boolean }).__capacityClaimAttempted),
+      { timeout: 30_000 }).toBe(true)
       await expect(maintenance.getByRole("alert")).toHaveText("Browser storage is full. Free up space, then retry archiving history.")
       expect(await owner.evaluate(async id => {
         const storage = (await import("/src/storage.ts")).defaultStorage
@@ -335,9 +346,12 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     } finally {
       await owner.evaluate(async () => {
         const storage = await import("/src/storage.ts")
-        const target = storage.defaultStorage as typeof storage.defaultStorage & { __originalClaim?: typeof storage.defaultStorage.claimHistoryTransitionId }
+        const target = storage.defaultStorage as typeof storage.defaultStorage & {
+          __originalClaim?: typeof storage.defaultStorage.claimHistoryTransitionId; __capacityClaimAttempted?: boolean
+        }
         if (target.__originalClaim) target.claimHistoryTransitionId = target.__originalClaim
         delete target.__originalClaim
+        delete target.__capacityClaimAttempted
       })
     }
     await ownerSync.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
@@ -580,7 +594,7 @@ test("Given an owner with two archived history generations, when adding my phone
     const phoneSync = phone.getByRole("dialog", { name: "Device sync" })
 
     await expect(phoneSync.getByRole("region", { name: "Rusty", exact: true }).locator(":scope > .rusty-connections")
-      .getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+      .getByText("Synced", { exact: true })).toBeVisible({ timeout: testInfo.project.name.includes("webkit") ? 60_000 : 30_000 })
 
     await host.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
     await source.getByRole("button", { name: "Sync", exact: true }).click()

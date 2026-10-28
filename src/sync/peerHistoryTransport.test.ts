@@ -5,7 +5,8 @@ import { parsePeerHistoryBaselineRead, parsePeerHistoryDocumentRead, parsePeerHi
   readPeerHistoryDocument, readPeerHistoryObject, respondToPeerHistoryBaselineRead, respondToPeerHistoryDocumentRead,
   respondToPeerHistoryObjectRead, readPeerHistoryAwareAcceptStream, type PeerHistoryObjectBinding } from "./peerHistoryTransport"
 
-import { createPeerHistoryHandlers } from "./workspaceSetHistory"
+import { createPeerHistoryHandlers, createPeerHistoryObjectReader } from "./workspaceSetHistory"
+import type { SyncConnection } from "./transport"
 
 const objectId = "A".repeat(43)
 const baselineId = "B".repeat(43)
@@ -40,6 +41,108 @@ function streamPair() {
 }
 
 describe("direct peer history object transport", () => {
+  it("Given an authenticated history read, when one stream times out, then retry the captured object once on a fresh stream of the same connection", async () => {
+    vi.useFakeTimers()
+    try {
+      const sent: Uint8Array[] = []
+      const send = vi.fn(async (frame: Uint8Array) => { sent.push(frame) }), reset = vi.fn(async () => {})
+      const stalled = { send, closeSend: async () => {}, readRaw: () => new Promise<Uint8Array>(() => {}), reset }
+      const payload = new Uint8Array([7, 8, 9])
+      const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
+      const recovered = { send, closeSend: async () => {}, readRaw: async () => new Uint8Array([...magic, 0, ...payload]), reset: async () => {} }
+      const openStream = vi.fn().mockResolvedValueOnce(stalled).mockResolvedValueOnce(recovered)
+      const close = vi.fn()
+      const guard = vi.fn(async () => {})
+      const reader = createPeerHistoryObjectReader({ openStream, close } as unknown as SyncConnection, guard)
+      const input = { ...binding }
+      const result = reader.read(objectId, input, baselineId).catch(error => ({ error }))
+      await vi.advanceTimersByTimeAsync(0)
+      input.workspaceId = "changed-after-request"
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(await result).toEqual(payload)
+      expect(openStream).toHaveBeenCalledTimes(2)
+      expect(reset).toHaveBeenCalledOnce()
+      expect(sent[0]).toEqual(sent[1])
+      expect(close).not.toHaveBeenCalled()
+      expect(guard).toHaveBeenCalled()
+    } finally { vi.useRealTimers() }
+  })
+
+  it("Given a multipart document, when one later stream resets, then retry that exact part without restarting verified earlier parts", async () => {
+    const bytes = new Uint8Array(300_000).fill(7)
+    const digest = await sha256Base64Url(bytes)
+    const requests: Array<{ offset: number; length: number }> = []
+    const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
+    const openStream = vi.fn(async () => {
+      const attempt = openStream.mock.calls.length
+      let request!: { offset: number; length: number }
+      return { send: async (frame: Uint8Array) => {
+        request = parsePeerHistoryDocumentRead(frame)!
+        requests.push(request)
+      }, closeSend: async () => {}, reset: async () => {}, readRaw: async () => {
+        if (attempt === 2) throw new MeshNetworkError("History part stream reset")
+        return new Uint8Array([...magic, 0, ...bytes.slice(request.offset, request.offset + request.length)])
+      } }
+    })
+    const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, () => {})
+    await expect(reader.readDocument({ version: 1, sourceKind: "authenticated-peer-plaintext", signedJson: "e30",
+      baselineId, documentDigest: digest, documentLength: bytes.length }, "board")).resolves.toEqual(bytes)
+    expect(requests.map(request => request.offset)).toEqual([0, 256 * 1024, 256 * 1024])
+  })
+
+  it("Given a stalled compact document, when its original deadline expires, then fail without granting a second document deadline", async () => {
+    vi.useFakeTimers()
+    try {
+      const openStream = vi.fn(async () => ({ send: async () => {}, closeSend: async () => {}, reset: async () => {},
+        readRaw: () => new Promise<Uint8Array>(() => {}) }))
+      const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, () => {})
+      let failure: unknown
+      void reader.readDocument({ version: 1, sourceKind: "authenticated-peer-plaintext", signedJson: "e30",
+        baselineId, documentDigest: objectId, documentLength: 1 }, "board").catch(error => { failure = error })
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(failure).toBeInstanceOf(MeshNetworkError)
+      expect(openStream).toHaveBeenCalledOnce()
+    } finally { vi.useRealTimers() }
+  })
+
+  it("Given both history streams fail, when retrying an authenticated read, then stop after the second attempt", async () => {
+    const openStream = vi.fn(async () => { throw new MeshNetworkError("Connection lost") })
+    const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, () => {})
+    await expect(reader.read(objectId, binding, baselineId)).rejects.toThrow("Connection lost")
+    expect(openStream).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(["unavailable", "malformed"])("Given an explicit %s history reply, when reading, then fail without retrying that terminal response", async kind => {
+    const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
+    const bytes = kind === "unavailable" ? new Uint8Array([...magic, 1]) : new TextEncoder().encode("malformed response")
+    const openStream = vi.fn(async () => ({ send: async () => {}, closeSend: async () => {}, readRaw: async () => bytes, reset: async () => {} }))
+    const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, () => {})
+    await expect(reader.read(objectId, binding, baselineId)).rejects.toThrow(kind === "unavailable" ? /unavailable/ : /Invalid peer history/)
+    expect(openStream).toHaveBeenCalledOnce()
+  })
+
+  it("Given authority is revoked after a stream fails, when retry is considered, then stop before opening another stream", async () => {
+    let revoked = false
+    const guard = async () => { if (revoked) throw new Error("Device access revoked") }
+    const openStream = vi.fn(async () => ({ send: async () => {}, closeSend: async () => {}, reset: async () => {}, readRaw: async () => {
+      revoked = true
+      throw new MeshNetworkError("Stream reset")
+    } }))
+    const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, guard)
+    await expect(reader.read(objectId, binding, baselineId)).rejects.toThrow("Device access revoked")
+    expect(openStream).toHaveBeenCalledOnce()
+  })
+
+  it("Given compact document bytes fail their signed digest, when reading history, then reject without another transfer", async () => {
+    const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
+    const openStream = vi.fn(async () => ({ send: async () => {}, closeSend: async () => {}, reset: async () => {},
+      readRaw: async () => new Uint8Array([...magic, 0, 1]) }))
+    const reader = createPeerHistoryObjectReader({ openStream } as unknown as SyncConnection, () => {})
+    await expect(reader.readDocument({ version: 1, sourceKind: "authenticated-peer-plaintext", signedJson: "e30",
+      baselineId, documentDigest: objectId, documentLength: 1 }, "board")).rejects.toThrow("digest changed")
+    expect(openStream).toHaveBeenCalledOnce()
+  })
+
   it.each(["object", "baseline"])("Given an archive %s request, when the peer closes without any response bytes, then reports a transport failure", async kind => {
     const reset = vi.fn(async () => {})
     const stream = { send: async () => {}, closeSend: async () => {}, read: vi.fn(),

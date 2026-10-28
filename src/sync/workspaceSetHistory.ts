@@ -2,7 +2,7 @@ import type { SyncConnection, DuplexStream } from "./transport"
 import { readPeerHistoryBaseline, readPeerHistoryDocument, readPeerHistoryObject, parsePeerHistoryBaselineRead,
   parsePeerHistoryDocumentRead, parsePeerHistoryObjectRead, respondToPeerHistoryBaselineRead,
   respondToPeerHistoryDocumentRead, respondToPeerHistoryObjectRead, type PeerHistoryDocumentRequest,
-  type PeerHistoryObjectBinding } from "./peerHistoryTransport"
+  type PeerHistoryObjectBinding, retryPeerHistoryStream } from "./peerHistoryTransport"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 
 export type PeerHistoryBaselineDescriptor = { version: 1; sourceKind: "authenticated-peer-plaintext"; signedJson: string;
@@ -41,16 +41,19 @@ export function createPeerHistoryObjectReader(connection: SyncConnection, ensure
   return { ensureCurrent,
     ...(scopes ? { invitationScopeAuthority: (workspaceId: string) => structuredClone(scopes.get(workspaceId)) } : {}),
     readBaseline: async (workspaceId, baselineId) => {
-      const descriptor = await readPeerHistoryBaseline(() => connection.openStream(), workspaceId, ensureCurrent, baselineId)
+      const descriptor = await retryPeerHistoryStream(() =>
+        readPeerHistoryBaseline(() => connection.openStream(), workspaceId, ensureCurrent, baselineId), ensureCurrent)
       return descriptor === undefined ? undefined : capturePeerHistoryBaselineDescriptor(descriptor)
     },
     read: (objectId, binding, baselineId) => {
       if (!baselineId || !/^[A-Za-z0-9_-]{43}$/.test(baselineId)) throw new Error("Peer history object read requires its verified baseline")
-      return readPeerHistoryObject(() => connection.openStream(), { baselineId, objectId, binding }, ensureCurrent)
+      const request = { baselineId, objectId, binding: structuredClone(binding) }
+      return retryPeerHistoryStream(() => readPeerHistoryObject(() => connection.openStream(), request, ensureCurrent), ensureCurrent)
     },
-    readDocument: (descriptor, workspaceId) => readPeerHistoryDocument(() => connection.openStream(), {
-      workspaceId, baselineId: descriptor.baselineId, documentDigest: descriptor.documentDigest, length: descriptor.documentLength,
-    }, ensureCurrent) }
+    readDocument: (descriptor, workspaceId) => {
+      const request = { workspaceId, baselineId: descriptor.baselineId, documentDigest: descriptor.documentDigest, length: descriptor.documentLength }
+      return readPeerHistoryDocument(() => connection.openStream(), request, ensureCurrent)
+    } }
 }
 
 export type WorkspacePeerHistoryStore = {

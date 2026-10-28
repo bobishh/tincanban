@@ -4,6 +4,8 @@ import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identi
 import { createEnrollmentRequest } from "./enrollment"
 import { defaultInvitationService, resetInvitationStorageForTest } from "./invitations"
 import { receiveEnrollment } from "./deviceSyncEnrollment"
+import { completeEnrollmentApproval } from "./deviceSyncSamePersonWorkspace"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import type { DuplexStream, SyncConnection, SyncNode } from "./transport"
 
 const waitFor = async (predicate: () => boolean) => {
@@ -45,6 +47,58 @@ const enrollmentInvitation = async (): Promise<DeviceEnrollmentInvitation> => {
   await defaultInvitationService.saveIssuedInvitation(invite)
   return invite
 }
+
+describe("enrollment history transport recovery", () => {
+  it.each(["reply", "request header"])("Given an approved enrollment, when one history %s stream is reset, then serve its fresh retry and finish acknowledgement on the same connection", async failureStage => {
+    const secret = "history-retry-secret"
+    const history = new TextEncoder().encode(`tincanban-peer-history-v1\n${JSON.stringify({ version: 1,
+      kind: "workspace-history-object-read", baselineId: "B".repeat(43), objectId: "A".repeat(43),
+      binding: { workspaceId: "board", historyEpoch: 1, indexId: "catalogue", objectKind: "page", partIndex: 0, partCount: 1 } })}`)
+    const reset = vi.fn(async () => {})
+    const incoming = (frame: Uint8Array) => ({ ...stream(async () => frame),
+      readPairingOrRawPrefix: async () => frame, reset })
+    const ack = incoming(encodePairingFrame("enroll-ack", secret, new Uint8Array([1])))
+    const confirmation = incoming(encodePairingFrame("mesh-handoff-confirmed", secret, new Uint8Array()))
+    const first = incoming(history)
+    if (failureStage === "request header") first.readPairingOrRawPrefix = async () => { throw new MeshNetworkError("Peer reset its expired history stream") }
+    const acceptStream = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(incoming(history))
+      .mockResolvedValueOnce(ack).mockResolvedValueOnce(confirmation)
+    let servedHistory = 0
+    const serve = vi.fn(async (frame: Uint8Array) => {
+      if (frame !== history) return false
+      if (failureStage === "reply" && ++servedHistory === 1) throw new MeshNetworkError("Peer reset its expired history stream")
+      return true
+    })
+    const replica = { servePeerHistoryBaselineRead: async () => false, servePeerHistoryDocumentRead: async () => false,
+      servePeerHistoryObjectRead: serve, serveProofPage: async () => false,
+      resolveProofs: async (bytes: Uint8Array) => bytes, receive: vi.fn(async () => {}) }
+    const guard = vi.fn(async () => {})
+    const connection = { acceptStream, openStream: vi.fn(), close: vi.fn() }
+    await expect(completeEnrollmentApproval(connection, replica as never, "phone-device", secret, guard, {} as never, "Rejected"))
+      .resolves.toBeUndefined()
+    expect(acceptStream).toHaveBeenCalledTimes(4)
+    expect(reset).toHaveBeenCalledOnce()
+    expect(replica.receive).toHaveBeenCalledOnce()
+    expect(ack.send).toHaveBeenCalledOnce()
+    expect(connection.close).not.toHaveBeenCalled()
+  })
+
+  it.each(["revoked", "malformed"])("Given a %s history request, when enrollment handles the failure, then terminate instead of reading another stream", async failure => {
+    const frame = new TextEncoder().encode("tincanban-peer-history-v1\n{}")
+    let replyFailed = false
+    const incoming = { ...stream(async () => frame), readPairingOrRawPrefix: async () => frame, reset: vi.fn(async () => {}) }
+    const acceptStream = vi.fn(async () => incoming)
+    const replica = { servePeerHistoryBaselineRead: async () => false, servePeerHistoryDocumentRead: async () => false,
+      servePeerHistoryObjectRead: async () => {
+        replyFailed = true
+        throw failure === "revoked" ? new MeshNetworkError("Reply stream reset") : new Error("Malformed history request")
+      } }
+    const guard = async () => { if (replyFailed && failure === "revoked") throw new Error("Device access revoked") }
+    await expect(completeEnrollmentApproval({ acceptStream } as never, replica as never, "phone-device", "secret", guard, {} as never, "Rejected"))
+      .rejects.toThrow(failure === "revoked" ? "Device access revoked" : "Malformed history request")
+    expect(acceptStream).toHaveBeenCalledOnce()
+  })
+})
 
 describe("device enrollment host admission", () => {
   beforeEach(() => {

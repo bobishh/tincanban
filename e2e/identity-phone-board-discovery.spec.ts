@@ -605,6 +605,21 @@ function attribute(record: LogRecord, key: string): unknown {
   return value && Object.values(value)[0]
 }
 
+async function retainedBoardAccess(page: Page, workspaceId: string) {
+  return page.evaluate(async id => {
+    const { defaultStorage } = await import("/src/storage.ts")
+    const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+    const { workspaceRole } = await import("/src/sync/changeAuthorization.ts")
+    const A = await import("/@id/@automerge/automerge/slim")
+    const saved = await defaultStorage.loadWorkspaceDoc(id)
+    if (!saved) return null
+    try {
+      return { workspaceId: saved.doc.id, ownerPersonId: saved.doc.ownerPersonId,
+        role: await workspaceRole(saved.doc, await bootstrapIdentity()) }
+    } finally { A.free(saved.doc) }
+  }, workspaceId)
+}
+
 for (const interrupt of [false, true]) {
 test(`Given an approved phone and an owner board with no Rusty copy${interrupt ? " after a connection failure" : ""}, when sign-in loads its private catalog, then recover the original board through P2P and retain it after reload`, async ({ page: desktop, context, browser, baseURL }) => {
   test.setTimeout(240_000)
@@ -704,10 +719,8 @@ test(`Given an approved phone and an owner board with no Rusty copy${interrupt ?
     }
     await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 90_000 })
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
-    await expect.poll(() => phone.evaluate(async id => {
-      const events = (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot()
-      return events.some(event => event.event === "identity.peer-recovery.completed" && event.workspaceId === id)
-    }, workspaceId), { timeout: 30_000 }).toBe(true)
+    // Recovery publishes before connection cleanup; verify durable access instead of a transient trace event.
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: personId, role: "owner" })
     expect(await phone.evaluate(async id => {
       const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
       return (await (await import("/src/sync/privateReplicaRepository.ts")).getReplicaConfigurations(profile.identity.personId))
@@ -724,6 +737,7 @@ test(`Given an approved phone and an owner board with no Rusty copy${interrupt ?
     await phone.reload()
     await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 30_000 })
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: personId, role: "owner" })
   } finally {
     console.log("P2P recovery diagnostics", diagnostics)
     await Promise.allSettled([phoneContext.close(), rusty.close()])

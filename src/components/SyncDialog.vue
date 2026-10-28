@@ -266,14 +266,13 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
                   :person-id="selectedMember.personId" :device-id="device.deviceId" :name="deviceDisplayName(device)" :active-workspace-id="activeWorkspaceId"
                   :removable-device-workspaces="removableDeviceWorkspaces" :remove-device="removeDevice" />
               </div>
-              <details class="mesh-device-details">
-                <summary>Details</summary>
+              <div class="mesh-device-details">
                 <small>{{ device.description || 'Browser / OS unknown' }}</small>
                 <code>{{ device.deviceId }}</code>
                 <small v-if="device.tabs">{{ device.tabs }} known {{ device.tabs === 1 ? 'browser session' : 'browser sessions' }}</small>
                 <small v-if="device.lastSeen && !device.online && !device.reconnecting">Last seen {{ new Date(device.lastSeen).toLocaleString() }}</small>
                 <small v-if="device.tabs">Session counts may include closed tabs.</small>
-              </details>
+              </div>
             </li>
           </ul>
           <details v-if="selectedMember.self && removedDeviceRecords.length" class="removed-device-history">

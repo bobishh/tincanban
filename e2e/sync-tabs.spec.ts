@@ -29,6 +29,12 @@ for (const width of [1280, 390]) test(`Given a board at ${width}px, when Sync op
   await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
   await expect(dialog.getByText("This device", { exact: true })).toBeVisible()
   const selected = dialog.getByRole("region", { name: "Selected mesh member", exact: true })
+  await expect(selected.locator("details.mesh-device-details")).toHaveCount(0)
+  await expect(selected.locator(".mesh-device-details code")).toBeVisible()
+  await expect(selected.locator(".mesh-device-details")).toContainText(/Likely (Chrome|Safari|Firefox|Browser)|Browser \/ OS unknown/)
+  await expect(selected.locator(".mesh-device-status")).toHaveText("Open in this tab")
+  expect(await selected.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+  await page.screenshot({ animations: "disabled", path: info.outputPath(`sync-selected-${width}.png`) })
   await expect.poll(async () => {
     const detailBox = await selected.boundingBox(), storageBox = await storage.boundingBox()
     if (!detailBox || !storageBox) return false
@@ -59,14 +65,18 @@ for (const width of [1280, 390]) test(`Given a board at ${width}px, when Sync op
   await expect(settings.getByRole("region", { name: "Private workspace recovery" })).toBeVisible()
 })
 
-test("Given Rusty is unavailable, when connecting, then pending and failure preserve participants on the same screen", async ({ page }, info) => {
+for (const width of [1280, 390]) test(`Given Rusty is unavailable at ${width}px, when connecting, then pending and failure preserve participants on the same screen`, async ({ page }, info) => {
+  await page.setViewportSize({ width, height: 844 })
   let release = () => {}
   const gate = new Promise<void>(resolve => { release = resolve })
   await page.route("https://rusty.invalid/**", async route => { await gate; await route.abort() })
   await page.goto("/")
   await expect(page.getByLabel("Workspace role: owner")).toBeVisible()
+  if (width < 640) await page.getByRole("button", { name: "Menu", exact: true }).click()
   await page.getByRole("button", { name: "Sync", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "Device sync" })
+  await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
+  await expect(dialog.locator(".mesh-device-details code")).toBeVisible()
   const panel = dialog.getByRole("region", { name: "Rusty", exact: true })
   await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
   await panel.getByLabel("Address", { exact: true }).fill("https://rusty.invalid")
@@ -77,6 +87,7 @@ test("Given Rusty is unavailable, when connecting, then pending and failure pres
   await expect(panel.getByRole("alert")).toBeVisible()
   await expect(panel.getByRole("button", { name: "Connect", exact: true })).toBeEnabled()
   await expect(dialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
+  await expect(dialog.locator(".mesh-device-details code")).toBeVisible()
 })
 
 test("Given a restored board has signed participant access without saved peer devices, when opening Sync after reload, then retain the offline participant and collapsible empty device list", async ({ page }, info) => {

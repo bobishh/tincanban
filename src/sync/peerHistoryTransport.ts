@@ -114,15 +114,26 @@ function validReadEnvelope(value: unknown): value is Record<string, unknown> {
     MAX_OBJECT_ID.test(value.baselineId) && isRecord(value.binding)
 }
 
+/** Retry one captured request; explicit unavailable and validation failures stay terminal. */
+export async function retryPeerHistoryStream<T>(read: () => Promise<T>, ensureCurrent: () => void | Promise<void>): Promise<T> {
+  try { return await read() }
+  catch (error) {
+    if (!(error instanceof MeshNetworkError)) throw error
+    await ensureCurrent()
+    return read()
+  }
+}
+
 async function runBoundedPeerHistoryStream<T>(openStream: () => Promise<DuplexStream>, ensureCurrent: () => void | Promise<void>,
   run: (stream: DuplexStream, ensureActive: () => void) => Promise<T>, deadlineAt = Date.now() + PEER_HISTORY_DEADLINE_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stream: DuplexStream | undefined
   let expired = false
   const ensureActive = () => {
-    if (expired || Date.now() >= deadlineAt) throw new PeerHistoryObjectUnavailableError("Peer history stream deadline exceeded")
+    if (expired || Date.now() >= deadlineAt) throw new MeshNetworkError("Peer history stream deadline exceeded")
   }
   const operation = (async () => {
+    ensureActive()
     const opened = await openStream()
     stream = opened
     if (expired) { void opened.reset?.().catch(() => undefined); ensureActive() }
@@ -130,7 +141,7 @@ async function runBoundedPeerHistoryStream<T>(openStream: () => Promise<DuplexSt
     return run(opened, ensureActive)
   })()
   const deadline = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => { expired = true; reject(new PeerHistoryObjectUnavailableError("Peer history stream deadline exceeded")) },
+    timer = setTimeout(() => { expired = true; reject(new MeshNetworkError("Peer history stream deadline exceeded")) },
       Math.max(0, deadlineAt - Date.now()))
   })
   try { return await Promise.race([operation, deadline]) }
@@ -238,6 +249,7 @@ export function parsePeerHistoryBaselineRead(frame: Uint8Array): PeerHistoryBase
 
 export async function readPeerHistoryDocument(openStream: () => Promise<DuplexStream>, input: Omit<PeerHistoryDocumentRequest, "offset"> & { length: number },
   ensureCurrent: () => void | Promise<void>): Promise<Uint8Array> {
+  input = structuredClone(input)
   if (!Number.isSafeInteger(input.length) || input.length < 1 || input.length > MAX_HISTORY_DOCUMENT_BYTES) throw new Error("Invalid peer history document length")
   const chunks: Uint8Array[] = []
   const deadlineAt = Date.now() + PEER_HISTORY_DOCUMENT_DEADLINE_MS
@@ -246,7 +258,7 @@ export async function readPeerHistoryDocument(openStream: () => Promise<DuplexSt
       offset, length: Math.min(MAX_PART_BYTES, input.length - offset) })
     const payload = encoder.encode(JSON.stringify({ version: 1, kind: "workspace-history-document-read", ...request }))
     await ensureCurrent()
-    const part = await runBoundedPeerHistoryStream(openStream, ensureCurrent, async (stream, ensureActive) => {
+    const part = await retryPeerHistoryStream(() => runBoundedPeerHistoryStream(openStream, ensureCurrent, async (stream, ensureActive) => {
       await ensureCurrent()
       ensureActive()
       await stream.send(concatenate(MAGIC, payload)); await stream.closeSend(); await ensureCurrent()
@@ -259,7 +271,7 @@ export async function readPeerHistoryDocument(openStream: () => Promise<DuplexSt
       const bytes = response.slice(MAGIC.length + 1)
       if (bytes.length !== request.length) throw new Error("Peer history document part is truncated")
       return bytes
-    }, deadlineAt)
+    }, deadlineAt), ensureCurrent)
     chunks.push(part)
   }
   const document = concatenate(...chunks)

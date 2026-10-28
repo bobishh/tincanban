@@ -949,7 +949,6 @@ test("Given trusted devices and multiple tabs, when tabs close and reopen, then 
     await guest.getByRole("button", { name: "Sync", exact: true }).click()
     const guestDialog = guest.getByRole("dialog", { name: "Device sync" })
     await guestDialog.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: "OWNER" }).click()
-    await guestDialog.getByText("Details", { exact: true }).first().click()
     await expect(guestDialog.getByText(/2 known browser sessions/)).toBeVisible({ timeout: 20_000 })
     await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()
 

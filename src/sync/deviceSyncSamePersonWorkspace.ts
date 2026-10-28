@@ -1,4 +1,5 @@
 import { decodePairingFrame, encodePairingFrame, inspectPairingFrame, type DeviceEnrollmentInvitation } from "@meta-uber/mesh-pairing"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import type { Context } from "@opentelemetry/api"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { registerWorkspaceInRoot } from "../domain/personalRoot"
@@ -15,7 +16,7 @@ import { assertActiveIdentityEnrollmentDevice, createSamePersonWorkspaceBootstra
 import { readIdentityAuthorityView, mergeIdentityAuthorityView } from "./identityAuthorityStore"
 import { createPeerHistoryObjectReader, workspaceSet, type PeerHistoryObjectReader } from "./workspaceSet"
 import { createEnrollmentHistoryAuthorizationGuard } from "./enrollmentHistoryAuthorization"
-import { readPeerHistoryRequestOrPairing } from "./peerHistoryTransport"
+import { isPeerHistoryFrame, readPeerHistoryRequestOrPairing } from "./peerHistoryTransport"
 import { createEnrollmentHistoryReader } from "./enrollmentHistoryReader"
 import { awaitEnrollmentAcknowledgement, enrollmentRejection } from "./enrollmentAcknowledgement"
 import { peerStore } from "./peerStore"
@@ -146,11 +147,19 @@ export async function completeEnrollmentApproval(connection: SyncConnection, rep
   let acknowledgement: Uint8Array | undefined
   for (let rounds = 0; rounds < 4096; rounds++) {
     const incoming = await connection.acceptStream()
-    const frame = await readPeerHistoryRequestOrPairing(incoming)
-    await historyGuard()
-    if (await replica.servePeerHistoryBaselineRead(frame, incoming, remoteDeviceId, historyGuard)) continue
-    if (await replica.servePeerHistoryDocumentRead(frame, incoming, remoteDeviceId, historyGuard)) continue
-    if (await replica.servePeerHistoryObjectRead(frame, incoming, remoteDeviceId, historyGuard)) continue
+    let frame: Uint8Array | undefined
+    try {
+      frame = await readPeerHistoryRequestOrPairing(incoming)
+      await historyGuard()
+      if (await replica.servePeerHistoryBaselineRead(frame, incoming, remoteDeviceId, historyGuard)) continue
+      if (await replica.servePeerHistoryDocumentRead(frame, incoming, remoteDeviceId, historyGuard)) continue
+      if (await replica.servePeerHistoryObjectRead(frame, incoming, remoteDeviceId, historyGuard)) continue
+    } catch (error) {
+      await historyGuard()
+      if (!(error instanceof MeshNetworkError) || frame && !isPeerHistoryFrame(frame)) throw error
+      await incoming.reset?.().catch(() => undefined)
+      continue
+    }
     if (await replica.serveProofPage(frame, incoming, secret, historyGuard)) continue
     ack = incoming
     acknowledgement = frame
