@@ -34,7 +34,7 @@ import { resolveSigningContext } from "../../../src/domain/signingContext";
 import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from "../../../src/domain/applicationReviewData";
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
 import type { AttachmentLocator } from "../../../src/product-replica";
-import type { ExecutionCoordinator } from "../src/executionCoordinator";
+import { ExecutionCoordinator } from "../src/executionCoordinator";
 import { runReplicaHostContractVectors, type ReplicaHostContractVector, type ReplicaHostPending,
   type ReplicaHostVectorObservation } from "../../../src/sync/replicaHostContractVectors.testSupport";
 
@@ -613,7 +613,7 @@ it("Given a current owner and retained mailbox events, When listing, Then return
   expect((await postApplicationReview("list", requestProof, body, testEnv)).status).toBe(403);
 });
 
-it("Given a retained clear email decision, When owner reviews, binds and retries it, Then queue once without changing the card", async () => {
+it("Given a retained application receipt for an already Applied card, When owner binds and retries it, Then record notes once without changing its status", async () => {
   const integrationId = `legacy-${crypto.randomUUID().replace(/-/g, "")}`;
   const { data, replica, cardId } = await bindingFixture(integrationId);
   const testEnv = reviewEnvironment(integrationId, data.packet.workspaceId, data.packet.bindings);
@@ -717,7 +717,13 @@ it("Given a retained clear email decision, When owner reviews, binds and retries
       expect(readApplicationBindingHistory(ctx.storage, eventId)).toHaveLength(1);
       if (scheduleEarlierAlarm) setExecutionFixture(instance, "scheduleEarlierAlarm", scheduleEarlierAlarm);
       await instance.alarm();
-      expect((await instance.getEvent(eventId))?.status).toBe("review");
+      expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { action: { kind: "noted-application", cardId, bindingId: binding.bindingId } } });
+      expect(replica.candidates().find(candidate => candidate.cardId === cardId)?.columnId).toBe(data.packet.bindings.columns.applied);
+      const noted = JSON.parse(replica.serialize()).rawDocument;
+      ctx.storage.sql.exec("UPDATE events SET status = 'pending', next_attempt_at = 0 WHERE event_id = ?", eventId);
+      await instance.alarm();
+      expect((await instance.getEvent(eventId))?.status).toBe("applied");
+      expect(JSON.parse(replica.serialize()).rawDocument).toBe(noted);
       await ctx.storage.deleteAlarm();
     });
   } finally {
@@ -3210,4 +3216,91 @@ it("Given a prepared history freeze, when retried or another transition arrives,
       .toEqual({ status: "pending", attempt: 0 });
     expect(ctx.storage.sql.exec("SELECT * FROM automation_history_transition WHERE singleton = 1").toArray()).toHaveLength(1);
   });
+});
+
+it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" }, { matches: 1, choice: "unrelated" }])(
+  "Given a matched job email note ($choice, $matches candidates), When processed, Then only uniquely relevant mail appends once without moving the card", async ({ matches, choice }) => {
+  const data = await fixture(undefined, true);
+  data.packet.transport = capturedRuntimeTransport();
+  let replica = await AutomationReplica.activate(data.packet, data.automation);
+  const created = await replica.createLead("note-original", { company: "Caspar Health", role: "Senior Backend Engineer", message: "Existing owner notes" }, {});
+  if (matches === 2) await replica.createLead("another-note-card", { company: "Caspar Health", role: "Senior Backend Engineer" }, {});
+  const before = replica.candidates().find(candidate => candidate.cardId === created.cardId)!;
+  const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: "2026-10-28T12:00:00.000Z",
+    message: { messageId: "<caspar-follow-up@example.test>", inReplyTo: null, references: [], from: "People <talent@example.test>",
+      to: "owner@example.test", subject: "Caspar Health application update", text: "Caspar Health Senior Backend Engineer: we need another week to review your application.",
+      date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] }, rawMime: encodeBlindBytes(new TextEncoder().encode("original-note-email")) };
+  const decision = { event: "uncertain", distributions: { application_event: { type: "choice", choice, confidence: 1,
+    probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(label => [label, label === choice ? 1 : 0])) } },
+    model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(`email-note-${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const coordinator = new ExecutionCoordinator(ctx, { INTEGRATIONS_JSON: "[]", EVENT_STORAGE_SECRET: reviewStorageSecret,
+      AI: { run: async () => { throw new Error("Frozen email classification must be reused"); } } });
+    Reflect.set(coordinator, "refreshReplica", async () => replica);
+    ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id) VALUES (1, 'owner', ?, ?)", data.packet.workspaceId, ctx.id.name!);
+    const input = { integrationId: ctx.id.name!, sourceEventId: "N".repeat(43), idempotencyKey: await blindHash(new TextEncoder().encode("original-note-email")), event,
+      classification: { status: "review", reason: "No status change", source: { type: "email", receivedAt: event.receivedAt, messageId: event.message.messageId }, decision } };
+    await coordinator.enqueueItemCommand(input);
+    await coordinator.alarm();
+    const readNotes = () => {
+      const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(JSON.parse(replica.serialize()).rawDocument));
+      try { const item = document.entities[created.cardId]; if (!isItem(item)) throw new Error("Card missing"); return String(item.values[data.packet.bindings.fieldIds.notes!]); }
+      finally { Automerge.free(document); }
+    };
+    if (matches !== 1 || choice === "unrelated") {
+      expect(coordinator.getItemCommandResult(input.sourceEventId, ctx.id.name!)).toMatchObject({ status: "review" });
+      expect(readNotes()).toBe("Existing owner notes");
+      await ctx.storage.deleteAlarm();
+      return;
+    }
+    expect(coordinator.getItemCommandResult(input.sourceEventId, ctx.id.name!)).toMatchObject({ status: "applied", result: { action: { kind: "noted-application", cardId: created.cardId } } });
+    const notes = readNotes();
+    expect(notes).toContain("Existing owner notes");
+    expect(notes).toContain(event.message.subject);
+    expect(notes).toContain(event.message.text);
+    expect(replica.candidates().find(candidate => candidate.cardId === created.cardId)?.workflow).toEqual(before.workflow);
+    replica = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, data.packet.transport);
+    expect(await replica.appendEmailNote(input.sourceEventId, created.cardId, event.message)).toMatchObject({ duplicate: true });
+    expect(readNotes()).toBe(notes);
+    expect(await replica.appendEmailNote("another-delivery", created.cardId, { ...event.message, messageId: "<forwarded-again@example.test>" })).toMatchObject({ duplicate: true });
+    expect(readNotes().split(event.message.text)).toHaveLength(2);
+    await ctx.storage.deleteAlarm();
+  });
+});
+
+it("Given job email notes without an approved Notes binding, When recording a message, Then keep the card unchanged for review", async () => {
+  const data = await fixture();
+  delete data.packet.bindings.fieldIds.notes;
+  data.packet.grant = await createAutomationWorkspaceGrant(data.owner, data.packet.workspaceId, data.automation.identity.personId,
+    { ...data.packet.grant.payload.automation!, fieldIds: Object.values(data.packet.bindings.fieldIds) });
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const created = await replica.createLead("no-notes-card", { company: "Acme", role: "Engineer" }, {});
+  const before = replica.serialize();
+  const mail = { messageId: "<no-notes@example.test>", inReplyTo: null, references: [], from: "hr@example.test", to: "owner@example.test",
+    subject: "Acme Engineer update", text: "Your application is still being reviewed.", date: "2026-10-28T12:00:00.000Z", urls: [], confirmation: false, attachments: [] };
+  expect(await replica.appendEmailNote("no-notes-event", created.cardId, mail)).toMatchObject({ review: expect.stringMatching(/approved Notes field/) });
+  expect(replica.serialize()).toBe(before);
+});
+
+it("Given existing email text in job notes and a failed durable save, When retrying the delivery, Then preserve notes and author one confirmed delivery", async () => {
+  const data = await fixture();
+  let fail = false;
+  const persist = data.packet.persist!;
+  data.packet.persist = async value => { if (fail) { fail = false; throw new Error("Note commit failed"); } await persist(value); };
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const text = "Acme Engineer: we will respond next week.";
+  const created = await replica.createLead("existing-email-card", { company: "Acme", role: "Engineer", message: text }, {});
+  const before = replica.serialize();
+  const mail = { messageId: "<existing@example.test>", inReplyTo: null, references: [], from: "hr@example.test", to: "owner@example.test",
+    subject: "Acme Engineer update", text, date: "2026-10-28T12:00:00.000Z", urls: [], confirmation: false, attachments: [] };
+  fail = true;
+  await expect(replica.appendEmailNote("note-commit-event", created.cardId, mail)).rejects.toThrow("Note commit failed");
+  expect(replica.serialize()).toBe(before);
+  expect(await replica.appendEmailNote("note-commit-event", created.cardId, mail)).toMatchObject({ duplicate: true });
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(JSON.parse(replica.serialize()).rawDocument));
+  try { const item = document.entities[created.cardId]; if (!isItem(item)) throw new Error("Card missing");
+    expect(String(item.values[data.packet.bindings.fieldIds.notes!]).split(text)).toHaveLength(2); }
+  finally { Automerge.free(document); }
+  expect(replica.appliedForRuntime("note-commit-event")?.changeHash).toMatch(/^[a-f0-9]{64}$/);
 });

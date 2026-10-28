@@ -26,6 +26,7 @@ import type { BlindReplicaConfig } from "../../../src/product-replica";
 import { ReplicaEngine, emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine";
 import { captureApplicationSource } from "./applicationSourceCapture";
 import type { JobPageResult } from "./extraction";
+import type { ForwardedMail } from "./email";
 import { readApplicationSourceData, type ApplicationSourceData } from "../../../src/domain/applicationSourceData";
 import { parseApplicationBindingProof, verifyApplicationBinding, type ApplicationBindingExpected,
   type ApplicationBindingPayload, type ApplicationBindingProof } from "../../../src/domain/applicationBinding";
@@ -161,7 +162,8 @@ export type AutomationCandidate = {
   sources?: ApplicationSourceData[];
 };
 
-type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }) & { changeHash?: string; messageIds?: string[] };
+type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }
+  | { kind: "note"; cardId: string }) & { changeHash?: string; messageIds?: string[] };
 type PendingUpload = { hash: string; object: BlindObject; requestId?: string; observedSequence?: number; bytes?: number; revision?: string; identity?: string };
 type ActiveHistoryUsage = { baselineId: string | null; admittedChanges: number; encodedBytes: number };
 const activeHistoryChangeLimit = 512;
@@ -816,11 +818,78 @@ export class AutomationReplica {
     });
   }
 
+  appendEmailNote(eventId: string, cardId: string, mail: ForwardedMail): Promise<{ cardId: string; duplicate: boolean } | { review: string }> {
+    mail = structuredClone(mail);
+    return this.enqueue(async () => {
+      this.assertActive();
+      this.assertPersistence();
+      await this.revalidate();
+      this.assertExecuting();
+      const fieldId = this.bindings.fieldIds.notes;
+      if (!fieldId || !this.grant.payload.automation!.fieldIds.includes(fieldId)) {
+        return { review: "Email notes require an approved Notes field" };
+      }
+      const previous = Object.hasOwn(this.applied, eventId) ? this.applied[eventId] : undefined;
+      if (previous) {
+        if (previous.kind !== "note" || previous.cardId !== cardId) throw new Error("Automation event was already applied differently");
+        return { cardId, duplicate: true };
+      }
+      const document = this.admittedDocument();
+      try {
+        const item = document.entities[cardId];
+        if (!isItem(item) || item.archivedAt || !belongsToBoard(document, cardId, this.bindings.boardId)) {
+          return { review: "Email note card is unavailable on the approved board" };
+        }
+        const existing = item.values[fieldId];
+        if (existing !== undefined && existing !== null && typeof existing !== "string") {
+          return { review: "Email notes require a text Notes field" };
+        }
+        const notes = typeof existing === "string" ? existing : "";
+        const subject = mail.subject.replace(/^(?:(?:fwd?|wg):\s*)+/i, "").trim();
+        const digest = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson({
+          from: mail.from, date: mail.date, subject, text: mail.text.trim(),
+        })));
+        const marker = `<!-- reflux-email:${digest} -->`;
+        const duplicate = notes.includes(marker) || Boolean(mail.text.trim() && notes.includes(mail.text.trim()));
+        // Every newly accepted delivery gets a signed receipt, while its visible message appears once.
+        const entry = duplicate ? "" : `### Email: ${subject}\n\nFrom: ${mail.from}\nDate: ${mail.date ?? "Unknown"}\n\n${mail.text.trim()}\n\n${marker}\n`;
+        const next = `${notes}${notes ? "\n\n" : ""}${entry}<!-- reflux-delivery:${eventId} -->`;
+        const result = await executeOwnedCommand(document, { kind: "patchItem", entityId: cardId, values: { [fieldId]: next } },
+          this.profile, actorIdForProfile(this.profile), await this.grantHash(),
+          (purpose, binding) => this.executionSigningContext(purpose, binding));
+        if (!result.ok) return { review: `Email note rejected: ${result.error.message}` };
+        const previousRaw = this.rawDocument;
+        const previousAuthorizations = this.authorizations;
+        const previousApplied = this.applied;
+        const previousHistoryUsage = this.historyUsage;
+        const previousRevision = this.contentRevision;
+        this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
+        await this.acceptAuthoredDocument(document, result.value.newDoc, result.value.receipt.changeHash, result.value.receipt.beforeHeads);
+        this.applied[eventId] = { kind: "note", cardId, changeHash: result.value.receipt.changeHash,
+          messageIds: [mail.messageId, ...mail.references].filter((id): id is string => !!id) };
+        try { await this.persistState(); }
+        catch (error) {
+          this.rawDocument = previousRaw;
+          this.authorizations = previousAuthorizations;
+          this.applied = previousApplied;
+          this.historyUsage = previousHistoryUsage;
+          this.contentRevision = previousRevision;
+          this.admissionCache = undefined;
+          throw error;
+        }
+        return { cardId, duplicate };
+      } finally { Automerge.free(document); }
+    });
+  }
+
   candidates(): AutomationCandidate[] {
     this.assertActive();
     const document = this.admittedDocument();
     try {
-      const messageIds = new Map(Object.values(this.applied).filter(event => event.kind === "lead" && event.messageIds?.length).map(event => [event.cardId, event.messageIds!]));
+      const messageIds = new Map<string, string[]>();
+      for (const event of Object.values(this.applied)) {
+        if (event.messageIds?.length) messageIds.set(event.cardId, [...new Set([...(messageIds.get(event.cardId) ?? []), ...event.messageIds])]);
+      }
       const sources = new Map<string, ApplicationSourceData[]>();
       for (const entity of Object.values(document.entities)) {
         if (entity.kind !== "application_source") continue;

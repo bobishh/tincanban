@@ -2,7 +2,7 @@ import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from
 import { parseIntegrations, type AutomationIntegration } from "./configuration";
 import type { ExecutionAdapters, ExecutionContextPort, ExecutionEnvironment, ExecutionSqlTransactionPort } from "./executionPorts";
 import { privateEmailRoutes } from "./emailRoutes";
-import { gmailForwardingConfirmationUrl } from "./email";
+import { correlateApplication, gmailForwardingConfirmationUrl } from "./email";
 import { automationTelemetry, configureAutomationTelemetry, flushAutomationTelemetryAfter, recordAutomationException, withAutomationSpan } from "./telemetry";
 import type { JobPageFetcher } from "./extraction";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
@@ -1417,16 +1417,16 @@ export class ExecutionCoordinator {
 
   private async applyScopedDecision(eventId: string, event: AutomationEvent, result: AutomationPipelineResult,
     emailCandidates: AutomationCandidate[] | undefined, replica: AutomationReplica | null, binding?: ApplicationBindingRecord): Promise<{
-    kind: "created-lead" | "moved-application"; cardId: string; columnId?: string; message: string; bindingId?: string; changeHash?: string;
+    kind: "created-lead" | "moved-application" | "noted-application"; cardId: string; columnId?: string; message: string; bindingId?: string; changeHash?: string;
   } | { kind: "review"; reason: string } | null> {
     const recorded = replica?.appliedForRuntime(eventId);
     if (recorded && replica) {
-      if (binding && (recorded.kind !== "move" || recorded.cardId !== binding.proof.signed.payload.cardId)) {
+      if (binding && (recorded.kind === "lead" || recorded.cardId !== binding.proof.signed.payload.cardId)) {
         throw new ApplicationBindingReviewError("Recorded application action differs from its owner binding");
       }
       await replica.sync();
       if (replica.controlForRuntime().state !== "active" || !replica.allowsSource(event.source)) return null;
-      return { kind: recorded.kind === "lead" ? "created-lead" : "moved-application", cardId: recorded.cardId,
+      return { kind: recorded.kind === "lead" ? "created-lead" : recorded.kind === "note" ? "noted-application" : "moved-application", cardId: recorded.cardId,
         ...(recorded.kind === "move" ? { columnId: recorded.columnId } : {}), message: "Previously recorded application change uploaded",
         ...(binding ? { bindingId: binding.proof.signed.payload.bindingId, changeHash: recorded.changeHash } : {}) };
     }
@@ -1434,7 +1434,7 @@ export class ExecutionCoordinator {
     const mailDecision = event.source === "email" && result.decision && "event" in result.decision ? result.decision : undefined;
     const isLeadProposal = leadDecision?.relevance === "yes";
     const isApplicationMove = mailDecision?.event === "applied" || mailDecision?.event === "interview" || mailDecision?.event === "rejection";
-    if (!isLeadProposal && !isApplicationMove) return null;
+    if (!isLeadProposal && !isApplicationMove) return this.recordEmailNote(eventId, event, result, replica);
     if (isApplicationMove && !emailCandidates) return { kind: "review", reason: "No admitted workspace is available to match this email" };
     if (isLeadProposal) {
       const opportunity = leadDecision!.distributions.job_opportunity;
@@ -1497,7 +1497,11 @@ export class ExecutionCoordinator {
           eventId, eventHash: p.eventHash, decisionHash: p.decisionHash }); }
         catch (error) { throw new ApplicationBindingReviewError(error instanceof Error ? error.message : "Application binding changed before execution"); }
       }
-      if (applicationMovePlan?.kind === "review") return applicationMovePlan;
+      if (applicationMovePlan?.kind === "review") {
+        const note = await this.recordEmailNote(eventId, event, result, replica, boundCandidate?.cardId);
+        return note?.kind === "noted-application" ? { ...note,
+          ...(binding ? { bindingId: binding.proof.signed.payload.bindingId } : {}) } : applicationMovePlan;
+      }
       if (applicationMovePlan?.kind !== "move") return null;
       const { candidate, columnId } = applicationMovePlan;
       const current = replica.candidates().find(current => current.cardId === candidate.cardId);
@@ -1514,7 +1518,28 @@ export class ExecutionCoordinator {
         ...(binding ? { bindingId: binding.proof.signed.payload.bindingId, changeHash: replica.appliedForRuntime(eventId)?.changeHash } : {}),
         message: moved.duplicate ? "Application status was already applied" : `Application moved to ${mailDecision.event === "applied" ? "Applied" : mailDecision.event === "interview" ? "Interview" : "Rejected"}` };
     }
-    return null;
+    return this.recordEmailNote(eventId, event, result, replica);
+  }
+
+  private async recordEmailNote(eventId: string, event: AutomationEvent, result: AutomationPipelineResult,
+    replica: AutomationReplica | null, boundCardId?: string): Promise<{
+      kind: "noted-application"; cardId: string; message: string; changeHash?: string;
+    } | { kind: "review"; reason: string } | null> {
+    if (event.source !== "email" || event.message.confirmation || !replica || !result.decision || !("event" in result.decision)) return null;
+    const choice = result.decision.distributions.application_event;
+    const probabilities = Object.values(choice.probabilities).sort((left, right) => right - left);
+    if (["unrelated", "uncertain"].includes(choice.choice) || probabilities[0]! < 0.7 || probabilities[0]! - probabilities[1]! < 0.2) return null;
+    await replica.sync();
+    if (replica.controlForRuntime().state !== "active" || !replica.allowsSource("email")) return null;
+    const match = boundCardId ? { kind: "matched" as const, cardId: boundCardId }
+      : correlateApplication(event.message, replica.candidates());
+    if (match.kind !== "matched") return { kind: "review", reason: match.reason };
+    const note = await replica.appendEmailNote(eventId, match.cardId, event.message);
+    if ("review" in note) return { kind: "review", reason: note.review };
+    await replica.sync();
+    return { kind: "noted-application", cardId: note.cardId,
+      changeHash: replica.appliedForRuntime(eventId)?.changeHash,
+      message: note.duplicate ? "Email was already recorded in application notes" : "Email added to application notes; status unchanged" };
   }
 
   protected jobPageFetcher(): JobPageFetcher { return this.adapters.jobPageFetcher?.() ?? fetch; }

@@ -28,6 +28,14 @@ AI, result and output JSON remain bounded at 1 MiB. A command is completed only
 after its signed change and Rusty receipt are confirmed. Retries retain the
 original classification evidence, command ID and bytes.
 
+A confidently relevant email that uniquely matches an existing card can append to
+its approved Notes field when no status move applies. Matching uses message
+references, a job URL, or company and role together; ambiguous matches remain in
+review. The note retains the parsed message, sender and original date, preserves
+existing notes and leaves workflow status unchanged. Retained delivery markers
+prevent repeated message text across retries and forwarded copies. A missing
+Notes binding, unrelated mail or uncertain classification never authors a note.
+
 Email vacancy pages are fetched only when Reflux grants the reaction the
 `job-page-fetch` operation for source-retained URLs. Reflux limits that grant to
 three public HTTPS DNS hosts and scopes proxy access to those hosts. The shared
