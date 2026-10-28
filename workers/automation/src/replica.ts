@@ -26,7 +26,7 @@ import type { BlindReplicaConfig } from "../../../src/product-replica";
 import { ReplicaEngine, emptyReplicaState, parseReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine";
 import { captureApplicationSource } from "./applicationSourceCapture";
 import type { JobPageResult } from "./extraction";
-import type { ForwardedMail } from "./email";
+import { emailNoteText, type ForwardedMail } from "./email";
 import { readApplicationSourceData, type ApplicationSourceData } from "../../../src/domain/applicationSourceData";
 import { parseApplicationBindingProof, verifyApplicationBinding, type ApplicationBindingExpected,
   type ApplicationBindingPayload, type ApplicationBindingProof } from "../../../src/domain/applicationBinding";
@@ -852,7 +852,7 @@ export class AutomationReplica {
         const marker = `[reflux-email:${digest}]: #`;
         const duplicate = notes.includes(marker) || Boolean(mail.text.trim() && notes.includes(mail.text.trim()));
         // Every newly accepted delivery gets a signed receipt, while its visible message appears once.
-        const entry = duplicate ? "" : `### Email: ${subject}\n\nFrom: ${mail.from}\nDate: ${mail.date ?? "Unknown"}\n\n${mail.text.trim()}\n\n${marker}\n`;
+        const entry = duplicate ? "" : `${emailNoteText(mail)}\n\n${marker}\n`;
         const next = `${notes}${notes ? "\n\n" : ""}${entry}[reflux-delivery:${eventId}]: #`;
         const result = await executeOwnedCommand(document, { kind: "patchItem", entityId: cardId, values: { [fieldId]: next } },
           this.profile, actorIdForProfile(this.profile), await this.grantHash(),
@@ -1456,7 +1456,8 @@ export class AutomationReplica {
     if (normalized.jobUrl) values[this.bindings.fieldIds.jobUrl] = normalized.jobUrl.slice(0, 2048);
     if (this.bindings.fieldIds.roleType && normalized.roleType) values[this.bindings.fieldIds.roleType] = normalized.roleType.slice(0, 256);
     if (this.bindings.fieldIds.seniority && normalized.seniority) values[this.bindings.fieldIds.seniority] = normalized.seniority.slice(0, 256);
-    if (this.bindings.fieldIds.notes && normalized.message) values[this.bindings.fieldIds.notes] = normalized.message.slice(0, 8_000);
+    if (this.bindings.fieldIds.notes && normalized.message) values[this.bindings.fieldIds.notes] = normalized.source?.origin === "email"
+      ? normalized.message : normalized.message.slice(0, 8_000);
     if (this.bindings.fieldIds.sourceText && normalized.sourceText !== undefined) values[this.bindings.fieldIds.sourceText] = normalized.sourceText;
     for (const fieldId of Object.keys(values)) {
       if (!scope.fieldIds.includes(fieldId)) throw new Error("Automation field binding exceeds the signed grant scope");

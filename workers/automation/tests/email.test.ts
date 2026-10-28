@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { correlateApplication, gmailForwardingConfirmationUrl, parseForwardedMail } from '../src/email.ts';
+import { correlateApplication, emailApplicationIdentity, gmailForwardingConfirmationUrl, parseForwardedMail } from '../src/email.ts';
+
+test('Given application receipts without vacancy URLs, when reading explicit company and role spans, then retain only an unambiguous identity', () => {
+  assert.deepEqual(emailApplicationIdentity({ subject: 'Thank you for your application to Ably, Alex!',
+    text: 'Thanks you for your application to the Senior Software Engineer,\nBackoffice Platform position. We appreciate your interest in joining Ably!' }),
+    { company: 'Ably', role: 'Senior Software Engineer, Backoffice Platform' });
+  assert.deepEqual(emailApplicationIdentity({ subject: 'Your application at Example GmbH', text: 'Thank you for applying for the Backend Engineer position.' }),
+    { company: 'Example GmbH', role: 'Backend Engineer' });
+  assert.deepEqual(emailApplicationIdentity({ subject: 'Application received', text: 'Company: Acme\nRole: Staff Engineer\nWe received your application.' }),
+    { company: 'Acme', role: 'Staff Engineer' });
+  assert.deepEqual(emailApplicationIdentity({ subject: 'Deine Bewerbung als Backend Engineer bei Beispiel GmbH', text: 'Vielen Dank!' }),
+    { company: 'Beispiel GmbH', role: 'Backend Engineer' });
+  assert.equal(emailApplicationIdentity({ subject: 'Your application at Example', text: 'We received your application.' }), null);
+  assert.equal(emailApplicationIdentity({ subject: 'Your application at Example', text: 'Company: Other\nRole: Engineer' }), null);
+  assert.equal(emailApplicationIdentity({ subject: 'Your application at Example', text: 'Role: Engineer\nRole: Designer' }), null);
+});
 
 test('Given a unique exact thread reference, when correlated, then selects the existing application', () => {
   const result = correlateApplication({

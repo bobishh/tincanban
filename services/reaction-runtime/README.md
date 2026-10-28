@@ -36,12 +36,22 @@ existing notes and leaves workflow status unchanged. Retained delivery markers
 prevent repeated message text across retries and forwarded copies. A missing
 Notes binding, unrelated mail or uncertain classification never authors a note.
 
+A confirmed application receipt can create a card directly in the approved Applied
+column when no existing application matches and company and role are explicit in
+the email. The receipt parser accepts labeled fields and common English/German
+application acknowledgements; missing or conflicting identities remain in review.
+The full email, sender and date are retained in Notes. Original posting evidence
+remains unavailable until a real posting is captured; email text never masquerades
+as a fetched vacancy page. Subsequent delivery matches the existing card instead
+of creating another. The same scoped replica author owns creation, notes and retry.
+
 Email vacancy pages are fetched only when Reflux grants the reaction the
 `job-page-fetch` operation for source-retained URLs. Reflux limits that grant to
 three public HTTPS DNS hosts and scopes proxy access to those hosts. The shared
 extractor also enforces public-address checks, redirect limits, an 8-second
 timeout and a 1 MiB response-body limit; failed or ungranted fetches leave the
-email in review without vacancy evidence.
+email without vacancy evidence; explicit receipt fields can still record a new
+application without inventing posting content.
 
 Reflux owns the runtime binding and state lifecycle. The one-time legacy import
 runs offline in Reflux; neither this engine nor Tincanban connects to PostgreSQL.

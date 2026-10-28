@@ -874,8 +874,8 @@ it.each(["confirmed", "lost-receipt", "corrected", "stale-workflow", "deleted"])
   } finally { sync.mockRestore(); }
 });
 
-async function typedFixture(subjectPersonId?: string, email = false, typeVersion: 1 | 2 = 1) {
-  const data = await fixture(subjectPersonId, email);
+async function typedFixture(subjectPersonId?: string, email = false, typeVersion: 1 | 2 = 1, appliedColumn = email) {
+  const data = await fixture(subjectPersonId, appliedColumn);
   if (typeVersion === 2) data.packet.grant = await createAutomationWorkspaceGrant(data.owner,
     data.packet.workspaceId, data.packet.grant.payload.personId, { ...data.packet.grant.payload.automation!, version: 2 });
   const payload = parseAutomationDefinition({ kind: "automation-definition", version: 1, id: "typed-intake", name: "Job intake",
@@ -2168,21 +2168,16 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
     setExecutionFixture(instance, "env", testEnv);
     setExecutionFixture(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
     await instance.alarm();
-    if (existing === 0) {
-      expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
-    } else {
-      expect((await instance.getEvent(eventId))).toMatchObject({ status: "review", result: { reason: "Original posting evidence is missing or unavailable; choose an application" } });
-    }
+    expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
     await ctx.storage.deleteAlarm();
   });
   await deliver();
   const stored = JSON.parse((await stub.loadReplicaState(storageSecret))!);
   const storedDocument = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(stored.rawDocument));
   const cards = Object.values(storedDocument.entities).filter(isItem);
-  expect(cards).toHaveLength(existing + (existing === 0 ? 1 : 0));
-  if (existing === 0) expect(cards.find(card => card.placement.parentId === data.packet.bindings.columns.applied)).toMatchObject({
+  expect(cards).toHaveLength(existing + 1);
+  expect(cards.find(card => card.placement.parentId === data.packet.bindings.columns.applied)).toMatchObject({
     placement: { parentId: data.packet.bindings.columns.applied }, values: { [data.packet.bindings.fieldIds.role]: "Senior Engineer" } });
-  else expect(cards.every(card => card.placement.parentId === data.packet.bindings.columns.lead)).toBe(true);
   Automerge.free(storedDocument);
   await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
 });
@@ -3268,6 +3263,61 @@ it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" 
     expect(readNotes()).toBe(notes);
     expect(await replica.appendEmailNote("another-delivery", created.cardId, { ...event.message, messageId: "<forwarded-again@example.test>" })).toMatchObject({ duplicate: true });
     expect(readNotes().split(event.message.text)).toHaveLength(2);
+    await ctx.storage.deleteAlarm();
+  });
+});
+
+it.each([{ existing: 0, applied: true, role: true }, { existing: 1, applied: true, role: true }, { existing: 2, applied: true, role: true },
+  { existing: 0, applied: false, role: true }, { existing: 0, applied: true, role: false }])(
+  "Given an application receipt with $existing matching cards, Applied scope $applied, role $role and no posting page, When processed and redelivered, Then create once, append notes, or review ambiguity", async ({ existing, applied, role }) => {
+  const data = await typedFixture(undefined, true, 2, applied);
+  data.packet.transport = capturedRuntimeTransport();
+  let replica = await AutomationReplica.activate(data.packet, data.automation);
+  for (let index = 0; index < existing; index++) await replica.createLead(`ably-existing-${index}`,
+    { company: "Ably", role: "Senior Software Engineer, Backoffice Platform", source: { origin: "website" } }, {});
+  const text = role ? "Thanks you for your application to the Senior Software Engineer, Backoffice Platform position. We really appreciate your interest in joining Ably!\n\n" + "Full receipt detail. ".repeat(450).trim() : "Your application has been received. Thank you for your interest in joining Ably!";
+  const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: "2026-10-28T12:00:00.000Z", rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
+    message: { messageId: "<ably-receipt@example.test>", inReplyTo: null, references: [], from: "Ably <no-reply@example.test>", to: "owner@example.test",
+      subject: "Thank you for your application to Ably, Alex!", text, date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] } };
+  const decision = { event: "applied", distributions: { application_event: { type: "choice", choice: "applied", confidence: 1,
+    probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(label => [label, label === "applied" ? 1 : 0])) } },
+    model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(`email-new-application-${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const coordinator = new ExecutionCoordinator(ctx, { INTEGRATIONS_JSON: "[]", EVENT_STORAGE_SECRET: reviewStorageSecret, AI: { run: async () => { throw new Error("Reuse classification"); } } });
+    Reflect.set(coordinator, "refreshReplica", async () => replica);
+    ctx.storage.sql.exec("INSERT INTO automation_registration (singleton, owner_id, workspace_id, integration_id) VALUES (1, 'owner', ?, ?)", data.packet.workspaceId, ctx.id.name!);
+    const input = { integrationId: ctx.id.name!, sourceEventId: "A".repeat(43), idempotencyKey: await blindHash(new TextEncoder().encode(text)), event,
+      classification: { status: "review", reason: "Application received", source: { type: "email", receivedAt: event.receivedAt, messageId: event.message.messageId }, decision } };
+    await coordinator.enqueueItemCommand(input);
+    await coordinator.alarm();
+    const outcome = coordinator.getItemCommandResult(input.sourceEventId, ctx.id.name!);
+    if (existing > 1 || !applied || !role) {
+      expect(outcome).toMatchObject({ status: "review" });
+      if (!applied) expect(outcome).toMatchObject({ result: { reason: "Creating an application receipt requires an approved Applied column" } });
+      expect(replica.candidates()).toHaveLength(existing);
+    } else {
+      expect(outcome).toMatchObject({ status: "applied", result: { action: { kind: existing ? "noted-application" : "created-lead" } } });
+      expect(replica.candidates()).toHaveLength(1);
+      const card = replica.candidates()[0]!;
+      if (!existing) {
+        expect(card).toMatchObject({ company: "Ably", role: "Senior Software Engineer, Backoffice Platform", columnId: data.packet.bindings.columns.applied });
+        expect(card.sources).toHaveLength(1);
+        expect(card.sources![0]!.observation).toMatchObject({ origin: "email", status: "unavailable" });
+      }
+      const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(JSON.parse(replica.serialize()).rawDocument));
+      const item = document.entities[card.cardId];
+      if (!isItem(item)) throw new Error("Application card missing");
+      expect(String(item.values[data.packet.bindings.fieldIds.notes!])).toContain(text);
+      expect(String(item.values[data.packet.bindings.fieldIds.notes!])).toContain(event.message.from);
+      Automerge.free(document);
+      replica = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, data.packet.transport);
+      await coordinator.enqueueItemCommand({ ...input, sourceEventId: "B".repeat(43), event: { ...event, message: { ...event.message, messageId: "<second-forward@example.test>" } },
+        classification: { ...input.classification, source: { ...input.classification.source, messageId: "<second-forward@example.test>" } } });
+      await coordinator.alarm();
+      expect(coordinator.getItemCommandResult("B".repeat(43), ctx.id.name!)).toMatchObject({ status: "applied", result: { action: { kind: "noted-application", cardId: card.cardId } } });
+      expect(replica.candidates()).toHaveLength(1);
+    }
     await ctx.storage.deleteAlarm();
   });
 });

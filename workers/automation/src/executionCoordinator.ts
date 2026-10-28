@@ -2,7 +2,7 @@ import { runPipeline, type AutomationEvent, type AutomationPipelineResult } from
 import { parseIntegrations, type AutomationIntegration } from "./configuration";
 import type { ExecutionAdapters, ExecutionContextPort, ExecutionEnvironment, ExecutionSqlTransactionPort } from "./executionPorts";
 import { privateEmailRoutes } from "./emailRoutes";
-import { correlateApplication, gmailForwardingConfirmationUrl } from "./email";
+import { correlateApplication, emailApplicationIdentity, emailNoteText, gmailForwardingConfirmationUrl } from "./email";
 import { automationTelemetry, configureAutomationTelemetry, flushAutomationTelemetryAfter, recordAutomationException, withAutomationSpan } from "./telemetry";
 import type { JobPageFetcher } from "./extraction";
 import { AutomationReplica, AutomationControlError, type AutomationActivationPacket, type AutomationCandidate,
@@ -1498,6 +1498,21 @@ export class ExecutionCoordinator {
         catch (error) { throw new ApplicationBindingReviewError(error instanceof Error ? error.message : "Application binding changed before execution"); }
       }
       if (applicationMovePlan?.kind === "review") {
+        const probabilities = Object.values(mailDecision.distributions.application_event.probabilities).sort((left, right) => right - left);
+        const identity = !binding && mailDecision.event === "applied" && probabilities[0]! >= 0.7 && probabilities[0]! - probabilities[1]! >= 0.2
+          ? emailApplicationIdentity(event.message) : null;
+        const match = identity ? correlateApplication(event.message, replica.candidates()) : undefined;
+        if (identity && match?.kind === "review" && ["No existing application matched", "Company context does not identify a role"].includes(match.reason)) {
+          const columnId = replica.bindingsForRuntime().applied;
+          if (!columnId) return { kind: "review", reason: "Creating an application receipt requires an approved Applied column" };
+          const created = await replica.createLead(eventId, { ...identity, message: emailNoteText(event.message), sourceText: event.message.text,
+            receivedAt: event.receivedAt, messageIds: [event.message.messageId, event.message.inReplyTo, ...event.message.references].filter((value): value is string => !!value),
+            ...(result.extraction ? { jobUrl: result.extraction.finalUrl } : {}),
+            source: { origin: "email", page: result.extraction } }, mailDecision, columnId);
+          await replica.sync();
+          return { kind: "created-lead", cardId: created.cardId, columnId,
+            message: created.duplicate ? "Application was already recorded" : "Application created in Applied from email confirmation" };
+        }
         const note = await this.recordEmailNote(eventId, event, result, replica, boundCandidate?.cardId);
         return note?.kind === "noted-application" ? { ...note,
           ...(binding ? { bindingId: binding.proof.signed.payload.bindingId } : {}) } : applicationMovePlan;
