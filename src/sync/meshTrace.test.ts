@@ -15,6 +15,15 @@ describe("mesh trace", () => {
 
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
+  it("Given normal diagnostic consent, when a board connection is prepared, then export its correlation once without enabling packet logging", async () => {
+    vi.stubGlobal("window", {})
+    meshTrace("credential.prepared", { workspaceId: "board-a", localDeviceId: "phone-a", credentialId: "fingerprint-a" })
+    meshTrace("gossip.packet", { workspaceId: "board-a" })
+    await vi.dynamicImportSettled()
+    expect(record).toHaveBeenCalledOnce()
+    expect(record.mock.calls[0]?.[0]).toBe("credential.prepared")
+  })
+
   it("keeps routine gossip out of the console by default while retaining it for diagnostic snapshots", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {})
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})

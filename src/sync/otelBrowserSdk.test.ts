@@ -18,6 +18,20 @@ function config() {
 }
 
 describe("browser OTel SDK", () => {
+  it("Given a prepared board connection, when diagnostics export, then correlate local device and credential fingerprints without transport secrets", async () => {
+    const logs = new InMemoryLogRecordExporter()
+    const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces: new InMemorySpanExporter() })
+    try {
+      sdk.emit({ event: "credential.prepared", detail: { workspaceId: "board-a", localDeviceId: "phone-a",
+        localEndpointId: "endpoint-a", credentialId: "fingerprint-a", transportSecret: "never-export-this-secret" },
+      level: "info", timestamp: Date.now() })
+      await sdk.forceFlush()
+      expect(logs.getFinishedLogRecords()[0]?.attributes).toMatchObject({ "workspace.id": "board-a",
+        "device.id": "phone-a", "network.local.endpoint.id": "endpoint-a", "sync.credential.id": "fingerprint-a" })
+      expect(JSON.stringify(logs.getFinishedLogRecords()[0]?.attributes)).not.toContain("never-export-this-secret")
+    } finally { await sdk.shutdown() }
+  })
+
   it("Given a callback operation context restored across navigation, when its lifecycle log exports, then the log and callback span retain the same trace", async () => {
     const logs = new InMemoryLogRecordExporter(), traces = new InMemorySpanExporter()
     const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces })

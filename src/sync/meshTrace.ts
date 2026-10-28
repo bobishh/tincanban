@@ -10,7 +10,7 @@ const traceBuffer = new MeshTraceBuffer("tincanban.mesh", 500, {
   info: line => { if (verboseConsoleLogging) console.info(line) },
   warn: (line: string) => writeConsoleWarning(line),
 })
-const automaticLifecycle = new Set(["node.started", "session.started", "session.closed", "session.recovery.started"])
+const automaticLifecycle = new Set(["node.started", "credential.prepared", "session.started", "session.closed", "session.recovery.started"])
 const incidentWindowMs = 60_000
 const maxIncidentsPerWindow = 120
 let incidentWindowStart: number | undefined

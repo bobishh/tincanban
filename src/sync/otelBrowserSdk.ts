@@ -60,7 +60,8 @@ function mappedAttributes(detail: Record<string, unknown>, mapping: Array<[strin
 }
 function identifierAttributes(detail: Record<string, unknown>): SafeAttributes {
   return mappedAttributes(detail, [["workspaceId", "workspace.id"], ["entityId", "entity.id"], ["recordId", "entity.id"], ["connectionId", "network.connection.id"], ["peerId", "network.peer.id"], ["changeId", "document.change.id"],
-    ["tabId", "browser.tab.id"], ["runtimeId", "sync.runtime.id"], ["runId", "sync.run.id"], ["instanceId", "network.peer.instance.id"]], safeIdentifier)
+    ["tabId", "browser.tab.id"], ["runtimeId", "sync.runtime.id"], ["runId", "sync.run.id"], ["instanceId", "network.peer.instance.id"],
+    ["localDeviceId", "device.id"], ["localEndpointId", "network.local.endpoint.id"], ["credentialId", "sync.credential.id"]], safeIdentifier)
 }
 function labelAttributes(detail: Record<string, unknown>): SafeAttributes {
   const labels: Array<[string, string]> = [["phase", "sync.phase"], ["outcome", "identity.signin.outcome"], ["component", "code.component"], ["operation", "code.operation"], ["transport", "network.transport"], ["kind", "sync.frame.kind"], ["mode", "sync.mode"], ["stage", "startup.stage"], ["browser", "browser.name"], ["platform", "os.name"], ["errorCode", "error.code"],

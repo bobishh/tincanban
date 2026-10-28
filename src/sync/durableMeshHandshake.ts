@@ -1,4 +1,4 @@
-import { type LocalProfile} from "../domain/identity"
+import { sha256Base64Url, type LocalProfile} from "../domain/identity"
 import * as Automerge from "@automerge/automerge/slim"
 import type { DeviceCertificate } from "../domain/model"
 import type { WorkspaceGrant } from "../domain/model"
@@ -228,6 +228,10 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       credential = await this.refreshOwnerCertificates(credential, profile, certificates)
       await this.refreshOwnBundle(credential, profile, endpoint, certificates)
       await this.pruneInvalidStoredPeers(credential, profile.device.deviceId)
+      // Diagnostic hashing must never delay or fail connection preparation.
+      void sha256Base64Url(new TextEncoder().encode(credential.transportSecret)).then(credentialId =>
+        this.trace("credential.prepared", { workspaceId: credential.workspaceId, localDeviceId: profile.device.deviceId,
+          localEndpointId: endpoint, credentialId })).catch(() => {})
     }
   }
 
