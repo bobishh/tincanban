@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import { ref, watch } from "vue"
-const props = defineProps<{ conflict?: { currentPersonId: string; currentName: string; targetPersonId: string } | null }>()
-const emit = defineEmits<{ (e: "request", replaceIdentity: boolean): void }>()
+const props = defineProps<{ signInAvailable?: boolean; conflict?: { currentPersonId: string; currentName: string; targetPersonId: string } | null }>()
+const emit = defineEmits<{ (e: "request", replaceIdentity: boolean): void; (e: "signIn"): void }>()
 const confirmed = ref(false)
 watch(() => props.conflict, () => { confirmed.value = false })
 </script>
 <template>
   <div>
-    <p>Add this device to the identity of your other device. Existing boards stay saved here. The identity changes only after approval on your other device.</p>
+    <template v-if="signInAvailable && conflict">
+      <p>Sign in to the same Identity as your other device to reconnect. Your local boards stay saved; after sign-in, return here to receive and merge the board.</p>
+      <button class="button button-primary" type="button" @click="emit('signIn')">Sign in to reconnect</button>
+    </template>
+    <template v-else>
+    <p>Connect this device to your other device. Existing boards and local changes stay saved here.</p>
     <section v-if="conflict" role="alert">
       <strong>Identity conflict</strong>
       <p>This device belongs to {{ conflict.currentName }} (<code>{{ conflict.currentPersonId }}</code>). The invitation belongs to <code>{{ conflict.targetPersonId }}</code>.</p>
@@ -15,6 +20,8 @@ watch(() => props.conflict, () => { confirmed.value = false })
       <label><input v-model="confirmed" type="checkbox" /> Replace this device's identity; keep a local backup of the previous identity.</label>
     </section>
     <button class="button button-primary" type="button" :disabled="Boolean(conflict) && !confirmed" @click="emit('request', confirmed)">Add this device</button>
+    <button v-if="signInAvailable" class="button" type="button" @click="emit('signIn')">Refresh Identity and reconnect</button>
+    </template>
   </div>
 </template>
 <style scoped>

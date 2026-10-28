@@ -1,4 +1,6 @@
-import { BLOB_CHUNK_BYTES, requestBlob, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
+import type { PeerStore } from "./peerStore"
+import type { WorkspaceMemberBundle } from "./meshRecords"
+import { BLOB_CHUNK_BYTES, requestBlob, respondToBlobRequest, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
 import type { LocalProfile } from "../domain/identity"
 import type { SessionEntry } from "./durableMeshBase"
 import { blobRequestSigning } from "./blobRequestSigning"
@@ -7,6 +9,44 @@ import { MeshNetworkError } from "@meta-uber/mesh-transport"
 type BlobCache = {
   read(descriptor: BlobDescriptor): Promise<Uint8Array | undefined>
   write(descriptor: BlobDescriptor, bytes: Uint8Array): Promise<void>
+}
+
+/** Serve a signed request only while its captured session and live workspace authority remain current. */
+export async function respondToCurrentBlobRequest(input: {
+  workspaceId: string; deviceId: string; secret: string; store: Pick<PeerStore, "getPeer">;
+  blob?: Pick<BlobCache, "read"> & { resolve(workspaceId: string, blobId: string): Promise<BlobDescriptor | undefined> }
+  ensureCurrent(): Promise<void>
+}, stream: Parameters<typeof respondToBlobRequest>[0], frame: Uint8Array): Promise<void> {
+  try {
+    await input.ensureCurrent()
+    const blob = input.blob
+    if (!blob) throw new Error("Blob storage is unavailable")
+    const peer = await input.store.getPeer(input.workspaceId, input.deviceId)
+    await input.ensureCurrent()
+    const bundle = peer?.advertisement as WorkspaceMemberBundle | undefined
+    if (!peer || !bundle?.publicKey || !Array.isArray(bundle.certificates)) throw new Error("Blob requester is unavailable")
+    await respondToBlobRequest({
+      send: async bytes => { await input.ensureCurrent(); await stream.send(bytes) },
+      closeSend: () => stream.closeSend(),
+    }, frame, {
+      secret: input.secret, scopeId: input.workspaceId,
+      identity: { personId: peer.personId, publicKey: bundle.publicKey,
+        displayName: bundle.advertisement?.payload?.deviceName ?? "Peer" },
+      certificates: bundle.certificates,
+      descriptor: async blobId => {
+        await input.ensureCurrent()
+        const descriptor = await blob.resolve(input.workspaceId, blobId)
+        await input.ensureCurrent()
+        return descriptor
+      },
+      bytes: async descriptor => {
+        await input.ensureCurrent()
+        const bytes = await blob.read(descriptor)
+        await input.ensureCurrent()
+        return bytes
+      },
+    })
+  } catch (error) { await stream.closeSend().catch(() => {}); throw error }
 }
 
 type BlobFetchInput = {

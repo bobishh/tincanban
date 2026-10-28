@@ -9,6 +9,8 @@ import type { PeerStore, WorkspaceAuthorityRecord, WorkspaceMeshCredential } fro
 import type { SyncConnection } from "./transport"
 import type { WorkspaceSetStore, OwnerWorkspaceOfferFrame } from "./workspaceSet"
 import { registerOwnerOfferProofs, publishOwnerWorkspaceOffer, OwnerOfferAccessDenied } from "./ownerOfferProofs"
+import { meshTrace } from "./meshTrace"
+import { resolveLearnedIdentityAccess, IdentityDeviceAccessDeniedError } from "../domain/identityAuthority"
 import { z } from "zod"
 
 export const ownerWorkspaceOfferSchema = z.object({
@@ -69,17 +71,31 @@ type OfferTarget = { connection: SyncConnection; secret: string; remoteWorkspace
 
 /** The authenticated recipient's current board rights govern every outgoing byte. */
 async function requireOfferAccess(host: OfferHost, target: OfferTarget, owner: LocalProfile, workspaceId: string, keeper?: OwnerKeeper) {
-  const profile = await host.getProfile()
-  const signer = [profile.identity.personId, profile.identity.publicKey, profile.device.deviceId]
-  const expectedSigner = [owner.identity.personId, owner.identity.publicKey, owner.device.deviceId]
-  if (canonicalizeJson(signer) !== canonicalizeJson(expectedSigner) || !target.remoteDeviceId) throw new OwnerOfferAccessDenied()
-  const policy = await ownerKeeperOfferPolicy(profile, target.remotePersonId)
-  if (!policy.allowed || canonicalizeJson(policy.keeper ?? null) !== canonicalizeJson(keeper ?? null)) throw new OwnerOfferAccessDenied()
-  const [credential, authority] = await Promise.all([
-    host.store.getWorkspaceCredential(workspaceId), host.store.getWorkspaceAuthority(workspaceId),
-  ])
-  if (!credential || credential.workspaceId !== workspaceId) throw new OwnerOfferAccessDenied()
-  assertOfferBoardAccess(credential, authority, profile, target)
+  try {
+    const profile = await host.getProfile()
+    const signer = [profile.identity.personId, profile.identity.publicKey, profile.device.deviceId]
+    const expectedSigner = [owner.identity.personId, owner.identity.publicKey, owner.device.deviceId]
+    if (canonicalizeJson(signer) !== canonicalizeJson(expectedSigner)) throw new OwnerOfferAccessDenied("Local signing identity changed")
+    if (!target.remoteDeviceId) throw new OwnerOfferAccessDenied("Authenticated recipient device is unavailable")
+    const policy = await ownerKeeperOfferPolicy(profile, target.remotePersonId)
+    if (!policy.allowed) throw new OwnerOfferAccessDenied("Owner offer policy no longer permits this recipient")
+    if (canonicalizeJson(policy.keeper ?? null) !== canonicalizeJson(keeper ?? null)) throw new OwnerOfferAccessDenied("Owner offer policy changed during delivery")
+    const assertGlobalCurrent = await resolveLearnedIdentityAccess([
+      { personId: profile.identity.personId, deviceId: profile.device.deviceId },
+      { personId: target.remotePersonId, deviceId: target.remoteDeviceId },
+    ])
+    const [credential, authority] = await Promise.all([
+      host.store.getWorkspaceCredential(workspaceId), host.store.getWorkspaceAuthority(workspaceId),
+    ])
+    if (!credential) throw new OwnerOfferAccessDenied("Workspace credential is unavailable")
+    if (credential.workspaceId !== workspaceId) throw new OwnerOfferAccessDenied("Workspace credential binding changed")
+    assertOfferBoardAccess(credential, authority, profile, target)
+    await assertGlobalCurrent()
+  } catch (cause) {
+    if (!(cause instanceof IdentityDeviceAccessDeniedError)) throw cause
+    throw new OwnerOfferAccessDenied(cause.deviceId === owner.device.deviceId
+      ? "Local global Identity device access is revoked or unavailable" : "Recipient global Identity device access is revoked or unavailable", { cause })
+  }
 }
 
 function assertOfferBoardAccess(credential: WorkspaceMeshCredential, authority: WorkspaceAuthorityRecord | null,
@@ -87,13 +103,22 @@ function assertOfferBoardAccess(credential: WorkspaceMeshCredential, authority: 
   const state = meshRustRuntime().state
   const binding = canonicalizeJson([credential.workspaceId, profile.identity.personId, profile.identity.publicKey, credential.epoch])
   for (const current of [credential, ...(authority ? [authority] : [])]) {
-    if (canonicalizeJson([current.workspaceId, current.ownerPersonId, current.ownerPublicKey, current.epoch]) !== binding ||
-        state.hasAuthorityConflict(current)) throw new OwnerOfferAccessDenied()
-    if (state.isDeviceRevoked(current, target.remotePersonId, target.remoteDeviceId) ||
-        state.isGrantRevoked(current, target.remotePersonId, null) || state.hasLeftWorkspace(current, target.remotePersonId, null) ||
-        state.isDeviceRevoked(current, profile.identity.personId, profile.device.deviceId) ||
-        state.isGrantRevoked(current, profile.identity.personId, credential.localGrant ?? null) ||
-        state.hasLeftWorkspace(current, profile.identity.personId, credential.localGrant ?? null)) throw new OwnerOfferAccessDenied()
+    if (canonicalizeJson([current.workspaceId, current.ownerPersonId, current.ownerPublicKey, current.epoch]) !== binding) {
+      throw new OwnerOfferAccessDenied("Workspace owner binding changed")
+    }
+    if (state.hasAuthorityConflict(current)) throw new OwnerOfferAccessDenied("Workspace authority has conflicting decisions")
+    assertOfferMemberAccess(current, target.remotePersonId, target.remoteDeviceId, null, false)
+    assertOfferMemberAccess(current, profile.identity.personId, profile.device.deviceId, credential.localGrant ?? null, true)
+  }
+}
+
+function assertOfferMemberAccess(current: WorkspaceMeshCredential | WorkspaceAuthorityRecord,
+  personId: string, deviceId: string, grant: unknown, local: boolean) {
+  const state = meshRustRuntime().state
+  if (state.isDeviceRevoked(current, personId, deviceId)) throw new OwnerOfferAccessDenied(local
+    ? "Local device access is revoked" : "Recipient device access is revoked")
+  if (state.isGrantRevoked(current, personId, grant) || state.hasLeftWorkspace(current, personId, grant)) {
+    throw new OwnerOfferAccessDenied(local ? "Local workspace membership is revoked or departed" : "Recipient workspace membership is revoked or departed")
   }
 }
 
@@ -142,6 +167,10 @@ export async function offerOwnerWorkspaces(host: OfferHost, target: OfferTarget)
       })()
       host.pending.set(key, offer)
       try { await offer } finally { if (host.pending.get(key) === offer) host.pending.delete(key) }
-    } catch (error) { if (!(error instanceof OwnerOfferAccessDenied)) throw error }
+    } catch (error) {
+      if (!(error instanceof OwnerOfferAccessDenied)) throw error
+      meshTrace("owner.offer.denied", { workspaceId, peerId: target.remoteDeviceId, localDeviceId: profile.device.deviceId,
+        errorCode: "owner_offer_access_denied", reason: error.message }, "warn", error)
+    }
   }
 }

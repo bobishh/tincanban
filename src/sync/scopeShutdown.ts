@@ -1,3 +1,23 @@
+import type { DuplexStream } from "./transport"
+
+/** A denied send owns only its stream; cleanup never replaces the authorization failure. */
+export function guardScopeStream(stream: DuplexStream, ensureCurrent: () => Promise<void>): DuplexStream {
+  return {
+    read: maximum => stream.read(maximum), closeSend: () => stream.closeSend(),
+    send: async bytes => {
+      try { await ensureCurrent(); await stream.send(bytes) }
+      catch (error) {
+        try { if (stream.reset) await stream.reset(); else await stream.closeSend() } catch { /* Preserve the original denial or transport failure. */ }
+        throw error
+      }
+    },
+    ...(stream.reset ? { reset: () => stream.reset!() } : {}),
+    ...(stream.readRaw ? { readRaw: (maximum?: number) => stream.readRaw!(maximum) } : {}),
+    ...(stream.readPairingOrRawPrefix ? { readPairingOrRawPrefix: (prefix: Uint8Array, maximum?: number) =>
+      stream.readPairingOrRawPrefix!(prefix, maximum) } : {}),
+  }
+}
+
 /** Disconnect without waiting for a receive callback; supervise drain separately. */
 export function createScopeShutdown(
   scope: { close: () => Promise<void> },

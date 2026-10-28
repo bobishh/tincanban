@@ -1,16 +1,56 @@
-import { describe, expect, it, vi } from "vitest"
+import { readFile } from "node:fs/promises"
+import * as Automerge from "@automerge/automerge/slim"
+import { beforeAll, describe, expect, it, vi } from "vitest"
 import type { WorkspaceDocumentV2 } from "../domain/model"
-import { createBoardAddressController } from "./useBoardAddress"
+import { createWorkspaceDoc } from "../domain/seeds"
+import type { WorkspaceStorage } from "../storage"
+import { createSyncActions } from "../stateSyncActions"
+import { createBoardAddressController, type BoardAddressRuntime } from "./useBoardAddress"
 
 const doc = (id: string, boardId: string, title: string) => ({ id, title, entities: { [boardId]: { id: boardId, kind: "board", title } } })
 
+beforeAll(async () => {
+  await Automerge.initializeWasm(new Uint8Array(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")))
+})
+
 describe("private board address integration", () => {
+  it.each([false, true])("Given inactive native boards and a matching address %s, when resolving that address, then release inspected copies without exposing a different board", async matching => {
+    const actions = createSyncActions(), allocated: Automerge.Doc<WorkspaceDocumentV2>[] = []
+    const records = new Map(["unrelated", "stored-a", "stored-b"].map(id => [id, createWorkspaceDoc(id, id, "owner", "blank")]))
+    const storage = { loadWorkspaceDoc: async (id: string) => {
+      const document = Automerge.from(records.get(id)!)
+      allocated.push(document)
+      return { doc: document }
+    } } as WorkspaceStorage
+    let activeId = "unrelated"
+    const target = "stored-b"
+    const boardId = (id: string) => Object.values(records.get(id)!.entities).find(entity => entity.kind === "board")!.id
+    const runtime = {
+      getAvailableWorkspaces: () => [{ id: "stored-a" }, { id: target }],
+      getActiveWorkspaceId: () => activeId,
+      getActiveBoard: () => ({ id: boardId(activeId), title: activeId }),
+      getIdentityId: () => "owner",
+      readWorkspaceDoc: (id: string) => actions.readWorkspaceDoc(id, storage),
+      withWorkspaceDoc: <T>(id: string, read: (document: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>) => actions.withWorkspaceDoc(id, read, storage),
+      switchWorkspace: vi.fn(async (id: string) => { activeId = id }),
+    }
+    const integration = createBoardAddressController(runtime, historyAt(`/boards/${matching ? boardId(target) : "missing"}/board`))
+    const live = () => allocated.filter(document => {
+      try { Automerge.getHeads(document); return true } catch { return false }
+    })
+    try {
+      expect(await integration.resolveAddress()).toBe(matching ? "available" : "unavailable")
+      expect(activeId).toBe(matching ? target : "unrelated")
+      expect(allocated).toHaveLength(2)
+      expect(live()).toHaveLength(0)
+    } finally { for (const document of live()) Automerge.free(document) }
+  })
   it("Given a board's publication location, when its address is copied and boards switch, then retain its locator and never carry it into another board", () => {
     const history = historyAt("/boards/published/old?message=m#message-m")
     let board: { id: string; title: string; publicationOrigin?: string } = { id: "published", title: "Published", publicationOrigin: "https://rusty.example" }
     const integration = createBoardAddressController({
       getAvailableWorkspaces: () => [{ id: "workspace" }], getActiveWorkspaceId: () => "workspace",
-      getActiveBoard: () => board, getIdentityId: () => "person", readWorkspaceDoc: vi.fn(), switchWorkspace: vi.fn(),
+      getActiveBoard: () => board, getIdentityId: () => "person", withWorkspaceDoc: vi.fn(), switchWorkspace: vi.fn(),
     }, history)
     integration.syncActiveBoard("workspace")
     expect(new URLSearchParams(history.location().search).get("rusty")).toBe("https://rusty.example")
@@ -29,7 +69,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => active,
       getActiveBoard: () => ({ id: active === "old-workspace" ? "old" : "new", title: active }),
       getIdentityId: () => "person-1",
-      readWorkspaceDoc: () => new Promise(resolve => { release = resolve }),
+      withWorkspaceDoc: scoped(() => new Promise(resolve => { release = resolve })),
       switchWorkspace,
     }, history)
     const resolving = integration.resolveAddress()
@@ -47,7 +87,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => "workspace-a",
       getActiveBoard: () => ({ id: "board-target", title: "Current title" }),
       getIdentityId: () => "person-1",
-      readWorkspaceDoc: vi.fn(),
+      withWorkspaceDoc: vi.fn(),
       switchWorkspace: vi.fn(),
     }, history)
     expect(integration.resolveActivePreview()).toBe("available")
@@ -61,7 +101,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => "workspace-a",
       getActiveBoard: () => ({ id: "board-a", title: "Unrelated" }),
       getIdentityId: () => "person-1",
-      readWorkspaceDoc: vi.fn(),
+      withWorkspaceDoc: vi.fn(),
       switchWorkspace,
     }, historyAt("/boards/private-target/shared-slug"))
     expect(integration.resolveActivePreview()).toBe("resolving")
@@ -72,7 +112,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => "workspace-a",
       getActiveBoard: () => ({ id: "private-target", title: "Private" }),
       getIdentityId: () => null,
-      readWorkspaceDoc: vi.fn(),
+      withWorkspaceDoc: vi.fn(),
       switchWorkspace: vi.fn(),
     }, historyAt("/boards/private-target/private"))
     expect(anonymous.resolveActivePreview()).toBe("resolving")
@@ -88,7 +128,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => active.id,
       getActiveBoard: () => active.id === "workspace-b" ? { id: "board-target", title: "Current title" } : { id: "board-a", title: "A" },
       getIdentityId: () => "person-1",
-      readWorkspaceDoc,
+      withWorkspaceDoc: scoped(readWorkspaceDoc),
       switchWorkspace: async id => { switched.push(id); active = { id } },
     }, historyAt("/boards/board-target/old-title?message=m#message-m"))
     expect(await integration.resolveAddress()).toBe("available")
@@ -105,7 +145,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => "workspace-a",
       getActiveBoard: () => ({ id: "board-a", title: "Unrelated" }),
       getIdentityId: () => "person-1",
-      readWorkspaceDoc: async () => doc("workspace-a", "board-a", "Unrelated") as unknown as WorkspaceDocumentV2,
+      withWorkspaceDoc: scoped(async () => doc("workspace-a", "board-a", "Unrelated") as unknown as WorkspaceDocumentV2),
       switchWorkspace,
       onUnavailable,
     }, historyAt("/boards/private-target/shared-slug"))
@@ -122,7 +162,7 @@ describe("private board address integration", () => {
       getActiveWorkspaceId: () => "workspace-eligible",
       getActiveBoard: () => ({ id: "other", title: "Other" }),
       getIdentityId: () => "person-current",
-      readWorkspaceDoc,
+      withWorkspaceDoc: scoped(readWorkspaceDoc),
       switchWorkspace: vi.fn(),
     }, historyAt("/boards/target/target"))
     expect(await integration.resolveAddress()).toBe("unavailable")
@@ -142,4 +182,8 @@ function historyAt(path: string) {
     fire: () => { for (const listener of listeners) listener(new Event("popstate")) },
   }
   return history
+}
+
+function scoped(read: (id: string) => Promise<WorkspaceDocumentV2>): BoardAddressRuntime["withWorkspaceDoc"] {
+  return async (id, inspect) => inspect(await read(id))
 }

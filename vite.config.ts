@@ -3,6 +3,45 @@ import vue from "@vitejs/plugin-vue"
 import { execFileSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 
+// Co-locate the existing eager workspace graph without pulling in lazy dependencies.
+const workspaceCoreModules = new Set([
+  "sync/workspaceAdmissionReuse.ts",
+  "sync/workspaceAdmissionCheckpoint.ts",
+  "sync/changeAuthorization.ts",
+  "domain/workspaceMigration.ts",
+  "domain/commandTypes.ts",
+  "domain/commandSupport.ts",
+  "domain/commandBasicHandlers.ts",
+  "domain/transactionProofs.ts",
+  "domain/commandContentHandlers.ts",
+  "domain/commandSchemaHandlers.ts",
+  "domain/commandProfileHandlers.ts",
+  "domain/commandAutomationHandlers.ts",
+  "domain/commandApplicationSource.ts",
+  "domain/commandHandlers.ts",
+  "domain/commands.ts",
+  "sync/identityDeviceActivationLoader.ts",
+  "crdt.ts",
+  "stateStartupMigration.ts",
+  "stateProjection.ts",
+  "stateCausalReviewLoader.ts",
+  "stateInjectedFixture.ts",
+  "pendingItemMoves.ts",
+  "statePendingWrites.ts",
+  "stateCausalReviewMetadata.ts",
+  "sync/localAdmissionReuse.ts",
+  "stateLocalChangePersistence.ts",
+  "statePersistence.ts",
+  "sync/workspaceChangeProofStore.ts",
+  "causalEvidence.ts",
+  "storagePersonalRoot.ts",
+  "storageDeltaRepository.ts",
+  "storageDeltaAccess.ts",
+  "storageHistoryAccess.ts",
+  "storageTransactionAccess.ts",
+  "storage.ts",
+])
+
 function buildCommit() {
   try {
     const commit = execFileSync("git", ["rev-parse", "--verify", "HEAD"], { encoding: "utf8" }).trim()
@@ -23,6 +62,11 @@ export default defineConfig(({ command }) => ({
         codeSplitting: {
           groups: [
             { name: "framework", test: /node_modules\/(?:vue|@vue|zod)\// },
+            {
+              name: "workspace-core",
+              test: id => workspaceCoreModules.has(id.replace(/\\/g, "/").split("/src/").at(-1) ?? ""),
+              includeDependenciesRecursively: false,
+            },
           ],
         },
       },

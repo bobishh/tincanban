@@ -8,13 +8,13 @@ type ManagementStatusObservation = {
   authorization: SignedEnvelope<ManagementStatusAuthorization>
   response: RustyManagementStatusResponse
 }
-export type ManagementConflictResolver = (binding: ManagementBinding) => Promise<ManagementStatusObservation>
+export type ManagementConflictResolver = (binding: ManagementBinding, minimumRevision: number) => Promise<ManagementStatusObservation>
 
 /** Explicit enrollment can replace pre-reset local policy only with fresh, pinned server evidence. */
 export async function reconcileManagementConflict(owner: string, incoming: PortableManagementRecord,
   resolve: ManagementConflictResolver): Promise<SignedEnvelope<RustyManagementCapability>> {
   const binding = structuredClone(incoming.binding)
-  const observation = structuredClone(await resolve(binding))
+  const observation = structuredClone(await resolve(binding, incoming.capability.payload.revision))
   const verified = await verifyRustyManagementStatus(observation.response, binding, { personId: owner,
     deviceId: observation.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId,
     operation: "management.update", minimumRevision: incoming.capability.payload.revision },

@@ -20,8 +20,8 @@ export async function connectAdoptedIdentityBoards(app: App, guard: () => void):
   for (const reference of Object.values(root.workspaces)) {
     if (reference.forgotten) continue
     guard()
-    const document = await app.readWorkspaceDoc(reference.workspaceId).catch(() => null)
-    if (!document || document.ownerPersonId === profile.identity.personId) continue
+    const ownerPersonId = await app.withWorkspaceDoc(reference.workspaceId, document => document.ownerPersonId).catch(() => null)
+    if (!ownerPersonId || ownerPersonId === profile.identity.personId) continue
     if (await app.getWorkspaceRole(reference.workspaceId) !== "owner") continue
     for (const pin of pins) {
       guard()

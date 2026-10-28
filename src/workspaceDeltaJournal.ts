@@ -246,7 +246,7 @@ export class WorkspaceDeltaJournal {
     ensureCurrent()
     if (installed) {
       transaction.objectStore("frontiers").put(frontier)
-      transaction.objectStore("revisions").put({ id: basis.workspaceId, workspaceId: basis.workspaceId, revision: nextRevision })
+      advanceWorkspaceRevision(transaction, basis.workspaceId, nextRevision)
     }
     await done
     return installed

@@ -11,7 +11,7 @@ test("Markdown descriptions and templates render consistently without executing 
   await page.getByRole("button", { name: "Add item to To do", exact: true }).click()
   const form = page.getByRole("dialog", { name: "Item details" })
   await form.getByLabel("Title *", { exact: true }).fill("Wallet checklist")
-  const markdown = "- [ ] Issue a **new card**\n- [x] Block the previous card\n\nFirst line\nSecond line\n\n<script>window.markdownExecuted = true</script>"
+  const markdown = "```markdown\n- [ ] Example only\n```\n\n- [ ] Issue a **new card**\n- [x] Block the previous card\n\nFirst line\nSecond line\n\n<script>window.markdownExecuted = true</script>"
   await form.getByLabel("Body", { exact: true }).fill(markdown)
   await form.getByRole("button", { name: "Save item" }).click()
   const card = page.getByRole("button", { name: "Open Wallet checklist", exact: true })
@@ -21,6 +21,7 @@ test("Markdown descriptions and templates render consistently without executing 
   await expect(cardContainer.getByRole("checkbox")).toHaveCount(2)
   await cardContainer.getByRole("checkbox").first().click()
   await expect(cardContainer.getByRole("checkbox").first()).toBeChecked()
+  await expect(cardContainer.locator("pre")).toContainText("- [ ] Example only")
   await expect(page.getByRole("dialog", { name: "Item overview" })).toHaveCount(0)
   await expect(page.getByText("Checklist updated", { exact: true })).toBeVisible()
   await page.reload()

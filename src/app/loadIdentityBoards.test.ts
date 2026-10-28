@@ -13,6 +13,8 @@ vi.mock("../statePersistence", () => ({ refreshAvailableWorkspaces: f.refreshCat
 vi.mock("./connectAdoptedIdentityBoards", () => ({ connectAdoptedIdentityBoards: vi.fn() }))
 vi.mock("../domain/identity", () => ({ isCurrentIdentityProfile: () => true }))
 import { loadIdentityBoards } from "./loadIdentityBoards"
+import { createSyncActions } from "../stateSyncActions"
+import type { WorkspaceStorage } from "../storage"
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -33,6 +35,9 @@ function app() {
     },
     activeWorkspace: { id: "guest-default" }, availableWorkspaces: { value: [{ id: "job-search" }] },
     readWorkspaceDoc: vi.fn(async (id: string) => ({ id, entities: { board: { id: `board-${id}`, kind: "board" } } })),
+    async withWorkspaceDoc<T>(id: string, read: (document: WorkspaceDocumentV2) => T | Promise<T>): Promise<T> {
+      return read(await this.readWorkspaceDoc(id) as unknown as WorkspaceDocumentV2)
+    },
     switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn(), getActiveDoc: () => null }
 }
 it("Given creation is pending during sign-in loading, when its selection intent changes before the board becomes active, then do not create or select a background default", async () => {
@@ -204,4 +209,33 @@ it("Given one saved board loads and another peer stays offline, when recovery re
   await expect(loadIdentityBoards(state as never, "/", async () => {})).rejects.toThrow(/waiting for an available peer/)
   expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
   expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+})
+
+
+it.each([false, true])("Given inactive native board documents and a pending peer %s, when catalog loading inspects routes and missing copies, then release every owned document without losing the selected board", async pendingPeer => {
+  const state = app(), actions = createSyncActions()
+  const allocated: Automerge.Doc<WorkspaceDocumentV2>[] = []
+  const storage = { loadWorkspaceDoc: async (id: string) => {
+    if (id !== "job-search") return null
+    const doc = Automerge.from(createWorkspaceDoc(id, "Saved board", "bo", "blank"))
+    allocated.push(doc)
+    return { doc }
+  } } as WorkspaceStorage
+  state.readWorkspaceDoc.mockImplementation(async id => await actions.readWorkspaceDoc(id, storage) as never)
+  Object.assign(state, { withWorkspaceDoc: <T>(id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>) =>
+    actions.withWorkspaceDoc(id, read, storage) })
+  if (pendingPeer) f.roots.mockResolvedValue({ identity: { personId: "bo" }, workspaces: {
+    "job-search": { workspaceId: "job-search", forgotten: false }, missing: { workspaceId: "missing", forgotten: false },
+  } })
+  const live = () => allocated.filter(doc => {
+    try { Automerge.getHeads(doc); return true } catch { return false }
+  })
+  try {
+    const loading = loadIdentityBoards(state as never, "/", async () => {})
+    if (pendingPeer) await expect(loading).rejects.toThrow(/waiting for an available peer/)
+    else await loading
+    expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+    expect(allocated.length).toBeGreaterThan(0)
+    expect(live()).toHaveLength(0)
+  } finally { for (const doc of live()) Automerge.free(doc) }
 })

@@ -1,5 +1,7 @@
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
+import type * as Automerge from "@automerge/automerge/slim"
 import type { useTincanban } from "../state"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 import { canonicalizeJson } from "../domain/identity"
 import { assertSigningContextCurrent } from "../domain/signingContext"
 import { workspaceBlobDescriptor } from "../app/workspaceMetadata"
@@ -8,7 +10,7 @@ import type { BlindReplicaConfig } from "./blindReplication"
 import { getPrivateReplicaProgress } from "./privateReplicaRepository"
 import { workspaceSigningContext } from "./workspaceSigning"
 
-type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "readWorkspaceDoc" | "getCurrentProfile">
+type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "withWorkspaceDoc" | "getCurrentProfile">
 
 /** Bind private file I/O to the current device, connection and admitted document reference. */
 export async function createAttachmentAccessGuard(app: AttachmentApp, config: BlindReplicaConfig,
@@ -30,27 +32,28 @@ export async function createAttachmentAccessGuard(app: AttachmentApp, config: Bl
       throw new Error("Attachment identity changed during transfer")
     }
   }
-  const readDocument = async () => {
+  const readDocument = async <T>(read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>): Promise<T> => {
     guardIdentity()
     await getPrivateReplicaProgress(personId, connection)
-    const doc = await app.readWorkspaceDoc(connection.workspaceId)
-    guardIdentity()
-    const matches = workspaceBlobDescriptor(doc, requested.blobId, reference => descriptorIdentity(reference) === descriptorIdentity(requested))
-    if (doc.id !== connection.workspaceId || !matches) {
-      throw new Error("Attachment reference is missing or changed")
-    }
-    return doc
+    return app.withWorkspaceDoc(connection.workspaceId, async doc => {
+      guardIdentity()
+      const matches = workspaceBlobDescriptor(doc, requested.blobId, reference => descriptorIdentity(reference) === descriptorIdentity(requested))
+      if (doc.id !== connection.workspaceId || !matches) throw new Error("Attachment reference is missing or changed")
+      const result = await read(doc)
+      guardIdentity()
+      return result
+    })
   }
-  let doc = await readDocument()
+  const doc = await readDocument(doc => ({ id: doc.id, ownerPersonId: doc.ownerPersonId }))
   const { context } = await workspaceSigningContext(doc, profile, `attachment-${mode}`, "workspaceId", undefined, {
     readAuthority: async () => {
-      doc = await readDocument()
+      guardIdentity()
       const authority = await readWorkspaceSigningAuthority(connection.workspaceId)
       guardIdentity()
       return authority
     },
     authorityFingerprint: authorityValidationFingerprint,
-    workspaceRole: (_captured, signer) => workspaceRole(doc, signer),
+    workspaceRole: (_captured, signer, stored) => readDocument(current => workspaceRole(current, signer, stored)),
   })
   return async () => {
     guardIdentity()

@@ -35,13 +35,15 @@ function openCurrentJournal(): Promise<IDBDatabase> {
     }
     request.onsuccess = () => {
       if (blockedTimer) clearTimeout(blockedTimer)
-      if (settled) { request.result.close(); return }
+      if (settled) { request.result.close(); journalDatabasePromise = undefined; return }
       settled = true
       request.result.onversionchange = () => { request.result.close(); journalDatabasePromise = undefined }
+      request.result.onclose = () => { journalDatabasePromise = undefined }
       resolve(request.result)
     }
     request.onerror = () => {
       if (blockedTimer) clearTimeout(blockedTimer)
+      if (settled) journalDatabasePromise = undefined
       settled = true
       reject(request.error ?? new Error("IndexedDB open failed"))
     }
@@ -59,7 +61,9 @@ function openCurrentJournal(): Promise<IDBDatabase> {
 function openJournalDatabase(): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined") return Promise.reject(new Error("IndexedDB is not available"))
   return journalDatabasePromise ??= openCurrentJournal().catch(error => {
-    journalDatabasePromise = undefined
+    // A refused upgrade remains queued until its blocking tab closes. Reuse
+    // that refusal rather than queueing a retry behind the abandoned request.
+    if (!(error instanceof Error && error.name === "WorkspaceJournalUpgradeBlockedError")) journalDatabasePromise = undefined
     throw error
   })
 }

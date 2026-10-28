@@ -155,6 +155,7 @@ export abstract class StorageDeltaAccess {
         const progress = current.historyProgress
         if (!progress) throw new Error("History progress is not initialized")
         if (progress.transitionId !== undefined && !valid(progress.transitionId)) throw new Error("A saved history transition has an invalid identifier")
+        const existingTransition = valid(progress.transitionId)
         const transitionId = valid(progress.transitionId) ? progress.transitionId : fallback
         if (valid(progress.transitionId) && !(progress.transitionPreviousBaselineId === null ||
             typeof progress.transitionPreviousBaselineId === "string" && /^[A-Za-z0-9_-]{43}$/.test(progress.transitionPreviousBaselineId))) {

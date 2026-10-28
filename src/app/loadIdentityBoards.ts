@@ -8,7 +8,7 @@ import { createIdentityReplica } from "../sync/identityReplicaStore"
 import { createBlindReplica } from "../sync/blindReplicaStore"
 import { getIdentityReplicaConfigurations, getReplicaConfigurations } from "../sync/privateReplicaRepository"
 import { recordIdentityBrowserSignIn } from "./identityBrowserSignIn"
-import { hasEntityKind, type WorkspaceDocumentV2 } from "../domain/model"
+import { hasEntityKind } from "../domain/model"
 import { parseBoardRouteUrl, resolveEligibleBoardRoute, type EligibleBoardRoute } from "./boardRoute"
 
 type App = ReturnType<typeof useTincanban>
@@ -62,7 +62,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
         const absent: string[] = []
         for (const id of ids) {
           guard()
-          try { await app.readWorkspaceDoc(id) } catch { absent.push(id) }
+          try { await app.withWorkspaceDoc(id, () => undefined) } catch { absent.push(id) }
         }
         return absent
       }
@@ -112,10 +112,12 @@ async function readLoadedWorkspaceRoutes(app: App,
   for (const workspace of available) {
     guard()
     try {
-      const document = await app.readWorkspaceDoc(workspace.id) as WorkspaceDocumentV2
-      if (document.id !== workspace.id) continue
-      const board = Object.values(document.entities).find(entity => hasEntityKind(entity, "board"))
-      if (board) eligible.push({ boardId: board.id, workspaceId: workspace.id, emptyDefault: isEmptyDefaultBoard(document) })
+      const route = await app.withWorkspaceDoc(workspace.id, document => {
+        if (document.id !== workspace.id) return null
+        const board = Object.values(document.entities).find(entity => hasEntityKind(entity, "board"))
+        return board ? { boardId: board.id, workspaceId: workspace.id, emptyDefault: isEmptyDefaultBoard(document) } : null
+      })
+      if (route) eligible.push(route)
     } catch { /* Unreadable workspaces cannot be route targets. */ }
   }
   guard()

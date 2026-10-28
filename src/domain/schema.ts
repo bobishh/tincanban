@@ -75,10 +75,42 @@ export function validateBoardSchemaDraft(draft: unknown, doc?: WorkspaceDocument
     }
   }
   validateColumns(draft.columns, errors)
+  validateDefinitionReferences(draft, doc, errors)
   validateArchiveRoleRemoval(draft, doc, errors)
   validateArchiveColumnContents(draft.columns, doc, errors)
   validateCardStageButtons(draft.cardStageButtons, draft.columns, errors); validateFields(draft.fields, errors); validatePolicy(draft, doc, errors); validateAgingPolicy(draft, errors)
   return { valid: errors.length === 0, errors }
+}
+
+function validateDefinitionReferences(draft: Record<string, unknown>, doc: WorkspaceDocumentV2 | undefined, errors: SchemaValidationError[]): void {
+  if (doc && (typeof draft.boardId !== "string" || !hasEntityKind(doc.entities[draft.boardId], "board"))) {
+    errors.push({ path: "/boardId", message: "boardId must identify this workspace board" })
+  }
+  const ids = new Set<string>()
+  for (const [name, kind] of [["columns", "column"], ["fields", "field"]] as const) {
+    const values = draft[name]
+    if (!Array.isArray(values)) continue
+    values.forEach((value, index) => {
+      if (!record(value) || value.id === undefined) return
+      const path = `/${name}/${index}`
+      if (typeof value.id !== "string" || !value.id.trim()) { errors.push({ path: `${path}/id`, message: "id must contain text" }); return }
+      if (ids.has(value.id)) errors.push({ path: `${path}/id`, message: `${kind === "column" ? "Column" : "Field"} id is duplicated` })
+      ids.add(value.id)
+      validateRetainedDefinition(value, kind, draft.boardId, doc, path, errors)
+    })
+  }
+}
+
+function validateRetainedDefinition(value: Record<string, unknown>, kind: "column" | "field", boardId: unknown,
+  doc: WorkspaceDocumentV2 | undefined, path: string, errors: SchemaValidationError[]): void {
+  const entity = doc?.entities[value.id as string]
+  // New definitions may have caller-allocated IDs; retained IDs cannot change owner or kind.
+  if (!entity) return
+  if (entity.kind !== kind || entity.placement.parentId !== boardId) {
+    errors.push({ path: `${path}/id`, message: `id must identify a ${kind} on this board` })
+  } else if (hasEntityKind(entity, "field") && value.valueType !== entity.valueType) {
+    errors.push({ path: `${path}/valueType`, message: `Field type cannot change: ${String(value.title)} (${String(entity.valueType)} [${typeof entity.valueType}] → ${String(value.valueType)} [${typeof value.valueType}])` })
+  }
 }
 
 function validateArchiveRoleRemoval(draft: Record<string, unknown>, doc: WorkspaceDocumentV2 | undefined, errors: SchemaValidationError[]): void {
@@ -209,7 +241,7 @@ export function diffBoardSchema(doc: WorkspaceDocumentV2, boardId: string, draft
 }
 function diffColumns(current: BoardSchemaColumn[], draft: BoardSchemaColumn[], doc: WorkspaceDocumentV2): Pick<SchemaDiff, "columnsRenamed" | "columnsReordered" | "columnsAdded" | "columnsArchived"> {
   const known = byId(current); const incoming = byId(draft)
-  const columnsRenamed = draft.flatMap(column => column.id && known.get(column.id)?.title !== column.title ? [{ id: column.id, oldTitle: known.get(column.id)!.title, newTitle: column.title }] : [])
+  const columnsRenamed = draft.flatMap(column => column.id && known.has(column.id) && known.get(column.id)!.title !== column.title ? [{ id: column.id, oldTitle: known.get(column.id)!.title, newTitle: column.title }] : [])
   const columnsAdded = draft.filter(column => !column.id || !known.has(column.id)).map(column => ({ title: column.title }))
   const columnsArchived = current.flatMap(column => {
     if (!column.id || incoming.has(column.id)) return []

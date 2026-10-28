@@ -312,7 +312,7 @@ export async function exportAuthorizationBundle(bytes: Uint8Array, knownProfile?
   finally { Automerge.free(doc) }
 }
 
-export async function exportDocumentAuthorizationBundle(doc: Automerge.Doc<WorkspaceDocumentV2>, knownProfile?: LocalProfile): Promise<{
+export async function exportDocumentAuthorizationBundle(doc: Pick<WorkspaceDocumentV2, "id" | "ownerPersonId">, knownProfile?: LocalProfile): Promise<{
   version: 1; records: WorkspaceChangeAuthorization[]; authority: WorkspaceWriteAuthorityEvidence
 }> {
   const { authority: evidence } = await localWorkspaceAdmissionAuthority(doc, knownProfile)

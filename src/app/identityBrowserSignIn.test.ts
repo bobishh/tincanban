@@ -129,6 +129,44 @@ describe("Identity browser sign-in", () => {
     expect(stages).toEqual(["refresh:false", "restore:false", "boards:false", "restore:false", "ready:true"])
   })
 
+  it("Given a retained phone pairing, when Identity returns despite unavailable catalog, then restore the exact pairing and resume it after closing approval", async () => {
+    const path = "/pair#retained-invitation-secret"
+    const stages: string[] = []
+    vi.stubGlobal("window", { dispatchEvent: vi.fn(), sessionStorage: { getItem: () => null },
+      location: { pathname: "/identity/return", search: "", hash: "" },
+      history: { state: null, replaceState: vi.fn((_state, _title, url) => stages.push(`restore:${url}`)) } })
+    const showPortal = ref(true)
+    const resumePairing = vi.fn(() => { expect(showPortal.value).toBe(false); stages.push("pairing") })
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
+      closePortal: () => { showPortal.value = false },
+      loadBoards: async () => { throw new Error("Catalog temporarily unavailable") }, resumePairing })
+    await result.complete(path)
+    expect(stages).toEqual([`restore:${path}`, "pairing"])
+    expect(resumePairing).toHaveBeenCalledOnce()
+    expect(result.boardLoadError.value).toContain("Catalog temporarily unavailable")
+    result.close()
+    expect(resumePairing).toHaveBeenCalledTimes(2)
+  })
+
+  it("Given phone pairing and pending catalog delivery, when Identity approval is saved, then resume direct pairing without waiting for Rusty", async () => {
+    vi.stubGlobal("window", { dispatchEvent: vi.fn(), sessionStorage: { getItem: () => null },
+      location: { pathname: "/identity/return", search: "", hash: "" },
+      history: { state: null, replaceState: vi.fn() } })
+    let begin!: () => void, finish!: () => void
+    const entered = new Promise<void>(resolve => { begin = resolve })
+    const showPortal = ref(true), resumePairing = vi.fn(() => { expect(showPortal.value).toBe(false); return true })
+    const result = createIdentityBrowserSignInReturn({ showPortal, refreshIdentity: async () => {},
+      closePortal: () => {}, resumePairing,
+      loadBoards: () => { begin(); return new Promise<void>(resolve => { finish = resolve }) } })
+    const completion = result.complete("/pair#retained")
+    await entered
+    try {
+      expect(result.boardLoading.value).toBe(true)
+      expect(resumePairing).toHaveBeenCalledOnce()
+    } finally { finish(); await completion }
+    expect(window.history.replaceState).toHaveBeenCalledTimes(1)
+  })
+
   it("Given a cancelled sign-in, when the dialog closes, then neither pending request nor stale return can reopen it", () => {
     const storage = new Map<string, string>()
     const target = {
@@ -164,7 +202,7 @@ describe("Identity browser sign-in", () => {
       getActiveWorkspaceId: () => "workspace",
       getActiveBoard: () => loaded ? board : null,
       getIdentityId: () => "owner",
-      readWorkspaceDoc: async () => ({ id: "workspace", entities: { restored: { ...board, kind: "board" } } }) as unknown as WorkspaceDocumentV2,
+      withWorkspaceDoc: async (_id, read) => read({ id: "workspace", entities: { restored: { ...board, kind: "board" } } } as unknown as WorkspaceDocumentV2),
       switchWorkspace: async () => {},
     }, { location: () => location, ...history,
       addEventListener: events.addEventListener.bind(events),

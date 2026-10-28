@@ -66,6 +66,8 @@ export function createIdentityBrowserSignInReturn(options: {
   resolveReturnPath?(returnPath: string): string
   resumeRustyConnection?(origin: string, workspaceId: string): Promise<void>
   reportRustyConnectionFailure?(origin: string, cause: unknown): void
+  /** Return true when pairing takes ownership of the restored route. */
+  resumePairing?(): boolean | void
 }) {
   const hasPendingRequest = window.sessionStorage.getItem(identityBrowserSignInPendingKey) !== null
   const hasReturn = window.sessionStorage.getItem(identityBrowserSignInReturnKey) !== null
@@ -81,7 +83,7 @@ export function createIdentityBrowserSignInReturn(options: {
     window.dispatchEvent(new Event("popstate"))
   }
 
-  function retryBoards(returnPath = `${window.location.pathname}${window.location.search}`): Promise<void> {
+  function retryBoards(returnPath = `${window.location.pathname}${window.location.search}`, restoreRoute = true): Promise<void> {
     if (boardLoad) return boardLoad
     boardLoading.value = true
     boardLoadError.value = ""
@@ -92,7 +94,7 @@ export function createIdentityBrowserSignInReturn(options: {
           boardCatalogApprovalRequired.value = true
           throw new Error("Your board catalog could not be received from Identity.")
         }
-        restoreReturnPath(returnPath)
+        if (restoreRoute) restoreReturnPath(returnPath)
         recordIdentityBrowserSignIn("restore", "completed")
       } catch (cause) {
         boardLoadError.value = `Signed in. Your boards have not finished loading. ${cause instanceof Error ? cause.message : ""}`.trim()
@@ -112,7 +114,7 @@ export function createIdentityBrowserSignInReturn(options: {
     boardLoadError,
     boardCatalogApprovalRequired,
     retryBoards,
-    close() { returning.value = false; options.closePortal() },
+    close() { returning.value = false; options.closePortal(); options.resumePairing?.() },
     async complete(returnPath: string, request?: DeviceAuthorizationRequest) {
       contextReady.value = false
       const refreshStarted = performance.now()
@@ -134,7 +136,8 @@ export function createIdentityBrowserSignInReturn(options: {
       restoreReturnPath(returnPath)
       returning.value = false
       options.showPortal.value = false
-      await retryBoards(returnPath)
+      const pairingResumed = options.resumePairing?.() === true
+      await retryBoards(returnPath, !pairingResumed)
     },
   }
 }

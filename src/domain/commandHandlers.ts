@@ -50,6 +50,9 @@ export function prepareCommand(doc: Automerge.Doc<WorkspaceDocumentV2>, command:
   if (targetId && (targetId.startsWith("application-source:") || doc.entities[targetId]?.kind === "application_source")) {
     return err("permission_denied", "Application source records are immutable")
   }
+  if (targetId && doc.entities[targetId] && ["createItem", "createTemplate", "addDocument", "recordArtifact"].includes(command.kind)) {
+    return err("conflict", "Entity ID already exists; creation cannot replace retained data")
+  }
   const handler = handlers[command.kind] as CommandHandler<Command["kind"]>
   return handler(doc, command, { nowIso, beforeHeads, actorPersonId } as CommandContext)
 }

@@ -243,7 +243,7 @@ async function saveNewItem(core: ReturnType<typeof useAppCore>, details: ReturnT
 async function applySchema(core: ReturnType<typeof useAppCore>, payload: { schema: BoardSchemaDraft; expectedHeads?: Heads }) {
   if (!core.tincanban.activeBoard.value) return
   try {
-    await core.tincanban.executeCommandAsync({ kind: "updateBoardSchema", boardId: core.tincanban.activeBoard.value.id, schema: payload.schema, expectedHeads: payload.expectedHeads })
+    await core.tincanban.executeCommandAsync({ kind: "updateBoardSchema", boardId: payload.schema.boardId, schema: payload.schema, expectedHeads: payload.expectedHeads })
     core.showEntitySettings.value = false
     core.notice.value = "Schema updated"
   } catch (error) { core.notice.value = `Schema update failed: ${messageFrom(error)}` }

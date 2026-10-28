@@ -1,4 +1,3 @@
-import type * as Automerge from "@automerge/automerge/slim"
 import type { LocalProfile } from "../domain/identity"
 import { signingEvidence, type VerifiedSigningContext } from "../domain/signingContext"
 import type { WorkspaceDocumentV2, WorkspaceGrant } from "../domain/model"
@@ -12,14 +11,15 @@ type ReadAuthority = { authority: StoredAuthority | null; invalid: boolean }
 export type WorkspaceSigningContextFactory = (purpose: string, binding: Record<string, string | number>,
   currentAuthority: () => Promise<string>) => Promise<VerifiedSigningContext>
 
-export type WorkspaceSigningPorts = {
+type SigningDocument = Pick<WorkspaceDocumentV2, "id" | "ownerPersonId">
+export type WorkspaceSigningPorts<Document extends SigningDocument = WorkspaceDocumentV2> = {
   readAuthority: () => Promise<ReadAuthority>
   authorityFingerprint: (authority: StoredAuthority | null) => string
-  workspaceRole: (doc: WorkspaceDocumentV2, profile: LocalProfile, stored?: ReadAuthority) => Promise<WorkspaceRole>
+  workspaceRole: (doc: Document, profile: LocalProfile, stored?: ReadAuthority) => Promise<WorkspaceRole>
 }
 
-export async function workspaceSigningContext(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile,
-  purpose: string, scopeField: string, factory: WorkspaceSigningContextFactory | undefined, ports: WorkspaceSigningPorts) {
+export async function workspaceSigningContext<Document extends SigningDocument>(doc: Document, profile: LocalProfile,
+  purpose: string, scopeField: string, factory: WorkspaceSigningContextFactory | undefined, ports: WorkspaceSigningPorts<Document>) {
   const currentAuthority = async () => {
     const stored = await ports.readAuthority()
     if (stored.invalid) throw new Error("Workspace signing authority could not be verified")
@@ -46,8 +46,8 @@ export async function workspaceSigningContext(doc: Automerge.Doc<WorkspaceDocume
   return { context, requireCurrent }
 }
 
-async function assertWorkspaceSigningAccess(doc: Automerge.Doc<WorkspaceDocumentV2>, profile: LocalProfile,
-  stored: ReadAuthority, purpose: string, workspaceRole: WorkspaceSigningPorts["workspaceRole"]) {
+async function assertWorkspaceSigningAccess<Document extends SigningDocument>(doc: Document, profile: LocalProfile,
+  stored: ReadAuthority, purpose: string, workspaceRole: WorkspaceSigningPorts<Document>["workspaceRole"]) {
   const authority = stored.authority
   const state = meshRustRuntime().state
   if (authority && (state.hasAuthorityConflict(authority) ||

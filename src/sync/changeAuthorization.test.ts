@@ -21,6 +21,8 @@ import { resolveSigningContext } from "../domain/signingContext"
 import { createDeviceRevocation, createIdentityAuthorityView, emptyIdentityProfileState,
   verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+import { readLocalJournal, writeLocalJournal } from "../storageJournal"
+import { putRecords } from "./workspaceChangeProofStore"
 
 type TestCatalog = {
   revocations?: WorkspaceRevocation[]
@@ -106,6 +108,71 @@ it("exports the same fresh authorization evidence from a hydrated document witho
   const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Hydrated proofs", owner.identity.personId, "blank"))
   expect(await exportDocumentAuthorizationBundle(doc, owner)).toEqual(await exportAuthorizationBundle(Automerge.save(doc), owner))
   expect(Automerge.change(doc, draft => { draft.title = "Still writable" }).title).toBe("Still writable")
+})
+
+it.each(["current", "legacy", "legacy-transfer"] as const)(
+  "Given %s authority with quarantined signed history, when exporting from admitted root metadata, then retain the exact raw proof union and owner history", async mode => {
+    const { local, remote, record } = await fixture((_, parentId) => ({ kind: "createItem", parentId, title: "Quarantined visitor write" }), "visitor")
+    const admission = await evaluateIncomingWorkspaceAdmission(local, remote, authorizationBundle(local, [record]))
+    const admitted = Automerge.load<WorkspaceDocumentV2>(admission.authorizedDocument)
+    try {
+      expect(admission.quarantinedHashes).toContain(record.signed.payload.hashes[0])
+      const saved = readLocalJournal(local.id)
+      saved.snapshot = { id: local.id, workspaceId: local.id, title: admitted.title, heads: Automerge.getHeads(admitted),
+        bytes: Automerge.save(admitted), savedAt: new Date().toISOString(), causalEvidence: {
+          bytes: admission.rawBytes, decisions: admission.decisions, authorizationEvidence: admission.authorizationEvidence,
+        } }
+      writeLocalJournal(local.id, saved)
+      peerStoreState.authority = { version: 1, workspaceId: local.id, genesisOwnerPersonId: owner.identity.personId,
+        ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+        ownerHistory: [], epoch: 1, updatedAt: new Date().toISOString(), catalog: {} }
+      if (mode === "legacy-transfer") {
+        const transfer = await createWorkspaceOwnershipTransfer(owner, local.id, {
+          personId: member.identity.personId, publicKey: member.identity.publicKey, certificates: [member.certificate],
+        }, Automerge.getHeads(local), 2)
+        peerStoreState.authority = { version: 1, workspaceId: local.id, ownerPersonId: member.identity.personId,
+          ownerPublicKey: member.identity.publicKey, ownerCertificates: [member.certificate],
+          ownerHistory: [{ personId: owner.identity.personId, publicKey: owner.identity.publicKey, certificates: [owner.certificate] }],
+          epoch: 2, updatedAt: new Date().toISOString(), catalog: { ownershipTransfers: [transfer] } }
+      } else if (mode === "legacy") {
+        delete peerStoreState.authority!.genesisOwnerPersonId
+      }
+      const root = { id: admitted.id, ownerPersonId: admitted.ownerPersonId }
+      const expected = await exportAuthorizationBundle(Automerge.save(remote), owner)
+      const actual = await exportDocumentAuthorizationBundle(root, owner)
+      expect(actual).toEqual(expected)
+      expect(actual.records.some(value => value.signed.signature === record.signed.signature)).toBe(true)
+      expect(actual.authority.genesisOwner.personId).toBe(owner.identity.personId)
+      expect(actual.authority.currentOwner.personId).toBe(mode === "legacy-transfer" ? member.identity.personId : owner.identity.personId)
+      if (mode === "legacy-transfer") expect(actual.authority.ownershipTransfers).toHaveLength(1)
+      if (mode === "legacy") {
+        await expect(exportDocumentAuthorizationBundle({ ...root, ownerPersonId: "wrong-genesis-owner" }, owner)).rejects.toThrow(/authority/i)
+      }
+    } finally { Automerge.free(admitted); Automerge.free(remote); Automerge.free(local) }
+  },
+)
+
+it("Given repeated metadata exports, when a new signed change and revocation arrive, then export their fresh evidence without reusing an old authorization bundle", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Fresh export", owner.identity.personId, "blank"))
+  await recordGenesisAuthority(doc, owner)
+  peerStoreState.authority = { version: 1, workspaceId: doc.id, genesisOwnerPersonId: owner.identity.personId,
+    ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+    ownerHistory: [], epoch: 1, updatedAt: new Date().toISOString(), catalog: {} }
+  const root = { id: doc.id, ownerPersonId: doc.ownerPersonId }
+  let changed: Automerge.Doc<WorkspaceDocumentV2> | undefined
+  try {
+    const initial = await exportDocumentAuthorizationBundle(root, owner)
+    changed = Automerge.change(Automerge.clone(doc), draft => { draft.title = "Newly signed change" })
+    const hash = Automerge.decodeChange(Automerge.getLastLocalChange(changed)!).hash
+    const added = await prepareLocalChangeAuthorizations(changed, owner, [hash])
+    await putRecords(doc.id, added)
+    const revocation = await createWorkspaceRevocation(owner, doc.id, member.identity.personId, 2, Automerge.getHeads(changed))
+    peerStoreState.authority = { ...peerStoreState.authority!, catalog: { ...peerStoreState.authority?.catalog, revocations: [revocation] } }
+    const current = await exportDocumentAuthorizationBundle(root, owner)
+    expect(current.records.length).toBeGreaterThan(initial.records.length)
+    expect(current.records.some(value => value.signed.signature === added[0]!.signed.signature)).toBe(true)
+    expect(current.authority.revocations).toEqual([revocation])
+  } finally { if (changed) Automerge.free(changed); Automerge.free(doc) }
 })
 
 it("Given an enrolled owner device with a delegated certificate, when creating a workspace, then genesis includes the complete verified issuer chain", async () => {

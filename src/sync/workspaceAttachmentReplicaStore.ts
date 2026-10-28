@@ -18,7 +18,7 @@ import { parseReplicaContentKeys } from "./replicaContentKeys"
 import { selectWorkspaceAttachmentTransfer, type WorkspaceAttachmentTransfer } from "./workspaceAttachmentTransfers"
 import type { RustyFetch } from "@meta-uber/mesh-replication/rusty-replica"
 
-type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "readWorkspaceDoc">
+type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "getCurrentProfile" | "withWorkspaceDoc">
 
 /** The production background adapter retains private progress independently of the original source bytes. */
 export function createWorkspaceAttachmentReplication(app: AttachmentApp, configInput: BlindReplicaConfig,
@@ -54,7 +54,7 @@ export function createWorkspaceAttachmentReplication(app: AttachmentApp, configI
   let coverageSupport: Promise<boolean> | undefined
   return new WorkspaceAttachmentReplication(config.workspaceId, {
     current,
-    list: async () => { await current(); return listWorkspaceAttachments(await app.readWorkspaceDoc(config.workspaceId)) },
+    list: async () => { await current(); return app.withWorkspaceDoc(config.workspaceId, listWorkspaceAttachments) },
     locators: () => index.read(),
     guard: (descriptor, mode) => createAttachmentAccessGuard(app, config, descriptor, mode, guardIdentity),
     prepared: async descriptor => {

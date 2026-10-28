@@ -2,7 +2,7 @@ import { captureIdentityProfile } from "../domain/identity"
 import { z } from "zod"
 import { adoptEnrolledIdentity, isCurrentIdentityProfile, fromBase64Url, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import type { DeviceCertificate, PersonalRootDocumentV1 } from "../domain/model"
-import { identityDeviceCertificateChain, mergeIdentityAuthorityViews, verifyIdentityAuthorityView,
+import { identityDeviceCertificateChain, verifyIdentityAuthorityView,
   publicKeyId, type IdentityAuthorityView, type VerifiedIdentityAuthorityView } from "@meta-uber/mesh-identity"
 import type { WorkspaceGrant } from "../domain/model"
 import { defaultProofStore } from "../domain/proofs"
@@ -17,7 +17,7 @@ import { activateIdentityDeviceTransfer, resumeIdentityDeviceActivation } from "
 import { readLocal, type LocalStatePlan } from "../localDb"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { enrollmentManagementConflictResolver } from "./enrollmentManagementReconciliation"
-import { readIdentityAuthorityView } from "./identityAuthorityStore"
+import { readIdentityAuthorityView, reconcileIdentityAuthorityHistory } from "./identityAuthorityStore"
 import { parsePrivateReplicaConfig, parseReplicaConfig } from "./blindReplicaConfig"
 import type { BlindReplicaConfig, IdentityReplicaConfig } from "./blindReplication"
 import { readIdentityRustyServicePin } from "./identityRustyServiceCatalog"
@@ -56,7 +56,7 @@ export async function assertActiveIdentityEnrollmentDevice(current: IdentityAuth
   if (current.personId !== personId || incoming.personId !== personId) {
     throw new Error("Identity authority view belongs to another person")
   }
-  const authorityView = await mergeIdentityAuthorityViews(current, incoming)
+  const authorityView = await reconcileIdentityAuthorityHistory(current, incoming)
   const certificates = await identityDeviceCertificateChain({ personId, publicKey: authorityView.identityPublicKey, displayName: "" },
     authorityView, deviceId)
   if (certificates[0]?.payload.devicePublicKey !== devicePublicKey) throw new Error("Identity device key does not match the active certificate")

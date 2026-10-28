@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest"
-import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { bootstrapIdentity, resetIdentityStorageForTest, signEnvelope } from "../domain/identity"
 import { createPersonalRoot, registerDeviceInRoot, registerWorkspaceInRoot } from "../domain/personalRoot"
 import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
 import { defaultStorage } from "../storage"
@@ -7,8 +7,9 @@ import * as local from "../localDb"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
 import { resumeIdentityDeviceActivation } from "./identityDeviceActivation"
 import { readIdentityStateRevision } from "../identityStateRevision"
-import { createIdentityAuthorityView, createIdentityEnrollmentDevice } from "@meta-uber/mesh-identity"
-import { rootIdentityProfileState } from "../domain/identityProfileRoot"
+import { createDeviceRevocation, createIdentityAuthorityView, createIdentityEnrollmentDevice, createIdentityProfileOperation,
+  verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
+import { projectIdentityProfileRoot, rootIdentityProfileState } from "../domain/identityProfileRoot"
 import { mergeIdentityAuthorityView, readIdentityAuthorityView, identityAuthorityViewKey } from "./identityAuthorityStore"
 
 beforeEach(() => resetIdentityStorageForTest())
@@ -102,4 +103,103 @@ it("Given a newer verified authority catalog arrives on another device, when tra
     revocationHead: previous!.revocationHead,
     viewDigest: next.viewDigest,
   })
+})
+
+it("Given a newer learned revocation, when an older authenticated catalog snapshot is imported, then recover its board reference while retaining the current revocation", async () => {
+  const { owner, root, transfer } = await fixture()
+  const app = await createIdentityEnrollmentDevice("Removed app")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+    owner.identity.personId, app.device.deviceId, app.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate], profileState = await rootIdentityProfileState(root)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, authority, app.device.deviceId, profileState)
+  const current = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState)
+  await mergeIdentityAuthorityView(current)
+
+  await expect(applyIdentityDeviceTransfer(transfer, () => {})).resolves.toBe(true)
+
+  expect((await defaultStorage.loadPersonalRoot(root.rootId))?.workspaces["new-board"]).toBeDefined()
+  expect(await readIdentityAuthorityView(owner.identity.personId)).toEqual(current)
+})
+
+it.each(["name", "photo"] as const)("Given an offline %s edit outside a later revocation cutoff, when an old authenticated catalog is imported, then restore its board without resurrecting the revoked profile edit", async field => {
+  const { owner, root } = await fixture()
+  const device = await createIdentityEnrollmentDevice("Removed manager")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+    owner.identity.personId, device.device.deviceId, device.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate], profileState = await rootIdentityProfileState(root)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, profileState))
+  const offline = { device: device.device, identity: owner.identity, certificate,
+    privateKeys: { devicePrivateKey: device.privateKey } }
+  const value = field === "name" ? "Revoked offline name" : { avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA",
+    changedAt: "2026-10-28T20:00:00.000Z" }
+  const edit = await createIdentityProfileOperation(offline, profileState, field, value, certificates)
+  const incoming = projectIdentityProfileRoot(root, { ...profileState, operations: [...profileState.operations, edit] })
+  registerWorkspaceInRoot(incoming, "offline-board", "offline-board", "genesis")
+  const transfer = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, certificates), owner.identity.personId)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, authority, device.device.deviceId, profileState)
+  const current = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState)
+  await mergeIdentityAuthorityView(current)
+
+  await applyIdentityDeviceTransfer(transfer, () => {})
+
+  const restored = await defaultStorage.loadPersonalRoot(root.rootId)
+  expect(restored?.workspaces["offline-board"]).toBeDefined()
+  expect(restored?.identity.displayName).toBe("Owner")
+  expect(restored?.photo).toBeUndefined()
+  expect(restored?.profileState?.operations).not.toContainEqual(edit)
+  expect(await readIdentityAuthorityView(owner.identity.personId)).toEqual(current)
+})
+
+it.each(["name", "photo"] as const)("Given an active app-only device's signed %s, when its catalog is imported, then preserve existing application presentation rights without manager delegation", async field => {
+  const { owner, root } = await fixture()
+  const app = await createIdentityEnrollmentDevice("App presentation")
+  const certificate = await signEnvelope(owner.privateKeys.identityPrivateKey!, { kind: "device-certificate" as const,
+    version: 1 as const, personId: owner.identity.personId, deviceId: app.device.deviceId,
+    devicePublicKey: app.device.publicKey, issuerCertificateHash: null, canEnrollDevices: false }, owner.identity.personId)
+  const certificates = [owner.certificate, certificate], profileState = await rootIdentityProfileState(root)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, profileState))
+  const value = field === "name" ? "App name" : { avatarData: "data:image/webp;base64,UklGRhYAAABXRUJQVlA4WAoAAAAAAAAAfwAAfwAA",
+    changedAt: "2026-10-28T20:00:00.000Z" }
+  const edit = { signed: await signEnvelope(app.privateKey, { kind: "identity-profile-update" as const, version: 1 as const,
+    personId: owner.identity.personId, deviceId: app.device.deviceId, counter: 1, context: {}, field, value,
+    supersedesLegacy: profileState.legacy.filter(observation => observation.field === field).map(observation => observation.id) }, app.device.deviceId),
+  certificates: [certificate] }
+  const incoming = projectIdentityProfileRoot(root, { ...profileState, operations: [...profileState.operations, edit] })
+  const transfer = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, certificates), owner.identity.personId)
+
+  await applyIdentityDeviceTransfer(transfer, () => {})
+
+  const restored = await defaultStorage.loadPersonalRoot(root.rootId)
+  expect(field === "name" ? restored?.identity.displayName : restored?.photo).toEqual(value)
+  expect(restored?.profileState?.operations).toContainEqual(edit)
+})
+
+it("Given no retained personal root and a name history fully outside the signed revocation cutoff, when its historical catalog restores, then show neutral presentation without restoring the revoked name or inventing history", async () => {
+  const { owner, root } = await fixture()
+  const device = await createIdentityEnrollmentDevice("Removed sole name author")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+    owner.identity.personId, device.device.deviceId, device.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate]
+  const profileState = { version: 1 as const, personId: owner.identity.personId, operations: [], legacy: [] }
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, profileState))
+  const offline = { device: device.device, identity: owner.identity, certificate,
+    privateKeys: { devicePrivateKey: device.privateKey } }
+  const edit = await createIdentityProfileOperation(offline, profileState, "name", "Revoked only name", certificates)
+  const incoming = projectIdentityProfileRoot(root, { ...profileState, operations: [edit] })
+  registerWorkspaceInRoot(incoming, "restored-board", "restored-board", "genesis")
+  const transfer = await readIdentityDeviceTransfer(await createIdentityDeviceTransfer(incoming, certificates), owner.identity.personId)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, authority, device.device.deviceId, profileState)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState))
+  await local.deleteLocal("tincanban.v1.personal_roots")
+
+  await applyIdentityDeviceTransfer(transfer, () => {})
+
+  const restored = await defaultStorage.loadPersonalRoot(root.rootId)
+  expect(restored?.identity.displayName).toBe("Participant")
+  expect(restored?.workspaces["restored-board"]).toBeDefined()
+  expect(restored?.profileState).toEqual(profileState)
+  expect((await bootstrapIdentity()).identity.displayName).toBe("Participant")
 })

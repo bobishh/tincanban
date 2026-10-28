@@ -4,6 +4,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { createBlobDescriptor } from "@meta-uber/mesh-blob"
 import type { BlindReplicaConfig } from "./blindReplication"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 
 async function loadTestModules() {
   const [crdt, identity, seeds, proofs, changes, meshRecords, peer, access, replicas, local, delivery, codec, index, client] = await Promise.all([
@@ -59,7 +60,7 @@ async function fixture(role: "owner" | "editor" | "visitor" | "uninvited" = "own
   await runtime.setReplicaPreference(profile.identity.personId, config)
   const selected = (await runtime.getReplicaConfigurations(profile.identity.personId))[0]!
   let currentDoc = doc
-  const app = { readWorkspaceDoc: async () => currentDoc, getCurrentProfile: () => profile }
+  const app = { withWorkspaceDoc: async <T>(_id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>) => read(currentDoc), getCurrentProfile: () => profile }
   const revoke = async () => {
     const authority = await runtime.peerStore.getWorkspaceAuthority(doc.id)
     if (!authority) throw new Error("Expected fixture owner authority")
@@ -159,9 +160,9 @@ it("Given a connection is removed while the document read waits, then do not ret
   const f = await fixture()
   try {
     const guard = await runtime.createAttachmentAccessGuard(f.app as never, f.config, f.descriptor, "read")
-    vi.spyOn(f.app, "readWorkspaceDoc").mockImplementationOnce(async () => {
+    vi.spyOn(f.app, "withWorkspaceDoc").mockImplementationOnce(async (_id, read) => {
       await runtime.setReplicaPreference(f.profile.identity.personId, f.config, true)
-      return f.doc
+      return read(f.doc)
     })
     await expect(guard()).rejects.toThrow(/credential|revision|connection/i)
   } finally { f.close() }
@@ -217,4 +218,32 @@ it("Given device authority is revoked while Rusty reads, then neither return byt
     await expect(runtime.fetchRustyAttachment(f.app as never, f.doc.id, f.descriptor, () => {}, peer)).rejects.toThrow(/revok|permission|authority/i)
     expect(peer).not.toHaveBeenCalled()
   } finally { f.close() }
+})
+
+it("Given attachment I/O on a saved background board, when authority is rechecked repeatedly, then release owned native documents without affecting the active board", async () => {
+  const f = await fixture()
+  const { createSyncActions } = await import("../stateSyncActions")
+  const { stateRuntime } = await import("../stateContext")
+  const previous = stateRuntime.activeDoc
+  const loaded: Automerge.Doc<WorkspaceDocumentV2>[] = []
+  const bytes = Automerge.save(f.doc)
+  const storage = { loadWorkspaceDoc: async () => {
+    const doc = Automerge.load<WorkspaceDocumentV2>(bytes)
+    loaded.push(doc)
+    return { doc }
+  } }
+  const actions = createSyncActions()
+  const app = { ...f.app, withWorkspaceDoc: <T>(id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>) => actions.withWorkspaceDoc(id, read, storage as never) }
+  stateRuntime.activeDoc = null
+  try {
+    const guard = await runtime.createAttachmentAccessGuard(app as never, f.config, f.descriptor, "read")
+    for (let attempt = 0; attempt < 4; attempt++) await guard()
+    expect(loaded.length).toBeGreaterThan(4)
+    expect(loaded.filter(doc => { try { Automerge.stats(doc); return true } catch { return false } })).toHaveLength(0)
+    expect(Automerge.stats(f.doc)).toBeDefined()
+  } finally {
+    for (const doc of loaded) { try { Automerge.free(doc) } catch { /* Already released by its owner. */ } }
+    stateRuntime.activeDoc = previous
+    f.close()
+  }
 })

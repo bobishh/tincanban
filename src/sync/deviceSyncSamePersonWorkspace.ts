@@ -25,6 +25,7 @@ import type { DurableMesh } from "./durableMesh"
 import type { WorkspaceSetStore } from "./workspaceSet"
 import type { EnrollmentContext } from "./deviceSyncEnrollment"
 import { traceEnrollment, traceEnrollmentOperation } from "./enrollmentDiagnostics"
+import { clearPairingLocation } from "./deviceSyncInviteView"
 
 function isCurrent(context: EnrollmentContext, run: number) {
   return context.currentRun() === run
@@ -102,7 +103,7 @@ export async function serveApprovedIdentityWorkspace(input: WorkspaceTransferSes
   const snapshot = await replica.snapshot()
   const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: [workspaceId], profile,
     remoteDeviceId: guest.deviceId, isCurrent: input.isCurrent, readProfile: input.getProfile,
-    readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
+    readWorkspaces: ids => peerStore.readWorkspaceAuthorization(ids) })
   const acknowledgementHistory = createEnrollmentHistoryReader(store, [workspaceId], guest.deviceId, historyGuard)
   await historyGuard()
   const payload = await createSamePersonWorkspaceBootstrap({ invite, profile, recipientDeviceId: guest.deviceId,
@@ -195,7 +196,7 @@ export async function receiveSamePersonWorkspaceBootstrap(context: EnrollmentCon
     } })
   context.state.step.value = "enroll-guest-done"
   traceEnrollment(invite, "guest", "completed", run, { workspaces: 1 })
-  if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/")
+  clearPairingLocation()
 }
 
 /** Verify history before activating credentials; the same retained offer can retry after interruption. */
@@ -223,7 +224,7 @@ export async function receiveApprovedIdentityWorkspace(input: WorkspaceTransferS
   ensureCurrent()
   const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds, profile,
     remoteDeviceId: invite.issuerDeviceId, isCurrent: input.isCurrent, readProfile: input.getProfile,
-    readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
+    readWorkspaces: ids => peerStore.readWorkspaceAuthorization(ids) })
   await mergeIdentityAuthorityView(prepared.authorityView, ensureCurrent)
   // History has validated. Install its verified access before merge publishes the
   // board to observers that immediately reclassify, edit, or share it.

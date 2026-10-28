@@ -116,4 +116,13 @@ describe("publication ownership state", () => {
     expect(result).toMatchObject({ published: false, withdrawn: true, recoveryNeeded: false })
     expect(result.record?.intent).toEqual(pending.intent)
   })
+
+  it("Given pending withdrawal, when an editor wins its next revision with public content, then do not confirm withdrawal", () => {
+    const pending = { ...record("withdrawn"), intent: { ...pendingUpdate().intent!, action: "unpublish" as const } }
+    const result = reconcilePublicationRecord(pending, { revision: 9, published: true, availability: "published", hash: "editor-hash" })
+    expect(result.record?.intent).toEqual(pending.intent)
+    expect(result.record?.intent?.confirmed).not.toBe(true)
+    expect(result.record?.remoteAvailability).toBe("published")
+    expect(result.retryWithdrawal).toBe(true)
+  })
 })

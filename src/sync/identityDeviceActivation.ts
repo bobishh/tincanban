@@ -17,16 +17,18 @@ import { resumeIdentityProfileProjections } from "./identityProfileProjection"
 import { planIdentityProfilePresentation } from "./identityProfilePresentationPlan"
 import { planIdentityAuthorityViewMerge } from "./identityAuthorityStore"
 import type { ManagementConflictResolver } from "./rustyManagementReconciliation"
+import type { VerifiedIdentityAuthorityView } from "@meta-uber/mesh-identity"
 
 type Transfer = Awaited<ReturnType<typeof readIdentityDeviceTransfer>>
 type ActivationOptions = { adoption?: LocalStatePlan; deferEffects?: boolean; resolveManagementConflict?: ManagementConflictResolver }
 
-async function mergeRoot(current: PersonalRootDocumentV1 | null, incoming: PersonalRootDocumentV1): Promise<PersonalRootDocumentV1> {
-  if (!current) return mergeIdentityProfileRoots(null, incoming)
+async function mergeRoot(current: PersonalRootDocumentV1 | null, incoming: PersonalRootDocumentV1,
+  authority: VerifiedIdentityAuthorityView): Promise<PersonalRootDocumentV1> {
+  if (!current) return mergeIdentityProfileRoots(null, incoming, authority)
   for (const [id, device] of Object.entries(incoming.devices)) {
     if (current.devices[id] && current.devices[id].publicKey !== device.publicKey) throw new Error("Device-state certificate catalog conflict")
   }
-  return { ...await mergeIdentityProfileRoots(current, incoming),
+  return { ...await mergeIdentityProfileRoots(current, incoming, authority),
     devices: { ...current.devices, ...incoming.devices },
     workspaces: { ...incoming.workspaces, ...current.workspaces },
     keeperIntegrations: { ...incoming.keeperIntegrations, ...current.keeperIntegrations },
@@ -43,9 +45,10 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
     throw new Error("Identity changed before device-state activation")
   }
   if (profileRaw !== undefined && profileRaw !== null) await refreshIdentityPresentation(profileRaw)
+  const authorityPlan = await planIdentityAuthorityViewMerge(personId, transfer.authorityView)
   let projectedRoot = transfer.personalRoot
-  const plans = await Promise.all([
-    planPersonalRootUpdate(personId, async current => { projectedRoot = await mergeRoot(current, transfer.personalRoot); return projectedRoot }),
+  const plans = [authorityPlan, ...await Promise.all([
+    planPersonalRootUpdate(personId, async current => { projectedRoot = await mergeRoot(current, transfer.personalRoot, authorityPlan.authorityView); return projectedRoot }),
     planPrivateReplicaImport(personId, transfer.replicas),
     new RustyManagementRepository(personId).planImport(transfer.capabilities, options.resolveManagementConflict),
     planIdentityRecoveryImport(personId, transfer.recoveryEvidence),
@@ -53,8 +56,7 @@ async function activationPlan(transfer: Transfer, options: ActivationOptions, pr
     planIdentityPeerRecoveryImport(transfer.manifest),
     planIdentityWorkspaceRouteRecoveryImport(transfer.manifest),
     planIdentityProfileImport(transfer.personalRoot.identity, transfer.observations),
-    planIdentityAuthorityViewMerge(personId, transfer.authorityView),
-  ])
+  ])]
   const profilePlan = planIdentityProfilePresentation(profileRaw ?? null, projectedRoot.identity, options.adoption)
   return { conditions: [...plans.flatMap(plan => plan.conditions), ...profilePlan.conditions,
     { key: activationKey(personId), value: previousActivation }],

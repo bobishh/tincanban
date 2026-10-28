@@ -486,6 +486,41 @@ describe("Transaction wrapper, commands, and publication queue (Requirement 1.6)
     expect(field.options[lowOpt.id].title).toBe("Minor")
   })
 
+  it("Given a card retaining an archived select option, when editing its description, then preserve that choice while rejecting newly selected archived options", async () => {
+    const blank = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("retained-option", "Options", profile.identity.personId, "blank"))
+    const queue = createCommandQueue(blank, profile)
+    const board = Object.values(blank.entities).find(entity => hasEntityKind(entity, "board"))!
+    const column = Object.values(blank.entities).find(entity => hasEntityKind(entity, "column"))!
+    const fieldResult = await queue.transact({ kind: "createField", boardId: board.id, title: "Choice", valueType: "select",
+      required: false, options: { old: { title: "Old" }, other: { title: "Other" } } })
+    expect(fieldResult.ok).toBe(true)
+    if (!fieldResult.ok) return
+    const fieldId = fieldResult.value.receipt.changedEntityIds[0]!
+    const field = queue.getDocument().entities[fieldId]
+    if (!hasEntityKind(field, "field") || field.valueType !== "select") throw new Error("Expected select field")
+    const oldOption = Object.values(field.options).find(option => option.title === "Old")!.id
+    const otherOption = Object.values(field.options).find(option => option.title === "Other")!.id
+    const created = await queue.transact({ kind: "createItem", id: "retained-card", parentId: column.id, title: "Existing card",
+      values: { [fieldId]: oldOption } })
+    expect(created.ok).toBe(true)
+    expect((await queue.transact({ kind: "patchFieldOption", fieldId, optionId: oldOption, archived: true })).ok).toBe(true)
+    expect((await queue.transact({ kind: "patchFieldOption", fieldId, optionId: otherOption, archived: true })).ok).toBe(true)
+    const edited = await queue.transact({ kind: "patchItem", entityId: "retained-card", body: "Current description",
+      values: { [fieldId]: oldOption } })
+    expect(edited.ok).toBe(true)
+    const saved = queue.getDocument().entities["retained-card"] as Item
+    expect(saved.body).toBe("Current description")
+    expect(saved.values[fieldId]).toBe(oldOption)
+    const before = Automerge.getHeads(queue.getDocument())
+    expect((await queue.transact({ kind: "patchItem", entityId: "retained-card", values: { [fieldId]: otherOption } })).ok).toBe(false)
+    expect((await queue.transact({ kind: "createItem", parentId: column.id, title: "New card", values: { [fieldId]: oldOption } })).ok).toBe(false)
+    expect(Automerge.getHeads(queue.getDocument())).toEqual(before)
+    expect((await queue.transact({ kind: "patchItem", entityId: "retained-card", values: { [fieldId]: null } })).ok).toBe(true)
+    expect((await queue.transact({ kind: "patchItem", entityId: "retained-card", values: { [fieldId]: oldOption } })).ok).toBe(false)
+    Automerge.free(queue.getDocument())
+    Automerge.free(blank)
+  })
+
   it("validates datetime field values when creating and patching items", async () => {
     const rawWs = createWorkspaceDoc("ws_dt_test", "Datetime Board", profile.identity.personId, "blank")
     const blankDoc = Automerge.from<WorkspaceDocumentV2>(rawWs)

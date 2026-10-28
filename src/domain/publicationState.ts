@@ -51,7 +51,7 @@ export function parsePublicationRecord(raw: string | null): PublicationRecord | 
 /** Remote state must come from the authenticated, integrity-checked publication reader. */
 export function reconcilePublicationRecord(record: PublicationRecord | undefined, remote: {
   revision: number; published: boolean; availability?: PublicationAvailability; hash?: string; projection?: PublicBoardProjection
-}): { published: boolean; withdrawn: boolean; recoveryNeeded: boolean; revision: number; hash: string; record?: PublicationRecord } {
+}): { published: boolean; withdrawn: boolean; recoveryNeeded: boolean; revision: number; hash: string; record?: PublicationRecord; retryWithdrawal?: boolean } {
   const availability = remote.availability ?? (remote.published ? "published" : "withdrawn")
   if (record?.ownerIntent === "withdrawn") return withdrawnIntent(record, availability, remote)
   if (record?.ownerIntent === "published" && availability === "missing") return missingPublishedCopy(record, remote.revision)
@@ -61,11 +61,13 @@ export function reconcilePublicationRecord(record: PublicationRecord | undefined
 
 function withdrawnIntent(record: PublicationRecord, availability: PublicationAvailability, remote: { revision: number }) {
   const next = { ...record, remoteAvailability: availability }
-  const pending = next.intent && !next.intent.confirmed && next.intent.action === "unpublish" && next.intent.expectedRevision + 1 === remote.revision
-    ? { ...next.intent, confirmed: true, confirmedBy: "status" as const } : next.intent
+  const intent = next.intent
+  const unconfirmed = intent?.action === "unpublish" && !intent.confirmed
+  const pending = availability === "withdrawn" && intent && unconfirmed && intent.expectedRevision + 1 === remote.revision
+    ? { ...intent, confirmed: true, confirmedBy: "status" as const } : intent
   const confirmed = pending === next.intent ? next : { ...next, intent: pending }
   return { published: false, withdrawn: true, recoveryNeeded: false, revision: remote.revision,
-    hash: record.confirmedHash, record: confirmed }
+    hash: record.confirmedHash, record: confirmed, retryWithdrawal: availability === "published" && unconfirmed }
 }
 function missingPublishedCopy(record: PublicationRecord, remoteRevision: number) {
   const next = { ...record, remoteAvailability: "missing" as const }

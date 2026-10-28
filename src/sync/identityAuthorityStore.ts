@@ -58,7 +58,7 @@ export async function requireIdentityAuthorityView(personId: string): Promise<Ve
   return view
 }
 
-/** Persist a verified view with compare-and-swap; stale or forked revocation history cannot replace it. */
+/** Persist a verified union with compare-and-swap; retained older history cannot lower the accepted revocation head. */
 export async function mergeIdentityAuthorityView(
   incomingValue: IdentityAuthorityView,
   ensureCurrent: () => void = () => {},
@@ -73,7 +73,7 @@ export async function mergeIdentityAuthorityView(
       let previous: unknown
       try { previous = JSON.parse(previousRaw) as unknown }
       catch { throw new Error("Stored Identity authority view is malformed") }
-      merged = await mergeIdentityAuthorityViews(previous, incoming)
+      merged = await reconcileIdentityAuthorityHistory(previous, incoming)
     }
     ensureCurrent()
     const next = JSON.stringify(merged)
@@ -95,11 +95,21 @@ export async function planIdentityAuthorityViewMerge(personId: string, incomingV
     let previous: unknown
     try { previous = JSON.parse(previousRaw) as unknown }
     catch { throw new Error("Stored Identity authority view is malformed") }
-    merged = await mergeIdentityAuthorityViews(previous, incoming)
+    merged = await reconcileIdentityAuthorityHistory(previous, incoming)
   }
   const next = JSON.stringify(merged)
   return {
     conditions: [{ key, value: previousRaw }],
     writes: next === previousRaw ? [] : [{ key, value: next }],
+    authorityView: merged,
   }
+}
+
+/** The SDK validates the shorter history as a prefix of the longer one, including certificate conflicts. */
+export async function reconcileIdentityAuthorityHistory(previous: unknown, incomingValue: IdentityAuthorityView): Promise<VerifiedIdentityAuthorityView> {
+  const current = await verifyIdentityAuthorityView(previous)
+  const incoming = await verifyIdentityAuthorityView(incomingValue)
+  return current.revocationHead.revision > incoming.revocationHead.revision
+    ? mergeIdentityAuthorityViews(incoming, current)
+    : mergeIdentityAuthorityViews(current, incoming)
 }

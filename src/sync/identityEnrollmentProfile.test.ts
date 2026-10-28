@@ -7,9 +7,11 @@ import { identityProfileRevision } from "../domain/identityProfileRevision"
 import { identityProfileValue } from "../domain/identityProfileState"
 import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "./identityEnrollmentProfile"
-import { createIdentityAuthorityView, createIdentityRustyServicePinOperation, emptyIdentityProfileState,
-  identityProfileRustyServicePins, publicKeyId } from "@meta-uber/mesh-identity"
+import { createDelegatedCertificate, createDeviceRevocation, createIdentityAuthorityView, createIdentityEnrollmentDevice,
+  createIdentityRustyServicePinOperation, emptyIdentityProfileState, identityProfileRustyServicePins,
+  publicKeyId, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
+import { certHashDefault } from "../domain/proofs"
 
 async function saveRoot(profile: Awaited<ReturnType<typeof bootstrapIdentity>>, root: ReturnType<typeof createPersonalRoot>) {
   await defaultStorage.savePersonalRoot(root)
@@ -43,6 +45,28 @@ it("Given an unchanged signed profile, when the sync adapter reloads it, then re
   expect(Automerge.getHeads(afterSignedChange)).not.toEqual(Automerge.getHeads(afterNoOp))
   const afterReload = await createIdentityEnrollmentProfileStore(profile).current()
   expect(Automerge.getHeads(afterReload)).toEqual(Automerge.getHeads(afterSignedChange))
+})
+
+it.each(["current", "commit"] as const)("Given a saved Identity profile and newer learned revocation, when %s reconciles the older profile snapshot, then retain the current authority and its existing profile history", async operation => {
+  const owner = await bootstrapIdentity("Revocation owner")
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  await saveRoot(owner, root)
+  const store = createIdentityEnrollmentProfileStore(owner), previous = await store.current()
+  const device = await createIdentityEnrollmentDevice("Removed device")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, device.device.deviceId, device.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate], profileState = await rootIdentityProfileState(root)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, authority, device.device.deviceId, profileState)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity,
+    { certificates, revocations: [revocation] }, profileState))
+
+  if (operation === "commit") await store.commit(previous, await identityProfileRevision(profileState))
+  const current = await store.current()
+
+  expect(current.revocations).toEqual([revocation])
+  expect(current.certificates).toEqual(expect.arrayContaining(certificates))
+  expect(current.profileState).toEqual(previous.profileState)
 })
 
 it("Given a manager-signed Rusty service pin, when Tincanban merges and exports profile history, then preserve the pin without projecting it as a user profile field", async () => {

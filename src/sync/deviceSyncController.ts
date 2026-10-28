@@ -453,10 +453,6 @@ export class DeviceSyncController {
       async () => await this.durableMesh?.revokedWorkspaceIds() ?? [])
   }
 
-  private requestEnrollment(replaceIdentity = false) {
-    return requestDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh(), replaceIdentity)
-  }
-
   private async waitToReconnect(milliseconds: number) {
     await new Promise<void>(resolve => {
       const finish = () => {
@@ -521,7 +517,8 @@ export class DeviceSyncController {
       provisionKeeperPairing: this.keeperOperations.provision,
       cancelKeeperPairing: async (pairing: KeeperPairing, operationId: string) => (await import("./keeperPairingWithdrawal")).cancelKeeperPairing(pairing, operationId, () => this.ensureDurableMesh()),
       approveEnrollment: () => this.approveEnrollment(), declineEnrollment: () => this.declineEnrollment(), enrollmentDeviceName: state.enrollmentDeviceName, enrollmentSameIdentity: state.enrollmentSameIdentity, enrollmentConflict: state.enrollmentConflict,
-      requestEnrollment: (replaceIdentity = false) => this.requestEnrollment(replaceIdentity), acceptWorkspaceJoin: () => this.acceptWorkspaceJoin(), prepareJoin: (raw: string) => this.prepareJoin(raw),
+      enrollmentPersonId: computed(() => state.parsedInvite.value?.kind === "device-enrollment" ? state.parsedInvite.value.issuerPersonId : undefined),
+      requestEnrollment: (replaceIdentity = false) => requestDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh(), replaceIdentity), acceptWorkspaceJoin: () => this.acceptWorkspaceJoin(), prepareJoin: (raw: string) => this.prepareJoin(raw),
       canReconnectDevice: computed(() => canReconnectDevice(state)), reconnectDevice: () => reconnectWorkspaceDevice({ state,
         stop: () => this.stopLiveSync(), resetMesh: async () => { await (this.durableMesh ?? await this.durableMeshPromise)?.dispose(); this.durableMesh = undefined; this.durableMeshPromise = undefined },
         identityChanged: this.identityChanged, refreshProfile: () => this.getProfile(), join: () => this.acceptWorkspaceJoin() }),

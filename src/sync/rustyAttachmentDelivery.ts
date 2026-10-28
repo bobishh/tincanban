@@ -9,7 +9,7 @@ import { blindHash, canonicalBlindJson } from "./blindClient"
 import { readStoredAttachment, writeStoredAttachmentStream } from "../attachments"
 import { parseReplicaContentKeys } from "./replicaContentKeys"
 
-type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "readWorkspaceDoc" | "getCurrentProfile">
+type AttachmentApp = Pick<ReturnType<typeof useTincanban>, "withWorkspaceDoc" | "getCurrentProfile">
 
 /** Keep request lifetime checks with the on-demand file path, including its final async return. */
 export async function guardedAttachmentRead<T>(guard: () => void, read: () => Promise<T>): Promise<T> {

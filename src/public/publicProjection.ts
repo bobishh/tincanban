@@ -30,6 +30,8 @@ type PublicProjectionChat = { scope: string; messages: StoredChatMessage[]; prof
 export type PublicProjectionPorts = {
   chat?: PublicProjectionChat
   readFile?: (reference: FileReference) => Promise<Uint8Array | undefined>
+  /** Content outside this writer's authority, from its exact public CAS base. */
+  retainedContent?: Pick<PublicBoardProjection, "discussions" | "discussionAuthors" | "files">
 }
 
 export function snapshotPublicBoardSource(document: WorkspaceDocumentV2, boardId: string): WorkspaceDocumentV2 {
@@ -72,6 +74,11 @@ export async function createPublicBoardPublication(document: WorkspaceDocumentV2
     kind: "tincanban-public-board", version: 1, board: { id: board.id, title: board.title, presentation: publicPresentation(board, columns, publicFields) },
     columns: columns.map(entity => ({ id: entity.id, title: entity.title, rank: entity.placement.rank, color: colors.get(entity.id), ...(isArchiveColumn(entity, board) ? { archive: true as const } : {}), ...( "collapsible" in entity ? { collapsible: entity.collapsible } : {}) })),
     fields: publicFields, cards, discussions: [], files: [],
+  }
+  if (ports.retainedContent) {
+    const { discussions, discussionAuthors, files } = ports.retainedContent
+    return { projection: validatePublicBoardProjection({ ...projection, discussions, files,
+      ...(discussionAuthors ? { discussionAuthors } : {}) }), assets: [] }
   }
   const chat = ports.chat ?? { scope: workspaceId, messages: [], profiles: [] }
   const memberAvatars = new Map(entities.flatMap(entity => entity.kind === "member_profile" ?

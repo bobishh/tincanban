@@ -1,5 +1,5 @@
 import { computed, ref, watch } from "vue"
-import { workspaceRole, effectiveWorkspaceOwner, exportAuthorizationBundle } from "../sync/changeAuthorization"
+import { workspaceRole, effectiveWorkspaceOwner, exportAuthorizationBundle, exportDocumentAuthorizationBundle } from "../sync/changeAuthorization"
 import { canWorkspace, type WorkspaceRole } from "../domain/permissions"
 import { bootstrapIdentity } from "../domain/identity"
 import { useTincanban } from "../state"
@@ -83,8 +83,8 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
   const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile(),
     readWorkspaceDoc: id => tincanban.readWorkspaceDoc(id) })
   configureChat(
-    async id => (await tincanban.readWorkspaceDoc(id)).ownerPersonId,
-    async id => workspaceChatRoomId(await tincanban.readWorkspaceDoc(id)),
+    id => tincanban.withWorkspaceDoc(id, doc => doc.ownerPersonId),
+    id => tincanban.withWorkspaceDoc(id, workspaceChatRoomId),
   )
   const profileRecovery = useIdentityProfileRecovery(tincanban)
   const chatWorkspaceId = computed(() => tincanban.ready.value ? tincanban.activeWorkspace.id : "")
@@ -137,14 +137,17 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
       },
       recordVerifiedOwnerWorkspace: id => tincanban.recordVerifiedOwnerWorkspace(id),
       readAuthorization: (bytes, id) => timedWorkspaceStoreStage("read-authorization", id ?? "unknown", () =>
-        // The exchanged bytes include quarantined history; export proofs for that raw evidence.
-        exportAuthorizationBundle(bytes)),
+        id ? tincanban.withWorkspaceDoc(id, doc => {
+          if (doc.id !== id) throw new Error("Workspace authorization scope changed")
+          // Root metadata selects fresh authority; the exporter still includes raw/quarantined proofs.
+          return exportDocumentAuthorizationBundle({ id: doc.id, ownerPersonId: doc.ownerPersonId })
+        }) : exportAuthorizationBundle(bytes)),
       ...peerHistorySource,
       activate: tincanban.switchWorkspace,
       readChat: exportChat,
       mergeChat: receiveChat,
       blob: {
-        resolve: async (workspaceId, blobId) => workspaceBlobDescriptor(await tincanban.readWorkspaceDoc(workspaceId), blobId),
+        resolve: (workspaceId, blobId) => tincanban.withWorkspaceDoc(workspaceId, doc => workspaceBlobDescriptor(doc, blobId)),
         read: readStoredAttachment,
         write: writeStoredAttachment,
       },
@@ -153,7 +156,7 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
     availableWorkspaces: tincanban.availableWorkspaces,
     activeWorkspaceId: () => tincanban.activeWorkspace.id || "default",
     workspaceOwner: id => timedWorkspaceStoreStage("owner-check", id, () =>
-      resolveWorkspaceOwner(tincanban.readWorkspaceDoc, id)),
+      resolveWorkspaceOwner(tincanban.withWorkspaceDoc, id)),
   })
   const policy = useWorkspacePolicy(tincanban, ui, sync)
   const blindReplication = useBlindReplication(tincanban)
@@ -191,10 +194,11 @@ async function timedWorkspaceStoreStage<T>(stage: string, workspaceId: string, o
   }
 }
 
-async function resolveWorkspaceOwner(readWorkspaceDoc: ReturnType<typeof useTincanban>["readWorkspaceDoc"], id: string) {
-  const doc = await readWorkspaceDoc(id)
-  await workspaceRole(doc, await bootstrapIdentity("My Device"))
-  return effectiveWorkspaceOwner(id, doc.ownerPersonId)
+async function resolveWorkspaceOwner(withWorkspaceDoc: ReturnType<typeof useTincanban>["withWorkspaceDoc"], id: string) {
+  return withWorkspaceDoc(id, async doc => {
+    await workspaceRole(doc, await bootstrapIdentity("My Device"))
+    return effectiveWorkspaceOwner(id, doc.ownerPersonId)
+  })
 }
 
 function useWorkspacePolicy(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>, sync: ReturnType<typeof useDeviceSync>) {

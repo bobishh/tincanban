@@ -10,6 +10,7 @@ import type { LocalProfile } from "../domain/identity"
 import { assertReplicaCredentialsUnfrozen } from "./replicaCredentialFreeze"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 import { readIdentityRustyServicePin } from "./identityRustyServiceCatalog"
+import { retainHistoryForReplicaDisconnect } from "./historyBaselineStartup"
 import { registerLocalWorkspaceOwners } from "./localWorkspaceOwnerRegistration"
 
 /** Board setup is separate from the loop that schedules workspace and private identity replicas. */
@@ -49,6 +50,8 @@ export async function revokeWorkspaceReplicaConnection(config: BlindReplicaConfi
   ensureCurrent: () => void): Promise<BlindReplicaConfig[]> {
   ensureCurrent()
   if (config.boardAccess) throw new Error("Only the board owner can remove its Rusty connection")
+  await retainHistoryForReplicaDisconnect(config, profile.identity.personId, ensureCurrent)
+  ensureCurrent()
   await approveRustyScope(config, profile, true, { scopePurpose: "workspace" })
   ensureCurrent()
   await recordReplicaPreference(profile.identity.personId, config, true)

@@ -1,6 +1,6 @@
 import { captureIdentityProfile } from "../domain/identity"
 import { createRustyIdentityRequestProof, type RustyIdentityRequestProofPayload } from "@meta-uber/mesh-replication/rusty-identity-request-proof"
-import { authorizeIdentityDataDevice, createLocalRootIdentityAuthorityView, mergeIdentityAuthorityViews,
+import { authorizeIdentityDataDevice, createLocalRootIdentityAuthorityView,
   publicKeyId, verifyIdentityAuthorityView, type VerifiedIdentityAuthorityView, type PublicIdentity, type SignedEnvelope } from "@meta-uber/mesh-identity"
 import { publishRustyIdentityAuthorityView, readRustyIdentityAuthorityStatus,
   RustyIdentityAuthorityStaleError } from "@meta-uber/mesh-replication/rusty-identity-authority"
@@ -351,22 +351,16 @@ function parsePrincipalActions(value: unknown): ("read" | "write")[] {
 
 async function mergeStatusAuthority(profile: LocalProfile, state: "missing" | "ready", remoteView: VerifiedIdentityAuthorityView | null,
   ensureCurrent?: () => void | Promise<void>): Promise<VerifiedIdentityAuthorityView> {
+  let local = await readIdentityAuthorityView(profile.identity.personId)
   if (remoteView) {
     await ensureCurrent?.()
-    await mergeIdentityAuthorityView(remoteView)
+    local = await mergeIdentityAuthorityView(remoteView)
     await ensureCurrent?.()
   }
-  let local = await readIdentityAuthorityView(profile.identity.personId)
-  if (!local && state === "ready" && remoteView) local = await mergeIdentityAuthorityView(remoteView)
   if (!local && state === "missing") local = await createFreshLocalAuthority(profile)
   if (!local) throw new Error("Rusty Identity authority view is unavailable")
   if (local.personId !== profile.identity.personId || local.identityPublicKey !== profile.identity.publicKey) {
     throw new Error("Local Rusty Identity authority view belongs to another identity")
-  }
-  if (remoteView) {
-    local = await mergeIdentityAuthorityViews(local, remoteView)
-    await ensureCurrent?.()
-    local = await mergeIdentityAuthorityView(local)
   }
   return local
 }
@@ -395,9 +389,8 @@ async function publishAuthorityIfNeeded(profile: LocalProfile, access: BlindAcce
     return local
   } catch (cause) {
     if (!(cause instanceof RustyIdentityAuthorityStaleError)) throw cause
-    const merged = await mergeIdentityAuthorityViews(local, cause.view)
     await ensureCurrent?.()
-    const persisted = await mergeIdentityAuthorityView(merged)
+    const persisted = await mergeIdentityAuthorityView(cause.view)
     const receipt = await publishAuthorityView(profile, access, persisted, ensureCurrent, fetcher)
     await mergeRustyIdentityServiceEnforcement(access.origin, receipt.payload.serviceId, receipt.payload.enforcement)
     return persisted

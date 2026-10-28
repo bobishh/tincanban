@@ -4,7 +4,7 @@ import { canonicalizeJson } from "./domain/identity"
 import type { WorkspaceChangeAuthorization } from "./product-replica"
 import { StorageHistoryAccess } from "./storageHistoryAccess"
 import { WorkspaceRevisionConflict, type WorkspaceRevisionBasis, type WorkspaceCommitCommand } from "./storageCommitSupport"
-import { openWorkspaceJournal, readWorkspaceBasisSnapshot, updateLocalJournal,
+import { advanceWorkspaceRevision, openWorkspaceJournal, readWorkspaceBasisSnapshot, updateLocalJournal,
   requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence } from "./storageJournal"
 import { withWorkspaceMutation } from "./workspaceMutation"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
@@ -221,7 +221,7 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
       this.assertBasisMatches(revision?.revision ?? null, frontier ?? null,
         snapshot?.receivedHistory?.baselineId ?? null, basis)
       if (frontier) transaction.objectStore("frontiers").put({ ...frontier, invalidated: true })
-      transaction.objectStore("revisions").put({ id: workspaceId, workspaceId, revision: nextRevision })
+      advanceWorkspaceRevision(transaction, workspaceId, nextRevision)
     } catch (error) {
       transaction.abort()
       await completion.catch(() => undefined)

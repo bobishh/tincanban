@@ -50,16 +50,17 @@ function validateSelect(field: Extract<FieldDefinition, { valueType: "select" }>
   return option.archivedAt && !allowDeprecated ? invalid(`${field.title} option "${option.title}" is no longer available`) : valid()
 }
 
+/** Retired options can be retained by an existing card, but cannot be newly selected. */
 export function validateItemValues(
   boardFields: FieldDefinition[],
   values: Record<string, FieldValue>,
-  allowDeprecatedOptions = false
+  previousValues?: Readonly<Record<string, FieldValue>>,
 ): { ok: boolean; errors: Record<string, string> } {
   const errors: Record<string, string> = {}
 
   for (const field of boardFields) {
     const val = values[field.id]
-    const res = validateFieldValue(field, val, allowDeprecatedOptions)
+    const res = validateFieldValue(field, val, previousValues !== undefined && val === previousValues[field.id])
     if (!res.valid) {
       errors[field.id] = res.issue || "Invalid value"
     }

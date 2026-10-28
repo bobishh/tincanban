@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge"
 import { normalizePersonalIdentityDocument, type PersonalIdentityDocument } from "@meta-uber/mesh-replication/identity-mesh"
-import { canonicalizeJson, createIdentityAuthorityView, mergeIdentityAuthorityViews,
+import { canonicalizeJson, createIdentityAuthorityView,
   readIdentityProfileStateWithRevocations } from "@meta-uber/mesh-identity"
 import type { LocalProfile } from "../domain/identity"
 import { certHashDefault, defaultProofStore } from "../domain/proofs"
@@ -69,8 +69,7 @@ export function createIdentityEnrollmentProfileStore(
     const saved = await normalizePersonalIdentityDocument(decodeSnapshot(raw), identity)
     const savedView = await createIdentityAuthorityView(identity,
       { certificates: saved.certificates, revocations: saved.revocations }, saved.profileState)
-    const mergedView = await mergeIdentityAuthorityViews(currentView, savedView)
-    const storedView = await mergeIdentityAuthorityView(mergedView)
+    const storedView = await mergeIdentityAuthorityView(savedView)
     const profileState = await readIdentityProfileStateWithRevocations(
       await mergeIdentityProfileState(saved.profileState, rootState, identity), identity,
       storedView.certificates, storedView.revocations)
@@ -98,9 +97,7 @@ export function createIdentityEnrollmentProfileStore(
       }
       const incomingView = await createIdentityAuthorityView(identity,
         { certificates: candidate.certificates, revocations: candidate.revocations ?? [] }, candidate.profileState)
-      const currentView = await requireIdentityAuthorityView(identity.personId)
-      const mergedView = await mergeIdentityAuthorityViews(currentView, incomingView)
-      const storedView = await mergeIdentityAuthorityView(mergedView)
+      const storedView = await mergeIdentityAuthorityView(incomingView)
       const incomingState = await readIdentityProfileStateWithRevocations(candidate.profileState, identity,
         storedView.certificates, storedView.revocations)
       candidate = { ...candidate, version: 2, certificates: structuredClone(storedView.certificates),

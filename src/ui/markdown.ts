@@ -128,9 +128,12 @@ export function renderMarkdown(source: string, preview = false, interactiveTasks
 }
 
 export function toggleMarkdownTask(source: string, taskIndex: number, checked: boolean): string {
-  let current = 0
-  return source.replace(/^(\s*(?:[-+*]|\d+[.)])\s+\[)([ xX])(\])/gm, (match, prefix: string, _marker: string, suffix: string) => {
-    if (current++ !== taskIndex) return match
-    return `${prefix}${checked ? "x" : " "}${suffix}`
-  })
+  if (!Number.isInteger(taskIndex) || taskIndex < 0) return source
+  const tasks = markdown.parse(source, {}).filter(token =>
+    token.type === "inline" && token.children?.some(child => child.type === "checkbox_input"))
+  const line = tasks[taskIndex]?.map?.[0]
+  if (line === undefined) return source
+  const lines = source.split("\n")
+  lines[line] = lines[line]!.replace(/\[[ xX\u00a0]\]/u, checked ? "[x]" : "[ ]")
+  return lines.join("\n")
 }

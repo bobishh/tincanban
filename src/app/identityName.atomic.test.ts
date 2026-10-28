@@ -10,6 +10,19 @@ import { subscribeIdentityDevicePreferences } from "../sync/identityDevicePrefer
 const rootsKey = "tincanban.v1.personal_roots"
 const profileKey = "tincanban.local_profile.v1"
 
+function isNameCommit(plan: Parameters<typeof localDb.compareAndSwapLocal>[0]) {
+  return plan.writes.some(write => write.key === profileKey) && plan.writes.some(write => write.key === rootsKey)
+}
+
+function failNameCommitOnce(message: string) {
+  const compareAndSwap = localDb.compareAndSwapLocal
+  let failed = false
+  return vi.spyOn(localDb, "compareAndSwapLocal").mockImplementation(async (plan, ensureCurrent) => {
+    if (!failed && isNameCommit(plan)) { failed = true; throw new Error(message) }
+    return compareAndSwap(plan, ensureCurrent)
+  })
+}
+
 beforeEach(async () => {
   resetIdentityStorageForTest()
   await deleteLocal(rootsKey)
@@ -32,7 +45,7 @@ it("Given the atomic rename commit aborts, when saving a name, then preserve bot
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, "certificate", "00000000-0000-4000-8000-000000000081"))
   const rawProfile = await readLocal(profileKey)
   const rawRoot = await readLocal(rootsKey)
-  const cas = vi.spyOn(localDb, "compareAndSwapLocal").mockRejectedValue(new Error("atomic storage failure"))
+  const cas = failNameCommitOnce("atomic storage failure")
   const changed = vi.fn()
   const unsubscribe = subscribeIdentityDevicePreferences(changed)
 
@@ -40,8 +53,9 @@ it("Given the atomic rename commit aborts, when saving a name, then preserve bot
     await expect(saveIdentityName("Changed", "active", async () => {})).rejects.toThrow("atomic storage failure")
   } finally { unsubscribe() }
 
-  expect(cas).toHaveBeenCalledOnce()
-  expect(cas.mock.calls[0][0].writes.map(write => write.key).sort()).toEqual([profileKey, rootsKey])
+  const commits = cas.mock.calls.filter(([plan]) => isNameCommit(plan))
+  expect(commits).toHaveLength(1)
+  expect(commits[0][0].writes.map(write => write.key).sort()).toEqual([profileKey, rootsKey])
   expect(await readLocal(profileKey)).toBe(rawProfile)
   expect(await readLocal(rootsKey)).toBe(rawRoot)
   expect((await bootstrapIdentity()).identity.displayName).toBe("Original")
@@ -104,9 +118,11 @@ it("Given no chosen name, when the explicit neutral-name save fails then succeed
   const profile = await bootstrapIdentity()
   await defaultStorage.savePersonalRoot(createPersonalRoot(profile, "certificate", "00000000-0000-4000-8000-000000000083"))
   const profileBefore = await readLocal(profileKey), rootBefore = await readLocal(rootsKey)
-  const cas = vi.spyOn(localDb, "compareAndSwapLocal").mockRejectedValueOnce(new Error("explicit save failed"))
+  const cas = failNameCommitOnce("explicit save failed")
   await expect(saveIdentityName("Participant", "active", async () => {})).rejects.toThrow("explicit save failed")
-  expect(cas.mock.calls[0][0].writes.map(write => write.key)).toContain(identityNameChoiceKey(profile.identity.personId))
+  const commits = cas.mock.calls.filter(([plan]) => isNameCommit(plan))
+  expect(commits).toHaveLength(1)
+  expect(commits[0][0].writes.map(write => write.key)).toContain(identityNameChoiceKey(profile.identity.personId))
   expect(await readLocal(profileKey)).toBe(profileBefore)
   expect(await readLocal(rootsKey)).toBe(rootBefore)
   clearInMemoryProfileForReloadTest()

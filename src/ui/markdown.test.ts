@@ -55,6 +55,19 @@ describe("shared Markdown rendering", () => {
     expect(toggleMarkdownTask(source, 1, false)).toBe("- [ ] First\n  - [ ] Nested\n1. [ ] Numbered")
   })
 
+  it("Given a fenced task example before a real task, when the rendered task is checked, then preserve the example and update only the real task", () => {
+    const source = "```markdown\n- [ ] Example only\n```\n\n- [ ] Real task"
+    expect(renderMarkdown(source, false, true).match(/data-task-index=/g)).toHaveLength(1)
+    expect(toggleMarkdownTask(source, 0, true)).toBe("```markdown\n- [ ] Example only\n```\n\n- [x] Real task")
+  })
+
+  it("Given a quoted task before an ordinary task, when the second rendered task is checked, then preserve the quoted task and its container", () => {
+    const source = "> - [ ] Quoted task\n\n- [ ] Ordinary task"
+    expect(renderMarkdown(source, false, true).match(/data-task-index=/g)).toHaveLength(2)
+    expect(toggleMarkdownTask(source, 1, true)).toBe("> - [ ] Quoted task\n\n- [x] Ordinary task")
+    expect(toggleMarkdownTask(source, 0, true)).toBe("> - [x] Quoted task\n\n- [ ] Ordinary task")
+  })
+
   it("keeps cached output separate for preview and interactive-task modes", () => {
     const source = "- [ ] First\n- [x] Done\n\n[site](https://example.com)"
     const full = renderMarkdown(source)

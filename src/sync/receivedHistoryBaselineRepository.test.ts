@@ -80,6 +80,18 @@ async function activate(f: Awaited<ReturnType<typeof setup>>, stageId: string, c
 }
 
 describe("received history baseline activation", () => {
+  it("Given a recovered workspace, when a verified compact basis activates, then retain its recovery identity for pending secondary state", async () => {
+    const f = await setup(), recoveryId = crypto.randomUUID(), database = await f.openWorkspaceJournal()
+    const seed = database.transaction("revisions", "readwrite"), seeded = f.transactionDone(seed)
+    seed.objectStore("revisions").put({ id: "history-workspace", workspaceId: "history-workspace", revision: "recovered-revision", recoveryId })
+    await seeded
+    const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)
+    await activate(f, stageId, f.candidate)
+    const read = database.transaction("revisions", "readonly"), done = f.transactionDone(read)
+    expect(await f.requestResult(read.objectStore("revisions").get("history-workspace"))).toMatchObject({ recoveryId })
+    await done
+  })
+
   it("stages verified source durably against exact prior snapshot and rejects a stale parent", async () => {
     const f = await setup()
     const stageId = await f.repository.stage(f.candidate, f.priorSnapshot)

@@ -1,3 +1,4 @@
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import { afterEach, expect, it, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, toBase64Url } from "../domain/identity"
 import * as local from "../localDb"
@@ -7,13 +8,15 @@ import { prepareReplicaCredentialFreeze, readReplicaCredentialFreeze, replicaCre
 import { identityReplicaSetupKey } from "./identityReplicaConnection"
 import { workspaceReplicaSetupKey } from "./workspaceReplicaConnection"
 import { connectWorkspaceReplica } from "./replicaConnections"
+import { readHistoryBaselineKeyCandidates } from "./historyBaselineReadingKeys"
+import type { StoredReceivedHistoryBaseline } from "../storageJournal"
 import { stateKey } from "./privateReplicaRepositoryState"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 const membership = vi.hoisted(() => ({ role: vi.fn(async () => "owner"), admission: vi.fn(async () => ({})) }))
 vi.mock("./changeAuthorization", () => ({ workspaceRole: membership.role, localWorkspaceAdmissionAuthority: membership.admission }))
 import { forgetRustyOrigin } from "./rustyLocalReset"
 
-afterEach(() => { resetIdentityStorageForTest(); vi.restoreAllMocks(); membership.role.mockReset().mockResolvedValue("owner"); membership.admission.mockReset().mockResolvedValue({}) })
+afterEach(() => { vi.unstubAllGlobals(); resetIdentityStorageForTest(); vi.restoreAllMocks(); membership.role.mockReset().mockResolvedValue("owner"); membership.admission.mockReset().mockResolvedValue({}) })
 
 async function resetArchiveKeys(owner: string): Promise<string[]> {
   const keys = (await local.listLocalKeys()).filter(key => key.startsWith("tincanban.rusty-local-reset.v1."))
@@ -184,4 +187,28 @@ it("Given only signed origin management evidence and no active scopes, When forg
   await repository.import([{ binding, capability }])
   expect(await repository.read(binding)).toBeUndefined()
   expect(await getPrivateReplicaConfigurations(f.owner)).toEqual([])
+})
+
+it("Given a previously forgotten Rusty connection, when reopening saved encrypted history, then derive only its matching reading keys from exact retained settings without reactivating delivery", async () => {
+  const f = await fixture()
+  await forgetRustyOrigin(f.app as never, f.config.origin, f.config.workspaceId, () => {})
+  vi.stubGlobal("indexedDB", new IDBFactory())
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange)
+  const active: StoredReceivedHistoryBaseline = { id: `${f.config.workspaceId}:baseline:fixture`, stageId: crypto.randomUUID(),
+    state: "active", baselineId: "fixture", workspaceId: f.config.workspaceId, scopeId: f.config.scopeId, keyEpoch: f.config.keyEpoch,
+    pinnedStorage: { servicePublicKey: f.config.servicePublicKey }, signedJson: new Uint8Array([1, 2, 3]),
+    document: new Uint8Array(), encryptedObjects: [], expectedSnapshot: null, createdAt: new Date().toISOString() }
+  const current = await getPrivateReplicaConfigurations(f.owner)
+  await local.writeLocal("tincanban.rusty-local-reset.v1.unrelated-corrupt-audit", "{invalid JSON")
+  expect(await readHistoryBaselineKeyCandidates(f.owner, active, current, () => {})).toEqual([f.config.contentKey])
+  for (const unrelated of [{ ...active, workspaceId: "other-board" }, { ...active, scopeId: "unrelated-scope" },
+    { ...active, keyEpoch: 2 }, { ...active, pinnedStorage: { servicePublicKey: "B".repeat(43) } }]) {
+    expect(await readHistoryBaselineKeyCandidates(f.owner, unrelated, current, () => {})).toEqual([])
+  }
+  expect(await readHistoryBaselineKeyCandidates("unrelated-person", active, [], () => {})).toEqual([])
+  expect(await getPrivateReplicaConfigurations(f.owner)).toEqual(current)
+  expect(current).toMatchObject([f.other])
+  await receivePrivateReplicaState(f.owner, f.old)
+  expect(await getPrivateReplicaConfigurations(f.owner)).toEqual(current)
+  vi.unstubAllGlobals()
 })

@@ -51,34 +51,22 @@ function validateBoard(value: unknown, doc: WorkspaceDocumentV2 | undefined, err
     errors.push({ path: "/board/boardId", message: "boardId is required" })
     return
   }
-  if (doc && !hasEntityKind(doc.entities[boardId], "board")) errors.push({ path: "/board/boardId", message: "boardId must identify this workspace board" })
-  if (doc) validateBoardReferences(value, boardId, doc, errors)
+  if (doc) validateBoardReferences(value, doc, errors)
 }
 
-function validateBoardReferences(value: Record<string, unknown>, boardId: string, doc: WorkspaceDocumentV2, errors: SchemaValidationError[]): void {
-  validateEntityReferences(value.columns, "column", boardId, doc, errors, "columns")
-  validateEntityReferences(value.fields, "field", boardId, doc, errors, "fields")
-  if (!Array.isArray(value.fields)) return
-  value.fields.forEach((field, index) => {
-    if (!isRecord(field) || typeof field.id !== "string") return
-    const entity = doc.entities[field.id]
-    if (hasEntityKind(entity, "field") && field.valueType !== entity.valueType) errors.push({ path: `/board/fields/${index}/valueType`,
-      message: `Field type cannot change: ${String(field.title)} (${String(entity.valueType)} [${typeof entity.valueType}] → ${String(field.valueType)} [${typeof field.valueType}])` })
-  })
+function validateBoardReferences(value: Record<string, unknown>, doc: WorkspaceDocumentV2, errors: SchemaValidationError[]): void {
+  validateEntityReferences(value.columns, "column", doc, errors, "columns")
+  validateEntityReferences(value.fields, "field", doc, errors, "fields")
 }
 
-function validateEntityReferences(values: unknown, kind: "column" | "field", boardId: string, doc: WorkspaceDocumentV2, errors: SchemaValidationError[], name: string): void {
+function validateEntityReferences(values: unknown, kind: "column" | "field", doc: WorkspaceDocumentV2, errors: SchemaValidationError[], name: string): void {
   if (!Array.isArray(values)) return
-  const ids = new Set<string>()
   values.forEach((value, index) => {
     if (!isRecord(value)) return
     rejectUnknown(value, kind === "column" ? ["id", "title", "archive", "collapsible", "color"] : ["id", "title", "valueType", "format", "required", "min", "max", "options"], `/board/${name}/${index}`, errors)
     if (typeof value.id !== "string") return
-    if (ids.has(value.id)) errors.push({ path: `/board/${name}/${index}/id`, message: `${kind === "column" ? "Column" : "Field"} id is duplicated` })
-    ids.add(value.id)
     const entity = doc.entities[value.id]
-    const kindMatches = kind === "column" ? hasEntityKind(entity, "column") : hasEntityKind(entity, "field")
-    if (!entity || !kindMatches || entity.placement.parentId !== boardId) errors.push({ path: `/board/${name}/${index}/id`, message: `id must identify a ${kind} on this board` })
+    if (!entity) errors.push({ path: `/board/${name}/${index}/id`, message: `id must identify a ${kind} on this board` })
   })
 }
 

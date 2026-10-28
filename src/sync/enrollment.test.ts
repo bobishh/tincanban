@@ -239,6 +239,29 @@ describe("device enrollment boundary", () => {
       guest.device.deviceId, guest.device.publicKey)).rejects.toThrow(/revoked/i)
   })
 
+  it.each(["unrelated", "phone"])("Given the phone has an older authority view and the host revoked %s, when reconnecting, then admit only the still-authorized phone without rolling authority back", async target => {
+    const { owner, guest, certificate, root } = await fixture()
+    const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const publicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey)))
+    const unrelated = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey!, owner.device.deviceId,
+      owner.identity.personId, await keyId(publicKey), publicKey, await certHashDefault(owner.certificate))
+    const certificates = [owner.certificate, certificate, unrelated]
+    const profileState = await rootIdentityProfileState(root)
+    const older = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, profileState)
+    const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+    const revocation = await createDeviceRevocation(owner, authority,
+      target === "phone" ? guest.device.deviceId : unrelated.payload.deviceId, profileState)
+    const current = await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState)
+    const reconnect = assertActiveIdentityEnrollmentDevice(current, older, owner.identity.personId,
+      guest.device.deviceId, guest.device.publicKey)
+    if (target === "phone") await expect(reconnect).rejects.toThrow(/revoked/i)
+    else {
+      const accepted = await reconnect
+      expect(accepted.authorityView.revocationHead).toEqual(current.revocationHead)
+      expect(accepted.certificates[0]).toEqual(certificate)
+    }
+  })
+
   it("Given a reactive enrollment invitation from the device dialog, when requesting enrollment, then sign its exact original binding", async () => {
     const { guest, invite } = await fixture()
     const bytes = await createEnrollmentRequest(reactive(invite), guest)

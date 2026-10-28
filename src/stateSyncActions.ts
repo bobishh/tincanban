@@ -36,6 +36,7 @@ import {
 export function createSyncActions() {
   return {
     readWorkspaceDoc,
+    withWorkspaceDoc,
     readWorkspaceHeads,
     readWorkspaceBytes,
     recordVerifiedOwnerWorkspace,
@@ -95,6 +96,14 @@ async function readWorkspaceDocLease(id: string, storage: WorkspaceStorage = def
   const loaded = await storage.loadWorkspaceDoc(id);
   if (!loaded) throw new WorkspaceUnavailableError();
   return { doc: loaded.doc, owned: true };
+}
+
+/** Read within the lease: native documents must not escape the callback. Active documents remain borrowed. */
+async function withWorkspaceDoc<T>(id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>,
+  storage = defaultStorage): Promise<T> {
+  const lease = await readWorkspaceDocLease(id, storage)
+  try { return await read(lease.doc) }
+  finally { if (lease.owned) Automerge.free(lease.doc) }
 }
 
 async function readWorkspaceHeads(id: string): Promise<string[]> {
@@ -365,12 +374,14 @@ async function assertImportAllowed(
 ): Promise<void> {
   const existing = (await storage.loadWorkspaceDoc(doc.id))?.doc;
   if (existing) {
-    assertWorkspaceCapability(
-      await workspaceRole(existing, profile),
-      "workspace.import",
-    );
-    if (existing.ownerPersonId !== doc.ownerPersonId)
-      throw new Error("Workspace ownership cannot change through import.");
+    try {
+      assertWorkspaceCapability(
+        await workspaceRole(existing, profile),
+        "workspace.import",
+      );
+      if (existing.ownerPersonId !== doc.ownerPersonId)
+        throw new Error("Workspace ownership cannot change through import.");
+    } finally { Automerge.free(existing) }
   } else if (doc.ownerPersonId !== profile.identity.personId)
     throw new Error("Only the workspace owner can import a new workspace");
 }

@@ -115,6 +115,13 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       await expect(publicSwitch).toBeEnabled({ timeout: 1_000 })
     }).toPass({ timeout: 30_000, intervals: [250, 500, 1_000] })
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
+    let interruptedWithdrawals = 0
+    await page.route(`${origin}/v1/public/boards/${fixture.boardId}`, async route => {
+      const request = route.request()
+      if (request.method() === "PUT" && request.postDataJSON().action === "unpublish" && interruptedWithdrawals++ === 0) {
+        await route.abort("failed")
+      } else await route.continue()
+    })
     await panel.getByRole("switch", { name: "Public board", exact: true }).click()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await expect(panel.getByRole("group", { name: "Confirm public board change" })).toBeVisible()
@@ -329,6 +336,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       response.request().method() === "PUT" && response.request().postDataJSON().action === "unpublish", { timeout: 30_000 })
     await panel.getByRole("button", { name: "Disable public access", exact: true }).click()
     expect((await withdrawal).status()).toBe(200)
+    expect(interruptedWithdrawals).toBeGreaterThanOrEqual(2)
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).toBeEnabled()
     await expect(panel.getByRole("switch", { name: "Public board", exact: true })).not.toBeChecked()
     await reader.reload()

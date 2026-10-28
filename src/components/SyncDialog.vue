@@ -32,6 +32,7 @@ const props = defineProps<{
   canReconnectDevice?: boolean
   enrollmentDeviceName?: string
   enrollmentSameIdentity?: boolean
+  enrollmentSignInAvailable?: boolean
   enrollmentConflict?: { currentPersonId: string; currentName: string; targetPersonId: string } | null
   authCode?: string
   invitationWorkspaceTitle?: string
@@ -81,6 +82,7 @@ const emit = defineEmits<{
   (e: "claimSuccession"): void
   (e: "copy", url?: string): void
   (e: "requestEnrollment", replaceIdentity: boolean): void
+  (e: "signInForEnrollment"): void
   (e: "approveDevice"): void
   (e: "declineDevice"): void
   (e: "acceptAndJoin"): void
@@ -418,7 +420,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
       </template>
 
       <!-- Step 5: Enroll guest request -->
-      <EnrollmentRequest v-else-if="step === 'enroll-guest'" :conflict="enrollmentConflict" @request="emit('requestEnrollment', $event)" />
+      <EnrollmentRequest v-else-if="step === 'enroll-guest'" :conflict="enrollmentConflict"
+        :sign-in-available="enrollmentSignInAvailable" @sign-in="emit('signInForEnrollment')" @request="emit('requestEnrollment', $event)" />
 
       <!-- Step 6: Enroll guest waiting -->
       <template v-else-if="step === 'enroll-guest-waiting'">

@@ -195,9 +195,14 @@ export function writeLocalJournal(workspaceId: string, journal: LocalJournal): v
   memoryJournals.set(workspaceId, saved)
 }
 
-/** Advance only inside a transaction that changes durable history or evidence. */
-export function advanceWorkspaceRevision(transaction: IDBTransaction, workspaceId: string) {
-  transaction.objectStore("revisions").put({ id: workspaceId, workspaceId, revision: crypto.randomUUID() })
+/** Advance CAS freshness while retaining the last recovery activation until replacement or deletion. */
+export function advanceWorkspaceRevision(transaction: IDBTransaction, workspaceId: string, revision: string = crypto.randomUUID()) {
+  const store = transaction.objectStore("revisions")
+  const request = store.get(workspaceId) as IDBRequest<{ recoveryId?: string } | undefined>
+  request.onsuccess = () => {
+    const recoveryId = request.result?.recoveryId
+    store.put({ id: workspaceId, workspaceId, revision, ...(recoveryId ? { recoveryId } : {}) })
+  }
 }
 
 export function withLocalJournalLock<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {

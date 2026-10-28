@@ -33,6 +33,7 @@ function restoreSignInReturnPath(path: string | null) {
 
 const props = defineProps<{ workspaceId: string; portalOrigin: string; profile: LocalProfile; browserReturn: boolean;
   initialMode?: "choose" | "signin";
+  expectedPersonId?: string;
   completeBrowserSignIn(returnPath: string, request?: DeviceAuthorizationRequest): Promise<void> }>()
 const emit = defineEmits<{ close: []; completed: [] }>()
 const mode = ref<"choose" | "create" | "signin">("choose")
@@ -46,6 +47,7 @@ const replacementIdentity = ref<Pick<PublicIdentity, "personId" | "displayName">
 const ownedLocalBoards = ref<Array<{ workspaceId: string; title: string }>>([])
 const browserApproval = ref<Extract<IdentityBrowserSignInResult, { kind: "approved" }> | null>(null)
 const browserSignInReturnPath = ref<string | null>(null)
+const browserSignInPersonId = ref<string | null>(props.expectedPersonId ?? null)
 const browserSignInCompletion = createApprovedSignInCompletion(props.completeBrowserSignIn)
 let browserSignInAttempt = 0
 let resolveRequest: ((decision: "approve" | "reject") => void) | undefined
@@ -73,12 +75,14 @@ async function beginBrowserSignIn() {
   const diagnostic = await beginIdentityBrowserSignInDiagnostic("request")
   recordIdentityBrowserSignIn("request", "started")
   try {
-    const returnPath = browserSignInReturnPath.value ?? `${window.location.pathname}${window.location.search}`
+    const returnPath = browserSignInReturnPath.value ?? `${window.location.pathname}${window.location.search}${window.location.hash}`
     const { pending, portalUrl } = await createIdentityBrowserSignIn({ profile: props.profile,
       portalOrigin: props.portalOrigin, applicationOrigin: window.location.origin, returnPath,
+      personId: props.expectedPersonId ?? browserSignInPersonId.value,
       catalogOrigin: import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined })
     if (attempt !== browserSignInAttempt) return
     browserSignInReturnPath.value = pending.returnPath
+    browserSignInPersonId.value = pending.request.payload.personId ?? null
     activeBrowserSignInChallenge = pending.request.payload.challenge
     writePendingIdentityBrowserSignIn(window.sessionStorage, pending)
     recordIdentityBrowserSignIn("request", "completed", { elapsedMs: performance.now() - startedAt })
@@ -115,6 +119,7 @@ async function finishBrowserSignInReturn() {
     trustedReturnPath = pending.returnPath
     activeBrowserSignInChallenge = pending.request.payload.challenge
     browserSignInReturnPath.value = pending.returnPath
+    browserSignInPersonId.value = pending.request.payload.personId ?? null
     const result = await verifyIdentityBrowserSignInReturn({ hash, pending, currentProfile: props.profile,
       applicationOrigin: window.location.origin })
     if (attempt !== browserSignInAttempt) return

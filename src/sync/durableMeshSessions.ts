@@ -6,7 +6,7 @@ import { BrowserMeshDialScheduler, BrowserMeshOutgoingHandshake, BrowserMeshSess
 import { adaptVerifiedWorkspaceAdvertisement, connectToDevice, type DeviceRoute } from "@meta-uber/mesh-replication/protocol"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { defaultProofStore } from "../domain/proofs"
-import { respondToBlobRequest, type BlobDescriptor } from "@meta-uber/mesh-blob"
+import type { BlobDescriptor } from "@meta-uber/mesh-blob"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
@@ -18,7 +18,8 @@ import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMIS
 import { DurableMeshHandshake } from "./durableMeshHandshake"
 import { participantWorkspaceSession } from "./participantWorkspaceStore"
 import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
-import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
+import { fetchBlobFromCurrentSessions, respondToCurrentBlobRequest } from "./durableMeshBlobFetch"
+import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
 import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
@@ -276,13 +277,16 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     create: input => {
       const credential = input.credential as WorkspaceMeshCredential
       const stage = `Workspace ${input.workspaceId.slice(0, 8)} from ${input.deviceId.slice(0, 8)}`
-      const created = participantWorkspaceSession(this.options.workspaceStore, { workspaceId: input.workspaceId, deviceId: input.deviceId,
+      const context = { workspaceId: input.workspaceId, deviceId: input.deviceId,
         remotePersonId: input.remotePersonId, transportSecret: credential.transportSecret, profile: input.profile, store: this.store,
         profileProvider: () => this.options.getProfile(), assertSession: () => {
           if (this.stopped || this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection !== input.connection) {
             throw new Error("Direct peer session is no longer current")
           }
-        } }, this.identityPreferenceConnections.has(input.connection), input.connection, error => {
+        } }
+      const guard = createDurablePeerHistoryGuard(context)
+      const created = participantWorkspaceSession(this.options.workspaceStore, context,
+        this.identityPreferenceConnections.has(input.connection), input.connection, error => {
           if (error) {
             this.trace("document.rejected", { connectionId: input.connectionId, workspaceId: input.workspaceId,
               peerId: input.deviceId, instanceId: input.instanceId, reason: error.message }, "warn", error)
@@ -299,7 +303,8 @@ export class DurableMeshSessions extends DurableMeshHandshake {
           onGossipPacket: input.remoteEndpoint
             ? packet => this.receiveWorkspaceGossipPacket(input.workspaceId, input.remoteEndpoint, packet) : undefined,
           onBlobRequest: input.blobTransferSupported
-            ? (stream, frame) => this.respondToBlobRequest(input.workspaceId, input.deviceId, credential.transportSecret, stream, frame)
+            ? (stream, frame) => respondToCurrentBlobRequest({ workspaceId: input.workspaceId, deviceId: input.deviceId,
+              secret: credential.transportSecret, blob: this.options.workspaceStore.blob, store: this.store, ensureCurrent: guard }, stream, frame)
             : undefined,
         })
       this.rustyAccessMaintenance.set(input.connection, created.maintenance)
@@ -344,27 +349,6 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       const current = this.sessions.get(this.peerKey(workspaceId, deviceId, instanceId))
       if (current?.connection === connection) this.rustyAccessMaintenance.get(connection)?.start()
     }
-  }
-
-  private async respondToBlobRequest(workspaceId: string, deviceId: string, secret: string,
-    stream: Parameters<typeof respondToBlobRequest>[0], frame: Uint8Array): Promise<void> {
-    const blob = this.options.workspaceStore.blob
-    if (!blob) throw new Error("Blob storage is unavailable")
-    const peer = await this.store.getPeer(workspaceId, deviceId)
-    const bundle = peer?.advertisement as WorkspaceMemberBundle | undefined
-    if (!peer || !bundle?.publicKey || !Array.isArray(bundle.certificates)) throw new Error("Blob requester is unavailable")
-    await respondToBlobRequest(stream, frame, {
-      secret,
-      scopeId: workspaceId,
-      identity: {
-        personId: peer.personId,
-        publicKey: bundle.publicKey,
-        displayName: bundle.advertisement?.payload?.deviceName ?? "Peer",
-      },
-      certificates: bundle.certificates,
-      descriptor: blobId => blob.resolve(workspaceId, blobId),
-      bytes: descriptor => blob.read(descriptor),
-    })
   }
 
   async fetchBlob(workspaceId: string, descriptor: BlobDescriptor): Promise<Uint8Array | undefined> {

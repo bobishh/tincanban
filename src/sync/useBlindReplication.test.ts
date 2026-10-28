@@ -30,6 +30,7 @@ const runtime = vi.hoisted(() => ({
   recoverConflict: vi.fn<(app: unknown, origin: string, scopeId: string, workspaceId: string, guard: () => void) => Promise<void>>().mockResolvedValue(undefined),
   readRustyStatus: vi.fn<(...args: unknown[]) => Promise<{ capability: undefined }>>().mockResolvedValue({ capability: undefined }),
   scopeApproval: vi.fn(async () => 1),
+  retainHistory: vi.fn(async () => {}),
   writer: vi.fn(async (_app: unknown, config: BlindReplicaConfig, guard: () => void) => { guard(); return config }),
   fetchAttachment: vi.fn<(app: unknown, workspaceId: string, descriptor: BlobDescriptor,
     ensureCurrent: () => void, fallback?: (descriptor: BlobDescriptor) => Promise<Uint8Array | undefined>) => Promise<Uint8Array | undefined>>(),
@@ -74,6 +75,8 @@ vi.mock("./rustyManagementClient", async original => ({
   readRustyManagementStatus: (...args: unknown[]) => runtime.readRustyStatus(...args),
 }))
 vi.mock("./rustyEnrollment", () => ({ approveRustyScope: runtime.scopeApproval }))
+// Controller effects are isolated; persistence-before-revoke is covered at replicaConnections and real Native boundaries.
+vi.mock("./historyBaselineStartup", () => ({ retainHistoryForReplicaDisconnect: runtime.retainHistory }))
 vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: runtime.writer,
   maintainWorkspaceReplicaWriter: runtime.maintenance }))
 
@@ -179,6 +182,7 @@ afterEach(() => {
   runtime.recoverConflict.mockReset().mockResolvedValue(undefined)
   runtime.readRustyStatus.mockReset().mockResolvedValue({ capability: undefined })
   runtime.scopeApproval.mockReset().mockResolvedValue(1)
+  runtime.retainHistory.mockReset().mockResolvedValue(undefined)
   runtime.writer.mockReset().mockImplementation(async (_app, config, guard) => { guard(); return config })
   runtime.fetchAttachment.mockReset()
   resetIdentityStorageForTest()
@@ -333,6 +337,7 @@ it("Given board and personal Rusty connections, when removal receives confirmed 
   await vi.waitFor(() => expect(runtime.workspaceSync, controller.error.value).toHaveBeenCalled())
   await controller.syncNow()
   await controller.remove(f.workspace)
+  expect(runtime.retainHistory).toHaveBeenCalledWith(f.workspace, f.personId, expect.any(Function))
   expect(runtime.scopeApproval).toHaveBeenCalledWith(f.workspace, f.profile, true, { scopePurpose: "workspace" })
   expect(await getReplicaConfigurations(f.personId)).toEqual([])
   expect(controller.identityConfigs.value[0]?.scopeId).toBe(f.identity.scopeId)

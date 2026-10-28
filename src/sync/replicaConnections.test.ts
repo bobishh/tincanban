@@ -32,7 +32,12 @@ vi.mock("./identityReplicaConnection", () => ({ ensureIdentityReplicaConnection:
   events.order.push("identity-authority-ready")
 }) }))
 
-import { connectWorkspaceReplica } from "./replicaConnections"
+vi.mock("./historyBaselineStartup", () => ({ retainHistoryForReplicaDisconnect: vi.fn(async () => { events.order.push("retain-history-key") }) }))
+import { connectWorkspaceReplica, revokeWorkspaceReplicaConnection } from "./replicaConnections"
+import { retainHistoryForReplicaDisconnect } from "./historyBaselineStartup"
+import { approveRustyScope } from "./rustyEnrollment"
+import { recordReplicaPreference } from "./identityDevicePreferences"
+import type { BlindReplicaConfig } from "./blindReplication"
 
 afterEach(() => { events.order.length = 0; vi.clearAllMocks() })
 
@@ -76,4 +81,25 @@ it("does not let the original genesis owner configure Rusty after ownership tran
 
   expect(app.getWorkspaceRole).toHaveBeenCalledWith("transferred-workspace")
   expect(events.order).toEqual([])
+})
+
+const disconnectConfig = { workspaceId: "workspace-1" } as BlindReplicaConfig
+const disconnectProfile = { identity: { personId: "person-1" } } as Parameters<typeof revokeWorkspaceReplicaConnection>[1]
+
+it("Given a compact local board, when disconnecting Rusty, then retain its offline reading key before remote revocation and delivery-token removal", async () => {
+  vi.mocked(approveRustyScope).mockImplementationOnce(async () => { events.order.push("revoke-scope"); return 2 })
+  vi.mocked(recordReplicaPreference).mockImplementationOnce(async () => { events.order.push("remove-delivery-tokens") })
+  await revokeWorkspaceReplicaConnection(disconnectConfig, disconnectProfile, () => {})
+  expect(events.order).toEqual(["retain-history-key", "revoke-scope", "remove-delivery-tokens"])
+})
+
+it("Given offline-key retention fails, when disconnect is retried, then keep delivery access until durable retention succeeds", async () => {
+  vi.mocked(retainHistoryForReplicaDisconnect).mockRejectedValueOnce(new Error("local disk blocked"))
+  await expect(revokeWorkspaceReplicaConnection(disconnectConfig, disconnectProfile, () => {})).rejects.toThrow("local disk blocked")
+  expect(approveRustyScope).not.toHaveBeenCalled()
+  expect(recordReplicaPreference).not.toHaveBeenCalled()
+  vi.mocked(approveRustyScope).mockImplementationOnce(async () => { events.order.push("revoke-scope"); return 2 })
+  vi.mocked(recordReplicaPreference).mockImplementationOnce(async () => { events.order.push("remove-delivery-tokens") })
+  await revokeWorkspaceReplicaConnection(disconnectConfig, disconnectProfile, () => {})
+  expect(events.order).toEqual(["retain-history-key", "revoke-scope", "remove-delivery-tokens"])
 })

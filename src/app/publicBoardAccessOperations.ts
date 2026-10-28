@@ -81,6 +81,10 @@ async function applyOwnerStatus(ctx: PublicBoardAccessOperations, captured: Awai
     ctx.syncPending.value = false
     if (ctx.timers.debounce) { clearTimeout(ctx.timers.debounce); ctx.timers.debounce = undefined }
   }
+  if (reconciled.retryWithdrawal) {
+    reportProgress(ctx, { phase: "withdrawing" })
+    await disablePublicAccess(ctx, captured, ctx.state.generation, status.revision)
+  }
 }
 
 export async function changePublicAccess(ctx: PublicBoardAccessOperations, enabled: boolean) {
@@ -103,9 +107,12 @@ export async function changePublicAccess(ctx: PublicBoardAccessOperations, enabl
     const captured = ctx.capture({ requireConnection: enabled })
     const expectedRevision = ctx.revision.value
     if (enabled) await enablePublicAccess(ctx, captured, generation, expectedRevision)
-    else await disablePublicAccess(ctx, captured, generation, expectedRevision)
+    else if (ctx.published.value) await disablePublicAccess(ctx, captured, generation, expectedRevision)
   } catch (cause) {
-    if (generation === ctx.state.generation) ctx.error.value = cause instanceof Error ? cause.message : "Could not change public access"
+    if (generation === ctx.state.generation) {
+      ctx.error.value = cause instanceof Error ? cause.message : "Could not change public access"
+      if (!enabled) ctx.scheduleRetry()
+    }
     throw cause
   } finally {
     ctx.state.operationRunning = false
@@ -141,7 +148,6 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
 }
 async function disablePublicAccess(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource, generation: number, expectedRevision: number) {
   captured.ensureCurrent()
-  if (!ctx.published.value) return
   const { withdrawPublicBoard } = await import("../public/publicationClient")
   captured.ensureCurrent()
   const intent = await persistPublicationIntent(ctx, captured, "unpublish", expectedRevision)
@@ -270,7 +276,7 @@ async function persistPublicationIntent(ctx: PublicBoardAccessOperations, captur
   expectedRevision: number, deliveryPolicy?: PublicBoardDeliveryPolicyEvidence): Promise<{ key: string; record: PublicationRecord; preparedAssets?: Array<{ sha256: string; bytes: Uint8Array }> }> {
   const key = publicationRecordKey(captured.origin, captured.workspaceId, captured.boardId, captured.profile)
   const current = parsePublicationRecord(await readLocal(key))
-  assertNoUncertainPublicationIntent(current)
+  assertNoUncertainPublicationIntent(current, action)
   const publication = action === "unpublish" ? undefined : await (await import("./publicBoardPublication")).createBrowserBoardPublication(captured.document, captured.workspaceId, captured.boardId)
   const projection = publication ? jsonProjection(publication.projection) : null
   const projectionHash = await sha256Base64Url(new TextEncoder().encode(projection ? canonicalizeJson(projection) : "null"))
@@ -292,7 +298,8 @@ function jsonProjection<T>(projection: T): T {
   return JSON.parse(JSON.stringify(projection)) as T
 }
 
-function assertNoUncertainPublicationIntent(current: PublicationRecord | undefined) {
+function assertNoUncertainPublicationIntent(current: PublicationRecord | undefined, action: PublicationIntentAction) {
+  if (action === "unpublish" && current?.ownerIntent === "withdrawn" && current.intent?.action === "unpublish") return
   if (current?.intent && !current.intent.confirmed) throw new Error("A previous publication operation has uncertain outcome; refresh status before changing access")
 }
 function createPendingPublicationRecord(ctx: PublicBoardAccessOperations, captured: CapturedAccessSource, action: PublicationIntentAction,

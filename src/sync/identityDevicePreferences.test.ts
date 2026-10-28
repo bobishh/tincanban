@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest"
-import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
+import { BrowserIdentityStore, createDeviceRevocation, createIdentityAuthorityView,
+  emptyIdentityProfileState, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { adoptEnrolledIdentity, bootstrapIdentity, publicKeyId, resetIdentityStorageForTest, signEnvelope, toBase64Url, verifyEnvelope } from "../domain/identity"
 import type { DeviceCertificate } from "../domain/model"
 import { deleteLocal, readLocal, writeLocal } from "../localDb"
@@ -16,6 +17,7 @@ import * as identityDeviceTransfer from "./identityDeviceTransfer"
 import { RustyManagementRepository } from "./rustyManagementRepository"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { readIdentityStateRevision } from "../identityStateRevision"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -24,6 +26,27 @@ const config: BlindReplicaConfig = { origin: "https://rusty.example", workspaceI
   readToken: token, writeToken: token, contentKey: token, servicePublicKey: token, policyRevision: 1,
   keyEpoch: 1, cursor: 19, lastUploaded: token }
 const stateKey = (personId: string) => `tincanban.private-replica-state.v2.${personId}`
+
+it("Given a learned global revocation and no Rusty policy, when that same-person app requests private preferences on an otherwise live board session, then disclose no Identity state", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Owner")
+  const values = new Map<string, string>()
+  const app = await new BrowserIdentityStore({ storageKey: "globally-revoked-recipient", storage: {
+    getItem: key => values.get(key) ?? null, setItem: (key, value) => { values.set(key, value) },
+    removeItem: key => { values.delete(key) },
+  } }).bootstrap("Remote app")
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, app.device.deviceId, app.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate], profileState = emptyIdentityProfileState(owner.identity.personId)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  const revocation = await createDeviceRevocation(owner, authority, app.device.deviceId, profileState)
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState))
+  await defaultStorage.savePersonalRoot(createPersonalRoot(owner, await certHashDefault(owner.certificate)))
+  const mesh = { version: 1, peers: [] }
+  const source = { readMesh: vi.fn(async () => mesh) } as unknown as WorkspaceSetStore
+  const session = withIdentityDevicePreferences(source, owner, owner.identity.personId, app.device.deviceId, () => true)
+  await expect(session.readMesh!("still-connected-board")).resolves.toEqual(mesh)
+})
 
 it("Given Rusty settings, when another enrolled device receives them, then it starts its own cursor without resetting an existing cursor", async () => {
   resetIdentityStorageForTest()

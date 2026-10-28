@@ -3,7 +3,10 @@ import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceMeshCredential } from "./peerStore"
 
 const mocks = vi.hoisted(() => ({ isDeviceRevoked: vi.fn() }))
-vi.mock("./durableMeshBase", () => ({ isDeviceRevoked: mocks.isDeviceRevoked }))
+vi.mock("@meta-uber/mesh-replication/runtime", () => ({ meshRustRuntime: () => ({ state: {
+  isDeviceRevoked: mocks.isDeviceRevoked, hasAuthorityConflict: () => false,
+  isGrantRevoked: () => false, hasLeftWorkspace: () => false,
+} }) }))
 
 import { createEnrollmentHistoryAuthorizationGuard } from "./enrollmentHistoryAuthorization"
 
@@ -15,44 +18,48 @@ const profile = (personId = "person-a", deviceId = "device-a") => ({
 
 const credential = (workspaceId: string) => ({ version: 1, workspaceId } as unknown as WorkspaceMeshCredential)
 
+const snapshotReader = (read: (id: string) => Promise<WorkspaceMeshCredential | undefined>) =>
+  async (ids: readonly string[]) => Promise.all(ids.map(async workspaceId => ({ workspaceId,
+    credential: (await read(workspaceId)) ?? null, authority: null })))
+
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.isDeviceRevoked.mockReturnValue(false)
 })
 
-it("Given the approved same-person session and current selected credentials, when guarded, then permit only after native revocation checks", async () => {
+it("Given the approved same-person session and current selected credentials, when guarded, then check both devices before permitting history", async () => {
   const readCredential = vi.fn(async (id: string) => credential(id))
   const guard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a", "board-b"], profile: profile(),
-    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile(), readCredential })
+    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile(), readWorkspaces: snapshotReader(readCredential) })
 
   await expect(guard()).resolves.toBeUndefined()
-  expect(readCredential).toHaveBeenCalledTimes(2)
-  expect(mocks.isDeviceRevoked).toHaveBeenNthCalledWith(1, credential("board-a"), "person-a", "approved-device")
-  expect(mocks.isDeviceRevoked).toHaveBeenNthCalledWith(2, credential("board-b"), "person-a", "approved-device")
+  expect(new Set(readCredential.mock.calls.map(([id]) => id))).toEqual(new Set(["board-a", "board-b"]))
+  expect(mocks.isDeviceRevoked).toHaveBeenCalledWith(credential("board-a"), "person-a", "approved-device")
+  expect(mocks.isDeviceRevoked).toHaveBeenCalledWith(credential("board-b"), "person-a", "device-a")
 })
 
 it("Given the saved identity or device changed, when authorizing enrollment history, then refuse before serving it", async () => {
   const readCredential = vi.fn(async (id: string) => credential(id))
   const personChanged = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a"], profile: profile(),
-    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile("person-b"), readCredential })
+    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile("person-b"), readWorkspaces: snapshotReader(readCredential) })
   await expect(personChanged()).rejects.toThrow(/identity changed/i)
   expect(readCredential).not.toHaveBeenCalled()
 
   const deviceChanged = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a"], profile: profile(),
-    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile("person-a", "device-b"), readCredential })
+    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile("person-a", "device-b"), readWorkspaces: snapshotReader(readCredential) })
   await expect(deviceChanged()).rejects.toThrow(/identity changed/i)
   expect(readCredential).not.toHaveBeenCalled()
 })
 
 it("Given a selected credential is missing or revokes the approved device, when the guard runs, then deny history access", async () => {
   const missing = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a"], profile: profile(),
-    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile(), readCredential: async () => undefined })
+    remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile(), readWorkspaces: snapshotReader(async () => undefined) })
   await expect(missing()).rejects.toThrow(/credential is unavailable/i)
 
   mocks.isDeviceRevoked.mockReturnValue(true)
   const revoked = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a"], profile: profile(),
     remoteDeviceId: "approved-device", isCurrent: () => true, readProfile: async () => profile(),
-    readCredential: async id => credential(id) })
+    readWorkspaces: snapshotReader(async id => credential(id)) })
   await expect(revoked()).rejects.toThrow(/device access revoked/i)
 })
 
@@ -61,7 +68,7 @@ it("Given enrollment is cancelled while a credential read is pending, when the r
   let resolveCredential!: (value: WorkspaceMeshCredential) => void
   const readCredential = vi.fn(() => new Promise<WorkspaceMeshCredential>(resolve => { resolveCredential = resolve }))
   const guard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board-a"], profile: profile(),
-    remoteDeviceId: "approved-device", isCurrent: () => sessionCurrent, readProfile: async () => profile(), readCredential })
+    remoteDeviceId: "approved-device", isCurrent: () => sessionCurrent, readProfile: async () => profile(), readWorkspaces: snapshotReader(readCredential) })
 
   const pending = guard()
   await vi.waitFor(() => expect(readCredential).toHaveBeenCalledOnce())

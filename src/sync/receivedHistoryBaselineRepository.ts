@@ -373,7 +373,7 @@ class ReceivedHistoryBaselineRepository {
           baselineId: captured.baselineId, admittedChanges: 0, encodedBytes: 0,
           ...(historyProgress?.transitionId ? { transitionId: historyProgress.transitionId,
             transitionPreviousBaselineId: historyProgress.transitionPreviousBaselineId } : {}) })
-        transaction.objectStore("revisions").put({ id: workspaceId, workspaceId, revision: activationRevision })
+        advanceWorkspaceRevision(transaction, workspaceId, activationRevision)
         await done
         ensureActivationCurrent()
       } catch (error) {

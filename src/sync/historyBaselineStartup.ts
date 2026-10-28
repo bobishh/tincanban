@@ -5,6 +5,11 @@ import { createReceivedHistoryBaselineRepository } from "./receivedHistoryBaseli
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
 import { getPrivateReplicaConfigurations } from "./privateReplicaRepository"
+import { readHistoryBaselineKeyCandidates } from "./historyBaselineReadingKeys"
+import { retainWorkspaceRecoveryArchives } from "./workspaceHistoryRecoveryArchives"
+import { toBase64Url } from "../domain/identity"
+import type { BlindReplicaConfig } from "./blindReplication"
+import type { ArchiveLocatorRoot } from "@meta-uber/mesh-replication/history-archive-locators"
 import { traceStorageRead, type StorageReadTrace } from "../storageReadTrace"
 
 /** Rebuild the active compact Owner-attested basis before any workspace read. */
@@ -29,15 +34,41 @@ export async function reverifyActiveHistoryForWorkspace(workspaceId: string, own
       reverifyStoredPeerHistoryBaseline({ stored: active, trustedScopeAuthority, ensureCurrent }),
     { workspaceId, bytes: active.document.byteLength })
   }
-  const matches = configurations.filter(config => config.purpose !== "identity" && config.workspaceId === workspaceId &&
-    config.scopeId === active.scopeId)
-  if (matches.length !== 1) throw new Error("Received workspace history requires one matching saved Rusty scope configuration")
-  const config = matches[0]!
-  ensureCurrent()
-  return traceStorageRead(trace, "rusty-native-reverify", () => openWithReplicaContentKeys(config, active.keyEpoch, async contentKey => {
+  const keys = await readHistoryBaselineKeyCandidates(owner, active, configurations, ensureCurrent)
+  if (!keys.length) throw new Error("Saved workspace history reading key is unavailable; recover its original private history evidence")
+  let failure: unknown
+  for (const contentKey of keys) {
     ensureCurrent()
-    return reverifyStoredHistoryBaseline({ stored: active,
+    try {
+      return await traceStorageRead(trace, "rusty-native-reverify", () => reverifyStoredHistoryBaseline({ stored: active,
+        scope: { scopeId: active.scopeId, keyEpoch: active.keyEpoch, key: decodeBlindBytes(contentKey) },
+        trustedScopeAuthority, ensureCurrent }), { workspaceId, bytes: active.document.byteLength })
+    } catch (error) { ensureCurrent(); failure = error }
+  }
+  throw failure
+}
+
+/** Persist only the authenticated local archive reading key before removing remote delivery access. */
+export async function retainHistoryForReplicaDisconnect(config: BlindReplicaConfig, owner: string,
+  ensureCurrent: () => void): Promise<void> {
+  const active = await createReceivedHistoryBaselineRepository(config.workspaceId, ensureCurrent).readActive()
+  if (!active || active.peerProofs || active.scopeId !== config.scopeId ||
+      active.pinnedStorage.servicePublicKey !== config.servicePublicKey) return
+  const authority = await peerStore.getWorkspaceAuthority(config.workspaceId) ?? await peerStore.getWorkspaceCredential(config.workspaceId)
+  ensureCurrent()
+  if (!authority?.scopeAuthoritySnapshot) throw new Error("Saved workspace history requires its admitted signed scope authority")
+  const reading = await openWithReplicaContentKeys(config, active.keyEpoch, async contentKey => {
+    const verified = await reverifyStoredHistoryBaseline({ stored: active,
       scope: { scopeId: active.scopeId, keyEpoch: active.keyEpoch, key: decodeBlindBytes(contentKey) },
-      trustedScopeAuthority, ensureCurrent })
-  }), { workspaceId, bytes: active.document.byteLength })
+      trustedScopeAuthority: authority.scopeAuthoritySnapshot, ensureCurrent })
+    try {
+      const envelope = verified.envelope() as { payload: { locatorRoot: ArchiveLocatorRoot } }
+      return { contentKey, root: envelope.payload.locatorRoot }
+    } finally { verified.free() }
+  })
+  ensureCurrent()
+  await retainWorkspaceRecoveryArchives(owner, config.workspaceId, active.stageId, [{ kind: "archive-source",
+    id: `offline:${active.baselineId}`, workspaceId: config.workspaceId, scopeId: active.scopeId, keyEpoch: active.keyEpoch,
+    key: reading.contentKey, signedJson: toBase64Url(active.signedJson), roots: [reading.root],
+    authorityEvidence: { pinnedStorage: structuredClone(active.pinnedStorage) } }], ensureCurrent)
 }

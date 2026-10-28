@@ -3,9 +3,9 @@ import { bootstrapIdentity, canonicalizeJson, sha256Base64Url, type LocalProfile
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext } from "../domain/signingContext"
 import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
-import { fetchBlind, readBlindJson } from "./rustyHttp"
+import { fetchBlind } from "./rustyHttp"
 import { verifyRustyManagementCapability, type RustyManagementCapability } from "./rustyManagementCapability"
-import { verifyRustyManagementStatus, type ManagementStatusAuthorization, type RustyManagementStatusResponse } from "./rustyManagementStatus"
+import { requestRustyManagementStatus } from "@meta-uber/mesh-replication/rusty-management"
 import { RustyManagementRepository, validatePolicy, type ManagementBinding, type ManagementUpdateRequest } from "./rustyManagementRepository"
 import { RustyPermissionMigrationRequiredError } from "./rustyPermissionMigration"
 import type { Context } from "@opentelemetry/api"
@@ -13,7 +13,6 @@ import { createRustyManagementMutationClient, type RustyManagementMutationBindin
 import { rustySignerCertificateChain } from "./rustySignerCertificates"
 
 export type ManagementClientGuard = { ensureCurrent?: () => void | Promise<void>; currentAuthority?: () => Promise<string>; diagnosticContext?: Context }
-const path = (binding: ManagementBinding) => `${binding.origin}/v2/management/${binding.resourceKind}/${binding.resourceId}`
 const repo = (profile: { identity: { personId: string } }) => new RustyManagementRepository(profile.identity.personId)
 const revision = async (binding: ManagementBinding, profile: LocalProfile) => (await repo(profile).read(binding))?.capability?.payload.revision ?? 0
 
@@ -150,25 +149,21 @@ export async function ensureRustyPersonPolicy(access: Pick<ManagementBinding, "o
 export async function readRustyManagementStatus(binding: ManagementBinding, profile: LocalProfile, guard: ManagementClientGuard = {}) {
   binding = structuredClone(binding)
   profile = captureIdentityProfile(profile)
-  const issuedAt = Date.now()
-  const signing = await context(binding, profile, "rusty-management-policy-status", issuedAt + 120_000, guard)
-  const evidence = signingEvidence(signing)
-  const certificates = await rustySignerCertificateChain(profile)
-  const authorization = await signWithContext(signing, {
-    kind: "rusty-management-policy-status", version: 1, serviceId: await sha256Base64Url(decodeBlindBytes(binding.servicePublicKey)),
-    origin: binding.origin, personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    resourceKind: binding.resourceKind, resourceId: binding.resourceId, requestId: crypto.randomUUID(), issuedAt, expiresAt: issuedAt + 120_000,
-  } satisfies ManagementStatusAuthorization)
   const minimumRevision = await revision(binding, profile)
-  await assertDevice(profile, guard)
-  const response = await readBlindJson<RustyManagementStatusResponse>(await fetchBlind(`${path(binding)}/status`, {
-    diagnosticContext: guard.diagnosticContext,
-    method: "POST", cache: "no-store", signal: AbortSignal.timeout(15_000), headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ version: 1, identity: evidence.identity, deviceId: profile.device.deviceId, certificates, authorization }),
-  }), 1024 * 1024)
-  const verified = await verifyRustyManagementStatus(response, binding, { personId: profile.identity.personId, deviceId: profile.device.deviceId,
-    resourceKind: binding.resourceKind, resourceId: binding.resourceId, operation: "management.update", minimumRevision }, authorization)
-  await assertDevice(profile, guard)
+  const { response, verified } = await requestRustyManagementStatus({ binding, identity: profile.identity,
+    deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
+    certificates: await rustySignerCertificateChain(profile), minimumRevision,
+    ensureCurrent: () => assertDevice(profile, guard),
+    fetcher: (input, init) => fetchBlind(String(input), { ...init, diagnosticContext: guard.diagnosticContext }),
+    signAuthorization: async payload => {
+      const { serviceId, origin, personId, deviceId, resourceKind, resourceId } = payload
+      const signing = await resolveLocalSigningContext(profile, payload.kind, { serviceId, origin, personId, deviceId, resourceKind, resourceId }, {
+        expiresAt: payload.expiresAt, ensureCurrent: guard.ensureCurrent,
+        currentAuthority: async () => canonicalizeJson([await localManagementAuthority(binding, profile), await guard.currentAuthority?.() ?? ""]),
+      })
+      return signWithContext(signing, payload)
+    },
+  })
   if (response.capability) await repo(profile).observe(binding, response.capability)
   else if (await revision(binding, profile) > 0) throw new Error("Rusty management authority rolled back during status verification")
   return { ...verified, capability: response.capability }

@@ -39,13 +39,15 @@ function photoProjector(workspace: ReturnType<typeof useTincanban>, isOwnerCurre
   async function projectOne(workspaceId: string, value: IdentityPhoto, ownerId: string): Promise<"complete" | "failed" | "stale"> {
     if (!isOwnerCurrent(ownerId) || !canProject()) return "stale"
     try {
-      const doc = await workspace.readWorkspaceDoc(workspaceId)
-      if (!isOwnerCurrent(ownerId) || !canProject()) return "stale"
-      const entity = doc.entities[memberProfileEntityId(ownerId)]
-      if (entity?.kind === "member_profile") {
+      const matches = await workspace.withWorkspaceDoc(workspaceId, doc => {
+        if (!isOwnerCurrent(ownerId) || !canProject()) return false
+        const entity = doc.entities[memberProfileEntityId(ownerId)]
+        if (entity?.kind !== "member_profile") return false
         const projected = parseIdentityPhoto(JSON.parse(entity.data))
-        if (entity.data === JSON.stringify(value) || projected?.avatarData === value.avatarData) return "complete"
-      }
+        return entity.data === JSON.stringify(value) || projected?.avatarData === value.avatarData
+      })
+      if (!isOwnerCurrent(ownerId) || !canProject()) return "stale"
+      if (matches) return "complete"
       await workspace.executeWorkspaceCommandAsync(workspaceId, { kind: "setMemberAvatar", ...value })
       return isOwnerCurrent(ownerId) ? "complete" : "stale"
     } catch { return isOwnerCurrent(ownerId) ? "failed" : "stale" }

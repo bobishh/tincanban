@@ -22,7 +22,7 @@ import type { WorkspaceGrant } from "../domain/model"
 import { startPersistentNode } from "./persistentNode"
 import type { SyncConnection, SyncNode } from "./transport"
 import { userMessage } from "./deviceSyncState"
-import { showInviteQr } from "./deviceSyncInviteView"
+import { clearPairingLocation, showInviteQr } from "./deviceSyncInviteView"
 import type { PairingContext } from "./deviceSyncContext"
 import { traceEnrollment, beginEnrollmentDiagnostic, endEnrollmentDiagnostic, enrollmentDiagnosticUrl,
   traceEnrollmentOperation, enrollmentErrorReason as errorReason } from "./enrollmentDiagnostics"
@@ -344,7 +344,7 @@ async function approveEnrollment(
   const replica = workspaceSet(store, workspaces)
   const historyGuard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ids, profile,
     remoteDeviceId: guest.deviceId, isCurrent: () => isCurrent(context, run), readProfile: context.getProfile,
-    readCredential: async id => (await peerStore.getWorkspaceCredential(id)) ?? undefined })
+    readWorkspaces: ids => peerStore.readWorkspaceAuthorization(ids) })
   const acknowledgementHistory = createEnrollmentHistoryReader(store, ids, guest.deviceId, historyGuard)
   await historyGuard()
   const payload = await enrollmentPayload(invite, profile, result.certificate, root, workspaces, active,
@@ -502,5 +502,5 @@ async function receiveEnrollmentApproval(context: EnrollmentContext, run: number
   await confirmation.closeSend()
   context.state.step.value = "enroll-guest-done"
   traceEnrollment(invite, "guest", "completed", run, { workspaces: ids.length })
-  if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/")
+  clearPairingLocation()
 }

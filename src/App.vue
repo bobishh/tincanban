@@ -56,7 +56,7 @@ const boardVisible = computed(() => workspaceBoardVisible.value && boardAddressR
 const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
-  beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
+  identitySignInPersonId, beginEnrollmentSignIn, beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
@@ -497,6 +497,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       @claim-succession="claimWorkspaceSuccession"
       @promote-peer="promoteWorkspacePeer"
       @request-enrollment="sync.requestEnrollment"
+      :enrollment-sign-in-available="Boolean(identityPortalOrigin)" @sign-in-for-enrollment="beginEnrollmentSignIn"
       :enrollment-device-name="sync.enrollmentDeviceName.value"
       :enrollment-same-identity="sync.enrollmentSameIdentity.value"
       @approve-device="sync.approveEnrollment"
@@ -510,7 +511,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   </TincanbanPageLayout>
   <BuildFooter />
   <IdentityPortalEnrollmentDialog v-if="ready.value && showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
-    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :initial-mode="identityPortalMode" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
+    :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :initial-mode="identityPortalMode" :expected-person-id="identitySignInPersonId" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
 </template>
 
 <style>

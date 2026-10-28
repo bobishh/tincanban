@@ -297,20 +297,21 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     const snapshot = await traceStorageRead(trace, "snapshot-read", () => readWorkspaceSnapshot(workspaceId))
     if (snapshot) this.inMemory.snapshots.set(workspaceId, snapshot)
 
+    const changes = await traceStorageRead(trace, "journal-read", () => this.listChanges(workspaceId))
+    if (!snapshot && changes.length === 0) return null
     let doc = await traceStorageRead(trace, "automerge-load", () => snapshot
       ? this.decodeSnapshot(snapshot, reusable) : Automerge.init<WorkspaceDocumentV2>(), { bytes: snapshot?.bytes.byteLength ?? 0 })
-
-    const changes = await traceStorageRead(trace, "journal-read", () => this.listChanges(workspaceId))
-    doc = await traceStorageRead(trace, "journal-replay", () => replayAdmittedJournal(doc, changes,
-      snapshot?.causalEvidence, snapshot?.receivedHistory?.excludedLocalChangeHashes),
-    { changeCount: changes.length, bytes: changes.reduce((total, change) => total + change.bytes.byteLength, 0) })
-
-    const heads = Automerge.getHeads(doc).sort()
-    if (!snapshot && changes.length === 0) {
-      return null
+    try {
+      doc = await traceStorageRead(trace, "journal-replay", () => replayAdmittedJournal(doc, changes,
+        snapshot?.causalEvidence, snapshot?.receivedHistory?.excludedLocalChangeHashes),
+      { changeCount: changes.length, bytes: changes.reduce((total, change) => total + change.bytes.byteLength, 0) })
+      const heads = Automerge.getHeads(doc).sort()
+      this.rememberDocument(workspaceId, doc)
+      return { doc, heads }
+    } catch (error) {
+      try { Automerge.free(doc) } catch { /* Preserve the read error if the native instance already failed. */ }
+      throw error
     }
-    this.rememberDocument(workspaceId, doc)
-    return { doc, heads }
   }
 
   async compactWorkspace(

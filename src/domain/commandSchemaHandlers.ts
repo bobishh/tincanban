@@ -21,6 +21,7 @@ export const setBoardPublicationOrigin: CommandHandler<"setBoardPublicationOrigi
 export const updateBoardSchema: CommandHandler<"updateBoardSchema"> = (doc, command, context) => {
   const board = doc.entities[command.boardId]
   if (!board || !hasEntityKind(board, "board")) return err("not_found", `Board ${command.boardId} not found`)
+  if (command.schema.boardId !== board.id) return err("invalid_input", "Schema draft belongs to another board")
   if (!headsMatch(context.beforeHeads, command.expectedHeads)) return err("conflict", "Concurrent edits arrived while schema draft was open")
   const retainedColumns = new Set(Array.isArray(command.schema.columns) ? command.schema.columns.flatMap(column => column?.id ? [column.id] : []) : [])
   const buttons = command.schema.cardStageButtons

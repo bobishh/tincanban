@@ -161,7 +161,7 @@ function reviewEntityChanges() {
 
   reviewedSchema.value = cloneJsonData(draft.value);
   reviewedHeads.value = props.heads ? structuredClone(props.heads) : undefined;
-  schemaDiff.value = diffBoardSchema(props.doc, props.board.id, reviewedSchema.value);
+  schemaDiff.value = diffBoardSchema(props.doc, reviewedSchema.value.boardId, reviewedSchema.value);
   showPreview.value = true;
 }
 

@@ -1,4 +1,8 @@
-import { beforeEach, expect, it, vi } from "vitest"
+import { beforeAll, beforeEach, expect, it, vi } from "vitest"
+import * as Automerge from "@automerge/automerge/slim"
+import { readFile } from "node:fs/promises"
+import { createWorkspaceDoc } from "../domain/seeds"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 const f = vi.hoisted(() => ({ root: vi.fn(), configs: [] as Array<Record<string, unknown>>, connect: vi.fn(), push: vi.fn(), sync: vi.fn() }))
 vi.mock("../storage", () => ({ defaultStorage: { loadPersonalRoot: f.root } }))
 vi.mock("../domain/identityProfileRoot", () => ({ rootIdentityProfileState: vi.fn(async () => ({})) }))
@@ -21,6 +25,9 @@ beforeEach(() => {
 function app(role = "owner") {
   return { getCurrentProfile: () => ({ identity: { personId: "bo" } }),
     readWorkspaceDoc: vi.fn(async () => ({ id: "added-board", ownerPersonId: "previous-local-person" })),
+    async withWorkspaceDoc<T>(_id: string, read: (document: Pick<WorkspaceDocumentV2, "id" | "ownerPersonId">) => T | Promise<T>): Promise<T> {
+      return read(await this.readWorkspaceDoc())
+    },
     getWorkspaceRole: vi.fn(async () => role) }
 }
 it("Given an explicitly adopted local board and approved Rusty pin, when finishing sign-in, then store its contents before publishing the updated catalog", async () => {
@@ -49,4 +56,32 @@ it("Given delivery failed after connection was saved, when sign-in retries, then
   expect(f.connect).toHaveBeenCalledOnce()
   expect(f.push).toHaveBeenCalledOnce()
   expect(f.sync).toHaveBeenCalledOnce()
+})
+
+
+beforeAll(async () => {
+  await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))
+})
+it.each(["owner", "visitor"])("Given adopted-board role %s, when checking its immutable owner before delivery, then release the native copy on both paths", async role => {
+  const state = app(role)
+  const allocated: Automerge.Doc<WorkspaceDocumentV2>[] = []
+  const allocate = async () => {
+    const doc = Automerge.from(createWorkspaceDoc("added-board", "Added board", "previous-local-person", "blank"))
+    allocated.push(doc)
+    return doc
+  }
+  state.readWorkspaceDoc.mockImplementation(async () => await allocate() as never)
+  Object.assign(state, { withWorkspaceDoc: async <T>(_id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>) => {
+    const doc = await allocate()
+    try { return await read(doc) } finally { Automerge.free(doc) }
+  } })
+  const live = () => allocated.filter(doc => {
+    try { Automerge.getHeads(doc); return true } catch { return false }
+  })
+  try {
+    await connectAdoptedIdentityBoards(state as never, () => {})
+    expect(allocated).toHaveLength(1)
+    expect(live()).toHaveLength(0)
+    expect(f.connect).toHaveBeenCalledTimes(role === "owner" ? 1 : 0)
+  } finally { for (const doc of live()) Automerge.free(doc) }
 })

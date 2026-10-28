@@ -24,7 +24,7 @@ import { createIdentityReplica } from "./identityReplicaStore"
 import { exportIdentityRecoveryEvidence } from "./identityRecoveryState"
 import { approveRustyScope } from "./rustyEnrollment"
 import { blindObjectId, discoverBlindKeeper, inventoryBlindObjects, uploadBlindObject, downloadBlindObject } from "./blindClient"
-import { decodeBlindBytes, encryptBlindObject, decryptBlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes, encryptBlindObject, decryptBlindObject, decryptPurposeBoundObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { prepareBlindCheckpoint, submitBlindCheckpoint } from "./blindCheckpoint"
 import { ensureRustyPersonPolicy, readRustyManagementStatus, updateRustyManagementPolicy } from "./rustyManagementClient"
 import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentityDeviceTransfer } from "./identityDeviceTransfer"
@@ -57,8 +57,9 @@ import { createLocatedArchiveStore } from "@meta-uber/mesh-replication/history-a
 import { prepareArchiveLocators } from "@meta-uber/mesh-replication/history-archive-locator-preparation"
 import { confirmArchiveCoverageSet, verifyCompleteArchiveCoverage } from "@meta-uber/mesh-replication/history-archive-coverage-set"
 import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-preparation-journal"
-import { createDeviceAuthorizationRequest, createIdentityAuthorityView, createRecoverableIdentity,
-  emptyIdentityProfileState, issueDeviceAuthorization, verifyDeviceCertificateChain, verifyEnvelope } from "@meta-uber/mesh-identity"
+import { createDeviceAuthorizationRequest, createIdentityAuthorityView, createRecoverableIdentity, createDeviceRevocation,
+  emptyIdentityProfileState, issueDeviceAuthorization, verifyDeviceCertificateChain, verifyEnvelope, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 import { ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
 import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { peerStore } from "./peerStore"
@@ -68,6 +69,8 @@ import { receiveBrowserHistoryBaseline, type BrowserHistoryBaselineReceivePorts 
 import { verifyReceivedWireHistoryBaseline } from "../product-replica/historyBaselineReceiver"
 import { receiveWorkerHistoryBasis, restoreWorkerHistoryBasis, validateWorkerHistoryAuthority } from "../../workers/automation/src/historyBaseline"
 import { readWorkspaceBasisSnapshot } from "../storageJournal"
+import { retainWorkspaceRecoveryArchives, listRetainedWorkspaceRecoveryArchives } from "./workspaceHistoryRecoveryArchives"
+import { reverifyActiveHistoryForWorkspace, retainHistoryForReplicaDisconnect } from "./historyBaselineStartup"
 import { readPublicBoardManagementState } from "../public/publicationClient"
 import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fixtures/history-capture-v1.json"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
@@ -865,6 +868,41 @@ test("Given a Native-derived original-history catalogue, when data and locator c
           trustedScopeAuthority, fetch: browserRoute, ports: browserPorts })
         expect((await browserRepository.readActive())?.baselineId).toBe(ownerProposal.baselineId)
         expect((await browserRepository.readArchiveRecord())?.wire).toEqual(wire)
+        // Disconnect removes delivery credentials; the exact saved compact board must remain openable offline.
+        await peerStore.putWorkspaceAuthority({ version: 1, workspaceId: context.workspaceId,
+          ownerPersonId: historyFixture.expected.personId, ownerPublicKey: historyFixture.expected.publicKey,
+          ownerCertificates: originalSigner.certificates, epoch: 1, updatedAt: new Date().toISOString(),
+          scopeAuthoritySnapshot })
+        await setReplicaPreference(profile.identity.personId, receiveConfig)
+        await retainWorkspaceRecoveryArchives(profile.identity.personId, context.workspaceId, crypto.randomUUID(), [{
+          kind: "archive-source", id: "native-received-history", workspaceId: context.workspaceId,
+          scopeId: scope.scopeId, keyEpoch: scope.keyEpoch, key: toBase64Url(scope.key),
+          signedJson: toBase64Url(signedBaselineBytes), roots: [wire.basis.locatorRoot], authorityEvidence: scopeAuthoritySnapshot,
+        }], () => {})
+        const beforeDisconnect = await reverifyActiveHistoryForWorkspace(context.workspaceId, profile.identity.personId, () => {})
+        try { expect(beforeDisconnect?.document()).toEqual(current.document) } finally { beforeDisconnect?.free() }
+        await setReplicaPreference(profile.identity.personId, receiveConfig, true)
+        expect(await getReplicaConfigurations(profile.identity.personId)).toEqual([])
+        const removedPreferences = await exportPrivateReplicaState(profile.identity.personId)
+        expect(removedPreferences.entries.flatMap(entry => entry.operations).every(operation => operation.config === null)).toBe(true)
+        const fetchWhileOffline = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline after disconnect"))
+        try {
+          const afterDisconnect = await reverifyActiveHistoryForWorkspace(context.workspaceId, profile.identity.personId, () => {})
+          try { expect(afterDisconnect?.document()).toEqual(current.document) } finally { afterDisconnect?.free() }
+          await retainHistoryForReplicaDisconnect(receiveConfig, profile.identity.personId, () => {})
+          await retainHistoryForReplicaDisconnect(receiveConfig, profile.identity.personId, () => {})
+          const retainedOffline = await listRetainedWorkspaceRecoveryArchives(profile.identity.personId, context.workspaceId, () => {})
+          expect(retainedOffline.map(record => record.source.id).sort()).toEqual(["native-received-history", `offline:${ownerProposal.baselineId}`].sort())
+          expect(retainedOffline.every(record => record.source.key === toBase64Url(scope.key))).toBe(true)
+          expect(await getReplicaConfigurations(profile.identity.personId)).toEqual([])
+          const admitted = await peerStore.getWorkspaceAuthority(context.workspaceId)
+          const withoutAuthority = vi.spyOn(peerStore, "getWorkspaceAuthority").mockResolvedValueOnce({ ...admitted!, scopeAuthoritySnapshot: undefined })
+          try {
+            await expect(reverifyActiveHistoryForWorkspace(context.workspaceId, profile.identity.personId, () => {}))
+              .rejects.toThrow("requires an admitted signed scope authority")
+          } finally { withoutAuthority.mockRestore() }
+          expect(fetchWhileOffline).not.toHaveBeenCalled()
+        } finally { fetchWhileOffline.mockRestore() }
       } finally { Automerge.free(originalDoc) }
     } finally { received.free() }
     await expect(verifyNativeArchive({ ...nativeInput, scopeAuthority: undefined })).rejects.toThrow(/requires signed scope authority/)
@@ -932,6 +970,10 @@ test("Given an admitted file and a private Rusty connection, when ordinary repli
     await setReplicaPreference(profile.identity.personId, config)
     const selected = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === document.id)!
     const app = { getCurrentProfile: () => profile, readWorkspaceDoc: async () => document,
+      withWorkspaceDoc: async <T>(id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>): Promise<T> => {
+        if (id !== document.id) throw new Error("Unexpected native workspace read")
+        return await read(document)
+      },
       readWorkspaceBytes: async () => Automerge.save(document), mergeAuthorizedWorkspace: async () => {},
       causalReviewError: { value: undefined } }
     let states: AttachmentCoverageStatus[] = []
@@ -1022,6 +1064,9 @@ test("Given encrypted attachment chunks and a lost response, when Rusty and the 
     const app = { getCurrentProfile: () => profile, readWorkspaceDoc: async (id: string) => {
       if (id !== workspaceId) throw new Error("Unexpected native workspace read")
       return workspace
+    }, withWorkspaceDoc: async <T>(id: string, read: (doc: Automerge.Doc<WorkspaceDocumentV2>) => T | Promise<T>): Promise<T> => {
+      if (id !== workspaceId) throw new Error("Unexpected native workspace read")
+      return await read(workspace)
     } }
     const connection = { ...access, purpose: "workspace" as const, workspaceId, keyEpoch: scope.keyEpoch,
       contentKey: scope.contentKey, cursor: 0, lastUploaded: "" }
@@ -1280,6 +1325,43 @@ test("Given an approved person policy, when Rusty restarts and an independent ow
     await rm(process.stateDirectory, { recursive: true, force: true })
   }
 }, 20_000)
+
+test("Given an encrypted Identity catalog on actual Rusty, when only learned global revocation advances, then publish that authority and keep later unchanged polls stable", async () => {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Authority catalog owner")
+  await defaultStorage.savePersonalRoot(createPersonalRoot(owner, await certHashDefault(owner.certificate)))
+  const remote = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+  const remotePublicKey = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("raw", remote.publicKey)))
+  const remoteDeviceId = await blindHash(new Uint8Array(await crypto.subtle.exportKey("raw", remote.publicKey)))
+  const certificate = await createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, remoteDeviceId, remotePublicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, certificate], profileState = emptyIdentityProfileState(owner.identity.personId)
+  const authority = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })
+  await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, profileState))
+  const service = await startRusty(owner)
+  try {
+    const discovery = await discoverBlindKeeper(service.origin)
+    await ensureRustyPersonPolicy(discovery, owner, true, { allowLegacyMigration: true })
+    const config = await ensureIdentityReplicaConnection(discovery, owner, () => {})
+    const source = createIdentityReplica(config, owner, () => {})
+    await source.push()
+    const before = await inventoryBlindObjects(config, 0)
+    const revocation = await createDeviceRevocation(owner, authority, remoteDeviceId, profileState)
+    await mergeIdentityAuthorityView(await createIdentityAuthorityView(owner.identity, { certificates, revocations: [revocation] }, profileState))
+    await source.push()
+    const after = await inventoryBlindObjects(config, 0)
+    expect(after.maxSequence).toBe(before.maxSequence! + 1)
+    const latest = await downloadBlindObject(config, after.objects.at(-1)!.objectId)
+    const plaintext = await decryptPurposeBoundObject(latest, { purpose: "identity-state", subjectId: owner.identity.personId,
+      scopeId: config.scopeId, keyEpoch: config.keyEpoch }, decodeBlindBytes(config.contentKey))
+    const record = JSON.parse(new TextDecoder().decode(plaintext)) as { payload: { state: { components: {
+      identityAuthority: { value: { authorityView: { revocations: unknown[] } } }
+    } } } }
+    expect(record.payload.state.components.identityAuthority.value.authorityView.revocations).toContainEqual(revocation)
+    await source.push()
+    expect((await inventoryBlindObjects(config, 0)).maxSequence).toBe(after.maxSequence)
+  } finally { await stopRusty(service.child); await rm(service.stateDirectory, { recursive: true, force: true }) }
+}, 45_000)
 
 test("Given eight Identity snapshots exhaust Rusty's quota, when a checkpoint reply is lost and Rusty restarts, then recover the pending upload and cold-restore the complete signed profile", async () => {
   resetIdentityStorageForTest()

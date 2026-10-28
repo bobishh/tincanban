@@ -2,6 +2,8 @@ import type { PersonalRootDocumentV1 } from "./model"
 import type { LocalProfile } from "./identity"
 import { resolveLocalSigningContext } from "./localSigningContext"
 import { identityProfileRevision } from "./identityProfileRevision"
+import { filterIdentityProfileRevocations, type VerifiedIdentityAuthorityView } from "@meta-uber/mesh-identity"
+import { unprovidedDisplayName } from "../chat/names"
 import { createIdentityProfileOperation, emptyIdentityProfileState, identityProfileValue, mergeIdentityProfileState,
   observeLegacyIdentityProfile, readIdentityProfileState, type IdentityProfileState, type ProfilePresentationField,
   type ProfileValue } from "./identityProfileState"
@@ -32,8 +34,9 @@ export async function reconcileIdentityProfileRootPresentation(root: PersonalRoo
 
 function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityProfileState, allowUnresolvedConflicts = false): void {
   const name = identityProfileValue(state, "name")
+  const knownNames = name.status === "empty" ? [unprovidedDisplayName] : name.values
   if (!(allowUnresolvedConflicts && name.status === "conflict") &&
-      !name.values.some(value => typeof value === "string" && value === root.identity.displayName)) {
+      !knownNames.some(value => typeof value === "string" && value === root.identity.displayName)) {
     throw new Error("Saved identity presentation does not match its profile history")
   }
   const photo = identityProfileValue(state, "photo")
@@ -50,8 +53,10 @@ function assertPresentationShadow(root: PersonalRootDocumentV1, state: IdentityP
 export function projectIdentityProfileRoot(root: PersonalRootDocumentV1, state: IdentityProfileState): PersonalRootDocumentV1 {
   const next = { ...structuredClone(root), profileState: structuredClone(state) }
   const name = identityProfileValue(state, "name"), photo = identityProfileValue(state, "photo")
-  if (name.status === "value" && typeof name.values[0] === "string") next.identity.displayName = name.values[0]
+  if (name.status === "empty") next.identity.displayName = unprovidedDisplayName
+  else if (name.status === "value" && typeof name.values[0] === "string") next.identity.displayName = name.values[0]
   if (photo.status === "value" && typeof photo.values[0] !== "string") next.photo = photo.values[0]
+  else if (photo.status === "empty") delete next.photo
   return next
 }
 
@@ -81,10 +86,14 @@ export async function assertIdentityProfileRevision(root: PersonalRootDocumentV1
   }
 }
 
-export async function mergeIdentityProfileRoots(current: PersonalRootDocumentV1 | null, incoming: PersonalRootDocumentV1): Promise<PersonalRootDocumentV1> {
-  const state = await rootIdentityProfileState(incoming)
+export async function mergeIdentityProfileRoots(current: PersonalRootDocumentV1 | null, incoming: PersonalRootDocumentV1,
+  authority: VerifiedIdentityAuthorityView): Promise<PersonalRootDocumentV1> {
+  const authorizedState = async (root: PersonalRootDocumentV1) => readIdentityProfileState(
+    await filterIdentityProfileRevocations(await rootIdentityProfileState(root), root.identity,
+      authority.certificates, authority.revocations), root.identity)
+  const state = await authorizedState(incoming)
   if (!current) return projectIdentityProfileRoot(incoming, state)
   if (current.identity.personId !== incoming.identity.personId || current.identity.publicKey !== incoming.identity.publicKey) throw new Error("Profile identity conflict")
-  const merged = await mergeIdentityProfileState(await rootIdentityProfileState(current), state, current.identity)
+  const merged = await mergeIdentityProfileState(await authorizedState(current), state, current.identity)
   return projectIdentityProfileRoot({ ...incoming, ...current }, merged)
 }

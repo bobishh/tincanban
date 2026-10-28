@@ -82,6 +82,22 @@ it("Given an admitted basis, When one local command commits, Then only the delta
   f.database.close()
 })
 
+it.each(["basis install", "tail append"] as const)("Given a recovered workspace with pending secondary state, when %s advances its local revision, then retain the recovery identity and current history", async stage => {
+  const f = await fixture(), recoveryId = crypto.randomUUID()
+  const seed = f.database.transaction(["frontiers", "revisions"], "readwrite"), seeded = transactionDone(seed)
+  if (stage === "basis install") seed.objectStore("frontiers").delete(f.doc.id)
+  seed.objectStore("revisions").put({ id: f.doc.id, workspaceId: f.doc.id, revision: "recovered-revision", recoveryId })
+  await seeded
+  try {
+    if (stage === "basis install") expect(await f.journal.install(f.snapshot, f.frontier, [], "recovered-revision", () => {}, "basis-installed")).toBe(true)
+    else await appendDelta(f, f.frontier, f.delta)
+    const read = f.database.transaction("revisions", "readonly"), done = transactionDone(read)
+    expect(await requestResult(read.objectStore("revisions").get(f.doc.id))).toMatchObject({ recoveryId })
+    await done
+    expect((await f.journal.read(f.doc.id))!.frontier.heads).toEqual(stage === "basis install" ? f.snapshot.heads : Automerge.getHeads(f.created).sort())
+  } finally { f.database.close() }
+})
+
 it("Given a compact history basis, When a new admitted delta commits, Then threshold counters advance by that exact change only", async () => {
   const f = await fixture()
   const prepare = f.database.transaction(["snapshots", "historyProgress"], "readwrite")

@@ -60,7 +60,8 @@ function itemValuesForCreate(doc: Automerge.Doc<WorkspaceDocumentV2>, command: C
   return { ok: true, value: values }
 }
 
-function validateValues(doc: Automerge.Doc<WorkspaceDocumentV2>, boardId: string, values: Record<string, FieldValue>, body?: string): { ok: true } | CommandFailure {
+function validateValues(doc: Automerge.Doc<WorkspaceDocumentV2>, boardId: string, values: Record<string, FieldValue>, body?: string,
+  previousValues?: Readonly<Record<string, FieldValue>>): { ok: true } | CommandFailure {
   const fields = Object.values(doc.entities).filter((entity): entity is FieldDefinition => hasEntityKind(entity, "field") && entity.placement.parentId === boardId)
   const board = doc.entities[boardId]
   const notesFieldId = hasEntityKind(board, "board") ? board.cardPresentation?.narrativeFieldId : undefined
@@ -69,7 +70,7 @@ function validateValues(doc: Automerge.Doc<WorkspaceDocumentV2>, boardId: string
     const legacyNote = values[notesFieldId]
     valuesForValidation[notesFieldId] = typeof legacyNote === "string" && legacyNote.trim() ? legacyNote : body ?? ""
   }
-  const validation = validateItemValues(fields, valuesForValidation)
+  const validation = validateItemValues(fields, valuesForValidation, previousValues)
   if (validation.ok) return { ok: true }
   const field = Object.keys(validation.errors)[0]
   return err("invalid_input", validation.errors[field], field)
@@ -114,7 +115,7 @@ function validateNarrativeFold(doc: Automerge.Doc<WorkspaceDocumentV2>, item: It
 function validateItemPatch(doc: Automerge.Doc<WorkspaceDocumentV2>, item: Item, command: CommandByKind<"patchItem">): PreparedCommand | { ok: true } {
   if (!command.values && command.body === undefined) return { ok: true }
   const boardId = findRootBoardId(doc.entities, item.id)
-  return boardId ? validateValues(doc, boardId, { ...item.values, ...command.values }, command.body ?? item.body) : { ok: true }
+  return boardId ? validateValues(doc, boardId, { ...item.values, ...command.values }, command.body ?? item.body, item.values) : { ok: true }
 }
 
 function patchItemInDraft(draft: WorkspaceDocumentV2, command: CommandByKind<"patchItem">, nowIso: string) {

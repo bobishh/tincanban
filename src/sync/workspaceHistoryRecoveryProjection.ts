@@ -1,7 +1,7 @@
 import { BrowserMeshStore } from "@meta-uber/mesh-browser-store"
 import { canonicalizeJson, sha256Base64Url, type LocalProfile } from "../domain/identity"
 import { readLocal } from "../localDb"
-import { defaultStorage } from "../storage"
+import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
 import { registerWorkspaceInCurrentRoot } from "../statePersonalRoot"
 import { readWorkspaceCatalogRecords } from "../storageCatalog"
 import { openWorkspaceJournal } from "../storageJournal"
@@ -132,38 +132,47 @@ async function project(intent: ProjectionIntent, ensureCurrent: () => void): Pro
   if (!await hasCommittedRecovery(intent.workspaceId, intent.recoveryId, ensureCurrent)) return
   const transfer = await readIdentityDeviceTransfer(intent.manifest, intent.personId)
   await assertCurrent(intent.personId, ensureCurrent)
+  if (!await hasCommittedRecovery(intent.workspaceId, intent.recoveryId, ensureCurrent)) return
   const reference = transfer.personalRoot.workspaces[intent.workspaceId]
   if (!reference || reference.forgotten || reference.workspaceId !== intent.workspaceId || !reference.grantHash) {
     throw new Error("Recovered workspace is missing its authenticated personal-root reference")
   }
   await activateIdentityDeviceTransfer(transfer, ensureCurrent)
   await assertCurrent(intent.personId, ensureCurrent)
+  // Identity activation can acquire workspace locks for its own projections.
+  // Fence board-local writes only after those effects release their locks.
+  const projected = await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId, async context => {
+    if (!await hasCommittedRecovery(intent.workspaceId, intent.recoveryId, ensureCurrent)) return false
+    await projectWorkspace(intent, profile, reference.grantHash, context, ensureCurrent)
+    return true
+  })
+  if (projected) defaultStorage.invalidateWorkspaceCache(intent.workspaceId)
+}
+
+async function projectWorkspace(intent: ProjectionIntent, profile: LocalProfile, grantHash: string,
+  context: WorkspaceAuthorityMutationContext, ensureCurrent: () => void): Promise<void> {
   if (intent.credential) {
     const current = await peerStore.getWorkspaceCredential(intent.workspaceId)
     await assertCurrent(intent.personId, ensureCurrent)
     if (current && current.ownerPersonId !== intent.credential.ownerPersonId) {
       if (intent.credential.epoch === current.epoch) throw new Error("Recovered workspace ownership conflicts with current authority")
-      if (intent.credential.epoch > current.epoch) await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
-        context => context.write(() => peerStore.transferWorkspaceCredential(current.ownerPersonId,
-          { ...intent.credential!, transportSecret: current.transportSecret }, intent.authority?.scopeAuthoritySnapshot)))
+      if (intent.credential.epoch > current.epoch) await context.write(() => peerStore.transferWorkspaceCredential(current.ownerPersonId,
+        { ...intent.credential!, transportSecret: current.transportSecret }, intent.authority?.scopeAuthoritySnapshot))
     } else {
-      await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
-        context => context.write(() => peerStore.putWorkspaceCredential(current ? { ...intent.credential!, transportSecret: current.transportSecret } : intent.credential!)))
+      await context.write(() => peerStore.putWorkspaceCredential(current ? { ...intent.credential!, transportSecret: current.transportSecret } : intent.credential!))
     }
     await assertCurrent(intent.personId, ensureCurrent)
   }
   if (intent.authority) {
     // PeerStore performs the durable monotonic merge and retains a newer admitted ledger.
-    await defaultStorage.withWorkspaceAuthorityMutation(intent.workspaceId,
-      context => context.write(() => peerStore.putWorkspaceAuthority(intent.authority!)))
+    await context.write(() => peerStore.putWorkspaceAuthority(intent.authority!))
     await assertCurrent(intent.personId, ensureCurrent)
   }
   await assertCurrent(intent.personId, ensureCurrent)
-  await registerWorkspaceInCurrentRoot(defaultStorage, profile, intent.workspaceId, reference.grantHash)
+  await registerWorkspaceInCurrentRoot(defaultStorage, profile, intent.workspaceId, grantHash)
   await assertCurrent(intent.personId, ensureCurrent)
   await readWorkspaceCatalogRecords()
   await assertCurrent(intent.personId, ensureCurrent)
-  defaultStorage.invalidateWorkspaceCache(intent.workspaceId)
   const key = await intentKey(intent.personId, intent.workspaceId, intent.recoveryId)
   const completed = { ...intent, status: "completed" as const }
   await store().updateRecords(STORE, [key], values => {

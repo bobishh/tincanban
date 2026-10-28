@@ -156,7 +156,12 @@ test("Given an enrollment reply is lost, when a restarted client retries after c
 
 test("Given local journal preparation fails, when enrollment is attempted, then do not send the scope mutation", async () => {
   const h = await harness({ retryCapability: true })
-  const failedWrite = vi.spyOn(localDb, "compareAndSwapLocal").mockRejectedValueOnce(new Error("Journal storage unavailable"))
+  const journalKey = await scopeEnrollmentJournalKey(h.profile.identity.personId, h.access.origin, h.access.scopeId)
+  const compareAndSwap = vi.mocked(localDb.compareAndSwapLocal).getMockImplementation()!
+  const failedWrite = vi.spyOn(localDb, "compareAndSwapLocal").mockImplementation(async (plan, ensureCurrent) => {
+    if (plan.writes.some(write => write.key === journalKey)) throw new Error("Journal storage unavailable")
+    return compareAndSwap(plan, ensureCurrent)
+  })
   try { await expect(approveRustyScope(h.access, h.profile, false, { requireExactRetry: true })).rejects.toThrow(/journal storage/i) }
   finally { failedWrite.mockRestore() }
   expect(h.challengeCount).toBe(1)

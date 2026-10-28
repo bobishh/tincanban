@@ -11,13 +11,22 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
   const showIdentityPortal = ref(false), identityPortalOrigin = configuredIdentityPortalOrigin(import.meta.env.VITE_IDENTITY_ORIGIN as string | undefined)
   const currentIdentityProfile = computed(() => { void app.workspace.docVersion.value; return app.workspace.getCurrentProfile() })
   const identitySignedIn = ref(false), identityPortalMode = ref<"choose" | "signin">("choose")
+  const identitySignInPersonId = ref<string | undefined>()
   watch(currentIdentityProfile, async profile => {
     const connected = Boolean(profile && await identityEnrollmentConfirmed(profile))
     if (currentIdentityProfile.value === profile) identitySignedIn.value = connected
   }, { immediate: true })
   function beginHeaderSignIn() {
+    identitySignInPersonId.value = undefined
     identityPortalMode.value = "signin"
     showSettings.value = false
+    showIdentityPortal.value = true
+  }
+  function beginEnrollmentSignIn() {
+    const personId = app.collaboration.device.sync.enrollmentPersonId.value
+    if (!personId) return
+    identitySignInPersonId.value = personId
+    identityPortalMode.value = "signin"
     showIdentityPortal.value = true
   }
   async function beginDeviceEnrollment(start: () => Promise<void>) {
@@ -34,6 +43,7 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
   const identityPortalFlow = createIdentityPortalFlow({ configured: Boolean(identityPortalOrigin), showPortal: showIdentityPortal, getProfile: app.workspace.getCurrentProfile, refreshIdentity: app.workspace.refreshIdentity })
   const browserSignInReturn = createIdentityBrowserSignInReturn({ showPortal: showIdentityPortal,
     refreshIdentity: app.workspace.refreshIdentity, closePortal: identityPortalFlow.close,
+    resumePairing: () => app.collaboration.device.sync.joinFromLocation(window.location.href),
     loadBoards: async returnPath => {
       const loader = await import("./identityBoardLoading")
       try { await loader.resumeIdentityBoardLoading(app.workspace, returnPath, app.collaboration.device.sync.recoverIdentityWorkspaces) }
@@ -63,5 +73,5 @@ export function useIdentityAccount(app: ReturnType<typeof useAppController>, sho
     else void browserSignInReturn.retryBoards()
   }
   return { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
-    beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards }
+    identitySignInPersonId, beginEnrollmentSignIn, beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards }
 }

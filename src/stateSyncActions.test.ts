@@ -56,6 +56,56 @@ describe("readWorkspaceDoc", () => {
   })
 })
 
+describe("withWorkspaceDoc", () => {
+  it("Given a saved background board, when an async scoped read finishes, then keep its native document alive through the callback and release it afterward", async () => {
+    stateRuntime.activeDoc = null
+    const doc = Automerge.from(createWorkspaceDoc("scoped-background", "Stored", "owner", "blank"))
+    const storage = { loadWorkspaceDoc: async () => ({ doc }) } as unknown as WorkspaceStorage
+    const value = await createSyncActions().withWorkspaceDoc(doc.id, async current => {
+      await Promise.resolve()
+      expect(Automerge.stats(current)).toBeDefined()
+      return current.title
+    }, storage)
+    expect(value).toBe("Stored")
+    expect(() => Automerge.stats(doc)).toThrow()
+  })
+
+  it("Given a saved background board, when a scoped reader rejects, then release its native document and preserve the original failure", async () => {
+    stateRuntime.activeDoc = null
+    const doc = Automerge.from(createWorkspaceDoc("scoped-failure", "Stored", "owner", "blank")), failure = new Error("Reader failed")
+    const storage = { loadWorkspaceDoc: async () => ({ doc }) } as unknown as WorkspaceStorage
+    await expect(createSyncActions().withWorkspaceDoc(doc.id, async () => { throw failure }, storage)).rejects.toBe(failure)
+    expect(() => Automerge.stats(doc)).toThrow()
+  })
+
+  it("Given the active board, when scoped reads succeed or fail, then leave its borrowed native document usable", async () => {
+    const doc = Automerge.from(createWorkspaceDoc("scoped-active", "Current", "owner", "blank"))
+    stateRuntime.activeDoc = doc
+    const storage = { loadWorkspaceDoc: async () => { throw new Error("Unexpected storage read") } } as unknown as WorkspaceStorage
+    try {
+      expect(await createSyncActions().withWorkspaceDoc(doc.id, current => current.title, storage)).toBe("Current")
+      await expect(createSyncActions().withWorkspaceDoc(doc.id, () => { throw new Error("Reader failed") }, storage)).rejects.toThrow("Reader failed")
+      expect(Automerge.stats(doc)).toBeDefined()
+    } finally { Automerge.free(doc) }
+  })
+})
+
+it("Given a retained foreign workspace, when import permission is denied, then release the owned document read for that check without changing the import candidate", async () => {
+  const profile = await bootstrapIdentity("Importing visitor")
+  stateRuntime.currentProfile = profile
+  const candidate = Automerge.from(createWorkspaceDoc("denied-import", "Foreign board", "another-person", "blank"))
+  const retained = Automerge.clone(candidate)
+  const storage = { loadWorkspaceDoc: async () => ({ doc: retained }) } as unknown as WorkspaceStorage
+  try {
+    await expect(createSyncActions().importWorkspaceDocument(candidate, storage)).rejects.toThrow("Only the owner can import")
+    expect(() => Automerge.stats(retained)).toThrow()
+    expect(Automerge.stats(candidate)).toBeDefined()
+  } finally {
+    try { Automerge.free(retained) } catch { /* It may already have been released by the reader. */ }
+    Automerge.free(candidate)
+  }
+})
+
 it("Given failing history storage, When access reclassification runs, Then trace preserves the failure stage and cause", async () => {
   clearMeshTrace()
   const storage = {

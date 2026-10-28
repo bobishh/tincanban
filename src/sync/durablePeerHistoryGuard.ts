@@ -6,6 +6,7 @@ import type { PeerStore, WorkspaceAuthorityRecord, WorkspaceMeshCredential } fro
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
 import type { WorkspaceAuthority } from "@meta-uber/mesh-workspace"
 import { ownerAuthorities } from "./durableMeshBase"
+import { resolveLearnedIdentityAccess } from "../domain/identityAuthority"
 
 export function createDurablePeerHistoryGuard(input: {
   workspaceId: string; deviceId: string; remotePersonId: string; transportSecret: string; profile: LocalProfile; store: PeerStore;
@@ -29,6 +30,10 @@ export function createDurablePeerHistoryGuard(input: {
       ownerCertificates: ownerState.ownerCertificates as DeviceCertificate[],
       ownerHistory: ownerHistory(authority, remote.credential) })
     let currentPeer = await verify(bundle)
+    const assertGlobalCurrent = await resolveLearnedIdentityAccess([
+      { personId: profile.identity.personId, deviceId: profile.device.deviceId },
+      { personId: input.remotePersonId, deviceId: input.deviceId },
+    ])
     input.assertSession()
     const [latestCredential, latestAuthority, latestPeer] = await Promise.all([
       input.store.getWorkspaceCredential(input.workspaceId), input.store.getWorkspaceAuthority(input.workspaceId),
@@ -54,6 +59,7 @@ export function createDurablePeerHistoryGuard(input: {
     }
     assertPeerIdentity(currentPeer, input, remote.credential)
     assertPoliciesCurrent(remote.credential, authority, profile, currentPeer.advertisement.payload.personId, input.deviceId, bundle.grant ?? null)
+    await assertGlobalCurrent()
     input.assertSession()
   }
 }

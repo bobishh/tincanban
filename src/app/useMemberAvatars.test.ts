@@ -1,6 +1,7 @@
 import { effectScope, nextTick, ref, shallowRef } from "vue"
 import { beforeEach, expect, it, vi } from "vitest"
 import type { useTincanban } from "../state"
+import type { WorkspaceDocumentV2 } from "../domain/model"
 import { useMemberAvatars } from "./useMemberAvatars"
 import { emptyIdentityProfileState, observeLegacyIdentityProfile } from "../domain/identityProfileState"
 
@@ -29,6 +30,11 @@ beforeEach(() => {
   preferences.listeners.clear()
 })
 
+function scopedPhotoRead(read: (id: string) => unknown) {
+  return async <T>(id: string, project: (doc: WorkspaceDocumentV2) => T | Promise<T>): Promise<T> =>
+    project(await read(id) as WorkspaceDocumentV2)
+}
+
 it("Given a restored Identity photo and two shared boards, when only one board is open, then publish the photo to both without switching boards", async () => {
   const active = { id: "active-board", entities: {} }
   const background = { id: "background-board", entities: {} }
@@ -36,7 +42,7 @@ it("Given a restored Identity photo and two shared boards, when only one board i
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: active.id }, { id: background.id }]),
     getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => active,
-    readWorkspaceDoc: async (id: string) => id === active.id ? active : background,
+    withWorkspaceDoc: scopedPhotoRead(id => id === active.id ? active : background),
     executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
@@ -56,7 +62,7 @@ it("Given an unchanged saved photo, when another board becomes available in the 
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces,
     getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => active,
-    readWorkspaceDoc: async (id: string) => id === active.id ? active : background,
+    withWorkspaceDoc: scopedPhotoRead(id => id === active.id ? active : background),
     executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
@@ -77,7 +83,7 @@ it("Given a saved photo whose board write fails once, when storage recovers, the
   const execute = vi.fn().mockRejectedValueOnce(new Error("Storage temporarily busy")).mockResolvedValue(undefined)
   const workspace = { ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
     getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => doc,
-    readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
+    withWorkspaceDoc: scopedPhotoRead(() => doc), executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
   try {
     await vi.waitFor(() => expect(avatars.avatarNotice.value).toMatch(/sharing.*pending/i))
@@ -99,7 +105,7 @@ it("Given a saved identity photo while startup checks are pending, when the work
   const workspace = {
     ready, docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
     getCurrentProfile: () => ({ identity: ownerIdentity }),
-    getActiveDoc: () => doc, readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: execute,
+    getActiveDoc: () => doc, withWorkspaceDoc: scopedPhotoRead(() => doc), executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
   const avatars = scope.run(() => useMemberAvatars(workspace))!
@@ -135,7 +141,7 @@ it("Given sign-in refreshed Bo while the guest board is still active, when brows
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: guestDoc.id }]),
     getCurrentProfile: () => current.value,
-    getActiveDoc: () => activeDoc, readWorkspaceDoc: async () => activeDoc,
+    getActiveDoc: () => activeDoc, withWorkspaceDoc: scopedPhotoRead(() => activeDoc),
     executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const guestSnapshot = structuredClone(guestDoc)
@@ -180,7 +186,7 @@ it("Given signed photo history with a missing root shadow, when avatar preferenc
   const execute = vi.fn(async () => {})
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
-    getCurrentProfile: () => profile, getActiveDoc: () => doc, readWorkspaceDoc: async () => doc,
+    getCurrentProfile: () => profile, getActiveDoc: () => doc, withWorkspaceDoc: scopedPhotoRead(() => doc),
     executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
@@ -197,7 +203,7 @@ it("Given a same-owner identity-scope photo update without a document version ch
   const workspace = {
     ready: ref(true), docVersion, availableWorkspaces: ref([]),
     getCurrentProfile: () => ({ identity: ownerIdentity }),
-    getActiveDoc: () => doc, readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: vi.fn(async () => {}),
+    getActiveDoc: () => doc, withWorkspaceDoc: scopedPhotoRead(() => doc), executeWorkspaceCommandAsync: vi.fn(async () => {}),
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
   const avatars = scope.run(() => useMemberAvatars(workspace))!
@@ -218,7 +224,7 @@ it("Given a saved private photo and a future-dated shared avatar, when the board
   const execute = vi.fn(async () => {})
   const workspace = { ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: doc.id }]),
     getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => doc,
-    readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
+    withWorkspaceDoc: scopedPhotoRead(() => doc), executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
   try {
     await vi.waitFor(() => expect(avatars.currentAvatar.value).toBe(photo.avatarData))
@@ -255,7 +261,7 @@ it("Given a pending personal-root read when identity changes, then do not projec
     ready: ref(true), docVersion, availableWorkspaces,
     getCurrentProfile: () => current.value,
     getActiveDoc: () => activeDoc,
-    readWorkspaceDoc: async () => otherDoc,
+    withWorkspaceDoc: scopedPhotoRead(() => otherDoc),
     executeWorkspaceCommandAsync: execute,
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
@@ -288,7 +294,7 @@ it("Given causal profile conflicts and a revision, when private profile state is
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
     getCurrentProfile: () => ({ identity }), getActiveDoc: () => ({ id: "workspace", entities: {} }),
-    readWorkspaceDoc: async () => ({ id: "workspace", entities: {} }), executeWorkspaceCommandAsync: vi.fn(async () => {}),
+    withWorkspaceDoc: scopedPhotoRead(() => ({ id: "workspace", entities: {} })), executeWorkspaceCommandAsync: vi.fn(async () => {}),
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
   try {
@@ -308,7 +314,7 @@ it("Given a foreign owner's preference event or a disposed view, then do not rec
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
     getCurrentProfile: () => ({ identity: ownerIdentity }),
-    getActiveDoc: () => doc, readWorkspaceDoc: async () => doc, executeWorkspaceCommandAsync: vi.fn(async () => {}),
+    getActiveDoc: () => doc, withWorkspaceDoc: scopedPhotoRead(() => doc), executeWorkspaceCommandAsync: vi.fn(async () => {}),
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope()
   scope.run(() => useMemberAvatars(workspace))
@@ -332,7 +338,7 @@ it("Given fresh unnamed provenance, when profile preferences load and explicit c
   const workspace = {
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
     getCurrentProfile: () => ({ identity }), getActiveDoc: () => ({ id: "workspace", entities: {} }),
-    readWorkspaceDoc: async () => ({ id: "workspace", entities: {} }), executeWorkspaceCommandAsync: vi.fn(async () => {}),
+    withWorkspaceDoc: scopedPhotoRead(() => ({ id: "workspace", entities: {} })), executeWorkspaceCommandAsync: vi.fn(async () => {}),
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
   try {
@@ -357,7 +363,7 @@ it("Given invalid workspace photo metadata, when Identity profile reconciliation
     ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([]),
     getCurrentProfile: () => ({ identity }),
     getActiveDoc: () => doc,
-    readWorkspaceDoc: async () => ({ id: "workspace", entities: {} }),
+    withWorkspaceDoc: scopedPhotoRead(() => ({ id: "workspace", entities: {} })),
     executeWorkspaceCommandAsync: vi.fn(async () => {}),
   } as unknown as ReturnType<typeof useTincanban>
   const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
@@ -374,4 +380,68 @@ it("Given invalid workspace photo metadata, when Identity profile reconciliation
     expect(avatars.profileLoadError.value).toBe("")
     expect(avatars.profileRevision.value).not.toBe("")
   } finally { scope.stop(); errorLog.mockRestore() }
+})
+
+async function nativePhotoProjection(backgroundMatches: boolean, execute: ReturnType<typeof vi.fn>) {
+  const Automerge = await import("@automerge/automerge/slim")
+  const { readFile } = await import("node:fs/promises")
+  const { createWorkspaceDoc } = await import("../domain/seeds")
+  const { createSyncActions } = await import("../stateSyncActions")
+  const { stateRuntime } = await import("../stateContext")
+  await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm"))
+  const seed = createWorkspaceDoc("active-photo-board", "Active", ownerId, "blank")
+  const id = `member-profile:${ownerId}`, now = "2026-10-28T20:00:00.000Z"
+  seed.entities[id] = { id, kind: "member_profile", title: "Owner", personId: ownerId, data: JSON.stringify(photo),
+    placement: { parentId: null, rank: "0/1" }, archivedAt: null, createdAt: now, updatedAt: now }
+  const active = Automerge.from(seed)
+  const background = Automerge.from({ ...seed, id: "background-photo-board", entities: backgroundMatches ? seed.entities : {} })
+  const bytes = Automerge.save(background), backgroundId = background.id
+  Automerge.free(background)
+  const loaded: typeof active[] = []
+  const source = { loadWorkspaceDoc: async () => {
+    const doc = Automerge.load<typeof seed>(bytes)
+    loaded.push(doc)
+    return { doc }
+  } }
+  const previous = stateRuntime.activeDoc
+  stateRuntime.activeDoc = active
+  const actions = createSyncActions()
+  const workspace = { ready: ref(true), docVersion: ref(1), availableWorkspaces: ref([{ id: active.id }, { id: backgroundId }]),
+    getCurrentProfile: () => ({ identity: ownerIdentity }), getActiveDoc: () => active,
+    readWorkspaceDoc: (id: string) => actions.readWorkspaceDoc(id, source as never),
+    withWorkspaceDoc: <T>(id: string, read: (doc: typeof active) => T | Promise<T>) => actions.withWorkspaceDoc(id, read, source as never),
+    executeWorkspaceCommandAsync: execute } as unknown as ReturnType<typeof useTincanban>
+  const alive = () => loaded.filter(doc => { try { Automerge.stats(doc); return true } catch { return false } })
+  const scope = effectScope(), avatars = scope.run(() => useMemberAvatars(workspace))!
+  return { loaded, alive, active, avatars, backgroundId, Automerge,
+    close: () => { scope.stop(); for (const doc of alive()) Automerge.free(doc); stateRuntime.activeDoc = previous; Automerge.free(active) } }
+}
+
+it("Given a matching photo on a saved background board, when photo preferences reconcile repeatedly, then release every owned native read and preserve the active borrowed board", async () => {
+  const execute = vi.fn(async () => {}), f = await nativePhotoProjection(true, execute)
+  try {
+    await f.avatars.retryProfileLoad()
+    expect(f.loaded.length).toBeGreaterThanOrEqual(2)
+    expect(execute).not.toHaveBeenCalled()
+    expect(f.avatars.avatarNotice.value).toBe("")
+    expect(f.alive()).toHaveLength(0)
+    expect(f.Automerge.stats(f.active)).toBeDefined()
+  } finally { f.close() }
+})
+
+it("Given a saved background photo write fails once, when its scheduled retry succeeds, then release both native reads while preserving retry behavior and the active board", async () => {
+  const execute = vi.fn().mockRejectedValueOnce(new Error("Storage temporarily busy")).mockResolvedValue(undefined)
+  const f = await nativePhotoProjection(false, execute)
+  vi.useFakeTimers()
+  try {
+    await vi.waitFor(() => expect(f.avatars.avatarNotice.value).toMatch(/sharing.*pending/i))
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.waitFor(() => expect(f.avatars.avatarNotice.value).toBe(""))
+    expect(execute).toHaveBeenCalledTimes(2)
+    expect(execute).toHaveBeenNthCalledWith(1, f.backgroundId, { kind: "setMemberAvatar", ...photo })
+    expect(execute).toHaveBeenNthCalledWith(2, f.backgroundId, { kind: "setMemberAvatar", ...photo })
+    expect(f.loaded.length).toBe(2)
+    expect(f.alive()).toHaveLength(0)
+    expect(f.Automerge.stats(f.active)).toBeDefined()
+  } finally { f.close(); vi.useRealTimers() }
 })

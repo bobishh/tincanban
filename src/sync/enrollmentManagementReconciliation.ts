@@ -1,10 +1,9 @@
-import { captureIdentityProfile, isCurrentIdentityProfile, sha256Base64Url, type LocalProfile } from "../domain/identity"
+import { captureIdentityProfile, isCurrentIdentityProfile, type LocalProfile } from "../domain/identity"
 import type { DeviceCertificate } from "../domain/model"
-import { resolveSigningContext, signingEvidence, signWithContext } from "../domain/signingContext"
-import { decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
-import { fetchBlind, readBlindJson } from "./rustyHttp"
+import { resolveSigningContext, signWithContext } from "../domain/signingContext"
+import { fetchBlind } from "./rustyHttp"
 import type { ManagementConflictResolver } from "./rustyManagementReconciliation"
-import type { ManagementStatusAuthorization, RustyManagementStatusResponse } from "./rustyManagementStatus"
+import { requestRustyManagementStatus } from "@meta-uber/mesh-replication/rusty-management"
 import type { Context } from "@opentelemetry/api"
 
 /** The approved certificate allows reading current status before adopting the returning device's identity. */
@@ -16,30 +15,22 @@ export function enrollmentManagementConflictResolver(prepared: { profile: LocalP
     ensureCurrent()
     if (!isCurrentIdentityProfile(original)) throw new Error("Identity changed during device enrollment")
   }
-  return async binding => {
+  return async (binding, minimumRevision) => {
     assertCurrent()
-    const issuedAt = Date.now(), expiresAt = issuedAt + 120_000
-    const serviceId = await sha256Base64Url(decodeBlindBytes(binding.servicePublicKey))
-    const scope = { serviceId, origin: binding.origin, personId: profile.identity.personId,
-      deviceId: profile.device.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId }
-    const authorityRevision = profile.certificate.signature
-    const signing = await resolveSigningContext({ profile, certificates, purpose: "rusty-management-policy-status",
-      binding: scope, authorityRevision, expiresAt, current: async () => {
-        assertCurrent()
-        return { personId: profile.identity.personId, deviceId: profile.device.deviceId, authorityRevision }
-      } })
-    const authorization = await signWithContext(signing, { kind: "rusty-management-policy-status", version: 1,
-      ...scope, requestId: crypto.randomUUID(), issuedAt, expiresAt } satisfies ManagementStatusAuthorization)
-    const evidence = signingEvidence(signing)
-    assertCurrent()
-    const response = await readBlindJson<RustyManagementStatusResponse>(await fetchBlind(
-      `${binding.origin}/v2/management/${binding.resourceKind}/${binding.resourceId}/status`, {
-        method: "POST", cache: "no-store", signal: AbortSignal.timeout(15_000), headers: { "Content-Type": "application/json" },
-        diagnosticContext,
-        body: JSON.stringify({ version: 1, identity: evidence.identity, deviceId: profile.device.deviceId,
-          certificates: evidence.certificates, authorization }),
-      }), 1024 * 1024)
-    assertCurrent()
+    const { authorization, response } = await requestRustyManagementStatus({ binding, identity: profile.identity,
+      deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey, certificates, minimumRevision,
+      ensureCurrent: assertCurrent,
+      fetcher: (input, init) => fetchBlind(String(input), { ...init, diagnosticContext }),
+      signAuthorization: async payload => {
+        const { serviceId, origin, personId, deviceId, resourceKind, resourceId } = payload
+        const authorityRevision = profile.certificate.signature
+        const signing = await resolveSigningContext({ profile, certificates, purpose: payload.kind,
+          binding: { serviceId, origin, personId, deviceId, resourceKind, resourceId }, authorityRevision, expiresAt: payload.expiresAt,
+          current: async () => { assertCurrent(); return { personId: profile.identity.personId,
+            deviceId: profile.device.deviceId, authorityRevision } } })
+        return signWithContext(signing, payload)
+      },
+    })
     return { deviceId: profile.device.deviceId, authorization, response }
   }
 }

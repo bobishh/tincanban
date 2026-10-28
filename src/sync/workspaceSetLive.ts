@@ -1,7 +1,7 @@
 import { BrowserMeshScopeSync, createLiveWorkspaceSession, type RustLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
 import { inspectPairingFrame } from "@meta-uber/mesh-pairing"
 import { createBackgroundMeshScope, validateBackgroundScopeDocument } from "./meshScopeClient"
-import { createScopeShutdown } from "./scopeShutdown"
+import { createScopeShutdown, guardScopeStream } from "./scopeShutdown"
 import { HandoffConfirmationInbox } from "./handoffConfirmation"
 import { WorkspaceChangeRejected } from "./changeAuthorization"
 import { MeshNetworkError as SyncNetworkError } from "@meta-uber/mesh-transport"
@@ -380,13 +380,7 @@ export function createLiveAutomergeWorkspaceSync(
   const scope = createLiveAutomergeScope({ connection, secret, store, workspaceId, localDeviceId, remoteDeviceId,
     historyReplica, peerHistory, peerHistoryGuard, options, onDocumentRejected, rejectionState })
   const responseStream: DuplexStream = {
-    async send(frame) {
-      if (stopped) return
-      const stream = await connection.openStream()
-      await stream.send(frame)
-      await stream.closeSend()
-      void consumeResponse(stream)
-    },
+    async send(frame) { await sendFrame(frame, "document") },
     async read() { throw new Error("Response stream cannot be read directly") },
     async closeSend() {},
   }
@@ -404,12 +398,10 @@ export function createLiveAutomergeWorkspaceSync(
   }
   const sendFrame = async (frame: Uint8Array, kind: "document" | "control"): Promise<boolean> => {
     if (stopped) return false
-    const stream = await measureScopePhase(`transport.${kind}.open`, workspaceId, remoteDeviceId,
-      () => connection.openStream(), frame.byteLength)
-    await measureScopePhase(`transport.${kind}.send`, workspaceId, remoteDeviceId,
-      () => stream.send(frame), frame.byteLength)
-    await measureScopePhase(`transport.${kind}.close-send`, workspaceId, remoteDeviceId,
-      () => stream.closeSend(), frame.byteLength)
+    const stream = guardScopeStream(await measureScopePhase(`transport.${kind}.open`, workspaceId, remoteDeviceId,
+      () => connection.openStream(), frame.byteLength), peerHistoryGuard)
+    await measureScopePhase(`transport.${kind}.send`, workspaceId, remoteDeviceId, () => stream.send(frame), frame.byteLength)
+    await measureScopePhase(`transport.${kind}.close-send`, workspaceId, remoteDeviceId, () => stream.closeSend(), frame.byteLength)
     if (kind === "document") void consumeResponse(stream)
     return true
   }
@@ -419,8 +411,9 @@ export function createLiveAutomergeWorkspaceSync(
       if (await historyReplica.servePeerHistoryDocumentRead(frame, stream, remoteDeviceId, peerHistoryGuard)) return
       if (await historyReplica.servePeerHistoryObjectRead(frame, stream, remoteDeviceId, peerHistoryGuard)) return
       if (await serveOwnerOfferProofs(connection, secret, stream, frame)) return
+      const reply = stream === responseStream ? stream : guardScopeStream(stream, peerHistoryGuard)
       await measureScopePhase("scope.receive", workspaceId, remoteDeviceId,
-        () => scope.receive(stream, frame), frame.byteLength)
+        () => scope.receive(reply, frame), frame.byteLength)
     }
     catch (error) {
       await restartProofTransfer(error)

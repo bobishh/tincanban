@@ -6,7 +6,7 @@ import { pairingLocationClearedEvent } from "../sync/deviceSyncInviteView"
 import { publicBoardOrigin } from "../public/publicBoardLink"
 
 type WorkspaceAddressApi = Pick<ReturnType<typeof useTincanban>, "ready" | "availableWorkspaces" | "activeWorkspace" |
-  "activeBoard" | "docVersion" | "getCurrentProfile" | "readWorkspaceDoc" | "switchWorkspace">
+  "activeBoard" | "docVersion" | "getCurrentProfile" | "withWorkspaceDoc" | "switchWorkspace">
 
 interface BoardAddressLocation { pathname: string; search: string; hash: string }
 export interface BoardAddressHistory {
@@ -23,7 +23,7 @@ export interface BoardAddressRuntime {
   getActiveBoard(): { id: string; title: string; publicationOrigin?: string } | null
   getIdentityId(): string | null
   getHintedWorkspaceId?(boardId: string): string | null
-  readWorkspaceDoc(workspaceId: string): Promise<WorkspaceDocumentV2>
+  withWorkspaceDoc: WorkspaceAddressApi["withWorkspaceDoc"]
   switchWorkspace(workspaceId: string): Promise<void>
   onUnavailable?(boardId: string): void
 }
@@ -80,18 +80,16 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
     const candidates = [...new Set([...(hinted && eligible.has(hinted) ? [hinted] : []), ...eligible])]
     for (const workspaceId of candidates) {
       if (!isCurrentEligibleIdentity(identityId, workspaceId)) return null
-      const document = await readEligibleDocument(workspaceId, route, identityId)
-      if (document) return workspaceId
+      if (await hasEligibleBoard(workspaceId, route, identityId)) return workspaceId
     }
     return null
   }
 
-  async function readEligibleDocument(workspaceId: string, route: NonNullable<ReturnType<typeof parseBoardRoute>>, identityId: string): Promise<WorkspaceDocumentV2 | null> {
+  async function hasEligibleBoard(workspaceId: string, route: NonNullable<ReturnType<typeof parseBoardRoute>>, identityId: string): Promise<boolean> {
     try {
-      const document = await runtime.readWorkspaceDoc(workspaceId)
-      if (!isCurrentEligibleIdentity(identityId, workspaceId) || document.id !== workspaceId) return null
-      return boardIn(document)?.id === route.boardId ? document : null
-    } catch { return null /* A stale local catalog entry is not an eligible target. */ }
+      return await runtime.withWorkspaceDoc(workspaceId, document => isCurrentEligibleIdentity(identityId, workspaceId) &&
+        document.id === workspaceId && boardIn(document)?.id === route.boardId)
+    } catch { return false /* A stale local catalog entry is not an eligible target. */ }
   }
 
   function isCurrentEligibleIdentity(identityId: string, workspaceId: string): boolean {
@@ -153,7 +151,7 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     getActiveBoard: () => app.activeBoard.value,
     getIdentityId: () => app.getCurrentProfile()?.identity.personId ?? null,
     getHintedWorkspaceId: boardId => readBoardRouteHint(boardId),
-    readWorkspaceDoc: async workspaceId => await app.readWorkspaceDoc(workspaceId) as WorkspaceDocumentV2,
+    withWorkspaceDoc: (workspaceId, read) => app.withWorkspaceDoc(workspaceId, read),
     switchWorkspace: app.switchWorkspace,
     onUnavailable: boardId => { unavailableBoardId.value = boardId },
   }, browserHistory())

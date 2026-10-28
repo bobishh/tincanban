@@ -24,6 +24,18 @@ it("Given local cursor or pending-request progress changes, when saved, then ret
   expect(await readIdentityStateRevision()).toBe(before)
 })
 
+it("Given a saved private catalog, when only its portable Identity authority changes, then advance its revision once and keep unchanged authority reads stable", async () => {
+  const key = `tincanban.identity-authority-view.v1.${crypto.randomUUID()}`
+  const first = JSON.stringify({ viewDigest: "accepted-authority", revocations: [] })
+  await local.writeLocal(key, first)
+  const before = await readIdentityStateRevision()
+  await local.writeLocal(key, JSON.stringify({ viewDigest: "revoked-device-authority", revocations: ["signed-revocation"] }))
+  const changed = await readIdentityStateRevision()
+  expect(changed).not.toBe(before)
+  await local.updateLocal(key, current => current!)
+  expect(await readIdentityStateRevision()).toBe(changed)
+})
+
 it("Given an unrelated workspace proof changes, when persisted, then invalidate only changes to portable certificates", async () => {
   const key = "tincanban.v1.proof_store"
   const original = await local.readLocal(key)
