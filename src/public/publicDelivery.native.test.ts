@@ -6,10 +6,12 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { afterEach, beforeEach, expect, test, vi } from "vitest"
+import { effectScope } from "vue"
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { certificateHash, profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
-import { canonicalizeJson, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+import { canonicalizeJson, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "../sync/identityAuthority.testSupport"
 import { createAutomationWorkspaceGrant, createWorkspaceGrant } from "../domain/proofs"
@@ -23,6 +25,10 @@ import type { PublicBoardDeliveryPolicyEvidence } from "./publicDeliveryPolicy"
 import { createBrowserBoardPublication as createPublicBoardPublication } from "../app/publicBoardPublication"
 import { validatePublicBoardProjection } from "./publicSchema"
 import type { PublicBoardProjection } from "./publicSchema"
+import { readLocal, writeLocal } from "../localDb"
+import { peerStore } from "../sync/peerStore"
+import { createWorkspaceOwnershipTransfer } from "../sync/meshRecords"
+import { usePublicBoardDelivery } from "../app/usePublicBoardDelivery"
 
 vi.mock("../sync/workspaceAdmissionClient", () => ({ runWorkspaceAccess: async () => "owner" }))
 
@@ -122,6 +128,80 @@ async function stopRusty(child: ChildProcess): Promise<void> {
   child.kill("SIGKILL")
   if (!await exited(2_000)) throw new Error("Rusty process did not exit; preserving its state directory")
 }
+
+test.each([false, true])("Given an owner-published board and durable editor authority without connection credentials (ownership transferred: %s), when a card is admitted locally, then browser delivery updates the same public board", async transferred => {
+  await initializeNativeAutomerge()
+  stubWindow("http://localhost")
+  const owner = await bootstrapIdentity("Publication owner")
+  const ownerRaw = (await readLocal("tincanban.local_profile.v1"))!
+  resetIdentityStorageForTest()
+  const editor = await bootstrapIdentity("Publication editor")
+  const editorRaw = (await readLocal("tincanban.local_profile.v1"))!
+  await writeLocal("tincanban.local_profile.v1", ownerRaw)
+  clearInMemoryProfileForReloadTest()
+  const service = await startRusty()
+  const scope = effectScope()
+  let workspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
+  try {
+    const workspaceId = crypto.randomUUID()
+    workspace = Automerge.from(createWorkspaceDoc(workspaceId, "Current public board", owner.identity.personId, "job-search"))
+    const board = Object.values(workspace.entities).find(entity => entity.kind === "board")!
+    const columnId = board.kind === "board" ? board.preset!.bindings["status.applied"] : ""
+    await recordGenesisAuthority(workspace, owner)
+    const grant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", 1)
+    const policyPayload = { kind: "rusty-public-board-delivery-policy" as const, version: 1 as const, workspaceId,
+      boardId: board.id, generation: 1, accessEpoch: 1, enabled: true as const,
+      acceptedGrants: [grant], revokedGrantIds: [] as string[], revokedDeviceIds: [] as string[] }
+    stubWindow(service.origin)
+    await publishBoardSnapshot({ origin: service.origin, boardId: board.id, workspaceId, document: workspace, profile: owner,
+      action: "publish", expectedRevision: 0, deliveryPolicy: {
+        policy: await signEnvelope(owner.privateKeys.devicePrivateKey, policyPayload, owner.device.deviceId),
+        ownerCertificates: [owner.certificate],
+      } })
+
+    const authority = (await peerStore.getWorkspaceAuthority(workspaceId))!
+    await peerStore.putWorkspaceAuthority({ ...authority, localGrant: grant })
+    if (transferred) {
+      const successor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Successor")
+      const nextOwner = { personId: successor.identity.personId, publicKey: successor.identity.publicKey, certificates: [successor.certificate] }
+      const transfer = await createWorkspaceOwnershipTransfer(owner, workspaceId, nextOwner, Automerge.getHeads(workspace), 2)
+      const snapshot = authority.scopeAuthoritySnapshot!
+      const payload = meshRustRuntime().state.createScopeControlTransferPayload({ snapshot, toController: nextOwner }, Date.now()) as { kind: string }
+      const controlTransfer = await signEnvelope(owner.privateKeys.devicePrivateKey, payload, owner.device.deviceId)
+      await peerStore.putWorkspaceAuthority({ ...authority, ownerPersonId: nextOwner.personId, ownerPublicKey: nextOwner.publicKey,
+        ownerCertificates: nextOwner.certificates, epoch: 2, localGrant: grant, updatedAt: new Date().toISOString(),
+        catalog: { ownershipTransfers: [transfer] },
+        scopeAuthoritySnapshot: { ...snapshot, controlTransfers: [...snapshot.controlTransfers, controlTransfer] } })
+    }
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+    await writeLocal("tincanban.local_profile.v1", editorRaw)
+    clearInMemoryProfileForReloadTest()
+    // Run the real policy directly in this Node host instead of a browser worker.
+    vi.stubGlobal("window", undefined)
+    const cardId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    workspace = Automerge.change(workspace, "Admitted email receipt", draft => {
+      draft.entities[cardId] = { id: cardId, title: "elearnio", body: "Application receipt", values: {},
+        placement: { parentId: columnId, rank: "0/1" }, archivedAt: null, createdAt: now, updatedAt: now }
+    })
+    const hook = scope.run(() => usePublicBoardDelivery({ origin: () => service.origin, workspaceId: () => workspaceId,
+      boardId: () => board.id, document: () => workspace, profile: () => editor, role: () => "editor",
+      sourceHeads: () => Automerge.getHeads(workspace!), sourceVersion: () => 1, debounceMs: 0 }))!
+    await vi.waitFor(() => {
+      expect(hook.error.value).toBe("")
+      expect(hook.status.value).toBe("delivered")
+    }, { timeout: 15_000 })
+    const snapshot = await (await fetch(`${service.origin}/v1/public/boards/${board.id}`)).json() as { revision: number; projection: unknown }
+    expect(snapshot.revision).toBe(2)
+    expect(validatePublicBoardProjection(snapshot.projection).cards.find(card => card.id === cardId)?.title).toBe("elearnio")
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toBeNull()
+  } finally {
+    scope.stop()
+    if (workspace) Automerge.free(workspace)
+    await stopRusty(service.child)
+    await rm(service.directory, { recursive: true, force: true })
+  }
+}, 60_000)
 
 test("Given a published board owned by another identity, when imported under the current identity, then management status uses the copied board resource ID", async () => {
   await initializeNativeAutomerge()

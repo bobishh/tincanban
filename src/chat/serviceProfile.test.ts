@@ -11,7 +11,7 @@ vi.mock("../domain/identity", async importOriginal => ({
   ...await importOriginal<typeof IdentityModule>(),
   bootstrapIdentity: async () => current.profile!,
 }))
-import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "../domain/proofs"
+import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { peerStore } from "../sync/peerStore"
 import { ChatStore, chatStore, doesProfileWin } from "./store"
 import { configureChat, ensureChatProfile, exportChat, receiveChat, sendChatMessage, sendChatTyping, subscribeChat,
@@ -43,6 +43,7 @@ beforeEach(async () => {
   activeStore = firstStore
   current.profile = first
   vi.spyOn(chatStore, "load").mockImplementation(id => activeStore.load(id))
+  vi.spyOn(chatStore, "loadProfiles").mockImplementation(id => activeStore.loadProfiles(id))
   vi.spyOn(chatStore, "putProfile").mockImplementation(value => activeStore.putProfile(value))
   vi.spyOn(chatStore, "append").mockImplementation(value => activeStore.append(value))
   vi.spyOn(chatStore, "merge").mockImplementation((id, messages, profiles) => activeStore.merge(id, messages, profiles))
@@ -76,6 +77,49 @@ async function useDevice(profile: LocalProfile, store: ChatStore) {
 }
 
 describe("shared chat profile intent across certified devices", () => {
+  it("Given a saved chat profile and retained message history, when typing presence is signed, then publish it without reading message history", async () => {
+    const scope = `${workspace}-typing-history`
+    await ensureChatProfile(scope)
+    await firstStore.merge(scope, Array.from({ length: 200 }, (_, index) => ({
+      workspaceId: scope, id: `history-${index}`, personId: first.identity.personId,
+      createdAt: new Date(index).toISOString(), body: "retained message ".repeat(128), record: { index },
+    })), [])
+    expect((await firstStore.load(scope)).messages).toHaveLength(200)
+    const loadHistory = vi.mocked(chatStore.load)
+    loadHistory.mockClear()
+    loadHistory.mockRejectedValue(new Error("Typing must not read message history"))
+    const published: ChatChange[] = []
+    const unsubscribe = subscribeChat(change => published.push(change))
+    try {
+      await sendChatTyping(scope, true)
+      expect(loadHistory).not.toHaveBeenCalled()
+      expect(published).toEqual([expect.objectContaining({ workspaceId: scope,
+        contentChanged: false, typing: [expect.objectContaining({ signed: expect.objectContaining({
+          payload: expect.objectContaining({ kind: "chat-typing", text: "typing" }),
+        }) })] })])
+    } finally { unsubscribe() }
+  })
+
+  it("Given an editor's signed grant and cached owner profile, when typing presence is signed, then resolve authority without loading messages", async () => {
+    const scope = `${workspace}-editor-typing`
+    await ensureChatProfile(scope)
+    const identity = await vi.importActual<typeof IdentityModule>("../domain/identity")
+    identity.resetIdentityStorageForTest()
+    const editor = await identity.bootstrapIdentity("Editor")
+    const grant = await createWorkspaceGrant(first, scope, editor.identity.personId, "editor")
+    await defaultProofStore.putGrant(grant.payload.grantId, grant)
+    vi.mocked(defaultProofStore.listCertificates).mockResolvedValue([first.certificate, editor.certificate])
+    await useDevice(editor, firstStore)
+    await ensureChatProfile(scope)
+    const loadHistory = vi.mocked(chatStore.load)
+    loadHistory.mockClear()
+    loadHistory.mockRejectedValue(new Error("Typing authority must not read message history"))
+    await sendChatTyping(scope, true)
+    expect(loadHistory).not.toHaveBeenCalled()
+    expect((await firstStore.loadProfiles(scope)).map(profile => profile.personId))
+      .toEqual(expect.arrayContaining([first.identity.personId, editor.identity.personId]))
+  })
+
   it("Given a stored profile, when local typing is published, then mark presence as non-durable while retaining peer delivery", async () => {
     const scope = `${workspace}-${first.device.deviceId}`
     await ensureChatProfile(scope)

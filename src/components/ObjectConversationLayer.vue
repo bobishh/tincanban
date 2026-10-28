@@ -61,10 +61,15 @@ watch(() => props.chat.open.value, open => {
       :connected="connected" :typing-people="chat.typingPeople.value" :read-only="readOnly" :send-message="chat.send" :target-id="view.targetId"
       @close="conversations.close(view)" @reference="conversations.openReference" @read="chat.markVisible" @typing="chat.setTyping" @thread="conversations.openThread" />
     <button v-if="conversations.selection.value && !readOnly" class="button button-small selection-discuss" type="button" aria-label="Discuss selection"
-      :style="{ left: `${conversations.selection.value.x}px`, top: `${conversations.selection.value.y}px` }" @pointerdown.prevent @click="conversations.selectedDiscuss">Discuss</button>
-    <div v-if="conversations.contextMenu.value && !readOnly" class="discussion-context-menu" role="menu" aria-label="Discussion actions"
+      :style="{ left: `${conversations.selection.value.x}px`, top: `${conversations.selection.value.y}px` }" @pointerdown.prevent @click="conversations.selectedDiscuss">{{ conversations.openChats.value.length ? "Discuss in…" : "Discuss" }}</button>
+    <div v-if="conversations.contextMenu.value && !readOnly" class="discussion-context-menu" role="menu" :aria-label="conversations.contextMenu.value.chooseChat ? 'Choose chat' : 'Discussion actions'"
       :style="{ left: `${conversations.contextMenu.value.x}px`, top: `${conversations.contextMenu.value.y}px` }" @pointerdown.prevent>
-      <button class="button button-small" role="menuitem" type="button" @click="conversations.contextualDiscuss">Discuss</button>
+      <template v-if="conversations.contextMenu.value.chooseChat">
+        <p class="discussion-picker-status" role="status">{{ chat.sending.value ? "Wait for the message to finish saving, then choose a chat." : "Choose where to add this reference." }}</p>
+        <button v-for="chatWindow in conversations.openChats.value" :key="chatWindow.id" :disabled="chat.sending.value" class="button button-small" role="menuitem" type="button" @click="conversations.discussIn(chatWindow.id)">Discuss in #{{ chatWindow.title }}</button>
+        <button class="button button-small" role="menuitem" type="button" @click="conversations.discussIn()">New discussion</button>
+      </template>
+      <button v-else class="button button-small" role="menuitem" type="button" @click="conversations.contextualDiscuss">Discuss</button>
     </div>
     <aside v-if="conversations.sourceState.value" class="source-feedback" role="status">{{ conversations.sourceState.value }}<button type="button" aria-label="Dismiss source feedback" @click="emit('sourceDismiss')">×</button></aside>
     <aside v-if="conversations.navigationState.value" class="source-feedback" role="status">{{ conversations.navigationState.value }}
@@ -75,8 +80,9 @@ watch(() => props.chat.open.value, open => {
 
 <style scoped>
 .selection-discuss { position: fixed; z-index: 28; touch-action: manipulation; }
-.discussion-context-menu { position: fixed; z-index: 28; padding: var(--space-1); background: var(--panel); border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
-.discussion-context-menu button { width: 100%; }
+.discussion-context-menu { position: fixed; z-index: 28; padding: var(--space-1); background: var(--panel); border: 2px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); display: grid; gap: var(--space-1); max-width: min(22rem, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-y: auto; }
+.discussion-picker-status { min-height: 3em; margin: 0; font-size: var(--site-font-secondary-size, 14px); }
+.discussion-context-menu button { width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .source-feedback { position: fixed; bottom: 12px; left: 12px; z-index: 29; max-width: calc(100vw - 24px); padding: var(--space-2) var(--space-3); background: var(--panel); border: 2px solid var(--ink); overflow-wrap: anywhere; }
 .chat-open-pending { position: fixed; z-index: 10001; inset: 50% auto auto 50%; display: flex; align-items: center; gap: var(--space-3); max-width: calc(100vw - 24px); padding: var(--space-3); transform: translate(-50%, -50%); background: var(--panel); color: var(--ink); border: 2px solid var(--line); box-shadow: 6px 6px 0 var(--ink); }
 </style>

@@ -479,8 +479,9 @@ test("Given an archived owner baseline, when a credential-free editor receives i
   }
 })
 
-test("Given an owner with two archived history generations, when adding my phone, then its backup covers both generations and it restores an original version with the owner device closed", async ({ browser, baseURL }, testInfo) => {
-  test.setTimeout(210_000)
+test("Given an owner with two archived history generations, when adding my phone, then its backup covers both generations and it restores an original version with the owner device closed", async ({ browser, baseURL, browserName }, testInfo) => {
+  // Keep each operation's deadline; allow WebKit time for the complete two-generation flow.
+  test.setTimeout(browserName === "webkit" ? 360_000 : 210_000)
   const sourceContext = await browser.newContext({ acceptDownloads: true })
   const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
   const source = await sourceContext.newPage()

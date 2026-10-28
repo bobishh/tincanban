@@ -8,7 +8,7 @@ let verboseConsoleLogging = typeof window !== "undefined" &&
   new URLSearchParams(window.location.search).get("syncTrace") === "1"
 const traceBuffer = new MeshTraceBuffer("tincanban.mesh", 500, {
   info: line => { if (verboseConsoleLogging) console.info(line) },
-  warn: line => console.warn(line),
+  warn: (line: string) => writeConsoleWarning(line),
 })
 const automaticLifecycle = new Set(["node.started", "session.started", "session.closed", "session.recovery.started"])
 const incidentWindowMs = 60_000
@@ -17,6 +17,24 @@ let incidentWindowStart: number | undefined
 let incidentCount = 0
 let suppressedCount = 0
 let telemetryModule: Promise<typeof Telemetry> | undefined
+let consoleWindowStart: number | undefined
+let consoleWarningCount = 0
+let consoleSuppressedCount = 0
+
+function writeConsoleWarning(line: string) {
+  if (typeof window === "undefined" || verboseConsoleLogging) { console.warn(line); return }
+  const now = Date.now()
+  if (consoleWindowStart === undefined || now < consoleWindowStart || now - consoleWindowStart >= incidentWindowMs) {
+    if (consoleSuppressedCount) console.warn(`[tincanban.mesh] ${JSON.stringify({
+      event: "mesh.console.suppressed", suppressedCount: consoleSuppressedCount,
+    })}`)
+    consoleWindowStart = now
+    consoleWarningCount = 0
+    consoleSuppressedCount = 0
+  }
+  if (consoleWarningCount < maxIncidentsPerWindow) { consoleWarningCount++; console.warn(line) }
+  else consoleSuppressedCount++
+}
 
 function loadTelemetry() {
   return telemetryModule ??= import("./telemetry").catch(cause => { telemetryModule = undefined; throw cause })
@@ -72,4 +90,7 @@ export function meshTraceSnapshot(): MeshTraceEvent[] {
 export function clearMeshTrace() {
   traceBuffer.clear()
   resetIncidentBudget()
+  consoleWindowStart = undefined
+  consoleWarningCount = 0
+  consoleSuppressedCount = 0
 }

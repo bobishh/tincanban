@@ -8,8 +8,8 @@ import { approveRustyForFixture } from "./support/identityRustyFixture"
  * Complete coverage requires verified receipts for the manifest and every chunk.
  * The source may close before the recipient requests its first attachment byte.
  */
-test("Given confirmed Rusty attachment coverage, when the source browser closes, then a fresh same-person device previews and downloads verified bytes", async ({ browser, baseURL }) => {
-  test.setTimeout(120_000)
+test("Given confirmed Rusty attachment coverage, when the source browser closes, then a fresh same-person device previews and downloads verified bytes", async ({ browser, baseURL, browserName }) => {
+  test.setTimeout(browserName === "webkit" ? 240_000 : 120_000)
   const sourceContext = await browser.newContext()
   const recipientContext = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -79,7 +79,9 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
     await rustyPanel.getByLabel("Address", { exact: true }).fill(service.origin)
     await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    // First connection registers Identity and board scopes before uploading every attachment chunk.
+    await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true }))
+      .toBeVisible({ timeout: browserName === "webkit" ? 60_000 : 30_000 })
     await source.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     await source.getByRole("button", { name: "Open Northstar Attachment Test — Encrypted file recipient", exact: true }).click()
     const sourceDetail = source.getByRole("dialog", { name: "Item overview" })

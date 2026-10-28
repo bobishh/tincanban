@@ -89,7 +89,7 @@ export async function ensureChatProfile(workspaceId: string, options: { updateNa
   return exclusive(workspaceId, async () => {
     const { bootstrapIdentity } = await import("../domain/identity")
     const profile = await bootstrapIdentity()
-    const own = (await loadChat(workspaceId)).profiles.find(p => p.personId === profile.identity.personId)
+    const own = (await chatStore.loadProfiles(await readScope(workspaceId))).find(p => p.personId === profile.identity.personId)
     // Background synchronization adopts the admitted shared profile; local names are not rename commands.
     if (own && (!options.updateName || own.name === profile.identity.displayName)) return own
     const value = member(await signed(workspaceId, "chat-profile", profile.identity.displayName, (own?.revision ?? 0) + 1))

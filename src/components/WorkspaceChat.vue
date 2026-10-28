@@ -2,7 +2,6 @@
 import { MarkdownContent } from "../ui/markdownContent"
 import { ref, computed, watch, nextTick, onMounted } from "vue"
 import SpatialWindow from "./SpatialWindow.vue"
-import ReferencePicker from "./ReferencePicker.vue"
 import type { ReferenceChoice } from "../chat/referenceChoices"
 import ParticipantAvatar from "./ParticipantAvatar.vue"
 import MessageLinkAction from "./MessageLinkAction.vue"
@@ -72,21 +71,57 @@ const draft = computed({ get: () => cached.body, set: value => { cached.body = v
 const context = computed({ get: () => cached.context, set: value => { cached.context = value } })
 function attachInitialContext(value?: MessageContext) {
   if (!value) return
-  if (value.replyTo) context.value = clone(value)
-  else if (!draft.value && !context.value.replyTo) context.value.references = clone(value.references)
+  if (value.replyTo && (value.replyTo !== context.value.replyTo || value.conversationRootId !== context.value.conversationRootId)) context.value = clone(value)
+  else if (!value.replyTo && !draft.value && !context.value.replyTo) context.value.references = clone(value.references)
   else for (const anchor of value.references) {
     if (context.value.references.length < MAX_REFERENCES && !context.value.references.some(existing => JSON.stringify(existing) === JSON.stringify(anchor))) context.value.references.push(clone(anchor))
   }
 }
 attachInitialContext(props.initialContext)
-const mentionQuery = ref("")
-const toolsOpen = ref(false)
-const mentionChoices = computed(() => (props.members ?? []).filter(member => member.name.toLowerCase().includes(mentionQuery.value.toLowerCase())))
-function mention(member: {personId: string; name: string}) {
-  if (context.value.mentions.length >= MAX_MENTIONS && !context.value.mentions.includes(member.personId)) return
+const composerInput = ref<HTMLTextAreaElement | null>(null)
+const mentionRange = ref<{ start: number; end: number; query: string } | null>(null)
+const mentionIndex = ref(0)
+const mentionChoices = computed(() => (props.members ?? []).filter(member =>
+  member.name.toLocaleLowerCase().includes((mentionRange.value?.query ?? "").toLocaleLowerCase())))
+const mentionListId = computed(() => `mentions-${props.windowId ?? 'chat'}`)
+function updateMention() {
+  const input = composerInput.value
+  if (!input || isComposing.value || input.selectionStart !== input.selectionEnd) { mentionRange.value = null; return }
+  const end = input.selectionStart
+  const match = /(?:^|[\s(])@([^\s@,;!?()]*)$/u.exec(input.value.slice(0, end))
+  mentionRange.value = match && match.index + match[0].length === end ? { start: end - match[1]!.length - 1, end, query: match[1]! } : null
+  mentionIndex.value = 0
+}
+function composerKeyUp(event: KeyboardEvent) {
+  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) updateMention()
+}
+async function mention(member: { personId: string; name: string }) {
+  const range = mentionRange.value
+  if (!range || context.value.mentions.length >= MAX_MENTIONS && !context.value.mentions.includes(member.personId)) return
   if (!context.value.mentions.includes(member.personId)) context.value.mentions.push(member.personId)
-  draft.value += `${draft.value && !draft.value.endsWith(" ") ? " " : ""}@${member.name} `
-  mentionQuery.value = ""
+  const suffix = draft.value.slice(range.end)
+  const replacement = `@${member.name}${/^[\s,.!?;:]/u.test(suffix) ? "" : " "}`
+  draft.value = draft.value.slice(0, range.start) + replacement + suffix
+  mentionRange.value = null
+  await nextTick()
+  const caret = range.start + replacement.length + (suffix.startsWith(" ") ? 1 : 0)
+  composerInput.value?.focus({ preventScroll: true })
+  composerInput.value?.setSelectionRange(caret, caret)
+}
+function mentionKey(event: KeyboardEvent): boolean {
+  if (!mentionRange.value) return false
+  if (event.key === "Escape") { mentionRange.value = null; event.preventDefault(); event.stopPropagation(); return true }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault()
+    const count = mentionChoices.value.length
+    if (count) mentionIndex.value = (mentionIndex.value + (event.key === "ArrowDown" ? 1 : count - 1) + count) % count
+    return true
+  }
+  if (event.key !== "Enter" || event.shiftKey) return false
+  event.preventDefault()
+  const selected = mentionChoices.value[Math.max(0, mentionIndex.value)]
+  if (selected) void mention(selected)
+  return true
 }
 function resetComposerContext() {
   const initial = props.initialContext
@@ -247,6 +282,7 @@ async function revealTarget() {
 watch(() => [props.targetId, props.messages.length, props.loading], () => { void revealTarget() }, { immediate: true })
 
 function handleKeyDown(e: KeyboardEvent) {
+  if (!e.isComposing && !isComposing.value && mentionKey(e)) return
   if (e.key === "Enter") {
     if (e.shiftKey || e.isComposing || isComposing.value) {
       return
@@ -367,18 +403,16 @@ function formatDisplayTime(createdAt: string): string {
         </div>
         <div v-if="context.replyTo && !inThread" class="reply-quote">Replying to: {{ replyQuote }} <button type="button" aria-label="Cancel reply" @click="context.replyTo = undefined; context.conversationRootId = undefined">×</button></div>
         <div v-if="context.mentions.length" class="reference-chips"><span v-for="personId in context.mentions" :key="personId">@{{ members?.find(member => member.personId === personId)?.name ?? 'Participant' }} <button class="button button-small" type="button" aria-label="Remove mention" @click="context.mentions = context.mentions.filter(id => id !== personId)">×</button></span></div>
-        <div class="chat-compose-tools" :class="{ 'is-open': toolsOpen }">
-        <ReferencePicker v-if="referenceChoices?.length" :choices="referenceChoices" :selected="context.references" @select="anchor => context.references.push(clone(anchor))" />
-        <details v-if="members?.length" class="mention-picker">
-          <summary>Invite @participant</summary>
-          <input v-model="mentionQuery" aria-label="Find participant" />
-          <button v-for="member in mentionChoices" :key="member.personId" class="button button-small" type="button" :disabled="context.mentions.length >= MAX_MENTIONS" @click="mention(member)"><ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" />{{ member.name }}</button>
-        </details>
-        </div>
         <form class="chat-composer-form" @submit.prevent="handleSubmit">
-          <button v-if="referenceChoices?.length || members?.length" class="button button-quiet chat-tools-toggle" type="button" aria-label="Add reference or participant" :aria-expanded="toolsOpen" @click="toolsOpen = !toolsOpen">+</button>
+          <div v-if="mentionRange" :id="mentionListId" class="mention-popup" role="listbox" aria-label="Participants" @pointerdown.prevent>
+            <p v-if="!mentionChoices.length" role="status" aria-label="Participant search">No participants found</p>
+            <button v-for="(member, index) in mentionChoices" :id="`${mentionListId}-${index}`" :key="member.personId" class="mention-option" type="button" role="option"
+              :aria-selected="index === Math.max(0, mentionIndex)" :disabled="context.mentions.length >= MAX_MENTIONS && !context.mentions.includes(member.personId)" @click="mention(member)">
+              <ParticipantAvatar :person-id="member.personId" :avatar-data="memberAvatars?.[member.personId]" /><span>{{ member.name }}</span>
+            </button>
+          </div>
           <label :for="`message-${windowId ?? 'chat'}`" class="chat-composer-label">Message</label>
-          <textarea :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea reading-input" aria-label="Message" placeholder="Message…" :disabled="isSubmitting" rows="3" @keydown="handleKeyDown" @compositionstart="isComposing = true" @compositionend="isComposing = false" />
+          <textarea ref="composerInput" :id="`message-${windowId ?? 'chat'}`" v-model="draft" class="chat-textarea reading-input" aria-label="Message" placeholder="Message…" :disabled="isSubmitting" rows="3" aria-autocomplete="list" aria-haspopup="listbox" :aria-expanded="Boolean(mentionRange)" :aria-controls="mentionRange ? mentionListId : undefined" :aria-activedescendant="mentionRange && mentionChoices.length ? `${mentionListId}-${Math.max(0, mentionIndex)}` : undefined" @input="updateMention" @click="updateMention" @keyup="composerKeyUp" @blur="mentionRange = null" @keydown="handleKeyDown" @compositionstart="isComposing = true; mentionRange = null" @compositionend="isComposing = false; updateMention()" />
           <button class="button button-primary chat-submit-btn" type="submit" aria-label="Send message" :disabled="!draft.trim() || sending || isSubmitting">{{ sending ? 'Saving…' : 'Send' }}</button>
         </form>
       </footer>
@@ -395,23 +429,21 @@ function formatDisplayTime(createdAt: string): string {
 .draft-reference { display: inline-flex; align-items: center; }
 .reference-chips button { white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .reply-quote { margin: var(--space-1) 0; padding: var(--space-1) var(--space-2); border-left: 2px solid var(--muted); color: var(--muted); overflow-wrap: anywhere; }
-.mention-picker { margin-block: var(--space-1); }
-.mention-picker button { display: inline-flex; align-items: center; gap: var(--space-1); }
-.chat-composer-form { display: grid; gap: var(--space-1); }
-.chat-tools-toggle { display: none; }
+.mention-popup { position: absolute; z-index: 4; inset-inline-start: 0; bottom: calc(100% + var(--space-1)); min-width: min(16rem, 100%); max-width: 100%; max-height: min(18rem, 40dvh); overflow-y: auto; padding: var(--space-1); border: 2px solid var(--line); background: var(--panel); box-shadow: 3px 3px 0 var(--line); }
+.mention-popup p { margin: var(--space-2); }
+.mention-option { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2); border: 0; text-align: left; color: var(--ink); }
+.mention-option[aria-selected="true"] { background: var(--soft); }
+.chat-composer-form { position: relative; display: grid; gap: var(--space-1); }
 .chat-window-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
 .chat-window-heading .chat-connection { margin: 0; font-size: .65rem; letter-spacing: 0; }
 @media (max-width: 600px) {
   .conversation-content { padding: var(--space-1) var(--space-2); }
   .chat-footer { position: relative; margin-top: var(--space-1); padding-top: var(--space-1); }
   .chat-footer > .reference-chips:empty { display: none; }
-  .chat-composer-form { grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; }
+  .chat-composer-form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .chat-composer-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); }
-  .chat-tools-toggle { display: block; width: 40px; height: 48px; padding: var(--space-1); }
-  .chat-textarea { grid-column: 2; height: 48px; min-height: var(--control-size); max-height: 88px; resize: none; padding: var(--space-2); }
-  .chat-submit-btn { grid-column: 3; width: auto; min-height: var(--control-size); padding: var(--space-1) var(--space-2); }
-  .chat-compose-tools { display: none; position: absolute; z-index: 3; bottom: calc(100% + 6px); left: 0; width: 100%; max-height: 40dvh; overflow: auto; padding: var(--space-2); border: 2px solid var(--line); background: var(--panel); }
-  .chat-compose-tools.is-open { display: block; animation: panel-appear var(--motion-panel) var(--motion-ease); }
+  .chat-textarea { grid-column: 1; height: 48px; min-height: var(--control-size); max-height: 88px; resize: none; padding: var(--space-2); }
+  .chat-submit-btn { grid-column: 2; width: auto; min-height: var(--control-size); padding: var(--space-1) var(--space-2); }
   .chat-messages-log { gap: var(--space-2); padding: var(--space-2); }
   .chat-message-item { padding: var(--space-2) var(--space-2); gap: var(--space-1); }
   .chat-author-tag { display: none; }

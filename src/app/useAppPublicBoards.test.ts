@@ -11,11 +11,13 @@ describe("publication through connected board storage", () => {
   let scope = effectScope()
   let board = ref({ id: "board", title: "Job search", publicationOrigin: undefined as string | undefined })
   let connections = ref<Array<{ workspaceId: string; origin: string; removalPending?: boolean }>>([])
+  let ownershipRevision = ref(0)
   let execute: ReturnType<typeof vi.fn>
   beforeEach(() => {
     scope = effectScope()
     board = ref({ id: "board", title: "Job search", publicationOrigin: undefined })
     connections = ref([])
+    ownershipRevision = ref(0)
     execute = vi.fn(async command => { board.value.publicationOrigin = command.origin })
     mocks.publish.mockReset().mockResolvedValue(undefined)
     mocks.access.mockReset().mockReturnValue({ owner: ref(true), privateConfirmed: ref(true), published: ref(false), checked: ref(true), busy: ref(false), setPublic: mocks.publish })
@@ -28,9 +30,17 @@ describe("publication through connected board storage", () => {
       workspace: { activeBoard: board, activeWorkspace: reactive({ id: "workspace" }), getActiveDoc: () => null,
         docVersion: ref(1), availableWorkspaces: ref([]), getCurrentProfile: () => null, executeCommandAsync: execute },
       actions: { currentDocHeads: ref([]) },
-      collaboration: { permissions: { confirmedRole: ref("owner") }, device: { blindReplication: { configs: connections }, sync: { isOpen: ref(false) } } },
+      collaboration: { permissions: { confirmedRole: ref("owner") }, device: { blindReplication: { configs: connections }, sync: { isOpen: ref(false), ownershipRevision } } },
     } as never, ref(true)))!
   }
+  it("Given active board delivery, when mesh authority changes without a board edit, then expose the existing authority revision to delivery recovery", () => {
+    create()
+    const input = mocks.editor.mock.calls[0]![0]
+    expect(input.authorityVersion()).toBe(0)
+    ownershipRevision.value++
+    expect(input.authorityVersion()).toBe(1)
+    expect(input.sourceVersion()).toBe(1)
+  })
   it("Given no connected Rusty, when a different board has storage, then keep this board unavailable without choosing that server", async () => {
     create()
     connections.value = [{ workspaceId: "other", origin: "https://other.example" }]

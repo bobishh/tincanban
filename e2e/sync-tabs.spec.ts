@@ -12,6 +12,15 @@ for (const width of [1280, 390]) test(`Given a board at ${width}px, when Sync op
   await expect(page.locator(".mobile-drawer-root")).toHaveCount(0)
   await expect(dialog.getByRole("tab")).toHaveCount(0)
   await expect(dialog.getByRole("list", { name: "Mesh members" })).toBeVisible()
+  const members = dialog.getByRole("list", { name: "Mesh members" })
+  const storage = dialog.getByRole("region", { name: "Persistent storage", exact: true })
+  if (width >= 1000) await dialog.getByRole("button", { name: "Maximize window", exact: true }).click()
+  await expect.poll(async () => {
+    const peopleBox = await members.boundingBox(), storageBox = await storage.boundingBox()
+    if (!peopleBox || !storageBox) return false
+    return width >= 1000 ? peopleBox.x + peopleBox.width <= storageBox.x
+      : storageBox.y >= peopleBox.y + peopleBox.height
+  }).toBe(true)
   await expect(dialog.getByRole("button", { name: "Add Rusty", exact: true })).toBeVisible()
   await expect(dialog.getByRole("button", { name: /(?:Start|Stop) live sync/ })).toHaveCount(0)
   await expect(dialog.getByRole("button", { name: "Export .tincanban", exact: true })).toHaveCount(0)
@@ -19,12 +28,26 @@ for (const width of [1280, 390]) test(`Given a board at ${width}px, when Sync op
   await expect(dialog.getByRole("region", { name: "Selected mesh member" })).toHaveCount(0)
   await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
   await expect(dialog.getByText("This device", { exact: true })).toBeVisible()
+  const selected = dialog.getByRole("region", { name: "Selected mesh member", exact: true })
+  await expect.poll(async () => {
+    const detailBox = await selected.boundingBox(), storageBox = await storage.boundingBox()
+    if (!detailBox || !storageBox) return false
+    return width >= 1000 ? detailBox.x + detailBox.width <= storageBox.x
+      : storageBox.y >= detailBox.y + detailBox.height
+  }).toBe(true)
   await expect(dialog.locator(".mesh-member").filter({ hasText: "You" })).toHaveAttribute("aria-expanded", "true")
   await dialog.locator(".mesh-member").filter({ hasText: "You" }).click()
   await expect(dialog.getByRole("region", { name: "Selected mesh member" })).toHaveCount(0)
   await expect(dialog.locator(".mesh-member").filter({ hasText: "You" })).toHaveAttribute("aria-expanded", "false")
   await expect(dialog.getByRole("button", { name: "Remove my device", exact: true })).toHaveCount(0)
   await page.screenshot({ animations: "disabled", path: info.outputPath(`sync-${width}.png`) })
+  if (width >= 1000) {
+    await dialog.getByRole("button", { name: "Restore window size", exact: true }).click()
+    await expect.poll(async () => {
+      const peopleBox = await members.boundingBox(), storageBox = await storage.boundingBox()
+      return Boolean(peopleBox && storageBox && storageBox.y >= peopleBox.y + peopleBox.height)
+    }).toBe(true)
+  }
   await dialog.getByRole("button", { name: "Close", exact: true }).click()
   if (width < 640) await page.getByRole("button", { name: "Menu", exact: true }).click()
   await page.getByRole("button", { name: "Settings", exact: true }).click()

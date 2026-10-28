@@ -94,17 +94,30 @@ describe("mesh trace", () => {
 
   it("Given a repeated failure storm, when the minute budget fills, then preserve local events and export suppression evidence in the next window", async () => {
     vi.stubGlobal("window", {})
-    vi.spyOn(console, "warn").mockImplementation(() => {})
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     const now = vi.spyOn(Date, "now").mockReturnValue(1_000)
     for (let index = 0; index < 160; index++) meshTrace("dial.failed", { connectionId: `out-${index}` }, "warn")
     await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(120))
     expect(record).toHaveBeenCalledTimes(120)
     expect(meshTraceSnapshot()).toHaveLength(160)
+    expect(warn).toHaveBeenCalledTimes(120)
     now.mockReturnValue(61_001)
     meshTrace("session.started", { connectionId: "in-recovered" })
+    meshTrace("dial.failed", { connectionId: "out-next-window" }, "warn")
+    expect(warn).toHaveBeenCalledTimes(122)
+    expect(warn.mock.calls.at(-2)?.[0]).toContain('"suppressedCount":40')
     await vi.dynamicImportSettled()
-    expect(record.mock.calls.slice(-2).map(call => call[0])).toEqual(["mesh.diagnostics.suppressed", "session.started"])
-    expect(record.mock.calls.at(-2)?.[1]).toMatchObject({ suppressedCount: 40 })
+    expect(record.mock.calls.slice(-3).map(call => call[0])).toEqual(["mesh.diagnostics.suppressed", "session.started", "dial.failed"])
+    expect(record.mock.calls.at(-3)?.[1]).toMatchObject({ suppressedCount: 40 })
+  })
+
+  it("Given explicit sync debugging, when a warning storm occurs, then retain every console warning and snapshot", () => {
+    vi.stubGlobal("window", {})
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    setMeshTraceVerboseLogging(true)
+    for (let index = 0; index < 160; index++) meshTrace("dial.failed", { connectionId: `out-${index}` }, "warn")
+    expect(warn).toHaveBeenCalledTimes(160)
+    expect(meshTraceSnapshot()).toHaveLength(160)
   })
 
   it("Given device opt-out, when incidents occur, then do not load/export diagnostics or consume the next consenting budget", async () => {

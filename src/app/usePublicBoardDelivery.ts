@@ -1,13 +1,13 @@
 import { computed, onScopeDispose, ref, watch } from "vue"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2, WorkspaceGrant } from "../domain/model"
-import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "../sync/peerStore"
+import type { WorkspaceAuthorityRecord } from "../sync/peerStore"
 import type { PublicBoardProjection } from "../public/publicSchema"
 import type { PublicDeliveryCommand } from "../public/publicDelivery"
 
 type DeliveryStatus = "idle" | "waiting" | "checking" | "sending" | "delivered" | "private" | "retry" | "blocked"
 class PublicDeliveryAccessError extends Error {
-  constructor(cause?: unknown) { super("Editor access could not be verified on this device. Open Sync to reconnect and check board access.", { cause }) }
+  constructor() { super("Editor access could not be verified on this device. Open Sync to reconnect and check board access.") }
 }
 type DeliveryMarker = { version: 1; workspaceId: string; boardId: string; sourceHeads: string[]; status: DeliveryStatus; attempts: number; updatedAt: number }
 type DeliveryCapture = { origin: string; workspaceId: string; boardId: string; document: WorkspaceDocumentV2; profile: LocalProfile; sourceHeads: string[]; sourceVersion: number }
@@ -20,6 +20,7 @@ export interface PublicBoardDeliveryInput {
   sourceHeads: () => string[]
   role: () => string | null | undefined
   profile: () => LocalProfile | null | undefined
+  authorityVersion?: () => number
   recoveryActive?: () => boolean
   debounceMs?: number
 }
@@ -40,39 +41,37 @@ function parseMarker(raw: string | null): DeliveryMarker | undefined {
     return value as DeliveryMarker
   } catch { return undefined }
 }
-async function currentEditorCredential(captured: DeliveryCapture, sameSource: (capture: DeliveryCapture) => boolean) {
+async function currentEditorAuthority(captured: DeliveryCapture, sameSource: (capture: DeliveryCapture) => boolean) {
   if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
-  const credentialState = await readEditorCredential(captured)
+  const authorityState = await readEditorAuthority(captured)
   if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
-  return credentialState
+  return authorityState
 }
-async function readEditorCredential(captured: DeliveryCapture) {
-  const [peerStoreModule, meshBase, proofs, verifyWorkspaceGrant] = await Promise.all([
+async function readEditorAuthority(captured: DeliveryCapture) {
+  const [peerStoreModule, meshBase, proofs, access, fingerprints] = await Promise.all([
     import("../sync/peerStore"), import("../sync/durableMeshBase"), import("../domain/proofs"),
-    import("../sync/meshRecords").then(module => module.verifyWorkspaceGrant),
+    import("../sync/changeAuthorization"), import("../sync/authorityFingerprint"),
   ])
   const { peerStore } = peerStoreModule
-  const [credential, authority] = await Promise.all([peerStore.getWorkspaceCredential(captured.workspaceId), peerStore.getWorkspaceAuthority(captured.workspaceId)])
-  const grant = credential?.localGrant as WorkspaceGrant | undefined
-  const revoked = !credential || !grant || meshBase.isGrantRevoked(credential, captured.profile.identity.personId, grant) ||
-    meshBase.isDeviceRevoked(credential, captured.profile.identity.personId, captured.profile.device.deviceId) ||
-    meshBase.hasLeftWorkspace(credential, captured.profile.identity.personId, grant)
-  assertEditorCredential(credential, authority, grant, captured, revoked)
-  const owner = { personId: credential!.ownerPersonId, publicKey: credential!.ownerPublicKey,
-    certificates: [...credential!.ownerCertificates, ...authority!.ownerCertificates] as LocalProfile["certificate"][] }
-  try {
-    const role = await verifyWorkspaceGrant(grant!, { workspaceId: captured.workspaceId, personId: captured.profile.identity.personId,
-      ownerPersonId: owner.personId, ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates })
-    if (role !== "editor") throw new PublicDeliveryAccessError()
-  } catch (cause) { throw new PublicDeliveryAccessError(cause) }
+  // Durable authority owns membership. A replaced or missing connection
+  // credential must not hide a current editor grant or historical owner chain.
+  const authority = await peerStore.getWorkspaceAuthority(captured.workspaceId).catch(() => { throw new PublicDeliveryAccessError() })
+  if (!authority) throw new Error("Waiting for workspace authority. Changes will sync automatically.")
+  const grant = authority.localGrant as WorkspaceGrant | undefined
+  assertEditorAuthority(authority, grant, captured)
+  if (await access.workspaceRole(captured.document, captured.profile) !== "editor") throw new PublicDeliveryAccessError()
+  const latest = await peerStore.getWorkspaceAuthority(captured.workspaceId)
+  const revision = fingerprints.workspaceAuthorityFingerprint([], [authority!])
+  if (revision !== fingerprints.workspaceAuthorityFingerprint([], latest ? [latest] : [])) {
+    throw new Error("Editor authority changed during public delivery; retry the action")
+  }
   const writerCertificates = meshBase.uniqueCertificates(captured.profile, [captured.profile.certificate, ...await proofs.defaultProofStore.listCertificates()])
-  return { credential: credential!, authority: authority!, grant: grant!, ownerCertificates: owner.certificates, writerCertificates }
+  return { grant: grant!, writerCertificates, revision }
 }
-function assertEditorCredential(credential: WorkspaceMeshCredential | null, authority: WorkspaceAuthorityRecord | null, grant: WorkspaceGrant | undefined,
-  captured: DeliveryCapture, revoked: boolean) {
-  if (!credential || !authority || credential.workspaceId !== captured.workspaceId || authority.workspaceId !== captured.workspaceId || !grant ||
-      grant.payload.workspaceId !== captured.workspaceId || grant.payload.personId !== captured.profile.identity.personId || grant.payload.role !== "editor" ||
-      (grant.payload.accessEpoch ?? 1) !== credential.epoch || revoked) throw new PublicDeliveryAccessError()
+function assertEditorAuthority(authority: WorkspaceAuthorityRecord | null, grant: WorkspaceGrant | undefined,
+  captured: DeliveryCapture) {
+  if (!authority || authority.workspaceId !== captured.workspaceId || !grant || grant.payload.workspaceId !== captured.workspaceId ||
+      grant.payload.personId !== captured.profile.identity.personId || grant.payload.role !== "editor") throw new PublicDeliveryAccessError()
 }
 function deliveryMarker(capture: DeliveryCapture, status: DeliveryStatus, attempts: number): DeliveryMarker {
   return { version: 1, workspaceId: capture.workspaceId, boardId: capture.boardId, sourceHeads: capture.sourceHeads,
@@ -106,7 +105,7 @@ async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryC
   ])
   const ensureCurrent = async () => {
     if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
-    if (writerResolved) await currentEditorCredential(captured, sameSource)
+    if (writerResolved) await currentEditorAuthority(captured, sameSource)
   }
   return await deliverPublicBoard({ origin: captured.origin, boardId: captured.boardId, workspaceId: captured.workspaceId,
     identity: captured.profile.identity, deviceId: captured.profile.device.deviceId,
@@ -114,7 +113,7 @@ async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryC
     resolveWriter: async () => {
       if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
       discoveredPublic()
-      const current = await currentEditorCredential(captured, sameSource)
+      const current = await currentEditorAuthority(captured, sameSource)
       writerResolved = true
       return { certificates: current.writerCertificates, grant: current.grant }
     },
@@ -127,14 +126,12 @@ async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryC
       const [{ resolveLocalSigningContext }, { signWithContext }] = await Promise.all([
         import("../domain/localSigningContext"), import("../domain/signingContext"),
       ])
-      const current = await currentEditorCredential(captured, sameSource)
+      const current = await currentEditorAuthority(captured, sameSource)
       const context = await resolveLocalSigningContext(captured.profile, "rusty-publication-command", payload, {
         certificates: current.writerCertificates, ensureCurrent,
         currentAuthority: async () => {
-          const live = await currentEditorCredential(captured, sameSource)
-          const { canonicalizeJson } = await import("../domain/identity")
-          return canonicalizeJson([live.credential.ownerPersonId, live.credential.ownerPublicKey,
-            live.credential.epoch, live.grant, live.authority.scopeAuthoritySnapshot])
+          const live = await currentEditorAuthority(captured, sameSource)
+          return live.revision
         },
       })
       return signWithContext(context, payload)
@@ -252,6 +249,9 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
       status.value = "idle"
       error.value = ""
     } else schedule(0)
+  })
+  watch(() => input.authorityVersion?.() ?? 0, () => {
+    if (status.value === "blocked" || status.value === "retry") schedule(0)
   })
   watch(() => input.recoveryActive?.() ?? false, (active, wasActive) => {
     if (wasActive && !active && status.value === "blocked") schedule(0)

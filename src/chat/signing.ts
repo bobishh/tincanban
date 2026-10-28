@@ -42,8 +42,8 @@ async function credentials(workspaceId: string, profile: LocalProfile, access: C
     publicKey: authority?.ownerPublicKey ?? profile.identity.publicKey,
     certificates: authority ? authority.ownerCertificates as DeviceCertificate[] : certificates.filter(c => c.payload.personId === owner),
   }
-  const saved = await chatStore.load(await access.readScope(workspaceId))
-  const source = saved.profiles.map(p => p.record as ChatRecord).find(r => r?.authority?.publicKey)
+  const profiles = await chatStore.loadProfiles(await access.readScope(workspaceId))
+  const source = profiles.map(p => p.record as ChatRecord).find(r => r?.authority?.publicKey)
   const grant = (authority?.localGrant as WorkspaceGrant | undefined) ??
     (await defaultProofStore.listGrants(workspaceId)).find(g => g.payload.personId === profile.identity.personId)
   if (!grant) throw new Error("Connect to the workspace owner once to enable chat")

@@ -39,6 +39,7 @@ export function useAppPublicBoards(app: ReturnType<typeof useAppController>, uiR
     sourceVersion: () => docVersion.value,
     sourceHeads: () => currentDocHeads.value,
     role: () => uiReady.value ? confirmedRole.value : null,
+    authorityVersion: () => app.collaboration.device.sync.ownershipRevision.value,
     recoveryActive: () => app.collaboration.device.sync.isOpen.value,
     profile: app.workspace.getCurrentProfile,
   })

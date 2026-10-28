@@ -1,7 +1,7 @@
 import type { FieldDefinition, Item } from "../domain/model"
 import type { Anchor } from "./context"
 
-export type ReferenceKind = "Card" | "Description" | "Field"
+type ReferenceKind = "Card" | "Description" | "Field"
 export type ReferenceChoice = { title: string; anchor: Anchor; type?: ReferenceKind; searchText?: string }
 
 export function itemReferenceChoices(items: readonly Item[], fields: readonly FieldDefinition[], workspaceScope: string, boardId: string, narrativeFieldId?: string): ReferenceChoice[] {

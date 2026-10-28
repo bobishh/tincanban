@@ -182,10 +182,12 @@ test("Given two items and a participant, when one discussion attaches both items
   await expect(form).toBeHidden()
   await discussObject(page, page.getByRole("dialog", { name: "Item overview" }))
   const discussion = page.getByRole("dialog", { name: /^Discussion/ })
-  await discussion.getByText("Attach item reference", { exact: true }).click()
-  await discussion.getByRole("button", { name: "Anchor Labs — Engineer", exact: true }).click()
-  await discussion.getByText("Invite @participant", { exact: true }).click()
-  await discussion.locator(".mention-picker button").first().click()
+  await discussion.press("Alt+Backquote")
+  await page.getByRole("dialog", { name: "Item overview" }).getByRole("button", { name: "Close detail", exact: true }).click()
+  await page.getByRole("button", { name: /Open Anchor Labs/ }).click()
+  await discussObject(page, page.getByRole("dialog", { name: "Item overview" }), "Discussion · Other Labs — Engineer")
+  await discussion.getByRole("textbox", { name: "Message", exact: true }).fill("@")
+  await discussion.getByRole("listbox", { name: "Participants" }).getByRole("option").first().click()
   await discussion.getByRole("textbox", { name: "Message", exact: true }).press("End")
   await discussion.getByRole("textbox", { name: "Message", exact: true }).pressSequentially("Compare these offers")
   await discussion.getByRole("button", { name: "Send message" }).click()
@@ -204,6 +206,31 @@ test("Given two items and a participant, when one discussion attaches both items
   await page.getByRole("button", { name: /Open Anchor Labs/ }).click()
   await discussObject(page, page.getByRole("dialog", { name: "Item overview" }))
   await expect(page.getByRole("dialog", { name: /^Discussion/ }).locator(".chat-message-item")).toHaveCount(1)
+})
+
+test("Given an open workspace chat and selected text in another window, when choosing Discuss in, then append its reference without replacing the draft or sending", async ({ page }) => {
+  const item = await createItem(page)
+  await page.getByRole("button", { name: "Workspace chat", exact: true }).click()
+  const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })
+  await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Keep existing draft")
+  const quote = await item.locator(".detail-copy").evaluate(el => {
+    const text = el.querySelector("p")!.firstChild!
+    const range = document.createRange()
+    range.setStart(text, 7); range.setEnd(text, 22)
+    const selection = window.getSelection()!
+    selection.removeAllRanges(); selection.addRange(range)
+    document.dispatchEvent(new Event("selectionchange"))
+    return range.toString()
+  })
+  await page.getByRole("button", { name: "Discuss selection", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Discuss in #Workspace chat", exact: true }).click()
+  await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Keep existing draft")
+  await expect(chat.locator(".draft-reference")).toContainText(quote)
+  await expect(item).toBeVisible()
+  await expect(chat.locator(".chat-message-item")).toHaveCount(0)
+  await chat.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect(chat.getByText("Saving locally…")).toHaveCount(0)
+  await expect(chat.locator(".chat-message-item .reference-chips")).toContainText(quote)
 })
 
 test("Given a quoted passage changed after discussion, when its reference opens then original quote remains without false highlighting", async ({ page }) => {
@@ -252,4 +279,115 @@ test("Given a pending discussion send, when its window closes and reopens then c
   await expect(discussion.getByText("Saving locally…", { exact: true })).toHaveCount(0, { timeout: 10000 })
   await expect(discussion.locator(".chat-message-item")).toHaveCount(1)
   await expect(discussion.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("")
+})
+
+
+async function selectDescription(page: Page) {
+  return page.getByRole("dialog", { name: "Item overview" }).locator(".detail-copy").evaluate(el => {
+    const text = el.querySelector("p")!.firstChild!
+    const range = document.createRange()
+    range.setStart(text, 7); range.setEnd(text, 22)
+    const selection = window.getSelection()!
+    selection.removeAllRanges(); selection.addRange(range)
+    document.dispatchEvent(new Event("selectionchange"))
+    return range.toString()
+  })
+}
+
+test("Given two open reply conversations, when a selection chooses one at the viewport edge, then readable destinations fit and preserve its draft and reply context", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 600 })
+  const item = await createItem(page)
+  await page.getByRole("button", { name: "Workspace chat", exact: true }).focus()
+  await page.keyboard.press("Enter")
+  const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })
+  for (const body of ["Offer negotiation", "Interview preparation"]) {
+    await chat.getByRole("textbox", { name: "Message", exact: true }).fill(body)
+    await chat.getByRole("button", { name: "Send message", exact: true }).click()
+    await expect(chat.getByText("Saving locally…", { exact: true })).toHaveCount(0)
+    await expect(chat.locator(".chat-message-body").getByText(body, { exact: true })).toBeVisible()
+  }
+  const rootId = await chat.locator(".chat-message-item").filter({ hasText: "Offer negotiation" }).getAttribute("data-message-id")
+  expect(rootId).toBeTruthy()
+  await chat.locator(".chat-message-item").filter({ hasText: "Offer negotiation" }).getByRole("button", { name: "Reply to message", exact: true }).click()
+  const thread = page.locator(`[data-window-id="conversation:${rootId}"]`)
+  await thread.getByRole("textbox", { name: "Message", exact: true }).fill("Keep thread draft")
+  await chat.focus()
+  await chat.locator(".chat-message-item").filter({ hasText: "Interview preparation" }).getByRole("button", { name: "Reply to message", exact: true }).click()
+  const quote = await selectDescription(page)
+  await item.focus()
+  await item.locator(".detail-copy").dispatchEvent("contextmenu", { clientX: 1270, clientY: 590 })
+  await page.getByRole("menu", { name: "Discussion actions", exact: true }).getByRole("menuitem", { name: "Discuss", exact: true }).click()
+  const menu = page.getByRole("menu", { name: "Choose chat", exact: true })
+  await expect(menu.getByRole("menuitem", { name: "Discuss in #Replies · Offer negotiation", exact: true })).toBeVisible()
+  await expect(menu.getByRole("menuitem", { name: "Discuss in #Replies · Interview preparation", exact: true })).toBeVisible()
+  await expect.poll(async () => {
+    const box = (await menu.boundingBox())!
+    return box.x >= 0 && box.y >= 0 && box.x + box.width <= 1280 && box.y + box.height <= 600
+  }).toBe(true)
+  await menu.getByRole("menuitem", { name: "Discuss in #Replies · Offer negotiation", exact: true }).click()
+  await expect(thread.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Keep thread draft")
+  await expect(thread.locator(".draft-reference")).toContainText(quote)
+  await expect(item).toBeVisible()
+  await expect(thread.locator(".chat-message-item")).toHaveCount(1)
+  await thread.getByRole("button", { name: "Send message", exact: true }).click()
+  await expect(thread.getByText("Saving locally…", { exact: true })).toHaveCount(0)
+  const saved = await page.evaluate(async () => {
+    const service = await import("/src/chat/service.ts")
+    const state = (await import("/src/test/stateFixture.ts")).useTincanban()
+    return (await service.loadChat(state.activeWorkspace.id)).messages.find(message => message.body === "Keep thread draft")!.context
+  })
+  expect(saved?.replyTo).toBe(rootId)
+  expect(saved?.conversationRootId).toBe(rootId)
+  expect(saved?.references[0]?.selection?.exact).toBe(quote)
+  await selectDescription(page)
+  await page.getByRole("button", { name: "Discuss selection", exact: true }).click()
+  await page.getByRole("menuitem", { name: "Discuss in #Replies · Offer negotiation", exact: true }).click()
+  await expect(thread.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("")
+  await expect(thread.locator(".draft-reference")).toContainText(quote)
+  await thread.getByRole("button", { name: "Close", exact: true }).click()
+  await chat.focus()
+  await chat.locator(".chat-message-item").filter({ hasText: "Offer negotiation" }).getByRole("button", { name: "1 reply", exact: true }).click()
+  await expect(thread.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("")
+  await expect(thread.locator(".draft-reference")).toContainText(quote)
+})
+
+test("Given a message still saving, when discussing a selection in that chat, then retain the chooser until saving finishes and attach without losing the reference", async ({ page }) => {
+  const item = await createItem(page)
+  await page.getByRole("button", { name: "Workspace chat", exact: true }).click()
+  const chat = page.getByRole("dialog", { name: "Workspace chat", exact: true })
+  await page.evaluate(async () => {
+    const { chatStore } = await import("/src/chat/store.ts")
+    const append = chatStore.append.bind(chatStore)
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    chatStore.append = async message => {
+      if (message.body === "Saving first message") await gate
+      return append(message)
+    }
+    ;(window as typeof window & { releaseChatAppend: () => void }).releaseChatAppend = () => { release(); chatStore.append = append }
+  })
+  try {
+    await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Saving first message")
+    await chat.getByRole("button", { name: "Send message", exact: true }).click()
+    await expect(chat.getByText("Saving locally…", { exact: true })).toBeVisible()
+    const quote = await selectDescription(page)
+    await page.getByRole("button", { name: "Discuss selection", exact: true }).click()
+    const destination = page.getByRole("menuitem", { name: "Discuss in #Workspace chat", exact: true })
+    await expect(destination).toBeDisabled()
+    await expect(page.getByRole("menu", { name: "Choose chat", exact: true }).getByRole("status")).toContainText("finish saving")
+    await expect(item).toBeVisible()
+    await page.evaluate(() => (window as typeof window & { releaseChatAppend: () => void }).releaseChatAppend())
+    await expect(chat.getByText("Saving locally…", { exact: true })).toHaveCount(0)
+    await expect(destination).toBeEnabled()
+    await destination.click()
+    await expect(chat.locator(".draft-reference")).toContainText(quote)
+    await expect(chat.locator(".chat-message-item")).toHaveCount(1)
+    await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Discuss after saving")
+    await chat.getByRole("button", { name: "Send message", exact: true }).click()
+    await expect(chat.getByText("Saving locally…", { exact: true })).toHaveCount(0)
+    await expect(chat.locator(".chat-message-item")).toHaveCount(2)
+    await expect(chat.locator(".chat-message-item").filter({ hasText: "Discuss after saving" }).locator(".reference-chips")).toContainText(quote)
+  } finally {
+    await page.evaluate(() => (window as typeof window & { releaseChatAppend?: () => void }).releaseChatAppend?.())
+  }
 })

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type * as IdentityModule from "../domain/identity"
 const mocks = vi.hoisted(() => ({ load: vi.fn(), append: vi.fn(), merge: vi.fn(), peers: vi.fn(), create: vi.fn() }))
-vi.mock("./store", () => ({ chatStore: { load: mocks.load, append: mocks.append, merge: mocks.merge, putProfile: vi.fn() } }))
+vi.mock("./store", () => ({ chatStore: { load: mocks.load, loadProfiles: async (id: string) => (await mocks.load(id)).profiles, append: mocks.append, merge: mocks.merge, putProfile: vi.fn() } }))
 vi.mock("../domain/identity", async importOriginal => ({ ...await importOriginal<typeof IdentityModule>(),
   bootstrapIdentity: async () => ({ identity: { personId: "person", publicKey: "public", displayName: "Person" }, device: { deviceId: "device" }, certificate: { signature: "certificate", payload: { deviceId: "device" } } }) }))
 vi.mock("../domain/proofs", () => ({ defaultProofStore: { listCertificates: async () => [], listGrants: async () => [] } }))

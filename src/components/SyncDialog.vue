@@ -215,7 +215,8 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
       <template v-if="step === 'members'">
         <p v-if="meshActionError" class="sync-error" role="alert">{{ meshActionError }}</p>
         <p v-if="leavingMesh" class="dialog-copy" role="status">Leaving workspace mesh…</p>
-        <div>
+        <div class="sync-overview">
+        <div class="sync-people">
         <p class="mesh-connection-summary" :class="{ 'is-warning': connectionStatus.warning }" role="status">
           <strong>{{ connectionStatus.title }}</strong><span> · {{ connectionStatus.message }}</span>
         </p>
@@ -317,6 +318,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <RustyPanel v-if="blindReplication && activeWorkspaceId" :controller="blindReplication" :workspace-id="activeWorkspaceId" :owner="currentRole === 'owner'" />
           <p v-else class="dialog-copy">Rusty is unavailable for this workspace.</p>
         </section>
+        </div>
         <section v-if="confirmingLeave && hasMesh" class="mesh-member-action" aria-label="Leave mesh confirmation">
           <strong>Leave this workspace mesh?</strong>
           <p class="dialog-copy">Your identity leaves this workspace on all its devices. Your identity and other workspaces are kept. Local data stays as a read-only copy. An owner must transfer ownership first; another workspace device must be connected.</p>

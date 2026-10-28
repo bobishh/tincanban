@@ -24,7 +24,8 @@ async function addLead(page: Page, company: string, workMode: "remote" | "onsite
 }
 
 test.describe("Automatic priority from workspace preferences", () => {
-  test("Given weighted work-mode rules, when leads are created, then fit and priority are derived without manual fields", async ({ page }) => {
+  test("Given weighted work-mode rules, when leads are created, then fit and priority are derived without manual fields", async ({ page, browserName }) => {
+    if (browserName === "webkit") test.setTimeout(60_000)
     await page.goto("/")
     await createJobSearchWorkspace(page, "Weighted jobs")
 

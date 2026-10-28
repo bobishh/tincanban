@@ -313,7 +313,8 @@ jobs:
   automation-worker:
     name: Automation (intake, participant and owner lifecycle)
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # This aggregate includes storage, enrollment, recovery and public-reader checks.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:

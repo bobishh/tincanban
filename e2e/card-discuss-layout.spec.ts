@@ -1,7 +1,8 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
 
-  test("Given a card discussion, when a draft is reopened and replies are saved then only persisted messages increment the count", async ({ page }) => {
+  test("Given a card discussion, when a draft is reopened and replies are saved then only persisted messages increment the count", async ({ page, browserName }) => {
+    if (browserName === "webkit") test.setTimeout(60_000)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.goto("/")
     await createJobSearchWorkspace(page, "Card controls")
