@@ -6,7 +6,7 @@ import { certHashDefault } from "../domain/proofs"
 import { resolveSigningContext } from "../domain/signingContext"
 import { createAuthorizedIdentityDeviceTransferFixture as createIdentityDeviceTransfer } from "./identityAuthority.testSupport"
 import { createIdentityReplicaRecord, type readIdentityReplicaRecord } from "./identityReplicaProtocol"
-import { decodeBlindBytes, encodeBlindBytes, encryptPurposeBoundObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
+import { decodeBlindBytes, encodeBlindBytes, encryptPurposeBoundObject, RustyResponseError, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { blindHash, blindObjectId, canonicalBlindJson, type BlindReceipt } from "./blindClient"
 import { IdentityReplica } from "./identityReplica"
 import type { IdentityReplicaConfig } from "./blindReplication"
@@ -55,6 +55,36 @@ async function fixture() {
   }
   return { config, record, root, objects, attempts, transport, store, loseReply: () => { failReply = true } }
 }
+
+it("Given an identity catalog compacted after inventory with a durable local outbox, when the next pull follows its failed old download, then admit the replacement without changing the original outbox", async () => {
+  const f = await fixture(), store = f.store("phone")
+  f.loseReply()
+  await expect(new IdentityReplica(f.config, "phone", store, f.transport).push()).rejects.toThrow("reply lost")
+  const original = store.progress()
+  const replacement = await encryptPurposeBoundObject({ purpose: "identity-state", subjectId: f.config.personId,
+    scopeId: f.config.scopeId, keyEpoch: 1 }, decodeBlindBytes(f.config.contentKey),
+  new TextEncoder().encode(canonicalBlindJson(f.record)))
+  const inventory = vi.fn(async (access: unknown, after: number) => {
+    const result = await f.transport.inventory(access, after)
+    if (inventory.mock.calls.length === 1) f.objects.splice(0, f.objects.length,
+      { objectId: await blindObjectId(replacement), sequence: 7, object: replacement })
+    return result
+  })
+  const download = vi.fn(async (access: unknown, id: string) => {
+    if (!f.objects.some(value => value.objectId === id)) throw new RustyResponseError("Object unavailable", { status: 403 })
+    return f.transport.download(access, id)
+  })
+  const replica = new IdentityReplica(f.config, "phone", store, { ...f.transport, inventory, download })
+  await expect(replica.pull()).rejects.toThrow("Object unavailable")
+  expect(store.progress()).toEqual(original)
+  expect(store.merge).not.toHaveBeenCalled()
+  await expect(replica.pull()).resolves.toBe(true)
+  expect(store.progress()).toMatchObject({ cursor: 7, pending: original.pending, lastUploaded: original.lastUploaded })
+  expect(store.merge).toHaveBeenCalledOnce()
+  expect(store.merge.mock.calls[0]![0].personalRoot.photo).toEqual(f.root.photo)
+  expect(inventory.mock.calls.map(call => call[1])).toEqual([0, 0])
+  expect(f.attempts).toHaveLength(1)
+})
 
 it("Given identity recovery at an old storage cursor, when a checkpoint rejects the fresh upload, then automatically admit it and confirm a fresh upload with the observed sequence", async () => {
   const f = await fixture(), source = f.store("source")

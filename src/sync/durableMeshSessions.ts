@@ -21,7 +21,7 @@ import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/histo
 import { fetchBlobFromCurrentSessions } from "./durableMeshBlobFetch"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
-import { MeshDialRouteSelector, routeLeaseFields } from "./durableMeshDialRoutes"
+import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
 export class DurableMeshSessions extends DurableMeshHandshake {
@@ -233,7 +233,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
   protected async outgoingRequest(credential: WorkspaceMeshCredential, peer: WorkspacePeerRecord) {
     const profile = await this.options.getProfile()
     const ownerWorkspaceIds = credential.ownerPersonId === profile.identity.personId && peer.personId === profile.identity.personId
-      ? await this.ownerWorkspaceIds(profile) : undefined
+      ? await routedOwnerWorkspaceIds(this.store, profile) : undefined
     return this.validateHandshake({ workspaceId: peer.workspaceId, peer: await this.ownBundle(credential),
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),

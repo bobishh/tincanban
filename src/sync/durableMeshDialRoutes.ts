@@ -1,6 +1,35 @@
+import type { LocalProfile } from "../domain/identity"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
+import { hasLeftWorkspace, isDeviceRevoked, isGrantRevoked } from "./durableMeshBase"
 import type { WorkspaceMemberBundle } from "./meshRecords"
-import type { WorkspacePeerRecord } from "./peerStore"
+import type { PeerStore, WorkspacePeerRecord } from "./peerStore"
 import { isNativeKeeperRoute } from "./nativeKeeperRoute"
+
+/** Retained content without a remote route still needs the normal verified owner offer. */
+export async function routedOwnerWorkspaceIds(store: Pick<PeerStore, "listWorkspaceCredentials" | "getWorkspaceCredential" | "listPeers">,
+  profile: Pick<LocalProfile, "identity" | "device">): Promise<string[]> {
+  const runtime = meshRustRuntime().state
+  const owned = runtime.ownedWorkspaceIds(await store.listWorkspaceCredentials(), profile.identity.personId, profile.identity.publicKey)
+  const routed: string[] = []
+  for (const workspaceId of owned) {
+    const peers = await store.listPeers(workspaceId)
+    const credential = await store.getWorkspaceCredential(workspaceId)
+    if (!credential || credential.ownerPersonId !== profile.identity.personId ||
+        credential.ownerPublicKey !== profile.identity.publicKey) continue
+    // Explicit access removal must not become a request to restore the board.
+    const active = runtime.partitionCredentials({ credentials: [credential], personId: profile.identity.personId,
+      publicKey: profile.identity.publicKey, deviceId: profile.device.deviceId }).activeIndices.length > 0
+    if (!active) { routed.push(workspaceId); continue }
+    if (peers.some(peer => {
+      const grant = (peer.advertisement as WorkspaceMemberBundle | undefined)?.grant
+      return peer.deviceId !== profile.device.deviceId && peer.transportSecret === credential.transportSecret &&
+        Boolean(peer.endpoint) && !isNativeKeeperRoute(peer) && !peer.revokedAt && Boolean(peer.advertisement) &&
+        !isDeviceRevoked(credential, peer.personId, peer.deviceId) &&
+        !isGrantRevoked(credential, peer.personId, grant) && !hasLeftWorkspace(credential, peer.personId, grant)
+    })) routed.push(workspaceId)
+  }
+  return routed
+}
 
 type Host = { connected: (workspaceId: string, deviceId: string) => boolean;
   trace: (event: string, detail: Record<string, unknown>) => void }

@@ -1,3 +1,4 @@
+import { routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 import { beforeAll, describe, expect, it, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
@@ -56,6 +57,11 @@ type MeshTestHooks = {
   adoptedNode?: { endpointId: string; accept: () => Promise<unknown>; close: () => Promise<void> }
   sessions: Map<string, TestSession>
   lastDiagnostic: string
+  outgoingRequest: (credential: WorkspaceMeshCredential, peer: TestPeer) => Promise<{ ownerWorkspaceIds?: string[] }>
+  incomingResponse: (credential: WorkspaceMeshCredential, personId: string) => Promise<{ ownerWorkspaceIds?: string[] }>
+  ownBundle: () => Promise<unknown>
+  validateHandshake: (raw: unknown) => unknown
+  ownerWorkspaceIds: (profile: LocalProfile) => Promise<string[]>
   activeWorkspaceIds?: Set<string>
   instanceId: string
   lifecycle?: { stopped: boolean }
@@ -124,6 +130,54 @@ beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modu
 
 
 describe("DurableMesh peer catalog gossip", () => {
+  it("Given an owner board has no remote route, when sibling devices handshake on another board, then request its verified owner offer without hiding the retained board inventory", async () => {
+    const profile = { identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "local-device" } } as LocalProfile
+    const credential = (workspaceId: string): WorkspaceMeshCredential => ({ version: 1, workspaceId,
+      ownerPersonId: "owner", ownerPublicKey: "owner-key", ownerCertificates: [], transportSecret: "secret", epoch: 1, updatedAt: new Date().toISOString() })
+    const credentials = [credential("connected-board"), credential("isolated-board")]
+    const remote = { workspaceId: "connected-board", personId: "owner", deviceId: "remote-device",
+      transportSecret: "secret", endpoint: "remote-endpoint", revokedAt: null as string | null, advertisement: {} as unknown }
+    let fresh = credentials[0]!
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => profile,
+      store: { listWorkspaceCredentials: async () => credentials, listWorkspaceAuthorities: async () => [],
+        getWorkspaceCredential: async (id: string) => id === fresh.workspaceId ? fresh : credentials.find(value => value.workspaceId === id),
+        listPeers: async (id: string) => [{ workspaceId: id, personId: "owner", deviceId: "local-device", advertisement: {} },
+          ...(id === "connected-board" ? [remote] : [])],
+      } as never })
+    const internal = meshHooks(mesh)
+    const store = (mesh as unknown as { store: Parameters<typeof routedOwnerWorkspaceIds>[0] }).store
+    internal.ownBundle = vi.fn(async () => ({}))
+    internal.validateHandshake = value => value
+    try {
+      expect(await internal.ownerWorkspaceIds(profile)).toEqual(["connected-board", "isolated-board"])
+      const peer = { workspaceId: "connected-board", personId: "owner", deviceId: "remote-device" }
+      expect((await internal.outgoingRequest(credentials[0]!, peer)).ownerWorkspaceIds).toEqual(["connected-board"])
+      expect((await internal.incomingResponse(credentials[0]!, "owner")).ownerWorkspaceIds).toEqual(["connected-board"])
+      expect((await internal.outgoingRequest(credentials[0]!, { ...peer, personId: "another-person" })).ownerWorkspaceIds).toBeUndefined()
+      expect((await internal.incomingResponse(credentials[0]!, "another-person")).ownerWorkspaceIds).toBeUndefined()
+      for (const invalid of [{ endpoint: "" }, { revokedAt: "2026-01-01T00:00:00.000Z" }, { transportSecret: "old-secret" }, { advertisement: undefined },
+        { advertisement: { advertisement: { payload: { userAgent: "mesh-lighthouse/1" } } } }]) {
+        const original = { ...remote }
+        Object.assign(remote, invalid)
+        expect(await routedOwnerWorkspaceIds(store, profile), JSON.stringify(invalid)).toEqual([])
+        Object.assign(remote, original)
+      }
+      // Expired signed bootstrap routes remain eligible until an authenticated sibling replaces them.
+      remote.advertisement = { advertisement: { payload: { expiresAt: "2000-01-01T00:00:00.000Z" } } }
+      expect(await routedOwnerWorkspaceIds(store, profile)).toEqual(["connected-board"])
+      fresh = { ...credentials[0]!, transportSecret: "new-secret" }
+      expect(await routedOwnerWorkspaceIds(store, profile), "Reread the current credential after reading its routes").toEqual([])
+      fresh = { ...credentials[0]!, catalog: { deviceRevocations: [{ record: { payload: { personId: "owner", deviceId: "remote-device" } } }] } } as never
+      expect(await routedOwnerWorkspaceIds(store, profile), "An authority-revoked peer cannot supply a route").toEqual([])
+      fresh = credentials[0]!
+      credentials[1] = { ...credentials[1]!, catalog: { deviceRevocations: [{ record: { payload: { personId: "owner", deviceId: "local-device" } } }] } } as never
+      expect(await routedOwnerWorkspaceIds(store, profile), "Local device revocation must not request board restoration").toEqual(["connected-board", "isolated-board"])
+      credentials.push({ ...credential("foreign-board"), ownerPersonId: "foreign-owner", ownerPublicKey: "foreign-key" })
+      expect(await routedOwnerWorkspaceIds(store, profile), "Another owner's board cannot enter the owner offer inventory").toEqual(["connected-board", "isolated-board"])
+    } finally { await mesh.dispose() }
+  })
+
   it("Given a retained current owner ledger, when an older invitation snapshot is replayed, then the SDK merge keeps current rights without invalidating recovery", async () => {
     const workspaceId = crypto.randomUUID(), current = { marker: "current" }, previous = { marker: "old" }
     const putWorkspaceAuthority = vi.fn()

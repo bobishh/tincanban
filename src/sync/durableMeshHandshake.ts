@@ -1,3 +1,4 @@
+import { routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 import { sha256Base64Url, type LocalProfile} from "../domain/identity"
 import * as Automerge from "@automerge/automerge/slim"
 import type { DeviceCertificate } from "../domain/model"
@@ -346,7 +347,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     const profile = await this.options.getProfile()
     const ownerWorkspaceIds = meshRustRuntime().state.shouldAdvertiseOwnerWorkspaceIds(
       credential.ownerPersonId, profile.identity.personId, remotePersonId)
-      ? await this.ownerWorkspaceIds(profile) : undefined
+      ? await routedOwnerWorkspaceIds(this.store, profile) : undefined
     return this.validateHandshake({ workspaceId: credential.workspaceId, peer: await this.ownBundle(credential),
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),

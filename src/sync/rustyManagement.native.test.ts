@@ -73,6 +73,7 @@ import capturedHistory from "../../vendor/meta-mesh/packages/mesh-replication/fi
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "./identityAuthority.testSupport"
 import { publishRustyIdentityAuthorityView } from "@meta-uber/mesh-replication/rusty-identity-authority"
 import { createRustyScopeEnrollmentClient, type RustyScopeEnrollmentJournal } from "@meta-uber/mesh-replication/rusty-scope-enrollment"
+import { ReplicaEngine, emptyReplicaState } from "@meta-uber/mesh-replication/replica-engine"
 import { publishRustyScopeAuthoritySnapshot, type ScopeAuthorityValidation } from "@meta-uber/mesh-replication/rusty-scope-authority"
 import { registerRustyResourcePrincipalGrant, type RustyWorkspaceMembershipGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
@@ -1121,6 +1122,36 @@ test("Given a native Rusty HTTP service, when the owner migrates, enrolls and ch
     expect(checkpointRequest.authorization.payload.managementRevision).toBe(1)
     const checkpointReceipt = await submitBlindCheckpoint(access, checkpointRequest)
     expect(checkpointReceipt.payload).toMatchObject({ sequence: 2, supersedesThrough: 1, policyRevision: 1 })
+    // A reader may retain the valid inventory reply while another owner commits compaction.
+    let progress = { ...emptyReplicaState<typeof firstObject>("interrupted-reader"), pending: {
+      requestId: "uncertain-local-request", hash: "local-hash", bytes: 1, object: firstObject, observedSequence: 0,
+    } }
+    const original = structuredClone(progress)
+    let staleInventory = true
+    const admitted = vi.fn(async (object: typeof firstObject) => {
+      expect(new TextDecoder().decode(await decryptBlindObject(object, access.scopeId, 1, contentKey)))
+        .toBe("complete admitted checkpoint")
+      return { hash: await blindHash(new TextEncoder().encode("complete admitted checkpoint")) }
+    })
+    const reader = new ReplicaEngine("interrupted-reader", {
+      repository: { read: async () => structuredClone(progress), commit: async (expected, next) => {
+        expect(expected).toBe(progress.generation)
+        progress = structuredClone(next) as typeof progress
+      } },
+      content: { revision: async () => "local", capture: async () => { throw new Error("Preserve original outbox") },
+        seal: async () => firstObject },
+      transport: { inventory: async after => {
+        if (staleInventory) { staleInventory = false; return inventory }
+        return inventoryBlindObjects(access, after)
+      }, download: id => downloadBlindObject(access, id), upload: async () => { throw new Error("Pull must not replace outbox") } },
+      admit: admitted, verifyReceipt: async () => {}, guard: async () => {},
+    })
+    await expect(reader.pull()).rejects.toMatchObject({ status: 403, message: "Object unavailable" })
+    expect(progress).toEqual(original)
+    expect(admitted).not.toHaveBeenCalled()
+    await expect(reader.pull()).resolves.toBe(true)
+    expect(progress).toMatchObject({ cursor: 2, pending: original.pending, lastUploaded: "" })
+    expect(admitted).toHaveBeenCalledOnce()
     const compactedInventory = await inventoryBlindObjects(access, 0)
     expect(compactedInventory).toMatchObject({ cursor: 2, maxSequence: 2, objectCount: 1 })
 

@@ -116,6 +116,8 @@ workspace ID, ownership and participant roles, and joins the owner's catalog.
 The source needs its retained board history and signed participant access.
 A configured Rusty connection is transferred with its current owner proof; a
 board without Rusty can reconnect directly between devices.
+Existing owner copies with missing peer routes also reconnect through another
+connected board of that Identity, merging both devices' retained edits.
 
 ## Workflow connections
 

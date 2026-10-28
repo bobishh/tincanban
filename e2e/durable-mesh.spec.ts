@@ -1,6 +1,6 @@
 import * as Automerge from "@automerge/automerge"
 import { expect, test, type Browser, type BrowserContext, type Page } from "./support/coverage"
-import { ensureJobSearchWorkspace } from "./support/workspaces"
+import { createJobSearchWorkspace, ensureJobSearchWorkspace, addJobSearchLead } from "./support/workspaces"
 import { captureRealIrohNodes, captureSavedAcknowledgements, closeLatestRealIrohNode, documentReceiveAttempts, realIrohNodeOwnership } from "./support/recovery"
 import { captureMeshResources, meshResourceCounts } from "./support/meshResources"
 import { expectFaviconColor, faviconColor, faviconChanges } from "./support/favicon"
@@ -31,6 +31,66 @@ async function pairWorkspace(host: Page, guest: Page) {
   if (await guestDialog.isVisible()) await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()
   if (await hostDialog.isVisible()) await hostDialog.getByRole("button", { name: "Close", exact: true }).first().click()
   return invite
+}
+
+async function enrollOwnerDevice(host: Page, guest: Page) {
+  await host.getByRole("button", { name: "Sync", exact: true }).click()
+  const panel = host.getByRole("dialog", { name: "Device sync" })
+  await panel.getByRole("button", { name: "Add someone", exact: true }).click()
+  await panel.getByRole("button", { name: "Add my device", exact: true }).click()
+  await guest.goto(await panel.getByLabel("Pairing link").inputValue())
+  const recipient = guest.getByRole("dialog", { name: "Device sync" })
+  await recipient.getByRole("button", { name: "Add this device", exact: true }).waitFor()
+  const replace = recipient.getByRole("checkbox", { name: /Replace this device.s identity/ })
+  if (await replace.count()) await replace.check()
+  await recipient.getByRole("button", { name: "Add this device", exact: true }).click()
+  await panel.getByRole("button", { name: "Approve device", exact: true }).click()
+  await expect(recipient.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(panel.getByText("Device enrolled", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await recipient.getByRole("button", { name: "Close", exact: true }).click()
+  await panel.getByRole("button", { name: "Close", exact: true }).click()
+}
+
+async function retainOwnerBoardWithoutRemoteRoutes(page: Page, workspaceId: string, forkSecret: boolean) {
+  await page.evaluate(async ({ workspaceId, forkSecret }) => {
+    const { peerStore } = await import("/src/sync/peerStore.ts")
+    const { bootstrapIdentity, toBase64Url } = await import("/src/domain/identity.ts")
+    const { readLocal, writeLocal } = await import("/src/localDb.ts")
+    const profile = await bootstrapIdentity()
+    for (const peer of await peerStore.listPeers(workspaceId)) {
+      if (peer.deviceId !== profile.device.deviceId) await peerStore.removePeer(workspaceId, peer.deviceId)
+    }
+    if (forkSecret) {
+      const credential = await peerStore.getWorkspaceCredential(workspaceId)
+      if (!credential) throw new Error("Expected retained owner credential")
+      await peerStore.putWorkspaceCredential({ ...credential, transportSecret: toBase64Url(crypto.getRandomValues(new Uint8Array(32))) })
+    }
+    // Legacy/partial restores can retain board history without the optional route catalog.
+    const key = `tincanban.identity-workspace-routes.v1.${profile.identity.personId}`
+    const raw = await readLocal(key)
+    if (raw) {
+      const catalog = JSON.parse(raw) as { envelopes: Array<{ workspaceId: string }> }
+      catalog.envelopes = catalog.envelopes.filter(envelope => envelope.workspaceId !== workspaceId)
+      await writeLocal(key, JSON.stringify(catalog))
+    }
+    // Restart at a new transport endpoint while retaining device Identity and signed board history.
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("tincanban-peer-catalog-v1")
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const transaction = database.transaction("node", "readwrite"), store = transaction.objectStore("node")
+    const secret = crypto.getRandomValues(new Uint8Array(32))
+    for (const key of ["localNodeSecret", `instance:${sessionStorage.getItem("tincanban.mesh.instance.v1")}`]) {
+      store.put({ key, secret, createdAt: new Date().toISOString() })
+    }
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => resolve()
+      transaction.onabort = () => reject(transaction.error)
+      transaction.onerror = () => reject(transaction.error)
+    })
+    database.close()
+  }, { workspaceId, forkSecret })
 }
 
 async function isolatedContext(browser: Browser): Promise<BrowserContext> {
@@ -127,6 +187,68 @@ async function storeUnadmittedRawTitle(page: Page, workspaceId: string, title: s
     } finally { A.free(projection) }
   }, { id: workspaceId, bytes: rawBytes, hash: changeHash })
   return rawHeads
+}
+
+for (const forkSecret of [false, true]) {
+  test(`Given two retained owner boards and one isolated connection (${forkSecret ? "forked secret" : "original secret"}), when a sibling board reconnects, then its verified owner offer restores both boards without reenrollment`, async ({ browser }) => {
+    test.setTimeout(120_000)
+    const hostContext = await isolatedContext(browser), phoneContext = await isolatedContext(browser)
+    const host = await hostContext.newPage(), phone = await phoneContext.newPage()
+    const select = (page: Page, id: string) => page.evaluate(async id => {
+      await (await import("/src/test/stateFixture.ts")).useTincanban().switchWorkspace(id)
+    }, id)
+    const binding = (page: Page, id: string) => page.evaluate(async id => {
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      const { sha256Base64Url } = await import("/src/domain/identity.ts")
+      const credential = await peerStore.getWorkspaceCredential(id)
+      if (!credential) return null
+      return { owner: credential.ownerPersonId, key: await sha256Base64Url(new TextEncoder().encode(credential.transportSecret)) }
+    }, id)
+    try {
+      await Promise.all([host.goto("/"), phone.goto("/")])
+      const ids: string[] = []
+      for (const suffix of ["A", "B"]) {
+        await createJobSearchWorkspace(host, `Retained board ${suffix}`)
+        ids.push(await host.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id))
+        await addJobSearchLead(host, `Before recovery ${suffix}`)
+      }
+      await enrollOwnerDevice(host, phone)
+      for (const [index, id] of ids.entries()) {
+        await expect.poll(() => persistedLeadExists(phone, id, `Before recovery ${index === 0 ? "A" : "B"} — Engineer`), { timeout: 30_000 }).toBe(true)
+        await select(phone, id)
+        await expect(phone.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
+      }
+      const originalBinding = await binding(host, ids[1]!)
+      await phoneContext.setOffline(true)
+      await expect(phone.getByLabel("Mesh offline")).toBeVisible({ timeout: 20_000 })
+      await addJobSearchLead(phone, "Phone retained B")
+      await retainOwnerBoardWithoutRemoteRoutes(phone, ids[1]!, forkSecret)
+      await phoneContext.setOffline(false)
+      await phone.reload()
+      await expect(phone.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+      await phone.evaluate(() => { (window as Window & { routeRecoverySentinel?: string }).routeRecoverySentinel = "same-page" })
+      for (const [index, id] of ids.entries()) {
+        await select(host, id)
+        await addJobSearchLead(host, `After recovery ${index === 0 ? "A" : "B"}`)
+      }
+      // A healthy sibling scope must actually deliver; B cannot pass through a shared global status.
+      await expect.poll(() => persistedLeadExists(phone, ids[0]!, "After recovery A — Engineer"), { timeout: 30_000 }).toBe(true)
+      await expect.poll(() => persistedLeadExists(phone, ids[1]!, "After recovery B — Engineer"), { timeout: 30_000 }).toBe(true)
+      await expect.poll(() => persistedLeadExists(host, ids[1]!, "Phone retained B — Engineer"), { timeout: 30_000 }).toBe(true)
+      expect(await binding(phone, ids[1]!)).toEqual(originalBinding)
+      expect(await phone.evaluate(() => (window as Window & { routeRecoverySentinel?: string }).routeRecoverySentinel)).toBe("same-page")
+      for (const [index, id] of ids.entries()) {
+        await select(phone, id)
+        await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
+        await expect(phone.getByRole("button", { name: `Open After recovery ${index === 0 ? "A" : "B"} — Engineer`, exact: true })).toBeVisible()
+      }
+      expect(await phone.evaluate(async () => {
+        const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+        const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+        return (await getPrivateReplicaConfigurations((await bootstrapIdentity()).identity.personId)).length
+      })).toBe(0)
+    } finally { await Promise.all([hostContext.close(), phoneContext.close()]) }
+  })
 }
 
 test("Given paired browsers, when a lead changes, then the peer receives the durable board update", async ({ browser, page }) => {
