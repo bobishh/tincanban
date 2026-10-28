@@ -10,6 +10,10 @@ import { workspaceOwnerSigningContext, type ReadWorkspaceOwnerAuthority } from "
 import { assertMeshRecordMembership, assertMeshRecordOperation, assertMeshRecordPayload, type MeshRecordOperation } from "./meshRecordPolicy"
 export type { MeshRecordOperation } from "./meshRecordPolicy"
 
+export class WorkspaceRecordAuthorityChangedError extends Error {
+  constructor() { super("Workspace record authority changed while signing") }
+}
+
 /** Public proof and private signing stay behind the same immutable, live-checked boundary. */
 export async function workspaceRecordSigning(profile: LocalProfile, workspaceId: string,
   currentAuthority: (payload?: Record<string, unknown>) => Promise<string>, purposes: string[],
@@ -36,7 +40,7 @@ async function prepareRecordProof(profile: LocalProfile, workspaceId: string,
   currentAuthority: (payload?: Record<string, unknown>) => Promise<string>) {
   for (let attempt = 0; ; attempt++) {
     const revision = await currentAuthority()
-    const changed = new Error("Workspace record authority changed while signing")
+    const changed = new WorkspaceRecordAuthorityChangedError()
     const unchanged = async (payload?: Record<string, unknown>) => {
       if (await currentAuthority(payload) !== revision) throw changed
       return revision

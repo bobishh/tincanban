@@ -107,9 +107,10 @@ export class IdentityPeerRecovery {
 
   async recover(workspaceIds: string[], options: { routesOnly?: boolean } = {}): Promise<void> {
     await this.start()
+    if (options.routesOnly) return this.recoverNow(workspaceIds, true)
     if (this.pending) await this.pending
-    this.retryAt.clear()
-    this.pending = this.recoverNow(workspaceIds, options.routesOnly === true).finally(() => { this.pending = undefined })
+    else this.retryAt.clear()
+    this.pending = this.recoverNow(workspaceIds).finally(() => { this.pending = undefined })
     await this.pending
   }
 

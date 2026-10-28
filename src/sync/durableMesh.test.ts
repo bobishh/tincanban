@@ -9,6 +9,7 @@ import { certHashDefault, createDelegatedCertificate, createWorkspaceGrant, defa
 import { createWorkspaceOwnershipTransfer, verifyWorkspaceGrant } from "./meshRecords"
 import { assertRequiredMeshCapabilities, DurableMesh, isMeshDialNetworkFailure } from "./durableMesh"
 import { isNativeKeeperRoute } from "./durableMeshSessions"
+import { workspaceRecordSigning } from "./meshRecordSigning"
 import { defaultStorage } from "../storage"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState, persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
@@ -1232,6 +1233,48 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(saved.at(-1)?.personId).toBe(owner.identity.personId)
     expect(saved.at(-1)?.endpoint).toBe("new-endpoint")
     await mesh.dispose()
+  })
+
+  it.each(["refresh", "unstable", "denied"] as const)("Given owner advertisement preparation is %s, when preparing an invitation, then retry only stale authority within a bound", async mode => {
+    resetIdentityStorageForTest()
+    const owner = await bootstrapIdentity("Owner")
+    let credential: WorkspaceMeshCredential = { version: 1, workspaceId: crypto.randomUUID(),
+      ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey,
+      ownerCertificates: [owner.certificate], transportSecret: "mesh-secret", epoch: 1,
+      updatedAt: new Date().toISOString() }
+    const saved: TestPeer[] = []
+    const mesh = new DurableMesh({ transport: {} as never, workspaceStore: {} as never, workspace: {} as never,
+      getProfile: async () => owner, store: {
+        getWorkspaceAuthority: async () => null, getWorkspaceCredential: async () => structuredClone(credential),
+        putWorkspaceCredential: async (next: WorkspaceMeshCredential) => { credential = structuredClone(next) },
+        listPeers: async () => [], getPeer: async () => null,
+        upsertPeer: async (peer: TestPeer) => { saved.push(peer); return peer },
+      } as never })
+    const internal = meshHooks(mesh)
+    internal.notify = vi.fn(async () => {})
+    const refresh = internal.refreshOwnBundle.bind(internal)
+    let attempts = 0
+    internal.refreshOwnBundle = async (...args) => {
+      attempts++
+      if (mode === "denied") throw new Error("Device access revoked")
+      if (mode === "refresh" && attempts > 1) return refresh(...args)
+      let revision = "before"
+      const signing = await workspaceRecordSigning(owner, credential.workspaceId, async () => revision, ["peer-advertisement"])
+      revision = "after"
+      await signing.sign({ kind: "peer-advertisement", workspaceId: credential.workspaceId })
+    }
+    try {
+      const prepare = mesh.ensureOwnerWorkspaces([credential.workspaceId], "owner-endpoint", owner)
+      if (mode === "refresh") {
+        await prepare
+        expect(attempts).toBe(2)
+        expect(saved.at(-1)?.endpoint).toBe("owner-endpoint")
+      } else {
+        await expect(prepare).rejects.toThrow(mode === "denied" ? "Device access revoked" : "Workspace record authority changed while signing")
+        expect(attempts).toBe(mode === "denied" ? 1 : 3)
+        expect(saved).toEqual([])
+      }
+    } finally { await mesh.dispose() }
   })
 
   it("Given a workspace guest enrolls as an owner device, when enrollment is approved, then its old peer aliases are removed", async () => {

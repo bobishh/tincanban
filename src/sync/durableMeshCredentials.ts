@@ -18,7 +18,7 @@ import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked, isGra
 import { DurableMeshBase } from "./durableMeshBase"
 import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
-import { workspaceRecordSigning } from "./meshRecordSigning"
+import { workspaceRecordSigning, WorkspaceRecordAuthorityChangedError } from "./meshRecordSigning"
 import { persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
 import { ownerKeeperOfferPolicy, ownerWorkspaceOfferSchema } from "./durableMeshOwnerOfferPolicy"
 import { captureWorkspaceRouteEnvelopes, readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
@@ -120,9 +120,12 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
   async ensureOwnerWorkspaces(workspaceIds: string[], endpoint: string, profile: LocalProfile): Promise<void> {
     await this.acquireInstance()
     const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())
-    for (const workspaceId of workspaceIds) {
+    for (const workspaceId of workspaceIds) for (let attempt = 0; ; attempt++) {
       const credential = await this.ensureOwnerCredential(workspaceId, profile, certificates)
-      await this.refreshOwnBundle(credential, profile, endpoint, certificates)
+      try { await this.refreshOwnBundle(credential, profile, endpoint, certificates); break } catch (error) {
+        // Revalidate ownership on retry; captured signers remain immutable.
+        if (!(error instanceof WorkspaceRecordAuthorityChangedError) || attempt === 2) throw error
+      }
     }
     await this.notify()
   }

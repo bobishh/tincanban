@@ -202,7 +202,7 @@ jobs:
   browser-policy:
     name: Browser (production policy/transport packaging)
     # Private WebKit startup requires native Ed25519; Linux WebKit intermittently rejects it.
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     # Production packaging, mobile behavior and startup use their real browsers.
     timeout-minutes: 20
     steps:
@@ -450,7 +450,7 @@ jobs:
             browser: chromium
             projects: attachments-rusty attachment-session-recovery complete-device-state
           - group: webkit
-            os: macos-latest
+            os: macos-15-intel
             browser: webkit
             projects: attachments-rusty-webkit attachment-session-recovery-webkit
     steps:

@@ -191,10 +191,9 @@ test("Given an owned board, address-only Rusty connects once and removal waits f
     await page.getByRole("button", { name: "Sync", exact: true }).click()
 
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Removal pending", { exact: true })).toBeVisible()
-    // Given an operator reset preserving service identity, stale connections remain removable.
+    // Losing this board scope must not erase the independently stored Identity scope.
     const serviceKey = await readFile(join(directory, "service-key"))
-    await rm(join(directory, "scopes"), { recursive: true, force: true })
-    await rm(join(directory, "enrollment"), { recursive: true, force: true })
+    await rm(join(directory, "scopes", scope!), { recursive: true, force: true })
     await start(new URL(origin).host)
     expect(await readFile(join(directory, "service-key"))).toEqual(serviceKey)
     // Reload resumes the pending revocation; its background retry can finish before a manual click.
