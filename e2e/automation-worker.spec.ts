@@ -171,18 +171,27 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
     await expect.poll(() => eventStatus(workerOrigin, rejectionId)).toMatchObject({ status: "applied", result: { action: { cardId: leadCardId } } })
     expect(await rustyObjectCount(rustyDirectory)).toBe(afterRejection)
 
-    // Stale message dates must not move an application even when Clef classifies it as an interview.
+    // Stale mail is retained once in notes while the newer application status survives.
+    const staleInterviewText = "We would like to invite you to an interview for Principal Systems Engineer at Nacre Light Integration GmbH. Original appointment: January 2000."
     const staleInterviewId = await postForwardedMail(workerOrigin, "<automation-stale-interview@example.test>",
       "Interview invitation for Principal Systems Engineer at Nacre Light Integration GmbH",
-      "We would like to invite you to an interview for Principal Systems Engineer at Nacre Light Integration GmbH.",
+      staleInterviewText,
       new Date("2000-01-01T00:00:00.000Z").toUTCString())
-    const staleInterview = await waitForReviewEvent(workerOrigin, staleInterviewId)
-    expect(staleInterview).toMatchObject({ result: { reason: "Email is older than the latest application status" } })
-    expect(await rustyObjectCount(rustyDirectory)).toBe(afterRejection)
+    const staleInterview = await waitForAppliedEvent(workerOrigin, staleInterviewId)
+    expect(actionFrom(staleInterview)).toMatchObject({ kind: "noted-application", cardId: leadCardId, changeHash: expect.any(String) })
+    const afterStaleNote = await rustyObjectCount(rustyDirectory)
+    expect(afterStaleNote).toBeGreaterThan(afterRejection)
+    expect(await postForwardedMail(workerOrigin, "<automation-stale-interview@example.test>",
+      "Interview invitation for Principal Systems Engineer at Nacre Light Integration GmbH", staleInterviewText,
+      new Date("2000-01-01T00:00:00.000Z").toUTCString())).toBe(staleInterviewId)
+    await expect.poll(() => eventStatus(workerOrigin, staleInterviewId)).toMatchObject({ status: "applied", result: { action: { kind: "noted-application", cardId: leadCardId } } })
+    expect(await rustyObjectCount(rustyDirectory)).toBe(afterStaleNote)
     page = await context.newPage()
     await page.goto(baseURL!)
     await syncFromBlindRusty(page)
     await expectStatusColumn(page, "Rejected", "Nacre Light Integration GmbH — Principal Systems Engineer")
+    await page.getByRole("button", { name: /Open Nacre Light Integration GmbH — Principal Systems Engineer/ }).click()
+    await expect(page.getByRole("dialog", { name: "Item overview", exact: true })).toContainText(staleInterviewText)
 
     const stored = await readRustyObjects(rustyDirectory)
     expect(stored.length).toBeGreaterThan(0)
@@ -310,12 +319,6 @@ async function eventStatus(origin: string, eventId: string, targetIntegrationId 
 async function waitForAppliedEvent(origin: string, eventId: string): Promise<Record<string, unknown>> {
   const event = await waitForTerminalEvent(origin, eventId)
   expect(event, JSON.stringify(event)).toMatchObject({ status: "applied" })
-  return event
-}
-
-async function waitForReviewEvent(origin: string, eventId: string): Promise<Record<string, unknown>> {
-  const event = await waitForTerminalEvent(origin, eventId)
-  expect(event, JSON.stringify(event)).toMatchObject({ status: "review" })
   return event
 }
 

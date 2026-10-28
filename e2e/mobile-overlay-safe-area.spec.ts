@@ -25,8 +25,8 @@ test("Given mobile board with safe insets, when Sync opens and viewport changes,
     await page.setViewportSize({ width: 390, height })
     await expect(page.locator(".overlay")).toHaveCount(0)
     await expect.poll(async () => {
-      const bounds = (await dialog.boundingBox())!
-      return bounds.y >= 20 && bounds.y + bounds.height <= height - 34 + .1
+      const bounds = await dialog.boundingBox()
+      return bounds !== null && bounds.y >= 20 && bounds.y + bounds.height <= height - 34 + .1
     }).toBe(true)
   }
   await page.screenshot({ path: info.outputPath("mobile-sync-bottom.png") })

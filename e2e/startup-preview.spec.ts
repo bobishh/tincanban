@@ -103,7 +103,7 @@ for (const width of [390]) for (const fail of [false, true]) test(`Given a saved
   expect(strip!.y).toBeGreaterThan(700)
   expect(strip!.height).toBeLessThan(64)
   await page.getByRole("searchbox", { name: "Search cards" }).fill("Saved engineer")
-  await expect(card).toBeVisible()
+  await expect(card).toHaveClass(/lead-card-expanded/)
   await card.getByRole("button", { name: "Open Saved engineer", exact: true }).click()
   const detail = page.getByRole("dialog", { name: "Item overview", exact: true })
   await expect(detail).toBeVisible()
