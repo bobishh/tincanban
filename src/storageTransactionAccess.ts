@@ -94,12 +94,13 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
 
   private async captureTransactionState(workspaceId: string): Promise<WorkspaceTransactionState> {
     const frontier = await this.readDeltaFrontier(workspaceId)
-    const snapshot = await readWorkspaceBasisSnapshot(workspaceId)
+    // Capture small metadata; authority writes still compare the actual snapshot basis.
+    const baselineId = await this.readWorkspaceBaselineId(workspaceId)
     const revision = (await this.readWorkspaceRevision(workspaceId)) ?? null
     const lifecycle = this.workspaceLifecycles.get(workspaceId) ?? 0
     return {
       storage: this, workspaceId,
-      basis: { revision, frontier: frontier ?? null, baselineId: snapshot?.receivedHistory?.baselineId ?? null },
+      basis: { revision, frontier: frontier ?? null, baselineId },
       lifecycle, live: true, used: false,
       lifecycleCurrent: () => lifecycle === (this.workspaceLifecycles.get(workspaceId) ?? 0),
     }

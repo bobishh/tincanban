@@ -3,7 +3,7 @@ import type { WorkspaceDocumentV2 } from "./domain/model"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 import { StorageDeltaRepository } from "./storageDeltaRepository"
 import type { StoredWorkspaceDelta, WorkspaceDeltaFrontier } from "./workspaceDeltaJournal"
-import { openWorkspaceJournal, readWorkspaceSnapshot, readLocalJournalReference, updateLocalJournal, writeLocalJournal,
+import { openWorkspaceJournal, readWorkspaceSnapshot, readWorkspaceBasisSnapshot, readLocalJournalReference, updateLocalJournal, writeLocalJournal,
   requestResult, transactionDone, type StoredWorkspaceSnapshot, type StoredCausalEvidence, type StoredChange, type StoredHistoryProgress } from "./storageJournal"
 import { cloneCausalEvidence, extendRawEvidence } from "./causalEvidence"
 import { advanceWorkspaceRevision, HISTORY_ACTIVE_BYTE_LIMIT, HISTORY_ACTIVE_CHANGE_LIMIT } from "./storageJournalRecords"
@@ -50,6 +50,13 @@ export abstract class StorageDeltaAccess {
     await done
     return row?.revision
   }
+  /** Capture the baseline without materializing a frontier that may need repair. */
+  protected async readWorkspaceBaselineId(workspaceId: string): Promise<string | null> {
+    const progress = await this.readHistoryProgressRow(workspaceId)
+    if (validHistoryProgress(progress, workspaceId)) return progress.baselineId
+    return (await readWorkspaceBasisSnapshot(workspaceId))?.receivedHistory?.baselineId ?? null
+  }
+
   /** Initialize one small sentinel from the current snapshot; later reads are metadata-only. */
   async ensureHistoryProgress(workspaceId: string): Promise<StoredHistoryProgress> {
     const existing = await this.readHistoryProgressRow(workspaceId)
