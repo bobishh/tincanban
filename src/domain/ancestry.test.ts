@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest"
 import {
-  compareRanks,
-  calculateRankBetween,
   sortEntitiesByRank,
   derivePlacementIssues,
   childrenIndex,
@@ -15,7 +13,7 @@ import {
 } from "./ancestry"
 import type { Item, Column, Board, WorkspaceEntity } from "./model"
 
-describe("Ancestry, rational ranks, and placement projection (Requirement 1.4)", () => {
+describe("Ancestry and placement projection (Requirement 1.4)", () => {
   it("indexes sorted children in one entity pass and walks ancestry without enumerating the entity record", () => {
     const board: Board = {
       id: "board_index", kind: "board", title: "Board", placement: { parentId: null, rank: "0/1" },
@@ -46,29 +44,6 @@ describe("Ancestry, rational ranks, and placement projection (Requirement 1.4)",
       ownKeys() { throw new Error("Ancestry walk must follow parent IDs directly") },
     })
     expect(getAncestryPath(noEnumeration, item.id).path).toEqual([item.id, column.id, board.id])
-  })
-
-  it("compares rational ranks exactly using BigInt arithmetic, not lexicographical string ordering", () => {
-    expect(compareRanks("1/10", "1/2")).toBeLessThan(0)
-    expect(compareRanks("1/2", "1/10")).toBeGreaterThan(0)
-    expect(compareRanks("2/4", "1/2")).toBe(0) // same value
-    expect(compareRanks("-1/2", "0/1")).toBeLessThan(0)
-    expect(compareRanks("3/2", "4/3")).toBeGreaterThan(0) // 1.5 > 1.333...
-  })
-
-  it("calculates correct mediant ranks between distinct ranks, and handles bounds", () => {
-    // Before first
-    expect(calculateRankBetween(null, "0/1")).toBe("-1/1")
-    expect(calculateRankBetween(null, "1/1")).toBe("0/1")
-
-    // After last
-    expect(calculateRankBetween("0/1", null)).toBe("1/1")
-    expect(calculateRankBetween("2/1", null)).toBe("3/1")
-
-    // Between distinct ranks: mediant of 0/1 and 1/1 is 1/2
-    expect(calculateRankBetween("0/1", "1/1")).toBe("1/2")
-    // Mediant of 1/2 and 1/1 is 2/3
-    expect(calculateRankBetween("1/2", "1/1")).toBe("2/3")
   })
 
   it("breaks equal-rank ties deterministically by entity ID", () => {

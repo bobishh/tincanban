@@ -25,6 +25,7 @@ import { certHashDefault, createDelegatedCertificate, defaultProofStore } from "
 import { publicKeyId, toBase64Url } from "./domain/identity"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { withWorkspaceMutation } from "./workspaceMutation"
+import { createWorkspaceDeviceRevocation } from "./sync/meshRecords"
 import type { WorkspaceChangeAuthorization } from "./sync/workspaceChangeProofStore"
 
 async function persistWorkspaceForTest(workspaceId: string,
@@ -57,6 +58,59 @@ describe("Repository-backed state and projections (Requirement 1.8)", () => {
     await bootstrapIdentity("State Test User")
     await hydrate()
     await useTincanban().createWorkspaceAsync("Job search", "job-search")
+  })
+
+  it("Given a prepared local delta basis, When saving an offline edit, Then load the document once and retain the edit after reload", async () => {
+    const app = useTincanban()
+    await createLeadFixture(app, { company: "Prepared save", role: "Engineer", status: "lead" })
+    await app.executeCommandAsync({ kind: "renameWorkspace", title: "Prepared basis" })
+    expect(await defaultStorage.readDeltaFrontier(app.activeWorkspace.id)).toBeDefined()
+    const read = vi.spyOn(defaultStorage, "loadWorkspaceDoc")
+    try {
+      await app.executeCommandAsync({ kind: "renameWorkspace", title: "Saved without duplicate preparation" })
+      expect(read).toHaveBeenCalledTimes(1)
+      expect(app.saveState.value).toBe("saved")
+    } finally { read.mockRestore() }
+    resetStateForTest()
+    await hydrate()
+    expect(app.activeWorkspace.title).toBe("Saved without duplicate preparation")
+  })
+
+  it("Given an obsolete preparation hint, When saving after its durable basis changed, Then revalidate before committing", async () => {
+    const app = useTincanban()
+    await createLeadFixture(app, { company: "Stale preparation", role: "Engineer", status: "lead" })
+    await app.executeCommandAsync({ kind: "renameWorkspace", title: "Prepared basis" })
+    const doc = app.getActiveDoc()!
+    const frontier = await defaultStorage.readDeltaFrontier(doc.id)
+    expect(frontier).toBeDefined()
+    const evidence = (await defaultStorage.loadCausalEvidence(doc.id))!
+    evidence.admissionCheckpoint!.policy = "obsolete-policy"
+    await persistWorkspaceForTest(doc.id, doc, Automerge.save(doc), [], undefined, evidence)
+    const read = vi.spyOn(defaultStorage, "readDeltaFrontier").mockResolvedValueOnce(frontier)
+    const admission = vi.spyOn(changeAuthorization, "evaluateIncomingWorkspaceAdmission")
+    try {
+      await app.executeCommandAsync({ kind: "renameWorkspace", title: "Revalidated save" })
+      expect(admission).toHaveBeenCalledOnce()
+      expect(app.activeWorkspace.title).toBe("Revalidated save")
+    } finally { read.mockRestore(); admission.mockRestore() }
+  })
+
+  it("Given a prepared delta basis, When its owner device is revoked, Then reject the edit and retain the durable document", async () => {
+    const app = useTincanban()
+    await createLeadFixture(app, { company: "Revoked writer", role: "Engineer", status: "lead" })
+    await app.executeCommandAsync({ kind: "renameWorkspace", title: "Before revocation" })
+    const doc = app.getActiveDoc()!, profile = app.getCurrentProfile()!
+    expect(await defaultStorage.readDeltaFrontier(doc.id)).toBeDefined()
+    const authority = (await peerStore.getWorkspaceAuthority(doc.id))!
+    const removal = await createWorkspaceDeviceRevocation(profile, doc.id, profile.identity.personId,
+      profile.device.deviceId, Automerge.getHeads(doc), [profile.certificate])
+    await peerStore.putWorkspaceAuthority({ ...authority, updatedAt: new Date().toISOString(),
+      catalog: { ...authority.catalog as object, deviceRevocations: [removal] } })
+    await expect(app.executeCommandAsync({ kind: "renameWorkspace", title: "Forbidden edit" })).rejects.toThrow("Visitors can only view this workspace")
+    expect(app.saveState.value).toBe("error")
+    const loaded = (await new WorkspaceStorage().loadWorkspaceDoc(doc.id))!
+    try { expect(loaded.doc.title).toBe("Before revocation") }
+    finally { Automerge.free(loaded.doc) }
   })
 
   it("Given a tab behind a verified local delta, When reclassification reuses the durable frontier, Then its active view catches up without publishing another shared change", async () => {

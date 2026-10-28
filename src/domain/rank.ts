@@ -18,6 +18,38 @@ function parseRank(rank: string): [bigint, bigint] {
   return [numerator, denominator]
 }
 
+function reduceRational(num: bigint, den: bigint): string {
+  if (den < 0n) {
+    num = -num
+    den = -den
+  }
+  if (num === 0n) return "0/1"
+  const g = gcdBigInt(num, den)
+  return `${num / g}/${den / g}`
+}
+
+export function calculateRankBetween(prevRank: string | null, nextRank: string | null): string {
+  if (prevRank === null && nextRank === null) {
+    return "0/1"
+  }
+  if (prevRank === null) {
+    const [n, d] = parseRank(nextRank!)
+    return reduceRational(n - d, d)
+  }
+  if (nextRank === null) {
+    const [n, d] = parseRank(prevRank!)
+    return reduceRational(n + d, d)
+  }
+
+  const [n1, d1] = parseRank(prevRank)
+  const [n2, d2] = parseRank(nextRank)
+
+  // Mediant of n1/d1 and n2/d2 is (n1 + n2) / (d1 + d2)
+  const num = n1 + n2
+  const den = d1 + d2
+  return reduceRational(num, den)
+}
+
 export function compareRanks(left: string, right: string): number {
   const [leftNumerator, leftDenominator] = parseRank(left)
   const [rightNumerator, rightDenominator] = parseRank(right)

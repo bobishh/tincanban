@@ -27,6 +27,9 @@ function rememberDeltaAdmission(frontier: WorkspaceDeltaFrontier) {
 
 /** Install a verified basis separately: its final write consumes the transaction claim. */
 export async function prepareLocalDeltaAdmission(workspaceId: string, storage: WorkspaceStorage, profile: LocalProfile): Promise<void> {
+  // Preparation only installs a missing basis. The command transaction validates
+  // any existing frontier against its current document and authority before use.
+  if (await storage.readDeltaFrontier(workspaceId)) return
   await storage.withWorkspaceTransaction(workspaceId, async transaction => {
     const loaded = await transaction.loadWorkspaceDoc()
     if (!loaded) return
