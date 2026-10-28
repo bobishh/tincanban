@@ -66,6 +66,7 @@ const commandCapabilities: Record<Command["kind"], WorkspaceCapability | "entity
   renameWorkspace: "workspace.rename",
   setWorkspaceArchived: "board.configure",
   createBoard: "board.configure",
+  setBoardPublicationOrigin: "board.configure",
   createColumn: "board.configure",
   createItem: "content.write",
   createItemWithApplicationSource: "content.write",

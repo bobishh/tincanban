@@ -1048,6 +1048,9 @@ export class AutomationReplica {
   private async deliverPublicChanges(diagnosticContext?: Context): Promise<void> {
     if (!this.transport.publicDelivery || this.tombstoned || this.controlForRuntime().state !== "active") return;
     const document = this.admittedDocument();
+    const board = document.entities[this.bindings.boardId];
+    if (!hasEntityKind(board, "board")) return;
+    const origin = board.publicationOrigin ?? this.blind.origin;
     const sourceHeads = Automerge.getHeads(document).sort();
     const captured = { raw: this.rawDocument, authority: this.authority, grant: this.grant };
     const ensureCurrent = async () => {
@@ -1062,7 +1065,7 @@ export class AutomationReplica {
       // The admitted document itself is durable; this marker records an unconfirmed delivery across restarts.
       this.publicDelivery = { pending: true, sourceHeads };
       await this.persistState();
-      await this.transport.publicDelivery({ origin: this.blind.origin, workspaceId: this.workspaceId, boardId: this.bindings.boardId,
+      await this.transport.publicDelivery({ origin, workspaceId: this.workspaceId, boardId: this.bindings.boardId,
         identity: this.profile.identity, deviceId: this.profile.device.deviceId, certificates: [this.profile.certificate],
         grant: this.grant, sourceHeads, ensureCurrent, diagnosticContext,
         ensureSourceCovers: async heads => {

@@ -1,3 +1,4 @@
+import { withPublicBoardOrigin } from "./publicBoardLink"
 import * as Automerge from "@automerge/automerge/slim"
 import { canonicalizeJson, sha256Base64Url, toBase64Url, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
@@ -289,7 +290,7 @@ async function commit(server: PublicationService, boardId: string, profile: Loca
   const authorizationHash = await sha256Base64Url(encoder.encode(canonicalizeJson(authorization)))
   if (!publicationReceiptMatches(payload, { serviceId, boardId, personId: profile.identity.personId, expectedRevision, action, projectionHash, challengeId: challengePayload.challengeId, authorizationHash })) throw new Error("Keeper publication receipt does not cover this snapshot")
   if (receipt.signerKeyId !== serviceId || !await verifyEnvelope(receipt, serviceKey, "RUSTY/2")) throw new Error("Keeper publication receipt signature is invalid")
-  return { revision: payload.revision, url: `${window.location.origin}/boards/${encodeURIComponent(boardId)}`, hash: projectionHash, receipt }
+  return { revision: payload.revision, url: `${window.location.origin}${withPublicBoardOrigin(`/boards/${encodeURIComponent(boardId)}`, origin)}`, hash: projectionHash, receipt }
 }
 function validPolicyGeneration(policy: PublicBoardDeliveryPolicyEvidence, action: string, boardId: string, generation?: number | null) {
   return action !== "unpublish" && policy.policy.payload.boardId === boardId && policy.policy.payload.generation === (generation ?? 0) + 1

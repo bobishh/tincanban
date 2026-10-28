@@ -5,7 +5,7 @@ import { publicationRecordKey } from "../domain/publicationState"
 import { createIdentityRegistrationGate } from "./identityRegistrationGate"
 import { createIdentityOwnerActions } from "./identityOwnerActions"
 
-const origin = "https://identity.example"
+const origin = "https://rusty.example"
 let profile: LocalProfile
 let board = { boardId: "board-a", workspaceId: "workspace-a", sourceHeads: ["head-a"] }
 const recordKey = () => publicationRecordKey(origin, board.workspaceId, board.boardId, profile)
@@ -27,8 +27,8 @@ function setup(options: { registrationResult?: boolean; published?: boolean; rev
     refreshIdentity: async () => {}, requestRegistration: registration })
   const setPublic = vi.fn(async () => {})
   const addMyDevice = vi.fn(async () => {})
-  const owner = createIdentityOwnerActions({ gate, portalOrigin: origin,
-    publicAccess: { published: { value: options.published ?? false }, revision: { value: options.revision ?? 0 }, setPublic },
+  const owner = createIdentityOwnerActions({ gate, portalOrigin: "https://identity.example",
+    publicAccess: { origin: { value: origin }, published: { value: options.published ?? false }, revision: { value: options.revision ?? 0 }, setPublic },
     getProfile: () => profile, getBoard: () => board, isOwner: () => true,
     addMyDevice, isSyncChooserOpen: () => true })
   return { owner, registration, setPublic, addMyDevice }

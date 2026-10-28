@@ -5,6 +5,7 @@ import type { LocalProfile } from "../domain/identity"
 
 type RegistrationGate = ReturnType<typeof createIdentityRegistrationGate>
 type PublicAccess = {
+  origin: { value: string }
   published: { value: boolean }
   revision: { value: number }
   setPublic(enabled: boolean): Promise<void>
@@ -24,8 +25,8 @@ export function createIdentityOwnerActions(options: {
     async setPublic(enabled: boolean): Promise<void> {
       if (!enabled || !options.portalOrigin) return await options.publicAccess.setPublic(enabled)
       await options.gate.run({
-        capture: async () => ({ ...options.getBoard(), enabled }),
-        skipRegistration: async (profile, intent) => !await isFirstPublication(profile, options.portalOrigin!, intent,
+        capture: async () => ({ ...options.getBoard(), origin: options.publicAccess.origin.value, enabled }),
+        skipRegistration: async (profile, intent) => !await isFirstPublication(profile, options.publicAccess.origin.value, intent,
           options.publicAccess.published.value, options.publicAccess.revision.value),
         assertCurrent: async (_profile, intent) => assertBoardCurrent(options, intent),
         recheckAuthority: async (_profile, intent) => {
@@ -65,9 +66,9 @@ async function isFirstPublication(profile: LocalProfile, origin: string,
 }
 
 function assertBoardCurrent(options: Parameters<typeof createIdentityOwnerActions>[0],
-  intent: { boardId: string; workspaceId: string; sourceHeads: string[] }) {
+  intent: { boardId: string; workspaceId: string; sourceHeads: string[]; origin: string }) {
   const current = options.getBoard()
-  if (current.boardId !== intent.boardId || current.workspaceId !== intent.workspaceId ||
+  if (options.publicAccess.origin.value !== intent.origin || current.boardId !== intent.boardId || current.workspaceId !== intent.workspaceId ||
       current.sourceHeads.join("\u0000") !== intent.sourceHeads.join("\u0000")) {
     throw new Error("Board changed while Identity enrollment was in progress")
   }

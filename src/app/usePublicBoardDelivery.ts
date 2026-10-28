@@ -10,9 +10,9 @@ class PublicDeliveryAccessError extends Error {
   constructor(cause?: unknown) { super("Editor access could not be verified on this device. Open Sync to reconnect and check board access.", { cause }) }
 }
 type DeliveryMarker = { version: 1; workspaceId: string; boardId: string; sourceHeads: string[]; status: DeliveryStatus; attempts: number; updatedAt: number }
-type DeliveryCapture = { workspaceId: string; boardId: string; document: WorkspaceDocumentV2; profile: LocalProfile; sourceHeads: string[]; sourceVersion: number }
+type DeliveryCapture = { origin: string; workspaceId: string; boardId: string; document: WorkspaceDocumentV2; profile: LocalProfile; sourceHeads: string[]; sourceVersion: number }
 export interface PublicBoardDeliveryInput {
-  origin: string
+  origin: () => string
   workspaceId: () => string
   boardId: () => string | undefined
   document: () => WorkspaceDocumentV2 | null | undefined
@@ -25,8 +25,8 @@ export interface PublicBoardDeliveryInput {
 }
 
 const retryDelays = [2_000, 5_000, 15_000, 30_000, 60_000]
-function markerKey(workspaceId: string, boardId: string, personId: string, deviceId: string) {
-  return `tincanban.public-delivery.v1:${encodeURIComponent(workspaceId)}:${encodeURIComponent(boardId)}:${encodeURIComponent(personId)}:${encodeURIComponent(deviceId)}`
+function markerKey(workspaceId: string, boardId: string, personId: string, deviceId: string, origin: string) {
+  return `tincanban.public-delivery.v1:${encodeURIComponent(workspaceId)}:${encodeURIComponent(boardId)}:${encodeURIComponent(personId)}:${encodeURIComponent(deviceId)}:${encodeURIComponent(origin)}`
 }
 function sortedHeads(heads: string[]) { return [...new Set(heads)].sort() }
 function parseMarker(raw: string | null): DeliveryMarker | undefined {
@@ -80,16 +80,16 @@ function deliveryMarker(capture: DeliveryCapture, status: DeliveryStatus, attemp
 }
 async function persistDeliveryMarker(capture: DeliveryCapture, marker: DeliveryMarker) {
   const { writeLocal } = await import("../localDb")
-  await writeLocal(markerKey(capture.workspaceId, capture.boardId, capture.profile.identity.personId, capture.profile.device.deviceId), JSON.stringify(marker))
+  await writeLocal(markerKey(capture.workspaceId, capture.boardId, capture.profile.identity.personId, capture.profile.device.deviceId, capture.origin), JSON.stringify(marker))
 }
 function canStartDelivery(running: boolean, disposed: boolean, role: string | null | undefined) {
   return !running && !disposed && role === "editor"
 }
 function deliveryAccessKey(input: PublicBoardDeliveryInput) {
-  return `${input.workspaceId()}:${input.boardId() ?? ""}:${input.profile()?.identity.personId ?? ""}:${input.profile()?.device.deviceId ?? ""}`
+  return `${input.origin()}:${input.workspaceId()}:${input.boardId() ?? ""}:${input.profile()?.identity.personId ?? ""}:${input.profile()?.device.deviceId ?? ""}`
 }
 function sameDeliverySource(input: PublicBoardDeliveryInput, captured: DeliveryCapture, disposed: boolean) {
-  return !disposed && input.role() === "editor" && input.workspaceId() === captured.workspaceId && input.boardId() === captured.boardId &&
+  return !disposed && input.origin() === captured.origin && input.role() === "editor" && input.workspaceId() === captured.workspaceId && input.boardId() === captured.boardId &&
     input.profile()?.identity.personId === captured.profile.identity.personId && input.profile()?.device.deviceId === captured.profile.device.deviceId &&
     input.sourceVersion() === captured.sourceVersion && JSON.stringify(sortedHeads(input.sourceHeads())) === JSON.stringify(captured.sourceHeads)
 }
@@ -108,7 +108,7 @@ async function deliverBoard(input: PublicBoardDeliveryInput, captured: DeliveryC
     if (!sameSource(captured)) throw new Error("Editor access or source changed during public delivery")
     if (writerResolved) await currentEditorCredential(captured, sameSource)
   }
-  return await deliverPublicBoard({ origin: input.origin, boardId: captured.boardId, workspaceId: captured.workspaceId,
+  return await deliverPublicBoard({ origin: captured.origin, boardId: captured.boardId, workspaceId: captured.workspaceId,
     identity: captured.profile.identity, deviceId: captured.profile.device.deviceId,
     sourceHeads: captured.sourceHeads, ensureCurrent,
     resolveWriter: async () => {
@@ -166,15 +166,16 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
   let lastAttempts = 0
 
   function capture() {
+    const origin = input.origin()
     const workspaceId = input.workspaceId(), boardId = input.boardId(), document = input.document(), profile = input.profile()
     const sourceHeads = sortedHeads(input.sourceHeads())
-    if (input.role() !== "editor" || !workspaceId || !boardId || !document || !profile || document.id !== workspaceId || sourceHeads.length === 0) {
+    if (!origin || input.role() !== "editor" || !workspaceId || !boardId || !document || !profile || document.id !== workspaceId || sourceHeads.length === 0) {
       throw new Error("Current editor, board, or admitted source is unavailable")
     }
-    return { workspaceId, boardId, document, profile, sourceHeads, sourceVersion: input.sourceVersion() }
+    return { origin, workspaceId, boardId, document, profile, sourceHeads, sourceVersion: input.sourceVersion() }
   }
   function schedule(delay = input.debounceMs ?? 350) {
-    if (disposed || input.role() !== "editor") return
+    if (disposed || !input.origin() || input.role() !== "editor") return
     queued = true
     if (timer) clearTimeout(timer)
     timer = setTimeout(() => { timer = undefined; void deliver() }, delay)
@@ -191,7 +192,7 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
     if (status.value === "retry") scheduleRetry()
   }
   async function deliver() {
-    if (!canStartDelivery(running, disposed, input.role())) { queued = true; return }
+    if (!input.origin() || !canStartDelivery(running, disposed, input.role())) { queued = true; return }
     queued = false
     running = true
     status.value = "checking"
@@ -199,7 +200,7 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
     let captured: ReturnType<typeof capture> | undefined
     try {
       captured = capture()
-      const key = markerKey(captured.workspaceId, captured.boardId, captured.profile.identity.personId, captured.profile.device.deviceId)
+      const key = markerKey(captured.workspaceId, captured.boardId, captured.profile.identity.personId, captured.profile.device.deviceId, captured.origin)
       const { readLocal } = await import("../localDb")
       const previous = parseMarker(await readLocal(key))
       lastAttempts = previous?.status === "retry" ? previous.attempts : 0
@@ -216,7 +217,7 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
       await handleDeliveryFailure(captured, cause)
     } finally {
       running = false
-      if (queued && input.role() === "editor") schedule(0)
+      if (queued && input.origin() && input.role() === "editor") schedule(0)
     }
   }
 
@@ -227,13 +228,13 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
     publicAvailable = false
     error.value = ""
     deliveredHeads.value = []
-    status.value = input.role() === "editor" ? "waiting" : "idle"
-    if (input.role() === "editor") {
+    status.value = input.origin() && input.role() === "editor" ? "waiting" : "idle"
+    if (input.origin() && input.role() === "editor") {
       try {
         const captured = capture()
         const { readLocal } = await import("../localDb")
         const marker = parseMarker(await readLocal(markerKey(captured.workspaceId, captured.boardId,
-          captured.profile.identity.personId, captured.profile.device.deviceId)))
+          captured.profile.identity.personId, captured.profile.device.deviceId, captured.origin)))
         if (disposed || input.role() !== "editor") return
         if (marker?.status === "retry") { lastAttempts = marker.attempts; scheduleRetry() }
         else schedule(0)
@@ -241,7 +242,7 @@ export function usePublicBoardDelivery(input: PublicBoardDeliveryInput) {
     }
   }, { immediate: true })
   watch(() => input.sourceVersion(), () => {
-    if (input.role() === "editor") { status.value = "waiting"; schedule() }
+    if (input.origin() && input.role() === "editor") { status.value = "waiting"; schedule() }
   })
   watch(() => input.role(), role => {
     if (role !== "editor") {

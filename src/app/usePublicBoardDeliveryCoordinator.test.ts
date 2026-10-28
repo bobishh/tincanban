@@ -35,7 +35,7 @@ describe("public delivery workspace coordinator", () => {
   afterEach(() => { scope.stop(); vi.useRealTimers() })
 
   it("loads eligible workspaces once at startup and reloads only the workspace named by a notification", async () => {
-    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: () => "https://rusty.test", ready: () => true,
       workspaceIds: () => ids.value, profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
       debounceMs: 10,
       subscribeLocalChanges: listener => { localListener = listener; return () => {} },
@@ -59,7 +59,7 @@ describe("public delivery workspace coordinator", () => {
 
   it("selects editor delivery only after workspace role verification", async () => {
     mocks.role.mockResolvedValue("editor")
-    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: () => "https://rusty.test", ready: () => true,
       workspaceIds: () => ["workspace-a"], profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
       debounceMs: 1, subscribeLocalChanges: () => () => {}, subscribeChat: () => () => {},
     }))
@@ -70,7 +70,7 @@ describe("public delivery workspace coordinator", () => {
   })
 
   it("Given a verified owner board, when chat reports only transient typing, then keep its role and delivery scope until durable content changes", async () => {
-    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: () => "https://rusty.test", ready: () => true,
       workspaceIds: () => ["workspace-a"], profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
       debounceMs: 10, subscribeLocalChanges: () => () => {},
       subscribeChat: listener => { chatListener = listener as typeof chatListener; return () => {} },
@@ -97,7 +97,7 @@ describe("public delivery workspace coordinator", () => {
     const active = ref<{ workspaceId: string; boardId: string } | null>({
       workspaceId: "workspace-a", boardId: "workspace-a-board",
     })
-    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: () => "https://rusty.test", ready: () => true,
       workspaceIds: () => ["workspace-a"], profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
       activeBoard: () => active.value, debounceMs: 1,
       subscribeLocalChanges: () => () => {}, subscribeChat: () => () => {},
@@ -114,7 +114,7 @@ describe("public delivery workspace coordinator", () => {
   })
 
   it("restarts workspace admission checks when local profile identity changes", async () => {
-    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: "https://rusty.test", ready: () => true,
+    scope.run(() => usePublicBoardDeliveryCoordinator({ origin: () => "https://rusty.test", ready: () => true,
       workspaceIds: () => ["workspace-a"], profile: () => profile.value as never, readWorkspaceDoc: readWorkspaceDoc as never,
       debounceMs: 1, subscribeLocalChanges: () => () => {}, subscribeChat: () => () => {},
     }))

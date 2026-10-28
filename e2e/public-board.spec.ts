@@ -2,6 +2,7 @@ import { expect, test } from "./support/coverage"
 
 const boardId = "public-board-fixture"
 const publicOrigin = process.env.TINCANBAN_PUBLIC_E2E_KEEPER_ORIGIN ?? "http://127.0.0.1:47839"
+const publicPath = `/boards/${boardId}?rusty=${encodeURIComponent(publicOrigin)}`
 const api = `${publicOrigin}/v1/public/boards/${boardId}`
 const fileHash = "A".repeat(43)
 const snapshot = {
@@ -40,7 +41,7 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await page.setViewportSize({ width, height: 900 })
   await page.route(api, route => route.fulfill({ json: { boardId, revision: 3, projection: snapshot }, headers: { "cache-control": "no-store" } }))
   await page.route(`${api}/files/3/${fileHash}`, route => route.fulfill({ body: "public!", headers: { "content-type": "text/plain", "content-disposition": 'attachment; filename="handout.txt"', "x-content-type-options": "nosniff" } }))
-  await page.goto(`/boards/${boardId}`)
+  await page.goto(publicPath)
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
   await expect(page.locator('.topbar .brand-name')).toHaveText("TINCANBAN")
   await expect(page.getByRole("img", { name: "Read-only board", exact: true })).toBeVisible()
@@ -110,7 +111,7 @@ test("Given a public route, When the service is pending, unavailable, or returns
     if (requestCount === 2) return route.fulfill({ json: { boardId, revision: 0, projection: { ...snapshot, privateCredential: "must be rejected" } } })
     return route.fulfill({ status: 404, json: { message: "Public board unavailable" } })
   })
-  await page.goto(`/boards/${boardId}`)
+  await page.goto(publicPath)
   await expect(page.getByRole("alert")).toContainText("unavailable")
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible()
   await expect(page.getByRole("button", { name: /Open workspaces|Workspace chat|Menu/ })).toHaveCount(0)
@@ -142,7 +143,7 @@ test("Given a live public board, When its publication changes or is withdrawn, T
   await page.route(api, route => withdrawn
     ? route.fulfill({ status:  404, json: { message: "Public board unavailable" }, headers: { "cache-control": "no-store" } })
     : route.fulfill({ json: { boardId, revision, projection: revision === 1 ? snapshot : updated }, headers: { "cache-control": "no-store" } }))
-  await page.goto(`/boards/${boardId}`)
+  await page.goto(publicPath)
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
   await expect(page.getByRole("region", { name: "Doing", exact: true }).getByRole("button", { name: "Collapse Doing", exact: true })).toBeVisible()
   await expect(page.getByRole("region", { name: "Backlog", exact: true }).getByRole("button", { name: /Collapse|Open Backlog/ })).toHaveCount(0)
@@ -181,7 +182,7 @@ for (const width of [390, 1440]) test(`Given a job-search publication at ${width
     discussions: [], files: [],
   }
   await page.route(api, route => route.fulfill({ json: { boardId, revision: 4, projection: jobSnapshot } }))
-  await page.goto(`/boards/${boardId}`)
+  await page.goto(publicPath)
   await expect(page.locator('.workspace-heading')).toHaveText("Job search")
   const column = page.getByRole("region", { name: "Applied", exact: true })
   const card = column.locator('.lead-card')
@@ -198,4 +199,28 @@ for (const width of [390, 1440]) test(`Given a job-search publication at ${width
   await expect(detail.getByRole("link", { name: "https://jobs.example.test/very-long-original-posting" })).toHaveAttribute("href", "https://jobs.example.test/very-long-original-posting")
   await expect(detail).toContainText("Berlin, Germany")
   await page.screenshot({ path: info.outputPath(`visitor-lead-${width}.png`), fullPage: true })
+})
+
+
+test("Given a board link without its Rusty address, when an anonymous visitor opens it, then explain how to get a complete public link without private startup", async ({ page }) => {
+  const getWasmRequests = await monitorPrivateStartup(page)
+  await page.goto(`/boards/${boardId}`)
+  await expect(page.getByRole("alert")).toContainText("Ask the board owner for its public link")
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0)
+  expect(getWasmRequests()).toBe(0)
+})
+
+
+test("Given this browser knows a private board route, when its explicit public link opens, then use the link's Rusty without starting the private app", async ({ page }) => {
+  const getWasmRequests = await monitorPrivateStartup(page)
+  await page.addInitScript(boardId => {
+    localStorage.setItem("tincanban.board-route-index.v1", JSON.stringify({ version: 1, activeIdentityId: "known-owner",
+      identities: { "known-owner": { [boardId]: "known-workspace" } } }))
+  }, boardId)
+  await page.route(api, route => route.fulfill({ json: { boardId, revision: 1, projection: snapshot } }))
+  await page.goto(publicPath)
+  await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
+  expect(getWasmRequests()).toBe(0)
+  expect(await page.evaluate(() => (window as typeof window & { __publicProbe: unknown }).__publicProbe))
+    .toEqual({ workers: 0, wasm: 0, idbOpen: 0 })
 })

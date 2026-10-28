@@ -7,8 +7,7 @@ import { deviceDisplayName } from "../ui/deviceInfo"
 import RustyMark from "./RustyMark.vue"
 import RustyCredentialConflictRecovery from "./RustyCredentialConflictRecovery.vue"
 const props = defineProps<{ controller: BlindReplicationController; workspaceId: string; owner: boolean }>()
-const configuredOrigin: unknown = import.meta.env.VITE_PUBLIC_BOARD_ORIGIN
-const address = ref(typeof configuredOrigin === "string" ? configuredOrigin : "")
+const address = ref("")
 const adding = ref(false)
 const failure = ref("")
 const pending = ref(false)

@@ -89,6 +89,10 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     return settings.getByRole("region", { name: "Public board access" })
   }
   try {
+    const unavailable = await openPublication()
+    await expect(unavailable).toContainText("Connect Rusty to this board to enable public access.")
+    await expect(unavailable.getByRole("button", { name: "Retry", exact: true })).toHaveCount(0)
+    await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     await start()
     await approveRustyForFixture(page, origin)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -183,6 +187,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await expect(panel).toContainText("Changes sync automatically.")
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)
+    expect(new URL(publicHref!, baseURL).searchParams.get("rusty")).toBe(origin)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     if (info.project.name === "chromium") await verifyPublicOwnerPollingDraft(page, origin, fixture.boardId, info)
 

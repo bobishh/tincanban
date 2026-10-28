@@ -17,6 +17,7 @@ const handlers = {
   setWorkspaceArchived: basic.setWorkspaceArchived,
   renameWorkspace: basic.renameWorkspace,
   createBoard: basic.createBoard,
+  setBoardPublicationOrigin: schema.setBoardPublicationOrigin,
   createItem: basic.createItem,
   createItemWithApplicationSource,
   patchItem: basic.patchItem,

@@ -75,11 +75,31 @@ not wait for Rusty access registration; unavailable storage retries independentl
 Legacy participant storage settings stay pending until the owner supplies current
 signed access, preserving local edits in the meantime.
 
-When `VITE_PUBLIC_BOARD_ORIGIN` is configured, sign-in discovers that Rusty service
-and includes its exact address and key for approval in Identity. This lets an
-older enrolled Identity profile find an existing catalog while its other devices
-are closed. Identity retains the approved service pin in its signed profile;
-discovery alone grants no access and does not connect a board to storage.
+Identity supplies its approved Rusty services during sign-in. The optional
+`VITE_PUBLIC_BOARD_ORIGIN` hint remains supported for older Identity profiles
+that have not approved their catalog service yet. It does not select or enable
+a board's publication server.
+
+## Public boards
+
+Connect Rusty to a board in **Sync**, then enable **Public board** in
+**Settings → Workspace**. The owner approves readable publication of that board's
+visitor-visible content and attached files; private workspace history and keys
+remain encrypted. The connected Rusty must advertise public-board publication.
+With several connections, choose a publication server explicitly. Its address is
+saved in the owner-signed board state so other authorized devices and automations
+update the same public copy.
+
+Share **Open public board**, which includes the Rusty address in its `rusty` query
+parameter. Visitors need no Identity or local board data. Private board addresses
+stay unchanged; a link without its publication server cannot locate an anonymous
+copy and asks for the complete public link.
+
+Changes reach the public copy while an authorized client or automation is running.
+Disconnecting Rusty pauses delivery; the last published copy stays public until
+the owner disables public access. Reconnect the same server to resume updates.
+Disable public access before choosing another publication server. Withdrawal
+stops anonymous reads; copies already downloaded cannot be recalled.
 
 ## Existing owner devices
 

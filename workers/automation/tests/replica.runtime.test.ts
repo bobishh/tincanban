@@ -149,6 +149,26 @@ function capturedRuntimeTransport(): ReplicaTransport {
   };
 }
 
+it("Given an owner-selected publication host, when automation delivers after restart, then use that board host instead of its private storage server", async () => {
+  const data = await typedFixture();
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+  const selected = await executeCommand(document, { kind: "setBoardPublicationOrigin", boardId: data.packet.bindings.boardId,
+    origin: "https://publication.example" }, data.owner);
+  if (!selected.ok) throw new Error(selected.error.message);
+  const initial = await ownerSnapshot(selected.value.newDoc, data.owner, data.packet);
+  Automerge.free(document); Automerge.free(selected.value.newDoc);
+  const publicDelivery = vi.fn(async (_input: { origin: string }) => ({ revision: 2, hash: "A".repeat(43) }));
+  const transport: ReplicaTransport = { ...capturedRuntimeTransport(), publicDelivery };
+  let saved = "";
+  const replica = await AutomationReplica.activate({ ...data.packet, initial, transport, persist: async next => { saved = next; } }, data.automation);
+  await replica.createLead("publication-host", { company: "Acme", role: "Engineer" }, {});
+  await replica.sync();
+  expect(publicDelivery).toHaveBeenCalledWith(expect.objectContaining({ origin: "https://publication.example", boardId: data.packet.bindings.boardId }));
+  const restored = await AutomationReplica.restore(saved, data.automation, async next => { saved = next; }, transport);
+  await restored.sync();
+  expect(publicDelivery.mock.calls.every(([input]) => input.origin === "https://publication.example")).toBe(true);
+});
+
 it("Given saved automation work and unavailable public delivery, when the Worker restarts, then retry publication without repeating the card action", async () => {
   const data = await typedFixture();
   let saved = "";

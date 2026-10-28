@@ -4,6 +4,19 @@ import { err } from "./commandTypes"
 import { validateBoardSchemaDraft } from "./schema"
 import { validateWorkspaceSettingsDraft } from "./workspaceSettings"
 import { applyBoardSchemaSettings, applyDocumentTemplates } from "./commandSupport"
+import { validPublicBoardOrigin } from "../public/publicBoardLink"
+
+export const setBoardPublicationOrigin: CommandHandler<"setBoardPublicationOrigin"> = (doc, command, context) => {
+  const board = doc.entities[command.boardId]
+  if (!board || !hasEntityKind(board, "board")) return err("not_found", `Board ${command.boardId} not found`)
+  if (!validPublicBoardOrigin(command.origin)) return err("invalid_input", "A publication server needs a secure Rusty address")
+  return { ok: true, value: { changedEntityIds: [board.id], apply: draft => {
+    const target = draft.entities[board.id]
+    if (!target || !hasEntityKind(target, "board")) throw new Error("Publication board is no longer available")
+    target.publicationOrigin = command.origin
+    target.updatedAt = context.nowIso
+  } } }
+}
 
 export const updateBoardSchema: CommandHandler<"updateBoardSchema"> = (doc, command, context) => {
   const board = doc.entities[command.boardId]

@@ -25,6 +25,7 @@ export type Command =
   | { kind: "renameWorkspace"; title: string }
   | { kind: "setWorkspaceArchived"; archived: boolean }
   | { kind: "createBoard"; title: string; preset: Preset }
+  | { kind: "setBoardPublicationOrigin"; boardId: string; origin: string }
   | { kind: "createColumn"; boardId: string; title: string; archive?: true; collapsible?: boolean; beforeId?: string | null }
   | { kind: "createItem"; id?: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null }
   | { kind: "createItemWithApplicationSource"; id: string; parentId: string; title: string; body?: string; values?: Record<string, FieldValue>; beforeId?: string | null; data: ApplicationSourceData }

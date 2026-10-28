@@ -10,6 +10,7 @@ export default defineConfig({
   outputDir: process.env.TINCANBAN_PUBLIC_E2E_OUTPUT_DIR ?? "test-results/public-board",
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
+    { name: "firefox", use: { browserName: "firefox" } },
     { name: "webkit", use: { browserName: "webkit" } },
   ],
   use: { baseURL: `http://127.0.0.1:${webPort}`, trace: "retain-on-failure", acceptDownloads: true, actionTimeout: 10_000 },
@@ -19,7 +20,6 @@ export default defineConfig({
       : `npm run dev -- --host 127.0.0.1 --port ${webPort}`,
     port: webPort, reuseExistingServer: false,
     env: {
-      VITE_PUBLIC_BOARD_ORIGIN: publicOrigin,
       VITE_SYNC_TELEMETRY_URL: "", VITE_SYNC_TELEMETRY_PROJECT: "tincanban", VITE_SYNC_TELEMETRY_BROWSER_KEY: "",
     },
   },

@@ -4,6 +4,7 @@ import { isValidRank } from "./rank"
 import { isAutomationDefinitionData, isAutomationControlData, isAutomationOrigin } from "./automationLifecycle"
 import { isAutomationApprovalData } from "./automationApproval"
 import { applicationSourceEntitySchema, type ApplicationSourceEntity } from "./applicationSourceData"
+import { validPublicBoardOrigin } from "../public/publicBoardLink"
 
 const id = z.string().min(1)
 const rank = z.string().refine(isValidRank, "Invalid canonical rank")
@@ -60,6 +61,7 @@ const boardSchema = z.object({
   settings: z.record(z.string(), z.unknown()).optional(),
   cardAgingPolicy: cardAgingPolicySchema.optional(),
   archiveColumnId: id.nullable().optional(),
+  publicationOrigin: z.string().refine(validPublicBoardOrigin, "Invalid public board server address").optional(),
 }).catchall(z.json().transform((value): unknown => value))
 const columnSchema = z.strictObject({
   ...common,

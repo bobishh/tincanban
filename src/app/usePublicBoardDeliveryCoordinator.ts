@@ -18,7 +18,9 @@ type ScopedDelivery = {
   access?: ReturnType<typeof usePublicBoardAccess>; editor?: ReturnType<typeof usePublicBoardDelivery>
 }
 export type PublicBoardDeliveryCoordinatorInput = {
-  origin: string; ready: () => boolean; workspaceIds: () => string[]
+  origin: (workspaceId: string, boardId: string, document: WorkspaceDocumentV2) => string
+  connected?: (workspaceId: string, origin: string) => boolean
+  ready: () => boolean; workspaceIds: () => string[]
   profile: () => LocalProfile | null | undefined
   readWorkspaceDoc: (workspaceId: string) => Promise<WorkspaceDocumentV2>
   subscribeLocalChanges: (listener: (workspaceId?: string) => void) => () => void
@@ -120,18 +122,20 @@ class PublicDeliveryCoordinator {
   }
 
   private installBoardHook(delivery: ScopedDelivery) {
+    const origin = () => delivery.document.value ? this.input.origin(delivery.workspaceId, delivery.boardId, delivery.document.value) : ""
+    const connected = () => this.input.connected?.(delivery.workspaceId, origin()) ?? Boolean(origin())
     const shared = {
-      origin: this.input.origin, workspaceId: () => delivery.workspaceId, boardId: () => delivery.boardId,
+      origin, workspaceId: () => delivery.workspaceId, boardId: () => delivery.boardId,
       document: () => delivery.document.value, sourceVersion: () => delivery.sourceVersion.value,
       sourceHeads: () => delivery.sourceHeads.value, profile: this.input.profile, debounceMs: this.input.debounceMs,
     }
     if (delivery.role === "owner") {
       const accessInput: PublicBoardAccessInput = { ...shared,
-        boardTitle: () => delivery.document.value?.entities[delivery.boardId]?.title ?? "",
+        boardTitle: () => delivery.document.value?.entities[delivery.boardId]?.title ?? "", connected,
         owner: () => delivery.verifiedRole.value === "owner" }
       delivery.access = usePublicBoardAccess(accessInput)
     } else {
-      const editorInput: PublicBoardDeliveryInput = { ...shared, role: () => delivery.verifiedRole.value }
+      const editorInput: PublicBoardDeliveryInput = { ...shared, origin: () => connected() ? origin() : "", role: () => delivery.verifiedRole.value }
       delivery.editor = usePublicBoardDelivery(editorInput)
     }
   }

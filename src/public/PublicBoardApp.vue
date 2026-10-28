@@ -6,8 +6,7 @@ import { PublicBoardRequestTimeoutError, publicSnapshotDecision, readWithTimeout
 import PublicBoardContent from "./PublicBoardContent.vue"
 import { recordPublicBoardView } from "./publicAnalytics"
 
-const props = defineProps<{ boardId: string; boardSlug?: string; canonicalizeBoardRoute?: (title: string) => void }>()
-const origin = (import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined)?.replace(/\/$/, "") ?? ""
+const props = defineProps<{ boardId: string; boardSlug?: string; canonicalizeBoardRoute?: (title: string) => void; origin: string }>()
 const state = ref<"loading" | "ready" | "unavailable" | "malformed" | "error">("loading")
 const projection = ref<PublicBoardProjection | null>(null)
 const revision = ref(0)
@@ -20,7 +19,7 @@ let loadedOnce = false
 let recordedView = false
 
 async function readPublicSnapshot(boardId: string, signal: AbortSignal): Promise<{ projection: PublicBoardProjection; revision: number } | null> {
-  const response = await fetch(`${origin}/v1/public/boards/${encodeURIComponent(boardId)}`, { cache: "no-store", signal })
+  const response = await fetch(`${props.origin}/v1/public/boards/${encodeURIComponent(boardId)}`, { cache: "no-store", credentials: "omit", signal })
   if (response.status === 404) return null
   if (!response.ok) throw new Error(`Public service returned ${response.status}`)
   const value: unknown = await response.json()
@@ -85,7 +84,7 @@ async function refresh() {
   refreshError.value = ""
   errorText.value = ""
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestedBoardId)) { state.value = "malformed"; errorText.value = "This board link is invalid."; activeRequest = undefined; return }
-  if (!origin) { state.value = "error"; errorText.value = "Public board service is not configured."; activeRequest = undefined; return }
+  if (!props.origin) { state.value = "malformed"; errorText.value = "Ask the board owner for its public link, including the Rusty address."; activeRequest = undefined; return }
   try {
     const result = await readWithTimeout(signal => readPublicSnapshot(requestedBoardId, signal), controller)
     if (controller.signal.aborted || currentGeneration !== requestGeneration) return
@@ -99,7 +98,7 @@ async function refresh() {
     if (activeRequest === controller) activeRequest = undefined
   }
 }
-function fileUrl(sha256: string) { return `${origin}/v1/public/boards/${encodeURIComponent(props.boardId)}/files/${revision.value}/${sha256}` }
+function fileUrl(sha256: string) { return `${props.origin}/v1/public/boards/${encodeURIComponent(props.boardId)}/files/${revision.value}/${sha256}` }
 function onVisible() { if (document.visibilityState !== "hidden") void refresh() }
 function startReader() {
   requestGeneration++
@@ -117,11 +116,11 @@ function startReader() {
 }
 onMounted(() => {
   startReader()
-  pollTimer = setInterval(() => { if (document.visibilityState !== "hidden") void refresh() }, 5000)
+  if (props.origin) pollTimer = setInterval(() => { if (document.visibilityState !== "hidden") void refresh() }, 5000)
   window.addEventListener("focus", onVisible)
   window.addEventListener("online", onVisible)
 })
-watch(() => props.boardId, startReader)
+watch(() => [props.boardId, props.origin], startReader)
 onBeforeUnmount(() => {
   requestGeneration++
   activeRequest?.abort()
@@ -136,7 +135,7 @@ onBeforeUnmount(() => {
   <section v-else-if="state !== 'ready'" class="board-state ui-stack" role="alert">
     <h1>{{ state === 'unavailable' ? 'Board unavailable' : state === 'malformed' ? 'Publication invalid' : 'Could not load board' }}</h1>
     <p>{{ state === 'unavailable' ? 'This link cannot open the board. Ask its owner for an invitation or a new link.' : errorText }}</p>
-    <button class="button button-small" type="button" @click="refresh">Try again</button>
+    <button v-if="origin" class="button button-small" type="button" @click="refresh">Try again</button>
   </section>
   <template v-else-if="projection">
     <p v-if="refreshError" class="board-refresh-error" role="status">{{ refreshError }} <button class="button button-small" type="button" @click="refresh">Retry</button></p>

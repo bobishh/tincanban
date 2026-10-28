@@ -53,6 +53,8 @@ describe("public board owner access", () => {
   let sourceVersion = ref(1)
   let sourceHeads = ref(["head-a"])
   let isOwner = ref(true)
+  let origin = ref("https://rusty.test")
+  let connected = ref(true)
   let document = shallowRef({ entities: {} })
   let profile = ref<ProfileFixture>({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
 
@@ -67,6 +69,8 @@ describe("public board owner access", () => {
     sourceVersion = ref(1)
     sourceHeads = ref(["head-a"])
     isOwner = ref(true)
+    origin = ref("https://rusty.test")
+    connected = ref(true)
     document = shallowRef({ entities: {} })
     profile = ref<ProfileFixture>({ identity: { personId: "person-a" }, device: { deviceId: "device-a" } })
     mocks.read.mockReset().mockResolvedValue({ revision: 4, published: true, hash: "projection-hash", deliveryGeneration: 1, deliveryPolicyHash: "policy-hash" })
@@ -86,12 +90,53 @@ describe("public board owner access", () => {
 
   function create() {
     return scope.run(() => usePublicBoardAccess({
-      origin: "https://rusty.test", boardId: () => boardId.value, boardTitle: () => "Board A", workspaceId: () => workspaceId.value,
+      origin: () => origin.value, connected: () => connected.value, boardId: () => boardId.value, boardTitle: () => "Board A", workspaceId: () => workspaceId.value,
       sourceVersion: () => sourceVersion.value, document: () => document.value as never,
       sourceHeads: () => sourceHeads.value,
       owner: () => isOwner.value, profile: () => profile.value as never, debounceMs: 20,
     }))!
   }
+
+  it("Given no connected Rusty, when owner controls start, then make no publication requests or retry loops", async () => {
+    origin.value = ""
+    const access = create()
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(access.checked.value).toBe(false)
+    expect(access.error.value).toBe("")
+    expect(mocks.read).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    origin.value = "https://rusty.test"
+    await nextTick()
+    await vi.waitFor(() => expect(access.checked.value).toBe(true))
+  })
+
+  it("Given a retained public host without a connection, when board content changes, then retain public status but send no new snapshot", async () => {
+    connected.value = false
+    mocks.compare.mockResolvedValue(true)
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    sourceVersion.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(40)
+    expect(access.published.value).toBe(true)
+    expect(mocks.publish).not.toHaveBeenCalled()
+    await access.setPublic(false)
+    expect(mocks.withdraw).toHaveBeenCalledOnce()
+  })
+
+  it("Given owner status in flight, when the selected server changes, then discard its result and read the new server", async () => {
+    let finishRead!: (value: { revision: number; published: boolean }) => void
+    mocks.read.mockImplementationOnce(() => new Promise(resolve => { finishRead = resolve }))
+    const access = create()
+    await vi.waitFor(() => expect(mocks.read).toHaveBeenCalledOnce())
+    origin.value = "https://replacement.test"
+    await nextTick()
+    finishRead({ revision: 99, published: true })
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    expect(mocks.read.mock.calls.at(-1)?.[0].origin).toBe("https://replacement.test")
+    expect(access.revision.value).not.toBe(99)
+  })
 
   it("updates a changed projection automatically and skips an unchanged projection", async () => {
     const access = create()
@@ -336,6 +381,19 @@ describe("public board owner access", () => {
     expect(access.published.value).toBe(false)
     expect(access.withdrawn.value).toBe(true)
     expect(access.recoveryNeeded.value).toBe(false)
+  })
+
+  it("Given an uncertain withdrawal, when Rusty still serves the old public copy, then block host changes until withdrawal is confirmed", async () => {
+    const access = create()
+    await vi.waitFor(() => expect(access.published.value && !access.busy.value).toBe(true))
+    mocks.withdraw.mockRejectedValueOnce(new Error("response lost"))
+    await expect(access.setPublic(false)).rejects.toThrow("response lost")
+    await access.refresh()
+    expect(access.withdrawn.value).toBe(true)
+    expect(access.privateConfirmed.value).toBe(false)
+    mocks.read.mockResolvedValue({ revision: 5, published: false, availability: "withdrawn", hash: "" })
+    await access.refresh()
+    expect(access.privateConfirmed.value).toBe(true)
   })
 
   it("Given an explicit withdrawal with uncertain remote outcome, when Rusty later reports a missing record, then do not restore publication intent", async () => {

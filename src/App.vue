@@ -273,7 +273,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
         <WorkspaceSettingsPanel :presence="meshPresenceLabel" :save-state="saveState" :diagnostic="sync.meshDiagnostic.value">
           <WorkspaceFileActions :export-workspace="exportWorkspace" :export-all-workspaces="exportAllWorkspaces" :import-workspace="openImport" :import-busy="workspaceImportState.busy" :import-error="workspaceImportState.error" />
           <WorkspaceHistoryMaintenance :controller="app.collaboration.device.blindReplication" :workspace-id="activeWorkspace.id" :owner="currentRole === 'owner'" />
-          <PublicBoardControls v-if="uiReady" :access="publicAccessWithIdentity" />
+          <PublicBoardControls v-if="uiReady" :access="publicAccessWithIdentity" @connect="showSettings = false; openConnections()" />
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'sending'" class="reading-explanation" role="status">Sending public board changes…</p>
           <p v-if="confirmedRole === 'editor' && publicDelivery.status.value === 'delivered'" class="reading-explanation" role="status">Public board changes delivered.</p>
           <p v-if="publicDelivery.error.value" class="form-error reading-explanation" role="alert">Public board delivery: {{ publicDelivery.error.value }}</p>

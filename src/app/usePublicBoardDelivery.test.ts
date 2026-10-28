@@ -19,6 +19,7 @@ describe("editor public delivery recovery", () => {
   let role = ref<string | null>("editor")
   let version = ref(1)
   let recoveryActive = ref(false)
+  let origin = ref("https://rusty.test")
   let profile = { identity: { personId: "person", publicKey: "identity-key" }, device: { deviceId: "device" }, certificate: {} }
   const heads = ["a".repeat(64)]
 
@@ -28,6 +29,7 @@ describe("editor public delivery recovery", () => {
     role = ref("editor")
     version = ref(1)
     recoveryActive = ref(false)
+    origin = ref("https://rusty.test")
     profile = { identity: { personId: "person", publicKey: "identity-key" }, device: { deviceId: "device" }, certificate: {} }
     mocks.read.mockReset().mockResolvedValue(null)
     mocks.write.mockReset().mockResolvedValue(undefined)
@@ -43,10 +45,41 @@ describe("editor public delivery recovery", () => {
   afterEach(() => { scope.stop(); vi.useRealTimers() })
 
   function create() {
-    return scope.run(() => usePublicBoardDelivery({ origin: "https://rusty.test", workspaceId: () => "workspace",
+    return scope.run(() => usePublicBoardDelivery({ origin: () => origin.value, workspaceId: () => "workspace",
       boardId: () => "board", document: () => ({ id: "workspace" } as never), sourceVersion: () => version.value,
       sourceHeads: () => heads, role: () => role.value, profile: () => profile as never, recoveryActive: () => recoveryActive.value, debounceMs: 0 }))!
   }
+
+  it("Given no connected publication server, when editor state changes, then perform no public requests", async () => {
+    origin.value = ""
+    create()
+    version.value++
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(mocks.delivery).not.toHaveBeenCalled()
+    expect(mocks.read).not.toHaveBeenCalled()
+  })
+
+  it("Given editor delivery in flight, when the publication host changes, then invalidate the old operation and deliver only to the new host", async () => {
+    let release!: () => void
+    let original: { ensureCurrent: () => Promise<void> } | undefined
+    mocks.delivery.mockImplementationOnce(async input => {
+      original = input
+      await new Promise<void>(resolve => { release = resolve })
+      return { revision: 50, hash: "old" }
+    })
+    const hook = create()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.waitFor(() => expect(original).toBeDefined())
+    origin.value = "https://replacement.test"
+    await nextTick()
+    await expect(original!.ensureCurrent()).rejects.toThrow(/changed/)
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.waitFor(() => expect(mocks.delivery).toHaveBeenCalledTimes(2))
+    expect(mocks.delivery.mock.calls[1]![0].origin).toBe("https://replacement.test")
+    expect(hook.status.value).toBe("delivered")
+  })
 
   it("resumes durable retry marker after hook restart", async () => {
     mocks.read.mockResolvedValue(JSON.stringify({ version: 1, workspaceId: "workspace", boardId: "board", sourceHeads: heads,
