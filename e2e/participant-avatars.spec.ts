@@ -79,9 +79,14 @@ test("Given slow signing, when a message is pending then fails, then its avatar 
   await page.evaluate(() => {
     const original = SubtleCrypto.prototype.sign
     ;(window as any).__restoreAvatarSign = () => { SubtleCrypto.prototype.sign = original }
-    SubtleCrypto.prototype.sign = async () => {
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      throw new Error("Avatar signing failure")
+    SubtleCrypto.prototype.sign = function (...args) {
+      // Hold only the message signature; profile and typing setup must keep working.
+      if (new TextDecoder().decode(args[2]).startsWith("MATCH/1/chat-message\0")) {
+        return new Promise<ArrayBuffer>((_resolve, reject) => {
+          ;(window as any).__failAvatarMessage = () => reject(new Error("Avatar signing failure"))
+        })
+      }
+      return original.apply(this, args)
     }
   })
   await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Retain my author")
@@ -89,6 +94,8 @@ test("Given slow signing, when a message is pending then fails, then its avatar 
   await expect(chat.getByText("Saving locally…", { exact: true })).toBeVisible()
   await expect(chat.locator(".chat-message-meta .participant-avatar")).toBeVisible()
   const drawing = await chat.locator(".chat-message-meta .participant-avatar").innerHTML()
+  await expect.poll(() => page.evaluate(() => typeof (window as any).__failAvatarMessage)).toBe("function")
+  await page.evaluate(() => (window as any).__failAvatarMessage())
   await expect(chat.getByRole("alert")).toContainText("Avatar signing failure")
   await expect(chat.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("Retain my author")
   await page.evaluate(() => (window as any).__restoreAvatarSign())
