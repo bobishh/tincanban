@@ -25,6 +25,13 @@ test('Given a unique exact thread reference, when correlated, then selects the e
   assert.equal(result.kind, 'matched');
 });
 
+test('Given a Join receipt naming this position inline, when extracting the application, then read the actual title instead of a placeholder', () => {
+  assert.deepEqual(emailApplicationIdentity({ subject: 'We received your application for a position at elearnio GmbH',
+    text: 'Hi Alex, You have successfully submitted your application for this position: Senior Full-Stack Developer (f/m/x) We will review your qualifications shortly. Thank you for your interest in elearnio GmbH.' }),
+    { company: 'elearnio GmbH', role: 'Senior Full-Stack Developer (f/m/x)' });
+  assert.equal(emailApplicationIdentity({ subject: 'We received your application for a position at Example', text: 'We received your application for this position.' }), null);
+});
+
 test('Given two roles at one company and no role clue, when correlated, then requires review', () => {
   const result = correlateApplication({
     messageId: '<mail@example.test>', inReplyTo: null, references: [], from: 'recruiter@example.test',

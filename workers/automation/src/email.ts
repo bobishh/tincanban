@@ -38,11 +38,14 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
   const roles = new Map<string, string>();
   const add = (values: Map<string, string>, value: string) => {
     const label = value.replace(/\s+/g, ' ').trim().replace(/^["“”']+|["“”']+$/g, '');
-    if (label.length >= 2 && label.length <= 200) values.set(normalizePhrase(label), label);
+    const normalized = normalizePhrase(label);
+    if (values === roles && /^(?:a|an|the|this|that|your|position|role|vacancy)$/.test(normalized)) return;
+    if (label.length >= 2 && label.length <= 200) values.set(normalized, label);
   };
   const subject = mail.subject.replace(/^(?:(?:fwd?|wg|re):\s*)+/i, '').trim();
   const text = mail.text.replace(/\r\n?/g, '\n');
   for (const match of subject.matchAll(/(?:your application|applying) (?:to|at|with) ([^,!\n]+?)(?:[,!]|$)/gi)) add(companies, match[1]);
+  for (const match of subject.matchAll(/application for (?:a|the) position (?:at|with) (.+)$/gi)) add(companies, match[1]);
   for (const match of text.matchAll(/interest in (?:joining|working (?:at|for))\s+([^!.\n]+)[!.\n]/gi)) add(companies, match[1]);
   for (const match of text.matchAll(/^(?:company|unternehmen):\s*([^\n]+)$/gim)) add(companies, match[1]);
   for (const match of text.matchAll(/^(?:role|position|stelle):\s*([^\n]+)$/gim)) add(roles, match[1]);
@@ -54,6 +57,7 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
     add(roles, match[1]); add(companies, match[2]);
   }
   const folded = text.replace(/\s+/g, ' ');
+  for (const match of text.matchAll(/(?:position|role|job title):[ \t]*(.{2,200}?)(?=\s+(?:We (?:will|have|are)|You (?:will|can)|Thank you|Our team|Sincerely)\b|[.!;\n]|$)/gi)) add(roles, match[1]);
   for (const match of folded.matchAll(/(?:application (?:to|for)|applying for) (?:the )?(.{2,200}?) (?:position|role|vacancy)\b/gi)) add(roles, match[1]);
   if (companies.size !== 1 || roles.size !== 1) return null;
   return { company: [...companies.values()][0], role: [...roles.values()][0] };
