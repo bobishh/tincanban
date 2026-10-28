@@ -125,9 +125,11 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     // An admitted profile change during staging must abort the captured source,
     // then a fresh owner confirmation may publish the current snapshot.
     let injectedSourceChange: { before: string[]; after: string[] } | undefined
+    let fileUploads = 0
     let injectionStarted = false
     let presentationRefresh: { before: string[]; after: string[]; beforeVersion: number; afterVersion: number } | undefined
     await page.route(`${origin}/v1/public/boards/${fixture.boardId}/files`, async route => {
+      if (route.request().method() === "PUT") fileUploads++
       if (!injectionStarted && route.request().method() === "PUT") {
         injectionStarted = true
         injectedSourceChange = await page.evaluate(async () => {
@@ -222,6 +224,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     expect(await readFile(await download.path()!)).toEqual(Buffer.from([0, 1, 2, 0xff, 0x41]))
 
     await publicCardWithFile.getByRole("button", { name: "Dismiss", exact: true }).click()
+    const uploadsBeforeTextEdit = fileUploads
     await page.getByRole("button", { name: "Open Public release card" }).click()
     const editDetail = page.getByRole("dialog", { name: "Item overview" })
     await editDetail.getByRole("button", { name: "Edit" }).click()
@@ -231,6 +234,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     if (await editDetail.count()) await editDetail.getByRole("button", { name: "Close detail" }).click()
     try {
       await expect(reader.getByText("Second published description", { exact: true })).toBeVisible({ timeout: 30_000 })
+      expect(fileUploads, "An ordinary text edit reuses Rusty's existing attachment bytes").toBe(uploadsBeforeTextEdit)
     } catch (cause) {
       const ownerPublication = await openPublication()
       console.error("Owner publication after stalled update:", await ownerPublication.innerText())

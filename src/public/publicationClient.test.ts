@@ -137,6 +137,59 @@ async function serve(input: RequestInfo | URL, init?: RequestInit): Promise<Resp
 }
 const publish = () => publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2, profile: owner, action: "publish", expectedRevision: revision })
 
+it("Given a stalled public snapshot request, when checking access, then bound its wait with an abort signal", async () => {
+  await readPublicBoardManagementState({ origin, boardId, profile: owner })
+  const request = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith(`/v1/public/boards/${boardId}`))
+  expect(request?.[1]?.signal).toBeInstanceOf(AbortSignal)
+})
+
+it("Given an attachment, when publishing, then report completed uploads before saving the snapshot", async () => {
+  mocks.includeAsset = true
+  const onProgress = vi.fn()
+  await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2,
+    profile: owner, action: "publish", expectedRevision: revision, onProgress } as Parameters<typeof publishBoardSnapshot>[0])
+  expect(onProgress.mock.calls.map(([progress]) => progress)).toEqual([
+    { phase: "connecting" }, { phase: "preparing" },
+    { phase: "uploading", completedFiles: 0, totalFiles: 1 },
+    { phase: "uploading", completedFiles: 1, totalFiles: 1 }, { phase: "saving" },
+  ])
+})
+
+it("Given unchanged published files, when only board content changes, then reuse stored bytes without staging files again", async () => {
+  const original = mocks.projection
+  mocks.projection = { ...original, files: [{ id: "file-1", parentId: boardId, title: "File", fileName: "file.txt", mediaType: "text/plain", byteLength: 3, sha256: "F".repeat(43) }] as never }
+  mocks.includeAsset = true
+  revision = 1; publicStatus = 200
+  try {
+    await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2,
+      profile: owner, action: "update", expectedRevision: revision })
+    expect(assetCount).toBe(0)
+    expect(mutationCount).toBe(1)
+  } finally { mocks.projection = original }
+})
+
+it("Given a published file lost on Rusty, when an update reuses it, then restage and retry only after an explicit missing-file rejection", async () => {
+  const original = mocks.projection
+  mocks.projection = { ...original, files: [{ id: "file-1", parentId: boardId, title: "File", fileName: "file.txt", mediaType: "text/plain", byteLength: 3, sha256: "F".repeat(43) }] as never }
+  mocks.includeAsset = true
+  revision = 1; publicStatus = 200
+  let missingRejections = 0
+  vi.stubGlobal("fetch", vi.fn(async (input, init) => {
+    if (String(input).endsWith(`/v1/public/boards/${boardId}`) && init?.method === "PUT" && assetCount === 0) {
+      missingRejections++
+      return json({ message: "Public attachment file.txt has not been staged" }, 400)
+    }
+    return serve(input, init)
+  }))
+  try {
+    await publishBoardSnapshot({ origin, boardId, workspaceId: "private-workspace", document: { entities: {} } as WorkspaceDocumentV2,
+      profile: owner, action: "update", expectedRevision: revision })
+    expect(missingRejections).toBe(1)
+    expect(assetCount).toBe(1)
+    expect(mutationCount).toBe(1)
+  } finally { mocks.projection = original }
+})
+
 describe("publication client signed state and receipts", () => {
   it("compares the wire projection hash when optional presentation fields are undefined", async () => {
     const original = mocks.projection

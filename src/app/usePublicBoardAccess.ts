@@ -10,6 +10,9 @@ export type { PublicBoardAccessInput } from "./publicBoardAccessInput"
 export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   const checked = ref(false), published = ref(false), busy = ref(false), error = ref(""), revision = ref(0), withdrawn = ref(false), recoveryNeeded = ref(false)
   const syncPending = ref(false)
+  const progress = ref<PublicBoardAccessOperations["progress"]["value"]>(null)
+  const lastConfirmedAt = ref<number | null>(null)
+  const lastDelivery = ref<PublicBoardAccessOperations["lastDelivery"]["value"]>(null)
   const availability = ref<"published" | "withdrawn" | "missing" | "unknown">("unknown")
   const state: PublicBoardAccessOperations["state"] = { generation: 0, syncQueued: false, operationRunning: false,
     refreshQueued: false, disposed: false, deliveryGeneration: null, deliveryPolicyHash: null, deliveryPolicyContentHash: null, retryCount: 0, lastHash: "", policyCache: {} }
@@ -61,15 +64,15 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
   function refresh() {
     if (!input.owner() || !input.origin() || state.disposed) return Promise.resolve()
     const generation = state.generation
-    if (!operations) busy.value = true
+    if (!operations) { busy.value = true; progress.value = { phase: "checking", startedAt: Date.now() } }
     return run(loaded => generation === state.generation ? loaded.refreshPublicAccess(ctx) : Promise.resolve()).catch(cause => {
       if (generation !== state.generation || state.disposed) return
-      checked.value = false; busy.value = false
+      checked.value = false; busy.value = false; progress.value = null
       error.value = cause instanceof Error ? cause.message : "Could not load public board controls. Reload the app and retry."
       scheduleRetry()
     })
   }
-  const ctx: PublicBoardAccessOperations = { input, availability, checked, published, busy, error, revision, withdrawn, recoveryNeeded, syncPending, state, timers, capture, scheduleSync, scheduleRetry,
+  const ctx: PublicBoardAccessOperations = { input, availability, checked, published, busy, error, revision, withdrawn, recoveryNeeded, syncPending, progress, lastConfirmedAt, lastDelivery, state, timers, capture, scheduleSync, scheduleRetry,
     refresh, deliverLatest: () => run(loaded => loaded.deliverLatestPublicSnapshot(ctx)) }
 
   watch(() => `${input.owner()}:${sourceIdentity(input)}`, () => {
@@ -92,7 +95,7 @@ export function usePublicBoardAccess(input: PublicBoardAccessInput) {
     }
   })
   onScopeDispose(() => { state.disposed = true; state.generation++; syncPending.value = false; clearTimers(timers) })
-  return { owner: computed(() => input.owner()), origin: computed(input.origin), connected: computed(() => input.connected()), checked, published, busy, error, revision, link,
+  return { owner: computed(() => input.owner()), origin: computed(input.origin), connected: computed(() => input.connected()), checked, published, busy, error, revision, link, progress, lastConfirmedAt, lastDelivery,
     syncPending, privateConfirmed: computed(() => checked.value && availability.value !== "published" && availability.value !== "unknown"),
     refresh: ctx.refresh, retry: () => run(loaded => loaded.retryPublicAccess(ctx)),
     setPublic: (enabled: boolean) => {
@@ -126,6 +129,7 @@ function resetAccess(ctx: PublicBoardAccessOperations) {
   ctx.state.generation++
   ctx.checked.value = false; ctx.published.value = false; ctx.busy.value = false; ctx.error.value = ""; ctx.revision.value = 0; ctx.recoveryNeeded.value = false
   ctx.syncPending.value = false
+  ctx.progress.value = null; ctx.lastConfirmedAt.value = null; ctx.lastDelivery.value = null
   ctx.state.deliveryGeneration = null; ctx.state.deliveryPolicyHash = null; ctx.withdrawn.value = false
   ctx.state.deliveryPolicyContentHash = null
   ctx.availability.value = "unknown"

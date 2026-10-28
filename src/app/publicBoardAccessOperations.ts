@@ -3,6 +3,11 @@ import type { PublicBoardDeliveryPolicyEvidence } from "../public/publicDelivery
 import { canonicalizeJson, sha256Base64Url } from "../domain/identity"
 import { deleteLocal, readLocal, writeLocal } from "../localDb"
 import { parsePublicationRecord, publicationRecordKey, reconcilePublicationRecord, type PublicationIntentAction, type PublicationRecord } from "../domain/publicationState"
+import type { PublicationProgress } from "../public/publicationClient"
+
+function reportProgress(ctx: PublicBoardAccessOperations, progress: PublicationProgress) {
+  ctx.progress.value = { ...progress, startedAt: ctx.progress.value?.startedAt ?? Date.now() }
+}
 
 
 export async function refreshPublicAccess(ctx: PublicBoardAccessOperations) {
@@ -12,6 +17,7 @@ export async function refreshPublicAccess(ctx: PublicBoardAccessOperations) {
   const generation = ctx.state.generation
   ctx.state.operationRunning = true
   ctx.busy.value = true
+  reportProgress(ctx, { phase: "checking" })
   ctx.error.value = ""
   try {
     const captured = await readOwnerStatus(ctx)
@@ -26,7 +32,7 @@ export async function refreshPublicAccess(ctx: PublicBoardAccessOperations) {
     }
   } finally {
     ctx.state.operationRunning = false
-    if (generation === ctx.state.generation) ctx.busy.value = false
+    if (generation === ctx.state.generation) { ctx.busy.value = false; ctx.progress.value = null }
     if (ctx.state.syncQueued && generation === ctx.state.generation && !ctx.error.value) ctx.scheduleSync()
     resumeQueuedPublicAccess(ctx)
   }
@@ -59,6 +65,7 @@ async function applyOwnerStatus(ctx: PublicBoardAccessOperations, captured: Awai
   if (reconciled.record) await writeLocal(key, JSON.stringify(reconciled.record))
   captured.ensureCurrent()
   ctx.checked.value = true
+  ctx.lastConfirmedAt.value = Date.now()
   ctx.published.value = reconciled.published
   ctx.revision.value = reconciled.revision
   ctx.state.deliveryGeneration = status.deliveryGeneration ?? null
@@ -90,6 +97,7 @@ export async function changePublicAccess(ctx: PublicBoardAccessOperations, enabl
   const generation = ctx.state.generation
   ctx.state.operationRunning = true
   ctx.busy.value = true
+  reportProgress(ctx, { phase: enabled ? "preparing" : "withdrawing" })
   ctx.error.value = ""
   try {
     const captured = ctx.capture({ requireConnection: enabled })
@@ -101,7 +109,7 @@ export async function changePublicAccess(ctx: PublicBoardAccessOperations, enabl
     throw cause
   } finally {
     ctx.state.operationRunning = false
-    if (generation === ctx.state.generation) ctx.busy.value = false
+    if (generation === ctx.state.generation) { ctx.busy.value = false; ctx.progress.value = null }
     if (generation === ctx.state.generation && ctx.state.syncQueued && !ctx.withdrawn.value) ctx.scheduleSync()
   }
 }
@@ -116,6 +124,7 @@ async function enablePublicAccess(ctx: PublicBoardAccessOperations, captured: Ca
   captured.ensureCurrent()
   const intent = await persistPublicationIntent(ctx, captured, "publish", expectedRevision, deliveryPolicy)
   const result = await publishBoardSnapshot({ ...captured, action: "publish", expectedRevision, deliveryPolicy,
+    onProgress: progress => { captured.ensureCurrent(); reportProgress(ctx, progress) },
     preparedProjection: intent.record.intent?.projection ?? undefined, preparedProjectionHash: intent.record.intent?.projectionHash,
     preparedAssetManifest: intent.record.intent?.preparedAssetManifest, preparedAssets: intent.preparedAssets ?? [] })
   captured.ensureCurrent()
@@ -168,6 +177,7 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
   ctx.state.syncQueued = false
   ctx.state.operationRunning = true
   ctx.busy.value = true
+  reportProgress(ctx, { phase: "preparing" })
   ctx.error.value = ""
   const generation = ctx.state.generation
   try {
@@ -176,7 +186,7 @@ export async function deliverLatestPublicSnapshot(ctx: PublicBoardAccessOperatio
     if (generation === ctx.state.generation) retainPublicDeliveryForRetry(ctx, cause)
   } finally {
     ctx.state.operationRunning = false
-    if (generation === ctx.state.generation) ctx.busy.value = false
+    if (generation === ctx.state.generation) { ctx.busy.value = false; ctx.progress.value = null }
     if (ctx.state.syncQueued && !ctx.withdrawn.value && !ctx.error.value) ctx.scheduleSync()
     else ctx.syncPending.value = false
   }
@@ -234,6 +244,7 @@ async function publishUpdatedSnapshot(ctx: PublicBoardAccessOperations, captured
   const { publishBoardSnapshot } = await import("../public/publicationClient")
   const intent = await persistPublicationIntent(ctx, captured, "update", ctx.revision.value, deliveryPolicy)
   const result = await publishBoardSnapshot({ ...captured, action: "update",
+    onProgress: progress => { captured.ensureCurrent(); reportProgress(ctx, progress) },
     expectedRevision: ctx.revision.value, ensureCurrent: captured.ensureCurrent, deliveryPolicy,
     preparedProjection: intent.record.intent?.projection ?? undefined, preparedProjectionHash: intent.record.intent?.projectionHash,
     preparedAssetManifest: intent.record.intent?.preparedAssetManifest, preparedAssets: intent.preparedAssets ?? [] })
@@ -304,4 +315,12 @@ async function confirmPublicationIntent(ctx: PublicBoardAccessOperations, captur
     ...(pending.record.intent?.projection ? { confirmedProjection: pending.record.intent.projection } : {}),
     remoteAvailability: pending.record.intent?.action === "unpublish" ? "withdrawn" : "published" }
   await writeLocal(pending.key, JSON.stringify(confirmed))
+  captured.ensureCurrent()
+  ctx.lastConfirmedAt.value = Date.now()
+  recordDeliveryConfirmation(ctx, pending.record)
+}
+function recordDeliveryConfirmation(ctx: PublicBoardAccessOperations, pending: PublicationRecord) {
+  if (pending.intent?.action !== "unpublish") ctx.lastDelivery.value = {
+    at: Date.now(), durationMs: Math.max(0, Date.now() - (ctx.progress.value?.startedAt ?? Date.now())),
+  }
 }

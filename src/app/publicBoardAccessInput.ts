@@ -2,6 +2,7 @@ import type { Ref } from "vue"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { PublicBoardDeliveryPolicyCache } from "../public/publicDeliveryPolicy"
+import type { PublicationProgress } from "../public/publicationClient"
 
 export class PublicBoardSourceChangedError extends Error {
   constructor() { super("Board source changed during publication preparation") }
@@ -26,6 +27,9 @@ export type CapturedAccessSource = {
 }
 export type PublicBoardAccessOperations = {
   input: PublicBoardAccessInput
+  progress: Ref<(PublicationProgress & { startedAt: number }) | null>
+  lastConfirmedAt: Ref<number | null>
+  lastDelivery: Ref<{ at: number; durationMs: number } | null>
   availability: Ref<"published" | "withdrawn" | "missing" | "unknown">
   checked: Ref<boolean>; published: Ref<boolean>; busy: Ref<boolean>; error: Ref<string>; revision: Ref<number>; withdrawn: Ref<boolean>; recoveryNeeded: Ref<boolean>; syncPending: Ref<boolean>
   state: { generation: number; syncQueued: boolean; operationRunning: boolean; refreshQueued: boolean; disposed: boolean;

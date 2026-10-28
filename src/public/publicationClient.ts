@@ -18,6 +18,7 @@ type Challenge = { kind: "rusty-publication-challenge"; version: 1; challengeId:
 type Receipt = SignedEnvelope<{ kind: "rusty-publication-receipt"; version: 1; serviceId: string; boardId: string; controllerPersonId: string; revision: number; action: string; projectionHash: string; challengeId: string; authorizationHash: string; withdrawn: boolean }>
 const encoder = new TextEncoder()
 type PublicationService = { origin: string; serviceId: string; serviceKey: string; scopeManagement: boolean; presentation: boolean; fieldConfiguration: boolean }
+export type PublicationProgress = { phase: "checking" | "connecting" | "preparing" | "uploading" | "saving" | "withdrawing"; completedFiles?: number; totalFiles?: number }
 
 async function controllerCertificates(profile: LocalProfile): Promise<DeviceCertificate[]> {
   const context = await resolveLocalSigningContext(profile, "rusty-publication-command", { personId: profile.identity.personId })
@@ -138,8 +139,10 @@ function assetReceiptMatches(payload: Record<string, unknown>, serviceId: string
   return payload.kind === "rusty-public-asset-receipt" && payload.version === 1 && payload.serviceId === serviceId && payload.boardId === boardId &&
     payload.sha256 === asset.sha256 && payload.byteLength === asset.bytes.byteLength
 }
-export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence; preparedProjection?: PublicBoardProjection; preparedProjectionHash?: string; preparedAssetManifest?: Array<{ sha256: string; byteLength: number }>; preparedAssets?: Array<{ sha256: string; bytes: Uint8Array }> }): Promise<{ revision: number; url: string; hash: string; receipt: Receipt }> {
+export async function publishBoardSnapshot(input: { origin: string; boardId: string; workspaceId: string; document: WorkspaceDocumentV2; profile: LocalProfile; action: "publish" | "update"; expectedRevision: number; ensureCurrent?: () => void | Promise<void>; onProgress?: (progress: PublicationProgress) => void; deliveryPolicy?: PublicBoardDeliveryPolicyEvidence; preparedProjection?: PublicBoardProjection; preparedProjectionHash?: string; preparedAssetManifest?: Array<{ sha256: string; byteLength: number }>; preparedAssets?: Array<{ sha256: string; bytes: Uint8Array }> }): Promise<{ revision: number; url: string; hash: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
+  const onProgress = input.onProgress ?? (() => {})
+  onProgress({ phase: "connecting" })
   // Capture authority metadata independently; limit document copying to the selected board tree.
   const snapshot = { origin: input.origin, boardId: input.boardId, workspaceId: input.workspaceId,
     profile: structuredClone(input.profile), action: input.action, expectedRevision: input.expectedRevision,
@@ -159,6 +162,7 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   const operation = snapshot.action === "publish" ? "publication.publish" : "publication.update"
   const capability = await managementAuthority(server, snapshot.boardId, profile, operation)
   const certificates = await controllerCertificates(profile)
+  onProgress({ phase: "preparing" })
   const prepared = snapshot.preparedProjection
     ? { projection: validatePublicBoardProjection(snapshot.preparedProjection), assets: snapshot.preparedAssets ?? [] }
     : await createPublicBoardPublication(document, snapshot.workspaceId, snapshot.boardId, undefined)
@@ -166,9 +170,43 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   if (snapshot.preparedProjection) await assertPreparedPublication(publication, snapshot.preparedProjectionHash, snapshot.preparedAssetManifest)
   assertFieldConfigurationSupport(server, publication.projection)
   await ensureCurrent?.()
-  await stagePublicationAssets(server, snapshot.boardId, profile, certificates, snapshot.expectedRevision, capability, ensureCurrent, sourceHeads, input.document, publication.assets)
+  const assets = await assetsRequiringUpload(server.origin, snapshot.boardId, snapshot.action, snapshot.expectedRevision, publication.assets)
   await ensureCurrent?.()
-  return commit(server, snapshot.boardId, profile, certificates, snapshot.action, publication.projection, snapshot.expectedRevision, capability, ensureCurrent, snapshot.deliveryPolicy, sourceHeads, input.document)
+  const stage = (assets: typeof publication.assets) => stagePublicationAssets(server, snapshot.boardId, profile, certificates,
+    snapshot.expectedRevision, capability, ensureCurrent, sourceHeads, input.document, assets, onProgress)
+  await stage(assets)
+  await ensureCurrent?.()
+  const send = () => {
+    onProgress({ phase: "saving" })
+    return commit(server, snapshot.boardId, profile, certificates, snapshot.action, publication.projection, snapshot.expectedRevision, capability, ensureCurrent, snapshot.deliveryPolicy, sourceHeads, input.document)
+  }
+  return commitWithAssetRepair(send, () => stage(publication.assets), assets.length < publication.assets.length)
+}
+
+async function assetsRequiringUpload(origin: string, boardId: string, action: string, expectedRevision: number,
+  assets: Array<{ sha256: string; bytes: Uint8Array }>) {
+  if (action !== "update" || !assets.length) return assets
+  try {
+    const response = await fetchBlind(`${origin}/v1/public/boards/${encodeURIComponent(boardId)}`, { cache: "no-store", signal: AbortSignal.timeout(5000) })
+    if (!response.ok) return assets
+    const current = await readBlindJson<{ boardId: string; revision: number; projection: unknown }>(response, 3 * 1024 * 1024)
+    if (current.boardId !== boardId || current.revision !== expectedRevision) return assets
+    const projection = validatePublicBoardProjection(current.projection)
+    const stored = new Map(projection.files.map(file => [file.sha256, file.byteLength]))
+    return assets.filter(asset => stored.get(asset.sha256) !== asset.bytes.byteLength)
+  } catch { return assets }
+}
+
+async function commitWithAssetRepair<T>(send: () => Promise<T>, restage: () => Promise<void>, reusedAssets: boolean): Promise<T> {
+  try { return await send() }
+  catch (cause) {
+    // Rusty checks every referenced digest before committing. Only this explicit
+    // rejection permits a retry; transport errors may have an uncertain outcome.
+    if (!reusedAssets || !(cause instanceof Error) || !("status" in cause) || cause.status !== 400 ||
+        !/^Public attachment .+ has not been staged$/.test(cause.message)) throw cause
+    await restage()
+    return send()
+  }
 }
 function assertDeliveryPolicyBinding(policy: PublicBoardDeliveryPolicyEvidence | undefined, workspaceId: string, boardId: string) {
   if (policy && (policy.policy.payload.workspaceId !== workspaceId || policy.policy.payload.boardId !== boardId || policy.policy.payload.enabled !== true)) {
@@ -209,8 +247,12 @@ function assertFieldConfigurationSupport(server: PublicationService, projection:
 }
 async function stagePublicationAssets(server: PublicationService, boardId: string, profile: LocalProfile, certificates: DeviceCertificate[],
   expectedRevision: number, capability: SignedEnvelope<RustyManagementCapability> | undefined, ensureCurrent: (() => void | Promise<void>) | undefined,
-  sourceHeads: string[], sourceDocument: WorkspaceDocumentV2, assets: Array<{ sha256: string; bytes: Uint8Array }>) {
-  for (const asset of assets) await stageAsset(server, boardId, profile, certificates, expectedRevision, asset, capability, ensureCurrent, sourceHeads, sourceDocument)
+  sourceHeads: string[], sourceDocument: WorkspaceDocumentV2, assets: Array<{ sha256: string; bytes: Uint8Array }>, onProgress?: (progress: PublicationProgress) => void) {
+  for (let index = 0; index < assets.length; index++) {
+    onProgress?.({ phase: "uploading", completedFiles: index, totalFiles: assets.length })
+    await stageAsset(server, boardId, profile, certificates, expectedRevision, assets[index]!, capability, ensureCurrent, sourceHeads, sourceDocument)
+    onProgress?.({ phase: "uploading", completedFiles: index + 1, totalFiles: assets.length })
+  }
 }
 export async function withdrawPublicBoard(input: { origin: string; boardId: string; profile: LocalProfile; expectedRevision: number; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; url: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
@@ -238,7 +280,7 @@ export async function readPublicBoardManagementState(input: { origin: string; bo
   const controllerStatus = await challenge(origin, snapshot.boardId, profile, certificates, serviceId, serviceKey, capability, currentAuthority)
   const challengePayload = controllerStatus.payload
   await currentAuthority()
-  const response = await fetchBlind(`${origin}/v1/public/boards/${encodeURIComponent(snapshot.boardId)}`, { cache: "no-store" })
+  const response = await fetchBlind(`${origin}/v1/public/boards/${encodeURIComponent(snapshot.boardId)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) })
   if (response.status === 404) {
     if (challengePayload.expectedRevision > 0 && !challengePayload.withdrawn || challengePayload.expectedRevision === 0 && challengePayload.withdrawn) throw new Error("Keeper publication status does not match its public snapshot")
     return { revision: challengePayload.expectedRevision, published: false, availability: challengePayload.expectedRevision === 0 ? "missing" : "withdrawn", hash: challengePayload.projectionHash,

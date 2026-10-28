@@ -111,6 +111,28 @@ describe("public board owner access", () => {
     await vi.waitFor(() => expect(access.checked.value).toBe(true))
   })
 
+  it("Given first publication, when files are uploading, then retain progress until confirmation and report total delivery duration", async () => {
+    mocks.read.mockResolvedValue({ revision: 0, published: false, availability: "missing" })
+    let finish!: (value: unknown) => void
+    mocks.publish.mockImplementationOnce(input => {
+      input.onProgress({ phase: "uploading", completedFiles: 2, totalFiles: 4 })
+      return new Promise(resolve => { finish = resolve })
+    })
+    const access = create()
+    await vi.waitFor(() => expect(access.checked.value && !access.busy.value).toBe(true))
+    const change = access.setPublic(true)
+    await vi.waitFor(() => expect(access.progress.value?.phase).toBe("uploading"))
+    expect(access.progress.value).toMatchObject({ completedFiles: 2, totalFiles: 4 })
+    expect(access.published.value).toBe(false)
+    const startedAt = access.progress.value!.startedAt
+    vi.setSystemTime(startedAt + 21000)
+    finish({ revision: 1, hash: "published-hash" })
+    await change
+    expect(access.progress.value).toBeNull()
+    expect(access.published.value).toBe(true)
+    expect(access.lastDelivery.value).toEqual({ at: startedAt + 21000, durationMs: 21000 })
+  })
+
   it("Given a retained public host without a connection, when board content changes, then retain public status but send no new snapshot", async () => {
     connected.value = false
     mocks.compare.mockResolvedValue(true)
