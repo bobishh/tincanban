@@ -2,12 +2,13 @@ import { canonicalizeJson, sha256Base64Url, type LocalProfile, type SignedEnvelo
 import { hasEntityKind, type DeviceCertificate, type WorkspaceDocumentV2, type WorkspaceGrant } from "../domain/model"
 import { parseAutomationApproval } from "../domain/automationApproval"
 import { automationLifecycle } from "../domain/automationLifecycle"
-import { defaultProofStore, validateCertificateChain, verifyWorkspaceGrant } from "../domain/proofs"
+import { defaultProofStore, validateCertificateChain } from "../domain/proofs"
 import { signWithContext, signingEvidence } from "../domain/signingContext"
 import { workspaceOwnerSigningContext } from "../sync/workspaceOwnerSigning"
 import { deviceRevocations, hasLeftWorkspace, isDeviceRevoked, isGrantRevoked } from "../sync/durableMeshBase"
 import { peerStore } from "../sync/peerStore"
 import { workspaceAuthorityFingerprint } from "../sync/authorityFingerprint"
+import { verifyWorkspaceGrant } from "../sync/meshRecords"
 
 type PublicBoardDeliveryPolicy = {
   kind: "rusty-public-board-delivery-policy"; version: 1; workspaceId: string; boardId: string
@@ -49,21 +50,16 @@ function isRevoked(credential: NonNullable<Awaited<ReturnType<typeof peerStore.g
   return isGrantRevoked(credential, grant.payload.personId, grant) || hasLeftWorkspace(credential, grant.payload.personId, grant)
 }
 
-async function grantSigningKey(grant: WorkspaceGrant, credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>, certificates: DeviceCertificate[]) {
-  if (grant.signerKeyId === credential.ownerPersonId) return credential.ownerPublicKey
-  const certificate = certificates.find(item => item.payload.deviceId === grant.signerKeyId)
-  if (!certificate || !(await validateCertificateChain(certificate, credential.ownerPublicKey, certificates)).ok) return undefined
-  return certificate.payload.devicePublicKey
-}
-
 async function collectActiveGrants(workspaceId: string, boardId: string, grants: WorkspaceGrant[], credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>, certificates: DeviceCertificate[]) {
   const acceptedGrants: WorkspaceGrant[] = [], revokedGrantIds = new Set<string>()
   for (const grant of grants) {
     const disposition = grantDisposition(grant, workspaceId, boardId, credential)
     if (disposition === "revoked") { revokedGrantIds.add(grant.payload.grantId); continue }
     if (disposition === "skip") continue
-    const key = await grantSigningKey(grant, credential, certificates)
-    if (key && await verifyWorkspaceGrant(grant, key)) acceptedGrants.push(structuredClone(grant))
+    const role = await verifyWorkspaceGrant(grant, { workspaceId, personId: grant.payload.personId,
+      ownerPersonId: credential.ownerPersonId, ownerPublicKey: credential.ownerPublicKey,
+      ownerCertificates: certificates }).catch(() => undefined)
+    if (role === "editor" || role === "automation") acceptedGrants.push(structuredClone(grant))
   }
   const byId = new Map<string, WorkspaceGrant>(), conflicts = new Set<string>()
   for (const grant of acceptedGrants) {
@@ -79,7 +75,7 @@ async function collectActiveGrants(workspaceId: string, boardId: string, grants:
 function grantDisposition(grant: WorkspaceGrant, workspaceId: string, boardId: string,
   credential: NonNullable<Awaited<ReturnType<typeof peerStore.getWorkspaceCredential>>>) {
   const payload = grant.payload
-  if (payload.workspaceId !== workspaceId || !["editor", "automation"].includes(payload.role) || (payload.accessEpoch ?? 1) !== credential.epoch) return "skip"
+  if (payload.workspaceId !== workspaceId || !["editor", "automation"].includes(payload.role)) return "skip"
   if (isRevoked(credential, grant)) return "revoked"
   if (payload.role === "automation" && (!payload.automation || payload.automation.boardId !== boardId || payload.automation.expiresAt <= Date.now())) return "skip"
   return "active"

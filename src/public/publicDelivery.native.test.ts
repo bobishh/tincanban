@@ -14,7 +14,7 @@ import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { canonicalizeJson, clearInMemoryProfileForReloadTest, resetIdentityStorageForTest, sha256Base64Url, signEnvelope, type LocalProfile } from "../domain/identity"
 import { createPersonalRoot } from "../domain/personalRoot"
 import { bootstrapConfirmedIdentityFixture as bootstrapIdentity, confirmIdentityAuthorityFixture } from "../sync/identityAuthority.testSupport"
-import { createAutomationWorkspaceGrant, createWorkspaceGrant } from "../domain/proofs"
+import { createAutomationWorkspaceGrant, createWorkspaceGrant, defaultProofStore } from "../domain/proofs"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { recordGenesisAuthority } from "../sync/changeAuthorization"
@@ -22,6 +22,7 @@ import { publishBoardSnapshot, readPublicBoardManagementState, withdrawPublicBoa
 import { forkWorkspaceDocumentV2 } from "../domain/workspaceBundle"
 import { deliverPublicBoard, type PublicDeliveryCommand } from "./publicDelivery"
 import type { PublicBoardDeliveryPolicyEvidence } from "./publicDeliveryPolicy"
+import { buildPublicBoardDeliveryPolicy } from "./publicDeliveryPolicy"
 import { createBrowserBoardPublication as createPublicBoardPublication } from "../app/publicBoardPublication"
 import { validatePublicBoardProjection } from "./publicSchema"
 import type { PublicBoardProjection } from "./publicSchema"
@@ -148,18 +149,21 @@ test.each([false, true])("Given an owner-published board and durable editor auth
     const board = Object.values(workspace.entities).find(entity => entity.kind === "board")!
     const columnId = board.kind === "board" ? board.preset!.bindings["status.applied"] : ""
     await recordGenesisAuthority(workspace, owner)
-    const grant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", 1)
-    const policyPayload = { kind: "rusty-public-board-delivery-policy" as const, version: 1 as const, workspaceId,
-      boardId: board.id, generation: 1, accessEpoch: 1, enabled: true as const,
-      acceptedGrants: [grant], revokedGrantIds: [] as string[], revokedDeviceIds: [] as string[] }
+    const authority = (await peerStore.getWorkspaceAuthority(workspaceId))!
+    const earlier = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", 1)
+    const epoch = meshRustRuntime().state.nextAccessEpoch(authority, [earlier])
+    const grant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", epoch)
+    await defaultProofStore.putGrant(earlier.payload.grantId, earlier)
+    await defaultProofStore.putGrant(grant.payload.grantId, grant)
+    const credential = vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue({ ...authority, transportSecret: "test-secret" })
+    let deliveryPolicy: PublicBoardDeliveryPolicyEvidence
+    try { deliveryPolicy = await buildPublicBoardDeliveryPolicy(owner, workspaceId, board.id, 1) }
+    finally { credential.mockRestore() }
+    expect(deliveryPolicy.policy.payload.acceptedGrants).toContainEqual(grant)
     stubWindow(service.origin)
     await publishBoardSnapshot({ origin: service.origin, boardId: board.id, workspaceId, document: workspace, profile: owner,
-      action: "publish", expectedRevision: 0, deliveryPolicy: {
-        policy: await signEnvelope(owner.privateKeys.devicePrivateKey, policyPayload, owner.device.deviceId),
-        ownerCertificates: [owner.certificate],
-      } })
+      action: "publish", expectedRevision: 0, deliveryPolicy })
 
-    const authority = (await peerStore.getWorkspaceAuthority(workspaceId))!
     await peerStore.putWorkspaceAuthority({ ...authority, localGrant: grant })
     if (transferred) {
       const successor = await profileFromIdentitySeedForDevice(crypto.getRandomValues(new Uint8Array(32)), "Successor")
@@ -261,11 +265,11 @@ test("Given owner-approved editor and automation grants, when delivery runs with
       placement: { parentId: columns["status.lead"], rank: "0/1" }, archivedAt: null, createdAt: now, updatedAt: now }
     workspace = Automerge.from<WorkspaceDocumentV2>(seed)
     await recordGenesisAuthority(workspace, owner)
-    const editorGrant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", 1)
+    const editorGrant = await createWorkspaceGrant(owner, workspaceId, editor.identity.personId, "editor", 2)
     const automationGrant = await createAutomationWorkspaceGrant(owner, workspaceId, automation.identity.personId, {
       version: 1, boardId: board.id, columns: { lead: columns["status.lead"], applied: columns["status.applied"],
         interview: columns["status.interview"], rejected: columns["status.rejected"] }, fieldIds: [fieldId], expiresAt: Date.now() + 60_000,
-    }, 1)
+    }, 3)
     const policyPayload = { kind: "rusty-public-board-delivery-policy" as const, version: 1 as const, workspaceId, boardId: board.id,
       generation: 1, accessEpoch: 1, enabled: true as const,
       acceptedGrants: [editorGrant, automationGrant].sort((left, right) => left.payload.grantId.localeCompare(right.payload.grantId)),

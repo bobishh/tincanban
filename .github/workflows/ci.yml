@@ -16,12 +16,13 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: a7b39d11c377d86c0ea4ded13ef28edaf877c16b
+  RUSTY_REVISION: 790fd34984b51752ba81712edca2f0f6df05915d
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # Checks and the production build precede retention of chunks used by open tabs.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:

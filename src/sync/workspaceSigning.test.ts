@@ -3,6 +3,7 @@ import { IDBFactory } from "fake-indexeddb"
 import * as Automerge from "@automerge/automerge/slim"
 import { BrowserIdentityStore } from "@meta-uber/mesh-identity"
 import { profileFromIdentitySeedForDevice } from "@meta-uber/mesh-identity"
+import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest"
 import { initializeAutomerge } from "../crdt"
 import { adoptEnrolledIdentity, bootstrapIdentity, resetIdentityStorageForTest, toBase64Url, verifyEnvelope, type LocalProfile } from "../domain/identity"
@@ -13,7 +14,7 @@ import { resolveSigningContext, signWithContext } from "../domain/signingContext
 import * as signingContext from "../domain/signingContext"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { authorizeLocalChanges, recordGenesisAuthority, prepareLocalChangeAuthorizations, type WorkspaceSigningContextFactory } from "./changeAuthorization"
-import { createWorkspaceDeviceRevocation } from "./meshRecords"
+import { createWorkspaceDeviceRevocation, createWorkspaceRevocation } from "./meshRecords"
 import { peerStore } from "./peerStore"
 import { readLocal, writeLocal } from "../localDb"
 import { records } from "./workspaceChangeProofStore"
@@ -151,7 +152,7 @@ it("Given a cached public policy, when grants, certificates, epoch or automation
     expect((await build()).ownerCertificates).toContainEqual(certificate)
     expect(sign).toHaveBeenCalledTimes(3)
     credential.mockResolvedValue({ ...authority, epoch: authority.epoch + 1, transportSecret: "test-secret" })
-    expect((await build()).policy.payload.acceptedGrants).toEqual([])
+    expect((await build()).policy.payload.acceptedGrants).toEqual([grant])
     expect(sign).toHaveBeenCalledTimes(4)
     credential.mockResolvedValue({ ...authority, transportSecret: "test-secret" })
     const expiresAt = Date.now() + 60_000
@@ -166,6 +167,35 @@ it("Given a cached public policy, when grants, certificates, epoch or automation
     expect(sign).toHaveBeenCalledTimes(6)
     await build()
     expect(sign).toHaveBeenCalledTimes(6)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given valid editor grants issued at different access generations, when the owner builds public delivery policy, then retain every active signed grant independently of the transport epoch", async () => {
+  const { profile, doc } = await fixture()
+  try {
+    await recordGenesisAuthority(doc, profile)
+    const authority = (await peerStore.getWorkspaceAuthority(doc.id))!
+    const credential = { ...authority, transportSecret: "test-secret" }
+    vi.spyOn(peerStore, "getWorkspaceCredential").mockResolvedValue(credential)
+    const first = await createWorkspaceGrant(profile, doc.id, "existing-editor", "editor", 1)
+    const nextEpoch = meshRustRuntime().state.nextAccessEpoch(credential, [first])
+    expect(nextEpoch).toBeGreaterThan(credential.epoch)
+    const promoted = await createWorkspaceGrant(profile, doc.id, "promoted-editor", "editor", nextEpoch)
+    await defaultProofStore.putGrant(first.payload.grantId, first)
+    await defaultProofStore.putGrant(promoted.payload.grantId, promoted)
+    const forged = { ...promoted, payload: { ...promoted.payload, grantId: "forged-grant", accessEpoch: nextEpoch + 1 } }
+    await defaultProofStore.putGrant(forged.payload.grantId, forged)
+    const invalidGeneration = await createWorkspaceGrant(profile, doc.id, "invalid-generation", "editor", 0)
+    await defaultProofStore.putGrant(invalidGeneration.payload.grantId, invalidGeneration)
+    const policy = await buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1)
+    expect(policy.policy.payload.acceptedGrants).toHaveLength(2)
+    expect(policy.policy.payload.acceptedGrants).toContainEqual(first)
+    expect(policy.policy.payload.acceptedGrants).toContainEqual(promoted)
+    const revoked = await createWorkspaceRevocation(profile, doc.id, promoted.payload.personId, nextEpoch, Automerge.getHeads(doc))
+    credential.catalog = { revocations: [revoked] }
+    const nextPolicy = await buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 2)
+    expect(nextPolicy.policy.payload.acceptedGrants).toEqual([first])
+    expect(nextPolicy.policy.payload.revokedGrantIds).toEqual([promoted.payload.grantId])
   } finally { Automerge.free(doc) }
 })
 
