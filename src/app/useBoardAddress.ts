@@ -144,6 +144,8 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
 export function useBoardAddress(app: WorkspaceAddressApi) {
   const status = ref<BoardAddressStatus>(isBoardAddressPath(window.location.pathname) ? "resolving" : "idle")
   const unavailableBoardId = ref("")
+  const publicReadResult = ref<boolean | null>(null)
+  watch(() => [status.value, unavailableBoardId.value], () => { publicReadResult.value = null })
   let generation = 0
   const controller = createBoardAddressController({
     getAvailableWorkspaces: () => app.availableWorkspaces.value,
@@ -210,13 +212,17 @@ export function useBoardAddress(app: WorkspaceAddressApi) {
     window.removeEventListener(pairingLocationClearedEvent, onPairingLocationCleared)
   })
 
+  const publicFallback = computed(() => {
+    if (status.value !== "unavailable" || !unavailableBoardId.value) return null
+    const origin = publicBoardOrigin(window.location.search, import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined)
+    return origin ? { boardId: unavailableBoardId.value, origin } : null
+  })
   return {
     status: computed(() => status.value),
-    publicFallback: computed(() => {
-      if (status.value !== "unavailable" || !unavailableBoardId.value) return null
-      const origin = publicBoardOrigin(window.location.search, import.meta.env.VITE_PUBLIC_BOARD_ORIGIN as string | undefined)
-      return origin ? { boardId: unavailableBoardId.value, origin } : null
-    }),
+    publicFallback,
+    publicReadable: computed(() => Boolean(publicFallback.value) && publicReadResult.value === true),
+    publicReadPending: computed(() => Boolean(publicFallback.value) && publicReadResult.value === null),
+    setPublicAvailability: (value: boolean | null) => { publicReadResult.value = value },
     unavailableBoardId: computed(() => unavailableBoardId.value),
     retry: resolveCurrentAddress,
     navigateToActiveBoard,

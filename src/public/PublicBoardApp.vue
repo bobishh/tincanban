@@ -7,7 +7,9 @@ import PublicBoardContent from "./PublicBoardContent.vue"
 import { recordPublicBoardView } from "./publicAnalytics"
 
 const props = defineProps<{ boardId: string; boardSlug?: string; canonicalizeBoardRoute?: (title: string) => void; origin: string }>()
+const emit = defineEmits<{ availability: [readable: boolean | null] }>()
 const state = ref<"loading" | "ready" | "unavailable" | "malformed" | "error">("loading")
+watch(state, value => emit("availability", value === "loading" ? null : value === "ready"), { immediate: true })
 const projection = ref<PublicBoardProjection | null>(null)
 const revision = ref(0)
 const errorText = ref("")

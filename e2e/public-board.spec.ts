@@ -235,3 +235,21 @@ test("Given an obsolete local route hint for a public board, when private access
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible({ timeout: 30_000 })
   await expect(page.getByRole("button", { name: "Edit board", exact: true })).toHaveCount(0)
 })
+
+test("Given a stale private hint and unavailable public service, when the reader retries after recovery, then the same address opens publicly and local navigation remains available during failure", async ({ page }) => {
+  await page.addInitScript(boardId => {
+    localStorage.setItem("tincanban.board-route-index.v1", JSON.stringify({ version: 1, activeIdentityId: "previous-identity",
+      identities: { "previous-identity": { [boardId]: "unavailable-workspace" } } }))
+  }, boardId)
+  let available = false
+  await page.route(api, route => available
+    ? route.fulfill({ json: { boardId, revision: 1, projection: snapshot } })
+    : route.fulfill({ status: 503 }))
+  await page.goto(`/boards/${boardId}`)
+  await expect(page.getByRole("link", { name: "Open local boards", exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+  available = true
+  await page.getByRole("button", { name: "Try again", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Edit board", exact: true })).toHaveCount(0)
+})

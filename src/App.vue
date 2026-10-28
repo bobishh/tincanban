@@ -153,8 +153,10 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
     <StartupStatus v-if="startupCoverVisible" expanded :message="startupMessage" :view-only="false" :error="null" />
   </Transition>
-  <PublicBoardApp v-if="boardAddress.publicFallback.value" v-bind="boardAddress.publicFallback.value" />
-  <TincanbanPageLayout v-else :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || workspaceDialogBusy || undefined" :busy="!uiReady && !startupError">
+  <div v-if="boardAddress.publicFallback.value" v-show="boardAddress.publicReadable.value">
+    <PublicBoardApp v-bind="boardAddress.publicFallback.value" @availability="boardAddress.setPublicAvailability" />
+  </div>
+  <TincanbanPageLayout v-if="!boardAddress.publicReadable.value" :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || workspaceDialogBusy || boardAddress.publicReadPending.value || undefined" :busy="!uiReady && !startupError || boardAddress.publicReadPending.value">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
         <span class="brand-presence">
@@ -191,13 +193,13 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       </div>
     </template>
 
-    <section v-if="boardAddress.status.value === 'unavailable'" ref="routeContent" class="board-address-unavailable" role="alert">
+    <section v-if="boardAddress.status.value === 'unavailable' && !boardAddress.publicReadPending.value" ref="routeContent" class="board-address-unavailable" role="alert">
       <h1>Board unavailable</h1>
       <p>This board is not available to the current identity on this device.</p>
       <button class="button button-small" type="button" @click="boardAddress.retry">Try again</button>
       <a class="button button-small" href="/">Open local boards</a>
     </section>
-    <p v-else-if="boardAddress.status.value === 'resolving'" ref="routeContent" class="board-address-progress" role="status">Opening board…</p>
+    <p v-else-if="boardAddress.status.value === 'resolving' || boardAddress.publicReadPending.value" ref="routeContent" class="board-address-progress" role="status">Opening board…</p>
 
     <CausalChangeReview v-if="boardVisible && (causalReview.length || causalReviewError)" :changes="causalReview" :error="causalReviewError"
       :can-review="uiReady && canEditItems" :review-change="reviewCausalChange"
@@ -512,9 +514,6 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 </template>
 
 <style>
-.board-address-unavailable, .board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
-.board-address-unavailable h1 { margin: 0 0 var(--space-2); }
-.board-address-unavailable p { margin: 0 0 var(--space-4); }
 .startup-concealed { visibility: hidden; }
 .startup-revealed { animation: startup-reveal 320ms ease-out; }
 .startup-cover-enter-active, .startup-cover-leave-active { transition: opacity 320ms ease; }
