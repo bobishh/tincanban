@@ -35,6 +35,7 @@ import { parseApplicationReviewMailbox, parseApplicationReviewResponse } from ".
 import { verifyAutomationObservation } from "../../../src/domain/automationProtocol";
 import type { AttachmentLocator } from "../../../src/product-replica";
 import { ExecutionCoordinator } from "../src/executionCoordinator";
+import { renderMarkdown } from "../../../src/ui/markdown";
 import { runReplicaHostContractVectors, type ReplicaHostContractVector, type ReplicaHostPending,
   type ReplicaHostVectorObservation } from "../../../src/sync/replicaHostContractVectors.testSupport";
 
@@ -3259,6 +3260,8 @@ it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" 
     expect(notes).toContain("Existing owner notes");
     expect(notes).toContain(event.message.subject);
     expect(notes).toContain(event.message.text);
+    expect(renderMarkdown(notes)).not.toContain("reflux-email:");
+    expect(renderMarkdown(notes)).not.toContain("reflux-delivery:");
     expect(replica.candidates().find(candidate => candidate.cardId === created.cardId)?.workflow).toEqual(before.workflow);
     replica = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, data.packet.transport);
     expect(await replica.appendEmailNote(input.sourceEventId, created.cardId, event.message)).toMatchObject({ duplicate: true });

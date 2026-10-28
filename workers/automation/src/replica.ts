@@ -849,11 +849,11 @@ export class AutomationReplica {
         const digest = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson({
           from: mail.from, date: mail.date, subject, text: mail.text.trim(),
         })));
-        const marker = `<!-- reflux-email:${digest} -->`;
+        const marker = `[reflux-email:${digest}]: #`;
         const duplicate = notes.includes(marker) || Boolean(mail.text.trim() && notes.includes(mail.text.trim()));
         // Every newly accepted delivery gets a signed receipt, while its visible message appears once.
         const entry = duplicate ? "" : `### Email: ${subject}\n\nFrom: ${mail.from}\nDate: ${mail.date ?? "Unknown"}\n\n${mail.text.trim()}\n\n${marker}\n`;
-        const next = `${notes}${notes ? "\n\n" : ""}${entry}<!-- reflux-delivery:${eventId} -->`;
+        const next = `${notes}${notes ? "\n\n" : ""}${entry}[reflux-delivery:${eventId}]: #`;
         const result = await executeOwnedCommand(document, { kind: "patchItem", entityId: cardId, values: { [fieldId]: next } },
           this.profile, actorIdForProfile(this.profile), await this.grantHash(),
           (purpose, binding) => this.executionSigningContext(purpose, binding));
