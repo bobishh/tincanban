@@ -427,7 +427,7 @@ describe("incremental workspace control plane", () => {
       read: async () => encodePairingFrame("mesh-durable-ack", "secret",
         new TextEncoder().encode(await sha256Base64Url(offer))) }
     const connection = { openStream: async () => stream } as never
-    await expect(publishOwnerWorkspaceOffer(connection, "secret", offer, "mesh-owner-workspace-offer")).resolves.toBeUndefined()
+    await expect(publishOwnerWorkspaceOffer(connection, "secret", offer, "mesh-owner-workspace-offer", async () => {})).resolves.toBeUndefined()
     expect(inspectPairingFrame(stream.send.mock.calls[0]![0]).type).toBe("mesh-owner-workspace-offer")
   })
 })

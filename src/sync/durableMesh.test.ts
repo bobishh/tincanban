@@ -585,7 +585,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       getOwnedWorkspaceIds: async () => ["new-workspace"],
-      store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
+      store: { getWorkspaceCredential: async (id: string) => ({ ...credential, workspaceId: id }), getWorkspaceAuthority: async () => null, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
     const internal = meshHooks(mesh)
     internal.ensureOwnerCredential = vi.fn(async () => credential)
     internal.start = vi.fn(async () => {})
@@ -614,14 +614,14 @@ describe("DurableMesh peer catalog gossip", () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({ identity: { personId: "owner", publicKey: "owner-key" }, device: { deviceId: "owner-device" } } as never),
       getOwnedWorkspaceIds: async () => ["new-workspace"],
-      store: { getWorkspaceCredential: async () => credential, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
+      store: { getWorkspaceCredential: async (id: string) => ({ ...credential, workspaceId: id }), getWorkspaceAuthority: async () => null, listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
     const internal = meshHooks(mesh)
     internal.encodeOwnerWorkspaceOffer = vi.fn(async () => offer)
     const connection = { openStream: vi.fn(async () => stream) }
 
     await Promise.all([
-      internal.offerMissingOwnerWorkspaces(connection, "secret", [], "owner", "mesh-owner-workspace-offer"),
-      internal.offerMissingOwnerWorkspaces(connection, "secret", [], "owner", "mesh-owner-workspace-offer"),
+      internal.offerMissingOwnerWorkspaces(connection, "secret", [], "owner", "owner-device", "mesh-owner-workspace-offer"),
+      internal.offerMissingOwnerWorkspaces(connection, "secret", [], "owner", "owner-device", "mesh-owner-workspace-offer"),
     ])
 
     expect(internal.encodeOwnerWorkspaceOffer).toHaveBeenCalledOnce()

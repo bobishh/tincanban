@@ -8,7 +8,7 @@ import { createWorkspaceDoc } from "../test/boardFixture"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { computeWorkspaceAdmission, type IncomingAuthorizationBundle } from "../product-replica/workspaceAdmission"
 import { liveAutomergeWorkspaceSync, workspaceSet } from "./workspaceSet"
-import { registerOwnerOfferProofs, serveOwnerOfferProofs, publishOwnerWorkspaceOffer } from "./ownerOfferProofs"
+import { registerOwnerOfferProofs, serveOwnerOfferProofs, publishOwnerWorkspaceOffer, OwnerOfferAccessDenied } from "./ownerOfferProofs"
 import { createLiveWorkspaceSession } from "@meta-uber/mesh-runtime"
 import { clearProofPages } from "./proofPageCache"
 import type { SyncConnection } from "./transport"
@@ -19,7 +19,7 @@ beforeAll(async () => {
   await initializeAutomerge()
 })
 
-async function fixture(corruption?: "missing" | "forged") {
+async function fixture(corruption?: "missing" | "forged", ensureCurrent?: () => Promise<void>) {
   resetIdentityStorageForTest()
   const owner = await bootstrapIdentity("Owner")
   let doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Future", owner.identity.personId, "blank"))
@@ -44,13 +44,14 @@ async function fixture(corruption?: "missing" | "forged") {
   expect(workspace!.authorization).toHaveProperty("kind", "workspace-authorization-manifest")
   const offer = new TextEncoder().encode(JSON.stringify({ version: 1, workspaceId: doc.id, workspace }))
   const requests: Uint8Array[] = []
+  const proofSend = vi.fn<(bytes: Uint8Array) => void>()
   const connection = { close: vi.fn(async () => {}), acceptStream: vi.fn(), openStream: async () => {
     let request!: Uint8Array
     return { send: async (bytes: Uint8Array) => { request = bytes; requests.push(bytes) }, closeSend: async () => {},
       read: async () => {
         let response!: Uint8Array
         expect(await serveOwnerOfferProofs(connection, "old-secret", {
-          read: vi.fn(), send: async bytes => { response = bytes }, closeSend: async () => {},
+          read: vi.fn(), send: async bytes => { proofSend(bytes); response = bytes }, closeSend: async () => {},
         }, request)).toBe(true)
         if (corruption) {
           const page = JSON.parse(new TextDecoder().decode(decodePairingFrame(response, "mesh-proof-page-v1", "old-secret")))
@@ -61,7 +62,7 @@ async function fixture(corruption?: "missing" | "forged") {
         return response
       } }
   } } as SyncConnection
-  const release = await registerOwnerOfferProofs(connection, "old-secret", offer, store)
+  const release = await registerOwnerOfferProofs(connection, "old-secret", offer, store, ensureCurrent ?? (async () => {}))
   const merge = vi.fn(async () => {})
   const validate = vi.fn(async (id: string, bytes: Uint8Array, proof: unknown) => {
     const result = computeWorkspaceAdmission({ workspaceId: id, remote: bytes,
@@ -70,8 +71,37 @@ async function fixture(corruption?: "missing" | "forged") {
     expect(result.admittedHashes).toHaveLength(100)
   })
   const target = workspaceSet({ read: async () => { throw new Error("Not enrolled") }, merge, validate, activate: vi.fn() }, [doc.id])
-  return { id: doc.id, snapshot, offer, connection, target, merge, validate, release, requests }
+  return { id: doc.id, snapshot, offer, connection, target, merge, validate, release, requests, proofSend }
 }
+
+it.each(["before-request", "during-page"] as const)("Given registered owner proofs and recipient revocation %s, when a proof page is requested, then send no proof bytes", async stage => {
+  let authorized = true, serving = false
+  const f = await fixture(undefined, async () => {
+    if (!authorized) throw new Error("Recipient device revoked")
+    if (serving && stage === "during-page") authorized = false
+  })
+  serving = true
+  if (stage === "before-request") authorized = false
+  try {
+    await expect(f.target.resolveProofs(f.snapshot, f.connection, "old-secret")).rejects.toThrow("Recipient device revoked")
+    expect(f.proofSend).not.toHaveBeenCalled()
+    expect(f.connection.close).not.toHaveBeenCalled()
+  } finally { f.release(); await clearProofPages(f.id) }
+})
+
+it("Given B proof access revoked on a healthy A connection, when a later proof request arrives, then end only its stream without failing the A dispatcher", async () => {
+  let denied = false
+  const f = await fixture(undefined, async () => { if (denied) throw new OwnerOfferAccessDenied() })
+  const stream = { send: vi.fn(), closeSend: vi.fn(async () => {}), read: vi.fn() }
+  try {
+    await f.target.resolveProofs(f.snapshot, f.connection, "old-secret")
+    denied = true
+    await expect(serveOwnerOfferProofs(f.connection, "old-secret", stream, f.requests[0]!)).resolves.toBe(true)
+    expect(stream.send).not.toHaveBeenCalled()
+    expect(stream.closeSend).toHaveBeenCalledOnce()
+    expect(f.connection.close).not.toHaveBeenCalled()
+  } finally { f.release(); await clearProofPages(f.id) }
+})
 
 it("Given approved future-board offer, pages bypass current scope and ACK waits for durable admission", async () => {
   const f = await fixture()
@@ -171,7 +201,7 @@ it("Given native RPC proof-request reply, owner publishes exact pages and waits 
   let commit!: () => void
   f.merge.mockImplementation(() => new Promise<void>(resolve => { commit = resolve }))
   let acknowledged = false
-  const delivery = publishOwnerWorkspaceOffer(f.connection, "old-secret", f.offer, "mesh-owner-workspace-offer")
+  const delivery = publishOwnerWorkspaceOffer(f.connection, "old-secret", f.offer, "mesh-owner-workspace-offer", async () => {})
     .then(() => { acknowledged = true })
   await vi.waitFor(() => expect(f.merge).toHaveBeenCalledOnce())
   expect(acknowledged).toBe(false)
@@ -186,7 +216,7 @@ it("Given native RPC proof-request reply, owner publishes exact pages and waits 
 
 it.each(["missing", "forged"] as const)("Given native RPC %s proofs, sender receives no durable ACK", async corruption => {
   const f = await nativeRpcFixture(corruption)
-  await expect(publishOwnerWorkspaceOffer(f.connection, "old-secret", f.offer, "mesh-owner-workspace-offer")).rejects.toThrow()
+  await expect(publishOwnerWorkspaceOffer(f.connection, "old-secret", f.offer, "mesh-owner-workspace-offer", async () => {})).rejects.toThrow()
   expect(f.merge).not.toHaveBeenCalled()
   f.close()
   await clearProofPages(f.id)

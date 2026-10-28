@@ -1,7 +1,7 @@
 import { canonicalizeJson, type LocalProfile, toBase64Url } from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
-import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
-import { mayOfferFutureKeeperWorkspace, saveOwnerKeeper } from "./ownerKeeper"
+import { defaultProofStore } from "../domain/proofs"
+import { saveOwnerKeeper } from "./ownerKeeper"
 import { createPairingSecret} from "@meta-uber/mesh-pairing"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { createPeerAdvertisement, verifyWorkspaceMemberBundle,
@@ -10,17 +10,15 @@ import { createPeerAdvertisement, verifyWorkspaceMemberBundle,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { type PeerStore, type WorkspaceMeshCredential} from "./peerStore"
 import type { SyncConnection} from "./transport"
-import { workspaceSet, publishOwnerWorkspaceOffer} from "./workspaceSet"
+import { workspaceSet } from "./workspaceSet"
 import { exportWorkspaceProofs } from "./workspaceProofTransfer"
-import { registerOwnerOfferProofs } from "./ownerOfferProofs"
 import { departures, hasLeftWorkspace, deviceRevocations, isDeviceRevoked, isGrantRevoked, uniqueCertificates, isEnvelope, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims,
   type MeshExport, type MeshWorkspaceEnvelope } from "./durableMeshBase"
 import { DurableMeshBase } from "./durableMeshBase"
 import { defaultStorage, type WorkspaceAuthorityMutationContext } from "../storage"
-import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { workspaceRecordSigning, WorkspaceRecordAuthorityChangedError } from "./meshRecordSigning"
 import { persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
-import { ownerKeeperOfferPolicy, ownerWorkspaceOfferSchema } from "./durableMeshOwnerOfferPolicy"
+import { offerOwnerWorkspaces, ownerWorkspaceOfferSchema } from "./durableMeshOwnerOfferPolicy"
 import { captureWorkspaceRouteEnvelopes, readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
 export { ownerKeeperOfferPolicy } from "./durableMeshOwnerOfferPolicy"
 import { z } from "zod"
@@ -254,7 +252,7 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
       if (!entry.ownerWorkspaceOfferFrame) return
       const credential = await this.store.getWorkspaceCredential(entry.workspaceId)
       if (!credential) return
-      await this.offerMissingOwnerWorkspaces(entry.connection, credential.transportSecret, [], entry.remotePersonId, entry.ownerWorkspaceOfferFrame, [workspaceId])
+      await this.offerMissingOwnerWorkspaces(entry.connection, credential.transportSecret, [], entry.remotePersonId, entry.deviceId, entry.ownerWorkspaceOfferFrame, [workspaceId])
     }))
   }
 
@@ -299,60 +297,14 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
     await recordVerifiedOwnerWorkspace(workspaceId)
   }
 
-  protected async offerMissingOwnerWorkspaces(connection: SyncConnection, secret: string,
-    remoteWorkspaceIds: unknown, remotePersonId: string,
-    ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined,
-    onlyWorkspaceIds?: string[]) {
-    const profile = await this.options.getProfile()
-    if (!ownerWorkspaceOfferFrame) return
-    const policy = await ownerKeeperOfferPolicy(profile, remotePersonId)
-    if (!policy.allowed) return
-    const keeper = policy.keeper
-    const ownedIds = this.options.getOwnedWorkspaceIds ? await this.options.getOwnedWorkspaceIds() : await this.ownerWorkspaceIds(profile)
-    if (this.node) await this.ensureOwnerWorkspaces(ownedIds, this.node.endpointId, profile)
-    const missing = meshRustRuntime().state.missingOwnerWorkspaces(ownedIds, remoteWorkspaceIds)
-      .filter(workspaceId => !onlyWorkspaceIds || onlyWorkspaceIds.includes(workspaceId))
-      .filter(workspaceId => !keeper || keeper.details?.boardIds.includes(workspaceId)
-        || mayOfferFutureKeeperWorkspace(keeper.details, workspaceId))
-    for (const workspaceId of missing) {
-      const key = `${remotePersonId}\0${workspaceId}`
-      const pending = this.ownerWorkspaceOffers.get(key)
-      if (pending) {
-        await pending
-        continue
-      }
-      const offerPromise = (async () => {
-        let offer = await this.encodeOwnerWorkspaceOffer(workspaceId)
-        if (keeper) {
-          const credential = await this.store.getWorkspaceCredential(workspaceId)
-          if (credential?.ownerPersonId !== profile.identity.personId) return
-          // Existing revocation/departure always wins over the future-board policy.
-          if (hasLeftWorkspace(credential, remotePersonId) || revocations(credential).some(record => record.payload.personId === remotePersonId)) return
-          const issued = await defaultProofStore.listGrants(workspaceId)
-          let grant = issued.find(record => record.payload.personId === remotePersonId && record.payload.role === keeper.role)
-          if (!grant) {
-            const accessEpoch = await this.nextAccessEpoch(workspaceId)
-            const context = await workspaceOwnerSigningContext(profile, workspaceId, "workspace-grant",
-              { personId: remotePersonId, role: keeper.role, accessEpoch }, async () =>
-                await this.store.getWorkspaceAuthority(workspaceId) ?? await this.store.getWorkspaceCredential(workspaceId))
-            grant = await createWorkspaceGrant(profile, workspaceId, remotePersonId, keeper.role, accessEpoch, context)
-            await defaultStorage.withWorkspaceAuthorityMutation(workspaceId,
-              context => context.write(() => defaultProofStore.putGrant(grant!.payload.grantId, grant!)))
-          }
-          const value = z.record(z.string(), z.unknown()).parse(JSON.parse(new TextDecoder().decode(offer)))
-          offer = new TextEncoder().encode(JSON.stringify({ ...value, grant, controllerPersonId: profile.identity.personId }))
-        }
-        const release = await registerOwnerOfferProofs(connection, secret, offer, this.options.workspaceStore)
-        try { await publishOwnerWorkspaceOffer(connection, secret, offer, ownerWorkspaceOfferFrame) }
-        finally { release() }
-      })()
-      this.ownerWorkspaceOffers.set(key, offerPromise)
-      try { await offerPromise } finally {
-        if (this.ownerWorkspaceOffers.get(key) === offerPromise) this.ownerWorkspaceOffers.delete(key)
-      }
-    }
+  protected async offerMissingOwnerWorkspaces(connection: SyncConnection, secret: string, remoteWorkspaceIds: unknown, remotePersonId: string,
+    remoteDeviceId: string, ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined, onlyWorkspaceIds?: string[]) {
+    return offerOwnerWorkspaces({ getProfile: this.options.getProfile, store: this.store, workspaceStore: this.options.workspaceStore, pending: this.ownerWorkspaceOffers,
+      ownedIds: profile => this.options.getOwnedWorkspaceIds ? this.options.getOwnedWorkspaceIds() : this.ownerWorkspaceIds(profile),
+      prepare: async (ids, profile) => { if (this.node) await this.ensureOwnerWorkspaces(ids, this.node.endpointId, profile) },
+      encode: id => this.encodeOwnerWorkspaceOffer(id), nextAccessEpoch: id => this.nextAccessEpoch(id) },
+    { connection, secret, remoteWorkspaceIds, remotePersonId, remoteDeviceId, frame: ownerWorkspaceOfferFrame, onlyWorkspaceIds })
   }
-
   async createGuestAdvertisements(workspaceIds: string[], endpoint: string, profile: LocalProfile): Promise<WorkspaceMemberBundle[]> {
     await this.acquireInstance()
     const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())

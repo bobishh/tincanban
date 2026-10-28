@@ -359,7 +359,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     ownerWorkspaceIds: string[] | undefined, connection: SyncConnection,
     ownerWorkspaceOfferFrame: "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1" | undefined): Promise<void> {
     await this.refreshWorkspaceGossip(credential.workspaceId)
-    await this.offerMissingOwnerWorkspaces(connection, credential.transportSecret, ownerWorkspaceIds, remote.personId,
+    await this.offerMissingOwnerWorkspaces(connection, credential.transportSecret, ownerWorkspaceIds, remote.personId, remote.deviceId,
       ownerWorkspaceOfferFrame)
   }
 

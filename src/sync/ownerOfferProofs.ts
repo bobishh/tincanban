@@ -7,17 +7,18 @@ import type { DuplexStream, SyncConnection } from "./transport"
 import { meshIngressPayloadLimit, meshIngressTransferDeadlineMs } from "../iroh"
 
 type Source = ReturnType<typeof workspaceProofTransfer>
-type Pending = { manifest: string; source: Source }
+type Pending = { manifest: string; source: Source; ensureCurrent: () => Promise<void> }
 const pending = new WeakMap<SyncConnection, Map<string, Pending>>()
+export class OwnerOfferAccessDenied extends Error {}
 
 export async function publishOwnerWorkspaceOffer(connection: SyncConnection, secret: string, bytes: Uint8Array,
-  frame: OwnerWorkspaceOfferFrame): Promise<void> {
+  frame: OwnerWorkspaceOfferFrame, ensureCurrent: () => Promise<void>): Promise<void> {
   const protocol = createLiveWorkspaceSession("workspace-set", secret)
   try {
     let response: Uint8Array | undefined
     if (bytes.byteLength <= meshIngressPayloadLimit("mesh-owner-workspace-offer")) {
       response = await exchangeOwnerFrame(connection, protocol.encode("mesh-owner-workspace-offer", bytes),
-        meshIngressTransferDeadlineMs())
+        meshIngressTransferDeadlineMs(), ensureCurrent)
     } else {
       if (frame !== "mesh-owner-workspace-offer-page-v1") {
         throw new Error("Peer does not support bounded owner workspace offers")
@@ -25,7 +26,7 @@ export async function publishOwnerWorkspaceOffer(connection: SyncConnection, sec
       const pages = protocol.encodeOwnerWorkspaceOfferPages(bytes)
       const deadline = Date.now() + meshIngressTransferDeadlineMs()
       for (let index = 0; index < pages.length; index++) {
-        response = await exchangeOwnerFrame(connection, pages[index]!, Math.max(1, deadline - Date.now()))
+        response = await exchangeOwnerFrame(connection, pages[index]!, Math.max(1, deadline - Date.now()), ensureCurrent)
         if (response.byteLength > 0) break
         if (index === pages.length - 1) throw new Error("Owner workspace offer was not durably acknowledged")
       }
@@ -43,21 +44,27 @@ export async function publishOwnerWorkspaceOffer(connection: SyncConnection, sec
         send: async value => { page = value }, closeSend: async () => {},
         read: async () => { throw new Error("Owner proof source cannot read") },
       }, response)
-      if (!handled || !page) throw new Error("Native requested proofs outside approved owner offer")
+      if (!handled || !page) {
+        await ensureCurrent()
+        throw new Error("Native requested proofs outside approved owner offer")
+      }
       outgoing = page
       response = await exchangeOwnerFrame(connection, outgoing, Math.min(20_000,
-        meshIngressTransferDeadlineMs()))
+        meshIngressTransferDeadlineMs()), ensureCurrent)
     }
     throw new Error("Owner proof reply limit exceeded")
   } finally { protocol.free?.() }
 }
 
-async function exchangeOwnerFrame(connection: SyncConnection, frame: Uint8Array, timeoutMs: number): Promise<Uint8Array> {
+async function exchangeOwnerFrame(connection: SyncConnection, frame: Uint8Array, timeoutMs: number,
+  ensureCurrent: () => Promise<void>): Promise<Uint8Array> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stream: DuplexStream | undefined
   try {
     return await Promise.race([(async () => {
+      await ensureCurrent()
       stream = await connection.openStream()
+      await ensureCurrent()
       await stream.send(frame)
       await stream.closeSend()
       return stream.read()
@@ -78,7 +85,8 @@ async function exchangeOwnerFrame(connection: SyncConnection, frame: Uint8Array,
  * outgoing offer. Requests can read only its exact frozen manifest on this
  * connection and existing transport secret, never an arbitrary workspace. */
 export async function registerOwnerOfferProofs(connection: SyncConnection, secret: string,
-  bytes: Uint8Array, store: WorkspaceSetStore): Promise<() => void> {
+  bytes: Uint8Array, store: WorkspaceSetStore, ensureCurrent: () => Promise<void>): Promise<() => void> {
+  await ensureCurrent()
   const offer = JSON.parse(new TextDecoder().decode(bytes)) as {
     workspaceId: string; workspace: { id: string; bytes: string; authorization?: { kind?: string; transferId?: string } }
   }
@@ -89,6 +97,7 @@ export async function registerOwnerOfferProofs(connection: SyncConnection, secre
   }
   const document = fromBase64Url(offer.workspace.bytes)
   const authorization = await store.readAuthorization(document, offer.workspaceId)
+  await ensureCurrent()
   const source = workspaceProofTransfer({ ...store,
     read: async id => {
       if (id !== offer.workspaceId) throw new Error("Proof workspace outside approved owner offer")
@@ -99,7 +108,7 @@ export async function registerOwnerOfferProofs(connection: SyncConnection, secre
   const key = `${secret}\0${manifest.transferId}`
   const entries = pending.get(connection) ?? new Map<string, Pending>()
   if (entries.has(key)) throw new Error("Owner proof transfer already pending")
-  const entry = { manifest: canonical(manifest), source }
+  const entry = { manifest: canonical(manifest), source, ensureCurrent }
   entries.set(key, entry)
   pending.set(connection, entries)
   return () => {
@@ -119,7 +128,15 @@ export async function serveOwnerOfferProofs(connection: SyncConnection, secret: 
   const entry = pending.get(connection)?.get(`${secret}\0${request.manifest?.transferId}`)
   if (!entry) return false
   if (canonical(request.manifest) !== entry.manifest) throw new Error("Owner proof request changed approved manifest")
-  return entry.source.serveProofPage(frame, stream, secret)
+  try {
+    await entry.ensureCurrent()
+    return await entry.source.serveProofPage(frame, { read: () => stream.read(), closeSend: () => stream.closeSend(),
+      send: async bytes => { await entry.ensureCurrent(); await stream.send(bytes) } }, secret)
+  } catch (error) {
+    if (!(error instanceof OwnerOfferAccessDenied)) throw error
+    await stream.closeSend()
+    return true
+  }
 }
 
 function canonical(value: unknown): string {

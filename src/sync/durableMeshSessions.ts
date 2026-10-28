@@ -147,7 +147,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       if (installed && value.ownerWorkspaceOfferFrame) {
         const credential = await this.store.getWorkspaceCredential(peer.workspaceId)
         if (credential) await this.offerMissingOwnerWorkspaces(value.connection, credential.transportSecret,
-          value.ownerWorkspaceIds, value.personId, value.ownerWorkspaceOfferFrame)
+          value.ownerWorkspaceIds, value.personId, peer.deviceId, value.ownerWorkspaceOfferFrame)
       }
     } catch (error) {
       if (signal.aborted || error instanceof MeshDialCancelled) {
