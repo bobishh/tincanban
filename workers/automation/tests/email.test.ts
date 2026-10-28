@@ -71,3 +71,11 @@ test('Given Gmail forwarding setup, when choosing its confirmation link, then ac
     assert.equal(gmailForwardingConfirmationUrl({ ...message, urls: [url] }), null);
   }
 });
+
+test('Given a job email with wrapped company and role names, when correlated, then whitespace does not hide a unique application', () => {
+  const result = correlateApplication({ messageId: '<wrapped@example.test>', inReplyTo: null, references: [],
+    subject: 'Caspar Health update', text: 'We received your application for Senior Backend & AI Engineer\r\n(all identities).', urls: [] },
+  [{ cardId: 'caspar', company: 'Caspar Health', role: 'Senior Backend & AI Engineer (all identities)' },
+    { cardId: 'other-role', company: 'Caspar Health', role: 'Product Designer' }]);
+  assert.deepEqual(result, { kind: 'matched', cardId: 'caspar', method: 'company-role' });
+});

@@ -99,7 +99,7 @@ export function correlateApplication(mail: Pick<ForwardedMail, 'messageId' | 'in
   if (urlMatches.length === 1) return { kind: 'matched', cardId: urlMatches[0].cardId, method: 'job-url' };
   if (urlMatches.length > 1) return review('Job URL matches multiple applications', urlMatches);
 
-  const context = `${mail.subject}\n${mail.text}`.normalize('NFKC').toLocaleLowerCase();
+  const context = normalizePhrase(`${mail.subject}\n${mail.text}`);
   const contextMatches = candidates.filter((candidate) => {
     const company = normalizePhrase(candidate.company);
     const role = normalizePhrase(candidate.role);
