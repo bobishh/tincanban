@@ -1,7 +1,7 @@
-import { expect, type Page, type Response, type TestInfo } from "@playwright/test"
+import { expect, type Page, type Request, type Response, type TestInfo } from "@playwright/test"
 import { writeFile } from "node:fs/promises"
 
-/** Exercise a real owner status poll while its unsaved Body draft receives keyboard input. */
+/** Exercise a real owner status poll while the unsaved card form receives keyboard input. */
 export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, boardId: string, info: TestInfo) {
   const isOwnerChallenge = (response: Response) => response.url() === `${origin}/v1/public/challenges` &&
     response.ok() && response.request().postDataJSON()?.boardId === boardId
@@ -26,7 +26,7 @@ export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, 
     if (!panel) return false
     return new Promise<boolean>(resolve => {
       let timer: ReturnType<typeof setTimeout> | undefined
-      const idle = () => panel.getAttribute("data-public-sync-pending") === "false" &&
+      const idle = () => panel.getAttribute("aria-busy") === "false" && panel.getAttribute("data-public-sync-pending") === "false" &&
         panel.querySelector('[role="status"]')?.textContent?.trim() === expectedStatus
       const observer = new MutationObserver(() => arm())
       const finish = () => {
@@ -51,8 +51,9 @@ export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, 
   await expect(body).toBeVisible()
   const session = await page.context().newCDPSession(page)
   await session.send("Emulation.setCPUThrottlingRate", { rate: 4 })
-  const initialVersion = await page.evaluate(async () => {
+  const initial = await page.evaluate(async () => {
     const state = (await import("/src/test/stateFixture.ts")).useTincanban()
+    const { workspaceHeads } = await import("/src/crdt.ts")
     const measure = { paints: [] as number[], events: [] as number[], policySignatures: 0, attachmentReads: 0 }
     const get = IDBObjectStore.prototype.get
     IDBObjectStore.prototype.get = function(key) {
@@ -79,13 +80,18 @@ export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, 
     Object.assign(window, { publicPollingMeasurement: { measure, finish: () => {
       measure.events.push(...(observer.takeRecords() as PerformanceEventTiming[]).filter(entry => entry.interactionId).map(entry => entry.duration))
       observer.disconnect(); crypto.subtle.sign = sign; IDBObjectStore.prototype.get = get; input.removeEventListener("input", onInput)
-      return { ...measure, version: state.docVersion.value }
+      return { ...measure, version: state.docVersion.value, heads: workspaceHeads(state.getActiveDoc()!), document: JSON.stringify(state.getActiveDoc()) }
     } } })
-    return state.docVersion.value
+    return { version: state.docVersion.value, heads: workspaceHeads(state.getActiveDoc()!), document: JSON.stringify(state.getActiveDoc()) }
   })
   let polls = 0
+  const publicWrites: string[] = []
   const onResponse = (response: Response) => { if (isOwnerChallenge(response)) polls++ }
+  const onRequest = (request: Request) => {
+    if (request.method() === "PUT" && request.url().startsWith(`${origin}/v1/public/boards/${encodeURIComponent(boardId)}`)) publicWrites.push(request.url())
+  }
   page.on("response", onResponse)
+  page.on("request", onRequest)
   try {
     const draft = "draft body ".repeat(8)
     await body.pressSequentially(draft, { delay: 200, timeout: 30_000 })
@@ -93,19 +99,24 @@ export async function verifyPublicOwnerPollingDraft(page: Page, origin: string, 
     await expect.poll(() => polls, { timeout: 5_000 }).toBeGreaterThan(0)
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
     const measured = await page.evaluate(() => (window as unknown as {
-      publicPollingMeasurement: { finish: () => { paints: number[]; events: number[]; policySignatures: number; attachmentReads: number; version: number } }
+      publicPollingMeasurement: { finish: () => { paints: number[]; events: number[]; policySignatures: number; attachmentReads: number; version: number; heads: string[]; document: string } }
     }).publicPollingMeasurement.finish())
     const measurementPath = info.outputPath("public-owner-polling.json")
-    await writeFile(measurementPath, JSON.stringify({ ...measured, polls }, null, 2))
+    await writeFile(measurementPath, JSON.stringify({ ...measured, initialVersion: initial.version, polls, publicWrites }, null, 2))
     await info.attach("public-owner-polling.json", { path: measurementPath, contentType: "application/json" })
     expect(measured.policySignatures).toBe(0)
     expect(measured.attachmentReads).toBe(0)
-    expect(measured.version).toBe(initialVersion)
+    // docVersion also invalidates profile presentation. CRDT heads and contents
+    // identify saved board changes independently from those harmless refreshes.
+    expect(measured.heads).toEqual(initial.heads)
+    expect(measured.document).toBe(initial.document)
+    expect(publicWrites).toEqual([])
     expect(measured.paints).toHaveLength(draft.length)
     expect(Math.max(...measured.paints)).toBeLessThan(200)
     expect(Math.max(0, ...measured.events)).toBeLessThan(200)
   } finally {
     page.off("response", onResponse)
+    page.off("request", onRequest)
     await session.send("Emulation.setCPUThrottlingRate", { rate: 1 })
     if (await form.isVisible()) await form.getByRole("button", { name: "Cancel", exact: true }).click()
   }
