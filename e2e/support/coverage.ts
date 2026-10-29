@@ -6,7 +6,7 @@ export * from "@playwright/test"
 // Opt-in collection changes timing. Keep performance benchmarks uninstrumented.
 export const test = process.env.TINCANBAN_E2E_COVERAGE === "1" ? base.extend<{ sourceCoverage: void }>({
   sourceCoverage: [async ({ page, browserName }, use, info) => {
-    if (browserName !== "chromium" || (info.file.endsWith("card-move-performance.spec.ts") || info.file.endsWith("card-move-responsiveness.spec.ts") || info.file.endsWith("card-edit-responsiveness.spec.ts") || info.file.endsWith("card-drop-zone.spec.ts") || info.file.endsWith("search-responsiveness.spec.ts") || info.file.endsWith("chat-open-performance.spec.ts"))) {
+    if (browserName !== "chromium" || info.file.endsWith("card-move-performance.spec.ts") || info.file.endsWith("card-drop-zone.spec.ts") || info.file.endsWith("chat-open-performance.spec.ts")) {
       await use()
       return
     }
