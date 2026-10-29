@@ -19,7 +19,8 @@ type PeerAdmissionContext = {
 function peerAuthorizationChanged(previous: Awaited<ReturnType<PeerStore["getPeer"]>>,
   record: { role: string; revokedAt: string | null }, incomingGrant: WorkspaceGrant | undefined): boolean {
   const previousGrant = (previous?.advertisement as { grant?: WorkspaceGrant } | undefined)?.grant
-  return !previous || previous.role !== record.role || previous.revokedAt !== record.revokedAt ||
+  // Both missing and null mean active; SDK route normalization can omit that marker.
+  return !previous || previous.role !== record.role || (previous.revokedAt ?? null) !== record.revokedAt ||
     canonicalizeJson(previousGrant ?? null) !== canonicalizeJson(incomingGrant ?? null)
 }
 

@@ -40,7 +40,8 @@ test("Given confirmed Rusty attachment coverage, when the source browser closes,
     await recipient.goto(await ownerSync.getByLabel("Pairing link").inputValue())
     const enrollment = recipient.getByRole("dialog", { name: "Device sync" })
     const replace = enrollment.getByRole("checkbox", { name: /Replace this device.s identity/ })
-    await expect(enrollment.getByRole("button", { name: "Add this device", exact: true })).toBeVisible()
+    // Form loading precedes identity consent; its button can remain disabled until the checkbox is checked.
+    await expect(enrollment.getByRole("button", { name: "Add this device", exact: true })).toBeVisible({ timeout: 30_000 })
     if (await replace.count()) await replace.check()
     await enrollment.getByRole("button", { name: "Add this device", exact: true }).click()
     await expect(ownerSync.getByRole("button", { name: "Approve device", exact: true })).toBeVisible({ timeout: 30_000 })

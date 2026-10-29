@@ -1,6 +1,6 @@
 import { BrowserMeshStore, MemoryMeshStore } from "@meta-uber/mesh-browser-store"
 import { canonicalizeJson, sha256Base64Url } from "@meta-uber/mesh-identity"
-import type { LocalProfile } from "../domain/identity"
+import { captureIdentityProfile, type LocalProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import type { CaptureCheckpointPort } from "./historyBaselineCapture"
@@ -186,7 +186,7 @@ function assertOwnerTransition(input: HistoryTransitionInput, transitionId: stri
 }
 
 async function loadHistoryTransition(input: HistoryTransitionInput) {
-  const profile = structuredClone(input.profile)
+  const profile = captureIdentityProfile(input.profile)
   const config = structuredClone(input.config)
   const routes = parseReplicaWriterWorkers(structuredClone(input.routes), config.workspaceId)
   const scopeAuthoritySnapshot = structuredClone(input.scopeAuthoritySnapshot)
@@ -308,7 +308,7 @@ export async function coordinateWorkspaceHistoryBaseline(input: {
   const transitionId = input.transitionId
   const previousBaselineId = input.previousBaselineId ?? null
   const profileValue = input.app.getCurrentProfile()
-  const profile = profileValue ? structuredClone(profileValue) : undefined
+  const profile = profileValue ? captureIdentityProfile(profileValue) : undefined
   if (!profile) throw new Error("Current identity is unavailable for history maintenance")
   await input.ports.ensureCurrent()
   const { discoverWorkspaceReplicaWorkers } = await import("./workspaceReplicaWorkers")

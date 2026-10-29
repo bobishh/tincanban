@@ -1,6 +1,6 @@
 import { withPublicBoardOrigin } from "./publicBoardLink"
 import * as Automerge from "@automerge/automerge/slim"
-import { canonicalizeJson, sha256Base64Url, toBase64Url, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { captureIdentityProfile, canonicalizeJson, sha256Base64Url, toBase64Url, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext } from "../domain/signingContext"
 import type { DeviceCertificate, WorkspaceDocumentV2 } from "../domain/model"
@@ -145,7 +145,7 @@ export async function publishBoardSnapshot(input: { origin: string; boardId: str
   onProgress({ phase: "connecting" })
   // Capture authority metadata independently; limit document copying to the selected board tree.
   const snapshot = { origin: input.origin, boardId: input.boardId, workspaceId: input.workspaceId,
-    profile: structuredClone(input.profile), action: input.action, expectedRevision: input.expectedRevision,
+    profile: captureIdentityProfile(input.profile), action: input.action, expectedRevision: input.expectedRevision,
     deliveryPolicy: input.deliveryPolicy ? structuredClone(input.deliveryPolicy) : undefined,
     preparedProjection: input.preparedProjection ? structuredClone(input.preparedProjection) : undefined,
     preparedProjectionHash: input.preparedProjectionHash,
@@ -256,7 +256,7 @@ async function stagePublicationAssets(server: PublicationService, boardId: strin
 }
 export async function withdrawPublicBoard(input: { origin: string; boardId: string; profile: LocalProfile; expectedRevision: number; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; url: string; receipt: Receipt }> {
   const ensureCurrent = input.ensureCurrent
-  const snapshot = structuredClone({ ...input, ensureCurrent: undefined })
+  const snapshot = { ...input, profile: captureIdentityProfile(input.profile) }
   await ensureCurrent?.()
   const profile = snapshot.profile
   const server = await service(snapshot.origin)
@@ -267,7 +267,7 @@ export async function withdrawPublicBoard(input: { origin: string; boardId: stri
 }
 export async function readPublicBoardManagementState(input: { origin: string; boardId: string; profile: LocalProfile; ensureCurrent?: () => void | Promise<void> }): Promise<{ revision: number; published: boolean; availability: "published" | "withdrawn" | "missing"; projection?: PublicBoardProjection; hash?: string; deliveryGeneration?: number | null; deliveryPolicyHash?: string | null; deliveryPolicyContentHash?: string | null }> {
   const ensureCurrent = input.ensureCurrent
-  const snapshot = structuredClone({ ...input, ensureCurrent: undefined })
+  const snapshot = { ...input, profile: captureIdentityProfile(input.profile) }
   await ensureCurrent?.()
   const profile = snapshot.profile
   const server = await service(snapshot.origin)

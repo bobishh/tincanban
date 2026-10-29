@@ -1,4 +1,4 @@
-import { canonicalizeJson } from "../domain/identity"
+import { captureIdentityProfile, canonicalizeJson } from "../domain/identity"
 import { parseAutomationApproval } from "../domain/automationApproval"
 import { parseAutomationDefinition, type AutomationDefinition } from "../domain/automationContract"
 import { automationLifecycle } from "../domain/automationLifecycle"
@@ -28,7 +28,7 @@ export async function discoverWorkspaceReplicaWorkers(appPick: WorkspacePick, co
   const accepted = acceptedStorageVariants ? structuredClone([...acceptedStorageVariants]) : [config]
   const profileValue = appPick.getCurrentProfile()
   if (!profileValue) throw new Error("Current identity is unavailable for Worker discovery")
-  const profile = structuredClone(profileValue)
+  const profile = captureIdentityProfile(profileValue)
   await guardAsync()
   const documentValue = await appPick.readWorkspaceDoc(config.workspaceId)
   const documentId = documentValue?.id
@@ -73,7 +73,7 @@ export async function discoverWorkspaceReplicaWorkers(appPick: WorkspacePick, co
 /** Apply an already verified Rusty receipt to each captured Worker route without renewing grants. */
 export async function refreshWorkspaceReplicaWorkers(profileValue: LocalProfile, configValue: BlindReplicaConfig,
   receiptValue: RustyScopePolicyReceipt, targetValues: ReplicaWriterWorker[], guardAsync: GuardAsync): Promise<void> {
-  const profile = structuredClone(profileValue)
+  const profile = captureIdentityProfile(profileValue)
   const config = structuredClone(configValue)
   const targets = parseReplicaWriterWorkers(structuredClone(targetValues), config.workspaceId)
   const receipt = parseRustyScopePolicyReceipt(receiptValue)

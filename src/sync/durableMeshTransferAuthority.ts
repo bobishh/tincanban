@@ -1,6 +1,6 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
-import type { LocalProfile } from "../domain/identity"
+import { captureIdentityProfile, type LocalProfile } from "../domain/identity"
 import { canonicalAuthorityJson } from "./authorityFingerprint"
 import type { PeerStore, WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerStore"
 import type { BlobAuthoritySnapshot } from "./durableMeshBlobFetch"
@@ -16,7 +16,7 @@ export async function readDurableMeshTransferAuthority(input: {
     input.descriptor ? input.blob?.resolve(input.workspaceId, input.descriptor.blobId) : undefined,
   ])
   if (!rawCredential) throw new Error("Workspace mesh credential is unavailable")
-  const profile = structuredClone(rawProfile)
+  const profile = captureIdentityProfile(rawProfile)
   const credential = structuredClone(rawCredential)
   assertAttachmentMembership(credential, authority)
   assertAttachmentReference(input.descriptor, referenced)

@@ -243,6 +243,12 @@ describe("publication client signed state and receipts", () => {
       personId: owner.identity.personId, resourceKind: "board", resourceId: boardId, revision: 3,
       operations: ["management.update", "publication.status"], revokedDeviceIds: [], requestId: "policy-3",
       authorizationHash: "A".repeat(43), issuedAt: Date.now() }) as SignedEnvelope<RustyManagementCapability>
+    const clone = globalThis.structuredClone
+    vi.spyOn(globalThis, "structuredClone").mockImplementation(value => {
+      const input = value as { privateKeys?: unknown; profile?: { privateKeys?: unknown } } | undefined
+      if (input?.privateKeys || input?.profile?.privateKeys) throw new Error("Publication status must not serialize browser-owned CryptoKey handles")
+      return clone(value)
+    })
     await expect(readPublicBoardManagementState({ origin, boardId, profile: owner })).resolves.toMatchObject({ revision: 0, published: false })
     expect(managementStatusCount).toBe(1)
     expect(challengeBody?.managementCapability).toEqual(managementCapability)

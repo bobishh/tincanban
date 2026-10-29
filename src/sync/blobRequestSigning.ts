@@ -1,12 +1,12 @@
 import { BLOB_SIGNATURE_DOMAIN, type BlobRequestPayload, type BlobRequestSigner } from "@meta-uber/mesh-blob"
-import type { LocalProfile } from "../domain/identity"
+import { captureIdentityProfile, type LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signWithContext } from "../domain/signingContext"
 
 /** Bind peer chunk requests to the current member, exact file and caller's live session generation. */
 export async function blobRequestSigning(profile: LocalProfile, workspaceId: string, blobId: string,
   currentAuthority: () => Promise<string>): Promise<BlobRequestSigner> {
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const revision = await currentAuthority()
   const unchanged = async () => {
     if (await currentAuthority() !== revision) throw new Error("Blob request authority or session changed while signing")

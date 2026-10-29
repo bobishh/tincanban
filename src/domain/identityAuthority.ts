@@ -29,6 +29,10 @@ export class IdentityDeviceAccessDeniedError extends Error {
 
 type LearnedDeviceAccess = { personId: string; devices: string[]; key: string; raw: string | null; viewDigest: string | null }
 
+class IdentityAuthoritySnapshotChangedError extends Error {
+  constructor() { super("Identity authority changed during access check") }
+}
+
 async function readLearnedDeviceAccess(personId: string, deviceIds: readonly string[]): Promise<LearnedDeviceAccess> {
   if (typeof personId !== "string" || !personId || personId.length > 128) throw new Error("Identity person binding is required")
   const devices = [...new Set(deviceIds)]
@@ -47,7 +51,22 @@ async function assertAccessCurrent(snapshots: readonly LearnedDeviceAccess[]): P
   if (await compareAndSwapLocal({ conditions: snapshots.map(({ key, raw }) => ({ key, value: raw })), writes: [] })) return
   // Reauthenticate after change. A revocation is a denial; another change requires a fresh operation.
   await Promise.all(snapshots.map(snapshot => readLearnedDeviceAccess(snapshot.personId, snapshot.devices)))
-  throw new Error("Identity authority changed during access check")
+  throw new IdentityAuthoritySnapshotChangedError()
+}
+
+/** Initial capture can restart before any caller has bound an operation to its snapshot. */
+async function captureLearnedDeviceAccess(groups: ReadonlyMap<string, readonly string[]>): Promise<LearnedDeviceAccess[]> {
+  const known = new Set<string>()
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const snapshots = await Promise.all([...groups].map(([personId, devices]) => readLearnedDeviceAccess(personId, devices)))
+    for (const snapshot of snapshots) {
+      if (snapshot.raw === null && known.has(snapshot.personId)) throw new Error("Learned Identity authority disappeared during access check")
+      if (snapshot.raw !== null) known.add(snapshot.personId)
+    }
+    try { await assertAccessCurrent(snapshots); return snapshots }
+    catch (error) { if (!(error instanceof IdentityAuthoritySnapshotChangedError)) throw error }
+  }
+  throw new IdentityAuthoritySnapshotChangedError()
 }
 
 /** Resolve once, then check cheaply after surrounding I/O and immediately before disclosure. */
@@ -55,16 +74,14 @@ export async function resolveLearnedIdentityAccess(bindings: readonly { personId
   const groups = new Map<string, string[]>()
   for (const { personId, deviceId } of bindings) groups.set(personId, [...(groups.get(personId) ?? []), deviceId])
   if (!groups.size) throw new Error("Identity device bindings are required")
-  const snapshots = await Promise.all([...groups].map(([personId, devices]) => readLearnedDeviceAccess(personId, devices)))
-  await assertAccessCurrent(snapshots)
+  const snapshots = await captureLearnedDeviceAccess(groups)
   return () => assertAccessCurrent(snapshots)
 }
 
 /** Every participant must remain active in one unchanged learned global authority view. */
 async function assertLearnedIdentityDevicesActive(personId: string, deviceIds: readonly string[]): Promise<string | null> {
-  const snapshot = await readLearnedDeviceAccess(personId, deviceIds)
-  await assertAccessCurrent([snapshot])
-  return snapshot.viewDigest
+  const snapshots = await captureLearnedDeviceAccess(new Map([[personId, deviceIds]]))
+  return snapshots[0]!.viewDigest
 }
 
 /** Apply the same global authority check at local signing boundaries. */

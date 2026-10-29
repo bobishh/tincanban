@@ -1,3 +1,4 @@
+import { captureIdentityProfile } from "../domain/identity"
 import { WasmStateCore, type WasmVerifiedHistoryArchiveCapture, type WasmVerifiedHistoryRebase,
   type WasmVerifiedHistoryBaselineAttestation, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 import { canonicalizeJson, sha256Base64Url } from "@meta-uber/mesh-identity"
@@ -452,7 +453,7 @@ export async function captureWorkspaceHistoryBaselineFromApp(input: {
 function captureProfile(tincanban: ReturnType<typeof useTincanban>) {
   const profile = tincanban.getCurrentProfile()
   if (!profile) throw new Error("Current identity is unavailable for history capture")
-  return structuredClone(profile)
+  return captureIdentityProfile(profile)
 }
 
 async function loadCaptureSource(tincanban: ReturnType<typeof useTincanban>, workspaceId: string,

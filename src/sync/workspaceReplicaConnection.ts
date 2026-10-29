@@ -1,4 +1,4 @@
-import { canonicalizeJson, verifyEnvelope, type LocalProfile } from "../domain/identity"
+import { captureIdentityProfile, canonicalizeJson, verifyEnvelope, type LocalProfile } from "../domain/identity"
 import { compareAndSwapLocal, readLocal } from "../localDb"
 import { withLocalStateWriteLock } from "../localStateLock"
 import { blindHash } from "./blindClient"
@@ -157,7 +157,7 @@ async function activateConnection(context: ConnectionContext, setup: Setup, raw:
 export async function ensureWorkspaceReplicaConnection(service: Service, workspaceId: string, profile: LocalProfile,
   guard: () => void, options: { allowNewScopeAfterRemoval?: boolean; beforeSetup?: () => Promise<void> } = {}): Promise<BlindReplicaConfig> {
   service = { origin: blindOrigin(service.origin), servicePublicKey: service.servicePublicKey }
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const personId = profile.identity.personId
   const key = await workspaceReplicaSetupKey(personId, service.origin, workspaceId)
   const transitionKey = await replicaCredentialFreezeKey(personId, service.origin)

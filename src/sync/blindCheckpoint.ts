@@ -1,4 +1,4 @@
-import { verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
+import { captureIdentityProfile, verifyEnvelope, type LocalProfile, type SignedEnvelope } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext } from "../domain/signingContext"
 import type { DeviceCertificate, PublicIdentity } from "../domain/model"
@@ -25,7 +25,7 @@ export async function prepareBlindCheckpoint(access: BlindAccess, object: BlindO
   guard: ManagementClientGuard = {}): Promise<BlindCheckpointRequest> {
   access = { ...access }
   object = structuredClone(object)
-  profile = structuredClone(profile)
+  profile = captureIdentityProfile(profile)
   const service = await discoverBlindKeeper(access.origin)
   if (service.servicePublicKey !== access.servicePublicKey) throw new Error("Rusty checkpoint service pin changed")
   const writerVersion = service.writerPolicy?.maximumWriterVersion === 2 ? 2 as const : undefined

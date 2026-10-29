@@ -47,6 +47,25 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+it("Given browser-owned signing keys, when connecting a workspace replica, then snapshot profile metadata without serializing CryptoKey handles", async () => {
+  const service = await serviceFixture()
+  const profile = await bootstrapIdentity("WebKit workspace setup")
+  approveAndConfirm(service)
+  const clone = globalThis.structuredClone
+  vi.spyOn(globalThis, "structuredClone").mockImplementation(value => {
+    if (value && typeof value === "object" && "privateKeys" in value) {
+      throw new Error("Serializing browser-owned CryptoKey handles can block WebKit")
+    }
+    return clone(value)
+  })
+
+  await expect(ensureWorkspaceReplicaConnection(service, workspaceId, profile, () => {})).resolves.toMatchObject({ workspaceId })
+  const snapshot = remote.approve.mock.calls[0]![1] as typeof profile
+  expect(snapshot).not.toBe(profile)
+  expect(snapshot.privateKeys.devicePrivateKey).toBe(profile.privateKeys.devicePrivateKey)
+  expect(snapshot.identity).not.toBe(profile.identity)
+})
+
 it("Given a saved legacy enrollment, when setup resumes, then preserve its v1 request and accept its signed legacy receipt", async () => {
   const service = await serviceFixture()
   const profile = await bootstrapIdentity("Legacy setup resume")
