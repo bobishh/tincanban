@@ -15,7 +15,7 @@ vi.mock("./blindHistoryCheckpoint", () => ({ assertHistoryStorageCheckpointSuppo
 beforeEach(() => { coordinate.mockReset().mockResolvedValue(undefined); checkpoint.fence.mockReset() })
 afterEach(() => vi.restoreAllMocks())
 
-it("Given reactive Rusty settings, when syncing advances their policy, then archive using a plain snapshot of the latest committed settings", async () => {
+it("Given committed Rusty settings, when archiving, then use a plain snapshot without starting another global sync", async () => {
   const config: BlindReplicaConfig = { purpose: "workspace", origin: "https://rusty.example", scopeId: "scope-for-history", workspaceId: "board", keyEpoch: 1,
     servicePublicKey: "A".repeat(43), contentKey: "A".repeat(43), readToken: "R".repeat(43), writeToken: "W".repeat(43),
     cursor: 0, lastUploaded: "", policyRevision: 1 }
@@ -24,23 +24,25 @@ it("Given reactive Rusty settings, when syncing advances their policy, then arch
   state.historyNotices.value.board = "Older history archived. Previous versions remain available."
   state.historyNotices.value.other = "Other workspace completion"
   const guard = vi.fn()
-  vi.spyOn(defaultStorage, "claimHistoryTransitionId").mockResolvedValue({ transitionId: "transition", previousBaselineId: null })
+  const ensureProgress = vi.spyOn(defaultStorage, "ensureHistoryProgress").mockResolvedValue({ id: "board", workspaceId: "board",
+    baselineId: null, admittedChanges: 1, encodedBytes: 1 })
+  vi.spyOn(defaultStorage, "claimHistoryTransitionId").mockImplementation(async () => {
+    expect(ensureProgress).toHaveBeenCalledWith("board")
+    return { transitionId: "transition", previousBaselineId: null }
+  })
   const switchWorkspace = vi.fn(async () => undefined)
   vi.spyOn(defaultStorage, "completeHistoryTransition").mockImplementation(async () => {
     expect(switchWorkspace).toHaveBeenCalledWith("board")
     expect(state.historyNotices.value.board).toBeUndefined()
   })
   const lifecycle = { identity: () => "owner", epoch: () => 1, disposed: () => false, reload: vi.fn(async () => undefined),
-    syncNow: vi.fn(async () => {
-      expect(state.historyNotices.value.board).toBeUndefined()
-      expect(state.historyNotices.value.other).toBe("Other workspace completion")
-      state.configs.value[0]!.policyRevision = 2
-    }) }
+    syncNow: vi.fn(async () => undefined) }
   const compact = createHistoryCompactionAction({ getActiveDoc: () => ({ id: "board" }), switchWorkspace } as unknown as Parameters<typeof createHistoryCompactionAction>[0], state,
     { captureSession: () => guard } as unknown as Parameters<typeof createHistoryCompactionAction>[2],
     lifecycle as Parameters<typeof createHistoryCompactionAction>[3], new Set())
   await compact("board")
-  expect(coordinate).toHaveBeenCalledWith(expect.objectContaining({ config: { ...config, policyRevision: 2 } }))
+  expect(coordinate).toHaveBeenCalledWith(expect.objectContaining({ config }))
+  expect(lifecycle.syncNow).not.toHaveBeenCalled()
   expect(() => structuredClone(coordinate.mock.calls[0]![0].config)).not.toThrow()
   expect(state.busy.value).toBe(false)
   expect(state.historyNotices.value.board).toBe("Older history archived. Previous versions remain available.")
@@ -57,6 +59,8 @@ it.each([true, false])("Given own upload advances Rusty after a pull, when caugh
     pull: vi.fn(async () => { order.push("pull-and-admit"); if (caughtUp) progress.cursor = 6; return caughtUp }) }
   vi.spyOn(replicaRepository, "getPrivateReplicaProgress").mockImplementation(async () => { order.push("read-admitted-cursor"); return progress })
   checkpoint.fence.mockImplementation(async (...args: unknown[]) => { order.push("record-fence"); expect(args[3]).toBe(6) })
+  vi.spyOn(defaultStorage, "ensureHistoryProgress").mockResolvedValue({ id: "board", workspaceId: "board",
+    baselineId: null, admittedChanges: 1, encodedBytes: 1 })
   vi.spyOn(defaultStorage, "claimHistoryTransitionId").mockResolvedValue({ transitionId: crypto.randomUUID(), previousBaselineId: null })
   vi.spyOn(defaultStorage, "completeHistoryTransition").mockResolvedValue(undefined)
   coordinate.mockImplementation(async input => { await input.ports!.drainOwner([]); order.push("capture") })

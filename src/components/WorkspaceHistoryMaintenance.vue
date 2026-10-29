@@ -25,7 +25,6 @@ async function compact() {
   busy.value = true
   error.value = ""
   try {
-    await props.controller.syncNow()
     await props.controller.compactWorkspaceHistory(props.workspaceId)
   } catch (cause) {
     error.value = presentError(cause)

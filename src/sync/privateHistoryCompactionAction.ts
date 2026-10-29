@@ -13,8 +13,6 @@ export function createHistoryCompactionAction(tincanban: ReturnType<typeof useTi
     const owner = lifecycle.identity(), epoch = lifecycle.epoch(), guard = runtime.captureSession(workspaceId, owner, epoch)
     guard()
     delete historyNotices.value[workspaceId]
-    await lifecycle.syncNow()
-    guard()
     if (error.value) throw new Error(error.value)
     const matches = configs.value.filter(config => config.workspaceId === workspaceId && !config.removalPending)
     if (matches.length !== 1) throw new Error("History compaction requires one active Rusty connection for this board")
@@ -29,6 +27,8 @@ export function createHistoryCompactionAction(tincanban: ReturnType<typeof useTi
       const { coordinateWorkspaceHistoryBaseline } = await import("./historyBaselineTransition")
       const { assertHistoryStorageCheckpointSupport } = await import("./blindHistoryCheckpoint")
       await assertHistoryStorageCheckpointSupport(config, guard)
+      await defaultStorage.ensureHistoryProgress(workspaceId)
+      guard()
       const transition = await defaultStorage.claimHistoryTransitionId(workspaceId)
       pendingTransition = transition
       const { currentHistoryCaptureAttempt } = await import("./historyCaptureAttempt")
