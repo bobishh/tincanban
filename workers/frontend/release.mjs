@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { canonical } from '../../scripts/release-cohort.mjs';
 
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const safePath = (path) => typeof path === 'string' && !path.startsWith('/') && path.split('/').every((part) => part && part !== '.' && part !== '..');
@@ -19,43 +18,6 @@ export function retentionCandidates(previous, now = Date.now()) {
   });
   if (candidates.length > maximumRetainedChunks) throw new Error('Previous live chunks exceed the retention capacity');
   return candidates;
-}
-export async function retainPreviousAssets(previous, directory, request, { now = Date.now(), onProgress = () => {} } = {}) {
-  const pending = retentionCandidates(previous, now).filter(([path]) => !existsSync(join(directory, path)));
-  const retained = {};
-  const retainedUntil = {};
-  let next = 0;
-  let completed = 0;
-  let failure;
-  onProgress(0, pending.length);
-  const download = async ([path, hash, until]) => {
-    let asset;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try { asset = await request(path); }
-      catch (error) {
-        if (attempt === 3) throw error;
-      }
-      if (asset?.ok || attempt === 3) break;
-      await new Promise(resolve => setTimeout(resolve, [250, 750, 1500][attempt]));
-    }
-    if (!asset.ok) throw new Error(`Previous chunk unavailable: ${path}`);
-    const bytes = Buffer.from(await asset.arrayBuffer());
-    if (digest(bytes) !== hash) throw new Error(`Previous chunk checksum mismatch: ${path}`);
-    writeFileSync(join(directory, path), bytes);
-    retained[path] = hash;
-    retainedUntil[path] = until;
-    completed++;
-    if (completed % 100 === 0 || completed === pending.length) onProgress(completed, pending.length);
-  };
-  await Promise.all(Array.from({ length: Math.min(16, pending.length) }, async () => {
-    while (!failure && next < pending.length) {
-      const candidate = pending[next++];
-      try { await download(candidate); }
-      catch (error) { failure ??= error instanceof Error ? error : new Error(String(error)); }
-    }
-  }));
-  if (failure) throw failure;
-  return { retained, retainedUntil };
 }
 export function uploadedVersion(output) {
   const uploads = output.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line))
@@ -95,18 +57,10 @@ async function main() {
     if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid release commit');
     const manifest = { sha, files: Object.fromEntries(files(directory).filter((path) => path !== 'release.json').map((path) => [path, digest(readFileSync(join(directory, path)))])) };
     writeFileSync(manifestPath, JSON.stringify(manifest));
-  } else if (command === 'check' || command === 'retain') {
+  } else if (command === 'check') {
     const manifest = JSON.parse(readFileSync(manifestPath));
     checkRelease(manifest, sha, (path) => readFileSync(join(directory, path)));
-    if (command === 'check') return;
-    const response = await get(`${origin}/release.json`);
-    const previous = response.status === 404 ? JSON.parse(readFileSync(new URL('./bootstrap-assets.json', import.meta.url))) : await response.json();
-    if (!response.ok && response.status !== 404) throw new Error('Cannot read previous release');
-    const { retained, retainedUntil } = await retainPreviousAssets(previous, directory, path => get(`${origin}/${path}`), {
-      onProgress: (completed, total) => console.log(`Retaining previous chunks: ${completed}/${total}`),
-    });
-    writeFileSync(manifestPath, JSON.stringify({ ...manifest, retained, retainedUntil, previousSha: previous.sha ?? null, previousManifestSha256: digest(canonical(previous)) }));
-    console.log(`Retained ${Object.keys(retained).length} previous chunks`);
+    return;
   } else if (command === 'smoke') {
     let lastError;
     for (let attempt = 0; attempt < 12; attempt++) {
@@ -128,6 +82,6 @@ async function main() {
       await new Promise((done) => setTimeout(done, 5000));
     }
     throw lastError;
-  } else throw new Error('Use seal, check, retain, smoke, or uploaded-version');
+  } else throw new Error('Use seal, check, smoke, or uploaded-version');
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();

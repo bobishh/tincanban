@@ -4,7 +4,7 @@ import { createWorkspaceDoc } from "../domain/seeds"
 import type { WorkspaceDocumentV2 } from "../domain/model"
 import { beforeAll, beforeEach, expect, it, vi } from "vitest"
 const f = vi.hoisted(() => ({ identityPull: vi.fn(), workspacePull: vi.fn(), roots: vi.fn(),
-  identityConfigs: vi.fn(), workspaceConfigs: vi.fn(), refreshCatalog: vi.fn() }))
+  identityConfigs: vi.fn(), workspaceConfigs: vi.fn(), refreshCatalog: vi.fn(), signIn: vi.fn() }))
 vi.mock("../sync/identityReplicaStore", () => ({ createIdentityReplica: () => ({ pull: f.identityPull }) }))
 vi.mock("../sync/blindReplicaStore", () => ({ createBlindReplica: () => ({ pull: f.workspacePull }) }))
 vi.mock("../sync/privateReplicaRepository", () => ({ getIdentityReplicaConfigurations: f.identityConfigs, getReplicaConfigurations: f.workspaceConfigs }))
@@ -12,6 +12,7 @@ vi.mock("../storage", () => ({ defaultStorage: { loadPersonalRoot: f.roots } }))
 vi.mock("../statePersistence", () => ({ refreshAvailableWorkspaces: f.refreshCatalog }))
 vi.mock("./connectAdoptedIdentityBoards", () => ({ connectAdoptedIdentityBoards: vi.fn() }))
 vi.mock("../domain/identity", () => ({ isCurrentIdentityProfile: () => true }))
+vi.mock("./identityBrowserSignIn", () => ({ recordIdentityBrowserSignIn: f.signIn }))
 import { loadIdentityBoards } from "./loadIdentityBoards"
 import { createSyncActions } from "../stateSyncActions"
 import type { WorkspaceStorage } from "../storage"
@@ -209,6 +210,8 @@ it("Given one saved board loads and another peer stays offline, when recovery re
   await expect(loadIdentityBoards(state as never, "/", async () => {})).rejects.toThrow(/waiting for an available peer/)
   expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
   expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+  expect(f.signIn).toHaveBeenCalledWith("boards", "pending", expect.objectContaining({ errorCode: "boards_pending" }))
+  expect(f.signIn).not.toHaveBeenCalledWith("boards", "failed", expect.anything())
 })
 
 

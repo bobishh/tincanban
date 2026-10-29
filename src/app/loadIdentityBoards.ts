@@ -14,6 +14,13 @@ import { parseBoardRouteUrl, resolveEligibleBoardRoute, type EligibleBoardRoute 
 type App = ReturnType<typeof useTincanban>
 export type IdentityWorkspaceRecovery = (workspaceIds: string[], options?: { routesOnly?: boolean }) => Promise<void>
 
+export class IdentityBoardLoadPending extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause })
+    this.name = "IdentityBoardLoadPending"
+  }
+}
+
 /** Load boards for an already approved Identity; failed delivery remains independently retryable. */
 export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
   const initialSelection = app.captureWorkspaceSelection()
@@ -28,7 +35,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
     for (const config of await getIdentityReplicaConfigurations(profile.identity.personId)) {
       guard()
       if (!await createIdentityReplica(config, profile, guard, { includeRecoveryEvidence: false }).pull()) {
-        throw new Error("Your board catalog is still loading. Retry loading boards.")
+        throw new IdentityBoardLoadPending("Your board catalog is still loading. Retry loading boards.")
       }
     }
     await app.refreshIdentity()
@@ -47,7 +54,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
       guard()
       try {
         if (!await createBlindReplica(config, app, guard, async () => {}).pull()) {
-          throw new Error("Your boards are still loading. Retry loading boards.")
+          throw new IdentityBoardLoadPending("Your boards are still loading. Retry loading boards.")
         }
       } catch (cause) {
         guard()
@@ -72,7 +79,9 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
     }
     await refreshAvailableWorkspaces()
     await restoreBoardSelection(app, returnPath, ids.size === 0, initialSelection, guard)
-    if (waitingForPeers) throw storageFailure ?? new Error("Your boards are waiting for an available peer or stored copy. Retry loading boards.")
+    if (waitingForPeers) {
+      throw new IdentityBoardLoadPending("Your boards are waiting for an available peer or stored copy. Retry loading boards.", storageFailure)
+    }
   })
 }
 
@@ -131,7 +140,11 @@ async function stage(phase: "catalog" | "boards", operation: () => Promise<void>
     await operation()
     recordIdentityBrowserSignIn(phase, "completed", { elapsedMs: performance.now() - started })
   } catch (cause) {
-    recordIdentityBrowserSignIn(phase, "failed", { errorCode: phase === "catalog" ? "catalog_failed" : "boards_failed", elapsedMs: performance.now() - started })
+    const pending = cause instanceof IdentityBoardLoadPending
+    recordIdentityBrowserSignIn(phase, pending ? "pending" : "failed", {
+      errorCode: phase === "catalog" ? (pending ? "catalog_pending" : "catalog_failed") : (pending ? "boards_pending" : "boards_failed"),
+      elapsedMs: performance.now() - started,
+    })
     throw cause
   }
 }

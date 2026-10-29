@@ -12,7 +12,7 @@ const identityBrowserSignInReturnKey = "tincanban.identity-browser-signin.return
 const pendingRustyConnectionKey = "tincanban.identity-browser-signin.rusty.v1"
 
 export type IdentityBrowserSignInPhase = "request" | "redirect" | "callback" | "adoption" | "refresh" | "catalog" | "boards" | "selection" | "restore" | "cancel"
-export type IdentityBrowserSignInOutcome = "started" | "verified" | "completed" | "cancelled" | "failed"
+export type IdentityBrowserSignInOutcome = "started" | "verified" | "completed" | "cancelled" | "pending" | "failed"
 
 /** Keep this browser activity linked across the same-tab Identity redirect. */
 export async function beginIdentityBrowserSignInDiagnostic(phase: "request" | "callback"): Promise<{
@@ -47,7 +47,7 @@ export function browserSignInFailureMessage(cause: unknown): string {
 
 /** Emit only fixed lifecycle fields; never include profile, device, request, or certificate data. */
 export function recordIdentityBrowserSignIn(phase: IdentityBrowserSignInPhase, outcome: IdentityBrowserSignInOutcome,
-  options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "catalog_failed" | "catalog_unavailable" | "boards_failed" | "restore_failed";
+  options: { errorCode?: "request_failed" | "callback_failed" | "adoption_failed" | "refresh_failed" | "catalog_failed" | "catalog_unavailable" | "catalog_pending" | "boards_failed" | "boards_pending" | "restore_failed";
     selection?: "saved" | "empty_default"; elapsedMs?: number } = {}) {
   try {
     record("identity.browser_signin", { phase, outcome,

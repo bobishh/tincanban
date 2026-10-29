@@ -23,6 +23,9 @@ export function beginReleaseMonitor(): () => void {
       const bytes = await response.text()
       if (bytes.length > 2 * 1024 * 1024 || stopped) return
       applyReleaseObservation(JSON.parse(bytes), commit)
+      if (releaseState.value.status === "update-available" || releaseState.value.status === "upgrade-required") {
+        window.location.reload()
+      }
     } catch { /* Offline tabs retain their last confirmed compatibility state. */ }
     finally { checking = false }
   }

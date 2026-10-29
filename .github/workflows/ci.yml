@@ -21,7 +21,6 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    # Checks and the production build precede retention of chunks used by open tabs.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -71,7 +70,6 @@ jobs:
           RELEASE_CANDIDATE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           node workers/frontend/release.mjs seal "$GITHUB_SHA"
-          node workers/frontend/release.mjs retain "$GITHUB_SHA"
           node scripts/capture-release-artifact.mjs frontend .release/frontend
       - uses: actions/upload-artifact@v6
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
