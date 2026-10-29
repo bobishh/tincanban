@@ -14,7 +14,8 @@ export default {
     if (url.pathname === '/release-cohort.json') {
       let cohort;
       try { cohort = JSON.parse(env.RELEASE_COHORT_JSON ?? 'null'); } catch { /* Missing release metadata is not activation evidence. */ }
-      if (cohort?.kind !== 'tincanban-release-cohort' || cohort.version !== 1 || !digest(cohort.cohortId)) {
+      if (cohort?.kind !== 'tincanban-release-cohort' || cohort.version !== 1 || !digest(cohort.cohortId) ||
+          cohort.components?.frontend?.sourceSha !== env.RELEASE_SHA) {
         return json({ status: 'uncoordinated', message: 'Compatible release activation has not been confirmed.' }, 503);
       }
       return json({ ...cohort, frontendVersionId: env.CF_VERSION_METADATA?.id ?? null });

@@ -4,14 +4,14 @@ export { assertClientReleaseWritable } from "./releaseCompatibility"
 
 export const releaseState = shallowRef(currentReleaseCompatibility())
 
-export function applyReleaseObservation(value: unknown, runningCandidate: string): void {
-  releaseState.value = observeReleaseCompatibility(value, runningCandidate)
+export function applyReleaseObservation(value: unknown, runningCommit: string): void {
+  releaseState.value = observeReleaseCompatibility(value, runningCommit)
 }
 
 /** A failed check cannot clear a previously observed upgrade barrier or erase local data. */
 export function beginReleaseMonitor(): () => void {
-  const candidate = typeof __TINCANBAN_RELEASE_CANDIDATE__ === "undefined" ? "dev" : __TINCANBAN_RELEASE_CANDIDATE__
-  if (candidate === "dev") return () => {}
+  const commit = typeof __TINCANBAN_BUILD_COMMIT__ === "undefined" ? "dev" : __TINCANBAN_BUILD_COMMIT__
+  if (commit === "dev") return () => {}
   let stopped = false
   let checking = false
   const check = async () => {
@@ -22,7 +22,7 @@ export function beginReleaseMonitor(): () => void {
       if (!response.ok || stopped) return
       const bytes = await response.text()
       if (bytes.length > 2 * 1024 * 1024 || stopped) return
-      applyReleaseObservation(JSON.parse(bytes), candidate)
+      applyReleaseObservation(JSON.parse(bytes), commit)
     } catch { /* Offline tabs retain their last confirmed compatibility state. */ }
     finally { checking = false }
   }

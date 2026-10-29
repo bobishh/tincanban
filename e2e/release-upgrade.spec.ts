@@ -14,9 +14,9 @@ test("Given an older tab below the workspace snapshot reader floor, when a basel
     const { applyReleaseObservation } = await import("/src/release/runtimeRelease.ts")
     applyReleaseObservation({
       kind: "tincanban-release-cohort", version: 1, cohortId: "a".repeat(64),
-      components: { frontend: { candidateId: "newer-release", artifactSha256: "b".repeat(64) } },
+      components: { frontend: { sourceSha: "b".repeat(40), candidateId: "newer-release", artifactSha256: "b".repeat(64) } },
       contract: { minimumWriterVersion: 2, readers: { frontend: { workspaceSnapshot: 3 } } },
-    }, "dev")
+    }, "a".repeat(40))
   })
   await expect(page.locator(".release-upgrade")).toContainText("This tab is read-only")
   await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()

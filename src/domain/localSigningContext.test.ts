@@ -13,8 +13,8 @@ afterEach(resetReleaseStateForTest)
 it("Given an already prepared local writer, when a newer incompatible cohort appears, then reject its final signature", async () => {
   const context = await resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" })
   applyReleaseObservation({ kind: "tincanban-release-cohort", version: 1, cohortId: "a".repeat(64),
-    components: { frontend: { candidateId: "new-build", artifactSha256: "b".repeat(64) } },
-    contract: { minimumWriterVersion: 3, readers: { frontend: { privateReplicas: 4 } } } }, "old-build")
+    components: { frontend: { sourceSha: "b".repeat(40), candidateId: "new-build", artifactSha256: "b".repeat(64) } },
+    contract: { minimumWriterVersion: 3, readers: { frontend: { privateReplicas: 4 } } } }, "a".repeat(40))
   await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/Update required/)
 })
 

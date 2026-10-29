@@ -83,7 +83,6 @@ export default defineConfig(({ command }) => ({
   define: {
     __VUE_OPTIONS_API__: false,
     __TINCANBAN_BUILD_COMMIT__: JSON.stringify(command === "build" ? buildCommit() : "dev"),
-    __TINCANBAN_RELEASE_CANDIDATE__: JSON.stringify(command === "build" ? process.env.RELEASE_CANDIDATE_ID ?? "uncoordinated" : "dev"),
   },
   plugins: [
     vue({ template: { compilerOptions: { isCustomElement: (tag) => tag === "berlin-tower" } } }),

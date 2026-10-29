@@ -20,14 +20,15 @@ export function assertClientReleaseWritable(purpose: string): void {
 
 const releaseFloor = z.number().int().positive().refine(Number.isSafeInteger)
 const digest = z.string().regex(/^[a-f0-9]{64}$/)
+const commit = z.string().regex(/^[a-f0-9]{40}$/)
 const cohortSchema = z.object({
   kind: z.literal("tincanban-release-cohort"), version: z.literal(1), cohortId: digest,
-  components: z.object({ frontend: z.object({ candidateId: z.string(), artifactSha256: digest }) }),
+  components: z.object({ frontend: z.object({ sourceSha: commit, artifactSha256: digest }) }),
   contract: z.object({ minimumWriterVersion: releaseFloor,
     readers: z.object({ frontend: z.record(z.string(), releaseFloor).refine(value => Object.keys(value).length > 0) }) }),
 })
 
-export function observeReleaseCompatibility(value: unknown, runningCandidate: string): ReleaseState {
+export function observeReleaseCompatibility(value: unknown, runningCommit: string): ReleaseState {
   const result = cohortSchema.safeParse(value)
   if (!result.success) throw new Error("Invalid release compatibility metadata")
   const cohort = result.data
@@ -38,7 +39,7 @@ export function observeReleaseCompatibility(value: unknown, runningCandidate: st
   for (const [schema, version] of Object.entries(floor)) retainedReaderFloors.set(schema, Math.max(retainedReaderFloors.get(schema) ?? 0, Number(version)))
   const incompatible = retainedWriterFloor > writerVersion || [...retainedReaderFloors].some(([schema, version]) =>
     (Object.hasOwn(readers, schema) ? readers[schema]! : 0) < version)
-  const current = frontend.candidateId === runningCandidate
+  const current = frontend.sourceSha === runningCommit
   state = Object.freeze({ status: incompatible ? "upgrade-required" : current ? "current" : "update-available",
     cohortId: cohort.cohortId, acknowledgedArtifact: current && !incompatible ? frontend.artifactSha256 : null })
   return state

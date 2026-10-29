@@ -1,2 +1,1 @@
 declare const __TINCANBAN_BUILD_COMMIT__: string
-declare const __TINCANBAN_RELEASE_CANDIDATE__: string

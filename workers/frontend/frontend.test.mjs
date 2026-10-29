@@ -31,8 +31,9 @@ test('Given a health request, then report exact deployed SHA without reading ass
 });
 
 test('Given a coordinated release, when a tab checks release state, then report the artifact cohort without claiming device acknowledgement', async () => {
-  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: { frontend: {} }, contract: {} };
+  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: { frontend: { sourceSha: 'a'.repeat(40) } }, contract: {} };
   const response = await worker.fetch(new Request('https://match.meta-uber-engineer.dev/release-cohort.json'), {
+    RELEASE_SHA: 'a'.repeat(40),
     RELEASE_COHORT_JSON: JSON.stringify(cohort), RELEASE_ARTIFACT_SHA256: 'a'.repeat(64),
     CF_VERSION_METADATA: { id: 'exact-version' },
   });
@@ -42,6 +43,14 @@ test('Given a coordinated release, when a tab checks release state, then report 
   assert.equal(body.cohortId, cohort.cohortId);
   assert.equal(body.frontendVersionId, 'exact-version');
   assert.equal(body.deviceAcknowledged, undefined);
+});
+
+test('Given cohort metadata from another commit, when a tab checks activation, then refuse the contradictory release', async () => {
+  const cohort = { kind: 'tincanban-release-cohort', version: 1, cohortId: 'c'.repeat(64), components: { frontend: { sourceSha: 'a'.repeat(40) } }, contract: {} };
+  const response = await worker.fetch(new Request('https://match.meta-uber-engineer.dev/release-cohort.json'), {
+    RELEASE_SHA: 'b'.repeat(40), RELEASE_COHORT_JSON: JSON.stringify(cohort),
+  });
+  assert.equal(response.status, 503);
 });
 
 test('Given no verified cohort metadata, when a client asks about activation, then refuse a successful cohort claim', async () => {
