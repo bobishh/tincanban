@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import type { Component } from "vue"
 import type { BlindReplicationController } from "../app/blindReplication"
+import type { useAppCore } from "../app/useAppCore"
 import type { useAppMesh } from "../app/useAppMesh"
 import type { useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
 import type { WorkspaceRole } from "../domain/permissions"
-import type { useWorkspaceChat } from "../chat/useWorkspaceChat"
-import type { useDeviceSync } from "../sync/useDeviceSync"
 
+type AppCore = ReturnType<typeof useAppCore>
 type Mesh = ReturnType<typeof useAppMesh>
 
 defineProps<{
   dialog: Component
-  sync: ReturnType<typeof useDeviceSync>
-  chat: ReturnType<typeof useWorkspaceChat>
+  sync: AppCore["sync"]
+  chat: AppCore["chat"]
   workspaceId: string
   memberAvatars: Record<string, string>
   revokingPeer: string
