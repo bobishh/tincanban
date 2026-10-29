@@ -633,9 +633,10 @@ test("Given an owner with two archived history generations, when adding my phone
     for (let page = 0; page < 4 && !(await original.count()); page++) {
       const before = await historyEntries.count()
       await phoneHistory.getByRole("button", { name: "Load earlier history", exact: true }).click()
-      await expect.poll(() => historyEntries.count(), { timeout: 15_000 }).toBeGreaterThan(before)
       await expect(phoneHistory.getByRole("status").filter({ hasText: "Reading archived versions…" }))
         .toHaveCount(0, { timeout: 30_000 })
+      await expect(phoneHistory.getByRole("alert")).toHaveCount(0)
+      await expect.poll(() => historyEntries.count(), { timeout: 15_000 }).toBeGreaterThan(before)
     }
     await expect(original.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
     await original.getByRole("button", { name: "Restore this version", exact: true }).click()

@@ -29,7 +29,7 @@ export class IdentityDeviceAccessDeniedError extends Error {
 
 type LearnedDeviceAccess = { personId: string; devices: string[]; key: string; raw: string | null; viewDigest: string | null }
 
-class IdentityAuthoritySnapshotChangedError extends Error {
+export class IdentityAuthoritySnapshotChangedError extends Error {
   constructor() { super("Identity authority changed during access check") }
 }
 
@@ -50,7 +50,10 @@ async function readLearnedDeviceAccess(personId: string, deviceIds: readonly str
 async function assertAccessCurrent(snapshots: readonly LearnedDeviceAccess[]): Promise<void> {
   if (await compareAndSwapLocal({ conditions: snapshots.map(({ key, raw }) => ({ key, value: raw })), writes: [] })) return
   // Reauthenticate after change. A revocation is a denial; another change requires a fresh operation.
-  await Promise.all(snapshots.map(snapshot => readLearnedDeviceAccess(snapshot.personId, snapshot.devices)))
+  const latest = await Promise.all(snapshots.map(snapshot => readLearnedDeviceAccess(snapshot.personId, snapshot.devices)))
+  if (latest.some((snapshot, index) => snapshot.raw === null && snapshots[index]!.raw !== null)) {
+    throw new Error("Learned Identity authority disappeared during access check")
+  }
   throw new IdentityAuthoritySnapshotChangedError()
 }
 

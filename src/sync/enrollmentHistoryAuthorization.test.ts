@@ -1,5 +1,11 @@
-import { beforeEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
+import * as identitySdk from "@meta-uber/mesh-identity"
 import type { LocalProfile } from "../domain/identity"
+import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
+import { certHashDefault } from "../domain/proofs"
+import { identityAuthorityViewKey } from "../domain/identityAuthority"
+import * as local from "../localDb"
+import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 import type { WorkspaceMeshCredential } from "./peerStore"
 
 const mocks = vi.hoisted(() => ({ isDeviceRevoked: vi.fn() }))
@@ -25,6 +31,65 @@ const snapshotReader = (read: (id: string) => Promise<WorkspaceMeshCredential | 
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.isDeviceRevoked.mockReturnValue(false)
+})
+
+afterEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest() })
+
+async function signedEnrollmentFixture() {
+  resetIdentityStorageForTest()
+  const owner = await bootstrapIdentity("Enrollment owner")
+  const phone = await identitySdk.createIdentityEnrollmentDevice("Approved phone")
+  const phoneCertificate = await identitySdk.createDelegatedCertificate(owner.privateKeys.devicePrivateKey,
+    owner.device.deviceId, owner.identity.personId, phone.device.deviceId, phone.device.publicKey, await certHashDefault(owner.certificate))
+  const certificates = [owner.certificate, phoneCertificate], state = identitySdk.emptyIdentityProfileState(owner.identity.personId)
+  const before = await identitySdk.createIdentityAuthorityView(owner.identity, { certificates, revocations: [] }, state)
+  await mergeIdentityAuthorityView(before)
+  const other = await identitySdk.createIdentityEnrollmentDevice("Other authorized device")
+  const added = await identitySdk.createDelegatedCertificate(owner.privateKeys.devicePrivateKey, owner.device.deviceId,
+    owner.identity.personId, other.device.deviceId, other.device.publicKey, await certHashDefault(owner.certificate))
+  const expanded = await identitySdk.createIdentityAuthorityView(owner.identity, { certificates: [...certificates, added], revocations: [] }, state)
+  const revoked = await identitySdk.createDeviceRevocation(owner,
+    await identitySdk.verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] }), phone.device.deviceId, state)
+  const revokedView = await identitySdk.createIdentityAuthorityView(owner.identity, { certificates, revocations: [revoked] }, state)
+  return { owner, phone, expanded, revokedView }
+}
+
+it.each(["additional certificate", "revocation", "missing authority"] as const)(
+  "Given signed enrollment authority changes during workspace verification (%s), when checking current access, then recheck additions and deny lost access",
+  async change => {
+    const f = await signedEnrollmentFixture()
+    let reads = 0
+    const guard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board"], profile: f.owner,
+      remoteDeviceId: f.phone.device.deviceId, isCurrent: () => true, readProfile: async () => f.owner,
+      readWorkspaces: async ids => {
+        if (++reads === 1) {
+          if (change === "missing authority") await local.deleteLocal(identityAuthorityViewKey(f.owner.identity.personId))
+          else await mergeIdentityAuthorityView(change === "revocation" ? f.revokedView : f.expanded)
+        }
+        return ids.map(workspaceId => ({ workspaceId, credential: credential(workspaceId), authority: null }))
+      } })
+    if (change === "additional certificate") {
+      await expect(guard()).resolves.toBeUndefined()
+      expect(reads).toBe(4)
+    } else {
+      await expect(guard()).rejects.toThrow(/revoked|unavailable|disappeared|authority changed/i)
+      expect(reads).toBe(2)
+    }
+  })
+
+it("Given Identity authority keeps changing after workspace reads, when authorizing enrollment history, then stop after eight complete checks", async () => {
+  const f = await signedEnrollmentFixture(), compare = local.compareAndSwapLocal
+  let checks = 0, reads = 0
+  vi.spyOn(local, "compareAndSwapLocal").mockImplementation(async (...args) => {
+    if (!args[0].writes.length && ++checks % 2 === 0) return false
+    return compare(...args)
+  })
+  const guard = createEnrollmentHistoryAuthorizationGuard({ workspaceIds: ["board"], profile: f.owner,
+    remoteDeviceId: f.phone.device.deviceId, isCurrent: () => true, readProfile: async () => f.owner,
+    readWorkspaces: async ids => { reads++; return ids.map(workspaceId => ({ workspaceId, credential: credential(workspaceId), authority: null })) } })
+  await expect(guard()).rejects.toThrow("Identity authority changed during access check")
+  expect(reads).toBe(16)
+  expect(checks).toBe(16)
 })
 
 it("Given the approved same-person session and current selected credentials, when guarded, then check both devices before permitting history", async () => {

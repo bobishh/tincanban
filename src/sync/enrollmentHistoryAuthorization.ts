@@ -1,5 +1,5 @@
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
-import { resolveLearnedIdentityAccess } from "../domain/identityAuthority"
+import { IdentityAuthoritySnapshotChangedError, resolveLearnedIdentityAccess } from "../domain/identityAuthority"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import type { WorkspaceAuthorityRecord, WorkspaceAuthorizationSnapshot, WorkspaceMeshCredential } from "./peerStore"
 import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
@@ -39,7 +39,7 @@ export function createEnrollmentHistoryAuthorizationGuard(input: EnrollmentHisto
     }
   }
 
-  return async () => {
+  const checkCurrentAccess = async () => {
     await requireCapturedProfile()
     const assertGlobalCurrent = await resolveLearnedIdentityAccess([
       { personId, deviceId }, { personId, deviceId: remoteDeviceId },
@@ -70,6 +70,14 @@ export function createEnrollmentHistoryAuthorizationGuard(input: EnrollmentHisto
     }
     await assertGlobalCurrent()
     requireCurrentSession()
+  }
+  // This check has no disclosure or writes. A changed, still-valid Identity view
+  // requires a fresh check; returned signing guards remain strict across I/O.
+  return async () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try { return await checkCurrentAccess() }
+      catch (error) { if (!(error instanceof IdentityAuthoritySnapshotChangedError) || attempt === 7) throw error }
+    }
   }
 }
 
