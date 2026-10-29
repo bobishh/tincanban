@@ -991,7 +991,7 @@ describe("DurableMesh peer catalog gossip", () => {
     await mesh.dispose()
   })
 
-  it("Given the peer closed this socket to move to a replacement, when the receive loop ends, then the session stays until the grace expires and the route is not backed off", async () => {
+  it("Given the peer closed this socket and no replacement arrives, when the grace ends, then the session drops and the route retries directly", async () => {
     vi.useFakeTimers()
     let rejectReceive!: (error: Error) => void
     const done = new Promise<never>((_resolve, reject) => { rejectReceive = reject })
@@ -1022,7 +1022,10 @@ describe("DurableMesh peer catalog gossip", () => {
       expect(internal.sessions.size).toBe(1)
       await vi.advanceTimersByTimeAsync(1)
       expect(internal.sessions.size).toBe(0)
-      expect(internal.runtime().reconnectState("workspace:remote-device:slot-0")).toBeNull()
+      const reconnect = internal.runtime().reconnectState("workspace:remote-device:slot-0")
+      expect(reconnect).not.toBeNull()
+      if (!reconnect) throw new Error("Reconnect state was not scheduled")
+      expect(reconnect.retryAtMs).toBeGreaterThan(Date.now())
       expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, "workspace:remote-device:slot-0")).toBe("direct")
     } finally {
       vi.useRealTimers()

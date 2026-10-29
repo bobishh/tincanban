@@ -452,9 +452,12 @@ export class DurableMeshSessions extends DurableMeshHandshake {
 
   protected recordRouteFailure(key: string, error: unknown): boolean {
     const networkFailure = isMeshNetworkFailure(error)
-    // The other browser closed this socket because it already moved to a replacement.
-    // Penalizing the route here forces relay and a growing backoff, so the peer stays down.
-    if (supersededPeerClose(error)) return true
+    // This close string is also what a browser sends when it drops the socket.
+    // Retry on the direct path. Forcing relay here leaves enrollment and peers stuck.
+    if (supersededPeerClose(error)) {
+      this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
+      return true
+    }
     this.reconnectPolicy.recordFailure(key, networkFailure)
     this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
     return networkFailure
