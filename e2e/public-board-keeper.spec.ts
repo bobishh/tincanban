@@ -160,7 +160,10 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
     const revision = async () => await panel.getAttribute("data-public-revision")
     const sourceChangedMessage = "Board source changed during publication preparation"
+    const ownerChangedMessage = "Workspace owner authority changed while signing"
     let injectedGuardAborted = false
+    let ownerGuardFaultArmed = false
+    let ownerGuardAborted = false
     for (let attempt = 0; attempt < 3; attempt++) {
       await expect.poll(async () => {
         if (await revision() === "1") return "published"
@@ -170,14 +173,15 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       const errors = await panel.getByRole("alert").allTextContents()
       if (presentationRefresh) throw new Error(`Identity presentation refresh invalidated an unchanged board snapshot: ${errors.join(" | ")}`)
       expect(errors.length).toBeGreaterThan(0)
-      expect(errors.every(error => error === sourceChangedMessage)).toBe(true)
+      expect(errors.filter(error => error !== sourceChangedMessage && error !== ownerChangedMessage)).toEqual([])
+      expect(await revision()).toBe("0")
+      expect((await page.request.get(`${origin}/v1/public/boards/${fixture.boardId}`)).status()).toBe(404)
+      if (errors.includes(ownerChangedMessage) && ownerGuardFaultArmed) ownerGuardAborted = true
       if (injectedSourceChange && !injectedGuardAborted) {
         expect(injectedSourceChange.after).not.toEqual(injectedSourceChange.before)
-        expect(await revision()).toBe("0")
-        expect((await page.request.get(`${origin}/v1/public/boards/${fixture.boardId}`)).status()).toBe(404)
         injectedGuardAborted = true
       }
-      if (attempt === 2) throw new Error("Board source kept changing across three confirmed publication attempts")
+      if (attempt === 2) throw new Error(`Publication preparation stayed stale across three confirmed attempts: ${errors.join(" | ")}`)
       const retry = panel.getByRole("button", { name: "Retry", exact: true })
       if (await retry.isVisible()) await retry.click()
       if (await revision() === "1") break
@@ -186,9 +190,30 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
       await expect(panel.getByRole("status")).toHaveText("Private · Access requires an invitation.")
       await publicSwitch.click()
       await expect(panel.getByRole("group", { name: "Confirm public board change" })).toContainText("discussion")
+      // A fresh confirmation must also recover from the independent owner-authority guard.
+      if (injectedGuardAborted && !ownerGuardFaultArmed) {
+        ownerGuardFaultArmed = true
+        await page.evaluate(async message => {
+          const { peerStore } = await import("/src/sync/peerStore.ts")
+          const read = peerStore.getWorkspaceAuthority
+          peerStore.getWorkspaceAuthority = async (...args) => {
+            const ownerPreparation = new Error().stack?.includes("workspaceOwnerSigningContext")
+            const authority = await read.apply(peerStore, args)
+            if (ownerPreparation) {
+              peerStore.getWorkspaceAuthority = read
+              const probe = window as Window & { __publicOwnerGuardRejected?: boolean }
+              probe.__publicOwnerGuardRejected = true
+              throw new Error(message)
+            }
+            return authority
+          }
+        }, ownerChangedMessage)
+      }
       await panel.getByRole("button", { name: "Enable public access", exact: true }).click()
     }
     expect(injectedGuardAborted).toBe(true)
+    expect(ownerGuardAborted).toBe(true)
+    expect(await page.evaluate(() => (window as Window & { __publicOwnerGuardRejected?: boolean }).__publicOwnerGuardRejected)).toBe(true)
     expect(presentationRefresh).toBeDefined()
     expect(presentationRefresh!.afterVersion).toBeGreaterThan(presentationRefresh!.beforeVersion)
     expect(presentationRefresh!.after).toEqual(presentationRefresh!.before)
