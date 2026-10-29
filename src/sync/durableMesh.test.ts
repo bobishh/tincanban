@@ -72,6 +72,7 @@ type MeshTestHooks = {
     create: (...args: unknown[]) => { session: Partial<LiveWorkspaceSync> }
   } }
   dialScheduler: { host: { peers: () => Promise<WorkspacePeerRecord[]> } }
+  reconnectPolicy: { mode: (node: { dialRelay?: unknown }, key: string) => "direct" | "relay" }
   runtime: () => {
     routeAttemptActive: (key: string) => boolean
     reconnectState: (key: string) => { failures: number; retryAtMs: number } | null
@@ -988,6 +989,83 @@ describe("DurableMesh peer catalog gossip", () => {
     if (!reconnect) throw new Error("Reconnect state was not scheduled")
     expect(reconnect.retryAtMs).toBeGreaterThan(Date.now())
     await mesh.dispose()
+  })
+
+  it("Given the peer closed this socket to move to a replacement, when the receive loop ends, then the session stays until the grace expires and the route is not backed off", async () => {
+    vi.useFakeTimers()
+    let rejectReceive!: (error: Error) => void
+    const done = new Promise<never>((_resolve, reject) => { rejectReceive = reject })
+    const mesh = new DurableMesh({
+      transport: {} as never,
+      workspace: {} as never,
+      workspaceStore: {} as never,
+      getProfile: async () => ({ device: { deviceId: "local-device" } } as never),
+      store: {
+        getWorkspaceCredential: async () => ({ workspaceId: "workspace", transportSecret: "secret" }),
+        listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [],
+        listPeers: async () => [],
+      } as never,
+    })
+    const internal = meshHooks(mesh)
+    internal.browserSessions.host.create = vi.fn(() => ({
+      session: { publish: async () => {}, close: async () => {}, done },
+    }))
+    const connection = { close: vi.fn(async () => {}) }
+
+    try {
+      await internal.installSession("workspace", "remote-device", "slot-0", "2026-09-24", 1,
+        "outgoing", connection, false, "outgoing-test")
+      rejectReceive(new MeshNetworkError("closed by peer: browser connection closed (code 0)"))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(internal.sessions.size).toBe(1)
+      await vi.advanceTimersByTimeAsync(1_499)
+      expect(internal.sessions.size).toBe(1)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(internal.sessions.size).toBe(0)
+      expect(internal.runtime().reconnectState("workspace:remote-device:slot-0")).toBeNull()
+      expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, "workspace:remote-device:slot-0")).toBe("direct")
+    } finally {
+      vi.useRealTimers()
+      await mesh.dispose()
+    }
+  })
+
+  it("Given a replacement arrives during the close grace, when the old receive loop ends, then the new session stays current", async () => {
+    vi.useFakeTimers()
+    let rejectReceive!: (error: Error) => void
+    const done = new Promise<never>((_resolve, reject) => { rejectReceive = reject })
+    const mesh = new DurableMesh({
+      transport: {} as never,
+      workspace: {} as never,
+      workspaceStore: {} as never,
+      getProfile: async () => ({ device: { deviceId: "local-device" } } as never),
+      store: {
+        getWorkspaceCredential: async () => ({ workspaceId: "workspace", transportSecret: "secret" }),
+        listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [],
+        listPeers: async () => [],
+      } as never,
+    })
+    const internal = meshHooks(mesh)
+    internal.browserSessions.host.create = vi.fn()
+      .mockReturnValueOnce({ session: { publish: async () => {}, close: async () => {}, done } })
+      .mockReturnValueOnce({ session: { publish: async () => {}, close: async () => {}, done: new Promise(() => {}) } })
+    const first = { close: vi.fn(async () => {}) }
+    const replacement = { close: vi.fn(async () => {}) }
+
+    try {
+      await internal.installSession("workspace", "remote-device", "slot-0", "2026-09-24", 1,
+        "outgoing", first, false, "outgoing-test")
+      rejectReceive(new MeshNetworkError("closed by peer: browser connection closed (code 0)"))
+      await vi.advanceTimersByTimeAsync(0)
+      await internal.installSession("workspace", "remote-device", "slot-0", "2026-09-24", 2,
+        "outgoing", replacement, false, "outgoing-test")
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(internal.sessions.get("workspace:remote-device:slot-0")?.connection).toBe(replacement)
+      expect(internal.runtime().reconnectState("workspace:remote-device:slot-0")).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      await mesh.dispose()
+    }
   })
 
   it("Given a live session while Iroh gossip has no neighbour yet, when the workspace changes, then direct sync still publishes", async () => {

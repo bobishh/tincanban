@@ -103,6 +103,8 @@ const { devicePresence, meshPresence, meshPresenceLabel,
   leaveWorkspaceMesh, setWorkspaceSuccessor, voteForWorkspaceSuccessor,
   claimWorkspaceSuccession, revokeWorkspacePeer, promoteWorkspacePeer,
 } = app.collaboration.mesh
+const chatConnectionLabel = computed(() => devicePresence.value === "connected" ? "Connected"
+  : devicePresence.value === "reconnecting" ? "Reconnecting · saved locally" : "Offline · saved locally")
 const {
   openBoardItem,
   restoreSelectedItemVersion, saveQuickNote, updateDocumentMarkdown, updateItemMarkdown, handleSaveTemplate,
@@ -360,7 +362,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 
 
     <ObjectConversationLayer v-if="showConversationLayer" :workspace-id="activeWorkspace.id" :workspace-title="activeWorkspace.title" :chat="chat" :conversations="conversations"
-      :can-view="chatCanView" :read-only="!canEditItems" :connected="sync.isWorkspaceLive(activeWorkspace.id)" :member-avatars="memberAvatars" @workspaces="showWorkspaces = true" @chat-close="chat.open.value = false" @source-dismiss="conversations.sourceState.value = ''" />
+      :can-view="chatCanView" :read-only="!canEditItems" :connected="devicePresence === 'connected'" :connection-label="chatConnectionLabel" :member-avatars="memberAvatars" @workspaces="showWorkspaces = true" @chat-close="chat.open.value = false" @source-dismiss="conversations.sourceState.value = ''" />
     <aside v-if="chat.toast.value" class="chat-toast" role="status">
       <button class="button button-quiet" type="button" @click="chat.open.value = true">{{ chat.toast.value.text }}</button>
       <button class="icon-button" type="button" aria-label="Dismiss chat notification" @click="chat.toast.value = null">×</button>

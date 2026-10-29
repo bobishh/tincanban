@@ -25,6 +25,11 @@ import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDu
 import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
+function supersededPeerClose(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /browser connection closed/i.test(message)
+}
+
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly rustyAccessMaintenance = new WeakMap<SyncConnection, ReturnType<typeof participantWorkspaceSession>["maintenance"]>()
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -447,6 +452,9 @@ export class DurableMeshSessions extends DurableMeshHandshake {
 
   protected recordRouteFailure(key: string, error: unknown): boolean {
     const networkFailure = isMeshNetworkFailure(error)
+    // The other browser closed this socket because it already moved to a replacement.
+    // Penalizing the route here forces relay and a growing backoff, so the peer stays down.
+    if (supersededPeerClose(error)) return true
     this.reconnectPolicy.recordFailure(key, networkFailure)
     this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
     return networkFailure
