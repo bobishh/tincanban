@@ -1,85 +1,45 @@
 <script setup lang="ts">
 import type { Component } from "vue"
 import type { BlindReplicationController } from "../app/blindReplication"
-import type { SuccessionView } from "../app/syncTypes"
-import type { OwnerReconnectReview } from "../sync/deviceSyncState"
-import type { SyncStep } from "../sync/useDeviceSync"
+import type { useAppMesh } from "../app/useAppMesh"
 import type { useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
-import type { MeshMemberView } from "../ui/deviceInfo"
+import type { WorkspaceRole } from "../domain/permissions"
+import type { useWorkspaceChat } from "../chat/useWorkspaceChat"
+import type { useDeviceSync } from "../sync/useDeviceSync"
 
-type RefValue<T> = { value: T }
-type JoinRequest = { id: string; name: string; personId: string; role: "visitor" | "editor"; ownerConnectionRequested?: boolean; followOwner?: boolean }
+type Mesh = ReturnType<typeof useAppMesh>
 
 defineProps<{
   dialog: Component
-  sync: {
-    pendingJoins: RefValue<JoinRequest[]>
-    decideJoin: (id: string, approve: boolean) => void
-    step: RefValue<SyncStep>
-    title: RefValue<string>
-    qrCode: RefValue<string>
-    inviteUrl: RefValue<string>
-    copyNotice: RefValue<string>
-    ownerReconnectReview: RefValue<OwnerReconnectReview | null>
-    startOwnerReconnect: () => void
-    approveOwnerReconnect: () => void
-    cancelOwnerReconnect: () => void
-    error: RefValue<string>
-    canReconnectDevice: RefValue<boolean>
-    reconnectDevice: () => void
-    authCode: RefValue<string>
-    invitationWorkspaceTitle: RefValue<string>
-    invitationWorkspaces: RefValue<{ id: string; title: string }[]>
-    availableWorkspaces: RefValue<{ id: string; title: string }[]>
-    selectedWorkspaceIds: RefValue<string[]>
-    selectedWorkspaceId: RefValue<string>
-    localDeviceId: RefValue<string>
-    removableDeviceWorkspaces: (personId: string, deviceId: string) => Promise<{ id: string; title: string }[]>
-    removeDevice: (personId: string, deviceId: string, workspaceIds: string[]) => Promise<void>
-    enrollmentConflict: RefValue<{ currentPersonId: string; currentName: string; targetPersonId: string } | null>
-    meshPeers: RefValue<{ workspaceId: string; revokedAt?: string }[]>
-    meshDiagnostic: RefValue<string>
-    networkOnline: RefValue<boolean>
-    isEnabled: RefValue<boolean>
-    selectSyncWorkspace: () => void
-    requestEnrollment: (replaceIdentity: boolean) => void
-    enrollmentDeviceName: RefValue<string>
-    enrollmentSameIdentity: RefValue<boolean>
-    approveEnrollment: () => void
-    declineEnrollment: () => void
-    acceptWorkspaceJoin: () => void
-    copyInvite: (url?: string) => void
-    dismiss: () => void
-    stopLiveSync: () => void
-  }
-  chat: { personId: RefValue<string> }
+  sync: ReturnType<typeof useDeviceSync>
+  chat: ReturnType<typeof useWorkspaceChat>
   workspaceId: string
   memberAvatars: Record<string, string>
   revokingPeer: string
   blindReplication: BlindReplicationController
   myDeviceRemoval: ReturnType<typeof useMyDeviceRemoval>
-  meshMembers: MeshMemberView[]
-  currentRole: "owner" | "editor" | "visitor"
-  succession: SuccessionView | undefined
+  meshMembers: Mesh["meshMembers"]["value"]
+  currentRole: WorkspaceRole
+  succession: Mesh["activeSuccession"]["value"]
   canClaimSuccession: boolean
   canManageAccess: boolean
   transferringOwnership: string
   leavingMesh: boolean
   peerAccessError: string
-  devicePresence: "connected" | "reconnecting" | "offline" | "empty"
-  meshPresence: "connected" | "reconnecting" | "offline" | "empty"
-  activeMeshRetryAt: number | undefined
+  devicePresence: Mesh["devicePresence"]["value"]
+  meshPresence: Mesh["meshPresence"]["value"]
+  activeMeshRetryAt: Mesh["activeMeshRetryAt"]["value"]
   identityPortalOrigin: string
-  addMyDevice: () => void
-  generateWorkspaceInvite: () => void
-  beginEnrollmentSignIn: () => void
-  revokeWorkspacePeer: (personId: string) => void
-  transferWorkspaceOwnership: (personId: string) => void
-  leaveWorkspaceMesh: () => void
-  setWorkspaceSuccessor: (personId: string | null) => void
-  voteForWorkspaceSuccessor: (personId: string) => void
-  claimWorkspaceSuccession: () => void
-  promoteWorkspacePeer: (personId: string) => void
+  addMyDevice: () => unknown
+  generateWorkspaceInvite: () => unknown
+  beginEnrollmentSignIn: () => unknown
+  revokeWorkspacePeer: Mesh["revokeWorkspacePeer"]
+  transferWorkspaceOwnership: Mesh["transferWorkspaceOwnership"]
+  leaveWorkspaceMesh: Mesh["leaveWorkspaceMesh"]
+  setWorkspaceSuccessor: Mesh["setWorkspaceSuccessor"]
+  voteForWorkspaceSuccessor: Mesh["voteForWorkspaceSuccessor"]
+  claimWorkspaceSuccession: Mesh["claimWorkspaceSuccession"]
+  promoteWorkspacePeer: Mesh["promoteWorkspacePeer"]
 }>()
 
 const emit = defineEmits<{
