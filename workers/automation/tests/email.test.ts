@@ -3,9 +3,9 @@ import test from 'node:test';
 import { correlateApplication, emailApplicationIdentity, gmailForwardingConfirmationUrl, parseForwardedMail } from '../src/email.ts';
 
 test('Given application receipts without vacancy URLs, when reading explicit company and role spans, then retain only an unambiguous identity', () => {
-  assert.deepEqual(emailApplicationIdentity({ subject: 'Thank you for your application to Ably, Alex!',
-    text: 'Thanks you for your application to the Senior Software Engineer,\nBackoffice Platform position. We appreciate your interest in joining Ably!' }),
-    { company: 'Ably', role: 'Senior Software Engineer, Backoffice Platform' });
+  assert.deepEqual(emailApplicationIdentity({ subject: 'Thank you for your application to Example Labs, Alex!',
+    text: 'Thanks you for your application to the Software Engineer,\nInternal Tools position. We appreciate your interest in joining Example Labs!' }),
+    { company: 'Example Labs', role: 'Software Engineer, Internal Tools' });
   assert.deepEqual(emailApplicationIdentity({ subject: 'Your application at Example GmbH', text: 'Thank you for applying for the Backend Engineer position.' }),
     { company: 'Example GmbH', role: 'Backend Engineer' });
   assert.deepEqual(emailApplicationIdentity({ subject: 'Application received', text: 'Company: Acme\nRole: Staff Engineer\nWe received your application.' }),
@@ -26,21 +26,21 @@ test('Given a unique exact thread reference, when correlated, then selects the e
 });
 
 test('Given a Join receipt naming this position inline, when extracting the application, then read the actual title instead of a placeholder', () => {
-  assert.deepEqual(emailApplicationIdentity({ subject: 'We received your application for a position at elearnio GmbH',
-    text: 'Hi Alex, You have successfully submitted your application for this position: Senior Full-Stack Developer (f/m/x) We will review your qualifications shortly. Thank you for your interest in elearnio GmbH.' }),
-    { company: 'elearnio GmbH', role: 'Senior Full-Stack Developer (f/m/x)' });
+  assert.deepEqual(emailApplicationIdentity({ subject: 'We received your application for a position at Example GmbH',
+    text: 'Hi Alex, You have successfully submitted your application for this position: Platform Developer (f/m/x) We will review your qualifications shortly. Thank you for your interest in Example GmbH.' }),
+    { company: 'Example GmbH', role: 'Platform Developer (f/m/x)' });
   assert.equal(emailApplicationIdentity({ subject: 'We received your application for a position at Example', text: 'We received your application for this position.' }), null);
 });
 
 test('Given a Greenhouse receipt naming company and role in its subject, when extracting identity, then keep both explicit spans and reject conflicts', () => {
-  const subject = 'Thank you for applying to Lanes & Planes as Senior Ruby on Rails Developer - AI Focus (f/m/d)';
+  const subject = 'Thank you for applying to Example & Co as Backend Engineer - Platform (f/m/d)';
   const text = 'Thank you for your interest in joining our awesome team! We have received your application.';
-  const identity = { company: 'Lanes & Planes', role: 'Senior Ruby on Rails Developer - AI Focus (f/m/d)' };
+  const identity = { company: 'Example & Co', role: 'Backend Engineer - Platform (f/m/d)' };
   assert.deepEqual(emailApplicationIdentity({ subject, text }), identity);
   assert.deepEqual(emailApplicationIdentity({ subject: `Fwd: ${subject}`, text }), identity);
   assert.equal(emailApplicationIdentity({ subject, text: `${text}\nCompany: Other` }), null);
   assert.equal(emailApplicationIdentity({ subject, text: `${text}\nRole: Designer` }), null);
-  assert.equal(emailApplicationIdentity({ subject: 'Thank you for applying to Lanes & Planes as', text }), null);
+  assert.equal(emailApplicationIdentity({ subject: 'Thank you for applying to Example & Co as', text }), null);
 });
 
 test('Given two roles at one company and no role clue, when correlated, then requires review', () => {

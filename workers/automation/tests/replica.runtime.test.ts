@@ -3268,14 +3268,14 @@ it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" 
 });
 
 const applicationReceipts = [
-  { provider: "Ably", company: "Ably", title: "Senior Software Engineer, Backoffice Platform",
-    subject: "Thank you for your application to Ably, Alex!",
-    text: "Thanks you for your application to the Senior Software Engineer, Backoffice Platform position. We really appreciate your interest in joining Ably!" },
-  { provider: "Join", company: "elearnio GmbH", title: "Senior Full-Stack Developer (f/m/x)",
-    subject: "We received your application for a position at elearnio GmbH",
-    text: "You have successfully submitted your application for this position: Senior Full-Stack Developer (f/m/x) We will review your qualifications shortly." },
-  { provider: "Greenhouse", company: "Lanes & Planes", title: "Senior Ruby on Rails Developer - AI Focus (f/m/d)",
-    subject: "Thank you for applying to Lanes & Planes as Senior Ruby on Rails Developer - AI Focus (f/m/d)",
+  { provider: "company in subject", company: "Example Labs", title: "Software Engineer, Internal Tools",
+    subject: "Thank you for your application to Example Labs, Alex!",
+    text: "Thanks you for your application to the Software Engineer, Internal Tools position. We really appreciate your interest in joining Example Labs!" },
+  { provider: "inline role", company: "Example GmbH", title: "Platform Developer (f/m/x)",
+    subject: "We received your application for a position at Example GmbH",
+    text: "You have successfully submitted your application for this position: Platform Developer (f/m/x) We will review your qualifications shortly." },
+  { provider: "company and role in subject", company: "Example & Co", title: "Backend Engineer - Platform (f/m/d)",
+    subject: "Thank you for applying to Example & Co as Backend Engineer - Platform (f/m/d)",
     text: "Thank you for your interest in joining our awesome team! We have received your application." },
 ];
 
@@ -3287,11 +3287,11 @@ it.each(applicationReceipts.flatMap(receipt => [
   const data = await typedFixture(undefined, true, 2, applied);
   data.packet.transport = capturedRuntimeTransport();
   let replica = await AutomationReplica.activate(data.packet, data.automation);
-  for (let index = 0; index < existing; index++) await replica.createLead(`ably-existing-${index}`,
+  for (let index = 0; index < existing; index++) await replica.createLead(`receipt-existing-${index}`,
     { company, role: title, source: { origin: "website" } }, {});
   const text = role ? receiptText + "\n\n" + "Full receipt detail. ".repeat(450).trim() : `Your application has been received. Thank you for your interest in joining ${company}!`;
   const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: "2026-10-28T12:00:00.000Z", rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
-    message: { messageId: "<ably-receipt@example.test>", inReplyTo: null, references: [], from: "Ably <no-reply@example.test>", to: "owner@example.test",
+    message: { messageId: "<application-receipt@example.test>", inReplyTo: null, references: [], from: "Recruiting <no-reply@example.test>", to: "owner@example.test",
       subject: role ? subject : `Your application at ${company}`, text, date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] } };
   const decision = { event: "applied", distributions: { application_event: { type: "choice", choice: "applied", confidence: 1,
     probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(label => [label, label === "applied" ? 1 : 0])) } },
