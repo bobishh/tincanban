@@ -40,6 +40,8 @@ A confirmed application receipt can create a card directly in the approved Appli
 column when no existing application matches and company and role are explicit in
 the email. The receipt parser accepts labeled fields and common English/German
 application acknowledgements; missing or conflicting identities remain in review.
+The engine owns receipt parsing and automatic creation; the Reflux host returns
+its outcome without a second creation pass.
 The full email, sender and date are retained in Notes. Original posting evidence
 remains unavailable until a real posting is captured; email text never masquerades
 as a fetched vacancy page. Subsequent delivery matches the existing card instead

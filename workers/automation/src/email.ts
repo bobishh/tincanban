@@ -40,11 +40,17 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
     const label = value.replace(/\s+/g, ' ').trim().replace(/^["“”']+|["“”']+$/g, '');
     const normalized = normalizePhrase(label);
     if (values === roles && /^(?:a|an|the|this|that|your|position|role|vacancy)$/.test(normalized)) return;
+    if (values === companies && /^(?:our|your|the)\b.*\bteam$/.test(normalized)) return;
     if (label.length >= 2 && label.length <= 200) values.set(normalized, label);
   };
   const subject = mail.subject.replace(/^(?:(?:fwd?|wg|re):\s*)+/i, '').trim();
   const text = mail.text.replace(/\r\n?/g, '\n');
-  for (const match of subject.matchAll(/(?:your application|applying) (?:to|at|with) ([^,!\n]+?)(?:[,!]|$)/gi)) add(companies, match[1]);
+  const subjectIdentity = subject.match(/(?:your application|applying) (?:to|at|with) (.+?) as (.+)$/i);
+  if (subjectIdentity) {
+    add(companies, subjectIdentity[1]); add(roles, subjectIdentity[2]);
+  } else {
+    for (const match of subject.matchAll(/(?:your application|applying) (?:to|at|with) ([^,!\n]+?)(?:[,!]|$)/gi)) add(companies, match[1]);
+  }
   for (const match of subject.matchAll(/application for (?:a|the) position (?:at|with) (.+)$/gi)) add(companies, match[1]);
   for (const match of text.matchAll(/interest in (?:joining|working (?:at|for))\s+([^!.\n]+)[!.\n]/gi)) add(companies, match[1]);
   for (const match of text.matchAll(/^(?:company|unternehmen):\s*([^\n]+)$/gim)) add(companies, match[1]);

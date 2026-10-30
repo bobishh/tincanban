@@ -3267,18 +3267,32 @@ it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" 
   });
 });
 
-it.each([{ existing: 0, applied: true, role: true }, { existing: 1, applied: true, role: true }, { existing: 2, applied: true, role: true },
-  { existing: 0, applied: false, role: true }, { existing: 0, applied: true, role: false }])(
-  "Given an application receipt with $existing matching cards, Applied scope $applied, role $role and no posting page, When processed and redelivered, Then create once, append notes, or review ambiguity", async ({ existing, applied, role }) => {
+const applicationReceipts = [
+  { provider: "Ably", company: "Ably", title: "Senior Software Engineer, Backoffice Platform",
+    subject: "Thank you for your application to Ably, Alex!",
+    text: "Thanks you for your application to the Senior Software Engineer, Backoffice Platform position. We really appreciate your interest in joining Ably!" },
+  { provider: "Join", company: "elearnio GmbH", title: "Senior Full-Stack Developer (f/m/x)",
+    subject: "We received your application for a position at elearnio GmbH",
+    text: "You have successfully submitted your application for this position: Senior Full-Stack Developer (f/m/x) We will review your qualifications shortly." },
+  { provider: "Greenhouse", company: "Lanes & Planes", title: "Senior Ruby on Rails Developer - AI Focus (f/m/d)",
+    subject: "Thank you for applying to Lanes & Planes as Senior Ruby on Rails Developer - AI Focus (f/m/d)",
+    text: "Thank you for your interest in joining our awesome team! We have received your application." },
+];
+
+it.each(applicationReceipts.flatMap(receipt => [
+  { existing: 0, applied: true, role: true }, { existing: 1, applied: true, role: true }, { existing: 2, applied: true, role: true },
+  { existing: 0, applied: false, role: true }, { existing: 0, applied: true, role: false },
+].map(scenario => ({ ...receipt, ...scenario }))))(
+  "Given a $provider application receipt with $existing matching cards, Applied scope $applied, role $role and no posting page, When processed and redelivered, Then create once, append notes, or review ambiguity", async ({ company, title, subject, text: receiptText, existing, applied, role }) => {
   const data = await typedFixture(undefined, true, 2, applied);
   data.packet.transport = capturedRuntimeTransport();
   let replica = await AutomationReplica.activate(data.packet, data.automation);
   for (let index = 0; index < existing; index++) await replica.createLead(`ably-existing-${index}`,
-    { company: "Ably", role: "Senior Software Engineer, Backoffice Platform", source: { origin: "website" } }, {});
-  const text = role ? "Thanks you for your application to the Senior Software Engineer, Backoffice Platform position. We really appreciate your interest in joining Ably!\n\n" + "Full receipt detail. ".repeat(450).trim() : "Your application has been received. Thank you for your interest in joining Ably!";
+    { company, role: title, source: { origin: "website" } }, {});
+  const text = role ? receiptText + "\n\n" + "Full receipt detail. ".repeat(450).trim() : `Your application has been received. Thank you for your interest in joining ${company}!`;
   const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: "2026-10-28T12:00:00.000Z", rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
     message: { messageId: "<ably-receipt@example.test>", inReplyTo: null, references: [], from: "Ably <no-reply@example.test>", to: "owner@example.test",
-      subject: "Thank you for your application to Ably, Alex!", text, date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] } };
+      subject: role ? subject : `Your application at ${company}`, text, date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] } };
   const decision = { event: "applied", distributions: { application_event: { type: "choice", choice: "applied", confidence: 1,
     probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(label => [label, label === "applied" ? 1 : 0])) } },
     model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };
@@ -3301,7 +3315,7 @@ it.each([{ existing: 0, applied: true, role: true }, { existing: 1, applied: tru
       expect(replica.candidates()).toHaveLength(1);
       const card = replica.candidates()[0]!;
       if (!existing) {
-        expect(card).toMatchObject({ company: "Ably", role: "Senior Software Engineer, Backoffice Platform", columnId: data.packet.bindings.columns.applied });
+        expect(card).toMatchObject({ company, role: title, columnId: data.packet.bindings.columns.applied });
         expect(card.sources).toHaveLength(1);
         expect(card.sources![0]!.observation).toMatchObject({ origin: "email", status: "unavailable" });
       }

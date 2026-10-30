@@ -32,6 +32,17 @@ test('Given a Join receipt naming this position inline, when extracting the appl
   assert.equal(emailApplicationIdentity({ subject: 'We received your application for a position at Example', text: 'We received your application for this position.' }), null);
 });
 
+test('Given a Greenhouse receipt naming company and role in its subject, when extracting identity, then keep both explicit spans and reject conflicts', () => {
+  const subject = 'Thank you for applying to Lanes & Planes as Senior Ruby on Rails Developer - AI Focus (f/m/d)';
+  const text = 'Thank you for your interest in joining our awesome team! We have received your application.';
+  const identity = { company: 'Lanes & Planes', role: 'Senior Ruby on Rails Developer - AI Focus (f/m/d)' };
+  assert.deepEqual(emailApplicationIdentity({ subject, text }), identity);
+  assert.deepEqual(emailApplicationIdentity({ subject: `Fwd: ${subject}`, text }), identity);
+  assert.equal(emailApplicationIdentity({ subject, text: `${text}\nCompany: Other` }), null);
+  assert.equal(emailApplicationIdentity({ subject, text: `${text}\nRole: Designer` }), null);
+  assert.equal(emailApplicationIdentity({ subject: 'Thank you for applying to Lanes & Planes as', text }), null);
+});
+
 test('Given two roles at one company and no role clue, when correlated, then requires review', () => {
   const result = correlateApplication({
     messageId: '<mail@example.test>', inReplyTo: null, references: [], from: 'recruiter@example.test',
