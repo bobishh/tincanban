@@ -397,6 +397,11 @@ jobs:
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps ${{ matrix.browsers }}
+      - name: Install locked Worker dependencies for browser intake
+        if: matrix.group == 'intake'
+        run: |
+          npm install --global pnpm@11.25.0
+          pnpm --dir workers/automation install --frozen-lockfile
       - name: Verify browser owner controls and scoped intake
         if: matrix.group == 'intake'
         env:
