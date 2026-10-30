@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { spawn, type ChildProcess } from "node:child_process"
 import { tmpdir } from "node:os"
@@ -6,6 +6,21 @@ import { join, resolve } from "node:path"
 import { discussObject } from "./support/discussions"
 import { verifyPublicOwnerPollingDraft } from "./support/publicOwnerPolling"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
+
+async function waitForStableWorkspaceHeads(page: Page) {
+  let previous: string | undefined
+  await expect.poll(async () => {
+    const heads = await page.evaluate(async () => {
+      const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+      const { workspaceHeads } = await import("/src/crdt.ts")
+      const doc = app.getActiveDoc()
+      return doc ? workspaceHeads(doc).join("\n") : ""
+    })
+    const stable = previous !== undefined && heads === previous
+    previous = heads
+    return stable
+  }, { timeout: 5_000, intervals: [200, 200, 200] }).toBe(true)
+}
 
 test("Given an owner publishes a board, when Keeper restarts and the owner withdraws it, then anonymous readers get only the active snapshot and file bytes", async ({ page, browser, baseURL }, info) => {
   test.setTimeout(120_000)
@@ -182,6 +197,7 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
         injectedGuardAborted = true
       }
       if (attempt === 2) throw new Error(`Publication preparation stayed stale across three confirmed attempts: ${errors.join(" | ")}`)
+      await waitForStableWorkspaceHeads(page)
       const retry = panel.getByRole("button", { name: "Retry", exact: true })
       if (await retry.isVisible()) await retry.click()
       if (await revision() === "1") break

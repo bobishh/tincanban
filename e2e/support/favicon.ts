@@ -1,6 +1,6 @@
 import { expect, type Page } from "./coverage"
 
-export async function faviconColor(page: Page) {
+async function faviconColor(page: Page) {
   return page.locator('link[rel="icon"][type="image/svg+xml"]').evaluate(link => {
     const href = link.getAttribute("href") ?? ""
     if (!href.startsWith("data:image/svg+xml,")) return null

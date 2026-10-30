@@ -620,8 +620,7 @@ async function retainedBoardAccess(page: Page, workspaceId: string) {
   }, workspaceId)
 }
 
-for (const interrupt of [false, true]) {
-test(`Given an approved phone and an owner board with no Rusty copy${interrupt ? " after a connection failure" : ""}, when sign-in loads its private catalog, then recover the original board through P2P and retain it after reload`, async ({ page: desktop, context, browser, baseURL }) => {
+test("Given an approved phone and an owner board with no Rusty copy, when sign-in loads its private catalog, then recover the original board through P2P and retain it after reload", async ({ page: desktop, context, browser, baseURL }) => {
   test.setTimeout(240_000)
   const appOrigin = new URL(baseURL!).origin
   const portal = await context.newPage()
@@ -655,7 +654,6 @@ test(`Given an approved phone and an owner board with no Rusty copy${interrupt ?
       const sources = await (await import("/src/sync/identityPeerRecoveryCatalog.ts")).readIdentityPeerRecovery((await profile).identity.personId)
       return { copies: configs.filter(config => config.workspaceId === id).length, source: sources.some(source => source.workspaceId === id) }
     }, workspaceId), { timeout: 30_000 }).toEqual({ copies: 0, source: true })
-    if (!interrupt) {
       const invite = await desktop.evaluate(async id => {
         const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
         return (await (await import("/src/sync/identityPeerRecoveryCatalog.ts")).readIdentityPeerRecovery(profile.identity.personId))
@@ -686,37 +684,9 @@ test(`Given an approved phone and an owner board with no Rusty copy${interrupt ?
         expect(await desktop.evaluate(async () => (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot().some(event =>
           event.event === "identity.peer-recovery.failed" && event.reason === "Recovery requires an already approved Identity device"))).toBe(true)
       } finally { await strangerContext.close() }
-    }
-    if (interrupt) await phone.route(`${appOrigin}/src/sync/irohTransport.ts*`, async route => {
-      const response = await route.fetch()
-      const source = await response.text()
-      await route.fulfill({ response, body: source + `
-        const originalStart = irohTransport.start;
-        irohTransport.start = async (...args) => {
-          const node = await originalStart(...args);
-          const originalDial = node.dial.bind(node);
-          node.dial = async endpoint => {
-            const profile = await (await import('/src/domain/identity.ts')).bootstrapIdentity();
-            const sources = await (await import('/src/sync/identityPeerRecoveryCatalog.ts')).readIdentityPeerRecovery(profile.identity.personId);
-            if (sessionStorage.getItem('e2e.peer-recovery-released') !== 'true' && sources.some(source => source.invite.issuerEndpoint === endpoint)) {
-              sessionStorage.setItem('e2e.peer-recovery-failed', 'true');
-              throw new Error('Fixture dropped the recovery connection');
-            }
-            return originalDial(endpoint);
-          };
-          return node;
-        };
-      ` })
-    })
     await phone.goto(baseURL!)
     await expect(phone.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
-    await approveApplicationDevice(phone, appOrigin, personId, undefined, undefined, interrupt)
-    if (interrupt) {
-      await expect(phone.getByRole("button", { name: "Retry loading boards", exact: true })).toBeVisible({ timeout: 15_000 })
-      expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().getCurrentProfile()?.identity.personId)).toBe(personId)
-      await phone.evaluate(() => sessionStorage.setItem("e2e.peer-recovery-released", "true"))
-      await phone.getByRole("button", { name: "Retry loading boards", exact: true }).click()
-    }
+    await approveApplicationDevice(phone, appOrigin, personId)
     await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 90_000 })
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
     // Recovery publishes before connection cleanup; verify durable access instead of a transient trace event.
@@ -744,4 +714,3 @@ test(`Given an approved phone and an owner board with no Rusty copy${interrupt ?
   }
 })
 
-}

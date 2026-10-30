@@ -65,6 +65,28 @@ describe("ChatStore transaction rules", () => {
   })
   afterEach(() => vi.unstubAllGlobals())
 
+  it("Given a stored message, when the same message is appended again from one store or two, then the duplicate is suppressed and distinct messages remain", async () => {
+    const store = new ChatStore("duplicate-append")
+    const shared = message(0)
+    expect(await store.append(shared)).toBe(true)
+    expect(await store.append(shared)).toBe(false)
+    expect((await store.load(workspaceId)).messages).toEqual([shared])
+
+    const name = "concurrent-tabs"
+    const first = new ChatStore(name)
+    const second = new ChatStore(name)
+    const left = message(1)
+    const right = message(2)
+    const [firstResult, secondResult] = await Promise.all([
+      first.append(shared).then(async saved => ({ saved, unique: await first.append(left) })),
+      second.append(shared).then(async saved => ({ saved, unique: await second.append(right) })),
+    ])
+    expect([firstResult.saved, secondResult.saved].filter(Boolean)).toHaveLength(1)
+    expect(firstResult.unique).toBe(true)
+    expect(secondResult.unique).toBe(true)
+    expect((await first.load(workspaceId)).messages.map(item => item.id).sort()).toEqual([shared.id, left.id, right.id].sort())
+  })
+
   it("Given an immutable stored message, when its ID is reused with different content, then append rejects without changing it", async () => {
     const store = new ChatStore("conflict")
     const original = message(0, { version: 1 })
@@ -157,9 +179,12 @@ describe("ChatStore transaction rules", () => {
     const original = message(3)
     await store.append(original)
     const before = await store.readContentRevision(workspaceId)
-    await expect(store.merge(workspaceId, [{ ...original, body: "conflicting content" }], [profile(1)])).rejects.toThrow(/conflict|immutable/i)
+    const sibling = message(4)
+    await expect(store.merge(workspaceId, [sibling, { ...original, body: "conflicting content" }], [profile(1)])).rejects.toThrow(/conflict|immutable/i)
     expect(await store.readContentRevision(workspaceId)).toBe(before)
-    expect((await store.load(workspaceId)).profiles).toEqual([])
+    const snapshot = await store.load(workspaceId)
+    expect(snapshot.profiles).toEqual([])
+    expect(snapshot.messages).toEqual([original])
   })
 
   it("Given saved content revision, when another store instance opens the database, then revision persists", async () => {

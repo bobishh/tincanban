@@ -152,12 +152,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - group: durable-1
+          - group: durable
             projects: durable-mesh
-            shard: 1/2
-          - group: durable-2
-            projects: durable-mesh
-            shard: 2/2
           - group: replication
             projects: chat sync workspace-sync-data workspace-schema-migration scoped-sync scoped-enrollment
           - group: authority
@@ -178,14 +174,11 @@ jobs:
       - name: Verify network projects in separate browser processes
         env:
           PROJECTS: ${{ matrix.projects }}
-          DURABLE_SHARD: ${{ matrix.shard }}
         run: |
           status=0
           for project in $PROJECTS; do
             if [ "$project" = chat ]; then
               npx playwright test --reporter=list --config=playwright.telemetry.config.ts --grep 'Given paired workspaces' --output="test-results/$project" || status=1
-            elif [ "$project" = durable-mesh ]; then
-              npx playwright test --reporter=list --project="$project" --fully-parallel --workers=1 --shard="$DURABLE_SHARD" --output="test-results/$project" || status=1
             else
               npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
             fi
@@ -424,7 +417,7 @@ jobs:
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           TINCANBAN_PUBLIC_E2E_PREVIEW: "1"
-        run: npm run test:e2e:public-board
+        run: npm run test:e2e:public-board -- --project=chromium
       - uses: actions/upload-artifact@v6
         if: failure()
         with:

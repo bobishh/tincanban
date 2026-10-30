@@ -4,6 +4,7 @@
     ".": {
       "entry": [
         "src/main.ts",
+        "src/components/KeeperDiscovery.vue",
         "src/**/*.test.ts",
         "e2e/**/*.spec.ts",
         "playwright.config.ts",

@@ -59,7 +59,7 @@ standard control minima. The `-1px` screen-reader-only box is a mechanical excep
 | --- | --- | --- |
 | Board, filters, archive, header | `chrome.css`, `style.css`, shared gutters | `component-layout`, `brand-layout`, `filtered-board-layout`, `archive-layout` |
 | Identity, Workspace, templates, priority, JSON | `SchemaEditorDialog.css`, section components | `shared-layout`, `settings-scope`, `settings-layout`, `ui-screen-audit` |
-| Sync, Rusty, backup, recovery, invitations | `SyncDialog.css`, panel components | `shared-layout`, `sync-tabs`, `sync-layout`, `ui-screen-audit` |
+| Sync, Rusty, backup, recovery, invitations | `SyncDialog.css`, panel components | `shared-layout`, `sync-tabs`, `sync-layout` |
 | Workspace list and creation, board/column schema | `WorkspacesDialog`, `CreateWorkspaceDialog`, `SchemaEditorDialog` | `shared-layout`, `component-layout`, `workspace-create-layout` |
 | Item creation, editing and details, attachments | `form-grid`, `ItemFormDialog`, `SpatialWindow`, `ItemDocuments` | `shared-layout`, `window-presentation`, `conversation-windows`, `card-discuss-layout` |
 | Chat, discussions, references | `WorkspaceChat.css`, shared window/actions | `shared-layout`, `conversation-windows`, `mobile-chat-composer`, `root-message-links` |

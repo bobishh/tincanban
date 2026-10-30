@@ -25,6 +25,11 @@ import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDu
 import { MeshDialRouteSelector, routeLeaseFields, routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 export { isNativeKeeperRoute } from "./nativeKeeperRoute"
 
+function supersededPeerClose(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /browser connection closed/i.test(message)
+}
+
 export class DurableMeshSessions extends DurableMeshHandshake {
   private readonly rustyAccessMaintenance = new WeakMap<SyncConnection, ReturnType<typeof participantWorkspaceSession>["maintenance"]>()
   private readonly workspacePublishTasks = new Map<string, Promise<void>>()
@@ -331,6 +336,10 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     publishRecovered: (key, entry) => this.stopped || this.sessions.get(key) !== entry
       ? Promise.resolve() : this.publishCurrentSession(key, entry as SessionEntry),
     stableSession: key => this.clearRouteReconnect(key),
+    routeRecovered: key => this.clearRouteReconnect(key),
+    holdDirectReconnect: (key, delayMs) => {
+      this.runtime().scheduleReconnect(key, Date.now(), delayMs, 10_000)
+    },
     protocolFailure: (stage, error) => this.reportProtocolFailure(stage, error),
     networkFailure: (key, error) => { this.recordRouteFailure(key, error) },
   }, this.sessions)
@@ -447,6 +456,12 @@ export class DurableMeshSessions extends DurableMeshHandshake {
 
   protected recordRouteFailure(key: string, error: unknown): boolean {
     const networkFailure = isMeshNetworkFailure(error)
+    // This close string is also what a browser sends when it drops the socket.
+    // Retry on the direct path. Forcing relay here leaves enrollment and peers stuck.
+    if (supersededPeerClose(error)) {
+      this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
+      return true
+    }
     this.reconnectPolicy.recordFailure(key, networkFailure)
     this.runtime().scheduleReconnect(key, Date.now(), 1_000, 10_000)
     return networkFailure

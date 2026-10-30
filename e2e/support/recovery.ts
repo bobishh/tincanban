@@ -6,7 +6,6 @@ declare global {
   interface Window {
     __TINCANBAN_E2E_RECOVERY_NODES__?: CapturedNode[]
     __TINCANBAN_E2E_RECOVERY_CLOSED_NODES__?: number
-    __TINCANBAN_E2E_DOCUMENT_RECEIVES__?: Array<{ document: number[]; shouldPersist: boolean; persisted: boolean; responseSent: boolean; failed: boolean }>
   }
 }
 
@@ -33,34 +32,6 @@ export async function closeLatestRealIrohNode(page: Page, endpoint?: string) {
     if (!node) throw new Error("No real Iroh node was captured")
     await node.close("E2E unexpected transport close")
   }, endpoint)
-}
-
-/** Counts actual persisted-document responses emitted by the receiving live scope. */
-export async function captureSavedAcknowledgements(page: Page) {
-  await page.route("**/browserScopeSync.ts*", async route => {
-    const response = await route.fetch()
-    const source = await response.text()
-    const preparedPersist = /persisted = !prepared\.shouldPersist \|\| \(?await this\.host\.persistDocument\(toBytes\(prepared\.document\), prepared\.proof\)\)? !== false;?/
-    const directPersist = /const persisted = !effect\.shouldPersist \|\| \(?await this\.host\.persistDocument\(toBytes\(effect\.document\), effect\.proof\)\)? !== false;?/
-    const acknowledgement = /(const completion = (?:await )?this\.runtime\.completeDocumentReceive\(persisted\);?\s*)if \(completion\.response\) await stream\.send\(toBytes\(completion\.response\)\);?/g
-    if (!preparedPersist.test(source) || !directPersist.test(source) || [...source.matchAll(acknowledgement)].length !== 2) {
-      throw new Error("Could not instrument both real document receive paths")
-    }
-    const captureAttempt = (value: "prepared" | "effect") =>
-      `const attempt = { document: Array.from(${value}.document), shouldPersist: Boolean(${value}.shouldPersist), persisted: false, responseSent: false, failed: false };\n;(window.__TINCANBAN_E2E_DOCUMENT_RECEIVES__ ??= []).push(attempt);`
-    const instrumented = source
-      .replace(preparedPersist, match => `${captureAttempt("prepared")}\ntry { ${match}; attempt.persisted = persisted } catch (error) { attempt.failed = true; throw error }`)
-      .replace(directPersist, match => `${captureAttempt("effect")}\nlet persisted = false; try { ${match.replace("const persisted =", "persisted =")}; attempt.persisted = persisted } catch (error) { attempt.failed = true; throw error }`)
-      .replace(acknowledgement, "$1if (completion.response) { await stream.send(toBytes(completion.response)); attempt.responseSent = true }")
-    await route.fulfill({
-      response,
-      body: instrumented,
-    })
-  })
-}
-
-export async function documentReceiveAttempts(page: Page) {
-  return page.evaluate(() => window.__TINCANBAN_E2E_DOCUMENT_RECEIVES__ ?? [])
 }
 
 export async function realIrohNodeOwnership(page: Page) {
