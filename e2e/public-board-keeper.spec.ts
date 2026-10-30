@@ -238,15 +238,14 @@ test("Given an owner publishes a board, when Keeper restarts and the owner withd
     const publicHref = await panel.getByRole("link", { name: "Open public board" }).getAttribute("href")
     expect(publicHref).toContain(`/boards/${fixture.boardId}`)
     expect(new URL(publicHref!, baseURL).searchParams.get("rusty")).toBe(origin)
-    const copiedAddress = page.url()
-    expect(new URL(copiedAddress).searchParams.get("rusty")).toBe(origin)
+    expect(new URL(page.url()).searchParams.has("rusty")).toBe(false)
     await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
     if (info.project.name === "chromium") await verifyPublicOwnerPollingDraft(page, origin, fixture.boardId, info)
 
     anonymousContext = await browser.newContext({ acceptDownloads: true })
     const reader = await anonymousContext.newPage()
     const publicRead = reader.waitForResponse(response => response.url() === `${origin}/v1/public/boards/${fixture.boardId}` && response.request().method() === "GET")
-    await reader.goto(copiedAddress)
+    await reader.goto(new URL(publicHref!, baseURL).href)
     const publicResponse = await publicRead
     const publicResponseBody = await publicResponse.text()
     expect(publicResponse.status()).toBe(200)
