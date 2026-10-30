@@ -151,12 +151,12 @@ export async function traceDiagnosticOperation<T>(name: string, attributes: Reco
   }
 }
 
-export function retryTelemetry() {
-  if (!telemetryConfig().enabled) return
+export function retryTelemetry(): Promise<void> {
+  if (!telemetryConfig().enabled) return Promise.resolve()
   stateError = ""
-  if (sdk) void sdk.forceFlush()
-  else void initialize()
+  const flushed = sdk ? sdk.forceFlush() : initialize().then(instance => instance?.forceFlush())
   notify()
+  return Promise.resolve(flushed).then(() => undefined)
 }
 
 /** Give queued diagnostics a bounded delivery window before a same-tab redirect. */
@@ -183,9 +183,9 @@ function installGlobalHandlers() {
     const error: unknown = event.reason as unknown ?? new Error("Unhandled promise rejection")
     record("browser.unhandled_rejection", { error }, "error")
   })
-  window.addEventListener("pagehide", retryTelemetry)
+  window.addEventListener("pagehide", () => { void retryTelemetry() })
   if (typeof document !== "undefined") document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") retryTelemetry()
+    if (document.visibilityState === "hidden") void retryTelemetry()
   })
 }
 installGlobalHandlers()
