@@ -158,6 +158,7 @@ describe("DurableMesh peer catalog gossip", () => {
       expect((await internal.outgoingRequest(credentials[0]!, { ...peer, personId: "another-person" })).ownerWorkspaceIds).toBeUndefined()
       expect((await internal.incomingResponse(credentials[0]!, "another-person")).ownerWorkspaceIds).toBeUndefined()
       for (const invalid of [{ endpoint: "" }, { revokedAt: "2026-01-01T00:00:00.000Z" }, { transportSecret: "old-secret" }, { advertisement: undefined },
+        { advertisement: { advertisement: { payload: { userAgent: "mesh-keeper/1" } } } },
         { advertisement: { advertisement: { payload: { userAgent: "mesh-lighthouse/1" } } } }]) {
         const original = { ...remote }
         Object.assign(remote, invalid)
@@ -757,7 +758,7 @@ describe("DurableMesh peer catalog gossip", () => {
     const peer = (deviceId: string, userAgent: string) => ({ workspaceId: "workspace", deviceId,
       personId: `person-${deviceId}`, endpoint: `endpoint-${deviceId}`, transportSecret: "secret", role: "visitor" as const,
       lastSeen: new Date().toISOString(), advertisement: { advertisement: { payload: { userAgent } } } })
-    const keeper = peer("lighthouse-device", "mesh-lighthouse/1.2.3")
+    const keeper = peer("keeper-device", "mesh-keeper/1.2.3")
     const browser = peer("browser-device", "Mozilla/5.0 Chrome/140")
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
       getProfile: async () => ({} as never),

@@ -12,7 +12,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 async function signedSettingsRequest(discovery: KeeperDiscovery, integrationId: string,
   expectedRevision: number, operationId: string, scopes: KeeperSettingsScope[], futureBoards: boolean) {
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, discovery, "lighthouse-integration-settings", {
+  const signed = await signKeeperControllerRequest(profile, discovery, "keeper-integration-settings", {
     integrationId, operationId, controllerPersonId: profile.identity.personId,
     controllerDeviceId: profile.device.deviceId, servicePersonId: discovery.personId,
     serviceDeviceId: discovery.deviceId, serviceOrigin: discovery.origin, expectedRevision,
@@ -90,7 +90,7 @@ export async function updateKeeperIntegrationSettings(discovery: KeeperDiscovery
   const response = await requestKeeperJson<unknown>(`${discovery.origin}/v1/integrations/${encodeURIComponent(integrationId)}/settings`, {
     method: "POST", body: JSON.stringify(request.signed),
   })
-  const payload = await verifyKeeperServiceEnvelope(discovery, response, "lighthouse-integration-settings-receipt")
+  const payload = await verifyKeeperServiceEnvelope(discovery, response, "keeper-integration-settings-receipt")
   return validateReceipt(payload, integrationId, operationId, request.requestHash, expectedRequestHash,
     request.profile.identity.personId, request.profile.device.deviceId, scopes, futureBoards)
 }

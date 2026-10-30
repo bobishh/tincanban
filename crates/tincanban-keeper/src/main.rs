@@ -19,8 +19,8 @@ use meta_mesh_native::{
 use serde::Deserialize;
 use serde_json::Value;
 use time::{OffsetDateTime, macros::format_description};
-use tincanban_lighthouse::{
-    TincanbanLighthouseHost, TincanbanLighthouseState, TincanbanScopeStore, now_ms,
+use tincanban_keeper::{
+    TincanbanKeeperHost, TincanbanKeeperState, TincanbanScopeStore, now_ms,
 };
 use tokio::sync::Mutex;
 
@@ -37,7 +37,7 @@ pub(crate) struct Config {
     local_handshake: MeshHandshake,
     genesis_person_id: String,
     state_path: PathBuf,
-    initial_state: TincanbanLighthouseState,
+    initial_state: TincanbanKeeperState,
     #[serde(default)]
     identity_seed: Vec<u8>,
     #[serde(default)]
@@ -48,13 +48,13 @@ pub(crate) struct Config {
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
-        "Usage: tincanban-lighthouse CONFIG.json | tincanban-lighthouse join INVITE_URL STATE_DIR",
+        "Usage: tincanban-keeper CONFIG.json | tincanban-keeper join INVITE_URL STATE_DIR",
     )?;
     if path == "join" {
         let invite = args
             .next()
             .ok_or("Missing Tincanban workspace invitation URL")?;
-        let directory = args.next().ok_or("Missing lighthouse state directory")?;
+        let directory = args.next().ok_or("Missing keeper state directory")?;
         if args.next().is_some() {
             return Err("Too many join arguments".into());
         }
@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         return Ok(());
     }
     if path == "create-item" {
-        let config_path = args.next().ok_or("Missing lighthouse config path")?;
+        let config_path = args.next().ok_or("Missing keeper config path")?;
         let column_id = args.next().ok_or("Missing item column ID")?;
         let title = args.next().ok_or("Missing item title")?;
         let field_values: serde_json::Map<String, serde_json::Value> =
@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .device_seed
             .as_slice()
             .try_into()
-            .map_err(|_| "Lighthouse device seed must contain 32 bytes")?;
+            .map_err(|_| "Keeper device seed must contain 32 bytes")?;
         let mut store = TincanbanScopeStore::open(
             config.workspace_id,
             config.genesis_person_id,
@@ -100,13 +100,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .device_seed
         .as_slice()
         .try_into()
-        .map_err(|_| "Lighthouse device seed must contain 32 bytes")?;
+        .map_err(|_| "Keeper device seed must contain 32 bytes")?;
     let route_store = FileScopeStore::new(config.state_path.with_file_name("route-sequence"));
     let secret: [u8; 32] = config
         .iroh_secret
         .as_slice()
         .try_into()
-        .map_err(|_| "Lighthouse Iroh secret must contain 32 bytes")?;
+        .map_err(|_| "Keeper Iroh secret must contain 32 bytes")?;
     let owner_id = EndpointId::from_str(&config.owner_endpoint_id)?;
     let node = Arc::new(
         NativeNode::start_with_options(NativeNodeOptions {
@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .await?,
     );
     if config.local_handshake.workspace_id != config.workspace_id {
-        return Err("Lighthouse handshake targets another workspace".into());
+        return Err("Keeper handshake targets another workspace".into());
     }
     let store = TincanbanScopeStore::open(
         config.workspace_id.clone(),
@@ -142,9 +142,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if verified.payload.device_id != config.device_id
         || verified.payload.endpoint != node.endpoint_id().to_string()
     {
-        return Err("Lighthouse advertisement does not match Iroh endpoint".into());
+        return Err("Keeper advertisement does not match Iroh endpoint".into());
     }
-    let host = TincanbanLighthouseHost {
+    let host = TincanbanKeeperHost {
         workspace_id: config.workspace_id.clone(),
         secret: config.transport_secret.clone(),
         local_device_id: config.device_id,
@@ -161,12 +161,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             {
                 Ok(true) => {}
                 Ok(false) => break,
-                Err(error) => eprintln!("Lighthouse receive: {error}"),
+                Err(error) => eprintln!("Keeper receive: {error}"),
             }
         }
     });
     println!(
-        "Lighthouse {} listening for workspace {}",
+        "Keeper {} listening for workspace {}",
         node.endpoint_id(),
         config.workspace_id
     );
@@ -184,9 +184,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .read()?
         .map(|bytes| {
             String::from_utf8(bytes)
-                .map_err(|_| "Invalid lighthouse route sequence".to_string())?
+                .map_err(|_| "Invalid keeper route sequence".to_string())?
                 .parse::<u64>()
-                .map_err(|_| "Invalid lighthouse route sequence".to_string())
+                .map_err(|_| "Invalid keeper route sequence".to_string())
         })
         .transpose()?
         .unwrap_or(0);
@@ -250,7 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for route in finished {
             if let Some((connection, task)) = peers.remove(&route) {
                 if let Ok(Err(error)) = task.await {
-                    eprintln!("Lighthouse receive from {route}: {error}");
+                    eprintln!("Keeper receive from {route}: {error}");
                 }
                 connection.close();
             }
@@ -274,7 +274,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 {
                     Ok(connection) => Arc::new(connection),
                     Err(error) => {
-                        eprintln!("Lighthouse connect to {route}: {error}");
+                        eprintln!("Keeper connect to {route}: {error}");
                         reconnects.schedule_reconnect(
                             route.clone(),
                             now_ms()?.try_into()?,
@@ -313,10 +313,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                     .await
                                 });
                                 peers.insert(route.clone(), (connection, receiver));
-                                println!("Lighthouse authenticated peer");
+                                println!("Keeper authenticated peer");
                             }
                             Err(error) => {
-                                eprintln!("Lighthouse handshake with {route}: {error}");
+                                eprintln!("Keeper handshake with {route}: {error}");
                                 connection.close();
                                 reconnects.schedule_reconnect(
                                     route.clone(),
@@ -328,7 +328,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         }
                     }
                     Err(error) => {
-                        eprintln!("Lighthouse connect to {route}: {error}");
+                        eprintln!("Keeper connect to {route}: {error}");
                         connection.close();
                         reconnects.schedule_reconnect(
                             route.clone(),
@@ -355,7 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Ok(()) => {}
                 Err(error) if error.to_string() == "prepare: Unauthenticated mesh peer" => {}
                 Err(error) => {
-                    eprintln!("Lighthouse publish to {route}: {error}");
+                    eprintln!("Keeper publish to {route}: {error}");
                     if let Some((connection, task)) = peers.remove(route) {
                         connection.close();
                         task.abort();
@@ -385,7 +385,7 @@ fn refresh_route(
         .peer
         .pointer("/advertisement/payload")
         .cloned()
-        .ok_or("Missing lighthouse route advertisement")?;
+        .ok_or("Missing keeper route advertisement")?;
     let issued_at = OffsetDateTime::from_unix_timestamp_nanos(now_ms()? * 1_000_000)
         .map_err(|error| error.to_string())?
         .format(format_description!(
@@ -401,14 +401,14 @@ fn refresh_route(
             .peer
             .pointer("/advertisement/payload/deviceId")
             .and_then(Value::as_str)
-            .ok_or("Missing lighthouse device id")?,
+            .ok_or("Missing keeper device id")?,
         DEFAULT_SIGNATURE_DOMAIN,
     )?)
     .map_err(|error| error.to_string())?;
     let peer = handshake
         .peer
         .as_object_mut()
-        .ok_or("Invalid lighthouse peer bundle")?;
+        .ok_or("Invalid keeper peer bundle")?;
     peer.insert("advertisement".into(), signed.clone());
     peer.insert("signed".into(), signed.clone());
     peer.insert("payload".into(), payload);

@@ -48,7 +48,7 @@ beforeEach(() => {
   }))
   mocks.requestKeeperJson.mockResolvedValue({ service: "response" })
   mocks.verifyKeeperServiceEnvelope.mockImplementation(async (_discovery, _response, kind) => {
-    expect(kind).toBe("lighthouse-integration-settings-receipt")
+    expect(kind).toBe("keeper-integration-settings-receipt")
     return receipt()
   })
 })
@@ -62,7 +62,7 @@ describe("signed keeper integration settings API", () => {
       scopes: [{ workspaceId: "board-a", grantEpoch: 7, state: "removed", cleanup: "complete" }],
     })
     expect(mocks.signKeeperControllerRequest).toHaveBeenCalledWith(expect.anything(), discovery,
-      "lighthouse-integration-settings", expect.objectContaining({ integrationId: "integration-a", expectedRevision: 2,
+      "keeper-integration-settings", expect.objectContaining({ integrationId: "integration-a", expectedRevision: 2,
         operationId: "settings-op", policy: { futureBoards: false }, scopes }))
     expect(mocks.requestKeeperJson).toHaveBeenCalledWith("https://rusty.example/v1/integrations/integration-a/settings",
       expect.objectContaining({ method: "POST" }))

@@ -502,26 +502,18 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await expect.poll(() => projectedAvatar(peer, actualWorkspaceId, personId), { timeout: 45_000 })
       .toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
 
-    await phone.reload()
-    await expect(phone.getByRole("region", { name: "Bo Job search", exact: true })).toBeVisible({ timeout: 60_000 })
-    await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
-    await expect(phone.getByRole("button", { name: /Open Bo private opportunity — Senior engineer on phone/u })).toBeVisible()
-    const restored = await phone.evaluate(async () => {
-      const storage = await import("/src/storage.ts")
-      const root = await storage.defaultStorage.loadPersonalRoot()
-      return { personId: root?.identity.personId, photo: root?.photo?.avatarData }
+    await phone.evaluate(async () => {
+      await (await import("/src/sync/telemetry.ts")).retryTelemetry()
     })
-    expect(restored.personId).toBe(personId)
-    expect(restored.photo).toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
-
-    await phone.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
     const expectedPhases = [
       ["request", "completed"], ["callback", "verified"], ["adoption", "completed"],
       ["catalog", "completed"], ["boards", "completed"], ["restore", "completed"],
     ] as const
-    await expect.poll(() => expectedPhases.every(([phase, outcome]) => phoneLogs.some(log =>
+    const signInLog = (phase: string, outcome: string) => phoneLogs.some(log =>
       log.body?.stringValue === "identity.browser_signin" && attribute(log, "sync.phase") === phase &&
-      attribute(log, "identity.signin.outcome") === outcome)), { timeout: 15_000 }).toBe(true)
+      attribute(log, "identity.signin.outcome") === outcome)
+    await expect.poll(() => expectedPhases.filter(([phase, outcome]) => !signInLog(phase, outcome))
+      .map(([phase, outcome]) => `${phase}:${outcome}`).join(", "), { timeout: 15_000 }).toBe("")
     const phaseLogs = expectedPhases.map(([phase, outcome]) => phoneLogs.find(log =>
       log.body?.stringValue === "identity.browser_signin" && attribute(log, "sync.phase") === phase &&
       attribute(log, "identity.signin.outcome") === outcome))
@@ -534,6 +526,18 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
       .some(log => attribute(log, "identity.signin.outcome") === "failed")).toBe(false)
     expect(phoneSpans.some(span => span.name === "identity.browser_signin.request" && span.traceId === traceId)).toBe(true)
     expect(phoneSpans.some(span => span.name === "identity.browser_signin.callback" && span.traceId === traceId)).toBe(true)
+
+    await phone.reload()
+    await expect(phone.getByRole("region", { name: "Bo Job search", exact: true })).toBeVisible({ timeout: 60_000 })
+    await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
+    await expect(phone.getByRole("button", { name: /Open Bo private opportunity — Senior engineer on phone/u })).toBeVisible()
+    const restored = await phone.evaluate(async () => {
+      const storage = await import("/src/storage.ts")
+      const root = await storage.defaultStorage.loadPersonalRoot()
+      return { personId: root?.identity.personId, photo: root?.photo?.avatarData }
+    })
+    expect(restored.personId).toBe(personId)
+    expect(restored.photo).toMatch(/^data:image\/(?:webp|jpeg);base64,/u)
 
     // A fresh local app still owns its boards; declining sign-in preserves that
     // Identity, while explicit adoption delivers the same board to Bo's devices.

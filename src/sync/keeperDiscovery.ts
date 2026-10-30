@@ -69,7 +69,7 @@ async function publicKeyFingerprint(publicKey: string) {
   return [...new Uint8Array(digest)].slice(0, 12).map(byte => byte.toString(16).padStart(2, "0")).join("").match(/.{1,4}/g)?.join(":") ?? "unavailable"
 }
 
-export async function discoverLighthouse(input: string, options: { allowLoopbackHttp?: boolean } = {}): Promise<KeeperDiscovery> {
+export async function discoverKeeper(input: string, options: { allowLoopbackHttp?: boolean } = {}): Promise<KeeperDiscovery> {
   const origin = normalizeOrigin(input, options.allowLoopbackHttp === true)
   const response = await fetch(`${origin}/.well-known/mesh-lighthouse`, { redirect: "error", headers: { Accept: "application/json" } })
   if (!response.ok) {

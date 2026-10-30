@@ -25,11 +25,11 @@ function boundedBody(now = Date.now()) {
 }
 
 it("Given an active local controller, when signing, then preserve the protocol envelope and certificate evidence", async () => {
-  const request = await signKeeperControllerRequest(profile, discovery, "lighthouse-test-request", boundedBody())
+  const request = await signKeeperControllerRequest(profile, discovery, "keeper-test-request", boundedBody())
   expect(request.identity).toEqual(profile.identity)
   expect(request.deviceId).toBe(profile.device.deviceId)
   expect(request.certificates).toEqual([profile.certificate])
-  expect(request.signed.payload).toMatchObject({ kind: "lighthouse-test-request", version: 1, protocolVersion: 1,
+  expect(request.signed.payload).toMatchObject({ kind: "keeper-test-request", version: 1, protocolVersion: 1,
     operationId: "operation-1", servicePersonId: discovery.personId, serviceOrigin: discovery.origin,
     controllerPersonId: profile.identity.personId, controllerDeviceId: profile.device.deviceId })
   expect(Number(request.signed.payload.expiresAt) - Number(request.signed.payload.issuedAt)).toBe(30)
@@ -45,7 +45,7 @@ it("Given an enrolled controller without its root private key, when signing, the
   profile = await adoptEnrolledIdentity(root.identity, certificate)
   vi.spyOn(defaultProofStore, "listCertificates").mockResolvedValue([root.certificate])
 
-  const request = await signKeeperControllerRequest(profile, discovery, "lighthouse-test-request", boundedBody())
+  const request = await signKeeperControllerRequest(profile, discovery, "keeper-test-request", boundedBody())
   expect(request.identity).toEqual(root.identity)
   expect(request.certificates).toEqual([certificate, root.certificate])
   await expect(verifyEnvelope(request.signed, profile.device.publicKey, domain)).resolves.toBe(true)
@@ -54,7 +54,7 @@ it("Given an enrolled controller without its root private key, when signing, the
 it("Given a different controller private key, when signing, then reject instead of returning an invalid request", async () => {
   const other = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
   const mismatched = { ...profile, privateKeys: { ...profile.privateKeys, devicePrivateKey: other.privateKey } }
-  await expect(signKeeperControllerRequest(mismatched, discovery, "lighthouse-test-request", boundedBody()))
+  await expect(signKeeperControllerRequest(mismatched, discovery, "keeper-test-request", boundedBody()))
     .rejects.toThrow(/key|signer|stale/i)
 })
 
@@ -66,7 +66,7 @@ it("Given another tab replaced the durable controller key, when signing, then fa
   stored.privateKeys.devicePrivateKeyPkcs8 = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("pkcs8", replacement.privateKey)))
   await writeLocal("tincanban.local_profile.v1", JSON.stringify(stored))
 
-  await expect(signKeeperControllerRequest(profile, discovery, "lighthouse-test-request", boundedBody()))
+  await expect(signKeeperControllerRequest(profile, discovery, "keeper-test-request", boundedBody()))
     .rejects.toThrow(/stale identity|signing key/i)
 })
 
@@ -78,7 +78,7 @@ it("Given the signer certificate has a missing ancestor, when signing, then reje
   if (!raw) throw new Error("Test profile was not persisted")
   await writeLocal("tincanban.local_profile.v1", JSON.stringify({ ...JSON.parse(raw), certificate }))
 
-  await expect(signKeeperControllerRequest(withMissingAncestor, discovery, "lighthouse-test-request", boundedBody()))
+  await expect(signKeeperControllerRequest(withMissingAncestor, discovery, "keeper-test-request", boundedBody()))
     .rejects.toThrow(/ancestor|certificate|chain/i)
 })
 
@@ -89,7 +89,7 @@ it("Given caller objects mutate during certificate resolution, when signing, the
   const inputProfile = structuredClone(profile)
   const inputDiscovery = structuredClone(discovery)
   const inputBody = boundedBody()
-  const pending = signKeeperControllerRequest(inputProfile, inputDiscovery, "lighthouse-test-request", inputBody)
+  const pending = signKeeperControllerRequest(inputProfile, inputDiscovery, "keeper-test-request", inputBody)
   inputProfile.identity.personId = "changed-person"
   inputProfile.device.deviceId = "changed-device"
   inputDiscovery.origin = "https://changed.example"
@@ -119,7 +119,7 @@ it("Given the durable key changes during the actual request signature, when sign
     return result
   })
 
-  await expect(signKeeperControllerRequest(profile, discovery, "lighthouse-test-request", boundedBody()))
+  await expect(signKeeperControllerRequest(profile, discovery, "keeper-test-request", boundedBody()))
     .rejects.toThrow(/stale identity|signing key|authority/i)
   expect(await readLocal("tincanban.local_profile.v1")).toBe(changed)
 })
@@ -139,6 +139,6 @@ it("Given the signed request expires during crypto, when signing resumes, then r
     return result
   })
 
-  await expect(signKeeperControllerRequest(profile, discovery, "lighthouse-test-request", { operationId: "expiring",
+  await expect(signKeeperControllerRequest(profile, discovery, "keeper-test-request", { operationId: "expiring",
     issuedAt, expiresAt })).rejects.toThrow(/expired|timestamp/i)
 })

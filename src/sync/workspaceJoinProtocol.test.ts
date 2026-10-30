@@ -79,7 +79,7 @@ describe("Rust workspace join state machine in browser stream adapter", () => {
     const installed = new Promise<void>(resolve => { installing = resolve })
     const committed = new Promise<void>(resolve => { commit = resolve })
     let acknowledged = false
-    const receipt = new TextEncoder().encode(JSON.stringify({ kind: "lighthouse-provision-commit", version: 1,
+    const receipt = new TextEncoder().encode(JSON.stringify({ kind: "keeper-provision-commit", version: 1,
       workspaceIds: ["one", "two"], snapshotHash: await sha256Base64Url(snapshot) }))
     const guestRun = pair.guest.handle(pair.guestRequestStream, pair.guestConnection, request, async () => {
       installing()
@@ -103,7 +103,7 @@ describe("Rust workspace join state machine in browser stream adapter", () => {
   it("Given a keeper sends a receipt for another snapshot, when host checks ACK, then host never accepts the peer", async () => {
     const pair = pairedAdapters()
     const verify = await keeperCommitReceiptVerifier(["one"], new Uint8Array([1]))
-    const receipt = new TextEncoder().encode(JSON.stringify({ kind: "lighthouse-provision-commit", version: 1,
+    const receipt = new TextEncoder().encode(JSON.stringify({ kind: "keeper-provision-commit", version: 1,
       workspaceIds: ["one"], snapshotHash: "wrong" }))
     const guestRun = pair.guest.handle(pair.guestRequestStream, pair.guestConnection, request,
       async () => ({ value: "committed", acknowledgement: receipt }))

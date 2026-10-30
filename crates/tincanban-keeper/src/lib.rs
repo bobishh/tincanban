@@ -25,7 +25,7 @@ use tincanban_authority::{admit_tincanban_candidate, prepare_tincanban_write_aut
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TincanbanLighthouseState {
+pub struct TincanbanKeeperState {
     pub document: Vec<u8>,
     pub authorization: Value,
     #[serde(default = "empty_chat")]
@@ -39,7 +39,7 @@ fn empty_chat() -> Value {
 }
 
 struct Inner {
-    state: TincanbanLighthouseState,
+    state: TincanbanKeeperState,
     file: FileScopeStore,
 }
 
@@ -55,12 +55,12 @@ impl TincanbanScopeStore {
         workspace_id: String,
         genesis_person_id: String,
         path: PathBuf,
-        initial: TincanbanLighthouseState,
+        initial: TincanbanKeeperState,
     ) -> Result<Self, String> {
         let file = FileScopeStore::new(path);
         let state = match file.read()? {
-            Some(bytes) => serde_json::from_slice::<TincanbanLighthouseState>(&bytes)
-                .map_err(|error| format!("Invalid lighthouse state: {error}"))?,
+            Some(bytes) => serde_json::from_slice::<TincanbanKeeperState>(&bytes)
+                .map_err(|error| format!("Invalid keeper state: {error}"))?,
             None => initial,
         };
         let store = Self {
@@ -72,10 +72,10 @@ impl TincanbanScopeStore {
             let guard = store
                 .inner
                 .lock()
-                .map_err(|_| "Lighthouse state lock poisoned")?;
+                .map_err(|_| "Keeper state lock poisoned")?;
             store.authority_for(&guard.state)?;
             let mut current = AutoCommit::load(&guard.state.document)
-                .map_err(|error| format!("Invalid lighthouse document: {error}"))?;
+                .map_err(|error| format!("Invalid keeper document: {error}"))?;
             let hashes = current
                 .get_changes(&[])
                 .iter()
@@ -96,7 +96,7 @@ impl TincanbanScopeStore {
                     meta_mesh_core::causal_admission::CausalAdmissionStatus::Admitted { .. }
                 )
             }) {
-                return Err("Persisted lighthouse history contains unadmitted changes".into());
+                return Err("Persisted keeper history contains unadmitted changes".into());
             }
             if guard.file.read()?.is_none() {
                 write_state(&guard.file, &guard.state)?;
@@ -109,7 +109,7 @@ impl TincanbanScopeStore {
         let guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         self.authority_for(&guard.state)
             .map(|(snapshot, _)| snapshot)
     }
@@ -118,7 +118,7 @@ impl TincanbanScopeStore {
         let guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         let mesh = verified_mesh_for(self, &guard.state)?;
         Ok(mesh
             .get("peers")
@@ -131,7 +131,7 @@ impl TincanbanScopeStore {
             .collect())
     }
 
-    /// Author one Tincanban item with the lighthouse's own editor credential.
+    /// Author one Tincanban item with the keeper's own editor credential.
     /// Call while the service is stopped; the running process owns its in-memory state.
     pub fn create_item(
         &mut self,
@@ -159,7 +159,7 @@ impl TincanbanScopeStore {
             now_ms()?,
         )?;
         if member.role != meta_mesh_core::WorkspaceRole::Editor {
-            return Err("Lighthouse needs an editor grant to create items".into());
+            return Err("Keeper needs an editor grant to create items".into());
         }
         let state = self.snapshot()?;
         let mut document = AutoCommit::load(&state.document)
@@ -274,17 +274,17 @@ impl TincanbanScopeStore {
 
     fn authority_for(
         &self,
-        state: &TincanbanLighthouseState,
+        state: &TincanbanKeeperState,
     ) -> Result<(WorkspaceWriteAuthorizationSnapshot, Value), String> {
         let evidence = state
             .authorization
             .get("authority")
-            .ok_or("Missing lighthouse authority")?;
+            .ok_or("Missing keeper authority")?;
         let records = state
             .authorization
             .get("records")
             .and_then(Value::as_array)
-            .ok_or("Missing lighthouse write authorizations")?;
+            .ok_or("Missing keeper write authorizations")?;
         let (snapshot, merged) = prepare_tincanban_write_authority(
             &state.document,
             evidence,
@@ -294,12 +294,12 @@ impl TincanbanScopeStore {
             now_ms()?,
         )?;
         if snapshot.workspace_id != self.workspace_id {
-            return Err("Lighthouse workspace does not match document".into());
+            return Err("Keeper workspace does not match document".into());
         }
         Ok((snapshot, merged))
     }
 
-    fn save(&self, guard: &mut Inner, next: TincanbanLighthouseState) -> Result<(), String> {
+    fn save(&self, guard: &mut Inner, next: TincanbanKeeperState) -> Result<(), String> {
         write_state(&guard.file, &next)?;
         guard.state = next;
         Ok(())
@@ -322,7 +322,7 @@ fn put_text(
 
 fn verified_mesh_for(
     store: &TincanbanScopeStore,
-    state: &TincanbanLighthouseState,
+    state: &TincanbanKeeperState,
 ) -> Result<Value, String> {
     let (authority, _) = store.authority_for(state)?;
     let existing = state
@@ -341,7 +341,7 @@ impl NativeScopeHost for TincanbanScopeStore {
         let guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         Ok(NativeScopeSnapshot {
             document: guard.state.document.clone(),
             authorization: Some(guard.state.authorization.clone()),
@@ -359,7 +359,7 @@ impl NativeScopeHost for TincanbanScopeStore {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         let incoming = proof
             .and_then(|value| value.get("authority"))
             .ok_or("Missing incoming Tincanban authority")?;
@@ -402,7 +402,7 @@ impl NativeScopeHost for TincanbanScopeStore {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         let incoming_evidence = incoming
             .get("authority")
             .ok_or("Missing Tincanban authority")?;
@@ -444,7 +444,7 @@ impl NativeScopeHost for TincanbanScopeStore {
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         let mut next = guard.state.clone();
         next.chat = merge_chat(&next.chat, incoming)?;
         self.save(&mut guard, next)
@@ -469,12 +469,12 @@ impl NativeScopeHost for TincanbanScopeStore {
                 .as_ref()
                 .is_some_and(|records| !records.is_empty())
         {
-            return Err("Lighthouse cannot apply mesh authority changes yet".into());
+            return Err("Keeper cannot apply mesh authority changes yet".into());
         }
         let mut guard = self
             .inner
             .lock()
-            .map_err(|_| "Lighthouse state lock poisoned")?;
+            .map_err(|_| "Keeper state lock poisoned")?;
         let (authority, _) = self.authority_for(&guard.state)?;
         let existing = guard
             .state
@@ -491,11 +491,11 @@ impl NativeScopeHost for TincanbanScopeStore {
     }
 
     fn merge_durable_batch(&mut self, _: &[u8]) -> Result<(), String> {
-        Err("Tincanban lighthouse does not accept workspace-set imports".into())
+        Err("Tincanban keeper does not accept workspace-set imports".into())
     }
 
     fn merge_owner_offer(&mut self, _: &[u8]) -> Result<(), String> {
-        Err("Tincanban lighthouse does not accept owner workspace offers".into())
+        Err("Tincanban keeper does not accept owner workspace offers".into())
     }
 
     fn receive_gossip(&mut self, _: &[u8]) -> Result<(), String> {
@@ -504,7 +504,7 @@ impl NativeScopeHost for TincanbanScopeStore {
     }
 }
 
-pub struct TincanbanLighthouseHost {
+pub struct TincanbanKeeperHost {
     pub workspace_id: String,
     pub secret: String,
     pub local_device_id: String,
@@ -512,7 +512,7 @@ pub struct TincanbanLighthouseHost {
     pub store: TincanbanScopeStore,
 }
 
-impl TincanbanLighthouseHost {
+impl TincanbanKeeperHost {
     fn handshake_with_causal_admission(&self) -> Result<Value, String> {
         let mut handshake = self.local_handshake.clone();
         if !handshake
@@ -528,7 +528,7 @@ impl TincanbanLighthouseHost {
     }
 }
 
-impl NativeScopeServiceHost for TincanbanLighthouseHost {
+impl NativeScopeServiceHost for TincanbanKeeperHost {
     type ScopeHost = TincanbanScopeStore;
 
     fn local_device_id(&self) -> &str {
@@ -548,7 +548,7 @@ impl NativeScopeServiceHost for TincanbanLighthouseHost {
         _: &MeshHandshake,
     ) -> Result<(WorkspaceWriteAuthorizationSnapshot, Value), String> {
         if workspace_id != self.workspace_id {
-            return Err("Wrong lighthouse workspace".into());
+            return Err("Wrong keeper workspace".into());
         }
         Ok((
             self.store.authority()?,
@@ -561,27 +561,27 @@ impl NativeScopeServiceHost for TincanbanLighthouseHost {
         workspace_id: &str,
     ) -> Result<WorkspaceWriteAuthorizationSnapshot, String> {
         if workspace_id != self.workspace_id {
-            return Err("Wrong lighthouse workspace".into());
+            return Err("Wrong keeper workspace".into());
         }
         self.store.authority()
     }
 
     fn outgoing_handshake(&mut self, workspace_id: &str) -> Result<Value, String> {
         if workspace_id != self.workspace_id {
-            return Err("Wrong lighthouse workspace".into());
+            return Err("Wrong keeper workspace".into());
         }
         self.handshake_with_causal_admission()
     }
 
     fn open_scope(&mut self, peer: &MeshPeerAdmission) -> Result<Self::ScopeHost, String> {
         if peer.workspace_id != self.workspace_id {
-            return Err("Wrong lighthouse workspace".into());
+            return Err("Wrong keeper workspace".into());
         }
         Ok(self.store.clone())
     }
 }
 
-fn write_state(file: &FileScopeStore, state: &TincanbanLighthouseState) -> Result<(), String> {
+fn write_state(file: &FileScopeStore, state: &TincanbanKeeperState) -> Result<(), String> {
     let bytes = serde_json::to_vec(state).map_err(|error| error.to_string())?;
     file.write_validated(&bytes, None, |_, _| Ok(()))
 }
@@ -642,7 +642,7 @@ fn merge_chat(current: &Value, incoming: &Value) -> Result<Value, String> {
             .cloned()
             .collect::<Vec<_>>();
         if values.len() > limit {
-            return Err("Lighthouse chat storage limit exceeded".into());
+            return Err("Keeper chat storage limit exceeded".into());
         }
         result.insert(field.into(), Value::Array(values));
     }
@@ -734,14 +734,14 @@ mod tests {
             .iter()
             .map(|change| change.hash().to_string())
             .collect();
-        let initial = TincanbanLighthouseState {
+        let initial = TincanbanKeeperState {
             document: baseline.clone(),
             authorization: proof_for(initial_hashes),
             chat: empty_chat(),
             mesh: None,
         };
         let path = std::env::temp_dir().join(format!(
-            "tincanban-lighthouse-{}-{}.json",
+            "tincanban-keeper-{}-{}.json",
             std::process::id(),
             now_ms().unwrap()
         ));

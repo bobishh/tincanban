@@ -158,7 +158,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 export async function getKeeperIntegrationStatus(discovery: KeeperDiscovery) {
   const profile = await bootstrapIdentity()
-  const signedRequest = await signKeeperControllerRequest(profile, discovery, "lighthouse-integration-status-request", {
+  const signedRequest = await signKeeperControllerRequest(profile, discovery, "keeper-integration-status-request", {
     controllerPersonId: profile.identity.personId,
     controllerDeviceId: profile.device.deviceId,
     servicePersonId: discovery.personId,
@@ -168,7 +168,7 @@ export async function getKeeperIntegrationStatus(discovery: KeeperDiscovery) {
   const envelope = await request<unknown>(`${discovery.origin}/v1/integrations/status`, {
     method: "POST", body: JSON.stringify(signedRequest),
   })
-  const payload = await verifyKeeperServiceEnvelope(discovery, envelope, "lighthouse-integration-status")
+  const payload = await verifyKeeperServiceEnvelope(discovery, envelope, "keeper-integration-status")
   const requestPayload = signedRequest.signed.payload as Record<string, unknown>
   if (payload.operationId !== requestPayload.operationId || payload.controllerPersonId !== profile.identity.personId
     || payload.controllerDeviceId !== profile.device.deviceId) {
@@ -308,7 +308,7 @@ export async function disconnectKeeperIntegration(discovery: KeeperDiscovery, in
   expectedRevision: number, operationId: string, scopes: KeeperDisconnectScope[], expectedRequestHash?: string): Promise<KeeperDisconnectReceipt> {
   validateDisconnectRequest(integrationId, expectedRevision, operationId, scopes)
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, discovery, "lighthouse-integration-disconnect", {
+  const signed = await signKeeperControllerRequest(profile, discovery, "keeper-integration-disconnect", {
     integrationId,
     operationId,
     controllerPersonId: profile.identity.personId,
@@ -327,7 +327,7 @@ export async function disconnectKeeperIntegration(discovery: KeeperDiscovery, in
   const response = await request<unknown>(`${discovery.origin}/v1/integrations/${encodeURIComponent(integrationId)}/disconnect`, {
     method: "POST", body: JSON.stringify(signed),
   })
-  const payload = await verifyKeeperServiceEnvelope(discovery, response, "lighthouse-integration-disconnect-receipt")
+  const payload = await verifyKeeperServiceEnvelope(discovery, response, "keeper-integration-disconnect-receipt")
   return parseDisconnectReceipt(payload, discovery, profile, integrationId, operationId, scopes, requestHash)
 }
 
@@ -438,7 +438,7 @@ export async function beginKeeperPairing(discovery: KeeperDiscovery, workspaces:
     workspaces, options, baselineIds)
   const integrationUpdate = pairingIntegrationUpdate(existing, workspaces, options, baselineIds)
   const controllerOrigin = ownerOriginForDiscovery(discovery)
-  const signedRequestBody = await signKeeperControllerRequest(profile, discovery, "lighthouse-pairing-offer", {
+  const signedRequestBody = await signKeeperControllerRequest(profile, discovery, "keeper-pairing-offer", {
     body: { scopes, policy: { futureBoards: options.futureBoards, baselineWorkspaceIds: baselineIds },
       ...(integrationUpdate ? { integrationUpdate } : {}) },
     ...(controllerOrigin ? { controllerOrigin } : {}),
@@ -449,7 +449,7 @@ export async function beginKeeperPairing(discovery: KeeperDiscovery, workspaces:
     transcriptHash: string; challenge: unknown
   }>(`${discovery.origin}/v1/pairings`, { method: "POST", body: JSON.stringify(signedRequestBody) })
   const challengeEnvelope = result.challenge as Record<string, unknown>
-  await verifyKeeperServiceEnvelope(discovery, challengeEnvelope, "lighthouse-pairing-challenge")
+  await verifyKeeperServiceEnvelope(discovery, challengeEnvelope, "keeper-pairing-challenge")
   const verified = validateKeeperPairingChallenge({ pairingId: result.pairingId, transcriptHash: result.transcriptHash,
     expiresAt: result.expiresAt, comparisonCode: result.comparisonCode }, discovery,
   { ...challengeEnvelope, operatorUrl: result.operatorUrl }, transcriptHash)
@@ -464,7 +464,7 @@ export async function beginKeeperPairing(discovery: KeeperDiscovery, workspaces:
 
 export async function decideKeeperPairing(pairing: KeeperPairing, approve: boolean): Promise<void> {
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "lighthouse-pairing-decision", {
+  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "keeper-pairing-decision", {
     pairingId: pairing.pairingId,
     transcriptHash: pairing.transcriptHash,
     challengeNonce: pairing.challengeNonce,
@@ -482,7 +482,7 @@ export async function deliverKeeperInvitation(pairing: KeeperPairing, invitation
     }
     const profile = await bootstrapIdentity()
     const approvedScopes = pairing.workspaces.map(workspace => ({ workspaceId: workspace.id, mode: "replicate" }))
-    const signed = await signKeeperControllerRequest(profile, pairing.discovery, "lighthouse-pairing-provision", {
+    const signed = await signKeeperControllerRequest(profile, pairing.discovery, "keeper-pairing-provision", {
       body: {
         pairingId: pairing.pairingId,
         transcriptHash: pairing.transcriptHash,
@@ -502,7 +502,7 @@ export async function deliverKeeperInvitation(pairing: KeeperPairing, invitation
     method: "POST",
     body,
   })
-  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, result, "lighthouse-pairing-status")
+  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, result, "keeper-pairing-status")
   const profile = await bootstrapIdentity()
   if (payload.pairingId !== pairing.pairingId
     || payload.integrationId !== pairing.integrationId

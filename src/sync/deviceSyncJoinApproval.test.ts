@@ -6,8 +6,8 @@ describe("owner-connection join decisions", () => {
   it("binds opt-in to one pending request even when same identity has concurrent requests", async () => {
     const state = createDeviceSyncState()
     const approvals = createDeviceSyncJoinApproval(state)
-    const first = approvals.waitForJoinDecision("keeper", "Lighthouse", true)
-    const second = approvals.waitForJoinDecision("keeper", "Lighthouse", true)
+    const first = approvals.waitForJoinDecision("keeper", "Keeper", true)
+    const second = approvals.waitForJoinDecision("keeper", "Keeper", true)
     const [firstRequest, secondRequest] = state.pendingJoins.value
     firstRequest!.role = "visitor"
     firstRequest!.followOwner = true
@@ -24,7 +24,7 @@ describe("owner-connection join decisions", () => {
   it("cancels pending requests without granting owner-connection permission", async () => {
     const state = createDeviceSyncState()
     const approvals = createDeviceSyncJoinApproval(state)
-    const pending = approvals.waitForJoinDecision("keeper", "Lighthouse", true)
+    const pending = approvals.waitForJoinDecision("keeper", "Keeper", true)
     approvals.cancelPending()
 
     await expect(pending).resolves.toBeNull()

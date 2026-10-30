@@ -4,13 +4,13 @@ import { canonicalKeeperIntegrationId } from "./keeperIntegrationSelection"
 
 const mocks = vi.hoisted(() => ({
   keeperIntegrationReferences: vi.fn(),
-  discoverLighthouse: vi.fn(),
+  discoverKeeper: vi.fn(),
   getKeeperIntegrationStatus: vi.fn(),
   beginKeeperPairing: vi.fn(),
 }))
 
 vi.mock("./ownerKeeper", () => ({ keeperIntegrationReferences: mocks.keeperIntegrationReferences }))
-vi.mock("./keeperDiscovery", () => ({ discoverLighthouse: mocks.discoverLighthouse }))
+vi.mock("./keeperDiscovery", () => ({ discoverKeeper: mocks.discoverKeeper }))
 vi.mock("./keeperPairing", () => ({
   getKeeperIntegrationStatus: mocks.getKeeperIntegrationStatus,
   beginKeeperPairing: mocks.beginKeeperPairing,
@@ -34,7 +34,7 @@ beforeEach(async () => {
   reference.integrationId = integrationId
   active.integrationId = integrationId
   mocks.keeperIntegrationReferences.mockResolvedValue({ integrations: { [integrationId]: reference } })
-  mocks.discoverLighthouse.mockResolvedValue(discovery)
+  mocks.discoverKeeper.mockResolvedValue(discovery)
   mocks.getKeeperIntegrationStatus.mockResolvedValue({ integrations: [active] })
   mocks.beginKeeperPairing.mockResolvedValue(pairing)
 })
@@ -66,7 +66,7 @@ describe("future-board policy approval", () => {
       duplicate: { ...reference, integrationId: "duplicate" },
     } })
     await expect(beginKeeperPolicyUpdate("rusty-person", [])).rejects.toThrow("Multiple saved Rusty integrations need review")
-    expect(mocks.discoverLighthouse).not.toHaveBeenCalled()
+    expect(mocks.discoverKeeper).not.toHaveBeenCalled()
     expect(mocks.beginKeeperPairing).not.toHaveBeenCalled()
   })
 

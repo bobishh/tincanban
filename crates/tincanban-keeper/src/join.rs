@@ -2,7 +2,7 @@ use std::{fs, io::Write, path::PathBuf, str::FromStr, time::Duration};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use iroh::{EndpointAddr, EndpointId};
-use tincanban_lighthouse::{now_ms, TincanbanLighthouseState, TincanbanScopeStore};
+use tincanban_keeper::{now_ms, TincanbanKeeperState, TincanbanScopeStore};
 use meta_mesh_core::{
     decode_workspace_set, parse_invitation, public_key_from_seed, public_key_id,
     sign_device_certificate, sign_json_envelope, verify_workspace_grant,
@@ -30,16 +30,16 @@ struct JoinResponse {
 pub async fn join(raw_invite: &str, directory: PathBuf) -> Result<(), BoxError> {
     let invite = match parse_invitation(raw_invite, now_ms()?.try_into()?)? {
         ScopedInvitation::WorkspaceJoin(invite) => invite,
-        _ => return Err("Lighthouse requires a workspace invitation".into()),
+        _ => return Err("Keeper requires a workspace invitation".into()),
     };
     if invite.workspaces.len() != 1 {
-        return Err("Lighthouse accepts one workspace per invitation".into());
+        return Err("Keeper accepts one workspace per invitation".into());
     }
     let directory_existed = directory.exists();
     if directory_existed
         && (directory.join("config.json").exists() || directory.join("state.json").exists())
     {
-        return Err("Lighthouse identity already exists in state directory".into());
+        return Err("Keeper identity already exists in state directory".into());
     }
 
     let identity_seed: [u8; 32] = rand::random();
@@ -89,7 +89,7 @@ pub async fn join(raw_invite: &str, directory: PathBuf) -> Result<(), BoxError> 
             Ok(session) => break session,
             Err(error) if attempt >= 3 => return Err(error),
             Err(error) => {
-                eprintln!("Lighthouse owner discovery attempt {attempt}: {error}");
+                eprintln!("Keeper owner discovery attempt {attempt}: {error}");
                 tokio::time::sleep(Duration::from_secs(attempt)).await;
             }
         }
@@ -99,7 +99,7 @@ pub async fn join(raw_invite: &str, directory: PathBuf) -> Result<(), BoxError> 
         let request = serde_json::to_vec(&json!({
             "invitationId": invite.invitation_id,
             "personId": person_id,
-            "displayName": "mesh-lighthouse",
+            "displayName": "mesh-keeper",
             "meshPeers": [bundle],
         }))?;
         let frame = machine.send_request(&request)?;
@@ -140,7 +140,7 @@ pub async fn join(raw_invite: &str, directory: PathBuf) -> Result<(), BoxError> 
     }
     let config = result?;
     println!(
-        "Lighthouse joined {} as {}. Start: tincanban-lighthouse {}",
+        "Keeper joined {} as {}. Start: tincanban-keeper {}",
         config.workspace_id,
         config.device_id,
         directory.join("config.json").display(),
@@ -165,7 +165,7 @@ fn guest_bundle(
             "deviceId": device_id, "endpoint": endpoint,
             "issuedAt": OffsetDateTime::from_unix_timestamp_nanos(now_ms()? * 1_000_000)?
                 .format(format_description!("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond digits:3]Z"))?,
-            "deviceName": "mesh-lighthouse",
+            "deviceName": "mesh-keeper",
         }),
         device_id,
         DEFAULT_SIGNATURE_DOMAIN,
@@ -232,7 +232,7 @@ fn prepare_config(
         &owner_certificates,
     )?;
     if role != WorkspaceRole::Editor && role != WorkspaceRole::Visitor {
-        return Err("Lighthouse invitation issued an invalid role".into());
+        return Err("Keeper invitation issued an invalid role".into());
     }
     let peers = envelope
         .get("peers")
@@ -266,7 +266,7 @@ fn prepare_config(
     let workspace_set = URL_SAFE_NO_PAD.decode(received.snapshot)?;
     let entries = decode_workspace_set(&workspace_set, &[invite.workspace_id.clone()])?;
     let entry = &entries[0];
-    let mut state = TincanbanLighthouseState {
+    let mut state = TincanbanKeeperState {
         document: URL_SAFE_NO_PAD.decode(&entry.bytes)?,
         authorization: entry
             .authorization
@@ -294,7 +294,7 @@ fn prepare_config(
         now_ms()?,
     )?;
     if verified_local.role != role {
-        return Err("Lighthouse grant and advertisement disagree".into());
+        return Err("Keeper grant and advertisement disagree".into());
     }
     let mut store = TincanbanScopeStore::open(
         invite.workspace_id.clone(),
@@ -368,7 +368,7 @@ fn create_private_directory(directory: &PathBuf) -> Result<(), BoxError> {
         Ok(()) => (),
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             if !fs::symlink_metadata(directory)?.file_type().is_dir() {
-                return Err("Lighthouse state path is not a directory".into());
+                return Err("Keeper state path is not a directory".into());
             }
         }
         Err(error) => return Err(error.into()),
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn failed_join_preserves_existing_http_inbox() {
         let directory =
-            std::env::temp_dir().join(format!("lighthouse-join-{}", rand::random::<u128>()));
+            std::env::temp_dir().join(format!("keeper-join-{}", rand::random::<u128>()));
         fs::create_dir(&directory).unwrap();
         let inbox = directory.join("inbox");
         fs::create_dir(&inbox).unwrap();

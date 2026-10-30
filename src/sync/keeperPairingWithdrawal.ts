@@ -3,8 +3,8 @@ import type { DurableMesh } from "./durableMesh"
 import type { KeeperIntegrationStatus } from "./keeperIntegrationStatus"
 import { clearPendingKeeperWithdrawalProofs, pendingKeeperWithdrawal, savePendingKeeperWithdrawal,
   savePendingKeeperWithdrawalProofs } from "./ownerKeeper"
-import { getKeeperPairingStatusInfo } from "./lighthousePairingWithdrawalApi"
-import { completeKeeperPairingWithdrawal, requestKeeperPairingWithdrawal } from "./lighthousePairingWithdrawalApi"
+import { getKeeperPairingStatusInfo } from "./keeperPairingWithdrawalApi"
+import { completeKeeperPairingWithdrawal, requestKeeperPairingWithdrawal } from "./keeperPairingWithdrawalApi"
 
 async function disconnectSelectedScopes(pairing: KeeperPairing, operationId: string,
   status: { integrations: KeeperIntegrationStatus[]; revision: number },

@@ -7,7 +7,7 @@ import type { KeeperDiscovery } from "./keeperDiscovery"
 import { peerStore } from "./peerStore"
 import * as ownerKeeper from "./ownerKeeper"
 import { canonicalKeeperIntegrationId } from "./keeperIntegrationSelection"
-import { getKeeperPairingStatusInfo } from "./lighthousePairingWithdrawalApi"
+import { getKeeperPairingStatusInfo } from "./keeperPairingWithdrawalApi"
 const getKeeperPairingStatus = async (pairing: KeeperPairing) => (await getKeeperPairingStatusInfo(pairing)).status
 import { beginKeeperPairing, decideKeeperPairing, deliverKeeperInvitation, disconnectKeeperIntegration, getEligibleKeeperWorkspaces, getKeeperIntegrationStatus, rememberActiveKeeperIntegration, refreshKeeperGrantFloors, signKeeperControllerRequest, verifyKeeperServiceEnvelope, type KeeperPairing } from "./keeperPairing"
 
@@ -67,14 +67,14 @@ async function offer(overrides: Record<string, unknown> = {}, challengeOverrides
   fetchMock.mockImplementation(async (url, init) => {
     const request = JSON.parse(String(init?.body)) as { signed: { payload: Record<string, unknown> } }
     if (String(url).endsWith("/v1/integrations/status")) {
-      return reply(await envelope("lighthouse-integration-status", {
+      return reply(await envelope("keeper-integration-status", {
         ...integrationPayload(request.signed.payload.operationId), integrations,
         capabilities: { integrationSettings: settingsSupported },
       }))
     }
     const transcriptHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(request.signed.payload)))
     return reply({ pairingId: "pairing", expiresAt: pairing.expiresAt, comparisonCode: "123456", transcriptHash,
-      operatorUrl: `${discovery.origin}/admin/`, challenge: await envelope("lighthouse-pairing-challenge", {
+      operatorUrl: `${discovery.origin}/admin/`, challenge: await envelope("keeper-pairing-challenge", {
         pairingId: "pairing", integrationId: integrations[0]?.integrationId ?? "integration", transcriptHash, servicePersonId: discovery.personId,
         serviceOrigin: discovery.origin, expiresAt: pairing.expiresAt, nonce: "nonce", ...challengeOverrides }), ...overrides })
   })
@@ -147,7 +147,7 @@ describe("keeper pairing", () => {
     await offer({}, {}, [existing])
     const result = await beginKeeperPairing(discovery, [], { futureBoards: true, futureBoardBaselineIds: ["board"], policyOnly: true })
     expect(result.integrationUpdate).toMatchObject({ policyOnly: true, scopeWorkspaceIds: [], expectedRevision: 2 })
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { pairingId: result.pairingId,
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { pairingId: result.pairingId,
       integrationId: result.integrationId, transcriptHash: result.transcriptHash, serviceOrigin: discovery.origin,
       status: "active", provisioning: { scopes: [] } })))
     await expect(deliverKeeperInvitation(result)).resolves.toBe("active")
@@ -221,11 +221,11 @@ describe("keeper pairing", () => {
     expect(body.signed.payload).toMatchObject({ decision: approve ? "approve" : "decline", challengeNonce: "nonce", transcriptHash: "transcript" })
   })
   it.each(["pending", "approved", "rejected", "expired"])("accepts signed %s status", async status => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", pairingPayload(status))))
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", pairingPayload(status))))
     await expect(getKeeperPairingStatus(pairing)).resolves.toBe(status)
   })
   it("rejects status from another integration", async () => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload(), integrationId: "foreign" })))
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { ...pairingPayload(), integrationId: "foreign" })))
     await expect(getKeeperPairingStatus(pairing)).rejects.toThrow("another pairing")
   })
   it.each([
@@ -235,16 +235,16 @@ describe("keeper pairing", () => {
     ["provisioning", [{ workspaceId: "board", status: "pending", error: "join_failed", errorDetail: "Rejected snapshot" }], "Rejected snapshot"],
     ["provisioning", [{ workspaceId: "board", status: "pending", error: "runtime_unavailable" }], "runtime is unavailable"],
   ] as const)("rejects unsafe provisioning %s %j", async (status, scopes, error) => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload(status), provisioning: scopes ? { scopes } : undefined })))
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { ...pairingPayload(status), provisioning: scopes ? { scopes } : undefined })))
     await expect(getKeeperPairingStatus(pairing)).rejects.toThrow(error)
   })
   it("Given a durable active scope, when a positive grant epoch is confirmed, then activation succeeds", async () => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload("active"),
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { ...pairingPayload("active"),
       provisioning: { scopes: [{ workspaceId: "board", status: "active", grantEpoch: 2 }] } })))
     await expect(getKeeperPairingStatus(pairing)).resolves.toBe("active")
   })
   it("Given join failure without details, when provisioning is queried, then retry explains missing service evidence", async () => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload("provisioning"),
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { ...pairingPayload("provisioning"),
       provisioning: { scopes: [{ workspaceId: "board", status: "pending", error: "join_failed" }] } })))
     await expect(getKeeperPairingStatus(pairing)).rejects.toThrow("No error detail")
   })
@@ -255,15 +255,15 @@ describe("keeper pairing", () => {
   it("retries identical signed provision after transport failure and accepts durable activation", async () => {
     const invitation = { invitationId: "invite" } as unknown as WorkspaceJoinInvitation
     fetchMock.mockRejectedValueOnce(new Error("offline"))
-      .mockResolvedValueOnce(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload("provisioning"), provisioning: { scopes: [{ workspaceId: "board", status: "pending" }] } })))
-      .mockResolvedValueOnce(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload("active"), provisioning: { scopes: [{ workspaceId: "board", status: "active" }] } })))
+      .mockResolvedValueOnce(reply(await envelope("keeper-pairing-status", { ...pairingPayload("provisioning"), provisioning: { scopes: [{ workspaceId: "board", status: "pending" }] } })))
+      .mockResolvedValueOnce(reply(await envelope("keeper-pairing-status", { ...pairingPayload("active"), provisioning: { scopes: [{ workspaceId: "board", status: "active" }] } })))
     await expect(deliverKeeperInvitation(pairing, invitation)).rejects.toThrow("offline")
     await expect(deliverKeeperInvitation(pairing, invitation)).resolves.toBe("provisioning")
     await expect(deliverKeeperInvitation(pairing, invitation)).resolves.toBe("active")
     expect(new Set(fetchMock.mock.calls.map(call => call[1]?.body)).size).toBe(1)
   })
   it("rejects provisioning response for another pairing", async () => {
-    fetchMock.mockResolvedValue(reply(await envelope("lighthouse-pairing-status", { ...pairingPayload("active"), pairingId: "other" })))
+    fetchMock.mockResolvedValue(reply(await envelope("keeper-pairing-status", { ...pairingPayload("active"), pairingId: "other" })))
     await expect(deliverKeeperInvitation(pairing, {} as WorkspaceJoinInvitation)).rejects.toThrow("another pairing")
   })
   it.each([reply({ message: "service error" }, 400), reply(null), new Response("not-json")])("surfaces failed or invalid HTTP responses", async response => {
@@ -276,7 +276,7 @@ describe("keeper integration confirmation", () => {
   async function statusReply(overrides: Record<string, unknown> = {}) {
     fetchMock.mockImplementation(async (_url, init) => {
       const request = JSON.parse(String(init?.body)) as { signed: { payload: Record<string, unknown> } }
-      return reply(await envelope("lighthouse-integration-status", { ...integrationPayload(request.signed.payload.operationId), ...overrides }))
+      return reply(await envelope("keeper-integration-status", { ...integrationPayload(request.signed.payload.operationId), ...overrides }))
     })
   }
   it("persists only verified exact board and future-board policy", async () => {
@@ -314,7 +314,7 @@ describe("keeper removal receipts", () => {
       delete semantic.issuedAt
       delete semantic.expiresAt
       const requestHash = await sha256Base64Url(new TextEncoder().encode(canonicalizeJson(semantic)))
-      return reply(await envelope("lighthouse-integration-disconnect-receipt", { version: 1, integrationId: "integration", operationId: "remove",
+      return reply(await envelope("keeper-integration-disconnect-receipt", { version: 1, integrationId: "integration", operationId: "remove",
         controllerPersonId: owner.identity.personId, servicePersonId: discovery.personId, serviceDeviceId: discovery.deviceId,
         serviceOrigin: discovery.origin, requestHash, revision: 3, status: "removed",
         scopes: [{ workspaceId: "board", grantEpoch: 1, state: "removed", cleanup: "complete" }], ...overrides }))

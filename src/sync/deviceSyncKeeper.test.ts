@@ -6,7 +6,7 @@ import type { DurableMesh } from "./durableMesh"
 import { createKeeperProvisioner, removeKeeperAccess, updateKeeperIntegrationAccess } from "./deviceSyncKeeper"
 import { ownerKeepers, saveKeeperIntegrationReference, saveOwnerKeeper } from "./ownerKeeper"
 import * as ownerKeeperStorage from "./ownerKeeper"
-import * as lighthousePairing from "./keeperPairing"
+import * as keeperPairing from "./keeperPairing"
 import * as integrationSettingsApi from "./keeperIntegrationSettingsApi"
 
 describe("keeper removal", () => {
@@ -58,7 +58,7 @@ describe("keeper removal", () => {
   it("does not issue an approved policy-only update when target cleanup starts before provision", async () => {
     const { discovery } = await setupOwnerKeeper(["board"])
     const pendingError = new Error("Rusty has board cleanup pending for this integration or selected board.")
-    const refresh = vi.spyOn(lighthousePairing, "refreshKeeperGrantFloors").mockRejectedValue(pendingError)
+    const refresh = vi.spyOn(keeperPairing, "refreshKeeperGrantFloors").mockRejectedValue(pendingError)
     const ensureDurableMesh = vi.fn(async () => {})
     const hostContext = vi.fn(() => ({} as never))
     const pairing = {
@@ -140,11 +140,11 @@ describe("keeper removal", () => {
     const active = { integrationId: "integration", revision: 1, futureBoards: false, scopes: [
       { workspaceId: "board", grantEpoch: 1, state: "active" as const, activationOperationId: "activation" },
     ], tombstones: [] }
-    vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus").mockResolvedValue({
+    vi.spyOn(keeperPairing, "getKeeperIntegrationStatus").mockResolvedValue({
       integrations: [active], integrationSettingsSupported: true, signerKeyId: "rusty-device", signature: "signed", revision: 1,
       signedStatus: { payload: {}, signerKeyId: "rusty-device", signature: "signed" },
     })
-    vi.spyOn(lighthousePairing, "disconnectKeeperIntegration").mockImplementation(async () => {
+    vi.spyOn(keeperPairing, "disconnectKeeperIntegration").mockImplementation(async () => {
       const references = await ownerKeeperStorage.keeperIntegrationReferences()
       const prior = references.integrations.integration!
       await saveKeeperIntegrationReference({ ...prior, revision: 3, workspaceIds: ["new-board"],
@@ -192,11 +192,11 @@ describe("keeper removal", () => {
     const active = { integrationId: "integration", revision: 1, futureBoards: false, scopes: [
       { workspaceId: "board", grantEpoch: 1, state: "active" as const, activationOperationId: "activation" },
     ], tombstones: [] }
-    vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus").mockResolvedValue({
+    vi.spyOn(keeperPairing, "getKeeperIntegrationStatus").mockResolvedValue({
       integrations: [active], integrationSettingsSupported: true, signerKeyId: "rusty-device", signature: "signed", revision: 1,
       signedStatus: { payload: {}, signerKeyId: "rusty-device", signature: "signed" },
     })
-    vi.spyOn(lighthousePairing, "disconnectKeeperIntegration").mockResolvedValue({
+    vi.spyOn(keeperPairing, "disconnectKeeperIntegration").mockResolvedValue({
       integrationId: "integration", operationId: "old-removal", requestHash: "old-hash", revision: 2,
       status: "removed", scopes: [{ workspaceId: "board", grantEpoch: 1, state: "removed", cleanup: "complete" }],
     })
@@ -261,7 +261,7 @@ describe("keeper removal", () => {
     root!.keeperIntegrations!.integration!.scopeReceipts = []
     await defaultStorage.savePersonalRoot(root!)
     const revokePerson = vi.fn(async () => {})
-    vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus").mockRejectedValue(new Error("Rusty offline"))
+    vi.spyOn(keeperPairing, "getKeeperIntegrationStatus").mockRejectedValue(new Error("Rusty offline"))
 
     await expect(removeKeeperAccess(keeper, {
       getProfile: async () => profile, workspaces: [{ id: "board" }], workspaceOwner: async () => owner,
@@ -345,12 +345,12 @@ describe("keeper removal", () => {
     const removed = { ...active, revision: 2, scopes: [], tombstones: [
       { workspaceId: "board", grantEpoch: 1, operationId: "remove-op", state: "removed" as const, cleanup: "complete" as const },
     ] }
-    const status = vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus")
+    const status = vi.spyOn(keeperPairing, "getKeeperIntegrationStatus")
       .mockResolvedValueOnce({ integrations: [active], integrationSettingsSupported: false, signerKeyId: "rusty-device", signature: "signed", revision: 1,
         signedStatus: { payload: {}, signerKeyId: "rusty-device", signature: "signed" } })
       .mockResolvedValue({ integrations: [removed], integrationSettingsSupported: false, signerKeyId: "rusty-device", signature: "signed", revision: 2,
         signedStatus: { payload: {}, signerKeyId: "rusty-device", signature: "signed" } })
-    vi.spyOn(lighthousePairing, "disconnectKeeperIntegration").mockResolvedValue({
+    vi.spyOn(keeperPairing, "disconnectKeeperIntegration").mockResolvedValue({
       integrationId: "integration", operationId: "remove-op", requestHash: "request-hash", revision: 2,
       status: "removed", scopes: [{ workspaceId: "board", grantEpoch: 1, state: "removed", cleanup: "complete" }],
     })
@@ -383,7 +383,7 @@ describe("keeper removal", () => {
     await defaultStorage.savePersonalRoot(root!)
     const revokePerson = vi.fn(async () => {})
     const mesh = { revokePerson, views: async () => [{ workspaceId: "board", personId: keeper }] } as unknown as DurableMesh
-    vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus").mockResolvedValue({
+    vi.spyOn(keeperPairing, "getKeeperIntegrationStatus").mockResolvedValue({
       integrations: [{ integrationId: "integration", revision: 2, futureBoards: false, scopes: [], tombstones: [
         { workspaceId: "board", grantEpoch: 1, operationId: "remove-op", state: "removed", cleanup: "complete" },
       ] }], integrationSettingsSupported: false, signerKeyId: "rusty-device", signature: "signed", revision: 2,
@@ -410,7 +410,7 @@ describe("keeper removal", () => {
     ] }
     const signedStatus = (integration: typeof active | typeof removed) => ({ integrations: [integration],
       integrationSettingsSupported: true, signerKeyId: "rusty-device", signature: "signed", revision: integration.revision })
-    const status = vi.spyOn(lighthousePairing, "getKeeperIntegrationStatus")
+    const status = vi.spyOn(keeperPairing, "getKeeperIntegrationStatus")
       .mockResolvedValueOnce(signedStatus(active) as never)
       .mockResolvedValueOnce(signedStatus(active) as never)
       .mockResolvedValueOnce(signedStatus(removed) as never)

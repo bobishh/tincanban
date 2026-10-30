@@ -4,14 +4,14 @@ import { bootstrapIdentity } from "../domain/identity"
 
 export async function beginKeeperPolicyUpdate(personId: string, baselineWorkspaceIds: string[]): Promise<KeeperPairing> {
   const profile = await bootstrapIdentity()
-  const [{ keeperIntegrationReferences }, { discoverLighthouse }, pairingApi] = await Promise.all([
+  const [{ keeperIntegrationReferences }, { discoverKeeper }, pairingApi] = await Promise.all([
     import("./ownerKeeper"), import("./keeperDiscovery"), import("./keeperPairing"),
   ])
   const { integrations } = await keeperIntegrationReferences()
   const reference = selectKeeperReference(integrations, personId)
   if (!reference) throw new Error("Saved Rusty integration could not be verified.")
   if (reference.state !== "active") throw new Error("Saved Rusty integration is not active.")
-  const discovery = await discoverLighthouse(reference.serviceOrigin)
+  const discovery = await discoverKeeper(reference.serviceOrigin)
   const current = await pairingApi.getKeeperIntegrationStatus(discovery)
   const canonicalId = await canonicalKeeperIntegrationId(profile.identity.personId, discovery.personId)
   const integration = selectCanonicalServiceIntegration(current.integrations, canonicalId)
