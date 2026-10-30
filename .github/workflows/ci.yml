@@ -194,7 +194,7 @@ jobs:
   browser-policy:
     name: Browser (production policy/transport packaging)
     # Private WebKit startup requires native Ed25519; Linux WebKit intermittently rejects it.
-    runs-on: macos-15-intel
+    runs-on: macos-15
     # Production packaging, mobile behavior and startup use their real browsers.
     timeout-minutes: 20
     steps:
@@ -291,6 +291,8 @@ jobs:
         run: |
           cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
           cargo build --locked --manifest-path vendor/meta-mesh/Cargo.toml -p meta-mesh-core --example history_archive_verify
+      - name: Verify public publication protocol and storage
+        run: cargo test --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml"
       - name: Fetch the exact previously deployed reader artifacts
         run: |
           git fetch --no-tags --depth=1 origin 07242d4880821829026234ca1a3cb6bd07ee29fe
@@ -305,34 +307,16 @@ jobs:
   automation-worker:
     name: Automation (intake, participant and owner lifecycle)
     runs-on: ubuntu-24.04
-    # This aggregate includes storage, enrollment, recovery and public-reader checks.
-    timeout-minutes: 40
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           submodules: recursive
-      - uses: actions/checkout@v7
-        with:
-          repository: bobishh/rusty
-          ref: ${{ env.RUSTY_REVISION }}
-          path: .ci/rusty
-          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
       - run: npm ci
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Move Rusty outside the application Cargo workspace
-        run: cp -a "$GITHUB_WORKSPACE/.ci/rusty" "$RUNNER_TEMP/tincanban-rusty"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-          workspaces: ${{ runner.temp }}/tincanban-rusty -> target
-      - name: Build pinned blind Rusty
-        run: cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml"
-      - name: Verify public publication protocol and storage
-        run: cargo test --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml"
       - name: Install locked Worker dependencies
         run: |
           npm install --global pnpm@11.25.0
@@ -364,14 +348,62 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 90
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: automation-runtime-failure
+          path: workers/automation/test-results/
+          retention-days: 1
+
+  browser-automation:
+    name: Browser (automation ${{ matrix.group }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: intake
+            browsers: chromium
+          - group: storage
+            browsers: chromium
+          - group: identity
+            browsers: chromium webkit
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: actions/checkout@v7
+        with:
+          repository: bobishh/rusty
+          ref: ${{ env.RUSTY_REVISION }}
+          path: .ci/rusty
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:meta-mesh
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Move Rusty outside the application Cargo workspace
+        run: cp -a "$GITHUB_WORKSPACE/.ci/rusty" "$RUNNER_TEMP/tincanban-rusty"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: ${{ runner.temp }}/tincanban-rusty -> target
+      - name: Build pinned blind Rusty
+        run: cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npx playwright install --with-deps ${{ matrix.browsers }}
       - name: Verify browser owner controls and scoped intake
+        if: matrix.group == 'intake'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
         run: npx playwright test --config playwright.automation-worker.config.ts --reporter=list
       - name: Check out pinned Identity portal for shared Rusty acceptance
+        if: matrix.group != 'intake'
         uses: actions/checkout@v7
         with:
           repository: bobishh/identity
@@ -381,39 +413,47 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - name: Install pinned Identity portal dependencies
+        if: matrix.group != 'intake'
         run: npm ci --prefix .ci/identity-provider
       - name: Verify encrypted storage connection
+        if: matrix.group == 'storage'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.rusty.config.ts --reporter=list
       - name: Verify retained owner board reconnect
+        if: matrix.group == 'intake'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
         run: npx playwright test --project=owner-reconnect --reporter=list --output=test-results/owner-reconnect
       - name: Verify Identity redirect trace continuity
+        if: matrix.group == 'identity'
         env:
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.identity-trace.config.ts --reporter=list
       - name: Verify ordinary phone sign-in and local board adoption
+        if: matrix.group == 'identity'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.identity-bootstrap.config.ts --reporter=list
       - name: Verify cold Identity catalog discovery with source closed
+        if: matrix.group == 'identity'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
         run: npx playwright test --config playwright.identity-cold-catalog.config.ts --reporter=list
       - name: Verify public board lifecycle with native storage
+        if: matrix.group == 'storage'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
         run: npm run test:e2e:public-board -- --project=chromium
       - name: Verify compiled anonymous reader
+        if: matrix.group == 'storage'
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           TINCANBAN_PUBLIC_E2E_PREVIEW: "1"
@@ -421,7 +461,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: automation-worker-failure
+          name: automation-${{ matrix.group }}-failure
           path: |
             test-results-automation-worker/
             test-results-identity-bootstrap/
@@ -443,7 +483,7 @@ jobs:
             browser: chromium
             projects: attachments-rusty attachment-session-recovery complete-device-state
           - group: webkit
-            os: macos-15-intel
+            os: macos-15
             browser: webkit
             projects: attachments-rusty-webkit attachment-session-recovery-webkit
     steps:
