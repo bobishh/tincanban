@@ -20,7 +20,7 @@ export interface BoardAddressHistory {
 export interface BoardAddressRuntime {
   getAvailableWorkspaces(): readonly { id: string }[]
   getActiveWorkspaceId(): string
-  getActiveBoard(): { id: string; title: string; publicationOrigin?: string } | null
+  getActiveBoard(): { id: string; title: string } | null
   getIdentityId(): string | null
   getHintedWorkspaceId?(boardId: string): string | null
   withWorkspaceDoc: WorkspaceAddressApi["withWorkspaceDoc"]
@@ -121,8 +121,7 @@ export function createBoardAddressController(runtime: BoardAddressRuntime, histo
 
   function activeAddress(board: NonNullable<ReturnType<BoardAddressRuntime["getActiveBoard"]>>) {
     const current = location(), search = new URLSearchParams(current.search)
-    if (board.publicationOrigin) search.set("rusty", board.publicationOrigin)
-    else search.delete("rusty")
+    search.delete("rusty")
     return boardRouteUrl(board.id, board.title, { search: search.size ? `?${search}` : "", hash: current.hash })
   }
   function replaceActiveAddress(board: NonNullable<ReturnType<BoardAddressRuntime["getActiveBoard"]>>) {

@@ -45,15 +45,15 @@ describe("private board address integration", () => {
       expect(live()).toHaveLength(0)
     } finally { for (const document of live()) Automerge.free(document) }
   })
-  it("Given a board's publication location, when its address is copied and boards switch, then retain its locator and never carry it into another board", () => {
-    const history = historyAt("/boards/published/old?message=m#message-m")
+  it.each(["", "&rusty=https%3A%2F%2Frusty.example"])("Given a saved published board and legacy locator %s, when navigating, then keep a clean private address and preserve message navigation", locator => {
+    const history = historyAt(`/boards/published/old?message=m${locator}#message-m`)
     let board: { id: string; title: string; publicationOrigin?: string } = { id: "published", title: "Published", publicationOrigin: "https://rusty.example" }
     const integration = createBoardAddressController({
       getAvailableWorkspaces: () => [{ id: "workspace" }], getActiveWorkspaceId: () => "workspace",
       getActiveBoard: () => board, getIdentityId: () => "person", withWorkspaceDoc: vi.fn(), switchWorkspace: vi.fn(),
     }, history)
     integration.syncActiveBoard("workspace")
-    expect(new URLSearchParams(history.location().search).get("rusty")).toBe("https://rusty.example")
+    expect(history.location()).toEqual({ pathname: "/boards/published/published", search: "?message=m", hash: "#message-m" })
     expect(new URLSearchParams(history.location().search).get("message")).toBe("m")
     board = { id: "private", title: "Private" }
     integration.syncActiveBoard("workspace")
