@@ -2,7 +2,7 @@ import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerSt
 
 /**
  * Stable projection of persisted authorization state. Peer presence and record timestamps
- * do not affect policy, while every credential/authority field can affect admission.
+ * and empty optional collections do not affect policy; effective security values remain visible.
  */
 export function workspaceAuthorityFingerprint(
   credentials: WorkspaceMeshCredential[],
@@ -12,17 +12,31 @@ export function workspaceAuthorityFingerprint(
     const security: Record<string, unknown> = { ...credential }
     delete security.transportSecret
     delete security.updatedAt
-    return normalizeCertificateSets(security)
+    return normalizeAuthorityDefaults(security)
   })
   const authorityState = authorities.map(authority => {
     const security: Record<string, unknown> = { ...authority }
     delete security.updatedAt
-    return normalizeCertificateSets(security)
+    return normalizeAuthorityDefaults(security)
   })
   return canonicalJson({
     credentials: canonicalSort(credentialState),
     authorities: canonicalSort(authorityState),
   })
+}
+
+/** Empty optional collections carry no grants, revocations, or prior owners. */
+function normalizeAuthorityDefaults(security: Record<string, unknown>) {
+  if (Array.isArray(security.ownerHistory) && security.ownerHistory.length === 0) delete security.ownerHistory
+  if (security.catalog && typeof security.catalog === "object" && !Array.isArray(security.catalog)) {
+    const catalog = { ...security.catalog } as Record<string, unknown>
+    for (const key of ["departures", "deviceRevocations", "revocations", "ownershipTransfers", "successionVotes", "successionClaims"]) {
+      if (Array.isArray(catalog[key]) && catalog[key].length === 0) delete catalog[key]
+    }
+    security.catalog = normalizeCertificateSets(catalog)
+    if (Object.keys(security.catalog as object).length === 0) delete security.catalog
+  }
+  return normalizeCertificateSets(security)
 }
 
 export class AuthorityFingerprintTracker {
@@ -39,13 +53,13 @@ function canonicalSort(values: unknown[]): unknown[] {
   return values.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right)))
 }
 
-/** Certificate collections are sets; signed payloads and all other arrays retain their order. */
+/** Omit unsigned undefined fields; certificate sets sort, while signed payloads retain their exact structure. */
 export function normalizeCertificateSets<T>(value: T): T {
   if (Array.isArray(value)) return (value as unknown[]).map(item => normalizeCertificateSets(item)) as T
   if (!value || typeof value !== "object") return value
   const record = value as Record<string, unknown>
   if ("signature" in record && "payload" in record) return value
-  return Object.fromEntries(Object.entries(record).map(([key, item]) => [key,
+  return Object.fromEntries(Object.entries(record).filter(([, item]) => item !== undefined).map(([key, item]) => [key,
     Array.isArray(item) && (key === "certificates" || key === "ownerCertificates")
       ? canonicalSort((item as unknown[]).slice()) : normalizeCertificateSets(item)])) as T
 }

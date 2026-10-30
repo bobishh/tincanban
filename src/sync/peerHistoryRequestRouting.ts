@@ -6,7 +6,7 @@ import { PeerHistoryObjectUnavailableError } from "./peerHistoryErrors"
 import type { PeerHistoryBaselineDescriptor } from "./workspaceSetHistory"
 
 async function fetchPeerHistoryBaseline(input: { workspaceId: string; baselineId: string; durableMesh?: DurableMesh;
-  durableMeshPromise?: Promise<DurableMesh | undefined>; directPeerSessions: Iterable<LiveWorkspaceSync> }) {
+  durableMeshPromise?: Promise<DurableMesh | undefined>; directPeerSessions: () => Iterable<LiveWorkspaceSync> }) {
   const { workspaceId, baselineId } = input
   if (!workspaceId || !/^[A-Za-z0-9_-]{43}$/.test(baselineId)) throw new Error("Invalid peer history baseline selector")
   const mesh = input.durableMesh ?? await input.durableMeshPromise
@@ -14,7 +14,7 @@ async function fetchPeerHistoryBaseline(input: { workspaceId: string; baselineId
     const durable = await mesh?.fetchHistoryBaseline(workspaceId, baselineId)
     if (durable) return durable
   } catch (error) { if (!isUnavailable(error)) throw error }
-  for (const session of input.directPeerSessions) {
+  for (const session of input.directPeerSessions()) {
     if (!session.readHistoryBaseline) continue
     try {
       const descriptor: PeerHistoryBaselineDescriptor | undefined = await session.readHistoryBaseline(workspaceId, baselineId)
@@ -25,7 +25,7 @@ async function fetchPeerHistoryBaseline(input: { workspaceId: string; baselineId
 }
 
 async function fetchPeerHistoryDocument(input: { workspaceId: string; descriptor: PeerHistoryBaselineDescriptor;
-  durableMesh?: DurableMesh; durableMeshPromise?: Promise<DurableMesh | undefined>; directPeerSessions: Iterable<LiveWorkspaceSync> }) {
+  durableMesh?: DurableMesh; durableMeshPromise?: Promise<DurableMesh | undefined>; directPeerSessions: () => Iterable<LiveWorkspaceSync> }) {
   const { workspaceId, descriptor } = input
   if (!workspaceId || !/^[A-Za-z0-9_-]{43}$/.test(descriptor.baselineId)) throw new Error("Invalid peer history document selector")
   const mesh = input.durableMesh ?? await input.durableMeshPromise
@@ -33,7 +33,7 @@ async function fetchPeerHistoryDocument(input: { workspaceId: string; descriptor
     const durable = await mesh?.fetchHistoryDocument(workspaceId, descriptor)
     if (durable) return durable
   } catch (error) { if (!isUnavailable(error)) throw error }
-  for (const session of input.directPeerSessions) {
+  for (const session of input.directPeerSessions()) {
     if (!session.readHistoryDocument) continue
     try {
       const bytes = await session.readHistoryDocument(structuredClone(descriptor), workspaceId)
@@ -46,7 +46,7 @@ async function fetchPeerHistoryDocument(input: { workspaceId: string; descriptor
 async function fetchPeerHistoryObject(input: {
   workspaceId: string; baselineId: string; objectId: string; binding: ArchiveObjectReadBinding
   durableMesh?: DurableMesh; durableMeshPromise?: Promise<DurableMesh | undefined>
-  directPeerSessions: Iterable<LiveWorkspaceSync>
+  directPeerSessions: () => Iterable<LiveWorkspaceSync>
 }): Promise<Uint8Array | undefined> {
   const { workspaceId, baselineId, objectId, binding } = input
   if (binding.workspaceId !== workspaceId || !/^[A-Za-z0-9_-]{43}$/.test(baselineId)) {
@@ -57,7 +57,7 @@ async function fetchPeerHistoryObject(input: {
     const durable = await mesh?.fetchHistoryObject(workspaceId, baselineId, objectId, structuredClone(binding))
     if (durable) return durable
   } catch (error) { if (!isUnavailable(error)) throw error }
-  for (const session of input.directPeerSessions) {
+  for (const session of input.directPeerSessions()) {
     if (!session.readHistoryObject) continue
     try { return await session.readHistoryObject(baselineId, objectId, structuredClone(binding)) }
     catch (error) { if (!isUnavailable(error)) throw error }
@@ -75,7 +75,7 @@ export function createPeerHistoryReadActions(input: {
   directPeerSessions: () => Iterable<LiveWorkspaceSync>
 }) {
   const routing = () => ({ durableMesh: input.durableMesh(), durableMeshPromise: input.durableMeshPromise(),
-    directPeerSessions: input.directPeerSessions() })
+    directPeerSessions: () => input.directPeerSessions() })
   return {
     fetchHistoryObject: (workspaceId: string, baselineId: string, objectId: string, binding: ArchiveObjectReadBinding) =>
       fetchPeerHistoryObject({ ...routing(), workspaceId, baselineId, objectId, binding }),

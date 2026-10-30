@@ -44,6 +44,31 @@ it("Given unchanged signed access, when history is guarded, then verify the peer
   expect(mocks.isDeviceRevoked).toHaveBeenCalledWith(f.current.authority, "remote-person", "remote-device")
 })
 
+it.each(["credential", "authority", "peer"] as const)(
+  "Given unchanged access, when a merge adds undefined optional fields to the %s, then retain the authenticated history channel", async target => {
+    const f = fixture()
+    mocks.verify.mockImplementationOnce(async selected => {
+      if (target === "peer") f.current.peer.revokedAt = undefined
+      else f.current[target].scopeAuthoritySnapshot = undefined
+      return selected
+    })
+    await expect(f.guard()).resolves.toBeUndefined()
+  })
+
+it("Given unchanged grants and revocations, when synchronization fills empty authority collections, then keep the current history session", async () => {
+  const f = fixture()
+  delete f.current.authority.ownerHistory
+  mocks.verify.mockImplementationOnce(async selected => {
+    const catalog = { departures: [], deviceRevocations: [], revocations: [], ownershipTransfers: [], successionVotes: [], successionClaims: [] }
+    f.current.credential.catalog = catalog
+    f.current.authority.catalog = catalog
+    f.current.credential.ownerHistory = []
+    f.current.authority.ownerHistory = []
+    return selected
+  })
+  await expect(f.guard()).resolves.toBeUndefined()
+})
+
 it("Given unchanged signed access, when presence advances during bundle verification, then history remains authorized", async () => {
   const f = fixture()
   mocks.verify.mockImplementationOnce(async selected => {

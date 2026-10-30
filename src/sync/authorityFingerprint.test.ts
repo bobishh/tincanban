@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { workspaceAuthorityFingerprint } from "./authorityFingerprint"
+import { canonicalAuthorityJson, workspaceAuthorityFingerprint } from "./authorityFingerprint"
 import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerStore"
 
 const credential = (): WorkspaceMeshCredential => ({
@@ -22,6 +22,38 @@ function fingerprint(c = credential(), a = authority()) {
 }
 
 describe("workspace authority fingerprint", () => {
+  it("Given no historical authority records, when synchronization fills empty optional collections, then retain the same fingerprint", () => {
+    const c = credential(), a = authority()
+    delete c.catalog; delete c.ownerHistory
+    delete a.catalog; delete a.ownerHistory
+    const catalog = { departures: [], deviceRevocations: [], revocations: [], ownershipTransfers: [], successionVotes: [], successionClaims: [] }
+    expect(fingerprint({ ...c, catalog, ownerHistory: [] }, { ...a, catalog, ownerHistory: [] }))
+      .toBe(fingerprint(c, a))
+  })
+
+  it("Given absent optional authority fields, when a store merge materializes undefined values, then retain the same fingerprint", () => {
+    const c = credential(), a = authority()
+    delete a.scopeAuthoritySnapshot
+    expect(fingerprint({ ...c, scopeAuthoritySnapshot: undefined }, { ...a, scopeAuthoritySnapshot: undefined }))
+      .toBe(fingerprint(c, a))
+  })
+
+  it("Given unsigned optional metadata, when undefined fields appear, then ignore them while retaining explicit null and signed payload changes", () => {
+    expect(canonicalAuthorityJson({ role: "editor", revokedAt: undefined }))
+      .toBe(canonicalAuthorityJson({ role: "editor" }))
+    expect(canonicalAuthorityJson({ role: "editor", revokedAt: null }))
+      .not.toBe(canonicalAuthorityJson({ role: "editor" }))
+    expect(canonicalAuthorityJson({ signature: "proof", payload: { optional: undefined } }))
+      .not.toBe(canonicalAuthorityJson({ signature: "proof", payload: {} }))
+  })
+
+  it("Given a new unknown catalog field or a signed ledger field, when an empty array appears, then retain that security change", () => {
+    const c = credential()
+    expect(fingerprint({ ...c, catalog: { ...c.catalog as object, futurePolicy: [] } })).not.toBe(fingerprint(c))
+    expect(canonicalAuthorityJson({ signature: "proof", payload: { revocations: [] } }))
+      .not.toBe(canonicalAuthorityJson({ signature: "proof", payload: {} }))
+  })
+
   it("Given identical certificate sets in different orders, When authority refreshes, Then the fingerprint stays equal without mutating stored records", () => {
     const c = credential(), a = authority()
     c.ownerCertificates.push({ id: "cert-b" })
