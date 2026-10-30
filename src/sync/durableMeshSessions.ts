@@ -1,6 +1,6 @@
 import { type LocalProfile} from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
-import { isMeshNetworkFailure, meshNetworkConnection as networkConnection, meshNetworkIO as networkIO } from "@meta-uber/mesh-transport"
+import { MeshNetworkError, isMeshNetworkFailure, meshNetworkConnection as networkConnection, meshNetworkIO as networkIO } from "@meta-uber/mesh-transport"
 import { meshIngressBudgetProfile } from "../iroh"
 import { BrowserMeshDialScheduler, BrowserMeshOutgoingHandshake, BrowserMeshSessions } from "@meta-uber/mesh-runtime"
 import { adaptVerifiedWorkspaceAdvertisement, connectToDevice, type DeviceRoute } from "@meta-uber/mesh-replication/protocol"
@@ -286,7 +286,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
         remotePersonId: input.remotePersonId, transportSecret: credential.transportSecret, profile: input.profile, store: this.store,
         profileProvider: () => this.options.getProfile(), assertSession: () => {
           if (this.stopped || this.sessions.get(this.peerKey(input.workspaceId, input.deviceId, input.instanceId))?.connection !== input.connection) {
-            throw new Error("Direct peer session is no longer current")
+            throw new MeshNetworkError("Direct peer session is no longer current")
           }
         } }
       const guard = createDurablePeerHistoryGuard(context)
