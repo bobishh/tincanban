@@ -1,3 +1,5 @@
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
+
 type PeerHistoryAuthorizationInput = {
   workspaceIds: string[]
   personId: string
@@ -12,9 +14,9 @@ export function createPeerHistoryAuthorizationGuard(input: PeerHistoryAuthorizat
   const workspaceIds = [...input.workspaceIds]
   const advertisements = structuredClone(input.advertisements)
   return async () => {
-    if (!input.isSessionCurrent()) throw new Error("Direct peer session is no longer current")
+    if (!input.isSessionCurrent()) throw new MeshNetworkError("Direct peer session is no longer current")
     const deviceId = await input.checkGuestDevices(workspaceIds, input.personId, advertisements)
-    if (!input.isSessionCurrent()) throw new Error("Direct peer session is no longer current")
+    if (!input.isSessionCurrent()) throw new MeshNetworkError("Direct peer session is no longer current")
     if (deviceId !== input.deviceId) throw new Error("Guest device authorization changed")
   }
 }

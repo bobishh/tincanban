@@ -50,7 +50,7 @@ beforeAll(async () => {
 })
 
 describe("Confirmed ownership delivery", () => {
-  it.each(["pairing", "durable"])("reads an exact history object through the authenticated %s peer session", async mode => {
+  it.each(["pairing", "durable"])("Given an authenticated %s history session, when it closes after a successful read, then classify later reads as unavailable", async mode => {
     const payload = new Uint8Array([7, 8, 9])
     const magic = new TextEncoder().encode("tincanban-peer-history-v1\n")
     const response = new Uint8Array([...magic, 0, ...payload])
@@ -69,6 +69,7 @@ describe("Confirmed ownership delivery", () => {
     expect(send).toHaveBeenCalledTimes(1)
     expect(new TextDecoder().decode(send.mock.calls[0]![0])).toContain('"baselineId":"' + "A".repeat(43) + '"')
     await session.close()
+    await expect(session.readHistoryObject!("A".repeat(43), "B".repeat(43), binding)).rejects.toBeInstanceOf(MeshNetworkError)
   })
 
   it("Given a durable document session receives a plain archive RPC, when the peer remains authorized, then route it before pairing-frame classification", async () => {

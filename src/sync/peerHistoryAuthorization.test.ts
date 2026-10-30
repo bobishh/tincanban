@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { MeshNetworkError } from "@meta-uber/mesh-transport"
 import { createPeerHistoryAuthorizationGuard } from "./peerHistoryAuthorization"
 
 describe("direct-peer history authorization", () => {
@@ -21,11 +22,22 @@ describe("direct-peer history authorization", () => {
     const checkGuestDevices = vi.fn().mockResolvedValue("device-b")
     const guard = createPeerHistoryAuthorizationGuard({ workspaceIds: ["board"], personId: "person", deviceId: "device-a",
       advertisements: [], isSessionCurrent: () => true, checkGuestDevices })
-    await expect(guard()).rejects.toThrow(/device authorization changed/i)
+    const changedDevice = guard()
+    await expect(changedDevice).rejects.toThrow(/device authorization changed/i)
+    await expect(changedDevice).rejects.not.toBeInstanceOf(MeshNetworkError)
 
     const cancelled = createPeerHistoryAuthorizationGuard({ workspaceIds: ["board"], personId: "person", deviceId: "device-a",
       advertisements: [], isSessionCurrent: () => false, checkGuestDevices })
-    await expect(cancelled()).rejects.toThrow(/session is no longer current/i)
+    await expect(cancelled()).rejects.toBeInstanceOf(MeshNetworkError)
     expect(checkGuestDevices).toHaveBeenCalledTimes(1)
+  })
+
+  it("Given current signed access, when its session closes during device verification, then classify the closed channel as unavailable", async () => {
+    let current = true
+    const checkGuestDevices = vi.fn(async () => { current = false; return "device-a" })
+    const guard = createPeerHistoryAuthorizationGuard({ workspaceIds: ["board"], personId: "person", deviceId: "device-a",
+      advertisements: [], isSessionCurrent: () => current, checkGuestDevices })
+    await expect(guard()).rejects.toBeInstanceOf(MeshNetworkError)
+    expect(checkGuestDevices).toHaveBeenCalledOnce()
   })
 })

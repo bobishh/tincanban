@@ -108,9 +108,9 @@ export function createLiveWorkspaceSetSync(
   const handoffConfirmations = new HandoffConfirmationInbox()
   const handlers = new Set<Promise<void>>()
   const peerHistoryGuard = async () => {
-    if (stopped) throw new Error("Direct peer session is no longer current")
+    if (stopped) throw new SyncNetworkError("Direct peer session is no longer current")
     await options.ensureCurrent?.()
-    if (stopped) throw new Error("Direct peer session is no longer current")
+    if (stopped) throw new SyncNetworkError("Direct peer session is no longer current")
   }
   const peerHistory = createPeerHistoryObjectReader(connection, peerHistoryGuard)
   let receiveFailure: unknown
@@ -371,9 +371,9 @@ export function createLiveAutomergeWorkspaceSync(
   const liveness = createLiveWorkspaceSession(workspaceId, secret)
   const frameHandlers = new Set<Promise<void>>()
   const peerHistoryGuard = async () => {
-    if (stopped) throw new Error("Direct peer session is no longer current")
+    if (stopped) throw new SyncNetworkError("Direct peer session is no longer current")
     await options.ensureCurrent?.()
-    if (stopped) throw new Error("Direct peer session is no longer current")
+    if (stopped) throw new SyncNetworkError("Direct peer session is no longer current")
   }
   const peerHistory = createPeerHistoryObjectReader(connection, peerHistoryGuard)
   const historyReplica = createReplica(store, [workspaceId])
