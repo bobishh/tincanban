@@ -241,7 +241,7 @@ jobs:
           cache-on-failure: true
           workspaces: |
             vendor/meta-mesh -> target
-            crates/tincanban-lighthouse -> target
+            crates/tincanban-keeper -> target
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium
@@ -249,7 +249,7 @@ jobs:
         run: cargo test --locked --manifest-path vendor/meta-mesh/crates/meta-mesh-core/Cargo.toml --lib
       - run: cargo build --locked --manifest-path vendor/meta-mesh/crates/meta-mesh-native/Cargo.toml --example browser_document_probe
       - run: npx playwright test --reporter=list --project=browser-native
-      - run: cargo build --locked --manifest-path crates/tincanban-lighthouse/Cargo.toml
+      - run: cargo build --locked --manifest-path crates/tincanban-keeper/Cargo.toml
       - run: npx playwright test --reporter=list --project=keeper-join
       - uses: actions/upload-artifact@v6
         if: failure()

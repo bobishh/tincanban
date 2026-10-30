@@ -73,7 +73,7 @@ function validateTerminalScopes(status: KeeperPairingStatus, scopes?: KeeperProv
 
 export async function getKeeperPairingStatusInfo(pairing: KeeperPairing, expectedWithdrawalOperationId?: string): Promise<KeeperPairingStatusInfo> {
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "lighthouse-pairing-status", {
+  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "keeper-pairing-status", {
     pairingId: pairing.pairingId,
     transcriptHash: pairing.transcriptHash,
     ...(expectedWithdrawalOperationId ? { withdrawalOperationId: expectedWithdrawalOperationId } : {}),
@@ -81,7 +81,7 @@ export async function getKeeperPairingStatusInfo(pairing: KeeperPairing, expecte
   const envelope = await requestKeeperJson<unknown>(`${pairing.discovery.origin}/v1/pairings/${encodeURIComponent(pairing.pairingId)}/status`, {
     method: "POST", body: JSON.stringify(signed),
   })
-  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, envelope, "lighthouse-pairing-status")
+  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, envelope, "keeper-pairing-status")
   const status = validateStatusPayload(payload, pairing, profile.identity.personId, profile.device?.deviceId ?? "")
   const withdrawal = parseWithdrawal(payload.withdrawal, expectedWithdrawalOperationId)
   validateStatusConsistency(status, withdrawal)
@@ -114,7 +114,7 @@ export async function requestKeeperPairingWithdrawal(pairing: KeeperPairing, ope
   grantScopes: KeeperWithdrawalGrantProof[] = []): Promise<KeeperPairingWithdrawal> {
   validateWithdrawalProofs(pairing, grantScopes)
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "lighthouse-pairing-withdrawal", {
+  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "keeper-pairing-withdrawal", {
     pairingId: pairing.pairingId, transcriptHash: pairing.transcriptHash,
     challengeNonce: pairing.challengeNonce, operationId,
     servicePersonId: pairing.discovery.personId, serviceDeviceId: pairing.discovery.deviceId,
@@ -126,7 +126,7 @@ export async function requestKeeperPairingWithdrawal(pairing: KeeperPairing, ope
   const response = await requestKeeperJson<unknown>(`${pairing.discovery.origin}/v1/pairings/${encodeURIComponent(pairing.pairingId)}/withdraw`, {
     method: "POST", body: JSON.stringify(signed),
   })
-  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, response, "lighthouse-pairing-status")
+  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, response, "keeper-pairing-status")
   const withdrawal = parseWithdrawal(payload.withdrawal, operationId)
   if (!withdrawal || withdrawal.requestHash !== requestHash || payload.pairingId !== pairing.pairingId
     || payload.integrationId !== pairing.integrationId || payload.transcriptHash !== pairing.transcriptHash
@@ -145,7 +145,7 @@ export async function completeKeeperPairingWithdrawal(pairing: KeeperPairing, op
     throw new Error("Keeper cancellation proof does not cover the exact approved boards.")
   }
   const profile = await bootstrapIdentity()
-  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "lighthouse-pairing-withdrawal-complete", {
+  const signed = await signKeeperControllerRequest(profile, pairing.discovery, "keeper-pairing-withdrawal-complete", {
     pairingId: pairing.pairingId, withdrawalOperationId: operationId, operationId,
     transcriptHash: pairing.transcriptHash, challengeNonce: pairing.challengeNonce,
     servicePersonId: pairing.discovery.personId, serviceDeviceId: pairing.discovery.deviceId,
@@ -155,7 +155,7 @@ export async function completeKeeperPairingWithdrawal(pairing: KeeperPairing, op
   const response = await requestKeeperJson<unknown>(`${pairing.discovery.origin}/v1/pairings/${encodeURIComponent(pairing.pairingId)}/withdraw/complete`, {
     method: "POST", body: JSON.stringify(signed),
   })
-  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, response, "lighthouse-pairing-status")
+  const payload = await verifyKeeperServiceEnvelope(pairing.discovery, response, "keeper-pairing-status")
   const withdrawal = parseWithdrawal(payload.withdrawal, operationId)
   if (!withdrawal || payload.pairingId !== pairing.pairingId || payload.integrationId !== pairing.integrationId
     || payload.transcriptHash !== pairing.transcriptHash || payload.status !== withdrawal.status

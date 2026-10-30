@@ -15,7 +15,7 @@ export async function keeperCommitReceiptVerifier(workspaceIds: string[], snapsh
     const actualIds = receipt?.workspaceIds
     if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)
       || Object.keys(receipt).sort().join(",") !== "kind,snapshotHash,version,workspaceIds"
-      || receipt.kind !== "lighthouse-provision-commit" || receipt.version !== 1
+      || receipt.kind !== "keeper-provision-commit" || receipt.version !== 1
       || receipt.snapshotHash !== snapshotHash || !Array.isArray(actualIds)
       || actualIds.length !== expectedIds.length
       || !expectedIds.every((id, index) => actualIds[index] === id)) {

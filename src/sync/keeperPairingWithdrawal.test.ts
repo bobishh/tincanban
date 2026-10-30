@@ -18,7 +18,7 @@ vi.mock("./ownerKeeper", () => ({
   savePendingKeeperWithdrawalProofs: mocks.savePendingKeeperWithdrawalProofs,
   clearPendingKeeperWithdrawalProofs: mocks.clearPendingKeeperWithdrawalProofs,
 }))
-vi.mock("./lighthousePairingWithdrawalApi", () => ({
+vi.mock("./keeperPairingWithdrawalApi", () => ({
   getKeeperPairingStatusInfo: mocks.getKeeperPairingStatusInfo,
   requestKeeperPairingWithdrawal: mocks.requestKeeperPairingWithdrawal,
   completeKeeperPairingWithdrawal: mocks.completeKeeperPairingWithdrawal,

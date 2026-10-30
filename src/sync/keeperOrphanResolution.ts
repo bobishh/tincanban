@@ -3,7 +3,7 @@ import { defaultProofStore, validateCertificateChain, verifyWorkspaceGrant } fro
 import type { WorkspaceGrant } from "../domain/model"
 import type { DurableMesh } from "./durableMesh"
 import type { KeeperPairing } from "./keeperPairing"
-import { discoverLighthouse } from "./keeperDiscovery"
+import { discoverKeeper } from "./keeperDiscovery"
 import { getKeeperIntegrationStatus } from "./keeperPairing"
 import type { PendingKeeperWithdrawal } from "./ownerKeeper"
 
@@ -75,7 +75,7 @@ export async function verifiedGrantEpochs(pairing: KeeperPairing, saved: Pending
 }
 
 async function sameService(pairing: KeeperPairing) {
-  const current = await discoverLighthouse(pairing.discovery.origin)
+  const current = await discoverKeeper(pairing.discovery.origin)
   return current.origin === pairing.discovery.origin && current.personId === pairing.discovery.personId
     && current.deviceId === pairing.discovery.deviceId && current.publicKey === pairing.discovery.publicKey
     ? current : undefined

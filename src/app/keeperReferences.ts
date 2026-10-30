@@ -46,7 +46,7 @@ export async function loadKeeperReferenceViews(
       reconnecting: false, onlineDevices: 0, devices: knownDeviceIds.length || 1, self: false,
       pendingRemoval: true,
       deviceList: knownDeviceIds.map(deviceId => ({ deviceId, name: "Rusty", online: false, reconnecting: false,
-        lastSeen: reference.verifiedAt, userAgent: "mesh-lighthouse/1.0.0", description: "Rusty", tabs: 1 })),
+        lastSeen: reference.verifiedAt, userAgent: "mesh-keeper/1.0.0", description: "Rusty", tabs: 1 })),
     }
   })
   return { pending, saved }

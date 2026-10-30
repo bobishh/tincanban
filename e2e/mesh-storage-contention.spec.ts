@@ -63,7 +63,7 @@ test("Given three tabs sharing nine boards, when signed catalogs replay, then pr
         createPeerAdvertisement(member, workspace.id, (index + 1).toString(16).padStart(64, "0"), {
           ...(index ? { grant: await createWorkspaceGrant(profile, workspace.id, member.identity.personId, "editor") } : {}),
           ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate],
-          instanceId: `synthetic-${index}`, userAgent: "mesh-lighthouse/benchmark",
+          instanceId: `synthetic-${index}`, userAgent: "mesh-keeper/benchmark",
         })))
       result.push({ workspaceId: workspace.id, catalog: { version: 1, peers,
         deviceRevocations: [], departures: [], revocations: [], ownershipTransfers: [],

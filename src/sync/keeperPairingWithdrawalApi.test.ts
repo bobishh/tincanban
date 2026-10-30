@@ -23,7 +23,7 @@ vi.mock("./keeperPairing", () => ({
   verifyProvisionedScopes: mocks.verifyProvisionedScopes,
 }))
 
-import { completeKeeperPairingWithdrawal, getKeeperPairingStatusInfo, requestKeeperPairingWithdrawal } from "./lighthousePairingWithdrawalApi"
+import { completeKeeperPairingWithdrawal, getKeeperPairingStatusInfo, requestKeeperPairingWithdrawal } from "./keeperPairingWithdrawalApi"
 
 const discovery = {
   origin: "https://rusty.example",
@@ -98,7 +98,7 @@ describe("signed keeper pairing withdrawal API", () => {
       operationId: "op-1", requestHash: "request-hash", status: "cancel_pending",
     }, provisioningScopes: scopes })
     expect(mocks.signKeeperControllerRequest).toHaveBeenCalledWith(expect.anything(), discovery,
-      "lighthouse-pairing-status", { pairingId: "pairing-1", transcriptHash: "transcript-1", withdrawalOperationId: "op-1" })
+      "keeper-pairing-status", { pairingId: "pairing-1", transcriptHash: "transcript-1", withdrawalOperationId: "op-1" })
     expect(mocks.verifyProvisionedScopes).toHaveBeenCalledWith(expect.any(Object), pairing, true)
   })
 
@@ -140,7 +140,7 @@ describe("signed keeper pairing withdrawal API", () => {
       operationId: "op-1", requestHash: "request-hash", status: "cancel_pending",
     })
     expect(mocks.signKeeperControllerRequest).toHaveBeenCalledWith(expect.anything(), discovery,
-      "lighthouse-pairing-withdrawal", expect.objectContaining({
+      "keeper-pairing-withdrawal", expect.objectContaining({
         pairingId: "pairing-1", transcriptHash: "transcript-1", challengeNonce: "nonce-1",
         operationId: "op-1", servicePersonId: "service-person", serviceDeviceId: "service-device",
         serviceOrigin: "https://rusty.example", grantScopes,
@@ -177,7 +177,7 @@ describe("signed keeper pairing withdrawal API", () => {
       operationId: "op-1", requestHash: "request-hash", status: "cancelled",
     })
     expect(mocks.signKeeperControllerRequest).toHaveBeenCalledWith(expect.anything(), discovery,
-      "lighthouse-pairing-withdrawal-complete", expect.objectContaining({
+      "keeper-pairing-withdrawal-complete", expect.objectContaining({
         pairingId: "pairing-1", withdrawalOperationId: "op-1", operationId: "op-1",
         transcriptHash: "transcript-1", challengeNonce: "nonce-1", scopes: completionScopes,
       }))

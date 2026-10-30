@@ -3740,7 +3740,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tincanban-lighthouse"
+name = "tincanban-keeper"
 version = "0.1.0"
 dependencies = [
  "automerge",

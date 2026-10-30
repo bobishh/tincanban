@@ -207,7 +207,7 @@ export async function createKeeperWorkspaceHost(
   const profile = await context.getProfile()
   const owners = await workspaceOwners(context, workspaces, profile)
   await context.pauseMesh()
-  await context.stopNode("Starting Lighthouse invitation host")
+  await context.stopNode("Starting Keeper invitation host")
   const run = context.nextRun()
   clearHostNotice(context)
   const node = await startWorkspaceHostNode(context)

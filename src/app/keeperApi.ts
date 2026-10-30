@@ -1,6 +1,6 @@
-import { discoverLighthouse, type KeeperDiscovery, type KeeperWorkspace } from "../sync/keeperDiscovery"
+import { discoverKeeper, type KeeperDiscovery, type KeeperWorkspace } from "../sync/keeperDiscovery"
 import { beginKeeperPairing, decideKeeperPairing, getEligibleKeeperWorkspaces, getKeeperIntegrationStatus, newKeeperOperationId, rememberActiveKeeperIntegration, type KeeperPairing } from "../sync/keeperPairing"
-import { completeKeeperPairingWithdrawal, getKeeperPairingStatusInfo, requestKeeperPairingWithdrawal } from "../sync/lighthousePairingWithdrawalApi"
+import { completeKeeperPairingWithdrawal, getKeeperPairingStatusInfo, requestKeeperPairingWithdrawal } from "../sync/keeperPairingWithdrawalApi"
 import { restoreKeeperPairing } from "./keeperWithdrawalUi"
 import { bootstrapIdentity } from "../domain/identity"
 import { keeperIntegrationReferences, ownerKeepers, pendingKeeperWithdrawals, type KeeperDetails, type PendingKeeperWithdrawal } from "../sync/ownerKeeper"
@@ -42,7 +42,7 @@ async function reconcileTargetWithdrawals(discovery: KeeperDiscovery, integratio
 
 /** Application boundary used by keeper discovery and approval controls. */
 export const keeperApi = {
-  discover: discoverLighthouse,
+  discover: discoverKeeper,
   integrationStatus: getKeeperIntegrationStatus,
   async selectCanonicalIntegration(discovery: KeeperDiscovery,
     integrations: Awaited<ReturnType<typeof getKeeperIntegrationStatus>>["integrations"]) {
@@ -96,7 +96,7 @@ export const keeperApi = {
     let integrationSettingsSupported = reference.integrationSettingsSupported
     if (integrationSettingsSupported !== true) {
       try {
-        const discovery = await discoverLighthouse(reference.serviceOrigin)
+        const discovery = await discoverKeeper(reference.serviceOrigin)
         const status = await getKeeperIntegrationStatus(discovery)
         integrationSettingsSupported = status.integrationSettingsSupported
           && status.integrations.some(integration => integration.integrationId === reference.integrationId)

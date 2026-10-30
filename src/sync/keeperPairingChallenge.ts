@@ -15,7 +15,7 @@ function challengeRecord(value: unknown): Record<string, unknown> | undefined {
 
 function validChallenge(challenge: Record<string, unknown> | undefined, pairingId: string,
   discovery: KeeperDiscovery, expiresAt: number, transcriptHash: string) {
-  return Boolean(challenge && challenge.kind === "lighthouse-pairing-challenge"
+  return Boolean(challenge && challenge.kind === "keeper-pairing-challenge"
     && challenge.pairingId === pairingId && typeof challenge.integrationId === "string" && challenge.integrationId
     && challenge.transcriptHash === transcriptHash && challenge.servicePersonId === discovery.personId
     && challenge.serviceOrigin === discovery.origin && challenge.expiresAt === expiresAt

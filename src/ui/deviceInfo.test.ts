@@ -13,8 +13,10 @@ describe("device user-agent description", () => {
 })
 
  it("recognizes the explicit keeper client marker, not a display name", () => {
+   expect(isKeeper("mesh-keeper/0.1.0")).toBe(true)
+   expect(describeUserAgent("mesh-keeper/0.1.0")).toBe("Rusty")
    expect(isKeeper("mesh-lighthouse/0.1.0")).toBe(true)
-   expect(describeUserAgent("mesh-lighthouse/0.1.0")).toBe("Rusty")
+   expect(isKeeper("Keeper")).toBe(false)
    expect(isKeeper("Lighthouse")).toBe(false)
    expect(isKeeper(undefined)).toBe(false)
  })

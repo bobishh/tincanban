@@ -1,12 +1,13 @@
 import { isGeneratedDeviceName, unprovidedDisplayName } from "../chat/names"
 
 export function keeperDisplayName(name: string): string {
-  if (!name.trim() || name === "Lighthouse" || name === "mesh-lighthouse") return "Rusty keeper"
+  const trimmed = name.trim()
+  if (!trimmed || trimmed === "Keeper" || trimmed === "Lighthouse" || trimmed === "mesh-keeper" || trimmed === "mesh-lighthouse") return "Rusty keeper"
   return name.replace(/^Participant(?= · |$)/, "Rusty keeper")
 }
 
 export function isKeeper(userAgent?: string): boolean {
-  return /^mesh-lighthouse\/\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(userAgent ?? "")
+  return /^mesh-(?:keeper|lighthouse)\/\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?$/.test(userAgent ?? "")
 }
 
 export function describeUserAgent(userAgent?: string): string {
