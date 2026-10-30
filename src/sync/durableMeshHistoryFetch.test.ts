@@ -56,3 +56,57 @@ it("Given network loss without an authority change, when reading history, then m
   f.entry.session.readHistoryObject.mockRejectedValueOnce(new Error("connection lost"))
   await expect(f.host.fetchHistoryObject(f.workspaceId, f.baselineId, f.objectId, f.binding)).rejects.toThrow("connection lost")
 })
+
+it("Given two history peers, when the first session closes during its read, then fetch from the other current peer without returning stale bytes", async () => {
+  const f = fixture()
+  const other = { ...f.entry, deviceId: "other", session: { readHistoryObject: vi.fn(async () => new Uint8Array([8])) } }
+  f.host.peerKey = (_workspaceId: string, deviceId: string) => deviceId
+  f.host.sessions = new Map([[f.entry.deviceId, f.entry], [other.deviceId, other]])
+  f.entry.session.readHistoryObject.mockImplementation(async () => {
+    f.host.sessions.delete(f.entry.deviceId)
+    return new Uint8Array([9])
+  })
+  await expect(f.host.fetchHistoryObject(f.workspaceId, f.baselineId, f.objectId, f.binding)).resolves.toEqual(new Uint8Array([8]))
+  expect(other.session.readHistoryObject).toHaveBeenCalledOnce()
+})
+
+it("Given a disconnected history peer and changed authority, when another peer is available, then reject before asking it for bytes", async () => {
+  const f = fixture()
+  const other = { ...f.entry, deviceId: "other", session: { readHistoryObject: vi.fn(async () => new Uint8Array([8])) } }
+  f.host.peerKey = (_workspaceId: string, deviceId: string) => deviceId
+  f.host.sessions = new Map([[f.entry.deviceId, f.entry], [other.deviceId, other]])
+  f.entry.session.readHistoryObject.mockImplementation(async () => {
+    f.host.sessions.delete(f.entry.deviceId)
+    f.authority.mockResolvedValue({ identity: "identity", credential: "revoked", transportSecret: "secret", profile: {} as never })
+    throw new MeshNetworkError("connection lost")
+  })
+  await expect(f.host.fetchHistoryObject(f.workspaceId, f.baselineId, f.objectId, f.binding)).rejects.toThrow(/authority|access/i)
+  expect(other.session.readHistoryObject).not.toHaveBeenCalled()
+})
+
+it("Given a history peer reconnects during its read, when its replacement is current, then retry that replacement once and discard the old response", async () => {
+  const f = fixture()
+  const replacement = { ...f.entry, session: { readHistoryObject: vi.fn(async () => new Uint8Array([8])) } }
+  f.entry.session.readHistoryObject.mockImplementation(async () => {
+    f.host.sessions.set("session", replacement)
+    return new Uint8Array([9])
+  })
+  await expect(f.host.fetchHistoryObject(f.workspaceId, f.baselineId, f.objectId, f.binding)).resolves.toEqual(new Uint8Array([8]))
+  expect(replacement.session.readHistoryObject).toHaveBeenCalledOnce()
+})
+
+it("Given a history peer keeps reconnecting, when its replacement also closes, then stop without reading a third session", async () => {
+  const f = fixture()
+  const third = { ...f.entry, session: { readHistoryObject: vi.fn(async () => new Uint8Array([8])) } }
+  const replacement = { ...f.entry, session: { readHistoryObject: vi.fn(async () => {
+    f.host.sessions.set("session", third)
+    throw new MeshNetworkError("connection lost")
+  }) } }
+  f.entry.session.readHistoryObject.mockImplementation(async () => {
+    f.host.sessions.set("session", replacement)
+    throw new MeshNetworkError("connection lost")
+  })
+  await expect(f.host.fetchHistoryObject(f.workspaceId, f.baselineId, f.objectId, f.binding))
+    .rejects.toBeInstanceOf(PeerHistoryObjectUnavailableError)
+  expect(third.session.readHistoryObject).not.toHaveBeenCalled()
+})
