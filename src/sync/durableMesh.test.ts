@@ -991,7 +991,7 @@ describe("DurableMesh peer catalog gossip", () => {
     await mesh.dispose()
   })
 
-  it("Given the peer closed this socket and no replacement arrives, when the grace ends, then the session drops and the route retries directly", async () => {
+  it("Given the peer closed this socket and no replacement arrives, when the session drops, then the direct retry waits out the successor grace", async () => {
     vi.useFakeTimers()
     let rejectReceive!: (error: Error) => void
     const done = new Promise<never>((_resolve, reject) => { rejectReceive = reject })
@@ -1015,18 +1015,14 @@ describe("DurableMesh peer catalog gossip", () => {
     try {
       await internal.installSession("workspace", "remote-device", "slot-0", "2026-09-24", 1,
         "outgoing", connection, false, "outgoing-test")
+      const closedAt = Date.now()
       rejectReceive(new MeshNetworkError("closed by peer: browser connection closed (code 0)"))
       await vi.advanceTimersByTimeAsync(0)
-      expect(internal.sessions.size).toBe(0)
-      expect(internal.runtime().reconnectState("workspace:remote-device:slot-0")).toBeNull()
-      await vi.advanceTimersByTimeAsync(1_499)
-      expect(internal.runtime().reconnectState("workspace:remote-device:slot-0")).toBeNull()
-      await vi.advanceTimersByTimeAsync(1)
       expect(internal.sessions.size).toBe(0)
       const reconnect = internal.runtime().reconnectState("workspace:remote-device:slot-0")
       expect(reconnect).not.toBeNull()
       if (!reconnect) throw new Error("Reconnect state was not scheduled")
-      expect(reconnect.retryAtMs).toBeGreaterThan(Date.now())
+      expect(reconnect.retryAtMs).toBeGreaterThanOrEqual(closedAt + 1_500)
       expect(internal.reconnectPolicy.mode({ dialRelay: async () => ({}) }, "workspace:remote-device:slot-0")).toBe("direct")
     } finally {
       vi.useRealTimers()

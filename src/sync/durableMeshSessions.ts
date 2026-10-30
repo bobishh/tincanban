@@ -336,6 +336,10 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     publishRecovered: (key, entry) => this.stopped || this.sessions.get(key) !== entry
       ? Promise.resolve() : this.publishCurrentSession(key, entry as SessionEntry),
     stableSession: key => this.clearRouteReconnect(key),
+    routeRecovered: key => this.clearRouteReconnect(key),
+    holdDirectReconnect: (key, delayMs) => {
+      this.runtime().scheduleReconnect(key, Date.now(), delayMs, 10_000)
+    },
     protocolFailure: (stage, error) => this.reportProtocolFailure(stage, error),
     networkFailure: (key, error) => { this.recordRouteFailure(key, error) },
   }, this.sessions)
