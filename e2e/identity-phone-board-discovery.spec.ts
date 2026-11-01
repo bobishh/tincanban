@@ -322,7 +322,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
       phoneCatalogTraffic.push({ path: url.pathname.replace(/[A-Za-z0-9_-]{40,}/gu, "<id>"), status: response.status() })
     }
   })
-  let releasePhonePeerReconnect: (() => void) | undefined
+  let releasePhoneCatalogReadiness: (() => Promise<void>) | undefined
   const browserKey = "public-browser-fixture-key-0123456789"
   await context.route("https://telemetry.invalid/v1/traces", async route => {
     const headers = route.request().headers()
@@ -402,25 +402,20 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await expect.poll(() => identityRustyPinOrigins(ownerPortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
     await joinAsEditor(desktop, peer)
 
-    let phonePeerReconnectStarted = false
-    const phonePeerReconnectGate = new Promise<void>(resolve => { releasePhonePeerReconnect = resolve })
-    await phoneContext.routeWebSocket("**/*", async socket => {
-      if (new URL(phone.url()).origin !== new URL(identityOrigin!).origin ||
-          new URL(socket.url()).protocol !== "wss:") {
-        socket.connectToServer()
-        return
-      }
-      const server = socket.connectToServer()
-      const buffered: Array<string | Buffer> = []
-      let released = false
-      server.onMessage(message => {
-        phonePeerReconnectStarted = true
-        if (released) socket.send(message)
-        else buffered.push(message)
-      })
-      await phonePeerReconnectGate
-      released = true
-      for (const message of buffered) socket.send(message)
+    // Hold catalog readiness without changing the authenticated transport. The
+    // original reader must still receive the real peer profile after release.
+    await phone.route(`${identityOrigin}/src/applicationCatalogReadiness.ts*`, async route => {
+      const response = await route.fetch()
+      const source = await response.text()
+      const marker = "let catalogAccessUnavailable = false;"
+      expect(source).toContain(marker)
+      const gate = `await new Promise(resolve => { window.__releaseCatalogReadiness = resolve; });`
+      await route.fulfill({ response, body: source.replace(marker, `${gate}${marker}`) })
+    }, { times: 1 })
+    releasePhoneCatalogReadiness = () => phone.evaluate(() => {
+      const fixture = window as unknown as { __releaseCatalogReadiness?: () => void }
+      fixture.__releaseCatalogReadiness?.()
+      delete fixture.__releaseCatalogReadiness
     })
     let phoneIdentityReturnRequests = 0
     phone.on("request", request => {
@@ -430,14 +425,15 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     try {
       await approveApplicationDevice(phone, appOrigin, personId, undefined, async () => {
         try {
-          await expect.poll(() => phonePeerReconnectStarted, { timeout: 10_000 }).toBe(true)
+          await phone.waitForFunction(() => typeof (window as unknown as { __releaseCatalogReadiness?: unknown })
+            .__releaseCatalogReadiness === "function", undefined, { timeout: 10_000 })
           const pending = phone.getByRole("status", { name: "Checking your Identity and boards…", exact: true })
           await expect(pending).toBeVisible({ timeout: 15_000 })
           await expect(phone.getByRole("button", { name: "Approve app device", exact: true })).toBeDisabled()
           await expect(phone).toHaveURL(url => url.origin === new URL(identityOrigin!).origin && url.pathname === "/authorize")
           expect(phoneIdentityReturnRequests).toBe(0)
         } finally {
-          releasePhonePeerReconnect()
+          await releasePhoneCatalogReadiness()
         }
       })
     }
@@ -591,7 +587,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await expect(deviceInvitation.getByLabel("Pairing link", { exact: true })).toHaveValue(/https?:\/\/.+/u)
     await expect(deviceInvitation.getByLabel("Identity invitation", { exact: true })).toHaveCount(0)
   } finally {
-    releasePhonePeerReconnect?.()
+    await releasePhoneCatalogReadiness?.().catch(() => {})
     await Promise.allSettled([peerContext.close(), phoneContext.close(), rusty.close()])
   }
 })
