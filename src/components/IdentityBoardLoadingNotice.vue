@@ -20,9 +20,9 @@ defineEmits<{ retry: [] }>()
     </div>
   </section>
   <aside v-else class="notice-overlay" aria-live="polite">
-    <div class="notice" role="alert">
-      <span>{{ error }}</span>
-      <button class="button button-small identity-board-retry" type="button" @click="$emit('retry')">Retry loading boards</button>
+    <div class="notice" :role="error ? 'alert' : 'status'">
+      <span>{{ error || 'Signed in. Loading the rest of your boards…' }}</span>
+      <button class="button button-small identity-board-retry" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
     </div>
   </aside>
 </template>

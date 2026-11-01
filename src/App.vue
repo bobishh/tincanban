@@ -18,6 +18,7 @@ import { useObjectConversations } from "./app/useObjectConversations"
 import SaveState from "./components/SaveState.vue"
 import StartupStatus from "./components/StartupStatus.vue"
 import IdentityBoardLoadingNotice from "./components/IdentityBoardLoadingNotice.vue"
+import type { isEmptyDefaultBoard } from "./app/identityLocalBoards"
 import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
@@ -61,23 +62,18 @@ const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identi
   identitySignInPersonId, beginEnrollmentSignIn, beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
 const identityBoardNoticeVisible = computed(() => !showIdentityPortal.value && !boardAddress.publicReadable.value &&
   (browserSignInReturn.boardLoading.value || Boolean(browserSignInReturn.boardLoadError.value)))
-const availableIdentityBoard = ref(false)
-let classifiedIdentityWorkspaceId = ""
-watch(() => [browserSignInReturn.boardLoadError.value, app.workspace.docVersion.value, app.workspace.activeWorkspace.id], async (_, __, onCleanup) => {
-  let current = true
-  onCleanup(() => { current = false })
-  if (!browserSignInReturn.boardLoadError.value || classifiedIdentityWorkspaceId !== app.workspace.activeWorkspace.id) {
-    availableIdentityBoard.value = false
+const isEmptyIdentityBoard = ref<typeof isEmptyDefaultBoard>()
+watch(identityBoardNoticeVisible, async visible => {
+  if (visible && !isEmptyIdentityBoard.value) {
+    isEmptyIdentityBoard.value = (await import("./app/identityLocalBoards")).isEmptyDefaultBoard
   }
-  if (!browserSignInReturn.boardLoadError.value) return
-  const { isEmptyDefaultBoard } = await import("./app/identityLocalBoards")
-  if (!current) return
+}, { immediate: true })
+const identityBoardsBlocked = computed(() => {
+  if (!identityBoardNoticeVisible.value) return false
+  void app.workspace.docVersion.value
   const doc = app.workspace.getActiveDoc()
-  availableIdentityBoard.value = Boolean(doc && !isEmptyDefaultBoard(doc))
-  classifiedIdentityWorkspaceId = doc?.id ?? ""
+  return !doc || !isEmptyIdentityBoard.value || isEmptyIdentityBoard.value(doc)
 })
-const identityBoardsBlocked = computed(() => identityBoardNoticeVisible.value &&
-  (browserSignInReturn.boardLoading.value || !availableIdentityBoard.value))
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {

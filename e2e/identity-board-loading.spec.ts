@@ -38,13 +38,20 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
     }
     await page.reload()
     const cover = page.getByRole("region", { name: "Loading your boards", exact: true })
-    await expect(cover).toBeVisible()
-    await expect(cover.getByRole("status")).toContainText("Signed in. Loading your boards")
-    await expect(cover).toHaveAttribute("aria-busy", "true")
-    await expect(page.locator("main.shell")).toHaveAttribute("inert", "")
-    await expect(page.locator(".board").first()).toBeHidden()
-    expect(await cover.boundingBox()).toEqual({ x: 0, y: 0, width, height: 844 })
-    const pendingButton = await cover.getByRole("button").boundingBox()
+    const pendingStatus = available ? page.getByRole("status").filter({ hasText: "Loading the rest of your boards" }) : cover.getByRole("status")
+    await expect(pendingStatus).toBeVisible()
+    if (available) {
+      await expect(cover).toHaveCount(0)
+      await expect(page.locator("main.shell")).not.toHaveAttribute("inert")
+      await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
+      await expect(page.locator("main.shell")).toHaveCSS("opacity", "1")
+    } else {
+      await expect(cover).toHaveAttribute("aria-busy", "true")
+      await expect(page.locator("main.shell")).toHaveAttribute("inert", "")
+      await expect(page.locator(".board").first()).toBeHidden()
+      expect(await cover.boundingBox()).toEqual({ x: 0, y: 0, width, height: 844 })
+    }
+    const pendingButton = await page.getByRole("button", { name: "Retry loading boards", exact: true }).boundingBox()
     await page.screenshot({ path: info.outputPath("loading.png") })
     await finish(true)
     const alert = page.getByRole("alert").filter({ hasText: "available peer or stored copy" })
@@ -65,10 +72,15 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
     await expect(retry).toBeFocused()
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     await retry.press("Enter")
-    await expect(cover).toHaveAttribute("aria-busy", "true")
     await expect(retry).toBeDisabled()
-    await expect(cover.getByRole("status")).toContainText("Loading your boards")
-    await expect(page.locator("main.shell")).toHaveAttribute("inert", "")
+    await expect(pendingStatus).toBeVisible()
+    if (available) {
+      await expect(cover).toHaveCount(0)
+      await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
+    } else {
+      await expect(cover).toHaveAttribute("aria-busy", "true")
+      await expect(page.locator("main.shell")).toHaveAttribute("inert", "")
+    }
     await page.waitForFunction(() => typeof (window as unknown as { __finishBoardLoading?: unknown }).__finishBoardLoading === "function")
     await finish(false)
     await expect(cover).toHaveCount(0)
