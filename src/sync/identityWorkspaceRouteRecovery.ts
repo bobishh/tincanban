@@ -11,6 +11,8 @@ import type { DurableMesh } from "./durableMesh"
 import { departures, deviceRevocations, ownerAuthorities, ownershipTransfers, revocations,
   successionClaims, successionPolicy, successionVotes } from "./durableMeshBase"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
+// A first dynamic import while offline can poison later catalog transfers in the browser's module cache.
+import { packWorkspaceRoutes, unpackWorkspaceRoutes } from "./identityWorkspaceRoutePacking"
 
 const componentName = "workspaceRouteRecovery"
 const schema = "workspace-route-recovery@1"
@@ -141,7 +143,7 @@ async function readComponent(manifest: Manifest): Promise<WorkspaceRouteRecovery
   const accept = async (name: string, component: IdentityDeviceComponent) => {
     if (!isIdentityWorkspaceRouteRecoveryComponent(name, component)) return
     const value = component.schema === packedSchema
-      ? await import("./identityWorkspaceRoutePacking").then(codec => codec.unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes))
+      ? unpackWorkspaceRoutes(manifest.personId, component.value, maxCatalogBytes)
       : component.value
     const checked = validateOptionalIdentityComponent(componentName, { schema, required: false, value: value as Record<string, unknown> })
     if (checked.value.personId !== manifest.personId) throw new Error("Workspace route recovery identity mismatch")
@@ -163,7 +165,7 @@ export function isIdentityWorkspaceRouteRecoveryComponent(name: string, componen
 export async function identityWorkspaceRouteRecoveryComponent(value: WorkspaceRouteRecovery): Promise<IdentityDeviceComponent> {
   const checked = await normalize(value.personId, value)
   validateOptionalIdentityComponent(componentName, { schema, required: false, value: checked })
-  const packed = await import("./identityWorkspaceRoutePacking").then(codec => codec.packWorkspaceRoutes(checked, maxCatalogBytes))
+  const packed = packWorkspaceRoutes(checked, maxCatalogBytes)
   return { schema: packedSchema, required: false, value: packed }
 }
 

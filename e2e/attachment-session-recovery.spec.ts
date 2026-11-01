@@ -1,6 +1,6 @@
 import { openSettingsFromSync } from "./support/settingsNavigation"
 import { readFile } from "node:fs/promises"
-import { expect, test, type Page } from "./support/coverage"
+import { expect, test, type Locator, type Page } from "./support/coverage"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
@@ -13,6 +13,18 @@ test.use({ trace: "off" })
 
 const attachmentTitle = "Session recovery file"
 const attachmentName = "session-recovery.txt"
+
+async function retryOriginalArchiveVersion(history: Locator): Promise<void> {
+  const original = history.locator(".item-history-entry").filter({ hasText: "createItem" })
+    .getByRole("button", { name: "Restore this version", exact: true })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await history.getByRole("button", { name: "Retry earlier history", exact: true }).click()
+    await expect(original.or(history.getByRole("alert"))).toBeVisible({ timeout: 30_000 })
+    if (await original.isVisible()) return
+    await expect(history.getByRole("alert")).toHaveText("Selected peer history is unavailable")
+  }
+  throw new Error("Original archived version stayed unavailable after three explicit retries")
+}
 
 type AttachmentRecoveryGate = {
   armed: boolean
@@ -399,8 +411,14 @@ test("Given an archived owner baseline, when a credential-free editor receives i
           if (!input.peerFetch) return originalCreateHistoryArchiveReader(input)
           const originalRead = input.peerFetch.read
           const peerFetch = { ...input.peerFetch, read: async function(objectId, binding) {
+            const observed = { objectId, binding, byteLength: null }
+            ;(window.__TINCANBAN_HISTORY_READS__ ??= []).push(observed)
+            if (!window.__TINCANBAN_HISTORY_READ_INTERRUPTED__) {
+              window.__TINCANBAN_HISTORY_READ_INTERRUPTED__ = true
+              return undefined
+            }
             const bytes = await originalRead(objectId, binding)
-            ;(window.__TINCANBAN_HISTORY_READS__ ??= []).push({ objectId, binding, byteLength: bytes?.byteLength ?? null })
+            observed.byteLength = bytes?.byteLength ?? null
             return bytes
           } }
           return originalCreateHistoryArchiveReader({ ...input, peerFetch })
@@ -416,10 +434,15 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     await detail.getByRole("button", { name: "History", exact: true }).click()
     const history = editor.getByRole("dialog", { name: "Item history", exact: true })
     await history.getByRole("button", { name: "Load earlier history", exact: true }).click()
+    await expect(history.getByRole("alert")).toHaveText("Selected peer history is unavailable")
+    expect(await editor.evaluate(() => (window as Window & { __TINCANBAN_HISTORY_READ_INTERRUPTED__?: boolean })
+      .__TINCANBAN_HISTORY_READ_INTERRUPTED__)).toBe(true)
+    await retryOriginalArchiveVersion(history)
     const originalVersion = history.locator(".item-history-entry").filter({ hasText: "createItem" })
     await expect(originalVersion.getByRole("button", { name: "Restore this version", exact: true })).toBeVisible({ timeout: 30_000 })
     const selectedReads = await editor.evaluate(() => (window as Window & { __TINCANBAN_HISTORY_READS__?: Array<{ objectId: string; binding: { workspaceId: string; historyEpoch: number; indexId: string; objectKind: string; partCount: number; partIndex: number }; byteLength: number | null }> }).__TINCANBAN_HISTORY_READS__ ?? [])
     expect(selectedReads.length).toBeGreaterThan(0)
+    expect(selectedReads.some(read => (read.byteLength ?? 0) > 0)).toBe(true)
     expect(selectedReads.length).toBeLessThan(256)
     expect(selectedReads.every(read => /^[A-Za-z0-9_-]{43}$/.test(read.objectId) && read.binding.workspaceId === workspaceId &&
       Number.isSafeInteger(read.binding.historyEpoch) && /^([a-z][a-z0-9-]{0,63}|change\/|entity\/|source-proof\/)/.test(read.binding.indexId) &&
@@ -428,6 +451,7 @@ test("Given an archived owner baseline, when a credential-free editor receives i
       (read.byteLength ?? 0) <= (read.binding.objectKind === "part" ? 256 : 64) * 1024)).toBe(true)
     await history.getByRole("button", { name: "Close history", exact: true }).click()
     await detail.getByRole("button", { name: "Close detail", exact: true }).click()
+    await editor.unroute("**/src/sync/historyArchiveReader.ts*")
 
     await makeIdentityRecovery()
     const complete = await makeWorkspaceRecovery()
