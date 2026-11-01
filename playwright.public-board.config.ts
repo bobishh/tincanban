@@ -6,7 +6,7 @@ const previewBuild = process.env.TINCANBAN_PUBLIC_E2E_PREVIEW === "1"
 if (!Number.isInteger(webPort) || webPort < 1 || !publicOrigin?.startsWith("http://127.0.0.1:")) throw new Error("Public board integration requires isolated local ports")
 
 export default defineConfig({
-  testDir: "./e2e", testMatch: previewBuild ? ["public-board.spec.ts"] : ["public-board-keeper.spec.ts", "public-board.spec.ts"], workers: 1, retries: 0,
+  testDir: "./e2e", testMatch: ["public-board.spec.ts"], workers: 1, retries: 0,
   outputDir: process.env.TINCANBAN_PUBLIC_E2E_OUTPUT_DIR ?? "test-results/public-board",
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
