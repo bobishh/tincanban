@@ -1,18 +1,19 @@
 import { expect, test } from "./support/coverage"
 
-for (const width of [320, 1280]) {
-  test(`Given interrupted sign-in board loading at ${width}px, when loading waits or fails, then cover the starter until retry succeeds`, async ({ page }, info) => {
+for (const width of [320, 1280]) for (const available of [false, true]) {
+  test(`Given interrupted sign-in board loading at ${width}px and ${available ? 'an edited local board' : 'only the starter'}, when loading waits or fails, then ${available ? 'keep available edits usable after failure' : 'cover the starter until retry succeeds'}`, async ({ page }, info) => {
     await page.setViewportSize({ width, height: 844 })
     await page.goto("/")
     await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
-    await page.evaluate(async () => {
+    await page.evaluate(async available => {
       const app = (await import("/src/state.ts")).useTincanban()
       await app.whenReady()
+      if (available) await app.createItemAsync({ title: "Retained card", parentId: app.genericColumns.value[0]!.id })
       const { beginIdentityBoardLoading, confirmIdentityCatalogInstalled } = await import("/src/app/identityBoardLoading.ts")
       const profile = app.getCurrentProfile()!
       const pending = await beginIdentityBoardLoading(profile)
       await confirmIdentityCatalogInstalled(profile, pending)
-    })
+    }, available)
     // Hold the real loader at its boundary; keep the application's persisted
     // resume, error, retry and board-selection paths intact.
     await page.route("**/src/app/loadIdentityBoards.ts", async route => {
@@ -46,12 +47,19 @@ for (const width of [320, 1280]) {
     const pendingButton = await cover.getByRole("button").boundingBox()
     await page.screenshot({ path: info.outputPath("loading.png") })
     await finish(true)
-    await expect(cover.getByRole("alert")).toContainText("available peer or stored copy")
-    await expect(cover).toHaveAttribute("aria-busy", "false")
-    const retry = cover.getByRole("button", { name: "Retry loading boards", exact: true })
+    const alert = page.getByRole("alert").filter({ hasText: "available peer or stored copy" })
+    await expect(alert).toBeVisible()
+    if (available) {
+      await expect(cover).toHaveCount(0)
+      await expect(page.locator("main.shell")).not.toHaveAttribute("inert")
+      await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
+    } else {
+      await expect(cover).toHaveAttribute("aria-busy", "false")
+    }
+    const retry = page.getByRole("button", { name: "Retry loading boards", exact: true })
     await expect(retry).toBeVisible()
     await expect(retry).toHaveCSS("color", "rgb(23, 23, 23)")
-    expect(await retry.boundingBox()).toEqual(pendingButton)
+    if (!available) expect(await retry.boundingBox()).toEqual(pendingButton)
     await page.screenshot({ path: info.outputPath("retry.png") })
     await retry.focus()
     await expect(retry).toBeFocused()
@@ -66,5 +74,6 @@ for (const width of [320, 1280]) {
     await expect(cover).toHaveCount(0)
     await expect(page.locator("main.shell")).not.toHaveAttribute("inert")
     await expect(page.locator(".board").first()).toBeVisible()
+    if (available) await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
   })
 }

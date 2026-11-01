@@ -1,10 +1,10 @@
 <script setup lang="ts">
-defineProps<{ error: string }>()
+withDefaults(defineProps<{ error: string; expanded?: boolean }>(), { expanded: true })
 defineEmits<{ retry: [] }>()
 </script>
 
 <template>
-  <section class="startup-screen identity-board-loading" role="region" aria-label="Loading your boards" :aria-busy="!error">
+  <section v-if="expanded" class="startup-screen identity-board-loading" role="region" aria-label="Loading your boards" :aria-busy="!error">
     <div class="identity-board-loading-content">
       <span class="startup-status-mark" aria-hidden="true">
         <span v-if="error">!</span>
@@ -19,6 +19,12 @@ defineEmits<{ retry: [] }>()
       <button class="button" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
     </div>
   </section>
+  <aside v-else class="notice-overlay" aria-live="polite">
+    <div class="notice" role="alert">
+      <span>{{ error }}</span>
+      <button class="button button-small identity-board-retry" type="button" @click="$emit('retry')">Retry loading boards</button>
+    </div>
+  </aside>
 </template>
 
 <style scoped>
@@ -30,4 +36,5 @@ defineEmits<{ retry: [] }>()
 .identity-board-loading-copy p { margin: 0 0 var(--space-4); }
 .identity-board-loading-copy summary { cursor: pointer; }
 .identity-board-loading .button { justify-self: center; color: var(--ink); }
+.identity-board-retry { flex-shrink: 0; color: var(--ink); }
 </style>

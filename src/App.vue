@@ -59,8 +59,25 @@ const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
   identitySignInPersonId, beginEnrollmentSignIn, beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
-const identityBoardsBlocked = computed(() => !showIdentityPortal.value && !boardAddress.publicReadable.value &&
+const identityBoardNoticeVisible = computed(() => !showIdentityPortal.value && !boardAddress.publicReadable.value &&
   (browserSignInReturn.boardLoading.value || Boolean(browserSignInReturn.boardLoadError.value)))
+const availableIdentityBoard = ref(false)
+let classifiedIdentityWorkspaceId = ""
+watch(() => [browserSignInReturn.boardLoadError.value, app.workspace.docVersion.value, app.workspace.activeWorkspace.id], async (_, __, onCleanup) => {
+  let current = true
+  onCleanup(() => { current = false })
+  if (!browserSignInReturn.boardLoadError.value || classifiedIdentityWorkspaceId !== app.workspace.activeWorkspace.id) {
+    availableIdentityBoard.value = false
+  }
+  if (!browserSignInReturn.boardLoadError.value) return
+  const { isEmptyDefaultBoard } = await import("./app/identityLocalBoards")
+  if (!current) return
+  const doc = app.workspace.getActiveDoc()
+  availableIdentityBoard.value = Boolean(doc && !isEmptyDefaultBoard(doc))
+  classifiedIdentityWorkspaceId = doc?.id ?? ""
+})
+const identityBoardsBlocked = computed(() => identityBoardNoticeVisible.value &&
+  (browserSignInReturn.boardLoading.value || !availableIdentityBoard.value))
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
@@ -162,7 +179,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   <div v-if="boardAddress.publicFallback.value" v-show="boardAddress.publicReadable.value">
     <PublicBoardApp v-bind="boardAddress.publicFallback.value" @availability="boardAddress.setPublicAvailability" />
   </div>
-  <IdentityBoardLoadingNotice v-if="identityBoardsBlocked" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
+  <IdentityBoardLoadingNotice v-if="identityBoardNoticeVisible" :expanded="identityBoardsBlocked" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
   <TincanbanPageLayout v-if="!boardAddress.publicReadable.value" :class="{ 'startup-concealed': startupCoverVisible || identityBoardsBlocked, 'startup-revealed': !startupCoverVisible && !identityBoardsBlocked }" :inert="startupCoverVisible || identityBoardsBlocked || workspaceDialogBusy || boardAddress.publicReadPending.value || undefined" :busy="!uiReady && !startupError || boardAddress.publicReadPending.value">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
