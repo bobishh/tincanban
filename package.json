@@ -98,5 +98,8 @@
     "vite": "^8.3.4",
     "vitest": "5.0.5",
     "vue-tsc": "^2.2.12"
+  },
+  "overrides": {
+    "minimatch": "11.0.1"
   }
 }
