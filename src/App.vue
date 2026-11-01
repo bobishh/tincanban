@@ -17,6 +17,7 @@ import BoardToolbar from "./components/BoardToolbar.vue"
 import { useObjectConversations } from "./app/useObjectConversations"
 import SaveState from "./components/SaveState.vue"
 import StartupStatus from "./components/StartupStatus.vue"
+import IdentityBoardLoadingNotice from "./components/IdentityBoardLoadingNotice.vue"
 import { LazyItemDocuments as ItemDocuments } from "./app/lazyItemDocuments"
 import { ItemFormDialog } from "./app/lazyItemFormDialog"
 import BuildFooter from "./components/BuildFooter.vue"
@@ -35,7 +36,7 @@ import { useMemberAvatars } from "./app/useMemberAvatars"
 import { useAppPublicBoards } from "./app/useAppPublicBoards"
 import { createIdentityOwnerActions } from "./app/identityOwnerActions"
 import { createWorkspaceInviteAction } from "./app/identityPortalFlow"
-import { CausalChangeReview, ColumnDialog, IdentityBoardLoadingNotice, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
+import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDialog, MobileDrawer, MoveItemDialog, ObjectConversationLayer, PublicBoardApp, SchemaEditorDialog, startOfflineDetailPreload, WorkspaceSettingsPanel, WorkspacesDialog } from "./app/lazyUiComponents"
 import WorkspaceSyncMount from "./components/WorkspaceSyncMount.vue"
 
 const app = useAppController()
@@ -58,6 +59,8 @@ const conversations = useObjectConversations(app)
 const showSettings = ref(false)
 const { showIdentityPortal, identityPortalOrigin, currentIdentityProfile, identitySignedIn, identityPortalMode,
   identitySignInPersonId, beginEnrollmentSignIn, beginHeaderSignIn, beginDeviceEnrollment, identityPortalFlow, browserSignInReturn, retryIdentityBoards } = useIdentityAccount(app, showSettings)
+const identityBoardsBlocked = computed(() => !showIdentityPortal.value && !boardAddress.publicReadable.value &&
+  (browserSignInReturn.boardLoading.value || Boolean(browserSignInReturn.boardLoadError.value)))
 const { connectingAutomation, describeAutomationBoard, exportAutomationConnection } = useAutomationConnection(app.workspace, browserSignInReturn.returning)
 const workspaceDialogBusy = ref(false)
 function openConnections() {
@@ -159,7 +162,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   <div v-if="boardAddress.publicFallback.value" v-show="boardAddress.publicReadable.value">
     <PublicBoardApp v-bind="boardAddress.publicFallback.value" @availability="boardAddress.setPublicAvailability" />
   </div>
-  <TincanbanPageLayout v-if="!boardAddress.publicReadable.value" :class="{ 'startup-concealed': startupCoverVisible, 'startup-revealed': !startupCoverVisible }" :inert="startupCoverVisible || workspaceDialogBusy || boardAddress.publicReadPending.value || undefined" :busy="!uiReady && !startupError || boardAddress.publicReadPending.value">
+  <IdentityBoardLoadingNotice v-if="identityBoardsBlocked" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
+  <TincanbanPageLayout v-if="!boardAddress.publicReadable.value" :class="{ 'startup-concealed': startupCoverVisible || identityBoardsBlocked, 'startup-revealed': !startupCoverVisible && !identityBoardsBlocked }" :inert="startupCoverVisible || identityBoardsBlocked || workspaceDialogBusy || boardAddress.publicReadPending.value || undefined" :busy="!uiReady && !startupError || boardAddress.publicReadPending.value">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">
         <span class="brand-presence">
@@ -303,7 +307,6 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     </DialogWindow>
     <RustyStatusDialog v-if="showRustyStatus" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="app.workspace.getCurrentProfile" :boards="availableWorkspaces" :read-workspace-doc="app.workspace.readWorkspaceDoc" :controller="app.collaboration.device.blindReplication" @close="showRustyStatus = false" />
     <AutomationConnectionDialog v-if="connectingAutomation && ready.value" :workspace-id="activeWorkspace.id" :ready="ready.value" :profile="currentIdentityProfile" :boards="availableWorkspaces" :describe="describeAutomationBoard" :export-packet="exportAutomationConnection" @sign-in="beginHeaderSignIn" />
-    <IdentityBoardLoadingNotice v-if="browserSignInReturn.boardLoading.value || browserSignInReturn.boardLoadError.value" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
     <template v-if="boardVisible">
 
     <TransitionGroup name="notice" tag="aside" class="notice-overlay" aria-live="polite" aria-atomic="true" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -458,7 +461,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     <WorkspaceSyncMount v-if="sync.isOpen.value" :dialog="SyncDialog" :sync="sync" :chat="chat" :workspace-id="activeWorkspace.id" :member-avatars="memberAvatars" :revoking-peer="revokingPeer" :blind-replication="app.collaboration.device.blindReplication" :my-device-removal="myDeviceRemoval" :mesh-members="meshMembers" :current-role="currentRole" :succession="activeSuccession" :can-claim-succession="canClaimSuccession" :can-manage-access="canManageAccess" :transferring-ownership="transferringOwnership" :leaving-mesh="leavingMesh" :peer-access-error="peerAccessError" :device-presence="devicePresence" :mesh-presence="meshPresence" :active-mesh-retry-at="activeMeshRetryAt" :identity-portal-origin="identityPortalOrigin ?? ''" :add-my-device="identityOwnerActions.addMyDevice" :generate-workspace-invite="generateWorkspaceInviteWithIdentity" :begin-enrollment-sign-in="beginEnrollmentSignIn" :revoke-workspace-peer="revokeWorkspacePeer" :transfer-workspace-ownership="transferWorkspaceOwnership" :leave-workspace-mesh="leaveWorkspaceMesh" :set-workspace-successor="setWorkspaceSuccessor" :vote-for-workspace-successor="voteForWorkspaceSuccessor" :claim-workspace-succession="claimWorkspaceSuccession" :promote-workspace-peer="promoteWorkspacePeer" @update-selected-workspace-ids="sync.selectedWorkspaceIds.value = $event" @update-selected-workspace-id="sync.selectedWorkspaceId.value = $event" />
 
   </TincanbanPageLayout>
-  <BuildFooter />
+  <BuildFooter :inert="identityBoardsBlocked || undefined" />
   <IdentityPortalEnrollmentDialog v-if="ready.value && showIdentityPortal && identityPortalOrigin && currentIdentityProfile"
     :workspace-id="activeWorkspace.id" :portal-origin="identityPortalOrigin" :profile="currentIdentityProfile" :browser-return="browserSignInReturn.returning.value" :initial-mode="identityPortalMode" :expected-person-id="identitySignInPersonId" :complete-browser-sign-in="browserSignInReturn.complete" @close="browserSignInReturn.close" @completed="identityPortalFlow.complete" />
 </template>

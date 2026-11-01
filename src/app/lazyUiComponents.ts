@@ -6,7 +6,6 @@ const pendingStatus = (message: string): Component => ({
 
 export const IdentitySettingsPanel = defineAsyncComponent<Component>(() => import("../components/IdentitySettingsPanel.vue"))
 export const PublicBoardApp = defineAsyncComponent<Component>(() => import("../public/PublicBoardApp.vue"))
-export const IdentityBoardLoadingNotice = defineAsyncComponent<Component>(() => import("../components/IdentityBoardLoadingNotice.vue"))
 export const CausalChangeReview = defineAsyncComponent<Component>({
   loader: () => import("../components/CausalChangeReview.vue"),
   delay: 0,
