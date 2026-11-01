@@ -41,7 +41,7 @@ export function createDurablePeerHistoryGuard(input: {
     ])
     input.assertSession()
     const latest = requireRemoteDevice(latestCredential, latestPeer, input)
-    if (authorizationState(remote.credential, authority, remote.peer) !== authorizationState(latest.credential, latestAuthority, latest.peer)) {
+    if (authorizationChanged(remote.credential, authority, remote.peer, latest.credential, latestAuthority, latest.peer)) {
       throw new Error("Direct peer authorization changed during history transfer")
     }
     if (canonicalAuthorityJson(bundle) !== canonicalAuthorityJson(latest.peer.advertisement)) {
@@ -53,7 +53,7 @@ export function createDurablePeerHistoryGuard(input: {
       ])
       input.assertSession()
       const final = requireRemoteDevice(finalCredential, finalPeer, input)
-      if (authorizationState(latest.credential, latestAuthority, latest.peer) !== authorizationState(final.credential, finalAuthority, final.peer)) {
+      if (authorizationChanged(latest.credential, latestAuthority, latest.peer, final.credential, finalAuthority, final.peer)) {
         throw new Error("Direct peer authorization changed during history transfer")
       }
     }
@@ -64,20 +64,45 @@ export function createDurablePeerHistoryGuard(input: {
   }
 }
 
-/** Route presence is not authority. Retain every other stored security value. */
+type HistoryPeer = NonNullable<Awaited<ReturnType<PeerStore["getPeer"]>>>
+
+/** Proof sets may grow; each source must retain every exact certificate captured before verification. */
+function authorizationChanged(beforeCredential: WorkspaceMeshCredential, beforeAuthority: WorkspaceAuthorityRecord | null,
+  beforePeer: HistoryPeer, afterCredential: WorkspaceMeshCredential, afterAuthority: WorkspaceAuthorityRecord | null,
+  afterPeer: HistoryPeer): boolean {
+  const before = [beforeCredential, beforeAuthority, beforePeer.advertisement]
+  const after = [afterCredential, afterAuthority, afterPeer.advertisement]
+  for (let index = 0; index < before.length; index++) {
+    const retained = new Set(ownerCertificateEvidence(after[index]))
+    if (ownerCertificateEvidence(before[index]).some(certificate => !retained.has(certificate))) return true
+  }
+  return authorizationState(beforeCredential, beforeAuthority, beforePeer) !== authorizationState(afterCredential, afterAuthority, afterPeer)
+}
+
+function ownerCertificateEvidence(value: unknown): string[] {
+  if (!value || typeof value !== "object") return []
+  const certificates = (value as { ownerCertificates?: unknown }).ownerCertificates
+  if (certificates === undefined) return []
+  if (!Array.isArray(certificates)) throw new Error("Invalid owner certificate evidence during history transfer")
+  return certificates.map(canonicalAuthorityJson)
+}
+
+/** Ignore presence, absent revocation defaults and separately checked owner evidence; retain access rules. */
 function authorizationState(credential: WorkspaceMeshCredential, authority: WorkspaceAuthorityRecord | null,
-  peer: NonNullable<Awaited<ReturnType<PeerStore["getPeer"]>>>): string {
+  peer: HistoryPeer): string {
   const security: Record<string, unknown> = { ...peer }
   for (const key of ["lastSeen", "endpoint", "instanceId", "instances"]) delete security[key]
+  if (security.revokedAt == null) delete security.revokedAt
   const bundle = peer.advertisement as WorkspaceMemberBundle | undefined
   if (bundle) {
     const proof: Record<string, unknown> = { ...bundle }
-    for (const key of ["advertisement", "signed", "payload", "signature", "signerKeyId"]) delete proof[key]
+    for (const key of ["advertisement", "signed", "payload", "signature", "signerKeyId", "ownerCertificates"]) delete proof[key]
     const { kind, version, workspaceId, personId, deviceId } = bundle.advertisement.payload
     security.advertisement = { ...proof, signerKeyId: bundle.advertisement.signerKeyId,
       identity: { kind, version, workspaceId, personId, deviceId } }
   }
-  return canonicalAuthorityJson({ authority: workspaceAuthorityFingerprint([credential], authority ? [authority] : []), peer: security })
+  return canonicalAuthorityJson({ authority: workspaceAuthorityFingerprint([{ ...credential, ownerCertificates: [] }],
+    authority ? [{ ...authority, ownerCertificates: [] }] : []), peer: security })
 }
 
 function assertLocalProfile(current: LocalProfile, expected: LocalProfile): void {

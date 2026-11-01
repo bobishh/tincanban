@@ -1,6 +1,7 @@
 import type { Download, Locator, Page } from "@playwright/test"
 
 const SOURCE_CHANGED = "Workspace changed during private recovery export; retry when changes settle"
+const RETRYABLE_CAPTURE_ERRORS = new Set([SOURCE_CHANGED, "Workspace signing authority is stale"])
 const DEADLINE_ERROR = "Private workspace backup exceeded its 60-second deadline"
 const SOURCE_QUIET_MS = 2_000
 const REVISION_SAMPLE_MS = 100
@@ -78,7 +79,7 @@ async function settleSourceWrites(page: Page, binding: Binding, deadline: number
   }, { expected: binding, quietMs: SOURCE_QUIET_MS, sampleMs: REVISION_SAMPLE_MS, deadline, deadlineError: DEADLINE_ERROR })
 }
 
-/** A rejected concurrent capture is discarded; only its exact Retry action can start a fresh complete file. */
+/** Discard stale document or signing snapshots; the Retry action rechecks access and captures a fresh complete file. */
 export async function downloadPrivateWorkspaceRecovery(page: Page, panel: Locator): Promise<Download> {
   const deadline = Date.now() + 60_000
   const binding = await withinDeadline(page.evaluate(async () => {
@@ -100,7 +101,7 @@ export async function downloadPrivateWorkspaceRecovery(page: Page, panel: Locato
     if (outcome.kind === "download") return outcome.download
     if (outcome.kind === "failed") throw outcome.error
     if (outcome.kind !== "message") throw new Error("Private workspace backup observation cancelled")
-    if (outcome.message !== SOURCE_CHANGED || attempt === 2) throw new Error(`Private workspace backup failed: ${outcome.message}`)
+    if (!RETRYABLE_CAPTURE_ERRORS.has(outcome.message) || attempt === 2) throw new Error(`Private workspace backup failed: ${outcome.message}`)
     await withinDeadline(settleSourceWrites(page, binding, deadline), deadline)
   }
   throw new Error(DEADLINE_ERROR)

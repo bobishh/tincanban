@@ -125,6 +125,41 @@ it.each(["revocation", "session"] as const)("Given a refreshed route under verif
   await expect(f.guard()).rejects.toThrow(/authorization changed|session is no longer current/i)
 })
 
+it("Given unchanged signed access, when owner certificate evidence grows during verification, then retain authorized history reads", async () => {
+  const f = fixture()
+  mocks.verify.mockImplementationOnce(async selected => {
+    const added = { signature: "additional-owner-certificate" } as WorkspaceMemberBundle["certificates"][number]
+    f.current.credential.ownerCertificates = [...f.current.credential.ownerCertificates, added]
+    f.current.authority.ownerCertificates = [...f.current.authority.ownerCertificates, added]
+    f.current.peer.advertisement = { ...f.bundle, ownerCertificates: [added] }
+    return selected
+  })
+  await expect(f.guard()).resolves.toBeUndefined()
+  expect(mocks.verify).toHaveBeenCalledTimes(2)
+})
+
+it.each(["removed", "modified"] as const)("Given retained owner certificate evidence, when a certificate is %s during verification, then deny the stale read", async change => {
+  const f = fixture()
+  const original = { signature: "trusted-certificate", payload: { deviceId: "trusted-owner-device" } } as WorkspaceMemberBundle["certificates"][number]
+  f.current.credential.ownerCertificates = [original]
+  f.current.authority.ownerCertificates = [original]
+  mocks.verify.mockImplementationOnce(async selected => {
+    f.current.credential.ownerCertificates = change === "removed" ? [] : [{ ...original,
+      payload: { ...original.payload, deviceId: "forged-device-with-same-signature" } }]
+    return selected
+  })
+  await expect(f.guard()).rejects.toThrow("Direct peer authorization changed during history transfer")
+})
+
+it("Given an active peer, when absent revocation is normalized from undefined to null, then retain the authenticated history channel", async () => {
+  const f = fixture()
+  mocks.verify.mockImplementationOnce(async selected => {
+    f.current.peer.revokedAt = null
+    return selected
+  })
+  await expect(f.guard()).resolves.toBeUndefined()
+})
+
 it("Given a sibling tab only refreshes its route list, when a history guard is checking, then preserve the current authenticated channel", async () => {
   const f = fixture()
   mocks.verify.mockImplementationOnce(async selected => {
