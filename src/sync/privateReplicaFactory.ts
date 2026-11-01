@@ -1,3 +1,4 @@
+import { listPendingWorkspaceDepartures } from "../storageWorkspaceDeparture"
 import type { Ref } from "vue"
 import type { useTincanban } from "../state"
 import { canonicalizeJson } from "../domain/identity"
@@ -7,6 +8,7 @@ import { getPrivateReplicaConfigurations, getPrivateReplicaConflictSummaries, pe
 import { provisionIdentityReplicas } from "./provisionIdentityReplicas"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
+import { defaultStorage } from "../storage"
 import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 
 type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
@@ -33,7 +35,10 @@ export async function provisionPrivateReplicas(app: ReturnType<typeof useTincanb
 }
 
 export async function reloadPrivateReplicas(owner: string, state: State, cache: Map<string, Replica>, isCurrent: () => boolean): Promise<void> {
-  const saved = await getPrivateReplicaConfigurations(owner)
+  const root = await defaultStorage.loadPersonalRootForIdentity(owner)
+  const departing = new Set((await listPendingWorkspaceDepartures()).filter(entry => entry.personId === owner).map(entry => entry.workspaceId))
+  const saved = (await getPrivateReplicaConfigurations(owner)).filter(config => config.purpose === "identity" ||
+    root?.identity.personId !== owner || !root.workspaces[config.workspaceId]?.forgotten || departing.has(config.workspaceId))
   const conflicts = await getPrivateReplicaConflictSummaries(owner)
   if (!isCurrent()) return
   state.configs.value = saved.filter((config): config is BlindReplicaConfig => config.purpose !== "identity")

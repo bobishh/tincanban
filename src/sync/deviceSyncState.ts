@@ -39,6 +39,8 @@ export function createDeviceSyncState() {
   const inviteUrl = ref("")
   const copyNotice = ref("")
   const error = ref("")
+  const connectionConflictWorkspaceId = ref("")
+  const resettingWorkspaceConnection = ref(false)
   const authCode = ref("")
   const ownerReconnectReview = ref<OwnerReconnectReview | null>(null)
   const pendingJoins = ref<PendingJoin[]>([])
@@ -76,7 +78,7 @@ export function createDeviceSyncState() {
     return step.value === "synced" ? "Live sync on" : "Device sync"
   })
   return {
-    isOpen, isEnabled, directLive, liveWorkspaceIds, step, qrCode, inviteUrl, copyNotice, error, authCode,
+    isOpen, isEnabled, directLive, liveWorkspaceIds, step, qrCode, inviteUrl, copyNotice, error, connectionConflictWorkspaceId, resettingWorkspaceConnection, authCode,
     pendingJoins, selectedWorkspaceId, selectedWorkspaceIds, invitationWorkspaceTitle, ownerReconnectReview,
     invitationWorkspaces, parsedInvite, meshPeers, meshDiagnostic, meshRetryAt, networkOnline,
     localDeviceId, canRenewDevice, localUserAgent, meshLiveWorkspaceIds, revokedWorkspaceIds, ownershipRevision,

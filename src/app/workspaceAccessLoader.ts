@@ -29,6 +29,7 @@ export async function loadWorkspaceAccess(tincanban: ReturnType<typeof useTincan
           return withWorkspaceAuthorityRaceRetry(() => workspaceRole(doc, profile), ensureCurrent)
         })
       } else role = await withWorkspaceAuthorityRaceRetry(() => tincanban.getWorkspaceRole(item.id), ensureCurrent)
+      if (sync.isWorkspaceAccessRevoked(item.id)) role = "visitor"
       return [item.id, { role, blocked: await workspaceWritesBlocked(item.id) }] as const
     } catch (cause) {
       const detail = cause instanceof Error ? cause.message : String(cause)

@@ -111,6 +111,16 @@ export class PersonalRootMapStore {
     })
   }
 
+  async loadForIdentity(personId: string): Promise<PersonalRootDocumentV1 | null> {
+    const map = await this.read()
+    this.replaceCache(map)
+    return copyRoot(Object.values(map).find(root => root.identity.personId === personId))
+  }
+
+  async hasWorkspaceReference(workspaceId: string): Promise<boolean> {
+    return Object.values(await this.read()).some(root => root.workspaces[workspaceId] && !root.workspaces[workspaceId]!.forgotten)
+  }
+
   async load(rootId?: string): Promise<PersonalRootDocumentV1 | null> {
     let map: Record<string, PersonalRootDocumentV1>
     try { map = await this.read() }

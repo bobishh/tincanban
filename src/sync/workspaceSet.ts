@@ -69,6 +69,7 @@ export type WorkspaceSetWorkspace = string | { id: string; title?: string }
 type ReceiveStage = <T>(stage: string, id: string, action: () => Promise<T>) => Promise<T>
 export type WorkspaceSetFactory = typeof workspaceSet
 export type LiveWorkspaceOptions = {
+  beforeDurableAcknowledgement?: (snapshot: Uint8Array) => Promise<void>
   onHandoffRequest?: (stream: DuplexStream, frame: Uint8Array, acceptConfirmation: SyncConnection["acceptStream"]) => Promise<void>
   ownerWorkspaceOfferFrame?: OwnerWorkspaceOfferFrame
   onOwnerWorkspaceOffer?: (bytes: Uint8Array) => Promise<void>

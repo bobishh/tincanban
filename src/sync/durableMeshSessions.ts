@@ -1,3 +1,4 @@
+import { listPendingWorkspaceDepartures } from "../storageWorkspaceDeparture"
 import { type LocalProfile} from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { MeshNetworkError, isMeshNetworkFailure, meshNetworkConnection as networkConnection, meshNetworkIO as networkIO } from "@meta-uber/mesh-transport"
@@ -18,7 +19,7 @@ import { DurableMeshBase, MeshDialCancelled, MeshNodeRestart, CAUSAL_WRITE_ADMIS
 import { DurableMeshHandshake } from "./durableMeshHandshake"
 import { participantWorkspaceSession } from "./participantWorkspaceStore"
 import type { ArchiveObjectReadBinding } from "@meta-uber/mesh-replication/history-archive"
-import { fetchBlobFromCurrentSessions, respondToCurrentBlobRequest } from "./durableMeshBlobFetch"
+import { fetchBlobFromCurrentSessions, persistDepartureFiles, respondToCurrentBlobRequest } from "./durableMeshBlobFetch"
 import { createDurablePeerHistoryGuard } from "./durablePeerHistoryGuard"
 import { readDurableMeshTransferAuthority } from "./durableMeshTransferAuthority"
 import { fetchDurableMeshHistoryObject, fetchDurableMeshHistoryBaseline, fetchDurableMeshHistoryDocument } from "./durableMeshHistoryFetch"
@@ -84,6 +85,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     let nextRouteRefreshAt = Date.now() + DurableMeshBase.ROUTE_RENEW_MS
     while (!signal.aborted) {
       if (!this.node) throw new MeshNodeRestart("runtime node unavailable")
+      await this.flushPendingDepartures()
       if (await this.pauseDialingWhenOffline(signal)) continue
       const profile = await this.options.getProfile()
       nextRouteRefreshAt = await this.refreshRoutesWhenDue(profile, nextRouteRefreshAt)
@@ -194,6 +196,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       this.throwIfDialCancelled(signal, routeSignal, node)
       connection = await this.openPeerConnection(peer, route, key, connectionId, node)
       const handshake = await this.exchangeOutgoingHandshake(connection, peer, credential, connectionId)
+      if (handshake.response.capabilities.includes("departure-delivery-v1")) this.departureDeliveryConnections.add(connection)
       if (handshake.response.capabilities?.includes("identity-device-preferences-v1")) this.identityPreferenceConnections.add(connection)
       credential = handshake.credential
       if (Array.isArray(handshake.response.revocations)) await this.mergeRevocations(credential, handshake.response.revocations)
@@ -244,13 +247,14 @@ export class DurableMeshSessions extends DurableMeshHandshake {
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
       revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),
-      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1"] }, peer.workspaceId)
+      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1", "departure-delivery-v1"] }, peer.workspaceId)
   }
 
   protected async verifyOutgoingHandshakePeer(credential: WorkspaceMeshCredential, bundle: WorkspaceMemberBundle) {
     const verified = await verifyWorkspaceMemberBundle(bundle, { workspaceId: credential.workspaceId,
       ownerPersonId: credential.ownerPersonId, ownerPublicKey: credential.ownerPublicKey,
-      ownerCertificates: credential.ownerCertificates as DeviceCertificate[], ownerHistory: ownerAuthorities(credential).slice(1) })
+      ownerCertificates: credential.ownerCertificates as DeviceCertificate[], ownerHistory: ownerAuthorities(credential).slice(1),
+      allowStaleRoute: hasLeftWorkspace(credential, bundle.advertisement.payload.personId, bundle.grant) })
     const payload = verified.advertisement.payload
     return { deviceId: payload.deviceId, instanceId: payload.instanceId ?? "legacy", issuedAt: payload.issuedAt,
       routeSequence: payload.routeSequence, personId: payload.personId, endpoint: payload.endpoint }
@@ -307,6 +311,9 @@ export class DurableMeshSessions extends DurableMeshHandshake {
               input.connection, credential.transportSecret) : undefined,
           onGossipPacket: input.remoteEndpoint
             ? packet => this.receiveWorkspaceGossipPacket(input.workspaceId, input.remoteEndpoint, packet) : undefined,
+          beforeDurableAcknowledgement: bytes => persistDepartureFiles(bytes, { workspaceId: input.workspaceId,
+            profile: input.profile, remotePersonId: input.remotePersonId, connection: input.connection, connectionId: input.connectionId,
+            secret: credential.transportSecret, blob: this.options.workspaceStore.blob, ensureCurrent: guard }),
           onBlobRequest: input.blobTransferSupported
             ? (stream, frame) => respondToCurrentBlobRequest({ workspaceId: input.workspaceId, deviceId: input.deviceId,
               secret: credential.transportSecret, blob: this.options.workspaceStore.blob, store: this.store, ensureCurrent: guard }, stream, frame)
@@ -484,11 +491,12 @@ export class DurableMeshSessions extends DurableMeshHandshake {
 
   async revokedWorkspaceIds(credentials?: WorkspaceMeshCredential[], profile?: LocalProfile): Promise<string[]> {
     profile ??= await this.options.getProfile()
-    const result: string[] = []
+    const result: string[] = (await listPendingWorkspaceDepartures()).filter(entry => entry.personId === profile.identity.personId && !entry.resumed)
+      .map(entry => entry.workspaceId)
     for (const credential of credentials ?? await this.store.listWorkspaceCredentials()) {
       if (hasLeftWorkspace(credential, profile.identity.personId, credential.localGrant as WorkspaceGrant | undefined) || isDeviceRevoked(credential, profile.identity.personId, profile.device.deviceId) || isGrantRevoked(credential, profile.identity.personId, credential.localGrant as WorkspaceGrant | undefined)) result.push(credential.workspaceId)
     }
-    return result
+    return [...new Set(result)]
   }
 
   async successionViews(credentials?: WorkspaceMeshCredential[]): Promise<MeshSuccessionView[]> {

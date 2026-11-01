@@ -24,6 +24,13 @@ const storedSchema = valueSchema.extend({ version: z.literal(1) }).strict()
 const maxCatalogBytes = 900 * 1024
 const maxEnvelopeCount = 512
 
+export class WorkspaceConnectionConflict extends Error {
+  constructor(readonly workspaceId: string) {
+    super("Saved connections for this board use different keys.")
+    this.name = "WorkspaceConnectionConflict"
+  }
+}
+
 export type WorkspaceRouteRecovery = { personId: string; envelopes: MeshWorkspaceEnvelope[] }
 type Manifest = { personId: string; components: Record<string, IdentityDeviceComponent> }
 
@@ -278,9 +285,6 @@ function compatibleRoutes(existing: WorkspaceMeshCredential | null, candidates: 
   if (existing && !compatible.length) {
     throw new Error("Saved workspace route uses a different transport secret than this device's current credential")
   }
-  if (!existing && new Set(compatible.map(envelope => envelope.transportSecret)).size !== 1) {
-    throw new Error("Saved workspace routes disagree on the transport secret")
-  }
   return compatible
 }
 
@@ -303,6 +307,9 @@ async function restoreWorkspaceRoutes(input: WorkspaceRouteRestore, workspaceId:
   for (const envelope of compatible) {
     try { admitted.push(await validateRecoveryEnvelope(input, workspaceId, envelope)) }
     catch { /* Invalid authority variants remain pending, but cannot block a valid one. */ }
+  }
+  if (!existing && new Set(admitted.map(item => item.envelope.transportSecret)).size > 1) {
+    throw new WorkspaceConnectionConflict(workspaceId)
   }
   const groups = groupRecoveryRoutes(admitted)
   if (groups.size === 0) throw new Error("No saved workspace route has verifiable active authority")

@@ -1,9 +1,214 @@
 import { expect, test, type Page } from "./support/coverage"
-import { ensureJobSearchWorkspace } from "./support/workspaces"
+import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
 
 function stored(page: Page, key = "tincanban.local_profile.v1") {
   return page.evaluate(async name => (await import("/src/localDb.ts")).readLocal(name), key)
 }
+
+test("Given an editor with unreachable peers, when leaving and removing the local copy, then leave immediately and report the signed departure after reload to a returning owner", async ({ browser, page: editor }) => {
+  test.setTimeout(120_000)
+  const ownerContext = await browser.newContext()
+  const owner = await ownerContext.newPage()
+  const observerContext = await browser.newContext()
+  const observer = await observerContext.newPage()
+  try {
+    await owner.goto("/")
+    await createJobSearchWorkspace(owner, "Obsolete shared board")
+    const workspaceId = await owner.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    const hosting = owner.getByRole("dialog", { name: "Device sync" })
+    await hosting.getByRole("button", { name: "Add someone", exact: true }).click()
+    await hosting.getByRole("button", { name: "Generate link", exact: true }).click()
+    await editor.goto(await hosting.getByLabel("Pairing link").inputValue())
+    const joining = editor.getByRole("dialog", { name: "Device sync" })
+    await joining.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await hosting.getByLabel("Participant role").selectOption("editor")
+    await hosting.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(joining.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await joining.getByRole("button", { name: "Close", exact: true }).click()
+    await hosting.getByRole("button", { name: "Close", exact: true }).click()
+    const editorProfile = await profile(editor)
+    const editorPersonId = editorProfile.identity.personId
+    await editor.reload()
+    await expect(editor.getByLabel("Workspace role: editor")).toBeVisible()
+    await expect(editor.getByLabel("Mesh connected")).toBeVisible({ timeout: 30_000 })
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    await hosting.getByRole("button", { name: "Add someone", exact: true }).click()
+    await hosting.getByRole("button", { name: "Generate link", exact: true }).click()
+    await observer.goto(await hosting.getByLabel("Pairing link").inputValue())
+    const observing = observer.getByRole("dialog", { name: "Device sync" })
+    await observing.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await hosting.getByLabel("Participant role").selectOption("visitor")
+    await hosting.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(observing.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await observing.getByRole("button", { name: "Close", exact: true }).click()
+    await hosting.getByRole("button", { name: "Close", exact: true }).click()
+    await expect.poll(() => observer.evaluate(async id =>
+      (await (await import("/src/sync/peerStore.ts")).peerStore.listPeers(id)).length, workspaceId)).toBeGreaterThan(1)
+    await observerContext.setOffline(true)
+    await observer.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await ownerContext.setOffline(true)
+    await owner.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await editor.getByRole("button", { name: /Add lead to/ }).first().click()
+    await editor.getByLabel("Company *").fill("Queued before leaving")
+    await editor.getByLabel("Role *").fill("Engineer")
+    await editor.getByRole("button", { name: "Create item", exact: true }).click()
+    await editor.getByRole("button", { name: "Close detail", exact: true }).click()
+    await editor.getByRole("button", { name: "Open Queued before leaving — Engineer", exact: true }).click()
+    const detail = editor.getByRole("dialog", { name: "Item overview" })
+    await detail.getByRole("button", { name: "+ File", exact: true }).click()
+    const attach = detail.getByRole("form", { name: "Attach document" })
+    await attach.getByLabel("Title").fill("Queued file")
+    await attach.getByLabel("File").setInputFiles({ name: "queued.txt", mimeType: "text/plain", buffer: Buffer.alloc(256 * 1024 + 13, 0x51) })
+    await attach.getByRole("button", { name: "Attach", exact: true }).click()
+    await expect(editor.getByText("Document attached", { exact: true })).toBeVisible()
+    await editor.getByRole("button", { name: "Close detail", exact: true }).click()
+    await editor.getByRole("button", { name: "Sync", exact: true }).click()
+    await expect(joining.getByRole("button", { name: "Leave mesh", exact: true })).toBeVisible()
+    await ownerContext.setOffline(true)
+    await owner.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await editor.context().setOffline(true)
+    await editor.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await joining.getByRole("button", { name: "Leave mesh", exact: true }).click()
+    await joining.getByRole("checkbox", { name: "Keep a read-only copy on this device", exact: true }).uncheck()
+    await joining.getByRole("button", { name: "Leave mesh and remove copy", exact: true }).click()
+    await expect(editor.getByRole("heading", { name: "TINCANBAN // Obsolete shared board", exact: true })).toHaveCount(0, { timeout: 5_000 })
+    await expect(joining.getByRole("alert")).toHaveCount(0)
+    await editor.context().setOffline(false)
+    await editor.reload()
+    await expect(editor.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+    await editor.getByRole("button", { name: "Open workspaces", exact: true }).click()
+    await expect(editor.locator(".workspace-item").filter({ hasText: "Obsolete shared board" })).toHaveCount(0)
+    expect(await editor.evaluate(async id => {
+      const { defaultStorage } = await import("/src/storage.ts")
+      return Boolean(await defaultStorage.loadWorkspaceDoc(id))
+    }, workspaceId)).toBe(true)
+    await ownerContext.setOffline(false)
+    await owner.evaluate(() => window.dispatchEvent(new Event("online")))
+    await owner.reload()
+    await expect.poll(() => owner.evaluate(async ({ id, personId }) => {
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      const credential = await peerStore.getWorkspaceCredential(id)
+      const records = credential?.catalog?.departures as Array<{ record: { payload: { personId: string } } }> | undefined
+      return records?.some(departure => departure.record.payload.personId === personId) ?? false
+    }, { id: workspaceId, personId: editorPersonId }), { timeout: 30_000 }).toBe(true)
+    await expect(owner.getByRole("heading", { name: "TINCANBAN // Obsolete shared board", exact: true })).toBeVisible()
+    await expect(owner.getByRole("button", { name: "Open Queued before leaving — Engineer", exact: true })).toBeVisible()
+    expect(await owner.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { hasEntityKind } = await import("/src/domain/model.ts")
+      const { blobDescriptor, readStoredAttachment } = await import("/src/attachments.ts")
+      const app = useTincanban()
+      return app.withWorkspaceDoc(app.activeWorkspace.id, async doc => {
+        const file = Object.values(doc.entities).find(entity => hasEntityKind(entity, "document") && entity.title === "Queued file")
+        if (!file || !hasEntityKind(file, "document") || !file.file) return null
+        const descriptor = blobDescriptor(file.file)
+        const bytes = descriptor && await readStoredAttachment(descriptor)
+        return bytes ? { size: bytes.length, first: bytes[0], last: bytes[bytes.length - 1] } : null
+      })
+    })).toEqual({ size: 256 * 1024 + 13, first: 0x51, last: 0x51 })
+    await expect.poll(() => editor.evaluate(async id => Boolean(await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(id)),
+      workspaceId), { timeout: 30_000 }).toBe(false)
+    await expect(editor.locator(".workspace-item").filter({ hasText: "Obsolete shared board" })).toHaveCount(0)
+    // Only the departed sender can answer: its data is gone and the owner is offline.
+    await ownerContext.setOffline(true)
+    await owner.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await editor.reload()
+    await observerContext.setOffline(false)
+    await observer.reload()
+    await expect.poll(() => observer.evaluate(async ({ id, personId }) => {
+      const credential = await (await import("/src/sync/peerStore.ts")).peerStore.getWorkspaceCredential(id)
+      return (credential?.catalog?.departures as Array<{ record: { payload: { personId: string } } }> | undefined)
+        ?.some(value => value.record.payload.personId === personId) ?? false
+    }, { id: workspaceId, personId: editorPersonId }), { timeout: 30_000 }).toBe(true)
+    expect(await editor.evaluate(async id => Boolean(await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(id)), workspaceId)).toBe(false)
+    await observerContext.close()
+    await ownerContext.setOffline(false)
+    await owner.reload()
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    await hosting.getByRole("button", { name: "Add someone", exact: true }).click()
+    await hosting.getByRole("button", { name: "Generate link", exact: true }).click()
+    await editor.goto(await hosting.getByLabel("Pairing link").inputValue())
+    await joining.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await hosting.getByLabel("Participant role").selectOption("editor")
+    await hosting.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(joining.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await joining.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(editor.getByLabel("Workspace role: editor")).toBeVisible()
+    await editor.reload()
+    await expect(editor.getByRole("heading", { name: "TINCANBAN // Obsolete shared board", exact: true })).toBeVisible()
+    expect((await profile(editor)).device.deviceId).toBe(editorProfile.device.deviceId)
+  } finally {
+    await editor.context().setOffline(false)
+    if (test.info().status !== test.info().expectedStatus) {
+      for (const [name, page] of [["owner", owner], ["editor", editor]] as const) {
+        const diagnostic = await page.evaluate(async () => {
+          const { meshTraceSnapshot } = await import("/src/sync/meshTrace.ts")
+          const { peerStore } = await import("/src/sync/peerStore.ts")
+          return { trace: meshTraceSnapshot(), peers: (await peerStore.listPeers()).map(({ workspaceId, deviceId, endpoint, revokedAt }) =>
+            ({ workspaceId, deviceId, endpoint, revokedAt })) }
+        }).catch(error => ({ error: String(error) }))
+        await test.info().attach(`${name}-mesh`, { body: JSON.stringify(diagnostic), contentType: "application/json" })
+      }
+    }
+    await observerContext.close()
+    await ownerContext.close()
+  }
+})
+
+test("Given an owner board with conflicting saved connection keys, when the owner creates a new connection, then preserve local cards and admit a participant with the new key", async ({ page, browser }) => {
+  test.setTimeout(90_000)
+  const participantContext = await browser.newContext()
+  const participant = await participantContext.newPage()
+  try {
+    await page.goto("/")
+    await createJobSearchWorkspace(page, "Connection reset board")
+    await page.getByRole("button", { name: /Add lead to/ }).first().click()
+    await page.getByLabel("Company *").fill("Local reset proof")
+    await page.getByLabel("Role *").fill("Engineer")
+    await page.getByRole("button", { name: "Create item", exact: true }).click()
+    await page.getByRole("button", { name: "Close detail", exact: true }).click()
+    const workspaceId = await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      const { identityWorkspaceRouteRecoveryComponent, planIdentityWorkspaceRouteRecoveryImport } = await import("/src/sync/identityWorkspaceRouteRecovery.ts")
+      const { compareAndSwapLocal } = await import("/src/localDb.ts")
+      const owner = await bootstrapIdentity()
+      const id = useTincanban().activeWorkspace.id
+      const envelope = { version: 1 as const, workspaceId: id, ownerPersonId: owner.identity.personId,
+        ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "first-saved-key", epoch: 1, peers: [] }
+      const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId,
+        envelopes: [envelope, { ...envelope, transportSecret: "second-saved-key" }] })
+      await compareAndSwapLocal(await planIdentityWorkspaceRouteRecoveryImport({ personId: owner.identity.personId,
+        components: { workspaceRouteRecovery: component } }))
+      await peerStore.removeWorkspaceMeshData(id)
+      return id
+    })
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "Device sync" })
+    await dialog.getByRole("button", { name: "Add someone", exact: true }).click()
+    await dialog.getByRole("button", { name: "Generate link", exact: true }).click()
+    await expect(dialog.getByRole("alert")).toContainText("different keys")
+    await expect(dialog.getByText("Existing participants and Rusty need new invitations. Your local board and cards stay saved.", { exact: true })).toBeVisible()
+    await dialog.getByRole("button", { name: "Create new connection", exact: true }).click()
+    await expect(dialog.getByLabel("Pairing link")).toBeVisible({ timeout: 15_000 })
+    await participant.goto(await dialog.getByLabel("Pairing link").inputValue())
+    const joining = participant.getByRole("dialog", { name: "Device sync" })
+    await joining.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await dialog.getByLabel("Participant role").selectOption("editor")
+    await dialog.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(joining.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await joining.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(participant.getByRole("button", { name: "Open Local reset proof — Engineer", exact: true })).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole("button", { name: "Open Local reset proof — Engineer", exact: true })).toBeVisible()
+    const secret = await page.evaluate(async id => (await import("/src/sync/peerStore.ts")).peerStore.getWorkspaceCredential(id)
+      .then(credential => credential?.transportSecret), workspaceId)
+    expect(secret).toBeTruthy()
+    expect(["first-saved-key", "second-saved-key"]).not.toContain(secret)
+  } finally { await participantContext.close() }
+})
 
 async function profile(page: Page) {
   return JSON.parse((await stored(page))!) as { identity: { personId: string }; device: { deviceId: string } }
@@ -682,7 +887,12 @@ test("Given a delegated owner device, when it grants an editor access twice, the
     await expect(editor.getByLabel("Mesh connected")).toHaveCount(0)
     await expect(closeEditorSync).toBeEnabled()
     await closeEditorSync.click()
+    await expect(editor.getByRole("button", { name: "Open Offline editor history — Engineer" })).toBeVisible()
     await expect(owner2.getByRole("button", { name: "Open Offline editor history — Engineer" })).toBeVisible({ timeout: 30_000 })
+    await editor.getByRole("button", { name: "Sync", exact: true }).click()
+    await editorDialog.getByRole("button", { name: "Remove local copy", exact: true }).click()
+    await expect(editor.getByRole("button", { name: "Open Offline editor history — Engineer" })).toHaveCount(0)
+    await expect(editorDialog).toHaveCount(0)
     await inviteEditor()
     await expect(editor.getByLabel("Workspace role: editor")).toBeVisible()
     // This scenario owns its Playwright project. Worker teardown closes both

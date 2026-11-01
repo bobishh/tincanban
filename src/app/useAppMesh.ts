@@ -9,12 +9,17 @@ import type { useWorkspaceChat } from "../chat/useWorkspaceChat"
 
 type MeshContext = {
   activeWorkspace: { id: string }
+  removeWorkspaceCopy: (workspaceId: string) => Promise<void>
   chat: ReturnType<typeof useWorkspaceChat>
   currentRole: Ref<WorkspaceRole>
   currentWorkspaceOwnerId: Ref<string>
   blindReplication: BlindReplicationController
   sync: ReturnType<typeof useDeviceSync>
 }
+
+const presenceLabels = {
+  connected: "Mesh connected", reconnecting: "Mesh reconnecting", offline: "Mesh offline", empty: "Mesh empty",
+} as const
 
 export function useAppMesh(context: MeshContext) {
   const { activeWorkspace, chat, currentRole, currentWorkspaceOwnerId, sync, blindReplication } = context
@@ -28,9 +33,11 @@ export function useAppMesh(context: MeshContext) {
     () => sync.isWorkspaceAccessRevoked(activeWorkspace.id), () => activeMeshPeers.value.length],
   ([workspaceId, connected, enabled, networkOnline, revoked, peerCount]) => {
     clearTimeout(offlineTimer)
-    if (networkOnline !== false && connected) {
+    if (revoked) {
+      devicePresence.value = "empty"
+    } else if (networkOnline !== false && connected) {
       devicePresence.value = "connected"
-    } else if (revoked || networkOnline === false || !enabled) {
+    } else if (networkOnline === false || !enabled) {
       devicePresence.value = peerCount ? "offline" : "empty"
     } else if (peerCount) {
       devicePresence.value = "reconnecting"
@@ -42,15 +49,11 @@ export function useAppMesh(context: MeshContext) {
     }
   }, { immediate: true })
   onScopeDispose(() => clearTimeout(offlineTimer))
-  const devicePresenceLabel = computed(() => ({
-    connected: "Mesh connected",
-    reconnecting: "Mesh reconnecting",
-    offline: "Mesh offline",
-    empty: "Mesh empty",
-  }[devicePresence.value]))
-  const meshPresence = computed(() => replicationPresence(devicePresence.value, blindReplication.configs.value,
+  const devicePresenceLabel = computed(() => sync.isWorkspaceAccessRevoked(activeWorkspace.id) ? "Not in mesh" : presenceLabels[devicePresence.value])
+  const meshPresence = computed(() => sync.isWorkspaceAccessRevoked(activeWorkspace.id) ? "empty" : replicationPresence(devicePresence.value, blindReplication.configs.value,
     blindReplication.statuses.value, activeWorkspace.id, blindReplication.now.value))
   const meshPresenceLabel = computed(() => {
+    if (sync.isWorkspaceAccessRevoked(activeWorkspace.id)) return "Not in mesh"
     const rusty = replicationSummary(blindReplication.configs.value, blindReplication.statuses.value, activeWorkspace.id, blindReplication.now.value)
     if (!rusty) return devicePresenceLabel.value
     const devices = { connected: "Devices connected", reconnecting: "Devices reconnecting", offline: "Devices offline", empty: "No live devices" }[devicePresence.value]
@@ -114,12 +117,14 @@ export function useAppMesh(context: MeshContext) {
     catch (error) { peerAccessError.value = error instanceof Error ? error.message : message }
   }
   const promoteWorkspacePeer = (personId: string) => meshAction(() => sync.promotePeer(personId), "Could not promote member")()
-  async function leaveWorkspaceMesh() {
+  async function leaveWorkspaceMesh(keepCopy = true) {
     if (leavingMesh.value) return
     leavingMesh.value = true
     peerAccessError.value = ""
-    try { await sync.leaveMesh() }
-    catch (error) { peerAccessError.value = error instanceof Error ? error.message : "Could not leave mesh" }
+    const workspaceId = activeWorkspace.id
+    try { await sync.leaveMesh()
+      if (!keepCopy) { await context.removeWorkspaceCopy(workspaceId); await sync.dismiss() }
+    } catch (error) { peerAccessError.value = error instanceof Error ? error.message : "Could not leave mesh" }
     finally { leavingMesh.value = false }
   }
   const claimWorkspaceSuccession = meshAction(() => sync.claimSuccession(), "Could not claim ownership")

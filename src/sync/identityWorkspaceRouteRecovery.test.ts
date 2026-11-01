@@ -387,3 +387,86 @@ it("Given captured signed member routes, when a clean peer restores through Dura
     expect(persistGrant).toHaveBeenCalledOnce()
   } finally { persistGrant.mockRestore(); start.mockRestore(); await mesh.dispose(); await peerStore.clear() }
 })
+
+
+it("Given a valid owner connection and an unverifiable saved key variant, when restoring sharing, then ignore the invalid variant before deciding key ambiguity", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const workspaceId = "owner-valid-route-variant"
+  const valid = { version: 1 as const, workspaceId, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate],
+    transportSecret: "verified-connection", epoch: 1, peers: [] }
+  const invalid = { ...valid, transportSecret: "unverified-connection", ownerCertificates: [{ ...owner.certificate,
+    signature: "A".repeat(owner.certificate.signature.length) }] }
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  registerWorkspaceInRoot(root, workspaceId, workspaceId, "grant-hash")
+  await confirmIdentityAuthorityFixture(root, [owner.certificate])
+  const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+    getProfile: async () => owner, store: peerStore })
+  vi.spyOn(mesh, "start").mockResolvedValue()
+  try {
+    await expect(mesh.validateInvitation([invalid], [workspaceId], owner, [])).rejects.toThrow()
+    await restoreIdentityWorkspaceRoutes({ mesh, envelopes: [invalid, valid], workspaceIds: [workspaceId], profile: owner,
+      readCredential: id => peerStore.getWorkspaceCredential(id) })
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toMatchObject({ transportSecret: valid.transportSecret })
+  } finally { await mesh.dispose() }
+})
+
+it("Given two verifiable saved connection keys, when restoring sharing without an installed credential, then retain the ambiguity instead of silently splitting participants", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const workspaceId = "owner-conflicting-valid-routes"
+  const envelope = { version: 1 as const, workspaceId, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "first-key", epoch: 1, peers: [] }
+  const receiveInvitation = vi.fn()
+  await expect(restoreIdentityWorkspaceRoutes({ mesh: { enrollmentGrant: async () => undefined,
+    validateInvitation: async () => new Map(), receiveInvitation } as never,
+    envelopes: [envelope, { ...envelope, transportSecret: "second-key" }], workspaceIds: [workspaceId], profile: owner,
+    readCredential: async () => null })).rejects.toThrow("Saved connections for this board use different keys")
+  expect(receiveInvitation).not.toHaveBeenCalled()
+})
+
+
+it("Given an owner's local board with conflicting saved connections, when the owner explicitly resets its connection, then preserve authority and data and keep the new key after reload", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const workspaceId = "owner-explicit-connection-reset"
+  const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
+  registerWorkspaceInRoot(root, workspaceId, workspaceId, "grant-hash")
+  await confirmIdentityAuthorityFixture(root, [owner.certificate])
+  const envelope = { version: 1 as const, workspaceId, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "first-key", epoch: 1, peers: [] }
+  const storeData = { read: vi.fn(async () => new Uint8Array([1, 2, 3])), merge: vi.fn() }
+  const createMesh = () => {
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: storeData as never,
+      getProfile: async () => owner, store: peerStore })
+    vi.spyOn(mesh, "start").mockResolvedValue()
+    return mesh
+  }
+  const mesh = createMesh()
+  try {
+    await mesh.receiveInvitation([envelope], [workspaceId], owner, [])
+    const originalAuthority = await peerStore.getWorkspaceAuthority(workspaceId)
+    await peerStore.removeWorkspaceMeshData(workspaceId)
+    const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId,
+      envelopes: [envelope, { ...envelope, transportSecret: "second-key" }] })
+    await compareAndSwapLocal(await planIdentityWorkspaceRouteRecoveryImport({ personId: owner.identity.personId,
+      components: { workspaceRouteRecovery: component } }))
+    await expect(mesh.addOwnerWorkspace(workspaceId)).rejects.toThrow(/different keys|disagree/)
+    await mesh.resetOwnerConnection(workspaceId)
+    const replacement = await peerStore.getWorkspaceCredential(workspaceId)
+    expect(replacement?.transportSecret).toBeTruthy()
+    expect(["first-key", "second-key"]).not.toContain(replacement?.transportSecret)
+    expect(JSON.parse(JSON.stringify({ ...await peerStore.getWorkspaceAuthority(workspaceId), updatedAt: null })))
+      .toEqual(JSON.parse(JSON.stringify({ ...originalAuthority, updatedAt: null })))
+    expect(storeData.merge).not.toHaveBeenCalled()
+    const reopened = createMesh()
+    try {
+      await reopened.addOwnerWorkspace(workspaceId)
+      expect((await peerStore.getWorkspaceCredential(workspaceId))?.transportSecret).toBe(replacement?.transportSecret)
+    } finally { await reopened.dispose() }
+    const stranger = (await createRecoverableIdentity("better", "Other person")).profile
+    const unauthorized = new DurableMesh({ transport: {} as never, workspace: {} as never,
+      workspaceStore: storeData as never, getProfile: async () => stranger, store: peerStore })
+    try { await expect(unauthorized.resetOwnerConnection(workspaceId)).rejects.toThrow(/owner authority/) }
+    finally { await unauthorized.dispose() }
+    expect((await peerStore.getWorkspaceCredential(workspaceId))?.transportSecret).toBe(replacement?.transportSecret)
+  } finally { await mesh.dispose() }
+})

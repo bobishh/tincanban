@@ -196,6 +196,7 @@ export abstract class DurableMeshBase {
   private reconnectPolicyState: MeshReconnectPolicy | undefined
   protected runtimeState: MeshRuntimeState | undefined
   /** Only credentials verified for the current local identity may produce routes. */
+  protected readonly departureDeliveryConnections = new WeakSet<SyncConnection>()
   protected activeWorkspaceIds: Set<string> | undefined
   protected readonly runtimeId = crypto.randomUUID()
   protected instanceId = ""

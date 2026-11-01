@@ -1,3 +1,5 @@
+import { receiveDepartureFiles } from "./workspaceDepartureSnapshot"
+import type { SyncConnection } from "./transport"
 import type { PeerStore } from "./peerStore"
 import type { WorkspaceMemberBundle } from "./meshRecords"
 import { BLOB_CHUNK_BYTES, requestBlob, respondToBlobRequest, type BlobDescriptor, type RequestBlobOptions } from "@meta-uber/mesh-blob"
@@ -269,4 +271,30 @@ function assertRuntime(input: { currentRunId(): number; isRunning(): boolean }, 
 
 function waitForNextSession(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 200))
+}
+
+
+/** A final departure receipt includes durable referenced file bytes, not just their descriptors. */
+type DepartureBlobInput = { workspaceId: string; profile: LocalProfile; connection: SyncConnection;
+  secret: string; connectionId: string; blob: BlobCache | undefined; ensureCurrent: () => Promise<void> }
+
+export async function persistDepartureFiles(snapshot: Uint8Array, input: DepartureBlobInput & { remotePersonId: string }): Promise<void> {
+  await receiveDepartureFiles(snapshot, input.workspaceId, input.remotePersonId, descriptor => persistDepartureBlob(input, descriptor))
+
+}
+
+async function persistDepartureBlob(input: DepartureBlobInput, descriptor: BlobDescriptor): Promise<void> {
+  const { blob, ensureCurrent } = input
+  if (!blob) throw new Error("Departure file storage is unavailable")
+  await ensureCurrent()
+  if (await blob.read(descriptor)) return
+  const signing = await blobRequestSigning(input.profile, input.workspaceId, descriptor.blobId, async () => {
+    await ensureCurrent()
+    return JSON.stringify([input.workspaceId, input.connectionId])
+  })
+  const data = await requestBlob(input.connection, input.secret, input.profile, input.workspaceId,
+    descriptor, { signing, ensureCurrent })
+  await ensureCurrent()
+  await blob.write(descriptor, data)
+  await ensureCurrent()
 }

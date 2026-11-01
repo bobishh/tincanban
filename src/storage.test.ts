@@ -6,7 +6,7 @@ import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "./crdt"
 import { bootstrapIdentity, resetIdentityStorageForTest, type LocalProfile } from "./domain/identity"
 import { prepareLocalChangeAuthorizations, recordGenesisAuthority } from "./sync/changeAuthorization"
-import { createPersonalRoot } from "./domain/personalRoot"
+import { createPersonalRoot, registerWorkspaceInRoot } from "./domain/personalRoot"
 import { createWorkspaceDoc } from "./test/boardFixture"
 import { deleteLocal, readLocal } from "./localDb"
 import { executeCommand, type Command } from "./domain/commands"
@@ -59,6 +59,118 @@ beforeAll(async () => {
   const wasm = await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
+})
+
+it("Given a removed local copy, when late replication tries to persist it after storage reload, then retain its removal and reject resurrection", async () => {
+  resetIdentityStorageForTest()
+  await deleteLocal("tincanban.v1.personal_roots")
+  const profile = await bootstrapIdentity()
+  const root = createPersonalRoot(profile, "certificate", crypto.randomUUID())
+  const id = crypto.randomUUID()
+  registerWorkspaceInRoot(root, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(root)
+  const doc = Automerge.from(createWorkspaceDoc(id, "Obsolete", profile.identity.personId, "job-search"))
+  try {
+    await persistSnapshotForTest(storage, id, doc)
+    await storage.removeWorkspaceCopy(id)
+    const reopened = new WorkspaceStorage()
+    expect((await reopened.loadPersonalRoot())?.workspaces[id]?.forgotten).toBe(true)
+    await expect(reopened.loadWorkspaceDoc(id)).resolves.toBeNull()
+    await expect(persistSnapshotForTest(reopened, id, doc)).rejects.toThrow("Workspace copy was removed")
+    await expect(reopened.loadWorkspaceDoc(id)).resolves.toBeNull()
+    // Authority remains writable so a retained departure can answer future peers.
+    await expect(reopened.withWorkspaceAuthorityMutation(id, async () => {})).resolves.toBeUndefined()
+    await reopened.restoreWorkspaceCopy(id)
+    await persistSnapshotForTest(reopened, id, doc)
+    const restored = await reopened.loadWorkspaceDoc(id)
+    expect(restored?.doc.id).toBe(id)
+    if (restored) Automerge.free(restored.doc)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given a hidden departing copy, when delivery is pending across reload, then retain its data and purge only after durable confirmation", async () => {
+  const { savePendingWorkspaceDeparture, updatePendingWorkspaceDeparture, readPendingWorkspaceDeparture } = await import("./storageWorkspaceDeparture")
+  resetIdentityStorageForTest()
+  await deleteLocal("tincanban.v1.personal_roots")
+  const profile = await bootstrapIdentity()
+  const id = crypto.randomUUID()
+  const root = createPersonalRoot(profile, "certificate", crypto.randomUUID())
+  registerWorkspaceInRoot(root, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(root)
+  const doc = Automerge.from(createWorkspaceDoc(id, "Queued", profile.identity.personId, "job-search"))
+  try {
+    await persistSnapshotForTest(storage, id, doc)
+    await savePendingWorkspaceDeparture({ workspaceId: id, personId: profile.identity.personId,
+      departure: {} as never, snapshot: "frozen-data", delivered: false, removeCopy: false })
+    await storage.removeWorkspaceCopy(id)
+    const reopened = new WorkspaceStorage()
+    expect((await reopened.loadPersonalRoot())?.workspaces[id]?.forgotten).toBe(true)
+    expect((await readPendingWorkspaceDeparture(id, profile.identity.personId))?.removeCopy).toBe(true)
+    await expect(reopened.completeWorkspaceDepartureDelivery(id, profile.identity.personId)).rejects.toThrow("not confirmed")
+    const retained = await reopened.loadWorkspaceDoc(id)
+    expect(retained?.doc.id).toBe(id)
+    if (retained) Automerge.free(retained.doc)
+    await updatePendingWorkspaceDeparture(id, profile.identity.personId, { delivered: true })
+    await new WorkspaceStorage().completeWorkspaceDepartureDelivery(id, profile.identity.personId)
+    await expect(reopened.loadWorkspaceDoc(id)).resolves.toBeNull()
+    await expect(readPendingWorkspaceDeparture(id, profile.identity.personId)).resolves.toBeNull()
+    await expect(persistSnapshotForTest(reopened, id, doc)).rejects.toThrow("copy was removed")
+  } finally { Automerge.free(doc) }
+})
+
+it("Given another local identity retains the same board, when this identity removes its copy, then preserve the other identity's data", async () => {
+  resetIdentityStorageForTest()
+  await deleteLocal("tincanban.v1.personal_roots")
+  const owner = await bootstrapIdentity()
+  const { profile: other } = await (await import("@meta-uber/mesh-identity")).createRecoverableIdentity("better", "Other identity")
+  const id = crypto.randomUUID()
+  const firstRoot = createPersonalRoot(owner, "first", crypto.randomUUID()), otherRoot = createPersonalRoot(other, "other", crypto.randomUUID())
+  registerWorkspaceInRoot(firstRoot, id, id, "import")
+  registerWorkspaceInRoot(otherRoot, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(firstRoot)
+  await storage.savePersonalRoot(otherRoot)
+  const doc = Automerge.from(createWorkspaceDoc(id, "Shared local data", owner.identity.personId, "job-search"))
+  try {
+    await persistSnapshotForTest(storage, id, doc)
+    await storage.removeWorkspaceCopy(id)
+    expect((await storage.loadPersonalRoot(firstRoot.rootId))?.workspaces[id]?.forgotten).toBe(true)
+    expect((await storage.loadPersonalRoot(otherRoot.rootId))?.workspaces[id]?.forgotten).toBe(false)
+    const retained = await storage.loadWorkspaceDoc(id)
+    expect(retained?.doc.id).toBe(id)
+    if (retained) Automerge.free(retained.doc)
+  } finally { Automerge.free(doc) }
+})
+
+it("Given two identities have hidden pending data for one board, when one delivery finishes, then retain the shared bytes until both deliveries finish", async () => {
+  const outbox = await import("./storageWorkspaceDeparture")
+  resetIdentityStorageForTest()
+  await deleteLocal("tincanban.v1.personal_roots")
+  const profile = await bootstrapIdentity(), otherPersonId = "other-pending-identity", id = crypto.randomUUID()
+  const root = createPersonalRoot(profile, "certificate", crypto.randomUUID())
+  registerWorkspaceInRoot(root, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(root)
+  const doc = Automerge.from(createWorkspaceDoc(id, "Pending copies", profile.identity.personId, "job-search"))
+  try {
+    await persistSnapshotForTest(storage, id, doc)
+    await outbox.savePendingWorkspaceDeparture({ workspaceId: id, personId: profile.identity.personId, departure: {} as never,
+      snapshot: "first-final-snapshot", delivered: false, removeCopy: true })
+    await outbox.savePendingWorkspaceDeparture({ workspaceId: id, personId: otherPersonId, departure: {} as never,
+      snapshot: "other-final-snapshot", delivered: false, removeCopy: true })
+    await storage.removeWorkspaceCopy(id)
+    await outbox.updatePendingWorkspaceDeparture(id, profile.identity.personId, { delivered: true })
+    await storage.completeWorkspaceDepartureDelivery(id, profile.identity.personId)
+    const retained = await new WorkspaceStorage().loadWorkspaceDoc(id)
+    expect(retained?.doc.id).toBe(id)
+    if (retained) Automerge.free(retained.doc)
+    expect((await outbox.readPendingWorkspaceDeparture(id, otherPersonId))?.delivered).toBe(false)
+    await outbox.updatePendingWorkspaceDeparture(id, otherPersonId, { delivered: true })
+    await storage.completeWorkspaceDepartureDelivery(id, otherPersonId)
+    await expect(storage.loadWorkspaceDoc(id)).resolves.toBeNull()
+  } finally { Automerge.free(doc) }
 })
 
 describe("personal root map writes", () => {
@@ -740,4 +852,42 @@ describe("Document & Change-hash persistence (Requirement 1.7)", () => {
     expect(items).toHaveLength(1)
     expect(items[0].title).toBe("Persisted Item")
   })
+})
+
+it("Given a removed board with an undelivered exit, when a newer invitation restores it, then unlock editing while retaining the exact old delivery", async () => {
+  const outbox = await import("./storageWorkspaceDeparture")
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Rejoining editor")
+  const id = crypto.randomUUID(), root = createPersonalRoot(profile, "certificate", crypto.randomUUID())
+  registerWorkspaceInRoot(root, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(root)
+  const snapshot = "exact-frozen-snapshot"
+  await outbox.savePendingWorkspaceDeparture({ workspaceId: id, personId: profile.identity.personId,
+    departure: { record: { payload: { accessEpoch: 1 } } } as never, snapshot, delivered: false, removeCopy: true })
+  await expect(outbox.assertWorkspaceNotDeparting(id, profile.identity.personId)).rejects.toThrow()
+  await storage.restoreWorkspaceCopy(id, 1)
+  await expect(outbox.assertWorkspaceNotDeparting(id, profile.identity.personId)).rejects.toThrow()
+  await storage.restoreWorkspaceCopy(id, 2)
+  await expect(outbox.assertWorkspaceNotDeparting(id, profile.identity.personId)).resolves.toBeUndefined()
+  expect(await outbox.readPendingWorkspaceDeparture(id, profile.identity.personId)).toMatchObject({ snapshot, delivered: false, removeCopy: false })
+})
+
+it("Given an offline removal, when saving its cleanup intent fails, then keep the board visible and allow retry without orphaning delivery", async () => {
+  const outbox = await import("./storageWorkspaceDeparture")
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Removing editor")
+  const id = crypto.randomUUID(), root = createPersonalRoot(profile, "certificate", crypto.randomUUID())
+  registerWorkspaceInRoot(root, id, id, "import")
+  const storage = new WorkspaceStorage()
+  await storage.savePersonalRoot(root)
+  await outbox.savePendingWorkspaceDeparture({ workspaceId: id, personId: profile.identity.personId,
+    departure: {} as never, snapshot: "retained-data", delivered: false, removeCopy: false })
+  const save = vi.spyOn(outbox, "updatePendingWorkspaceDeparture").mockRejectedValueOnce(new Error("Storage unavailable"))
+  await expect(storage.removeWorkspaceCopy(id)).rejects.toThrow("Storage unavailable")
+  expect((await new WorkspaceStorage().loadPersonalRoot())?.workspaces[id]?.forgotten).toBe(false)
+  save.mockRestore()
+  await storage.removeWorkspaceCopy(id)
+  expect((await new WorkspaceStorage().loadPersonalRoot())?.workspaces[id]?.forgotten).toBe(true)
+  expect((await outbox.readPendingWorkspaceDeparture(id, profile.identity.personId))?.removeCopy).toBe(true)
 })

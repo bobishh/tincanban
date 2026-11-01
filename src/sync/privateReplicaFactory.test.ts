@@ -113,3 +113,21 @@ test("Given concurrent requests for the same replica, when its adapter loads, th
   expect(left).toBe(right)
   expect(mocks.create).toHaveBeenCalledOnce()
 })
+
+
+test("Given a forgotten local board, when Rusty connections reload, then omit its data replica while retaining Identity and other boards", async () => {
+  const { defaultStorage } = await import("../storage")
+  const root = vi.spyOn(defaultStorage, "loadPersonalRootForIdentity").mockResolvedValue({ identity: { personId: "owner" },
+    workspaces: { [config.workspaceId]: { forgotten: true } } } as never)
+  const other = { ...config, workspaceId: "retained-board" }
+  const identity = { ...config, purpose: "identity" }
+  mocks.configurations.mockResolvedValue([config, other, identity])
+  mocks.conflicts.mockResolvedValue([])
+  const state = { configs: ref([]), identityConfigs: ref([]), statuses: ref({}), profileSetupErrors: ref({}) }
+  try {
+    const { reloadPrivateReplicas } = await import("./privateReplicaFactory")
+    await reloadPrivateReplicas("owner", state, new Map(), () => true)
+    expect(state.configs.value).toEqual([other])
+    expect(state.identityConfigs.value).toEqual([identity])
+  } finally { root.mockRestore() }
+})

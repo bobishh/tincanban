@@ -210,7 +210,7 @@ test("Given an editor has synced changes, when owner removes access, then writes
     await settings.getByRole("button", { name: "Remove participant", exact: true }).click()
     await confirmation.getByRole("button", { name: "Remove participant and all devices", exact: true }).click()
     await expect(confirmation).toHaveCount(0)
-    await expect(guest.getByLabel("Mesh offline")).toBeVisible({ timeout: 20_000 })
+    await expect(guest.getByLabel("Not in mesh")).toBeVisible({ timeout: 20_000 })
 
     await expect(guest.getByRole("button", { name: /Add lead to/ })).toHaveCount(0)
     await settings.getByRole("button", { name: "Close", exact: true }).click()

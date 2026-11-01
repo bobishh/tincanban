@@ -1,18 +1,18 @@
+import { WorkspaceDepartureDelivery } from "./workspaceDepartureDelivery"
 import { removableWorkspaceDevices, restoreEnrolledWorkspaceDevices } from "./workspaceDeviceRestoration"
 import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { WorkspaceAuthorityClassification } from "./workspaceAuthorityClassification"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
-import { createWorkspaceDeparture, type WorkspaceDeparture, createWorkspaceDeviceRevocation, type WorkspaceDeviceRevocation,
+import { type WorkspaceDeparture, createWorkspaceDeviceRevocation, type WorkspaceDeviceRevocation,
   createWorkspaceRevocation, verifyWorkspaceMemberBundle, createWorkspaceSuccessionPolicy, createWorkspaceSuccessionVote, createWorkspaceSuccessionClaim,
   type WorkspaceMemberBundle, type WorkspaceOwnershipTransfer, type WorkspaceSuccessionPolicy,
   type WorkspaceSuccessionVote, type WorkspaceSuccessionClaim } from "./meshRecords"
 import { type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { defaultStorage, isWorkspaceAuthorityMutation, type WorkspaceAuthorityMutationContext } from "../storage"
-import { deviceRevocations, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, isDeviceRevoked, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
+import { hasLeftWorkspace, deviceRevocations, uniqueCertificates, meshCatalog, revocations, ownershipTransfers, successionPolicy, successionVotes, ownerAuthorities, isDeviceRevoked, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
 import { DurableMeshCredentials, type InvitationInstallOptions } from "./durableMeshCredentials"
-import { workspaceSet } from "./workspaceSet"
 import { meshTrace } from "./meshTrace"
 import { assertKeeperGrantGeneration, emptyRevocationGeneration, reconcilePriorPersonRevocation } from "./revocationGeneration"
 import { runKeeperRevocationActions } from "./keeperRevocationActions"
@@ -20,7 +20,7 @@ import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
 import { persistVerifiedPeerBundle } from "./durableMeshPeerAdmission"
-import { awaitOwnerDelivery, confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
+import { confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
   ownershipTransfersWithPending, persistScopeAuthoritySnapshot, planOwnershipMerge, preflightScopeAuthoritySnapshot, publishConfirmedToSessions,
   type OwnershipMergePlan, type OwnershipTransferState } from "./durableMeshOwnershipScope"
 export abstract class DurableMeshAuthority extends DurableMeshCredentials {
@@ -478,41 +478,33 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     await this.mergeOwnershipTransfers(state.current, [state.transfer!], undefined, state.nextScopeAuthoritySnapshot)
   }
 
-  async leaveWorkspace(workspaceId: string): Promise<void> {
-    const profile = await this.options.getProfile()
-    const credential = await this.store.getWorkspaceCredential(workspaceId)
-    if (!credential) throw new Error("No workspace membership")
-    if (credential.ownerPersonId === profile.identity.personId) throw new Error("Transfer ownership before leaving this workspace")
-    const deadline = Date.now() + 20_000
-    while (![...this.sessions.values()].some(session => session.workspaceId === workspaceId)) {
-      if (Date.now() >= deadline) throw new Error("No verified workspace connection. Keep another device online, then retry leaving.")
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-    const snapshot = await workspaceSet(this.options.workspaceStore, [workspaceId]).snapshot()
-    await awaitOwnerDelivery(() => [...this.sessions.values()].filter(session => session.workspaceId === workspaceId &&
-      session.remotePersonId === credential.ownerPersonId && session.ownershipReceiptSupported), credential.transportSecret, snapshot, deadline)
-    const workspaceHeads = await this.readAuthorityHeads(workspaceId)
-    const departure = await createWorkspaceDeparture(profile, workspaceId, (credential.localGrant as WorkspaceGrant | undefined)?.payload.accessEpoch ?? 1,
-      workspaceHeads,
-      uniqueCertificates(profile, await defaultProofStore.listCertificates()),
-      await meshRecordSigning(profile, credential, { kind: "departure" }, this.store))
-    await this.mergeDepartures(credential, [departure], false)
-    await this.publishAll(); const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
-    await this.mergeDepartures(current, [departure])
-    await this.reclassifyWorkspaceAuthority(workspaceId)
-    for (const action of meshRustRuntime().state.planAuthorityCommand({ kind: "leave", workspaceId })) {
-      if (action === "leave") await this.leaveWorkspaceHost(workspaceId)
-      if (action === "notify") await this.notify()
-    }
-  }
+  private readonly departureDelivery = new WorkspaceDepartureDelivery({
+    profile: () => this.options.getProfile(), store: this.store, workspaceStore: this.options.workspaceStore,
+    heads: id => this.readAuthorityHeads(id), notify: () => this.notify(), publish: () => this.publishAll(),
+    sessions: () => [...this.sessions.values()].filter(entry => entry.ownershipReceiptSupported && this.departureDeliveryConnections.has(entry.connection)),
+    commit: async (credential, departure) => {
+      await this.mergeDepartures(credential, [departure])
+      await this.reclassifyWorkspaceAuthority(credential.workspaceId)
+    },
+    close: async id => {
+      const credential = await this.store.getWorkspaceCredential(id), profile = await this.options.getProfile()
+      if (credential && hasLeftWorkspace(credential, profile.identity.personId, credential.localGrant as WorkspaceGrant | undefined)) {
+        await this.leaveWorkspaceHost(id)
+        this.activeWorkspaceIds?.delete(id)
+      }
+    },
+    pending: (workspaceId, error) => this.trace("departure.delivery.pending", { workspaceId,
+      reason: error instanceof Error ? error.message : String(error) }),
+  })
+
+  async leaveWorkspace(workspaceId: string): Promise<void> { await this.departureDelivery.leave(workspaceId) }
+  protected async flushPendingDepartures(): Promise<void> { await this.departureDelivery.flush() }
 
   private async leaveWorkspaceHost(workspaceId: string): Promise<void> {
     for (const [, entry] of [...this.sessions]) if (entry.workspaceId === workspaceId) await entry.evict("workspace left")
     this.gossip.close(workspaceId)
-    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async context => {
-      await context.write(() => this.store.removeWorkspaceMeshData(workspaceId))
-      await context.write(() => defaultProofStore.removeWorkspaceGrants(workspaceId))
-    })
+    // Keep the signed departure and its response credential after data sessions close.
+    // A returning participant must receive removal evidence even after a reload.
     this.lastDiagnostic = ""; this.options.onDiagnostic?.("")
     this.clearRouteReconnects(`${workspaceId}:`)
   }

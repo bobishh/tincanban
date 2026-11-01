@@ -29,6 +29,8 @@ const props = defineProps<{
   inviteUrl: string
   copyNotice: string
   error: string
+  canResetWorkspaceConnection?: boolean
+  resettingWorkspaceConnection?: boolean
   canReconnectDevice?: boolean
   enrollmentDeviceName?: string
   enrollmentSameIdentity?: boolean
@@ -46,6 +48,7 @@ const props = defineProps<{
   removableDeviceWorkspaces?: (personId: string, deviceId: string) => Promise<{ id: string; title: string }[]>
   removeDevice?: (personId: string, deviceId: string, workspaceIds: string[]) => Promise<void>
   hasMesh?: boolean
+  workspaceAccessEnded?: boolean
   currentPersonId?: string
   currentRole?: "owner" | "editor" | "visitor"
   succession?: SuccessionView
@@ -73,8 +76,9 @@ const emit = defineEmits<{
   (e: "update:selectedWorkspaceIds", val: string[]): void
   (e: "update:selectedWorkspaceId", val: string): void
   (e: "generateWorkspaceInvite"): void
+  (e: "resetWorkspaceConnection"): void
   (e: "transferOwnership", personId: string): void
-  (e: "leaveMesh"): void
+  (e: "leaveMesh", keepCopy: boolean): void
   (e: "promotePeer", personId: string): void
   (e: "revokePerson", personId: string): void
   (e: "setSuccessor", personId: string | null): void
@@ -127,6 +131,7 @@ const rejectedSource = computed(() => {
 })
 const visiblePendingJoins = computed(() => props.pendingJoins ?? [])
 const confirmingLeave = ref(false)
+const keepLocalCopy = ref(true)
 const confirmingReconnect = ref(false)
 const reconnectCancelled = ref(false)
 watch(() => props.step, () => { reconnectCancelled.value = false })
@@ -322,14 +327,17 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
         </div>
         <section v-if="confirmingLeave && hasMesh" class="mesh-member-action" aria-label="Leave mesh confirmation">
           <strong>Leave this workspace mesh?</strong>
-          <p class="dialog-copy">Your identity leaves this workspace on all its devices. Your identity and other workspaces are kept. Local data stays as a read-only copy. An owner must transfer ownership first; another workspace device must be connected.</p>
+          <p class="dialog-copy">Your identity leaves this workspace on all its devices. Your identity and other workspaces are kept. Other participants receive your signed departure when they reconnect. No connection is required. An owner must transfer ownership first.</p>
+          <p class="dialog-copy">Removing the copy hides the board immediately. A hidden copy keeps delivering pending changes after reload and is deleted only after delivery is confirmed.</p>
+          <label><input v-model="keepLocalCopy" type="checkbox" :disabled="leavingMesh" /> Keep a read-only copy on this device</label>
           <div class="dialog-actions">
-            <button class="button button-danger" type="button" :disabled="leavingMesh" @click="emit('leaveMesh')">{{ leavingMesh ? 'Leaving workspace…' : 'Leave mesh, keep copy' }}</button>
+            <button class="button button-danger" type="button" :disabled="leavingMesh" @click="emit('leaveMesh', keepLocalCopy)">{{ leavingMesh ? 'Leaving workspace…' : keepLocalCopy ? 'Leave mesh, keep copy' : 'Leave mesh and remove copy' }}</button>
             <button class="button button-quiet" type="button" :disabled="leavingMesh" @click="confirmingLeave = false">Cancel</button>
           </div>
         </section>
         <div class="dialog-actions sync-primary-actions">
           <button v-if="hasMesh" class="button button-danger" type="button" :disabled="currentRole === 'owner'" @click="confirmingLeave = true">Leave mesh</button>
+          <button v-else-if="workspaceAccessEnded" class="button button-danger" type="button" :disabled="leavingMesh" @click="emit('leaveMesh', false)">Remove local copy</button>
         </div>
         <p v-if="hasMesh && currentRole === 'owner'" class="dialog-copy">Transfer ownership in Participants before leaving this workspace.</p>
       </template>
@@ -505,6 +513,10 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
       <!-- Step 11: Error -->
       <template v-else-if="step === 'error'">
         <p class="sync-error" role="alert">{{ error }}</p>
+        <section v-if="canResetWorkspaceConnection" class="mesh-member-action" aria-label="Create a new workspace connection">
+          <p class="dialog-copy">Existing participants and Rusty need new invitations. Your local board and cards stay saved.</p>
+          <button class="button button-primary" type="button" :disabled="resettingWorkspaceConnection" @click="emit('resetWorkspaceConnection')">{{ resettingWorkspaceConnection ? 'Creating connection…' : 'Create new connection' }}</button>
+        </section>
         <section v-if="canReconnectDevice && confirmingReconnect" class="mesh-member-action" role="region" aria-label="Confirm device reconnection">
           <p class="dialog-copy">Reconnect this device with a new device key. Your identity and local boards stay saved. The old key stays revoked; the owner must approve access.</p>
           <div class="dialog-actions"><button class="button button-primary" type="button" @click="confirmingReconnect = false; emit('reconnectDevice')">Confirm reconnection</button><button class="button button-quiet" type="button" @click="confirmingReconnect = false">Cancel</button></div>

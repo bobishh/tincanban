@@ -1,7 +1,7 @@
 import { openSettingsFromSync } from "./support/settingsNavigation"
 import { readFile } from "node:fs/promises"
 import { expect, test, type Locator, type Page } from "./support/coverage"
-import { createJobSearchWorkspace, ensureJobSearchWorkspace } from "./support/workspaces"
+import { createJobSearchWorkspace, ensureJobSearchWorkspace, addJobSearchLead } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
 import { captureHistoryNativeFailures } from "./support/historyNativeFailure"
@@ -673,6 +673,112 @@ test("Given an owner with two archived history generations, when adding my phone
   } finally {
     if (!sourceClosed) await sourceContext.close()
     await phoneContext.close()
+    await rusty?.close()
+  }
+})
+
+
+test("Given a compacted shared board, when its editor removes it offline, then deliver pending changes from its original history basis before cleaning the hidden copy", async ({ browser, baseURL }) => {
+  test.setTimeout(180_000)
+  const ownerContext = await browser.newContext(), editorContext = await browser.newContext()
+  const owner = await ownerContext.newPage(), editor = await editorContext.newPage()
+  let rusty: Awaited<ReturnType<typeof startRustyService>> | undefined
+  let workspaceId = ""
+  try {
+    await owner.goto(baseURL!)
+    await createJobSearchWorkspace(owner, "Cold history source")
+    workspaceId = await owner.evaluate(async () => (await import("/src/test/stateFixture.ts")).useTincanban().activeWorkspace.id)
+    const trustedOwner = await owner.evaluate(async () => {
+      const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
+      return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
+    })
+    rusty = await startRustyService(trustedOwner, baseURL!)
+    await approveRustyForFixture(owner, rusty.origin)
+
+    const add = owner.getByRole("region", { name: "Lead" }).getByRole("button", { name: "Add lead to Lead" })
+    await add.click()
+    const form = owner.getByRole("dialog", { name: "Add item" })
+    await form.getByLabel("Company *").fill("History Archive Company")
+    await form.getByLabel("Role *").fill("Before archive")
+    await form.getByRole("button", { name: "Create item", exact: true }).click()
+    const ownerDetail = owner.getByRole("dialog", { name: "Item overview" })
+    if (!await ownerDetail.isVisible()) await owner.getByRole("button", { name: "Open History Archive Company — Before archive", exact: true }).click()
+    await ownerDetail.getByRole("button", { name: "Edit", exact: true }).click()
+    const edit = owner.getByRole("dialog", { name: "Edit item" })
+    await edit.getByLabel("Role *").fill("After archive")
+    await edit.getByRole("button", { name: "Save changes", exact: true }).click()
+    await ownerDetail.getByRole("button", { name: "Close detail", exact: true }).click()
+
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    const ownerSync = owner.getByRole("dialog", { name: /^(Device sync|Settings)$/ })
+
+    const rustyPanel = owner.getByRole("region", { name: "Rusty", exact: true })
+    await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await rustyPanel.getByLabel("Address", { exact: true }).fill(rusty.origin)
+    await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(rustyPanel.locator(":scope > .rusty-connections").getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    await openSettingsFromSync(owner, "Workspace")
+    const maintenance = ownerSync.getByRole("region", { name: "Workspace history" })
+    await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
+    await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })
+      .or(maintenance.getByRole("alert"))).toBeVisible({ timeout: 60_000 })
+    await expect(maintenance.getByRole("alert")).toHaveCount(0)
+    await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" })).toContainText("Older history archived")
+
+
+    await ownerSync.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    const invite = owner.getByRole("dialog", { name: "Device sync" })
+    await invite.getByRole("button", { name: "Add someone", exact: true }).click()
+    await invite.getByRole("button", { name: "Generate link", exact: true }).click()
+    await editor.route("**/src/sync/workspaceRustyAccess.ts*", async route => {
+      const response = await route.fetch()
+      await route.fulfill({ response, body: `${await response.text()}\n;receiveBoardStorageAccess = async function() {}\n` })
+    })
+    await editor.goto(await invite.getByLabel("Pairing link").inputValue())
+    const join = editor.getByRole("dialog", { name: "Device sync" })
+    await join.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await invite.getByLabel("Participant role").selectOption("editor")
+    await invite.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(join.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await join.getByRole("button", { name: "Close", exact: true }).click()
+    await invite.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(editor.getByLabel("Workspace role: editor")).toBeVisible()
+    await ownerContext.setOffline(true)
+    await owner.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await addJobSearchLead(editor, "Final archived editor change")
+    await editorContext.setOffline(true)
+    await editor.evaluate(() => window.dispatchEvent(new Event("offline")))
+    await editor.getByRole("button", { name: "Sync", exact: true }).click()
+    await join.getByRole("button", { name: "Leave mesh", exact: true }).click()
+    await join.getByLabel("Keep a read-only copy on this device").uncheck()
+    await join.getByRole("button", { name: "Leave mesh and remove copy", exact: true }).click()
+    await expect(join).toHaveCount(0)
+    await expect(editor.locator(".workspace-item").filter({ hasText: "Cold history source" })).toHaveCount(0)
+    await editorContext.setOffline(false)
+    await editor.reload()
+    await expect(editor.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled()
+    expect(await editor.evaluate(async id => Boolean(await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(id)), workspaceId)).toBe(true)
+    await ownerContext.setOffline(false)
+    await owner.reload()
+    await expect(owner.getByRole("button", { name: "Open Final archived editor change — Engineer", exact: true })).toBeVisible({ timeout: 30_000 })
+    await expect.poll(() => editor.evaluate(async id => Boolean(await (await import("/src/storage.ts")).defaultStorage.loadWorkspaceDoc(id)),
+      workspaceId), { timeout: 30_000 }).toBe(false)
+  } catch (error) {
+    {
+      for (const [label, page] of [["owner", owner], ["editor", editor]] as const) {
+        const diagnostics = await page.evaluate(async () => ({
+          trace: (await import("/src/sync/meshTrace.ts")).meshTraceSnapshot(),
+          pending: await (await import("/src/storageWorkspaceDeparture.ts")).listPendingWorkspaceDepartures(),
+        })).catch(error => ({ error: String(error) }))
+        console.error(`${label}-departure`, JSON.stringify(diagnostics))
+        await test.info().attach(`${label}-departure`, { body: JSON.stringify(diagnostics), contentType: "application/json" })
+      }
+    }
+    throw error
+  } finally {
+    await editorContext.close()
+    await ownerContext.close()
     await rusty?.close()
   }
 })

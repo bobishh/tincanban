@@ -1,3 +1,4 @@
+import { listPendingWorkspaceDepartures } from "../storageWorkspaceDeparture"
 import { routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 import { sha256Base64Url, type LocalProfile} from "../domain/identity"
 import * as Automerge from "@automerge/automerge/slim"
@@ -15,7 +16,7 @@ import { createPeerAdvertisement,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import type { SyncConnection, SyncNode, DuplexStream } from "./transport"
-import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions } from "./durableMeshBase"
+import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, hasLeftWorkspace, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions } from "./durableMeshBase"
 import { DurableMeshAuthority } from "./durableMeshAuthority"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { meshRecordSigning } from "./meshRecordSigning"
@@ -128,7 +129,8 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       const profile = await this.options.getProfile()
       const workspaceIds = new Set(credentials.map(credential => credential.workspaceId))
       const peers = await this.store.listPeers()
-      return peers.some(peer => workspaceIds.has(peer.workspaceId) && peer.deviceId !== profile.device.deviceId)
+      if (peers.some(peer => workspaceIds.has(peer.workspaceId) && peer.deviceId !== profile.device.deviceId)) return true
+      return (await listPendingWorkspaceDepartures()).some(pending => workspaceIds.has(pending.workspaceId) && pending.personId === profile.identity.personId)
     }
     await this.adoptedNode?.close("No mesh credentials").catch(() => {})
     this.adoptedNode = undefined
@@ -184,7 +186,9 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     const ownedWorkspaceIds = await this.options.getOwnedWorkspaceIds?.() ?? []
     if (signal.aborted || (storedCredentials.length === 0 && ownedWorkspaceIds.length === 0)) return
     let credentials = await this.activeCredentialsForProfile(storedCredentials, profile)
-    if (signal.aborted || (credentials.length === 0 && ownedWorkspaceIds.length === 0)) return
+    if (signal.aborted) return
+    if (credentials.length === 0 && ownedWorkspaceIds.length === 0 && !storedCredentials.some(credential =>
+      hasLeftWorkspace(credential, profile.identity.personId, credential.localGrant as WorkspaceGrant | undefined))) return
     const adoptedNode = this.adoptedNode
     this.adoptedNode = undefined
     const node = adoptedNode ?? await startPersistentNode(this.options.transport, this.store, this.instanceId)
@@ -271,6 +275,11 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     secret: credential => credential.transportSecret,
     workspaceId: credential => credential.workspaceId,
     mergeAuthority: (credential, request) => this.mergeIncomingAuthority(credential, request),
+    localPeer: async credential => {
+      const profile = await this.options.getProfile()
+      return { personId: profile.identity.personId, deviceId: profile.device.deviceId,
+        grant: credential.localGrant as WorkspaceGrant | undefined }
+    },
     verifyPeer: (credential, bundle) => this.verifyIncomingPeer(credential, bundle),
     admit: (credential, request, remoteEndpointId) => this.admitSignedPeer(credential, request, remoteEndpointId),
     revocations: credential => revocations(credential),
@@ -285,8 +294,10 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       connectionId, features.ownershipReceiptSupported, remote.personId, features.ownerWorkspaceSupported, features.ownerWorkspaceOfferFrame,
       features.blobTransferSupported, remote.endpoint)
     },
-    afterInstalled: ({ credential, remote, request, connection, features }) => this.afterIncomingInstall(
-      credential, remote, request.ownerWorkspaceIds, connection as SyncConnection, features.ownerWorkspaceOfferFrame),
+    afterInstalled: ({ credential, remote, request, connection, features }) => {
+      if (request.capabilities.includes("departure-delivery-v1")) this.departureDeliveryConnections.add(connection as SyncConnection)
+      return this.afterIncomingInstall(credential, remote, request.ownerWorkspaceIds, connection as SyncConnection, features.ownerWorkspaceOfferFrame)
+    },
     trace: (event, detail, level) => this.trace(event, detail, level),
     failed: (stage, error) => this.reportProtocolFailure(stage, error),
   }, this.handshakeCodec)
@@ -328,8 +339,11 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       if (!effect) throw new Error(`Unexpected handshake authority action: ${action}`)
       await effect()
     }
-    await this.reclassifyWorkspaceAuthority(workspaceId)
     const current = await this.store.getWorkspaceCredential(workspaceId) ?? credential
+    const profile = await this.options.getProfile()
+    if (!hasLeftWorkspace(current, profile.identity.personId, current.localGrant as WorkspaceGrant | undefined)) {
+      await this.reclassifyWorkspaceAuthority(workspaceId)
+    }
     this.identityPreferenceCredentials.set(current, request.capabilities?.includes("identity-device-preferences-v1") ?? false)
     return current
   }
@@ -352,7 +366,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
       revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),
-      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1"] }, credential.workspaceId)
+      ownerWorkspaceIds, capabilities: [...this.handshakeCodec.capabilities(), CAUSAL_WRITE_ADMISSION_CAPABILITY, "identity-device-preferences-v1", "departure-delivery-v1"] }, credential.workspaceId)
   }
 
   protected async afterIncomingInstall(credential: WorkspaceMeshCredential, remote: IncomingPeer,
@@ -373,7 +387,9 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
     let own = this.selectLocalHandshakePeer(peers, profile.device.deviceId)
     if (!own) {
       const fallback = await this.store.getPeer(credential.workspaceId, profile.device.deviceId)
-      own = fallback ? this.selectLocalHandshakePeer([fallback], profile.device.deviceId) : undefined
+      const departed = hasLeftWorkspace(credential, profile.identity.personId, credential.localGrant as WorkspaceGrant | undefined)
+      own = departed && fallback?.personId === profile.identity.personId
+        ? fallback : fallback ? this.selectLocalHandshakePeer([fallback], profile.device.deviceId) : undefined
     }
     if (!own?.advertisement) throw new Error("Missing local peer advertisement")
     return own.advertisement as WorkspaceMemberBundle

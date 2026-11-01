@@ -85,6 +85,30 @@ copies, once every stored state has been verified and merged. The replacement
 preserves signed profile history, recovery evidence, and unknown optional
 components. An incomplete or rejected state prevents replacement.
 
+## Leave a workspace
+
+**Leave mesh** ends local participation immediately, without another device online
+or another owner approval. Choose whether to keep a read-only copy. Removing the
+copy hides the board immediately; a durable local delivery queue retains its final
+snapshot, signed history and locally available files. Delivery retries while the
+app is open and resumes after reload. New local edits and chat messages are blocked.
+
+A verified participant must confirm durable receipt of the final snapshot and
+files before the hidden copy is cleaned up. The mesh propagates that received copy
+to other participants. The sender then publishes its signed departure and retains
+that proof separately to answer returning peers. Data still referenced by another
+local identity is preserved. Owners must transfer ownership before leaving.
+
+The frontend declares the `workspaceDeparture@1` reader contract. Clients that
+observe this contract must support pending departures before continuing writes;
+older tabs reload through the existing release compatibility check.
+
+If an owned board's saved connections use different keys, **Sync** offers
+**Create new connection**. This explicit owner action preserves the local board,
+cards and signed authority, then creates a fresh connection key. Existing
+participants and Rusty need new invitations. The installed key survives reload;
+conflicting recovery evidence is never selected arbitrarily.
+
 ## Public boards
 
 Connect Rusty to a board in **Sync**, then enable **Public board** in

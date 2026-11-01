@@ -1,3 +1,5 @@
+import { assertSigningContextCurrent } from "../domain/signingContext"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { canonicalizeJson, type LocalProfile, toBase64Url } from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
 import { defaultProofStore } from "../domain/proofs"
@@ -156,6 +158,35 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
         await context.write(() => this.store.putWorkspaceCredential(credential))
       })
     return credential
+  }
+
+  async resetOwnerConnection(workspaceId: string): Promise<void> {
+    const profile = await this.options.getProfile()
+    const readAuthority = async () => await this.store.getWorkspaceAuthority(workspaceId) ??
+      await this.store.getWorkspaceCredential(workspaceId)
+    const signing = await workspaceOwnerSigningContext(profile, workspaceId, "workspace-connection-reset", {}, readAuthority)
+    await this.options.workspaceStore.read(workspaceId)
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async context => {
+      await assertSigningContextCurrent(signing)
+      const authority = await readAuthority()
+      if (!authority) throw new Error("Current workspace owner authority is unavailable")
+      const credential: WorkspaceMeshCredential = { version: 1, workspaceId,
+        ownerPersonId: authority.ownerPersonId, ownerPublicKey: authority.ownerPublicKey,
+        ownerCertificates: authority.ownerCertificates, epoch: authority.epoch,
+        transportSecret: createPairingSecret(), updatedAt: new Date().toISOString(), catalog: structuredClone(authority.catalog) }
+      await context.write(() => this.store.removeWorkspaceMeshData(workspaceId))
+      await context.write(() => this.store.putWorkspaceCredential(credential))
+    })
+    for (const entry of [...this.sessions.values()]) if (entry.workspaceId === workspaceId) await entry.evict("workspace connection replaced")
+    this.gossip.close(workspaceId)
+    this.clearRouteReconnects(`${workspaceId}:`)
+    await this.notify()
+  }
+
+  async removedDeviceWorkspaceIds(): Promise<string[]> {
+    const profile = await this.options.getProfile()
+    return (await this.store.listWorkspaceCredentials()).filter(credential =>
+      isDeviceRevoked(credential, profile.identity.personId, profile.device.deviceId)).map(credential => credential.workspaceId)
   }
 
   protected async ownerWorkspaceIds(profile: LocalProfile) {

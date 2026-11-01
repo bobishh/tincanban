@@ -1,3 +1,4 @@
+import { assertWorkspaceNotDeparting } from "../storageWorkspaceDeparture"
 import { bootstrapIdentity, canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { resolveLocalSigningContext } from "../domain/localSigningContext"
 import { signingEvidence, signWithContext, type VerifiedSigningContext } from "../domain/signingContext"
@@ -55,6 +56,7 @@ async function credentials(workspaceId: string, profile: LocalProfile, access: C
 
 async function chatSigningAuthority(workspaceId: string, profile: LocalProfile, kind: ChatRecord["signed"]["payload"]["kind"],
   access: ChatSigningAccess): Promise<{ authority: ChatAuthority; scope: string; revision: string }> {
+  await assertWorkspaceNotDeparting(workspaceId, profile.identity.personId)
   const [scope, ownerPersonId, authority, credential, peers] = await Promise.all([
     access.readScope(workspaceId), access.readOwner(workspaceId),
     typeof indexedDB === "undefined" ? Promise.resolve(null) : peerStore.getWorkspaceAuthority(workspaceId),

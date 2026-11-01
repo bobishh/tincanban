@@ -1,3 +1,4 @@
+import { assertWorkspaceNotDeparting } from "../storageWorkspaceDeparture"
 import { captureIdentityProfile } from "../domain/identity"
 import type { WorkspaceRecordSigner } from "@meta-uber/mesh-workspace"
 import { type LocalProfile } from "../domain/identity"
@@ -77,6 +78,7 @@ export async function meshRecordSigning(profile: LocalProfile, expected: Workspa
   const expectedRevision = credentialRevision(expected)
   const workspaceId = expected.workspaceId
   const currentAuthority = async (payload?: Record<string, unknown>) => {
+    if (operation.kind !== "advertisement") await assertWorkspaceNotDeparting(workspaceId, profile.identity.personId)
     const [credential, authority, peers] = await Promise.all([
       store.getWorkspaceCredential(workspaceId), store.getWorkspaceAuthority(workspaceId), store.listPeers(workspaceId),
     ])

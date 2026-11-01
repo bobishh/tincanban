@@ -164,7 +164,7 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
     const workspaceId = tincanban.activeWorkspace.id
     return blindReplication.fetchAttachment(workspaceId, descriptor, current => sync.fetchBlob(workspaceId, current))
   })
-  const mesh = useAppMesh({ activeWorkspace: tincanban.activeWorkspace, chat, sync, blindReplication, ...policy })
+  const mesh = useAppMesh({ removeWorkspaceCopy: tincanban.removeWorkspaceCopyAsync, activeWorkspace: tincanban.activeWorkspace, chat, sync, blindReplication, ...policy })
   return { chat, sync, blindReplication, profileRecovery, ...policy, ...mesh }
 }
 

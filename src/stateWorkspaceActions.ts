@@ -31,6 +31,7 @@ export function createWorkspaceActions() {
     getWorkspaceRole,
     renameWorkspaceAsync,
     archiveWorkspaceAsync,
+    removeWorkspaceCopyAsync,
     restoreWorkspaceAsync,
   };
 }
@@ -208,6 +209,14 @@ async function archiveWorkspaceAsync(
   await refreshAvailableWorkspaces(storage);
   stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId });
   if (wasActive) return selectWorkspaceReplacement(storage);
+}
+
+async function removeWorkspaceCopyAsync(workspaceId: string, storage = defaultStorage): Promise<void> {
+  const wasActive = stateRuntime.activeDoc?.id === workspaceId
+  await storage.removeWorkspaceCopy(workspaceId)
+  await refreshAvailableWorkspaces(storage)
+  stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId })
+  if (wasActive) await selectWorkspaceReplacement(storage)
 }
 
 async function restoreWorkspaceAsync(workspaceId: string, storage = defaultStorage): Promise<void> {

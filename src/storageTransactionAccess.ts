@@ -55,6 +55,7 @@ export function isWorkspaceAuthorityMutation(context: WorkspaceAuthorityMutation
 }
 
 export abstract class StorageTransactionAccess extends StorageHistoryAccess {
+  protected abstract assertWorkspaceDataWritable(workspaceId: string): Promise<void>
   protected readonly workspaceLifecycles = new Map<string, number>()
   abstract loadWorkspaceDoc(workspaceId: string, reusable?: Automerge.Doc<WorkspaceDocumentV2>):
     Promise<{ doc: Automerge.Doc<WorkspaceDocumentV2>; heads: Heads } | null>
@@ -133,7 +134,8 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
         this.delta.forget(state.workspaceId)
         state.used = true
       },
-      commitDelta: (frontier, delta, doc) => {
+      commitDelta: async (frontier, delta, doc) => {
+        await this.assertWorkspaceDataWritable(state.workspaceId)
         assertLive()
         state.used = true
         return this.commitDelta(frontier, delta, doc, state.basis.revision, assertCurrent)
@@ -153,6 +155,7 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
   private async installCapturedDeltaBasis(state: WorkspaceTransactionState, snapshot: StoredWorkspaceSnapshot,
     frontier: WorkspaceDeltaFrontier, authorizations: WorkspaceChangeAuthorization[], doc: Automerge.Doc<WorkspaceDocumentV2>,
     assertLive: () => void, assertCurrent: () => void): Promise<boolean> {
+    await this.assertWorkspaceDataWritable(state.workspaceId)
     assertLive()
     const nextRevision = crypto.randomUUID()
     const installed = await this.installDeltaBasis(snapshot, frontier, authorizations, doc, state.basis.revision,

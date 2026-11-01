@@ -225,16 +225,9 @@ export class DeviceSyncController {
     const mesh = await this.ensureDurableMesh()
     if (!workspaceId || !mesh) throw new Error("No active workspace")
     await mesh.leaveWorkspace(workspaceId)
-    this.run += 1
-    this.wakeRetry?.()
     this.beforeLeaveWorkspace(workspaceId)
-    try {
-      await this.pauseDurableMesh()
-      await this.stopNode("Leaving workspace mesh")
-      for (const session of this.directPeerSessions.values()) await session.close().catch(() => {})
-      this.directPeerSessions.clear()
-      await this.startDurableMesh()
-    } finally { this.leavingWorkspaceIds.delete(workspaceId) }
+    this.leavingWorkspaceIds.delete(workspaceId)
+    await this.startDurableMesh()
   }
 
   private async leaveWorkspace(workspaceId: string) {
@@ -361,6 +354,12 @@ export class DeviceSyncController {
     await generateWorkspaceInvite(this.workspaceHostContext())
   }
 
+  private async resetWorkspaceConnection() {
+    await this.ensureDurableMesh()
+    const { resetWorkspaceConnection } = await import("./deviceSyncHost")
+    await resetWorkspaceConnection(this.workspaceHostContext())
+  }
+
   private workspaceHostContext(): WorkspaceHostContext {
     return {
       state: this.state, workspace: this.workspace, workspaceStore: this.workspaceStore, meshWorkspaceStore: this.meshWorkspaceStore,
@@ -450,7 +449,7 @@ export class DeviceSyncController {
     }
     if (invite.kind !== "workspace-join") return
     await showWorkspaceJoinStep(this.state, invite, this.availableWorkspaces.value.map(item => item.id),
-      async () => await this.durableMesh?.revokedWorkspaceIds() ?? [])
+      async () => await this.durableMesh?.removedDeviceWorkspaceIds() ?? [])
   }
 
   private async waitToReconnect(milliseconds: number) {
@@ -508,7 +507,7 @@ export class DeviceSyncController {
       isWorkspaceAccessRevoked: (id: string) => state.revokedWorkspaceIds.value.includes(id), meshPeers: state.meshPeers, meshDiagnostic: state.meshDiagnostic,
       meshRetryAt: state.meshRetryAt, networkOnline: state.networkOnline, meshSuccession: state.meshSuccession, localDeviceId: state.localDeviceId,
       localUserAgent: state.localUserAgent, ownershipRevision: state.ownershipRevision, step: state.step, phase: state.phase, title: state.title,
-      qrCode: state.qrCode, inviteUrl: state.inviteUrl, copyNotice: state.copyNotice, error: state.error, authCode: state.authCode,
+      qrCode: state.qrCode, inviteUrl: state.inviteUrl, copyNotice: state.copyNotice, error: state.error, connectionConflictWorkspaceId: state.connectionConflictWorkspaceId, resettingWorkspaceConnection: state.resettingWorkspaceConnection, resetWorkspaceConnection: () => this.resetWorkspaceConnection(), authCode: state.authCode,
       selectedWorkspaceId: state.selectedWorkspaceId, selectedWorkspaceIds: state.selectedWorkspaceIds, invitationWorkspaceTitle: state.invitationWorkspaceTitle,
       invitationWorkspaces: state.invitationWorkspaces, availableWorkspaces: this.availableWorkspaces, open: () => this.open(),
       selectSyncAll: () => this.selectSyncAll(), selectSyncWorkspace: () => this.selectSyncWorkspace(), generateWorkspaceInvite: () => this.generateWorkspaceInvite(),

@@ -283,16 +283,8 @@ export async function createOwnershipProposal(profile: LocalProfile, workspaceId
   return { transfer, scopeAuthoritySnapshot }
 }
 
-export async function publishConfirmedToSessions(sessions: SessionEntry[], secret: string, snapshot: Uint8Array, message: string) {
-  const receipts = await Promise.allSettled(sessions.map(session => publishConfirmedWorkspace(session.connection, secret, snapshot)))
+export async function publishConfirmedToSessions(sessions: SessionEntry[], secret: string, snapshot: Uint8Array, message: string, timeoutMs?: number) {
+  const receipts = await Promise.allSettled(sessions.map(session => publishConfirmedWorkspace(session.connection, secret, snapshot, timeoutMs)))
   await Promise.all(sessions.flatMap((session, index) => receipts[index]?.status === "rejected" ? [session.evict(message)] : []))
   return receipts.some(receipt => receipt.status === "fulfilled")
-}
-
-export async function awaitOwnerDelivery(sessions: () => SessionEntry[], secret: string, snapshot: Uint8Array, deadline: number) {
-  while (true) {
-    if (await publishConfirmedToSessions(sessions(), secret, snapshot, "workspace delivery unconfirmed")) return
-    if (Date.now() >= deadline) throw new Error("No owner confirmed the workspace before leaving. Keep an owner device online, then retry.")
-    await new Promise(resolve => setTimeout(resolve, 200))
-  }
 }

@@ -12,6 +12,8 @@ import { canonicalizeJson } from "./domain/identity"
 import { causalEvidenceChanged, snapshotCausalEvidence, replayAdmittedJournal } from "./causalEvidence"
 import type { StoredProofsV1 } from "./domain/proofs"
 import { fromBase64Url } from "./domain/identity"
+import { listPendingWorkspaceDepartures, readPendingWorkspaceDeparture, updatePendingWorkspaceDeparture, completeWorkspaceDeparture } from "./storageWorkspaceDeparture"
+import { forgetWorkspaceInRoot } from "./domain/personalRoot"
 import { PersonalRootMapStore } from "./storagePersonalRoot"
 import { StorageTransactionAccess } from "./storageTransactionAccess"
 import {
@@ -150,7 +152,58 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     return records
   }
 
-  async purgeWorkspaceForTest(workspaceId: string): Promise<void> {
+  async removeWorkspaceCopy(workspaceId: string): Promise<void> {
+    await withWorkspaceMutation(workspaceId, async () => {
+      const root = await this.loadPersonalRoot()
+      if (!root?.workspaces[workspaceId]) throw new Error("Workspace is missing from the personal catalog")
+      if (await readPendingWorkspaceDeparture(workspaceId, root.identity.personId)) {
+        await updatePendingWorkspaceDeparture(workspaceId, root.identity.personId, { removeCopy: true })
+      }
+      await this.updatePersonalRootForIdentity(root.identity.personId, current => {
+        if (!current) throw new Error("Personal catalog is unavailable")
+        forgetWorkspaceInRoot(current, workspaceId)
+        return current
+      })
+      if (!(await listPendingWorkspaceDepartures()).some(entry => entry.workspaceId === workspaceId) &&
+        !await this.personalRootStore.hasWorkspaceReference(workspaceId)) await this.purgeWorkspaceData(workspaceId)
+    })
+  }
+
+  async completeWorkspaceDepartureDelivery(workspaceId: string, personId: string): Promise<void> {
+    await withWorkspaceMutation(workspaceId, async () => {
+      const pending = await readPendingWorkspaceDeparture(workspaceId, personId)
+      if (!pending?.delivered) throw new Error("Workspace delivery is not confirmed")
+      const others = (await listPendingWorkspaceDepartures()).some(entry => entry.workspaceId === workspaceId && entry.personId !== personId)
+      if (pending.removeCopy && !others && !await this.personalRootStore.hasWorkspaceReference(workspaceId)) await this.purgeWorkspaceData(workspaceId)
+      await completeWorkspaceDeparture(workspaceId, personId)
+    })
+  }
+
+  async restoreWorkspaceCopy(workspaceId: string, accessEpoch?: number): Promise<void> {
+    await withWorkspaceMutation(workspaceId, async () => {
+      const root = await this.loadPersonalRoot()
+      const pending = root && await readPendingWorkspaceDeparture(workspaceId, root.identity.personId)
+      if (pending) {
+        const resumed = accessEpoch !== undefined && accessEpoch > pending.departure.record.payload.accessEpoch
+        await updatePendingWorkspaceDeparture(workspaceId, root.identity.personId, { removeCopy: false, resumed })
+      }
+      if (!root?.workspaces[workspaceId]?.forgotten) return
+      await this.updatePersonalRootForIdentity(root.identity.personId, current => {
+        if (current?.workspaces[workspaceId]) current.workspaces[workspaceId]!.forgotten = false
+        return current
+      })
+    })
+  }
+
+  protected async assertWorkspaceDataWritable(workspaceId: string): Promise<void> {
+    if ((await this.loadPersonalRoot())?.workspaces[workspaceId]?.forgotten && !(await listPendingWorkspaceDepartures()).some(entry => entry.workspaceId === workspaceId)) {
+      throw new Error("Workspace copy was removed from this device")
+    }
+  }
+
+  async purgeWorkspaceForTest(workspaceId: string): Promise<void> { await this.purgeWorkspaceData(workspaceId) }
+
+  private async purgeWorkspaceData(workspaceId: string): Promise<void> {
     this.advanceWorkspaceLifecycle(workspaceId)
     this.delta.forget(workspaceId)
     this.inMemory.snapshots.delete(workspaceId)
@@ -178,6 +231,7 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     ensureContextCurrent: () => void,
   ): Promise<{ proofChanged: boolean; causalChanged: boolean }> {
     checkStorageFailureHook()
+    await this.assertWorkspaceDataWritable(workspaceId)
     const prepared = await this.prepareWorkspaceCommit(workspaceId, doc, bytes, authorizations, command,
       causalEvidence, onPhase, expectedBasis, ensureContextCurrent)
     if (this.workspaceCommitUnchanged(prepared.committed, prepared.snapshot,
@@ -410,6 +464,10 @@ export class WorkspaceStorage extends StorageTransactionAccess {
     update: (current: PersonalRootDocumentV1 | null) => PersonalRootDocumentV1 | null | Promise<PersonalRootDocumentV1 | null>,
   ): Promise<PersonalRootDocumentV1 | null> {
     return this.personalRootStore.update(personId, update)
+  }
+
+  async loadPersonalRootForIdentity(personId: string): Promise<PersonalRootDocumentV1 | null> {
+    return this.personalRootStore.loadForIdentity(personId)
   }
 
   async loadPersonalRoot(rootId?: string): Promise<PersonalRootDocumentV1 | null> {

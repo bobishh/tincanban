@@ -5,6 +5,7 @@ import {
   invitationUrl,
   type WorkspaceJoinInvitation,
 } from "@meta-uber/mesh-pairing"
+import { WorkspaceConnectionConflict } from "./identityWorkspaceRouteRecovery"
 import { defaultInvitationService } from "./invitations"
 import type { LocalProfile } from "../domain/identity"
 import type { WorkspaceGrant } from "../domain/model"
@@ -50,13 +51,29 @@ function startWorkspaceHostNode(context: Pick<WorkspaceHostContext, "durableMesh
 
 export async function generateWorkspaceInvite(context: WorkspaceHostContext) {
   if (context.state.selectedWorkspaceIds.value.length === 0) return
+  context.state.connectionConflictWorkspaceId.value = ""
   try {
     await createWorkspaceHost(context)
   } catch (err) {
+    if (err instanceof WorkspaceConnectionConflict) context.state.connectionConflictWorkspaceId.value = err.workspaceId
     console.error("generateWorkspaceInvite failed", err)
     context.state.step.value = "error"
-    context.state.error.value = userMessage(err, "Couldn’t generate invite.")
+    context.state.error.value = err instanceof WorkspaceConnectionConflict ? err.message : userMessage(err, "Couldn’t generate invite.")
   }
+}
+
+export async function resetWorkspaceConnection(context: WorkspaceHostContext): Promise<void> {
+  const state = context.state, workspaceId = state.connectionConflictWorkspaceId.value
+  if (!workspaceId || state.resettingWorkspaceConnection.value || state.step.value !== "error" ||
+    !state.selectedWorkspaceIds.value.includes(workspaceId)) return
+  state.resettingWorkspaceConnection.value = true
+  try {
+    if (!context.durableMesh) throw new Error("Mesh unavailable")
+    await context.durableMesh.resetOwnerConnection(workspaceId)
+    state.connectionConflictWorkspaceId.value = ""
+    await generateWorkspaceInvite(context)
+  } catch (error) { state.error.value = userMessage(error, "Could not create a new workspace connection") }
+  finally { state.resettingWorkspaceConnection.value = false }
 }
 
 async function createWorkspaceHost(context: WorkspaceHostContext) {

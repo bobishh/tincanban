@@ -1,4 +1,5 @@
-import { readLocal, writeLocal } from "../localDb"
+import { readPendingWorkspaceDeparture, updatePendingWorkspaceDeparture } from "../storageWorkspaceDeparture"
+import { listLocalKeys, deleteLocal, readLocal, writeLocal } from "../localDb"
 import { withWorkspaceMutation } from "../workspaceMutation"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
@@ -45,7 +46,8 @@ beforeAll(async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(wasm, { headers: { "content-type": "application/wasm" } })))
   await initializeAutomerge()
 })
-beforeEach(() => resetIdentityStorageForTest())
+beforeEach(async () => { resetIdentityStorageForTest(); for (const key of await listLocalKeys()) if (key.startsWith("tincanban.workspace-departure.v1.")) await deleteLocal(key)
+  await deleteLocal("tincanban.workspace-departure-index.v1") })
 async function identity(name: string) { resetIdentityStorageForTest(); return bootstrapIdentity(name) }
 async function fixture() {
   const owner = await identity("Owner")
@@ -75,7 +77,7 @@ async function fixture() {
   vi.spyOn(hooks, "publishAll").mockResolvedValue(undefined)
   await writeLocal("tincanban.local_profile.v1", ownerRaw)
   clearInMemoryProfileForReloadTest()
-  return { mesh, owner, visitor, bundle, store, credential: () => credential, peer: () => peer,
+  return { mesh, owner, visitor, bundle, store, bytes, heads: Automerge.getHeads(doc), credential: () => credential, peer: () => peer,
     activateVisitor: async () => { await writeLocal("tincanban.local_profile.v1", visitorRaw); clearInMemoryProfileForReloadTest() } }
 }
 
@@ -211,6 +213,48 @@ describe("member access", () => {
 })
 
 describe("leaving membership", () => {
+  it("Given no connected peers, when a participant leaves and retries, then persist one signed departure intent without waiting and finalize it after a confirmed receipt", async () => {
+    const f = await fixture()
+    await f.activateVisitor()
+    f.credential().localGrant = f.bundle.grant
+    const member = new DurableMesh({ transport: {} as never, workspace: {} as never,
+      workspaceStore: { readAuthorityHeads: async () => f.heads, read: async () => f.bytes } as never,
+      store: f.store as unknown as PeerStore, getProfile: async () => f.visitor })
+    const hooks = member as unknown as { notify(): Promise<void>; publishAll(): Promise<void>; canStartRuntime(): Promise<boolean>; flushPendingDepartures(): Promise<void>;
+      reclassifyWorkspaceAuthority(id: string): Promise<void> }
+    vi.spyOn(hooks, "notify").mockResolvedValue()
+    const publish = vi.spyOn(hooks, "publishAll").mockResolvedValue()
+    vi.spyOn(hooks, "reclassifyWorkspaceAuthority").mockResolvedValue()
+    vi.useFakeTimers()
+    try {
+      const leaving = member.leaveWorkspace("board").then(() => null, error => error)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(await leaving).toBeNull()
+      const pending = await readPendingWorkspaceDeparture("board", f.visitor.identity.personId)
+      expect(pending).not.toBeNull()
+      expect(verifyWorkspaceDeparture(pending!.departure, "board")).toEqual(pending!.departure)
+      expect(pending!.delivered).toBe(false)
+      expect((f.credential().catalog as { departures?: unknown[] } | undefined)?.departures ?? []).toEqual([])
+      await member.leaveWorkspace("board")
+      expect(await readPendingWorkspaceDeparture("board", f.visitor.identity.personId)).toEqual(pending)
+      expect(f.credential().transportSecret).toBe("secret")
+      expect(await member.revokedWorkspaceIds()).toEqual(["board"])
+      expect(await member.removedDeviceWorkspaceIds()).toEqual([])
+      expect(await hooks.canStartRuntime()).toBe(true)
+      expect(publish).not.toHaveBeenCalled()
+      await updatePendingWorkspaceDeparture("board", f.visitor.identity.personId, { delivered: true })
+      await vi.advanceTimersByTimeAsync(1_000)
+      await hooks.flushPendingDepartures()
+      await vi.waitFor(async () => expect(await readPendingWorkspaceDeparture("board", f.visitor.identity.personId)).toBeNull())
+      expect(hasLeftWorkspace(f.credential(), f.visitor.identity.personId, f.bundle.grant)).toBe(true)
+      expect((f.credential().catalog as { departures: WorkspaceDeparture[] }).departures).toEqual([pending!.departure])
+    } finally {
+      vi.useRealTimers()
+      await member.dispose()
+      await f.mesh.dispose()
+    }
+  })
+
   it("requires the owner to transfer ownership before leaving", async () => {
     const f = await fixture()
     await expect(f.mesh.leaveWorkspace("board")).rejects.toThrow("Transfer ownership")

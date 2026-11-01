@@ -32,7 +32,7 @@ async function measureScopePhase<T>(phase: string, workspaceId: string, peerId: 
 
 // Receipt binds exact document, proofs and catalog to this authenticated
 // stream. Timeout means unknown outcome, never rollback.
-export async function publishConfirmedWorkspace(connection: SyncConnection, secret: string, bytes: Uint8Array): Promise<void> {
+export async function publishConfirmedWorkspace(connection: SyncConnection, secret: string, bytes: Uint8Array, timeoutMs = MESH_HEARTBEAT_TIMEOUT_MS): Promise<void> {
   const protocol = createLiveWorkspaceSession("confirmed-delivery", secret)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -44,7 +44,7 @@ export async function publishConfirmedWorkspace(connection: SyncConnection, secr
         protocol.verifySavedReceipt(await stream.read(), bytes)
       })(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Ownership delivery is unconfirmed. Reconnect and retry the same transfer.")), MESH_HEARTBEAT_TIMEOUT_MS)
+        timer = setTimeout(() => reject(new Error("Ownership delivery is unconfirmed. Reconnect and retry the same transfer.")), timeoutMs)
       }),
     ])
   } finally { clearTimeout(timer); protocol.free?.() }
@@ -213,7 +213,7 @@ async function applyWorkspaceSetReceivePlan(
 ): Promise<void> {
   const bytes = Uint8Array.from(operation.action.payload ?? [])
   const effects: Record<string, () => Promise<void>> = {
-    mergeDurableBatch: () => merge(bytes),
+    mergeDurableBatch: async () => { await merge(bytes); await options.beforeDurableAcknowledgement?.(bytes) },
     mergeWorkspaceSnapshot: () => merge(bytes),
     sendSavedAcknowledgement: async () => { await stream.send(protocol.acknowledgeSaved(bytes)) },
     sendHeartbeatAcknowledgement: async () => { await stream.send(protocol.encode("sync-heartbeat-ack", new Uint8Array())) },
@@ -316,6 +316,7 @@ function createLiveAutomergeScope(context: AutomergeScopeContext) {
     mergeDurableBatch: bytes => measureScopePhase("store.merge-durable-batch", workspaceId, remoteDeviceId,
       async () => {
         await historyReplica.receive(await historyReplica.resolveProofs(bytes, connection, secret), false, peerHistory)
+        await options.beforeDurableAcknowledgement?.(bytes)
       }, bytes.byteLength),
     mergeAuthorization: async authorization => {
       const bytes = await store.read(workspaceId)

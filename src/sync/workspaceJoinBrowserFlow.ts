@@ -181,6 +181,8 @@ async function installReceivedInvitation(context: WorkspaceJoinBrowserContext, r
   for (const grant of received.grants) await defaultStorage.withWorkspaceAuthorityMutation(grant.payload.workspaceId,
     context => context.write(() => defaultProofStore.putGrant(grant.payload.grantId, grant)))
   await context.durableMesh?.receiveInvitation(received.meshWorkspaces, workspaceIds, profile, received.grants)
+  for (const workspaceId of workspaceIds) await defaultStorage.restoreWorkspaceCopy(workspaceId, received.grants.find(grant =>
+    grant.payload.workspaceId === workspaceId && grant.payload.personId === profile.identity.personId)?.payload.accessEpoch)
   await replica.receive(snapshot, true, historyReader)
   await defaultStorage.updatePersonalRootForIdentity(profile.identity.personId, personalRoot => {
     if (!personalRoot) return null

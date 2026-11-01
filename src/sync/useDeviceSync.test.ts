@@ -58,7 +58,7 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     }
     const node = { close: vi.fn(async () => undefined) }
     const durableMesh = {
-      revokedWorkspaceIds: vi.fn(async () => []),
+      revokedWorkspaceIds: vi.fn(async () => []), removedDeviceWorkspaceIds: vi.fn(async () => []),
       resumeAll: vi.fn(async () => undefined),
     }
     const controller = new DeviceSyncController({ workspace: {}, origin: () => "http://localhost:3000" })
@@ -91,7 +91,7 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     }
     const node = { close: vi.fn(async () => undefined) }
     const durableMesh = {
-      revokedWorkspaceIds: vi.fn(async () => []),
+      revokedWorkspaceIds: vi.fn(async () => []), removedDeviceWorkspaceIds: vi.fn(async () => []),
       resumeAll: vi.fn(async () => undefined),
     }
     const controller = new DeviceSyncController({ workspace: {}, origin: () => "http://localhost:3000" })
@@ -122,7 +122,7 @@ describe("useDeviceSync direct sync selection and custom workspace sets", () => 
     }
     const node = { close: vi.fn(async () => undefined) }
     const durableMesh = {
-      revokedWorkspaceIds: vi.fn(async () => []),
+      revokedWorkspaceIds: vi.fn(async () => []), removedDeviceWorkspaceIds: vi.fn(async () => []),
       resumeAll: vi.fn(async () => undefined),
     }
     const controller = new DeviceSyncController({ workspace: {}, origin: () => "http://localhost:3000" })
