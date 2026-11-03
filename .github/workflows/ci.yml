@@ -134,6 +134,9 @@ jobs:
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test --reporter=list --project=core --shard=${{ matrix.shard }}
+      - name: Verify peer typing in a fresh browser process
+        if: matrix.shard == '4/4'
+        run: npx playwright test --reporter=list --project=quiet-peer-typing --output=test-results/quiet-peer-typing
       - name: Verify deployment-configured diagnostics
         if: matrix.shard == '1/4'
         run: npx playwright test --reporter=list --config=playwright.telemetry.config.ts telemetry.spec.ts

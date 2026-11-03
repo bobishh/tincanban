@@ -33,6 +33,7 @@ npm run quality
 npm test
 npx playwright install chromium
 npx playwright test --project=core
+npx playwright test --project=quiet-peer-typing
 ```
 
 Architecture checks run within `npm run quality`: dependency direction and cycle

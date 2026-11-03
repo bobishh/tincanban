@@ -1,4 +1,5 @@
 import * as admissionClient from "./workspaceAdmissionClient"
+import { peerStore } from "./peerStore"
 import { hasEntityKind } from "../domain/model"
 import { readFile } from "node:fs/promises"
 import { beforeAll, beforeEach, expect, it, vi } from "vitest"
@@ -237,6 +238,20 @@ it("Given two valid enrolled devices, When stored certificate order changes, The
   expect(authorityValidationFingerprint(reversed)).toBe(authorityValidationFingerprint(stored))
   expect((await localWorkspaceAdmissionAuthority(doc, owner)).fingerprint).toBe(before.fingerprint)
   Automerge.free(doc)
+})
+
+it("Given changing stored authority, when capturing admission context, then evidence and its fingerprint describe one verified snapshot and the next capture observes the change", async () => {
+  const doc = Automerge.from(createWorkspaceDoc(crypto.randomUUID(), "Authority capture", owner.identity.personId, "blank"))
+  const first = { version: 1 as const, workspaceId: doc.id, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], epoch: 1, updatedAt: "first", catalog: {} }
+  const next = { ...first, epoch: 2, updatedAt: "next" }
+  const read = vi.spyOn(peerStore, "getWorkspaceAuthority").mockResolvedValueOnce(first).mockResolvedValue(next)
+  try {
+    const captured = await localWorkspaceAdmissionAuthority(doc, owner)
+    expect(captured.credentialFingerprint).toBe(authorityValidationFingerprint(first))
+    expect((await localWorkspaceAdmissionAuthority(doc, owner)).credentialFingerprint).toBe(authorityValidationFingerprint(next))
+    expect(read).toHaveBeenCalledTimes(2)
+  } finally { read.mockRestore(); Automerge.free(doc) }
 })
 
 it("reports admission phase costs without changing the authorized result", async () => {

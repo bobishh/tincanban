@@ -336,7 +336,9 @@ export async function localWorkspaceAdmissionAuthority(doc: Pick<WorkspaceDocume
   }
   const evidence = workspaceWriteAuthorityEvidence(doc, authority)
   if (!evidence) throw new Error("Workspace authority is unavailable for write authorization")
-  const credential = await incomingCredential(doc.id)
+  // Bind evidence and fingerprint to one verified read. Callers recheck the
+  // current authority before reuse or commit instead of mixing two snapshots.
+  const credential = stored.authority
   if (credential && meshRustRuntime().state.hasAuthorityConflict(credential)) throw new Error("Workspace writes paused: conflicting ownership records")
   const credentialFingerprint = authorityValidationFingerprint(credential)
   return { authority: evidence, credentialFingerprint, fingerprint: canonicalAuthorityJson({ authority: evidence, credential: credentialFingerprint }) }

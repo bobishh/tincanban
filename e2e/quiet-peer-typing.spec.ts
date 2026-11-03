@@ -26,10 +26,15 @@ test("Given a committed peer snapshot and an unsaved card, when duplicate prefli
     const { clearMeshTrace } = await import("/src/sync/meshTrace.ts")
     clearMeshTrace()
     const state = { stopped: false, repeats: 0, errors: [] as string[], paints: [] as number[], events: [] as number[],
+      eventDetails: [] as Array<{ name: string; startTime: number; duration: number; processingStart: number; processingEnd: number }>,
       version: app.docVersion.value, finished: Promise.resolve() }
     const observer = new PerformanceObserver(list => {
       for (const entry of list.getEntries() as PerformanceEventTiming[]) {
-        if (entry.interactionId && ["keydown", "keyup"].includes(entry.name)) state.events.push(entry.duration)
+        if (entry.interactionId && ["keydown", "keyup"].includes(entry.name)) {
+          state.events.push(entry.duration)
+          state.eventDetails.push({ name: entry.name, startTime: entry.startTime, duration: entry.duration,
+            processingStart: entry.processingStart, processingEnd: entry.processingEnd })
+        }
       }
     })
     observer.observe({ type: "event", durationThreshold: 16 })
@@ -56,12 +61,12 @@ test("Given a committed peer snapshot and an unsaved card, when duplicate prefli
   const measured = await page.evaluate(async () => {
     const app = (await import("/src/test/stateFixture.ts")).useTincanban()
     const { meshTraceSnapshot } = await import("/src/sync/meshTrace.ts")
-    const state = (window as unknown as { quietReceive: { stopped: boolean; repeats: number; errors: string[]; paints: number[]; events: number[]; version: number; finished: Promise<void> } }).quietReceive
+    const state = (window as unknown as { quietReceive: { stopped: boolean; repeats: number; errors: string[]; paints: number[]; events: number[]; version: number; eventDetails: unknown[]; finished: Promise<void> } }).quietReceive
     state.stopped = true
     await state.finished
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
     ;(window as unknown as { quietObserver: PerformanceObserver }).quietObserver.disconnect()
-    return { repeats: state.repeats, errors: state.errors, paints: state.paints, events: state.events,
+    return { repeats: state.repeats, errors: state.errors, paints: state.paints, events: state.events, eventDetails: state.eventDetails,
       unchangedVersion: state.version === app.docVersion.value,
       admissionRuns: meshTraceSnapshot().filter(event => event.event === "workspace.admission.started").length }
   })

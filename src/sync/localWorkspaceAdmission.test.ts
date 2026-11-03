@@ -10,7 +10,8 @@ import { evaluateIncomingWorkspaceAdmission, exportDocumentAuthorizationBundle,
 import { persistDeltaCommand, reusableDeltaAdmission } from "../stateDeltaAdmission"
 import { WorkspaceStorage } from "../storage"
 import { putRecords } from "./workspaceChangeProofStore"
-import { peerStore, type WorkspaceAuthorityRecord } from "./peerStore"
+import type { WorkspaceAuthorityRecord } from "./peerStore"
+import * as deltaJournal from "../workspaceDeltaJournal"
 
 const stored = vi.hoisted(() => ({ authority: null as WorkspaceAuthorityRecord | null }))
 vi.mock("@automerge/automerge/slim", async importOriginal => {
@@ -80,8 +81,12 @@ it("Given a local delta commit, When a fresh instance loads, Then document and c
 
 it("Given an authority change during local validation, When extending the checkpoint, Then no admitted result is returned", async () => {
   const f = await fixture()
-  const authority = vi.spyOn(peerStore, "getWorkspaceAuthority")
-    .mockResolvedValueOnce(null).mockResolvedValueOnce(null).mockResolvedValue(f.authority)
+  const prepare = deltaJournal.prepareWorkspaceDelta
+  const authority = vi.spyOn(deltaJournal, "prepareWorkspaceDelta").mockImplementation(async (...args) => {
+    const delta = await prepare(...args)
+    stored.authority = f.authority
+    return delta
+  })
   try {
     await expect(f.extend()).rejects.toThrow(/authority changed during validation/)
     expect((await f.storage.readDeltaFrontier(f.base.id))?.revision).toBe(0)
