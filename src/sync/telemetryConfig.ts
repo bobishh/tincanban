@@ -60,9 +60,9 @@ function deploymentConfig(): TelemetryConfig {
   const value: TelemetryConfig = { enabled: !!endpoint && !!browserKey && !!otlp, endpoint,
     analyticsEndpoint: analyticsEndpoint(legacyEndpoint, endpoint),
     logsEndpoint: otlp?.logsEndpoint ?? "", tracesEndpoint: otlp?.tracesEndpoint ?? "", project, browserKey,
-    level: (env.VITE_SYNC_TELEMETRY_LEVEL || "all") as TelemetryConfig["level"],
+    level: (env.VITE_SYNC_TELEMETRY_LEVEL || "errors") as TelemetryConfig["level"],
     sampleRate: Number(env.VITE_SYNC_TELEMETRY_SAMPLE_RATE || "1"), batchSize: Number(env.VITE_SYNC_TELEMETRY_BATCH_SIZE || "50") }
-  return validateTelemetryConfig(value) ? { enabled: false, endpoint: "", logsEndpoint: "", tracesEndpoint: "", project: "tincanban", browserKey: "", level: "all", sampleRate: 0, batchSize: 50 } : value
+  return validateTelemetryConfig(value) ? { enabled: false, endpoint: "", logsEndpoint: "", tracesEndpoint: "", project: "tincanban", browserKey: "", level: "errors", sampleRate: 0, batchSize: 50 } : value
 }
 const DEVICE_CONSENT_KEY = "tincanban.telemetry.enabled.v1"
 const deployment = deploymentConfig()

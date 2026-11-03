@@ -29,7 +29,7 @@ afterEach(() => { clearDiagnosticContinuation(); vi.unstubAllGlobals(); active.s
 
 it("Given an owner invitation, when another browser enrolls then sends Rusty HTTP, then preserve one trace without changing enrollment data or exporting secrets", async () => {
   const exporters = { logs: new InMemoryLogRecordExporter(), traces: new InMemorySpanExporter() }
-  const config = { ...telemetryConfig(), enabled: true, browserKey: "public-browser-fixture-key-0123456789" }
+  const config = { ...telemetryConfig(), level: "all" as const, enabled: true, browserKey: "public-browser-fixture-key-0123456789" }
   const host = new BrowserOtelSdk(config, () => {}, exporters)
   const guestExporters = { logs: new InMemoryLogRecordExporter(), traces: new InMemorySpanExporter() }
   const guest = new BrowserOtelSdk(config, () => {}, guestExporters)
