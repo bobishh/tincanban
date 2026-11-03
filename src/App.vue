@@ -175,7 +175,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
   <div v-if="boardAddress.publicFallback.value" v-show="boardAddress.publicReadable.value">
     <PublicBoardApp v-bind="boardAddress.publicFallback.value" @availability="boardAddress.setPublicAvailability" />
   </div>
-  <IdentityBoardLoadingNotice v-if="identityBoardNoticeVisible && identityBoardsBlocked" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
+  <IdentityBoardLoadingNotice v-if="identityBoardsBlocked" :error="browserSignInReturn.boardLoadError.value" @retry="retryIdentityBoards" />
   <TincanbanPageLayout v-if="!boardAddress.publicReadable.value" :class="{ 'startup-concealed': startupCoverVisible || identityBoardsBlocked, 'startup-revealed': !startupCoverVisible && !identityBoardsBlocked }" :inert="startupCoverVisible || identityBoardsBlocked || workspaceDialogBusy || boardAddress.publicReadPending.value || undefined" :busy="!uiReady && !startupError || boardAddress.publicReadPending.value">
     <template #header>
       <button class="brand brand-button" type="button" aria-label="Open workspaces" :disabled="!uiReady" @click="showWorkspaces = true">

@@ -12,18 +12,15 @@ defineEmits<{ retry: [] }>()
       </span>
       <h1>Your boards</h1>
       <div class="identity-board-loading-copy" :role="error ? 'alert' : 'status'" aria-live="polite">
-        <p>{{ error ? 'Signed in. Your boards are not ready yet.' : 'Signed in. Loading your boards…' }}</p>
+        <p>{{ error || 'Signed in. Loading your boards…' }}</p>
         <p>{{ error ? 'Check your connection or open Tincanban on another device with your boards, then retry.' : 'Finding your saved boards and loading their contents. This may take a while. Keep this page open.' }}</p>
-        <details v-if="error"><summary>Loading details</summary><p>{{ error }}</p></details>
       </div>
       <button class="button" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
     </div>
   </section>
-  <aside v-else class="identity-board-recovery" aria-live="polite">
-    <div class="identity-board-recovery-copy" :role="error ? 'alert' : 'status'">
-      <span>{{ error || 'Signed in. Loading the rest of your boards…' }}</span>
-      <button class="button button-small identity-board-retry" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
-    </div>
+  <aside v-else class="identity-board-recovery" :role="error ? 'alert' : 'status'" aria-live="polite">
+    <span>{{ error || 'Signed in. Loading the rest of your boards…' }}</span>
+    <button class="button button-small identity-board-retry" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
   </aside>
 </template>
 
@@ -34,10 +31,8 @@ defineEmits<{ retry: [] }>()
 .identity-board-loading h1 { margin: 0; font: 700 2rem/1.2 var(--site-font-sans); }
 .identity-board-loading-copy { min-height: 12em; font: 400 1rem/1.5 var(--site-font-sans); overflow-wrap: anywhere; }
 .identity-board-loading-copy p { margin: 0 0 var(--space-4); }
-.identity-board-loading-copy summary { cursor: pointer; }
 .identity-board-loading .button { justify-self: center; color: var(--ink); }
 .identity-board-retry { flex-shrink: 0; color: var(--ink); }
-.identity-board-recovery { min-height: 8em; margin-block: var(--space-4); }
-.identity-board-recovery-copy { display: grid; gap: var(--space-3); overflow-wrap: anywhere; }
-.identity-board-recovery-copy .button { justify-self: start; }
+.identity-board-recovery { min-height: 8em; margin-block: var(--space-4); display: grid; align-content: start; gap: var(--space-3); overflow-wrap: anywhere; }
+.identity-board-recovery .button { justify-self: start; }
 </style>

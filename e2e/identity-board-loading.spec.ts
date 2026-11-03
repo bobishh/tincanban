@@ -66,6 +66,7 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
       await expect(page.getByRole("button", { name: "Open Retained card", exact: true })).toBeVisible()
     } else {
       await expect(cover).toHaveAttribute("aria-busy", "false")
+      await expect(cover.getByText("Signed in. Your boards are waiting for an available peer or stored copy.", { exact: true })).toBeVisible()
     }
     const retry = page.getByRole("button", { name: "Retry loading boards", exact: true })
     await expect(retry).toBeVisible()

@@ -264,9 +264,11 @@ async function persistSamePersonWorkspaceAccess(profile: LocalProfile,
     if (!current || current.identity.publicKey !== profile.identity.publicKey) throw new Error("Local Identity catalog is unavailable")
     const existing = current.workspaces[workspace.id]
     if (existing) {
-      if (existing.forgotten || existing.documentId !== workspace.reference.documentId || existing.grantHash !== workspace.reference.grantHash) {
+      if (existing.forgotten || existing.workspaceId !== workspace.id || existing.documentId !== workspace.reference.documentId) {
         throw new Error("Workspace catalog conflicts with the approved device bootstrap")
       }
+      // Catalog grant references may differ across devices. Verified scope and
+      // history above own access admission; retain this device's existing reference.
       return current
     }
     registerWorkspaceInRoot(current, workspace.id, workspace.reference.documentId, workspace.reference.grantHash)

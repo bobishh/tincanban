@@ -476,8 +476,10 @@ test("Given an archived owner baseline, when a credential-free editor receives i
     try {
       await restored.goto(baseURL!)
       const identityRecoveryFile = JSON.parse(identityRecoveryBytes!.toString("utf8"))
-      await restored.evaluate(async ({ file, words }) =>
-        (await import("/src/sync/identityDeviceRecovery.ts")).restoreIdentityDeviceRecovery(file, words, "", true),
+      await restored.evaluate(async ({ file, words }) => {
+        await (await import("/src/state.ts")).useTincanban().whenReady()
+        await (await import("/src/sync/identityDeviceRecovery.ts")).restoreIdentityDeviceRecovery(file, words, "", true)
+      },
       { file: identityRecoveryFile, words: identityRecoveryWords })
       await restored.reload()
       const restoredPersonId = await restored.evaluate(async () =>

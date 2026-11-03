@@ -59,8 +59,35 @@ async function fixture() {
   const receive = () => receiveApprovedIdentityWorkspace({ profile, mesh,
     store: {} as workspaceSetModule.WorkspaceSetStore, connection, invite, bytes,
     getProfile: async () => profile, isCurrent: () => current })
-  return { receive, validate, publish, install, workspaceId, cancel: () => { current = false } }
+  return { receive, validate, publish, install, workspaceId, profile, cancel: () => { current = false } }
 }
+
+it("Given the same board is already catalogued with another grant reference, when verified device bootstrap arrives, then retain the local reference and finish authorized delivery", async () => {
+  const f = await fixture()
+  const reference = { workspaceId: f.workspaceId, documentId: f.workspaceId, grantHash: "already-verified-local-grant", forgotten: false }
+  await defaultStorage.updatePersonalRootForIdentity(f.profile.identity.personId, root => {
+    root!.workspaces[f.workspaceId] = reference
+    return root
+  })
+  await f.receive()
+  expect(f.validate).toHaveBeenCalledOnce()
+  expect(f.install).toHaveBeenCalledOnce()
+  expect(f.publish).toHaveBeenCalledOnce()
+  expect((await defaultStorage.loadPersonalRoot())!.workspaces[f.workspaceId]).toEqual(reference)
+})
+
+it.each([{ forgotten: true }, { documentId: "another-document" }, { workspaceId: "another-workspace" }])("Given an incompatible local catalog reference %j, when approved bootstrap arrives, then preserve that reference and reject delivery", async conflict => {
+  const f = await fixture()
+  const reference = { workspaceId: f.workspaceId, documentId: f.workspaceId, grantHash: "approved", forgotten: false, ...conflict }
+  await defaultStorage.updatePersonalRootForIdentity(f.profile.identity.personId, root => {
+    root!.workspaces[f.workspaceId] = reference
+    return root
+  })
+  await expect(f.receive()).rejects.toThrow("Workspace catalog conflicts")
+  expect(f.install).not.toHaveBeenCalled()
+  expect(f.publish).not.toHaveBeenCalled()
+  expect((await defaultStorage.loadPersonalRoot())!.workspaces[f.workspaceId]).toEqual(reference)
+})
 
 it("Given a verified same-person board, when its history becomes visible, then write authority is already installed", async () => {
   const f = await fixture()
