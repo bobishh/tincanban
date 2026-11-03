@@ -3,14 +3,14 @@ import { isCurrentIdentityProfile, type LocalProfile } from "../domain/identity"
 import type { useTincanban } from "../state"
 import type { IdentityWorkspaceRecovery } from "./loadIdentityBoards"
 
-type PendingBoardLoading = { version: 1; attempt: string; stage: "access" | "boards" }
+type PendingBoardLoading = { version: 1 | 2; attempt: string; stage: "access" | "catalog" | "boards" }
 const keyFor = (profile: LocalProfile) =>
   `tincanban.identity-board-loading.v1.${profile.identity.personId}.${profile.device.deviceId}`
 
 /** Delivery intent only. The approved profile and installed catalog credentials remain authoritative. */
 export async function beginIdentityBoardLoading(profile: LocalProfile): Promise<PendingBoardLoading> {
   assertCurrent(profile)
-  const pending: PendingBoardLoading = { version: 1, attempt: crypto.randomUUID(), stage: "access" }
+  const pending: PendingBoardLoading = { version: 2, attempt: crypto.randomUUID(), stage: "access" }
   await writeLocal(keyFor(profile), JSON.stringify(pending))
   return pending
 }
@@ -21,7 +21,7 @@ export async function hasPendingIdentityBoardLoading(profile: LocalProfile): Pro
 
 export async function confirmIdentityCatalogInstalled(profile: LocalProfile, pending: PendingBoardLoading): Promise<void> {
   await compareAndSwapLocal({ conditions: [{ key: keyFor(profile), value: JSON.stringify(pending) }],
-    writes: [{ key: keyFor(profile), value: JSON.stringify({ ...pending, stage: "boards" }) }] }, () => assertCurrent(profile))
+    writes: [{ key: keyFor(profile), value: JSON.stringify({ ...pending, version: 2, stage: "catalog" }) }] }, () => assertCurrent(profile))
 }
 
 export class IdentityCatalogApprovalRequired extends Error {
@@ -35,15 +35,22 @@ export class IdentityCatalogApprovalRequired extends Error {
 export async function resumeIdentityBoardLoading(app: ReturnType<typeof useTincanban>, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
   const profile = app.getCurrentProfile()
   if (!profile) return
-  const raw = await readLocal(keyFor(profile))
+  let raw = await readLocal(keyFor(profile))
   if (!raw) return
   const pending = JSON.parse(raw) as PendingBoardLoading
-  if (pending.version !== 1 || !pending.attempt || !["access", "boards"].includes(pending.stage)) {
+  if (![1, 2].includes(pending.version) || !pending.attempt || !["access", "catalog", "boards"].includes(pending.stage)) {
     throw new Error("Saved board loading request is invalid")
   }
   assertCurrent(profile)
   if (pending.stage === "access") throw new IdentityCatalogApprovalRequired()
-  await (await import("./loadIdentityBoards")).loadIdentityBoards(app, returnPath, recoverPeers)
+  await (await import("./loadIdentityBoards")).loadIdentityBoards(app, returnPath, recoverPeers, {
+    catalogLoaded: pending.version === 2 && pending.stage === "boards",
+    catalogReceived: async () => {
+      const next = JSON.stringify({ ...pending, version: 2, stage: "boards" })
+      if (await compareAndSwapLocal({ conditions: [{ key: keyFor(profile), value: raw }],
+        writes: [{ key: keyFor(profile), value: next }] }, () => assertCurrent(profile))) raw = next
+    },
+  })
   await compareAndSwapLocal({ conditions: [{ key: keyFor(profile), value: raw }],
     writes: [{ key: keyFor(profile), value: null }] }, () => assertCurrent(profile))
 }

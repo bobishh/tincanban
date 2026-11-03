@@ -2,9 +2,8 @@ import { listPendingWorkspaceDepartures } from "../storageWorkspaceDeparture"
 import { routedOwnerWorkspaceIds } from "./durableMeshDialRoutes"
 import { sha256Base64Url, type LocalProfile} from "../domain/identity"
 import * as Automerge from "@automerge/automerge/slim"
-import type { DeviceCertificate } from "../domain/model"
-import type { WorkspaceGrant } from "../domain/model"
-import { BrowserMeshHandshake, BrowserMeshLifecycle, MeshHandshakeCodec, type MeshHandshakePayload } from "@meta-uber/mesh-runtime"
+import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
+import { BrowserMeshHandshake, BrowserMeshOutgoingHandshake, BrowserMeshLifecycle, MeshHandshakeCodec, type MeshHandshakePayload } from "@meta-uber/mesh-runtime"
 import { defaultProofStore } from "../domain/proofs"
 import { startPersistentNode } from "./persistentNode"
 import { meshNetworkConnection as networkConnection } from "@meta-uber/mesh-transport"
@@ -16,11 +15,12 @@ import { createPeerAdvertisement,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import type { SyncConnection, SyncNode, DuplexStream } from "./transport"
-import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, hasLeftWorkspace, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions } from "./durableMeshBase"
+import { DurableMeshBase, MeshNodeRestart, assertRequiredMeshCapabilities, CAUSAL_WRITE_ADMISSION_CAPABILITY, hasLeftWorkspace, departures, deviceRevocations, revocations, ownershipTransfers, successionPolicy, successionVotes, successionClaims, ownerAuthorities, uniqueCertificates, type DurableMeshOptions, type MeshWorkspaceEnvelope } from "./durableMeshBase"
 import { DurableMeshAuthority } from "./durableMeshAuthority"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { meshRecordSigning } from "./meshRecordSigning"
 import { defaultStorage } from "../storage"
+import { WorkspaceConnectionConflict } from "./identityWorkspaceRouteRecovery"
 
 type InstallSessionArguments = [
   workspaceId: string,
@@ -56,6 +56,62 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
   private authenticatedSessions: RustMeshAuthenticatedSessions | undefined
 
   protected abstract publishWorkspace(workspaceId: string): Promise<void>
+
+  /** Probe saved alternatives without replacing credentials or admitting unverified routes. */
+  async probeWorkspaceConnection(envelope: MeshWorkspaceEnvelope, profile: LocalProfile, grant?: WorkspaceGrant): Promise<boolean> {
+    const workspaceId = envelope.workspaceId
+    // A probe needs retained authority/history. A clean device can first receive
+    // its signed copy through Rusty or same-person enrollment.
+    try { await this.options.workspaceStore.read(workspaceId) } catch { return false }
+    const credential = meshRustRuntime().state.planInvitationCredential({ workspaceId, envelope,
+      previousCredential: await this.store.getWorkspaceCredential(workspaceId),
+      previousAuthority: await this.store.getWorkspaceAuthority(workspaceId), localPersonId: profile.identity.personId,
+      localGrant: grant ?? null, updatedAt: new Date().toISOString() }) as WorkspaceMeshCredential
+    const peers = envelope.peers.filter(peer => peer.advertisement.payload.deviceId !== profile.device.deviceId)
+    if (!peers.length) return false
+    const node = await startPersistentNode(this.options.transport, undefined, `connection-probe-${crypto.randomUUID()}`)
+    try {
+      const own = await createPeerAdvertisement(profile, workspaceId, node.endpointId, {
+        certificates: uniqueCertificates(profile, await defaultProofStore.listCertificates()), grant,
+        ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates as DeviceCertificate[],
+        instanceId: `probe-${crypto.randomUUID()}` })
+      for (const peer of peers) {
+        let connection: SyncConnection | undefined
+        let expired = false
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const ensureActive = () => { if (expired) throw new Error("Connection probe expired") }
+        const handshake = new BrowserMeshOutgoingHandshake<WorkspaceMeshCredential, IncomingPeer>({
+          secret: value => value.transportSecret, workspaceId: value => value.workspaceId,
+          request: value => this.incomingResponse(value, "", own),
+          mergeAuthority: async value => { ensureActive(); return value },
+          verifyPeer: (value, bundle) => { ensureActive(); return this.verifyIncomingPeer(value, bundle) },
+          admit: (value, response, endpoint) => { ensureActive(); return this.admitSignedPeer(value, response, endpoint) },
+          putVerifiedBundle: async () => { ensureActive() }, trace: (event, detail, level) => this.trace(event, detail, level),
+        }, this.handshakeCodec)
+        try {
+          await Promise.race([(async () => {
+            connection = networkConnection(await node.dial(peer.advertisement.payload.endpoint), meshIngressBudgetProfile())
+            if (expired) { await connection.close(); throw new Error("Connection probe expired") }
+            await handshake.exchange(connection, credential, this.connectionId("outgoing"), peer.advertisement.payload.deviceId)
+          })(), new Promise<never>((_, reject) => {
+            timer = setTimeout(() => { expired = true; reject(new Error("Connection probe timed out")) }, 5_000)
+          })])
+          const current = await this.options.getProfile()
+          return current.identity.personId === profile.identity.personId && current.device.deviceId === profile.device.deviceId
+        } catch {
+          // One unavailable or rejected candidate cannot discard the other keys.
+        } finally {
+          if (timer) clearTimeout(timer)
+          expired = true
+          if (connection) {
+            this.removeAuthenticatedPeer(workspaceId, connection.remoteEndpointId ?? "")
+            await connection.close().catch(() => {})
+          }
+        }
+      }
+      return false
+    } finally { await node.close("Connection probe complete").catch(() => {}) }
+  }
 
   private subscribeWorkspaceUpdates() {
     const stopPreferences = subscribeIdentityDevicePreferences(() => { void this.publishAll() })
@@ -223,7 +279,13 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
   }
 
   protected async prepareOwnedWorkspaces(ids: string[], node: SyncNode, profile: LocalProfile): Promise<WorkspaceMeshCredential[]> {
-    await this.ensureOwnerWorkspaces(ids, node.endpointId, profile)
+    for (const workspaceId of ids) {
+      try { await this.ensureOwnerWorkspaces([workspaceId], node.endpointId, profile) }
+      catch (error) {
+        if (!(error instanceof WorkspaceConnectionConflict)) throw error
+        this.trace("workspace.connection.pending", { workspaceId }, "warn")
+      }
+    }
     return this.activeCredentialsForProfile(await this.store.listWorkspaceCredentials(), profile)
   }
 
@@ -357,12 +419,12 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
       routeSequence: payload.routeSequence, personId: payload.personId, endpoint: payload.endpoint }
   }
 
-  protected async incomingResponse(credential: WorkspaceMeshCredential, remotePersonId: string): Promise<MeshHandshakePayload> {
+  protected async incomingResponse(credential: WorkspaceMeshCredential, remotePersonId: string, own?: WorkspaceMemberBundle): Promise<MeshHandshakePayload> {
     const profile = await this.options.getProfile()
     const ownerWorkspaceIds = meshRustRuntime().state.shouldAdvertiseOwnerWorkspaceIds(
       credential.ownerPersonId, profile.identity.personId, remotePersonId)
       ? await routedOwnerWorkspaceIds(this.store, profile) : undefined
-    return this.validateHandshake({ workspaceId: credential.workspaceId, peer: await this.ownBundle(credential),
+    return this.validateHandshake({ workspaceId: credential.workspaceId, peer: own ?? await this.ownBundle(credential),
       ownershipTransfers: ownershipTransfers(credential), successionPolicy: successionPolicy(credential),
       successionVotes: successionVotes(credential), successionClaims: successionClaims(credential),
       revocations: revocations(credential), deviceRevocations: deviceRevocations(credential), departures: departures(credential),

@@ -65,6 +65,7 @@ async function verifyGuestDeviceAdvertisement(raw: unknown, workspaceIds: string
 }
 
 export abstract class DurableMeshCredentials extends DurableMeshBase {
+  abstract probeWorkspaceConnection(envelope: MeshWorkspaceEnvelope, profile: LocalProfile, grant?: WorkspaceGrant): Promise<boolean>
   private readonly ownerWorkspaceOffers = new Map<string, Promise<void>>()
   protected abstract mergeDepartures(credential: WorkspaceMeshCredential, records: WorkspaceDeparture[], disconnect?: boolean): Promise<void>
   protected abstract mergeDeviceRevocations(credential: WorkspaceMeshCredential, records: WorkspaceDeviceRevocation[]): Promise<void>

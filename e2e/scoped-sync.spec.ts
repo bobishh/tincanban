@@ -156,6 +156,47 @@ test("Given an editor with unreachable peers, when leaving and removing the loca
   }
 })
 
+test("Given a retained shared board and alternative connection keys, when probing the saved routes, then reject the wrong key and authenticate the working key without changing local data", async ({ page: owner, browser }) => {
+  test.setTimeout(90_000)
+  const context = await browser.newContext()
+  const editor = await context.newPage()
+  try {
+    await owner.goto("/")
+    await createJobSearchWorkspace(owner, "Connection alternatives")
+    await owner.getByRole("button", { name: "Sync", exact: true }).click()
+    const hosting = owner.getByRole("dialog", { name: "Device sync" })
+    await hosting.getByRole("button", { name: "Add someone", exact: true }).click()
+    await hosting.getByRole("button", { name: "Generate link", exact: true }).click()
+    await editor.goto(await hosting.getByLabel("Pairing link").inputValue())
+    const joining = editor.getByRole("dialog", { name: "Device sync" })
+    await joining.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await hosting.getByLabel("Participant role").selectOption("editor")
+    await hosting.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(joining.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    const result = await editor.evaluate(async () => {
+      const app = (await import("/src/state.ts")).useTincanban()
+      const { peerStore } = await import("/src/sync/peerStore.ts")
+      const { captureWorkspaceRouteEnvelopes } = await import("/src/sync/identityWorkspaceRouteRecovery.ts")
+      const { DurableMesh } = await import("/src/sync/durableMesh.ts")
+      const { irohTransport } = await import("/src/sync/irohTransport.ts")
+      const profile = app.getCurrentProfile()!, id = app.activeWorkspace.id
+      const before = JSON.stringify(await peerStore.getWorkspaceCredential(id))
+      const history = await app.readWorkspaceBytes(id)
+      const envelope = (await captureWorkspaceRouteEnvelopes(peerStore, [id], profile))[0]!
+      const mesh = new DurableMesh({ transport: irohTransport, getProfile: async () => profile,
+        workspaceStore: { read: app.readWorkspaceBytes } as never, workspace: {} as never })
+      const grant = await mesh.enrollmentGrant(id, profile)
+      try {
+        const wrong = await mesh.probeWorkspaceConnection({ ...envelope, transportSecret: "unreachable-old-key" }, profile, grant)
+        const working = await mesh.probeWorkspaceConnection(envelope, profile, grant)
+        return { wrong, working, credentialPreserved: before === JSON.stringify(await peerStore.getWorkspaceCredential(id)),
+          historyPreserved: String(history) === String(await app.readWorkspaceBytes(id)) }
+      } finally { await mesh.dispose() }
+    })
+    expect(result).toEqual({ wrong: false, working: true, credentialPreserved: true, historyPreserved: true })
+  } finally { await context.close() }
+})
+
 test("Given an owner board with conflicting saved connection keys, when the owner creates a new connection, then preserve local cards and admit a participant with the new key", async ({ page, browser }) => {
   test.setTimeout(90_000)
   const participantContext = await browser.newContext()

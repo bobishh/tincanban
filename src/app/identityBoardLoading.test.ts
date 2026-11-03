@@ -27,7 +27,24 @@ it("Given installed catalog access and an interrupted pull, when reloaded and re
   profile = await bootstrapIdentity()
   expect(await hasPendingIdentityBoardLoading(profile)).toBe(true)
   await resumeIdentityBoardLoading(app as never, "/boards/original")
-  expect(f.loadBoards).toHaveBeenLastCalledWith(app, "/boards/original", undefined)
+  expect(f.loadBoards).toHaveBeenLastCalledWith(app, "/boards/original", undefined,
+    expect.objectContaining({ catalogLoaded: false }))
+  expect(await hasPendingIdentityBoardLoading(profile)).toBe(false)
+})
+
+it("Given the catalog arrived before board recovery failed, when reloading and retrying, then reuse the received catalog instead of requiring another network pull", async () => {
+  let profile = await bootstrapIdentity("Approved app")
+  await confirmIdentityCatalogInstalled(profile, await beginIdentityBoardLoading(profile))
+  const app = { getCurrentProfile: () => profile }
+  f.loadBoards.mockImplementationOnce(async (_app, _path, _recover, delivery) => {
+    await delivery.catalogReceived()
+    throw new Error("Missing board copy")
+  }).mockResolvedValueOnce(undefined)
+  await expect(resumeIdentityBoardLoading(app as never)).rejects.toThrow("Missing board copy")
+  clearInMemoryProfileForReloadTest()
+  profile = await bootstrapIdentity()
+  await resumeIdentityBoardLoading(app as never)
+  expect(f.loadBoards).toHaveBeenLastCalledWith(app, "/", undefined, expect.objectContaining({ catalogLoaded: true }))
   expect(await hasPendingIdentityBoardLoading(profile)).toBe(false)
 })
 

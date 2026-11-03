@@ -19,7 +19,7 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
     await page.route("**/src/app/loadIdentityBoards.ts", async route => {
       const response = await route.fetch()
       const source = await response.text()
-      const marker = "const initialSelection = app.captureWorkspaceSelection();"
+      const marker = "let initialSelection = app.captureWorkspaceSelection();"
       expect(source).toContain(marker)
       const gate = `await new Promise((resolve, reject) => {
         window.__finishBoardLoading = (fail) => fail
@@ -38,6 +38,10 @@ for (const width of [320, 1280]) for (const available of [false, true]) {
     }
     await page.reload()
     const cover = page.getByRole("region", { name: "Loading your boards", exact: true })
+    if (available) {
+      await expect(page.locator('.notice-overlay').filter({ hasText: /loading.*boards/i })).toHaveCount(0)
+      await page.getByRole("button", { name: "Open workspaces", exact: true }).click()
+    }
     const pendingStatus = available ? page.getByRole("status").filter({ hasText: "Loading the rest of your boards" }) : cover.getByRole("status")
     await expect(pendingStatus).toBeVisible()
     if (available) {

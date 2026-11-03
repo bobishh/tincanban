@@ -203,6 +203,7 @@ function readDirectoryPreferences(value: unknown): { pinned: string[]; recent: s
         <div class="board-directory-filters" role="group" aria-label="Board filters">
           <button v-for="filter in ['all', 'mine', 'shared'] as const" :key="filter" type="button" :aria-pressed="scope === filter" @click="scope = filter">{{ filter === 'all' ? 'All boards' : filter === 'mine' ? 'Mine' : 'Shared' }}</button>
         </div>
+      <slot name="recovery" />
       <div class="workspace-list">
         <section v-for="group in directoryGroups" :key="group.key" :aria-label="group.label ? `${group.label} boards` : 'Matching boards'">
         <h3 v-if="group.label">{{ group.label }}</h3>

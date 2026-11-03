@@ -259,7 +259,7 @@ it("Given a workspace revocation and a newer compatible scope ledger, when resto
   expect(receiveInvitation).toHaveBeenCalledTimes(2)
 })
 
-it("Given signed snapshots with incompatible genesis, when recovery tries to combine them, then keep both authority variants pending", async () => {
+it.each(["same-secret", "another-secret"])("Given signed snapshots with incompatible genesis and a second key %s, when recovery tries to combine them, then keep both authority variants pending", async secondKey => {
   const owner = await bootstrapIdentity("Owner")
   resetIdentityStorageForTest()
   const stranger = await bootstrapIdentity("Different genesis")
@@ -270,7 +270,7 @@ it("Given signed snapshots with incompatible genesis, when recovery tries to com
       certificates: [profile.certificate] }, controlEpoch: 1,
   }, profile.device.deviceId)
   const envelope = async (profile: typeof owner) => ({ version: 1 as const, workspaceId, ownerPersonId: profile.identity.personId,
-    ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], transportSecret: "same-secret",
+    ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], transportSecret: profile === owner ? "same-secret" : secondKey,
     epoch: 1, peers: [], revocations: [], scopeAuthoritySnapshot: { genesis: await genesis(profile), grants: [],
       grantIssuers: [], revocations: [], controlTransfers: [] } })
 
@@ -280,9 +280,11 @@ it("Given signed snapshots with incompatible genesis, when recovery tries to com
 
   const envelopes = ((await decodedRoutes(component)) as { envelopes: Array<unknown> }).envelopes
   expect(envelopes).toHaveLength(2)
-  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(), receiveInvitation: async () => {} } as never
+  const probeWorkspaceConnection = vi.fn(async () => true)
+  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(), receiveInvitation: async () => {}, probeWorkspaceConnection } as never
   await expect(restoreIdentityWorkspaceRoutes({ mesh, envelopes: envelopes as never[], workspaceIds: [workspaceId], profile: owner,
     readCredential: async () => null })).rejects.toThrow(/multiple saved workspace authorities/i)
+  expect(probeWorkspaceConnection).not.toHaveBeenCalled()
 })
 
 it("Given an expired but signed route lease, when compacting recovery state, then retain it as a bootstrap contact for SDK handshake revalidation", async () => {
@@ -324,6 +326,29 @@ it("Given an existing workspace credential with another transport secret, when r
 
   expect(validateInvitation).not.toHaveBeenCalled()
   expect(receiveInvitation).not.toHaveBeenCalled()
+})
+
+it.each([false, true])("Given two verified connection keys and a reachable second route %s, when restoring a board, then try both keys and install only a verified live connection", async reachable => {
+  const profile = await bootstrapIdentity("Owner")
+  const workspaceId = "multiple-live-routes"
+  const first = { version: 1 as const, workspaceId, ownerPersonId: profile.identity.personId,
+    ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate],
+    transportSecret: "first-key", epoch: 1, peers: [] }
+  const second = { ...first, transportSecret: "second-key" }
+  const probeWorkspaceConnection = vi.fn(async (envelope: typeof first) => reachable && envelope.transportSecret === second.transportSecret)
+  const receiveInvitation = vi.fn(async () => {})
+  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(),
+    probeWorkspaceConnection, receiveInvitation } as never
+  const loading = restoreIdentityWorkspaceRoutes({ mesh, envelopes: [first, second], workspaceIds: [workspaceId], profile,
+    readCredential: async () => null })
+  if (reachable) {
+    await loading
+    expect(receiveInvitation).toHaveBeenCalledWith([second], [workspaceId], profile, [], { mode: "identity-recovery" })
+  } else {
+    await expect(loading).rejects.toThrow(/different keys/)
+    expect(receiveInvitation).not.toHaveBeenCalled()
+  }
+  expect(probeWorkspaceConnection.mock.calls.map(([envelope]) => envelope.transportSecret)).toEqual(["first-key", "second-key"])
 })
 
 it("Given captured signed member routes, when a clean peer restores through DurableMesh, then admit active Ray and reject revoked or foreign routes", async () => {

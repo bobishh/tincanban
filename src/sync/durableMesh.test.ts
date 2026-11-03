@@ -15,6 +15,7 @@ import { defaultStorage } from "../storage"
 import { isEnvelope, isGrantRevoked } from "./durableMeshBase"
 import { mergeSuccessionState, persistScopeAuthoritySnapshot } from "./durableMeshOwnershipScope"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
+import { WorkspaceConnectionConflict } from "./identityWorkspaceRouteRecovery"
 import type { SyncConnection, SyncNode } from "./transport"
 import type { WorkspaceMeshCredential, WorkspacePeerRecord } from "./peerStore"
 import type { LocalProfile } from "../domain/identity"
@@ -51,6 +52,7 @@ type TestSession = Omit<Partial<SessionEntry>, "connection" | "session"> & {
   session?: Partial<LiveWorkspaceSync>
 }
 type MeshTestHooks = {
+  prepareOwnedWorkspaces: (ids: string[], node: SyncNode, profile: LocalProfile) => Promise<WorkspaceMeshCredential[]>
   installInvitationWorkspace: (workspaceId: string, envelope: object, profile: LocalProfile, grant?: unknown) => Promise<void>
   node?: unknown
   acceptor?: unknown
@@ -1707,6 +1709,21 @@ describe("DurableMesh peer catalog gossip", () => {
 })
 
 describe("durable runtime cleanup", () => {
+  it("Given one unavailable saved connection and another owned board, when the mesh starts automatically, then keep preparing the other board without resetting either connection", async () => {
+    const profile = await bootstrapIdentity("Owner")
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
+      workspaceStore: {} as never, getProfile: async () => profile,
+      store: { listWorkspaceCredentials: async () => [] } as never })
+    const prepare = vi.spyOn(mesh, "ensureOwnerWorkspaces").mockImplementation(async ids => {
+      if (ids.includes("offline-board")) throw new WorkspaceConnectionConflict("offline-board")
+    })
+    const internal = meshHooks(mesh)
+    internal.activeCredentialsForProfile = vi.fn(async () => [])
+    try {
+      await expect(internal.prepareOwnedWorkspaces(["offline-board", "working-board"], { endpointId: "local" } as SyncNode, profile)).resolves.toEqual([])
+      expect(prepare).toHaveBeenCalledWith(["working-board"], "local", profile)
+    } finally { await mesh.dispose() }
+  })
   it("reports a failed diagnostic notification without an unhandled rejection", async () => {
     const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never,
       workspaceStore: {} as never, getProfile: async () => null as never })

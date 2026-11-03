@@ -64,6 +64,14 @@ An untouched
 `Untitled` starter does not replace a restored board as the selected board.
 Edited starters remain available and keep their current selection.
 
+Retained boards open before network recovery. Once the catalog has arrived, a
+resumed request with every catalogued board retained finishes locally. Missing
+copies and their retry control appear in **Workspaces**, without covering an
+available board. When saved connections contain different transport keys, the
+app probes verified peer routes before selecting a connection; failed probes do
+not replace local credentials or board history. A fresh device still needs a
+verified board copy before this handshake can check its workspace authority.
+
 Private Identity recovery state also retains signed workspace contacts and the
 workspace transport credential. A restored device checks that evidence against
 workspace authority before reconnecting to participants. A saved address is a

@@ -22,8 +22,9 @@ export class IdentityBoardLoadPending extends Error {
 }
 
 /** Load boards for an already approved Identity; failed delivery remains independently retryable. */
-export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery): Promise<void> {
-  const initialSelection = app.captureWorkspaceSelection()
+export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeers?: IdentityWorkspaceRecovery,
+  delivery: { catalogLoaded?: boolean; catalogReceived?(): Promise<void> } = {}): Promise<void> {
+  let initialSelection = app.captureWorkspaceSelection()
   const profile = app.getCurrentProfile()
   if (!profile) throw new Error("Signed-in profile is unavailable")
   const guard = () => {
@@ -31,7 +32,20 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
       throw new Error("Identity changed while loading boards")
     }
   }
-  await stage("catalog", async () => {
+  await refreshAvailableWorkspaces()
+  await restoreBoardSelection(app, returnPath, false, initialSelection, guard, true)
+  initialSelection = app.captureWorkspaceSelection()
+  if (delivery.catalogLoaded) {
+    const root = await defaultStorage.loadPersonalRoot()
+    if (root?.identity.personId === profile.identity.personId) {
+      const ids = Object.values(root.workspaces).filter(reference => !reference.forgotten).map(reference => reference.workspaceId)
+      if (ids.length && (await missingWorkspaceIds(app, ids, guard)).length === 0) {
+        await restoreBoardSelection(app, returnPath, false, initialSelection, guard)
+        return
+      }
+    }
+  }
+  if (!delivery.catalogLoaded) await stage("catalog", async () => {
     for (const config of await getIdentityReplicaConfigurations(profile.identity.personId)) {
       guard()
       if (!await createIdentityReplica(config, profile, guard, { includeRecoveryEvidence: false }).pull()) {
@@ -41,6 +55,7 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
     await app.refreshIdentity()
     guard()
     await connectAdoptedIdentityBoards(app, guard)
+    await delivery.catalogReceived?.()
   })
   await stage("boards", async () => {
     const root = await defaultStorage.loadPersonalRoot()
@@ -63,32 +78,32 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
       }
     }
     guard()
-    let waitingForPeers = false
+    let missing: string[] = []
     if (recoverPeers) {
-      const missing = async () => {
-        const absent: string[] = []
-        for (const id of ids) {
-          guard()
-          try { await app.withWorkspaceDoc(id, () => undefined) } catch { absent.push(id) }
-        }
-        return absent
-      }
       await recoverPeers([...ids])
       guard()
-      waitingForPeers = (await missing()).length > 0
+      missing = await missingWorkspaceIds(app, [...ids], guard)
     }
     await refreshAvailableWorkspaces()
     await restoreBoardSelection(app, returnPath, ids.size === 0, initialSelection, guard)
-    if (waitingForPeers) {
-      throw new IdentityBoardLoadPending("Your boards are waiting for an available peer or stored copy. Retry loading boards.", storageFailure)
+    if (missing.length) {
+      throw new IdentityBoardLoadPending(`${missing.length} ${missing.length === 1 ? "board is" : "boards are"} not saved on this device; waiting for an available peer or stored copy.`, storageFailure)
     }
   })
 }
 
+async function missingWorkspaceIds(app: App, ids: string[], guard: () => void): Promise<string[]> {
+  const absent: string[] = []
+  for (const id of ids) {
+    guard()
+    try { await app.withWorkspaceDoc(id, () => undefined) } catch { absent.push(id) }
+  }
+  return absent
+}
+
 async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog: boolean,
-  initialSelection: ReturnType<App["captureWorkspaceSelection"]>, guard: () => void): Promise<void> {
+  initialSelection: ReturnType<App["captureWorkspaceSelection"]>, guard: () => void, localOnly = false): Promise<void> {
   const available = app.availableWorkspaces.value
-  const route = parseBoardRouteUrl(returnPath)
   const loaded = await readLoadedWorkspaceRoutes(app, available, guard)
   if (!initialSelection.isCurrent()) {
     // A newly created board may not be in the directory snapshot read above.
@@ -98,10 +113,9 @@ async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog:
     return
   }
   const saved = loaded.filter(workspace => !workspace.emptyDefault)
+  if (localOnly && !saved.length) return
   const eligible = saved.length ? saved : loaded
-  const activeAvailable = eligible.some(workspace => workspace.workspaceId === app.activeWorkspace.id)
-  const requested = route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
-  const selected = requested ?? (activeAvailable ? app.activeWorkspace.id : eligible[0]?.workspaceId)
+  const selected = preferredWorkspaceId(eligible, returnPath, app.activeWorkspace.id)
   if (selected) {
     if (selected !== app.activeWorkspace.id) await app.switchWorkspace(selected)
   }
@@ -109,6 +123,12 @@ async function restoreBoardSelection(app: App, returnPath: string, emptyCatalog:
   else throw new Error("Your boards are known, but their contents could not be loaded. Retry loading boards.")
   guard()
   recordSelectedBoard(!selected || eligible.find(workspace => workspace.workspaceId === selected)?.emptyDefault)
+}
+
+function preferredWorkspaceId(eligible: EligibleBoardRoute[], returnPath: string, activeId: string): string | undefined {
+  const route = parseBoardRouteUrl(returnPath)
+  const requested = route ? resolveEligibleBoardRoute(route, eligible)?.workspaceId : undefined
+  return requested ?? (eligible.some(workspace => workspace.workspaceId === activeId) ? activeId : eligible[0]?.workspaceId)
 }
 
 function recordSelectedBoard(emptyDefault: boolean | undefined): void {

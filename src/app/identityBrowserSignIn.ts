@@ -97,7 +97,7 @@ export function createIdentityBrowserSignInReturn(options: {
         if (restoreRoute) restoreReturnPath(returnPath)
         recordIdentityBrowserSignIn("restore", "completed")
       } catch (cause) {
-        boardLoadError.value = `Signed in. Your boards have not finished loading. ${cause instanceof Error ? cause.message : ""}`.trim()
+        boardLoadError.value = `Signed in. ${cause instanceof Error ? cause.message : "Board recovery paused."}`
       } finally {
         contextReady.value = true
         boardLoading.value = false

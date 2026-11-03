@@ -259,7 +259,8 @@ export async function exportIdentityWorkspaceRouteRecovery(personId: string, wor
 
 /** Admit one pending envelope through DurableMesh; pending state remains portable for retry and later devices. */
 type WorkspaceRouteRestore = {
-  mesh: Pick<DurableMesh, "enrollmentGrant" | "validateInvitation" | "receiveInvitation">
+  mesh: Pick<DurableMesh, "enrollmentGrant" | "validateInvitation" | "receiveInvitation"> &
+    Partial<Pick<DurableMesh, "probeWorkspaceConnection">>
   envelopes: MeshWorkspaceEnvelope[]
   profile: LocalProfile
   readCredential: (workspaceId: string) => Promise<WorkspaceMeshCredential | null>
@@ -298,6 +299,12 @@ function groupRecoveryRoutes(admitted: Awaited<ReturnType<typeof validateRecover
   return groups
 }
 
+async function receiveRecoveryRoute(input: WorkspaceRouteRestore, workspaceId: string,
+  item: Awaited<ReturnType<typeof validateRecoveryEnvelope>>): Promise<void> {
+  await input.mesh.receiveInvitation([item.envelope], [workspaceId], input.profile, item.grant ? [item.grant] : [],
+    { mode: "identity-recovery" })
+}
+
 async function restoreWorkspaceRoutes(input: WorkspaceRouteRestore, workspaceId: string,
   candidates: MeshWorkspaceEnvelope[]): Promise<void> {
   if (!candidates.length) return
@@ -309,14 +316,22 @@ async function restoreWorkspaceRoutes(input: WorkspaceRouteRestore, workspaceId:
     catch { /* Invalid authority variants remain pending, but cannot block a valid one. */ }
   }
   if (!existing && new Set(admitted.map(item => item.envelope.transportSecret)).size > 1) {
+    const authorities = new Set(admitted.map(({ envelope }) => canonicalizeJson([
+      envelope.ownerPersonId, envelope.ownerPublicKey, envelope.scopeAuthoritySnapshot ?? null,
+    ])))
+    if (authorities.size > 1) throw new Error("Multiple saved workspace authorities remain pending explicit resolution")
+    for (const item of admitted) {
+      if (!await input.mesh.probeWorkspaceConnection?.(item.envelope, input.profile, item.grant)) continue
+      await receiveRecoveryRoute(input, workspaceId, item)
+      return
+    }
     throw new WorkspaceConnectionConflict(workspaceId)
   }
   const groups = groupRecoveryRoutes(admitted)
   if (groups.size === 0) throw new Error("No saved workspace route has verifiable active authority")
   if (groups.size !== 1) throw new Error("Multiple saved workspace authorities remain pending explicit resolution")
   for (const item of groups.values().next().value ?? []) {
-    await input.mesh.receiveInvitation([item.envelope], [workspaceId], input.profile, item.grant ? [item.grant] : [],
-      { mode: "identity-recovery" })
+    await receiveRecoveryRoute(input, workspaceId, item)
   }
 }
 

@@ -41,6 +41,25 @@ function app() {
     },
     switchWorkspace: vi.fn(), createWorkspaceAsync: vi.fn(), getActiveDoc: () => null }
 }
+it("Given a previously received catalog and all board copies retained locally, when resuming sign-in, then open the local board without network recovery", async () => {
+  const state = app(), recover = vi.fn(async () => {})
+  await loadIdentityBoards(state as never, "/", recover, { catalogLoaded: true })
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  expect(f.identityPull).not.toHaveBeenCalled()
+  expect(f.workspacePull).not.toHaveBeenCalled()
+  expect(recover).not.toHaveBeenCalled()
+})
+
+it("Given a retained board and a stalled catalog request, when resuming sign-in, then select the local board before that request completes", async () => {
+  const state = app()
+  let release!: () => void
+  f.identityPull.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const loading = loadIdentityBoards(state as never)
+  await vi.waitFor(() => expect(f.identityPull).toHaveBeenCalled())
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  release()
+  await loading
+})
 it("Given creation is pending during sign-in loading, when its selection intent changes before the board becomes active, then do not create or select a background default", async () => {
   const state = app()
   state.availableWorkspaces.value = []
@@ -78,18 +97,18 @@ it("Given an owned catalog on Rusty and only the guest default active, when sign
   expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
   expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
 })
-it("Given catalog lookup fails, when sign-in loads boards, then expose failure without creating another Untitled", async () => {
+it("Given catalog lookup fails, when sign-in loads boards, then keep the retained board available without creating another Untitled", async () => {
   const state = app()
   f.identityPull.mockRejectedValueOnce(new Error("Rusty is unreachable"))
   await expect(loadIdentityBoards(state as never)).rejects.toThrow("Rusty is unreachable")
   expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
-  expect(state.switchWorkspace).not.toHaveBeenCalled()
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
 })
 
 it("Given a slow catalog pull, when the user opens a new board during loading, then the completed pull preserves that newer selection", async () => {
   const state = app()
   state.availableWorkspaces.value = [{ id: "job-search" }]
-  f.identityPull.mockImplementationOnce(async () => { state.activeWorkspace.id = "user-selected"; return true })
+  f.identityPull.mockImplementationOnce(async () => { state.switchWorkspace.mockClear(); state.activeWorkspace.id = "user-selected"; return true })
   await loadIdentityBoards(state as never, "/boards/board-job-search")
   expect(state.switchWorkspace).not.toHaveBeenCalled()
 })

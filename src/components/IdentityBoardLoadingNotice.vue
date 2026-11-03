@@ -19,8 +19,8 @@ defineEmits<{ retry: [] }>()
       <button class="button" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
     </div>
   </section>
-  <aside v-else class="notice-overlay" aria-live="polite">
-    <div class="notice" :role="error ? 'alert' : 'status'">
+  <aside v-else class="identity-board-recovery" aria-live="polite">
+    <div class="identity-board-recovery-copy" :role="error ? 'alert' : 'status'">
       <span>{{ error || 'Signed in. Loading the rest of your boards…' }}</span>
       <button class="button button-small identity-board-retry" type="button" :disabled="!error" @click="$emit('retry')">Retry loading boards</button>
     </div>
@@ -37,4 +37,7 @@ defineEmits<{ retry: [] }>()
 .identity-board-loading-copy summary { cursor: pointer; }
 .identity-board-loading .button { justify-self: center; color: var(--ink); }
 .identity-board-retry { flex-shrink: 0; color: var(--ink); }
+.identity-board-recovery { min-height: 8em; margin-block: var(--space-4); }
+.identity-board-recovery-copy { display: grid; gap: var(--space-3); overflow-wrap: anywhere; }
+.identity-board-recovery-copy .button { justify-self: start; }
 </style>
