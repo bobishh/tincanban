@@ -180,7 +180,19 @@ export class BrowserOtelSdk {
     }
     const batchOptions = { scheduledDelayMillis: 2000, exportTimeoutMillis: 5000, maxExportBatchSize: 50, maxQueueSize: 512 }
     this.loggerProvider = new LoggerProvider({ resource, processors: [new BatchLogRecordProcessor({ exporter: trackedLogs, ...batchOptions })] })
-    this.tracerProvider = new WebTracerProvider({ resource, spanProcessors: [new BatchSpanProcessor(trackedTraces, batchOptions)] })
+    const spanProcessor = new BatchSpanProcessor(trackedTraces, batchOptions)
+    this.tracerProvider = new WebTracerProvider({ resource, spanProcessors: [{
+      onStart: (span, parent) => spanProcessor.onStart(span, parent),
+      onEnd: span => {
+        if (config.level === "errors" && span.status.code !== SpanStatusCode.ERROR) {
+          this.outstanding = Math.max(0, this.outstanding - 1)
+          this.exportState.queued = Math.max(0, this.exportState.queued - 1)
+          this.onState()
+        } else spanProcessor.onEnd(span)
+      },
+      forceFlush: () => spanProcessor.forceFlush(),
+      shutdown: () => spanProcessor.shutdown(),
+    }] })
     this.logger = this.loggerProvider.getLogger("tincanban.browser")
     this.tracer = this.tracerProvider.getTracer("tincanban.browser", buildVersion)
   }

@@ -14,10 +14,30 @@ afterEach(async () => {
 })
 
 function config() {
-  return { ...telemetryConfig(), enabled: true, endpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs", tracesEndpoint: "https://collector.invalid/v1/traces", project: "tincanban", browserKey: "public-browser-fixture-key-0123456789" }
+  return { ...telemetryConfig(), level: "all" as const, enabled: true, endpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs", tracesEndpoint: "https://collector.invalid/v1/traces", project: "tincanban", browserKey: "public-browser-fixture-key-0123456789" }
 }
 
 describe("browser OTel SDK", () => {
+  it("Given errors-only diagnostics, when successful operations and failed requests finish, then export only failures and release the queue budget", async () => {
+    const logs = new InMemoryLogRecordExporter()
+    const traces = new InMemorySpanExporter()
+    const sdk = new BrowserOtelSdk({ ...config(), level: "errors" }, () => {}, { logs, traces })
+    try {
+      sdk.operation({ name: "workspace.save", attributes: {}, startedAt: 1, endedAt: 2 })
+      sdk.beginHttp("HTTP_OK", {}).end(undefined, 200)
+      await sdk.forceFlush()
+      expect(traces.getFinishedSpans()).toHaveLength(0)
+      expect(logs.getFinishedLogRecords()).toHaveLength(0)
+      expect(sdk.exportState).toMatchObject({ queued: 0, sending: 0, dropped: 0, lastSentAt: null })
+      sdk.operation({ name: "workspace.save", attributes: {}, startedAt: 3, endedAt: 4, exception: new Error("save failed") })
+      sdk.beginHttp("HTTP_UNAVAILABLE", {}).end(undefined, 503)
+      await sdk.forceFlush()
+      expect(traces.getFinishedSpans().map(span => span.name)).toEqual(["workspace.save", "HTTP_UNAVAILABLE"])
+      expect(logs.getFinishedLogRecords().map(log => log.eventName)).toEqual(["workspace.save.failed"])
+      expect(sdk.exportState).toMatchObject({ queued: 0, sending: 0, dropped: 0 })
+    } finally { await sdk.shutdown() }
+  })
+
   it("Given a prepared board connection, when diagnostics export, then correlate local device and credential fingerprints without transport secrets", async () => {
     const logs = new InMemoryLogRecordExporter()
     const sdk = new BrowserOtelSdk(config(), () => {}, { logs, traces: new InMemorySpanExporter() })

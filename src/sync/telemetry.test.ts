@@ -7,6 +7,7 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) })
   vi.stubEnv("VITE_SYNC_TELEMETRY_URL", "https://collector.invalid/events")
   vi.stubEnv("VITE_SYNC_TELEMETRY_PROJECT", "tincanban")
+  vi.stubEnv("VITE_SYNC_TELEMETRY_LEVEL", "all")
   vi.stubEnv("VITE_SYNC_TELEMETRY_BROWSER_KEY", "public-browser-fixture-key-0123456789")
   vi.stubEnv("VITE_OTEL_EXPORTER_OTLP_ENDPOINT", "")
 })

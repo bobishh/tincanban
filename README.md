@@ -117,6 +117,17 @@ cards and signed authority, then creates a fresh connection key. Existing
 participants and Rusty need new invitations. The installed key survives reload;
 conflicting recovery evidence is never selected arbitrarily.
 
+## Diagnostics
+
+Browser diagnostics use the configured TinSink endpoint. The default `errors`
+level retains error/fatal messages, failure events and failed operation/HTTP spans;
+successful operation spans are discarded before export. Set
+`VITE_SYNC_TELEMETRY_LEVEL=all` only for an explicit debugging session, then restore
+`errors` and rebuild. `VITE_STARTUP_DIAGNOSTICS` normally stays `0`. Deployment
+configuration does not override a device's saved diagnostics opt-out.
+Cloudflare Workers Logs are disabled for the static frontend; TinSink diagnostics
+remain independent of that setting.
+
 ## Public boards
 
 Connect Rusty to a board in **Sync**, then enable **Public board** in

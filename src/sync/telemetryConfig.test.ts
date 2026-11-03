@@ -79,3 +79,10 @@ it("Given distinct analytics and OTLP routes, when configuration loads, then ana
   const { telemetryConfig } = await import("./telemetryConfig")
   expect(telemetryConfig()).toMatchObject({ analyticsEndpoint: "https://collector.invalid/events", logsEndpoint: "https://collector.invalid/v1/logs" })
 })
+
+
+it("Given no explicit diagnostic level, when deployment settings load, then collect errors only", async () => {
+  vi.stubEnv("VITE_SYNC_TELEMETRY_LEVEL", "")
+  const { telemetryConfig } = await import("./telemetryConfig")
+  expect(telemetryConfig().level).toBe("errors")
+})
