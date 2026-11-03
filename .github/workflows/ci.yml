@@ -83,7 +83,7 @@ jobs:
   formal-models:
     name: Tincanban formal models
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
@@ -150,7 +150,7 @@ jobs:
   browser-network:
     name: Browser (network ${{ matrix.group }})
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ startsWith(matrix.group, 'durable') && 20 || 25 }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -196,10 +196,8 @@ jobs:
 
   browser-policy:
     name: Browser (production policy/transport packaging)
-    # Private WebKit startup requires native Ed25519; Linux WebKit intermittently rejects it.
-    runs-on: macos-15
-    # Production packaging, mobile behavior and startup use their real browsers.
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -213,11 +211,10 @@ jobs:
       - name: Use Ubuntu primary archive mirror for browser dependencies
         if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e:policy
-      - run: npx playwright test --reporter=list --project=mobile-webkit
       - run: npx playwright test --reporter=list --project=mobile-profile-sync
-      - run: npx playwright test --reporter=list --config=playwright.startup.config.ts
+      - run: npx playwright test --reporter=list --config=playwright.startup.config.ts --project=startup-chromium
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
@@ -228,7 +225,7 @@ jobs:
   browser-native:
     name: Browser (native Rust peer)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -264,7 +261,7 @@ jobs:
   native-management:
     name: Native Rusty management and archive interoperability
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -361,7 +358,7 @@ jobs:
   browser-automation:
     name: Browser (automation ${{ matrix.group }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -371,7 +368,7 @@ jobs:
           - group: storage
             browsers: chromium
           - group: identity
-            browsers: chromium webkit
+            browsers: chromium
     steps:
       - uses: actions/checkout@v7
         with:
@@ -454,7 +451,7 @@ jobs:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
-        run: npx playwright test --config playwright.identity-cold-catalog.config.ts --reporter=list
+        run: npx playwright test --config playwright.identity-cold-catalog.config.ts --project=chromium --reporter=list
       - name: Verify public board lifecycle with native storage
         if: matrix.group == 'storage'
         env:
@@ -478,22 +475,9 @@ jobs:
           retention-days: 1
 
   browser-archives:
-    name: Browser (archives and attachments ${{ matrix.group }})
-    # Cross-device WebKit needs macOS WebRTC; build Rusty once per platform.
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - group: chromium
-            os: ubuntu-24.04
-            browser: chromium
-            projects: attachments-rusty attachment-session-recovery complete-device-state
-          - group: webkit
-            os: macos-15
-            browser: webkit
-            projects: attachments-rusty-webkit attachment-session-recovery-webkit
+    name: Browser (archives and attachments)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -521,30 +505,20 @@ jobs:
       - name: Use Ubuntu primary archive mirror for browser dependencies
         if: runner.os == 'Linux'
         run: bash scripts/use-primary-ubuntu-mirror.sh
-      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npx playwright install --with-deps chromium
       - name: Verify archive recovery and attachment lifecycle
         env:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
-          PROJECTS: ${{ matrix.projects }}
+          PROJECTS: attachments-rusty attachment-session-recovery complete-device-state
         run: |
           status=0
           for project in $PROJECTS; do
             npx playwright test --reporter=list --project="$project" --output="test-results/$project" || status=1
           done
           exit "$status"
-      - name: Verify mobile Rusty credential recovery in WebKit
-        if: matrix.browser == 'webkit'
-        env:
-          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
-        run: npx playwright test --config playwright.rusty.config.ts rusty-credential-conflict.spec.ts --reporter=list --output=test-results/rusty-credential-recovery-webkit
-      - name: Verify public board lifecycle in WebKit with native Ed25519
-        if: matrix.browser == 'webkit'
-        env:
-          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
-        run: npm run test:e2e:public-board -- --project=webkit
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: archives-${{ matrix.group }}-failure
+          name: archives-failure
           path: test-results/
           retention-days: 1

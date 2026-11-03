@@ -36,6 +36,10 @@ npx playwright test --project=core
 npx playwright test --project=quiet-peer-typing
 ```
 
+Required CI runs Chromium on Ubuntu, with a 15-minute limit per job. WebKit
+projects remain available for explicit browser-specific checks and do not block
+ordinary releases.
+
 Architecture checks run within `npm run quality`: dependency direction and cycle
 rules include executable allowed/forbidden import fixtures; pattern rules reject
 imports of SDK implementation files. `npm run quality:replica` separately checks
