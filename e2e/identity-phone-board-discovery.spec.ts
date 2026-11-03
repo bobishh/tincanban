@@ -288,7 +288,7 @@ async function identityRustyPinOrigins(portal: Page, personId: string): Promise<
   }, personId)
 }
 
-test("Given an enrolled phone and untouched local Untitled, when Bo signs in, then current owned board and photo load and edits sync", async ({
+test("Given an enrolled phone and untouched local Untitled, when the first profile sync is interrupted during sign-in, then current owned board and photo load and edits sync", async ({
   page: desktop, context, browser, baseURL,
 }) => {
   test.setTimeout(300_000)
@@ -315,6 +315,10 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
         elapsedMs: typeof fields?.elapsedMs === "number" ? fields.elapsedMs : undefined })
     })
   }
+  let interruptedPhoneProfileSyncs = 0
+  phone.on("console", message => {
+    if (message.text() === "Identity fixture: interrupt first profile sync") interruptedPhoneProfileSyncs += 1
+  })
   const phoneCatalogTraffic: Array<{ path: string; status: number }> = []
   phone.on("response", response => {
     const url = new URL(response.url())
@@ -402,6 +406,35 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
     await expect.poll(() => identityRustyPinOrigins(ownerPortal, personId), { timeout: 30_000 }).toContain(rusty.origin)
     await joinAsEditor(desktop, peer)
 
+    // Interrupt the first real peer sync only after catalog approval is waiting.
+    // The controller must close that session and reconnect to the trusted owner.
+    await phone.route(`${identityOrigin}/src/identityPortalController.ts*`, async route => {
+      const response = await route.fetch()
+      let source = await response.text()
+      const activation = source.indexOf("async function activateIdentityPeer(")
+      const sync = source.indexOf("const result = await syncProfileState({", activation)
+      expect(activation).toBeGreaterThanOrEqual(0)
+      expect(sync).toBeGreaterThan(activation)
+      source = source.slice(0, sync) + `
+        if (!window.__firstProfileSyncInterrupted) {
+          window.__firstProfileSyncInterrupted = true;
+          await new Promise(resolve => {
+            if (window.__catalogProfileWaiting) resolve();
+            else window.__interruptFirstProfileSync = resolve;
+          });
+          console.warn("Identity fixture: interrupt first profile sync");
+          throw new Error("Fixture: first peer profile sync interrupted");
+        }
+      ` + source.slice(sync)
+      const waiting = "await readiness.promise;"
+      expect(source).toContain(waiting)
+      source = source.replace(waiting, `
+        window.__catalogProfileWaiting = true;
+        window.__interruptFirstProfileSync?.();
+        ${waiting}`)
+      await route.fulfill({ response, body: source })
+    }, { times: 1 })
+
     // Hold catalog readiness without changing the authenticated transport. The
     // original reader must still receive the real peer profile after release.
     await phone.route(`${identityOrigin}/src/applicationCatalogReadiness.ts*`, async route => {
@@ -467,6 +500,7 @@ test("Given an enrolled phone and untouched local Untitled, when Bo signs in, th
           errorCode: attribute(log, "identity.signin.error_code"), traceId: log.traceId }))
       throw new Error(`Phone board discovery failed: ${JSON.stringify({ ...state, signInPhases })}`)
     }
+    expect(interruptedPhoneProfileSyncs).toBe(1)
     await expect(phone.getByLabel("Workspace role: owner")).toBeVisible()
     await expect(phone.getByRole("button", { name: /Open Bo private opportunity/u })).toBeVisible()
     await expect(phone.locator(".save-state-error")).toHaveCount(0)

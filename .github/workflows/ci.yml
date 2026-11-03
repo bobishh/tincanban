@@ -415,7 +415,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: bobishh/identity
-          ref: 1829ede0a2ebd27532e8e9ccfee8ec09638bc69c
+          ref: 215ee92f0120f2e95ff995fd6e87377ea1814864
           path: .ci/identity-provider
           ssh-key: ${{ secrets.IDENTITY_DEPLOY_KEY }}
           submodules: recursive
