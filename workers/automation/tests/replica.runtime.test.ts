@@ -2410,6 +2410,51 @@ async function createReceiptSigner() {
 }
 
 describe("AutomationReplica in workerd with the compiled Rust policy", () => {
+  it("Given a confirmed Worker snapshot, when the next scoped edit is signed, then upload document changes with the current proofs", async () => {
+    const data = await typedFixture();
+    const uploads: BlindObject[] = [];
+    data.packet.transport = { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }),
+      download: async () => { throw new Error("Unexpected download"); },
+      upload: async (access, object, requestId) => { uploads.push(object); return signedReceipt(access, object, requestId); } };
+    const replica = await AutomationReplica.activate(data.packet, data.automation);
+    await replica.createLead("first-signed-delta-event", { company: "First", role: "Engineer" }, {});
+    await replica.sync();
+    await replica.createLead("second-signed-delta-event", { company: "Second", role: "Engineer" }, {});
+    await replica.sync();
+    const plaintext = await decryptBlindObject(uploads.at(-1)!, data.packet.blind.scopeId, 1, data.key);
+    expect(JSON.parse(new TextDecoder().decode(plaintext))).toMatchObject({ version: 3, kind: "document-changes",
+      authorization: { records: expect.any(Array) }, changes: expect.any(Array) });
+  });
+
+  it("Given an owner-signed document delta, when the Worker pulls it, then admit the edit and advance the durable cursor", async () => {
+    const data = await typedFixture();
+    const active = await AutomationReplica.activate(data.packet, data.automation);
+    const before = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+    const added = await executeCommand(before, { kind: "createItem", parentId: data.packet.bindings.columns.lead,
+      title: "Delta owner update", body: "", values: {
+        [data.packet.bindings.fieldIds.company]: "Delta owner", [data.packet.bindings.fieldIds.role]: "Engineer",
+      } }, data.owner);
+    if (!added.ok) throw new Error(added.error.message);
+    try {
+      const snapshot = await ownerSnapshot(added.value.newDoc, data.owner, data.packet);
+      const changes = Automerge.getChanges(before, added.value.newDoc).map(encodeBlindBytes);
+      const remote = await encryptBlindObject(data.packet.blind.scopeId, 1, data.key,
+        new TextEncoder().encode(JSON.stringify({ version: 3, kind: "document-changes", workspaceId: data.packet.workspaceId,
+          authorization: snapshot.authorization, chat: snapshot.chat, heads: Automerge.getHeads(added.value.newDoc), changes })));
+      const transport: ReplicaTransport = {
+        inventory: async (_access, after) => after < 1
+          ? { objects: [{ objectId: await blindObjectId(remote), sequence: 1 }], cursor: 1, hasMore: false }
+          : { objects: [], cursor: after, hasMore: false },
+        download: async () => remote, upload: signedReceipt,
+      };
+      const saved: string[] = [];
+      const receiver = await AutomationReplica.restore(active.serialize(), data.automation, async value => { saved.push(value); }, transport);
+      await receiver.sync();
+      expect(receiver.candidates()).toContainEqual(expect.objectContaining({ company: "Delta owner", role: "Engineer" }));
+      expect(JSON.parse(saved.at(-1)!).blind.cursor).toBe(1);
+    } finally { Automerge.free(added.value.newDoc); }
+  });
+
   async function runWorkerReplicaHostVector(vector: ReplicaHostContractVector): Promise<ReplicaHostVectorObservation> {
     const { automation, packet, persisted } = await fixture();
     const originalPersist = packet.persist!;

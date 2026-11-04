@@ -8,6 +8,7 @@ export default defineConfig({
   ...bootstrap,
   testMatch: "identity-board-restore.spec.ts",
   grep: /cold enrolled Identity profile/u,
+  grepInvert: undefined,
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
     { name: "webkit", use: { browserName: "webkit" } },

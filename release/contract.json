@@ -5,13 +5,13 @@
     "frontend": {
       "identityDevice": 1,
       "privateReplicas": 5,
-      "workspaceSnapshot": 2,
+      "workspaceSnapshot": 3,
       "instanceManagementActions": 3,
       "workspaceDeparture": 1
     },
     "automation": {
       "automationState": 5,
-      "workspaceSnapshot": 2,
+      "workspaceSnapshot": 3,
       "instanceManagementActions": 3
     }
   },
@@ -37,6 +37,7 @@
     "scope-policy-enrollment-receipt@1",
     "automation-state@5",
     "automation-instance-actions@3",
-    "workspace-history-snapshot@2"
+    "workspace-history-snapshot@2",
+    "workspace-document-changes@3"
   ]
 }

@@ -572,3 +572,45 @@ it("Given local settings fail before replica construction, when the device retri
   expect(runtime.workspaceSync).toHaveBeenCalled()
   expect(controller!.deviceSyncIssues.value).toEqual({})
 })
+
+it("Given a replica pass is already running, when the local board changes, then another pass starts as soon as the current one finishes", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let release!: () => void
+  runtime.workspaceSync.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"))
+    const passes = runtime.workspaceSync.mock.calls.length
+    for (const listener of f.localChanges) listener()
+    release()
+    await vi.waitFor(() => expect(runtime.workspaceSync.mock.calls.length).toBeGreaterThan(passes))
+    expect(controller.busy.value).toBe(false)
+  } finally { release?.() }
+})
+
+it("Given a pass finishes still catching up, when no further edit arrives, then one immediate follow-up runs", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  runtime.workspaceSync.mockResolvedValueOnce(false)
+  f.start()
+  await vi.waitFor(() => expect(runtime.workspaceSync.mock.calls.length).toBeGreaterThan(1))
+})
+
+it("Given the document becomes visible, when replica sync is configured, then a pass starts without waiting for the poll", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  let hidden = true
+  const listeners = new Set<() => void>()
+  vi.stubGlobal("document", { hidden, visibilityState: "hidden",
+    addEventListener: (_type: string, listener: () => void) => { listeners.add(listener) },
+    removeEventListener: (_type: string, listener: () => void) => { listeners.delete(listener) } })
+  try {
+    f.start()
+    await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+    const passes = runtime.workspaceSync.mock.calls.length
+    hidden = false
+    for (const listener of listeners) listener()
+    await vi.waitFor(() => expect(runtime.workspaceSync.mock.calls.length).toBeGreaterThan(passes))
+  } finally { vi.unstubAllGlobals() }
+})

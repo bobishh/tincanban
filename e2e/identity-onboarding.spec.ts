@@ -2,7 +2,8 @@ import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
 test.use({ trace: "off", video: "off", screenshot: "off" })
-const identityOrigin = process.env.IDENTITY_E2E_ORIGIN ?? ""
+const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 
 function sanitizeUiDiagnostics(values: string[]): string[] {
   return values.map(value => value.replace(/https?:\/\/\S+/gu, "<url>")
@@ -18,7 +19,6 @@ async function clearIdentityInvitations(page: import("@playwright/test").Page): 
 }
 
 test("Given a registered workspace owner, when Add another device is clicked once, then the existing enrollment QR and link open directly", async ({ page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await ensureJobSearchWorkspace(page)
@@ -47,7 +47,6 @@ test("Given a registered workspace owner, when Add another device is clicked onc
 })
 
 test("Given an anonymous local board, when Add another device needs Identity registration and is closed, then retain local data without an invitation input", async ({ page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   const personId = await page.evaluate(async () => (await (await import("/src/domain/identity.ts")).bootstrapIdentity()).identity.personId)
@@ -63,7 +62,6 @@ test("Given an anonymous local board, when Add another device needs Identity reg
 })
 
 test("Given Identity registration is declined, when the device is offline, then its local board remains editable", async ({ page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to enable Identity account settings")
   await page.goto("/")
   await expect(page.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30000 })
   await page.getByRole("button", { name: "Settings", exact: true }).click()
@@ -90,7 +88,6 @@ test("Given Identity registration is declined, when the device is offline, then 
 })
 
 test("Given an unregistered local profile, when Add my device requests registration, then enroll same person, save recovery, and resume the device action", async ({ browser, page }) => {
-  test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal")
   test.setTimeout(90_000)
   const portalContext = await browser.newContext()
   const portal = await portalContext.newPage()

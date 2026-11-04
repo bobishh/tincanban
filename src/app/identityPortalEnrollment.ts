@@ -1,4 +1,4 @@
-import { createIdentityProfileRecovery } from "@meta-uber/mesh-identity"
+import { createIdentityAuthorityView, createIdentityProfileRecovery } from "@meta-uber/mesh-identity"
 import { createBrowserIdentityEnrollmentHost, serveIdentityProfileSync,
   syncProfileState, type BrowserIdentityEnrollmentHost, type PendingIdentityEnrollment } from "@meta-uber/mesh-runtime"
 import { defaultProofStore, certHashDefault } from "../domain/proofs"
@@ -7,6 +7,8 @@ import { defaultStorage } from "../storage"
 import { createIdentityEnrollmentProfileStore } from "../sync/identityEnrollmentProfile"
 import { writeLocal } from "../localDb"
 import { identityEnrollmentPrefix } from "./identityEnrollmentReceipt"
+import { mergeIdentityAuthorityView } from "../sync/identityAuthorityStore"
+import { rootIdentityProfileState } from "../domain/identityProfileRoot"
 
 export type IdentityEnrollmentRequest = PendingIdentityEnrollment["request"]["payload"]
 
@@ -64,15 +66,19 @@ async function approveIdentityDevice(options: {
     avatarData: root.photo?.avatarData ?? null,
     ...(root.profileState ? { profileState: root.profileState } : {}),
   }, "better", options.certificates)
+  let enrolledCertificates = options.certificates
   options.onStatus("Recovery package prepared. Sending the approved device response…")
   const approval = await options.pending.approve({ fullRecoveryConsent: true, recovery, ensureCurrent,
     persist: async (_identity, certificates) => {
       options.onStatus("New device acknowledged. Saving its trusted certificate…")
       await persistCertificates(certificates)
+      const authority = await mergeIdentityAuthorityView(await createIdentityAuthorityView(options.profile.identity,
+        { certificates, revocations: [] }, await rootIdentityProfileState(root)), ensureCurrent)
+      enrolledCertificates = authority.certificates
     } })
   ensureCurrent()
   options.onStatus("Saving signed Identity profile on the new device…")
-  await syncNewPeer(options.profile, options.certificates, approval.connection, approval.remoteRoute,
+  await syncNewPeer(options.profile, enrolledCertificates, approval.connection, approval.remoteRoute,
     options.pending.request.payload.deviceId)
   await writeLocal(`${identityEnrollmentPrefix}${options.profile.identity.personId}`, JSON.stringify({
     personId: options.profile.identity.personId,

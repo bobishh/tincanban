@@ -33,6 +33,7 @@ npm run quality
 npm test
 npx playwright install chromium
 npx playwright test --project=core
+sh scripts/check-sdk-core.sh
 npx playwright test --project=quiet-peer-typing
 ```
 
@@ -46,6 +47,13 @@ imports of SDK implementation files. `npm run quality:replica` separately checks
 the headless product and automation boundaries. These checks enforce structural
 contracts; domain ownership and client/server compatibility also require review
 and behavior tests. See [architecture guidance](AGENTS.md).
+
+The SDK core check generates fresh TLC graphs and includes every Rust library test,
+including the large signed-history regression. Native SDK/service interoperability
+runs in `npm run test:rusty-management`; build Rusty, `history_archive_verify` and
+`verify_service_login` first. Missing binaries fail setup. Identity browser scenarios
+run with `playwright.identity-bootstrap.config.ts` and an isolated Identity provider,
+rather than being silently skipped by the core browser suite.
 
 ## Components
 
@@ -92,6 +100,16 @@ Identity supplies its approved Rusty services during sign-in. The optional
 `VITE_PUBLIC_BOARD_ORIGIN` hint remains supported for older Identity profiles
 that have not approved their catalog service yet and for reading original public
 board addresses. It does not select or enable a board's publication server.
+
+Board delivery stores full encrypted snapshots and, between them, document changes
+with their signed write evidence. Browsers and automation use the same payload
+reader; neither Rusty nor a storage receipt grants editing authority. History
+baselines travel through owner checkpoints. Chat, access-policy and attachment
+changes still send a full snapshot. Missing change dependencies pause that object
+without advancing its cursor. Visible pages poll every two seconds; hidden pages
+use a fifteen-second fallback and sync when visibility changes. A browser open
+before the document-changes release needs a page reload. Rollback must retain
+workspace snapshot reader version 3.
 
 Identity delivery replaces redundant encrypted snapshots after eight retained
 copies, once every stored state has been verified and merged. The replacement

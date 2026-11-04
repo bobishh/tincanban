@@ -7,6 +7,8 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { createHash } from "node:crypto"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
+import { openSettingsFromSync } from "./support/settingsNavigation"
+import { decodeBlindBytes, decryptBlindObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 
 const operatorToken = "automation-e2e-provisioning-token-with-at-least-32-bytes"
 const integrationId = "e2e"
@@ -14,71 +16,7 @@ const forwardedMessages = new Map<string, string>()
 
 test("Given an owner-approved blind workspace, when Worker intake and forwarded mail run, then real clients see one scoped Lead and safe status moves", async ({ browser, baseURL }, testInfo) => {
   test.setTimeout(180_000)
-  const rustyDirectory = await mkdtemp(join(tmpdir(), "automation-rusty-e2e-"))
-  const workerDirectory = await mkdtemp(join(tmpdir(), "automation-worker-e2e-"))
-  let rusty: ChildProcess | undefined
-  let worker: ChildProcess | undefined
-  let context: BrowserContext | undefined
-  try {
-    const workerSetup = await startAutomationWorker(workerDirectory)
-    worker = workerSetup.process
-    const workerOrigin = workerSetup.origin
-    context = await browser.newContext()
-    let page = await context.newPage()
-    await page.goto(baseURL!)
-    await ensureJobSearchWorkspace(page)
-    const trustedOwner = await page.evaluate(async () => {
-      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const profile = await bootstrapIdentity()
-      return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
-    })
-    const rustySetup = await startRusty(rustyDirectory, baseURL!, trustedOwner)
-    rusty = rustySetup.process
-    const rustyOrigin = rustySetup.origin
-
-    // Exercise the real owner UI export: this contains Rusty's read/write access and content key.
-    await connectBlindRusty(page, rustyOrigin)
-    const workspace = await inspectWorkspace(page)
-    const configured = await fetch(`${workerOrigin}/__test/configure`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId,
-        columns: workspace.columns, fieldIds: workspace.fieldBindings, emailAddress: "intake@example.test" }),
-    })
-    expect(configured.status, await configured.clone().text()).toBe(200)
-    const workerIdentityResponse = await fetch(`${workerOrigin}/v1/integrations/${integrationId}/identity`, {
-      method: "POST", headers: { authorization: `Bearer ${operatorToken}` },
-    })
-    expect(workerIdentityResponse.status, await workerIdentityResponse.clone().text()).toBe(200)
-    const workerIdentity = await workerIdentityResponse.json() as Record<string, unknown>
-    const activation = await approveAutomationFromUi(page, workerIdentity)
-    expect(activation).toMatchObject({ version: 2, definition: { payload: { type: "job-intake", typeVersion: 2 } } })
-    const sharedAutomation = await page.evaluate(async () => {
-      const { useTincanban } = await import("/src/test/stateFixture.ts")
-      const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")
-      const doc = useTincanban().getActiveDoc()
-      const entity = doc?.entities["automation:e2e"]
-      if (entity?.kind !== "automation") throw new Error("Owner approval must persist its CRDT record")
-      return { state: automationLifecycle(entity).state, origin: entity.executor.origin, approval: entity.approval }
-    })
-    expect(sharedAutomation).toMatchObject({ state: "active", origin: workerOrigin })
-    const privateData = activation.blind as { readToken: string; writeToken: string; contentKey: string }
-    for (const secret of Object.values(privateData).filter(value => typeof value === "string" && value.length >= 43)) {
-      expect(sharedAutomation.approval).not.toContain(secret)
-    }
-    const expiry = (activation as { grant: { payload: { automation: { expiresAt: number } } } }).grant.payload.automation.expiresAt
-    const exactExpiryConfiguration = await fetch(`${workerOrigin}/__test/configure`, {
-      method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId,
-        columns: workspace.columns, fieldIds: workspace.fieldBindings, emailAddress: "intake@example.test", expiresAt: expiry }),
-    })
-    expect(exactExpiryConfiguration.status, await exactExpiryConfiguration.clone().text()).toBe(200)
-    const activated = await fetch(`${workerOrigin}/v1/integrations/${integrationId}/activation`, {
-      method: "PUT", headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
-      body: JSON.stringify(activation),
-    })
-    expect(activated.status, await activated.clone().text()).toBe(200)
-    expect(await activated.json()).toMatchObject({ status: "active", synced: true })
-
+  await withApprovedWorkspace(browser, baseURL!, async ({ page, context, workerOrigin, rustyDirectory, workspace, activation }) => {
     // Bad human check is the required failure path; it must not create an event.
     const rejected = await submitWebsite(workerOrigin, { company: "No event", role: "Rejected submission", contact: "no-event@example.test" }, "wrong-answer")
     expect(rejected.status).toBe(400)
@@ -207,6 +145,136 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
         expect(rawFile).not.toContain(secret)
       }
     }
+  })
+})
+
+test("Given an archived owner-approved workspace, when an owner delta reaches Worker intake, then both clients retain the edits and continue scoped writes", async ({ browser, baseURL }) => {
+  test.setTimeout(180_000)
+  await withApprovedWorkspace(browser, baseURL!, async ({ page, context, workerOrigin, activation }) => {
+    const settings = await openSettingsFromSync(page, "Workspace")
+    const maintenance = settings.getByRole("region", { name: "Workspace history", exact: true })
+    await maintenance.getByRole("button", { name: "Archive older history", exact: true }).click()
+    await expect(maintenance.getByRole("status").filter({ hasText: "Older history archived" }).or(maintenance.getByRole("alert")))
+      .toBeVisible({ timeout: 60_000 })
+    await expect(maintenance.getByRole("alert")).toHaveCount(0)
+    await settings.getByRole("button", { name: /^(Close|Dismiss)$/, exact: true }).click()
+    const access = activation.blind as { scopeId: string; keyEpoch: number; contentKey: string }
+    const sentObjects: BlindObject[] = []
+    page.on("request", request => {
+      if (request.method() === "PUT" && new URL(request.url()).pathname.startsWith(`/v2/scopes/${access.scopeId}/objects/`)) {
+        sentObjects.push(request.postDataJSON() as BlindObject)
+      }
+    })
+    await page.getByRole("button", { name: "Add lead to Lead", exact: true }).click()
+    const addOwnerItem = page.getByRole("dialog", { name: "Add item", exact: true })
+    await addOwnerItem.getByLabel("Company *").fill("Owner after archive")
+    await addOwnerItem.getByLabel("Role *").fill("Engineer")
+    await addOwnerItem.getByRole("button", { name: "Create item", exact: true }).click()
+    const ownerDetail = page.getByRole("dialog", { name: "Item overview", exact: true })
+    if (!await ownerDetail.isVisible()) await page.getByRole("button", { name: "Open Owner after archive — Engineer", exact: true }).click()
+    await ownerDetail.getByRole("button", { name: "Close detail", exact: true }).click()
+    await syncFromBlindRusty(page)
+    await page.getByRole("button", { name: "Open Owner after archive — Engineer", exact: true }).click()
+    await ownerDetail.getByRole("button", { name: "Edit", exact: true }).click()
+    const editOwnerItem = page.getByRole("dialog", { name: "Edit item", exact: true })
+    await editOwnerItem.getByLabel("Role *").fill("Delta Engineer")
+    await editOwnerItem.getByRole("button", { name: "Save changes", exact: true }).click()
+    await ownerDetail.getByRole("button", { name: "Close detail", exact: true }).click()
+    await syncFromBlindRusty(page)
+    const payloads = await Promise.all(sentObjects.map(async object => JSON.parse(new TextDecoder().decode(
+      await decryptBlindObject(object, access.scopeId, access.keyEpoch, decodeBlindBytes(access.contentKey)))) as { kind?: string; document?: string; history?: unknown }))
+    expect(payloads).toContainEqual(expect.objectContaining({ kind: "document-changes" }))
+
+    const rejected = await submitWebsite(workerOrigin, { company: "Rejected after archive", role: "Engineer" }, "wrong-answer")
+    expect(rejected.status).toBe(400)
+    await page.close()
+    const challenge = await getChallenge(workerOrigin)
+    const response = await fetch(`${workerOrigin}/v1/intake/${integrationId}`, {
+      method: "POST", headers: { "content-type": "application/json", "Idempotency-Key": "post-archive-delta-intake" },
+      body: JSON.stringify({ company: "Nacre Light Integration GmbH", role: "Principal Systems Engineer",
+        jobUrl: "https://jobs.example.test/nacre/systems", contact: "delta@example.test", message: "After archived owner edit",
+        humanCheckToken: challenge.token, humanCheckAnswer: challenge.answer }),
+    })
+    expect(response.status, await response.clone().text()).toBe(202)
+    const event = await response.json() as { eventId: string }
+    expect(await waitForAppliedEvent(workerOrigin, event.eventId)).toMatchObject({ status: "applied", result: { action: { kind: "created-lead" } } })
+    page = await context.newPage()
+    await page.goto(baseURL!)
+    await syncFromBlindRusty(page)
+    await expect(page.getByRole("button", { name: "Open Owner after archive — Delta Engineer", exact: true })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Open Nacre Light Integration GmbH — Principal Systems Engineer", exact: true })).toBeVisible()
+  })
+})
+
+type ApprovedWorkspace = { page: Page; context: BrowserContext; workerOrigin: string; rustyDirectory: string;
+  workspace: WorkspaceSeed; activation: Record<string, unknown> }
+
+async function withApprovedWorkspace(browser: import("@playwright/test").Browser, baseURL: string,
+  run: (fixture: ApprovedWorkspace) => Promise<void>) {
+  const rustyDirectory = await mkdtemp(join(tmpdir(), "automation-rusty-e2e-"))
+  const workerDirectory = await mkdtemp(join(tmpdir(), "automation-worker-e2e-"))
+  let rusty: ChildProcess | undefined, worker: ChildProcess | undefined, context: BrowserContext | undefined
+  try {
+    const workerSetup = await startAutomationWorker(workerDirectory, baseURL)
+    worker = workerSetup.process
+    const workerOrigin = workerSetup.origin
+    context = await browser.newContext()
+    let page = await context.newPage()
+    await page.goto(baseURL)
+    await ensureJobSearchWorkspace(page)
+    const trustedOwner = await page.evaluate(async () => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const profile = await bootstrapIdentity()
+      return { identity: profile.identity, allowedControllerDeviceIds: [profile.device.deviceId] }
+    })
+    const rustySetup = await startRusty(rustyDirectory, baseURL!, trustedOwner)
+    rusty = rustySetup.process
+    const rustyOrigin = rustySetup.origin
+
+    // Exercise the real owner UI export: this contains Rusty's read/write access and content key.
+    await connectBlindRusty(page, rustyOrigin)
+    const workspace = await inspectWorkspace(page)
+    const configured = await fetch(`${workerOrigin}/__test/configure`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId,
+        columns: workspace.columns, fieldIds: workspace.fieldBindings, emailAddress: "intake@example.test" }),
+    })
+    expect(configured.status, await configured.clone().text()).toBe(200)
+    const workerIdentityResponse = await fetch(`${workerOrigin}/v1/integrations/${integrationId}/identity`, {
+      method: "POST", headers: { authorization: `Bearer ${operatorToken}` },
+    })
+    expect(workerIdentityResponse.status, await workerIdentityResponse.clone().text()).toBe(200)
+    const workerIdentity = await workerIdentityResponse.json() as Record<string, unknown>
+    const activation = await approveAutomationFromUi(page, workerIdentity)
+    expect(activation).toMatchObject({ version: 2, definition: { payload: { type: "job-intake", typeVersion: 2 } } })
+    const sharedAutomation = await page.evaluate(async () => {
+      const { useTincanban } = await import("/src/test/stateFixture.ts")
+      const { automationLifecycle } = await import("/src/domain/automationLifecycle.ts")
+      const doc = useTincanban().getActiveDoc()
+      const entity = doc?.entities["automation:e2e"]
+      if (entity?.kind !== "automation") throw new Error("Owner approval must persist its CRDT record")
+      return { state: automationLifecycle(entity).state, origin: entity.executor.origin, approval: entity.approval }
+    })
+    expect(sharedAutomation).toMatchObject({ state: "active", origin: workerOrigin })
+    const privateData = activation.blind as { readToken: string; writeToken: string; contentKey: string }
+    for (const secret of Object.values(privateData).filter(value => typeof value === "string" && value.length >= 43)) {
+      expect(sharedAutomation.approval).not.toContain(secret)
+    }
+    const expiry = (activation as { grant: { payload: { automation: { expiresAt: number } } } }).grant.payload.automation.expiresAt
+    const exactExpiryConfiguration = await fetch(`${workerOrigin}/__test/configure`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: workspace.workspaceId, boardId: workspace.boardId,
+        columns: workspace.columns, fieldIds: workspace.fieldBindings, emailAddress: "intake@example.test", expiresAt: expiry }),
+    })
+    expect(exactExpiryConfiguration.status, await exactExpiryConfiguration.clone().text()).toBe(200)
+    const activated = await fetch(`${workerOrigin}/v1/integrations/${integrationId}/activation`, {
+      method: "PUT", headers: { authorization: `Bearer ${operatorToken}`, "content-type": "application/json" },
+      body: JSON.stringify(activation),
+    })
+    expect(activated.status, await activated.clone().text()).toBe(200)
+    expect(await activated.json()).toMatchObject({ status: "active", synced: true })
+
+    await run({ page, context, workerOrigin, rustyDirectory, workspace, activation })
   } finally {
     try { await context?.close() } finally {
       await stopProcess(worker)
@@ -215,7 +283,7 @@ test("Given an owner-approved blind workspace, when Worker intake and forwarded 
       await rm(rustyDirectory, { recursive: true, force: true })
     }
   }
-})
+}
 
 async function connectBlindRusty(page: Page, origin: string): Promise<void> {
   await approveRustyForFixture(page, origin)

@@ -1,9 +1,9 @@
 import { expect, test } from "./support/coverage"
 
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
-test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to an isolated Identity server")
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 
-test("Given an Identity with a photo, when signing in from the narrow menu and reloading, then keep the profile only in Settings", async ({ page, context }) => {
+test("Given an Identity with a photo, when signing in from the narrow menu and reloading, then keep the profile only in Settings", async ({ page, context, baseURL }) => {
   test.setTimeout(120_000)
   const portal = await context.newPage()
   await portal.goto(identityOrigin!)
@@ -40,15 +40,16 @@ test("Given an Identity with a photo, when signing in from the narrow menu and r
   await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
   await page.getByLabel("Allow this app to use the Identity shown above.").check()
   await page.getByRole("button", { name: "Approve app device", exact: true }).click()
+  await page.waitForURL(url => url.origin === new URL(baseURL!).origin)
   const approval = page.getByRole("dialog", { name: "Identity profile", exact: true })
-  await approval.getByLabel("I understand this changes the active Identity and may leave local boards inaccessible.").check()
-  await approval.getByRole("button", { name: "Continue with this Identity", exact: true }).click()
+  await expect(approval).toBeHidden({ timeout: 30_000 })
   await expect(page.getByRole("button", { name: /Open profile for/ })).toHaveCount(0)
   const openSettings = async () => {
     await page.getByRole("button", { name: "Menu", exact: true }).click()
     const menu = page.getByRole("dialog", { name: "Navigation menu" })
     await expect(menu.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0)
     await menu.getByRole("button", { name: "Settings", exact: true }).click()
+    await page.getByRole("dialog", { name: "Settings", exact: true }).getByRole("tab", { name: "Identity", exact: true }).click()
   }
   await openSettings()
   const profile = page.getByRole("region", { name: "Your profile", exact: true })

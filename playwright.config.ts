@@ -2,6 +2,8 @@ import { defineConfig } from "@playwright/test"
 
 const port = Number(process.env.TINCANBAN_E2E_PORT ?? 4244)
 
+const identitySpecs = ["**/identity-profile-signin.spec.ts", "**/identity-rusty-connection.spec.ts", "**/identity-browser-signin.spec.ts", "**/enrollment-identity-reconnect.spec.ts", "**/identity-phone-board-discovery.spec.ts", "**/identity-onboarding.spec.ts", "**/identity-board-restore.spec.ts"]
+
 const networkSpecs = [
   "**/owner-reconnect.spec.ts",
   "**/quiet-peer-typing.spec.ts",
@@ -40,7 +42,7 @@ export default defineConfig({
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   projects: [
-    { name: "core", testIgnore: [...networkSpecs, "**/identity-browser-signin-trace.spec.ts", "**/identity-phone-board-discovery.spec.ts", "**/reflux-automation-connection.spec.ts", "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/application-source-binding.spec.ts", "**/identity-rusty-owner-restore.spec.ts", "**/rusty-connection.spec.ts", "**/rusty-mobile.spec.ts", "**/rusty-credential-conflict.spec.ts", "**/public-board-keeper.spec.ts"] },
+    { name: "core", testIgnore: [...networkSpecs, ...identitySpecs, "**/identity-browser-signin-trace.spec.ts", "**/identity-phone-board-discovery.spec.ts", "**/reflux-automation-connection.spec.ts", "**/telemetry.spec.ts", "**/startup-diagnostics.spec.ts", "**/automation-production.spec.ts", "**/automation-worker.spec.ts", "**/application-source-binding.spec.ts", "**/identity-rusty-owner-restore.spec.ts", "**/rusty-connection.spec.ts", "**/rusty-mobile.spec.ts", "**/rusty-credential-conflict.spec.ts", "**/public-board-keeper.spec.ts"] },
     { name: "mobile-webkit", testMatch: ["**/shared-layout.spec.ts", "**/mobile-overlay-safe-area.spec.ts", "**/mobile-large-history.spec.ts", "**/card-discuss-layout.spec.ts", "**/modal-background-state.spec.ts", "**/mobile-chat-composer.spec.ts"], use: { browserName: "webkit" } },
     { name: "attachments-rusty-webkit", testMatch: "**/attachments-rusty.spec.ts", use: { browserName: "webkit" } },
     { name: "attachment-session-recovery-webkit", testMatch: "**/attachment-session-recovery.spec.ts", use: { browserName: "webkit" } },

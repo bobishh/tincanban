@@ -3,8 +3,8 @@ import { startIdentityRustyService } from "./support/rustyService"
 
 test.use({ trace: "off", video: "off", screenshot: "off", actionTimeout: 15_000 })
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 
-test.skip(!identityOrigin, "A local Identity portal is required")
 
 async function approve(page: Page) {
   await page.getByRole("heading", { name: "Authorize app device", exact: true }).waitFor()
@@ -63,7 +63,7 @@ async function enrollColdManager(source: Page, target: Page) {
 
 for (const coldProfile of [false, true]) {
 test(`Given remotely saved boards and the source device closed${coldProfile ? " with a cold enrolled Identity profile" : ""}, when ordinary Identity login runs on a clean app device, then original cards load after interrupted restore and survive reload`, async ({ browser, baseURL }) => {
-  test.skip(coldProfile && !process.env.IDENTITY_CATALOG_E2E_ORIGIN, "A configured catalog origin is required")
+  if (coldProfile && !process.env.IDENTITY_CATALOG_E2E_ORIGIN) throw new Error("Cold catalog acceptance requires IDENTITY_CATALOG_E2E_ORIGIN")
   test.setTimeout(180_000)
   const source = await browser.newContext()
   const coldTarget = coldProfile ? await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true }) : undefined

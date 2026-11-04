@@ -245,8 +245,6 @@ jobs:
       - name: Use Ubuntu primary archive mirror for Chromium dependencies
         run: bash scripts/use-primary-ubuntu-mirror.sh
       - run: npx playwright install --with-deps chromium
-      - name: Verify Rust protocol rules
-        run: cargo test --locked --manifest-path vendor/meta-mesh/crates/meta-mesh-core/Cargo.toml --lib
       - run: cargo build --locked --manifest-path vendor/meta-mesh/crates/meta-mesh-native/Cargo.toml --example browser_document_probe
       - run: npx playwright test --reporter=list --project=browser-native
       - run: cargo build --locked --manifest-path crates/tincanban-keeper/Cargo.toml
@@ -257,6 +255,25 @@ jobs:
           name: browser-native-failure
           path: test-results/
           retention-days: 1
+
+  sdk-core:
+    name: SDK core (all tests and fresh model conformance)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: vendor/meta-mesh -> target
+      - name: Run every SDK library obligation, including conformance and large signed history
+        run: sh scripts/check-sdk-core.sh
 
   native-management:
     name: Native Rusty management and archive interoperability
@@ -291,6 +308,7 @@ jobs:
         run: |
           cargo build --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml" --bin mesh-lighthouse
           cargo build --locked --manifest-path vendor/meta-mesh/Cargo.toml -p meta-mesh-core --example history_archive_verify
+          cargo build --locked --manifest-path vendor/meta-mesh/Cargo.toml -p meta-mesh-core --example verify_service_login
       - name: Verify public publication protocol and storage
         run: cargo test --locked --manifest-path "$RUNNER_TEMP/tincanban-rusty/Cargo.toml"
       - name: Fetch the exact previously deployed reader artifacts

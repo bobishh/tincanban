@@ -1,5 +1,6 @@
 import { expect, test } from "./support/coverage"
 import { createJobSearchWorkspace } from "./support/workspaces"
+import supported from "../release/readers.json" with { type: "json" }
 
 test("Given an older tab below the workspace snapshot reader floor, when a baseline write is attempted, then refuse signing and retain local history", async ({ page, baseURL }) => {
   await page.goto(baseURL ?? "http://127.0.0.1:4244")
@@ -10,14 +11,14 @@ test("Given an older tab below the workspace snapshot reader floor, when a basel
     return (await storage.ensureHistoryProgress(id)).baselineId
   }, workspaceId)
 
-  await page.evaluate(async () => {
+  await page.evaluate(async workspaceSnapshot => {
     const { applyReleaseObservation } = await import("/src/release/runtimeRelease.ts")
     applyReleaseObservation({
       kind: "tincanban-release-cohort", version: 1, cohortId: "a".repeat(64),
       components: { frontend: { sourceSha: "b".repeat(40), candidateId: "newer-release", artifactSha256: "b".repeat(64) } },
-      contract: { minimumWriterVersion: 2, readers: { frontend: { workspaceSnapshot: 3 } } },
+      contract: { minimumWriterVersion: 2, readers: { frontend: { workspaceSnapshot } } },
     }, "a".repeat(40))
-  })
+  }, supported.frontend.workspaceSnapshot + 1)
   await expect(page.locator(".release-upgrade")).toContainText("This tab is read-only")
   await expect(page.getByRole("button", { name: /Add lead to/ }).first()).toBeVisible()
   await page.getByRole("button", { name: /Add lead to/ }).first().click()

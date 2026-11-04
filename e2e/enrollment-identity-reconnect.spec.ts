@@ -6,9 +6,9 @@ import { addJobSearchLead, createJobSearchWorkspace, ensureJobSearchWorkspace } 
 // Pairing and Identity approvals contain credentials; keep them out of test artifacts.
 test.use({ trace: "off", video: "off", screenshot: "off", actionTimeout: 15_000 })
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 
 test("Given a disconnected phone and a browser without enrollment rights, when the phone signs in and reconnects, then catch up fresh cards in both directions without losing local boards", async ({ page: source, browser, baseURL }, testInfo) => {
-  test.skip(!identityOrigin, "A configured Identity origin is required")
   test.setTimeout(180_000)
   const identity = (await createRecoverableIdentity("better", "Reconnecting phone owner")).profile
   const initial = emptyIdentityProfileState(identity.identity.personId)

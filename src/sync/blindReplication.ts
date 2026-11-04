@@ -6,7 +6,7 @@ import { ReplicaEngine, emptyReplicaState, type ReplicaState } from "@meta-uber/
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import type { BlindCheckpointRequest as HistoryCheckpointRequest } from "./blindCheckpoint"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
-import type { AttachmentLocator } from "../product-replica"
+import type { AttachmentLocator, WorkspaceReplicaSnapshot } from "../product-replica"
 import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import { pushWithCheckpointRefresh, uploadWithCheckpointEvidence } from "./rustyCheckpointRecovery"
 
@@ -44,8 +44,7 @@ export type BlindReplicaStore = {
   operation?: <T>(name: string, operation: () => Promise<T>) => Promise<T>
 }
 type Transport = { inventory: typeof inventoryBlindObjects; download: typeof downloadBlindObject; upload: (access: BlindAccess, object: BlindObject, requestId: string, observedSequence?: number) => Promise<BlindReceipt>; checkpoint?: typeof submitBlindCheckpoint }
-type Snapshot = { version: 1 | 2; workspaceId: string; document: string; authorization: unknown; chat: unknown;
-  attachments?: AttachmentLocator[]; history?: unknown }
+type Snapshot = WorkspaceReplicaSnapshot
 const maximumPlaintextBytes = 16 * 1024 * 1024 - 16
 type ContentParts = { document: string; authority: string; chat: string; attachments?: string; history?: string; revision?: string }
 function changedParts(parts: ContentParts, previous?: ContentParts): string[] {
@@ -74,6 +73,8 @@ export class BlindReplica {
   private capturedParts?: ContentParts
   private capturedHash?: string
   private freshUpload = false
+  private pendingSnapshot?: Snapshot
+  private uploadedSnapshot?: Snapshot
   private operations: Promise<unknown> = Promise.resolve()
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
     private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject,
@@ -211,11 +212,19 @@ export class BlindReplica {
   }
 
   private async captureSnapshot() {
-    const { snapshot, plaintext, hash } = await this.snapshot()
-    this.capturedParts = hash === this.capturedHash && this.capturedParts ? this.capturedParts : await this.parts(snapshot)
-    this.capturedHash = hash
+    const captured = await this.snapshot(undefined, undefined, { includeStoredHistory: false })
+    const parts = captured.hash === this.capturedHash && this.capturedParts
+      ? this.capturedParts
+      : await this.parts(captured.snapshot)
+    const { encodeWorkspaceDocumentChanges } = await import("../product-replica")
+    const delta = this.uploadedSnapshot && captured.hash !== this.capturedHash
+      ? encodeWorkspaceDocumentChanges(this.uploadedSnapshot, captured.snapshot) : undefined
+    const plaintext = delta && delta.length <= maximumPlaintextBytes ? delta : captured.plaintext
+    this.pendingSnapshot = captured.snapshot
+    this.capturedParts = parts
+    this.capturedHash = captured.hash
     this.freshUpload = true
-    return { hash, bytes: plaintext.length, payload: plaintext, identity: this.contentIdentity(this.capturedParts) }
+    return { hash: captured.hash, bytes: plaintext.length, payload: plaintext, identity: this.contentIdentity(this.capturedParts) }
   }
 
   private contentIdentity(parts: ContentParts): string {
@@ -229,11 +238,8 @@ export class BlindReplica {
     const plaintext = await this.phase("decrypt", () => openWithReplicaContentKeys(this.config, object.keyEpoch,
       key => decryptBlindObject(object, this.config.scopeId, object.keyEpoch, decodeBlindBytes(key))))
     if (plaintext.length > maximumPlaintextBytes) throw new Error("Encrypted snapshot exceeds client limit")
-    const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) as Snapshot
-    if (snapshot.workspaceId !== this.config.workspaceId || typeof snapshot.document !== "string" || !snapshot.authorization ||
-        snapshot.version !== (snapshot.history === undefined ? 1 : 2)) {
-      throw new Error("Encrypted snapshot does not match this workspace")
-    }
+    const { readWorkspaceReplicaSnapshot } = await import("../product-replica")
+    const snapshot = await readWorkspaceReplicaSnapshot(plaintext, this.config.workspaceId, () => this.store.read(this.config.workspaceId))
     const attachments = await readAttachmentLocators(snapshot.attachments)
     if (attachments.length && !this.store.mergeAttachments) throw new Error("Attachment index reader upgrade required")
     const document = decodeBlindBytes(snapshot.document)
@@ -262,6 +268,7 @@ export class BlindReplica {
 
   private observeProgress(detail: Record<string, unknown>) {
     const changedFields = this.capturedParts ? changedParts(this.capturedParts, this.previousParts ?? this.receivedParts) : []
+    if (detail.phase === "uploaded" || detail.phase === "already-stored") this.uploadedSnapshot = this.pendingSnapshot ?? this.uploadedSnapshot
     if (detail.phase === "uploaded") {
       this.previousParts = this.capturedParts ?? this.previousParts
       this.observe("mesh.rusty.upload.completed", { phase: "changed", changedFields, bytes: detail.bytes })
@@ -274,11 +281,11 @@ export class BlindReplica {
     this.freshUpload = false
   }
 
-  private async snapshot(document?: Uint8Array, historyOverride?: unknown) {
+  private async snapshot(document?: Uint8Array, historyOverride?: unknown, options?: { includeStoredHistory?: boolean }) {
     const bytes = document ?? await this.store.read(this.config.workspaceId)
     const snapshot: Snapshot = { version: 1, workspaceId: this.config.workspaceId, document: encodeBlindBytes(bytes),
       authorization: await this.store.authorization(bytes, this.config.workspaceId), chat: await this.store.readChat(this.config.workspaceId) }
-    const history = historyOverride ?? await this.store.readHistoryBaseline?.(this.config.workspaceId)
+    const history = historyOverride ?? (options?.includeStoredHistory === false ? undefined : await this.store.readHistoryBaseline?.(this.config.workspaceId))
     if (history !== undefined) {
       snapshot.history = (await import("../product-replica")).parseWireHistoryBaseline(history)
       snapshot.version = 2
@@ -344,6 +351,7 @@ export class BlindReplica {
   }
 
   private async parts(snapshot: Snapshot): Promise<ContentParts> {
+    if (typeof snapshot.document !== "string") throw new Error("Encrypted snapshot does not match this workspace")
     const [document, authority, chat, revision, history] = await Promise.all([
       blindHash(new TextEncoder().encode(snapshot.document)),
       blindHash(new TextEncoder().encode(canonicalizeJson(snapshot.authorization))),

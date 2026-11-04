@@ -5,7 +5,7 @@ import automergeWasm from "@automerge/automerge/automerge.wasm";
 import wasmModule from "../../../vendor/meta-mesh/packages/mesh-transport/wasm/policy/meta_mesh_policy_bg.wasm";
 import { initSync, WasmStateCore, type WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm";
 import { computeWorkspaceAdmission, computeWorkspaceDocumentAdmission, type IncomingAuthorizationBundle, type WorkspaceAdmissionResult, type WorkspaceWriteAuthorityEvidence,
-  admitHistoricalAutomationAuthority, mergeAttachmentLocators, parseAttachmentLocators,
+  admitHistoricalAutomationAuthority, mergeAttachmentLocators, parseAttachmentLocators, readWorkspaceReplicaSnapshot, encodeWorkspaceDocumentChanges,
   parseWireHistoryBaseline, type AttachmentLocator, type HistoryBaselineFetchPort, type WireHistoryBaseline,
   type WorkspaceChangeAuthorization } from "../../../src/product-replica";
 import { mergeAuthorizationRecords } from "../../../src/product-replica/workspaceAuthorizationRecords";
@@ -268,6 +268,8 @@ export class AutomationReplica {
   private attachments: AttachmentLocator[];
   private progress: ReplicaState<BlindObject>;
   private contentRevision: string;
+  private capturedSnapshot?: WireSnapshot;
+  private uploadedSnapshot?: WireSnapshot;
   private engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>;
   private applied: Record<string, AppliedEvent>;
   private definition?: SignedEnvelope<AutomationDefinition>;
@@ -1212,6 +1214,9 @@ export class AutomationReplica {
         upload: (object, requestId, observedSequence) => this.transport.upload({ ...this.blind }, object, requestId, observedSequence),
       },
       admit: object => this.receiveSnapshot(object, managementGuard),
+      observe: (_event, detail) => {
+        if (detail.phase === "uploaded" || detail.phase === "already-stored") this.uploadedSnapshot = this.capturedSnapshot ?? this.uploadedSnapshot;
+      },
       verifyReceipt: async (receipt, object, requestId) => {
         await verifyBlindReceipt(receipt, this.blind, object, requestId);
         // A retry may deliver an older snapshot before publishing newer local commands.
@@ -1235,8 +1240,7 @@ export class AutomationReplica {
   }
 
   private wireSnapshot(): WireSnapshot {
-    return { version: this.history ? 2 : 1, workspaceId: this.workspaceId, document: this.rawDocument,
-      ...(this.history ? { history: this.history.wire } : {}),
+    return { version: 1, workspaceId: this.workspaceId, document: this.rawDocument,
       authorization: { version: 1, records: normalizeWireAuthorizations(this.authorizations), authority: this.authority }, chat: this.chat,
       ...(this.attachments.length ? { attachments: this.attachments } : {}) };
   }
@@ -1244,9 +1248,13 @@ export class AutomationReplica {
   private async captureSnapshot(management = false) {
     const admission = management ? this.admission() : await this.revalidate();
     if (admission.quarantinedHashes.length || admission.pendingHashes.length) throw new Error("Unadmitted workspace changes prevent replica upload");
-    const plaintext = new TextEncoder().encode(canonicalizeJson(this.wireSnapshot()));
+    const snapshot = this.wireSnapshot();
+    const plaintext = new TextEncoder().encode(canonicalizeJson(snapshot));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Automation snapshot exceeds the Rusty object limit");
-    return { hash: await blindHash(plaintext), bytes: plaintext.length, payload: plaintext };
+    const delta = this.uploadedSnapshot ? encodeWorkspaceDocumentChanges(this.uploadedSnapshot, snapshot) : undefined;
+    const payload = delta && delta.length <= maximumSnapshotBytes ? delta : plaintext;
+    this.capturedSnapshot = snapshot;
+    return { hash: await blindHash(plaintext), bytes: payload.length, payload };
   }
 
   private replaceEvidence(rawDocument: string, authorizations: WorkspaceChangeAuthorization[],
@@ -1267,10 +1275,8 @@ export class AutomationReplica {
     const plaintext = await openWithReplicaContentKeys(this.blind, object.keyEpoch,
       key => decryptBlindObject(object, this.blind.scopeId, object.keyEpoch, decodeBlindBytes(key)));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Encrypted automation snapshot exceeds the size limit");
-    const snapshot = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext)) as WireSnapshot;
-    if ((snapshot.version !== 1 && snapshot.version !== 2) || (snapshot.version === 2) !== Boolean(snapshot.history) ||
-      snapshot.workspaceId !== this.workspaceId || typeof snapshot.document !== "string" || !snapshot.authorization) throw new Error("Encrypted snapshot is invalid");
-    if (this.history && !snapshot.history) throw new Error("A compact Worker requires the verified history descriptor; original source retained");
+    const snapshot = await readWorkspaceReplicaSnapshot<IncomingAuthorizationBundle, OpaqueChatBatch | null>(plaintext,
+      this.workspaceId, async () => decodeBlindBytes(this.rawDocument));
     const revision = this.contentRevision;
     const ensureCurrent = () => {
       if (revision !== this.contentRevision) throw new Error("Worker content changed during history receive");

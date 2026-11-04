@@ -7,5 +7,6 @@ export { parseRustyScopePolicyReceipt, verifyRustyWriterPolicyReceipt, type Rust
 export { parseAttachmentLocators, mergeAttachmentLocators } from "./attachmentIndex"
 export type { AttachmentLocator } from "./attachmentLocator"
 export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "./config"
+export { encodeWorkspaceDocumentChanges, readWorkspaceReplicaSnapshot, type WorkspaceReplicaSnapshot } from "./workspaceReplicaPayload"
 export { parseWireHistoryBaseline, verifyReceivedWireHistoryBaseline, verifyReceivedHistoryBaseline,
   reverifyStoredHistoryBaseline, type HistoryBaselineFetchPort, type StoredHistoryBaselineEvidence, type WireHistoryBaseline } from "./historyBaselineReceiver"

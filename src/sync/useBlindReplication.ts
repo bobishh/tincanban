@@ -2,7 +2,7 @@ import { createDeviceAccessRefresh } from "./privateDeviceAccessRefresh"
 import { createReplicationState,clearReplicationSessionState,reportDeviceSyncProblem } from "./privateReplicationState"
 import { createPrivateReplicationActions } from "./privateReplicationActions"
 import { createPrivateReplicaUserActions } from "./privateReplicaUserActions"
-import { startPrivateReplicationTriggers } from "./privateReplicationTriggers"
+import { createReplicationFollowUp, startPrivateReplicationTriggers } from "./privateReplicationTriggers"
 import { onBeforeUnmount,watch } from "vue"
 import type { useTincanban } from "../state"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
@@ -18,9 +18,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   const state = createReplicationState()
   const { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
-  let identity = "", session = 0
+  let identity = "", session = 0, disposed = false
   let running: Promise<void> | undefined, automaticCompaction: Promise<void> | undefined
-  let disposed = false
+  const followUp = createReplicationFollowUp()
   const automaticHistoryCompactions = new Set<string>()
   const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, deviceSyncIssues, attachmentCoverage }, {
     identity: () => identity, epoch: () => session, disposed: () => disposed,
@@ -55,14 +55,12 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     await deviceAccess.refresh(owner, epoch)
   }
   function syncNow(duringAction = false): Promise<void> {
-    if (running) return running
+    if (running) { followUp.request(); return running }
     if (busy.value || (actionBusy.value && !duringAction) || !identity || disposed || (configs.value.length + identityConfigs.value.length === 0 && !deviceSyncIssues.value.session)) return Promise.resolve()
-    busy.value = true
-    error.value = ""
+    busy.value = true; error.value = ""
     deviceSyncIssues.value = Object.fromEntries(Object.entries(deviceSyncIssues.value).filter(([key]) => key !== "session"))
     notice.value = ""
-    const owner = identity
-    const epoch = session
+    const owner = identity, epoch = session
     const isCurrent = () => !disposed && identity === owner && session === epoch
     const run = async () => {
       const { syncReplicaConnections, recordReplicaHealth } = await import("./replicaHealthRun")
@@ -97,7 +95,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     running = run().catch(cause => { if (isCurrent()) reportDeviceSyncProblem(state, cause) }).finally(() => {
       running = undefined
       busy.value = false
+      const retry = followUp.next(Object.values(statuses.value).some(status => status.phase === "catching-up"))
       void maybeCompactActiveHistory(owner, epoch)
+      if (isCurrent() && retry) void syncNow()
     })
     return running
   }

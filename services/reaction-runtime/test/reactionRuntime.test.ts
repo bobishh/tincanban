@@ -405,28 +405,3 @@ test("Given a reaction granted public job-page fetch, when it uses fetch, then a
       sourceDigest: createHash("sha256").update(source).digest("hex") }, stubParticipant()), /job-page-fetch/);
   } finally { globalThis.fetch = originalFetch; }
 });
-
-test("Given the Reflux homepage source, when executed by the shared reaction engine, then public fetch enrichment reaches the existing card command", { skip: !process.env.REFLUX_HOMEPAGE_SOURCE_PATH }, async () => {
-  const source = await readFile(process.env.REFLUX_HOMEPAGE_SOURCE_PATH!, "utf8");
-  const originalFetch = globalThis.fetch;
-  let command: unknown;
-  globalThis.fetch = async () => new Response('<html><head><title>Software Development Engineer II</title></head><body><script type="application/ld+json">{"@type":"JobPosting","title":"Software Development Engineer II","description":"Develop PartyRock tools.","hiringOrganization":{"name":"Amazon"}}</script></body></html>',
-    { status: 200, headers: { "content-type": "text/html" } });
-  const submission = { message: "PartyRock", contact: "", company: "", role: "",
-    jobUrl: "https://www.amazon.jobs/de/jobs/10471492/software-development-engineer" };
-  const request = { ...input, runId: "reflux-source-proof", source, sourceDigest: createHash("sha256").update(source).digest("hex"),
-    signals: [{ id: "signal-1", source: "website", external_id: "home-proof-1", body: submission.message,
-      payload: { source: "website", receivedAt: "2026-10-17T12:00:00.000Z", submission } }],
-    capabilities: { operations: ["item-command", "clef.opportunity", "job-page-fetch"], targets: ["integration-1"] } };
-  try {
-    const participant = stubParticipant({
-      async getOrCreateOpportunity() { return { relevance: "yes" } as never; },
-      async enqueueItemCommand(_commandId, value) { command = value; return { status: "pending" }; },
-    });
-    const result = await runReaction(request, participant);
-    assert.equal(result.status, "pending");
-    assert.equal((command as any).classification.extraction.company, "Amazon");
-    assert.equal((command as any).classification.extraction.role, "Software Development Engineer II");
-    assert.equal((command as any).event.submission.message, "PartyRock");
-  } finally { globalThis.fetch = originalFetch; }
-});

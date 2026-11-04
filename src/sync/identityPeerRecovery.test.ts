@@ -13,7 +13,8 @@ import type { WorkspaceSetStore } from "./workspaceSet"
 vi.mock("./privateReplicaRepository", () => ({ getIdentityReplicaConfigurations: async () => [{ purpose: "identity" }] }))
 beforeEach(() => resetIdentityStorageForTest())
 
-async function recoveryFixture(dial = vi.fn(async () => { throw new Error("Peer offline") })) {
+async function recoveryFixture(dial = vi.fn(async () => { throw new Error("Peer offline") }),
+  read: (id: string) => Promise<Uint8Array> = async () => { throw new Error("Board is not retained") }) {
   const profile = await bootstrapIdentity()
   const root = createPersonalRoot(profile, await certHashDefault(profile.certificate))
   registerWorkspaceInRoot(root, "board", "board", "genesis")
@@ -25,12 +26,22 @@ async function recoveryFixture(dial = vi.fn(async () => { throw new Error("Peer 
   const node = { endpointId: "local", dial,
     accept: async () => ({ accept: () => new Promise<undefined>(resolve => { finishAccept = resolve }),
       close: async () => { finishAccept(undefined) } }), close: vi.fn(async () => {}) } as unknown as SyncNode
-  const read = vi.fn(async () => { throw new Error("Board is not retained") })
   const recovery = new IdentityPeerRecovery({ transport: { start: async () => node },
     store: { read } as unknown as WorkspaceSetStore, mesh: {} as DurableMesh,
     getProfile: async () => profile, ownedWorkspaces: async () => [], changed: vi.fn() })
   return { profile, root, invite, dial, recovery }
 }
+
+it("Given the current document is already retained, when board loading recovers peers, then it does not dial a same-person history transfer", async () => {
+  const read = vi.fn(async () => new Uint8Array([1]))
+  const dial = vi.fn(async () => { throw new Error("Peer should stay idle") })
+  const { recovery } = await recoveryFixture(dial, read)
+  try {
+    await recovery.recover(["board"])
+    expect(read).toHaveBeenCalledWith("board")
+    expect(dial).not.toHaveBeenCalled()
+  } finally { await recovery.close() }
+})
 
 it("Given a retained P2P source is unreachable, when the user retries loading boards, then retry the same source without losing its catalog reference", async () => {
   const { profile, root, invite, dial, recovery } = await recoveryFixture()

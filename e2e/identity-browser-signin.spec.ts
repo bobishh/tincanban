@@ -5,8 +5,8 @@ import { expect, test, type Page } from "./support/coverage"
 test.use({ trace: "off", video: "off", screenshot: "off" })
 
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 
-test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to a running Identity portal preview")
 
 test("Given a local app device and saved board, when Identity approves browser sign-in, then return with the approved identity and preserved board", async ({ page, context, baseURL }) => {
   test.setTimeout(120_000)

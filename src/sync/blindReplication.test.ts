@@ -1,10 +1,14 @@
 import type { BlindCheckpointRequest, BlindCheckpointReceipt } from "./blindCheckpoint"
-import { expect, test, vi } from "vitest"
+import { beforeAll, expect, test, vi } from "vitest"
+import { IDBFactory } from "fake-indexeddb"
 import { BlindReplica, type BlindReplicaConfig } from "./blindReplication"
-import { encryptBlindObject, encodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import { readFile } from "node:fs/promises"
+import { encryptBlindObject, decryptBlindObject, encodeBlindBytes, decodeBlindBytes } from "@meta-uber/mesh-replication/rusty-replica"
+import * as Automerge from "@automerge/automerge/slim"
 import { blindHash, canonicalBlindJson, type BlindAccess, type BlindReceipt, blindObjectId } from "./blindClient"
 import type { BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { emptyReplicaState, type ReplicaState } from "@meta-uber/mesh-replication/replica-engine"
+import { recordHistoryStorageFence } from "./blindHistoryCheckpoint"
 
 const signer = await createReceiptSigner()
 let receiptSequence = 0
@@ -548,4 +552,285 @@ test("Given a reloaded client with an unchanged durable snapshot, subsequent enc
   expect(completed.every(value => value.detail.phase === "changed")).toBe(true)
   expect(uploads).toBe(4)
   expect(JSON.stringify(events)).not.toContain("private chat content")
+})
+
+const digest = "A".repeat(43)
+function storedHistoryBaseline() {
+  const context = { workspaceId: "board", historyEpoch: 3, indexId: "basis-document" }
+  const coverage = { payload: { kind: "blind-archive-coverage-aggregate-receipt", version: 1, serviceId: digest,
+    scopeId: "opaque", policyRevision: 1, requestId: "coverage-request-id-0001", archiveRootId: digest,
+    height: 1, objectCount: 1, firstObjectId: digest, lastObjectId: digest, setDigest: digest, rootCovered: true },
+    signerKeyId: digest, signature: "A".repeat(86) }
+  return { version: 1, signedJson: "e30", basis: { context,
+    reference: { kind: "workspace-history-bytes", version: 1,
+      root: { objectId: digest, height: 0, count: 1, first: "0000000000000000", last: "0000000000000000" },
+      byteLength: 4, partCount: 1 },
+    locatorRoot: { kind: "workspace-history-locator-root", version: 1,
+      context: { ...context, indexId: "archive-locators" },
+      root: { objectId: digest, ciphertextId: digest, height: 0, count: 1, first: digest, last: digest } },
+    coverage } }
+}
+
+async function openUploadedSnapshot(config: BlindReplicaConfig, key: Uint8Array, object: BlindObject) {
+  const plaintext = await decryptBlindObject(object, config.scopeId, config.keyEpoch, key)
+  return JSON.parse(new TextDecoder().decode(plaintext)) as { version: number; kind?: string; document?: string; authorization?: unknown; history?: { version?: number }; changes?: string[] }
+}
+
+test("Given a stored history baseline, when an ordinary push follows a document change, then the uploaded snapshot omits that baseline", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let bytes = new Uint8Array([1])
+  const uploads: BlindObject[] = []
+  const readHistoryBaseline = vi.fn(async () => storedHistoryBaseline())
+  const replica = new BlindReplica(config, {
+    read: async () => bytes, authorization: async () => ({ signed: true }), readChat: async () => null,
+    readHistoryBaseline, mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") },
+    upload: async (access, object, requestId) => { uploads.push(object); return signedReceipt(access, object, requestId) } })
+  await replica.push()
+  bytes = new Uint8Array([2])
+  await replica.push()
+  expect(readHistoryBaseline).not.toHaveBeenCalled()
+  const snapshot = await openUploadedSnapshot(config, key, uploads.at(-1)!)
+  expect(snapshot.version).toBe(1)
+  expect(snapshot.history).toBeUndefined()
+  if (typeof snapshot.document !== "string") throw new Error("Ordinary snapshot omitted the document")
+  expect([...decodeBlindBytes(snapshot.document)]).toEqual([2])
+})
+
+test("Given a stored history baseline and an unchanged board, when ordinary push repeats, then no new replica object is uploaded", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let uploads = 0
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1]), authorization: async () => ({ signed: true }), readChat: async () => null,
+    readHistoryBaseline: async () => storedHistoryBaseline(), mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") },
+    upload: async (access, object, requestId) => { uploads++; return signedReceipt(access, object, requestId) } })
+  await replica.push()
+  await replica.push()
+  expect(uploads).toBe(1)
+})
+
+test("Given a baseline being published, when a history storage checkpoint is captured, then the checkpoint snapshot contains that baseline", async () => {
+  const previousDatabase = globalThis.indexedDB
+  globalThis.indexedDB = new IDBFactory()
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "https://rusty.example", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 4, lastUploaded: "" }
+  const history = storedHistoryBaseline()
+  let captured: { history?: { version?: number } } | undefined
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1]), authorization: async () => ({ signed: true }), readChat: async () => null,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {}, ensureIdentity: () => {}, ensureCurrent: async () => {},
+    readReplicaProgress: async () => emptyReplicaState("history-checkpoint"), persistReplicaProgress: async () => {},
+    prepareHistoryCheckpoint: async (_bytes, object) => {
+      captured = await openUploadedSnapshot(config, key, object)
+      throw new Error("stop after history capture")
+    },
+  }, { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") },
+    upload: async () => { throw new Error("Unexpected upload") }, checkpoint: async () => { throw new Error("Unexpected submit") } })
+  try {
+    await recordHistoryStorageFence("owner", config, "transition", 4, () => {})
+    await expect(replica.checkpointHistoryBaseline("owner", "transition", "baseline", undefined, history)).rejects.toThrow("stop after history capture")
+    expect(captured?.history?.version).toBe(1)
+  } finally { globalThis.indexedDB = previousDatabase }
+})
+
+test("Given retained replica objects and a stored history baseline, when they are compacted, then the compacted head contains that baseline", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const history = storedHistoryBaseline()
+  const stored = { version: 1 as const, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([1])), authorization: { signed: true }, chat: null }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(stored)))
+  const objectId = await blindObjectId(object)
+  let compacted: BlindObject | undefined
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1]), authorization: async () => stored.authorization, readChat: async () => null,
+    readHistoryBaseline: async () => history, mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+    checkpointAllowed: async () => true,
+    prepareCheckpoint: async (_bytes, replacement, expectedSequence) => {
+      compacted = replacement
+      return { object: replacement, identity: { personId: "owner", publicKey: "unused", displayName: "Owner" }, deviceId: "device", certificates: [],
+        authorization: { payload: { kind: "rusty-snapshot-checkpoint", version: 1, serviceId: "unused", origin: config.origin, scopeId: config.scopeId, keyEpoch: 1, policyRevision: 1,
+          expectedSequence, objectId: await blindObjectId(replacement), requestId: crypto.randomUUID(), issuedAt: Date.now(), expiresAt: Date.now() + 120000 }, signerKeyId: "device", signature: "unused" } }
+    },
+  }, { inventory: async (_access, after) => ({ objects: after < 8 ? [{ objectId, sequence: 8 }] : [], cursor: Math.max(after, 8), hasMore: false, objectCount: after < 8 ? 8 : 1, maxSequence: 8 }),
+    download: async () => object, upload: async () => { throw new Error("Ordinary upload is not compaction") },
+    checkpoint: async (_access, request) => ({ payload: { sequence: request.authorization.payload.expectedSequence + 1 } } as BlindCheckpointReceipt) })
+  expect(await replica.sync()).toBe(true)
+  expect((await openUploadedSnapshot(config, key, compacted!)).history).toMatchObject({ version: 1, basis: { context: { workspaceId: "board" } } })
+})
+
+test("Given a stored object that still contains history, when admission fails and later succeeds, then the cursor advances only after admission", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const history = storedHistoryBaseline()
+  const payload = { version: 2, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([1, 2, 3])), authorization: { signed: true }, chat: null, history }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(payload)))
+  const id = await blindObjectId(object)
+  let admitted = false
+  const merge = vi.fn(async () => {})
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1, 2, 3]), authorization: async () => payload.authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge, persist: async () => {},
+    receiveHistoryBaseline: async () => { if (!admitted) throw new Error("History proof rejected") },
+  }, { inventory: async (_access, cursor) => cursor < 1 ? { objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false } : { objects: [], cursor, hasMore: false },
+    download: async () => object, upload: async () => { throw new Error("Unexpected upload") } })
+  await expect(replica.pull()).rejects.toThrow("History proof rejected")
+  expect(config.cursor).toBe(0)
+  expect(merge).not.toHaveBeenCalled()
+  admitted = true
+  await replica.pull()
+  expect(config.cursor).toBe(1)
+  expect(merge).not.toHaveBeenCalled()
+})
+
+test("Given an ordinary snapshot without history, when it is pulled, then the document merges and history admission does not run", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const payload = { version: 1, workspaceId: "board", document: encodeBlindBytes(new Uint8Array([4, 5])), authorization: { signed: true }, chat: null }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(payload)))
+  const id = await blindObjectId(object)
+  const merge = vi.fn(async () => {})
+  const receiveHistoryBaseline = vi.fn(async () => {})
+  const replica = new BlindReplica(config, {
+    read: async () => new Uint8Array([1]), authorization: async () => payload.authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge, persist: async () => {}, receiveHistoryBaseline,
+  }, { inventory: async (_access, cursor) => cursor < 1 ? { objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false } : { objects: [], cursor, hasMore: false },
+    download: async () => object, upload: async () => { throw new Error("Unexpected upload") } })
+  expect(await replica.pull()).toBe(true)
+  expect(merge).toHaveBeenCalledWith("board", new Uint8Array([4, 5]), payload.authorization)
+  expect(receiveHistoryBaseline).not.toHaveBeenCalled()
+  expect(config.cursor).toBe(1)
+})
+
+beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")) })
+
+test("Given an uploaded automerge board, when only the document changes, then the next upload carries those changes and an unchanged board uploads nothing", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let doc = Automerge.from({ title: "A" })
+  let authorization = { version: 1, records: ["initial-proof"], authority: { owner: "unchanged-owner" } }
+  const uploads: BlindObject[] = []
+  const replica = new BlindReplica(config, {
+    read: async () => Automerge.save(doc), authorization: async () => authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") },
+    upload: async (access, object, requestId) => { uploads.push(object); return signedReceipt(access, object, requestId) } })
+  try {
+    await replica.push()
+    expect((await openUploadedSnapshot(config, key, uploads[0]!)).document).toEqual(expect.any(String))
+    doc = Automerge.change(doc, draft => { draft.title = "B" })
+    authorization = { ...authorization, records: [...authorization.records, "edit-proof"] }
+    await replica.push()
+    const changes = await openUploadedSnapshot(config, key, uploads[1]!)
+    expect(changes.kind).toBe("document-changes")
+    expect(changes.document).toBeUndefined()
+    expect(changes.changes?.length).toBeGreaterThan(0)
+    expect(changes.authorization).toEqual(authorization)
+    const uploaded = uploads.length
+    await replica.push()
+    expect(uploads).toHaveLength(uploaded)
+  } finally { Automerge.free(doc) }
+})
+
+test("Given chat changes after an automerge upload, when ordinary push runs, then the upload remains a full snapshot", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const doc = Automerge.from({ title: "A" })
+  let chat: unknown = null
+  const uploads: BlindObject[] = []
+  const replica = new BlindReplica(config, {
+    read: async () => Automerge.save(doc), authorization: async () => ({ signed: true }), readChat: async () => chat,
+    mergeChat: async () => {}, merge: async () => {}, persist: async () => {},
+  }, { inventory: async (_access, cursor) => ({ objects: [], cursor, hasMore: false }), download: async () => { throw new Error("Unexpected download") },
+    upload: async (access, object, requestId) => { uploads.push(object); return signedReceipt(access, object, requestId) } })
+  try {
+    await replica.push()
+    chat = { message: "hello" }
+    await replica.push()
+    const snapshot = await openUploadedSnapshot(config, key, uploads.at(-1)!)
+    expect(snapshot.kind).toBeUndefined()
+    expect(snapshot.document).toEqual(expect.any(String))
+  } finally { Automerge.free(doc) }
+})
+
+test("Given a document-changes object whose dependencies are local, when it is pulled, then the merged document contains the change and history admission does not run", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const base = Automerge.from({ title: "A" })
+  const baseBytes = Automerge.save(base)
+  const changed = Automerge.change(base, draft => { draft.title = "B" })
+  const payload = { version: 3, kind: "document-changes", workspaceId: "board", authorization: { signed: true }, chat: null,
+    heads: Automerge.getHeads(changed), changes: Automerge.getChanges(base, changed).map(change => encodeBlindBytes(change)) }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(payload)))
+  const id = await blindObjectId(object)
+  const merge = vi.fn<(id: string, bytes: Uint8Array, authorization: unknown) => Promise<void>>().mockResolvedValue(undefined)
+  const receiveHistoryBaseline = vi.fn(async () => {})
+  const replica = new BlindReplica(config, {
+    read: async () => baseBytes, authorization: async () => payload.authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge, persist: async () => {}, receiveHistoryBaseline,
+  }, { inventory: async (_access, cursor) => cursor < 1 ? { objects: [{ objectId: id, sequence: 1 }], cursor: 1, hasMore: false } : { objects: [], cursor, hasMore: false },
+    download: async () => object, upload: async () => { throw new Error("Unexpected upload") } })
+  expect(await replica.pull()).toBe(true)
+  const merged = Automerge.load<typeof base>(merge.mock.calls[0]![1])
+  expect(merged.title).toBe("B")
+  expect(receiveHistoryBaseline).not.toHaveBeenCalled()
+})
+
+test("Given missing change dependencies, when a replica pulls a document delta, then refuse before merge or cursor acknowledgement", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const base = Automerge.from({ title: "A" })
+  const baseBytes = Automerge.save(base)
+  const missing = Automerge.change(base, draft => { draft.title = "B" })
+  const changed = Automerge.change(missing, draft => { draft.title = "C" })
+  const payload = { version: 3, kind: "document-changes", workspaceId: "board", authorization: { signed: true }, chat: null,
+    heads: Automerge.getHeads(changed), changes: Automerge.getChanges(missing, changed).map(change => encodeBlindBytes(change)) }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(payload)))
+  const objectId = await blindObjectId(object)
+  const merge = vi.fn(async () => {})
+  const replica = new BlindReplica(config, {
+    read: async () => baseBytes, authorization: async () => payload.authorization, readChat: async () => null,
+    mergeChat: async () => {}, merge, persist: async () => {},
+  }, { inventory: async (_access, cursor) => ({ objects: cursor < 1 ? [{ objectId, sequence: 1 }] : [], cursor: 1, hasMore: false }),
+    download: async () => object, upload: async () => { throw new Error("Unexpected upload") } })
+  try {
+    await expect(replica.pull()).rejects.toThrow(/dependencies/i)
+    expect(config.cursor).toBe(0)
+    expect(merge).not.toHaveBeenCalled()
+  } finally { Automerge.free(changed) }
+})
+
+test("Given an unsent local edit and a remote delta, when replication runs, then upload the merged board instead of treating the local edit as remotely stored", async () => {
+  const key = crypto.getRandomValues(new Uint8Array(32))
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(key), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  const base = Automerge.from({ title: "A", notes: "" }), baseBytes = Automerge.save(base)
+  const remote = Automerge.change(base, draft => { draft.title = "Remote title" })
+  let local = Automerge.load<{ title: string; notes: string }>(baseBytes)
+  local = Automerge.change(local, draft => { draft.notes = "Unsent local note" })
+  let current = Automerge.save(local)
+  const authorization = { signed: true }
+  const payload = { version: 3, kind: "document-changes", workspaceId: "board", authorization, chat: null,
+    heads: Automerge.getHeads(remote), changes: Automerge.getChanges(base, remote).map(encodeBlindBytes) }
+  const object = await encryptBlindObject(config.scopeId, 1, key, new TextEncoder().encode(JSON.stringify(payload)))
+  const objectId = await blindObjectId(object)
+  const upload = vi.fn(async (access: BlindAccess, object: BlindObject, requestId: string) => signedReceipt(access, object, requestId))
+  const replica = new BlindReplica(config, {
+    read: async () => current, authorization: async () => authorization, readChat: async () => null, mergeChat: async () => {}, persist: async () => {},
+    merge: async (_id, bytes) => {
+      const before = Automerge.load(current), incoming = Automerge.load(bytes)
+      try { current = Automerge.save(Automerge.merge(before, incoming)) }
+      finally { Automerge.free(before); Automerge.free(incoming) }
+    },
+  }, { inventory: async (_access, cursor) => ({ objects: cursor < 1 ? [{ objectId, sequence: 1 }] : [], cursor: 1, hasMore: false }),
+    download: async () => object, upload })
+  try {
+    expect(await replica.sync()).toBe(true)
+    expect(upload).toHaveBeenCalledOnce()
+    const stored = await openUploadedSnapshot(config, key, upload.mock.calls[0]![1])
+    const merged = Automerge.load<{ title: string; notes: string }>(decodeBlindBytes(stored.document!))
+    try { expect(merged.title).toBe("Remote title"); expect(merged.notes).toBe("Unsent local note") }
+    finally { Automerge.free(merged) }
+  } finally { Automerge.free(local); Automerge.free(remote) }
 })

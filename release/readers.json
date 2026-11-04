@@ -2,13 +2,13 @@
   "frontend": {
     "identityDevice": 1,
     "privateReplicas": 5,
-    "workspaceSnapshot": 2,
+    "workspaceSnapshot": 3,
     "instanceManagementActions": 3,
     "workspaceDeparture": 1
   },
   "automation": {
     "automationState": 5,
-    "workspaceSnapshot": 2,
+    "workspaceSnapshot": 3,
     "instanceManagementActions": 3
   },
   "writerVersions": {

@@ -10,12 +10,12 @@ type OtlpLogs = { resourceLogs?: Array<{ scopeLogs?: Array<{ logRecords?: LogRec
 type OtlpTraces = { resourceSpans?: Array<{ scopeSpans?: Array<{ spans?: Span[] }> }> }
 
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
+if (!identityOrigin) throw new Error("Run Identity acceptance with an isolated provider and IDENTITY_E2E_ORIGIN")
 const avatarPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/nWQAAAAASUVORK5CYII=",
   "base64",
 )
 
-test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to an isolated Identity portal preview")
 test.use({ video: "off", screenshot: "off" })
 
 async function createOwnerIdentity(portal: Page): Promise<string> {
