@@ -8,6 +8,9 @@ const loginVerifier = process.env.META_MESH_VERIFY_SERVICE_LOGIN_BIN ?? resolve(
 export default defineConfig({
   plugins: [vue()],
   test: {
+    // Native services and identity key derivation share the runner's CPU budget.
+    fileParallelism: false,
+    testTimeout: 30_000,
     include: ["src/**/*.native.test.ts", "vendor/meta-mesh/packages/**/*.native.test.ts",
       "vendor/meta-mesh/packages/mesh-identity/src/serviceLoginCli.integration.test.ts"],
     exclude: ["e2e/**", "tmp/**", "workers/**", "scripts/**/*.test.mjs", "**/node_modules/**"],

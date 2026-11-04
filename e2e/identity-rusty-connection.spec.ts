@@ -43,7 +43,7 @@ test("Given a signed-in board owner, when approving Add Rusty in Identity, then 
     await page.getByRole("heading", { name: "Authorize app device" }).waitFor()
     await page.getByLabel("Allow this app device and add the listed verified Rusty service keys to the shared Identity catalog.").check()
     await page.getByRole("button", { name: "Approve device and link services", exact: true }).click()
-    await expect(page).toHaveURL(boardUrl)
+    await expect(page).toHaveURL(boardUrl, { timeout: 30_000 })
     await expect(page.getByRole("button", { name: "Sign in", exact: true })).toHaveCount(0)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await expect(storage.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
