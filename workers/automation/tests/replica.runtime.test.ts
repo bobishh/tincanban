@@ -3312,6 +3312,79 @@ it.each([{ matches: 1, choice: "follow_up" }, { matches: 2, choice: "follow_up" 
   });
 });
 
+it("Given a referenced interview without explicit role or original evidence When processing Then keep review instead of reporting a note as a completed transition", async () => {
+  const data=await fixture(undefined,true);
+  data.packet.transport=capturedRuntimeTransport();
+  const replica=await AutomationReplica.activate(data.packet,data.automation);
+  const card=await replica.createLead("review-original",{company:"Caspar Health",role:"Senior Backend Engineer",message:"Existing notes",messageIds:["<earlier@example.test>"]},{});
+  const before=replica.candidates().find(candidate=>candidate.cardId===card.cardId)!;
+  const event:Extract<AutomationEvent,{source:"email"}>={source:"email",receivedAt:"2026-11-05T08:00:00Z",rawMime:encodeBlindBytes(new TextEncoder().encode("Invitation")),
+    message:{messageId:"<new@example.test>",inReplyTo:"<earlier@example.test>",references:["<earlier@example.test>"],from:"hr@example.test",to:"owner@example.test",subject:"Caspar Health update",text:"We invite you to an interview.",date:"2026-11-05T08:00:00Z",urls:[],confirmation:false,attachments:[]}};
+  const decision={event:"interview",distributions:{application_event:{type:"choice",choice:"interview",confidence:1,probabilities:Object.fromEntries(["new_opportunity","applied","interview","rejected","offer","follow_up","unrelated","uncertain"].map(label=>[label,label==="interview"?1:0]))}},model:CLEF_MODEL,policyVersion:APPLICATION_EVENT_POLICY_VERSION};
+  const stub=(env as WorkerEnv).AUTOMATION.getByName(`intake-review-${crypto.randomUUID()}`);
+  await runInDurableObject(stub,async(_instance,ctx)=>{
+    const coordinator=new ExecutionCoordinator(ctx,{INTEGRATIONS_JSON:"[]",EVENT_STORAGE_SECRET:reviewStorageSecret,AI:{run:async()=>{throw new Error("Retained classification must be reused");}}});
+    Reflect.set(coordinator,"refreshReplica",async()=>replica);
+    ctx.storage.sql.exec("INSERT INTO automation_registration(singleton,owner_id,workspace_id,integration_id) VALUES(1,'owner',?,?)",data.packet.workspaceId,ctx.id.name!);
+    const id="Q".repeat(43);
+    await coordinator.enqueueItemCommand({integrationId:ctx.id.name!,sourceEventId:id,idempotencyKey:await blindHash(new TextEncoder().encode("Invitation")),event,classification:{status:"review",reason:"Invitation",source:{type:"email",receivedAt:event.receivedAt,messageId:event.message.messageId},decision}});
+    await coordinator.alarm();
+    expect(coordinator.getItemCommandResult(id,ctx.id.name!)).toMatchObject({status:"review",result:{reason:"Original posting evidence is missing or unavailable; choose an application"}});
+    expect(replica.appliedForRuntime(id)).toBeUndefined();
+    expect(replica.candidates().find(candidate=>candidate.cardId===card.cardId)?.workflow).toEqual(before.workflow);
+    await ctx.storage.deleteAlarm();
+  });
+});
+
+it.each(["interview", "rejection"] as const)("Given an explicit %s for an Applied card with an attached document When intake runs and restarts Then move through the process once and preserve the document", async kind => {
+  const data = await fixture(undefined, true);
+  const cardId = crypto.randomUUID();
+  const document = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(data.packet.initial.document));
+  const created = await executeCommand(document, { kind: "createItem", id: cardId, parentId: data.packet.bindings.columns.applied!,
+    title: "Caspar Health — Senior Backend Engineer", body: "Vacancy", values: {
+      [data.packet.bindings.fieldIds.company]: "Caspar Health", [data.packet.bindings.fieldIds.role]: "Senior Backend Engineer" } }, data.owner);
+  if (!created.ok) throw new Error(created.error.message);
+  const attached = await executeCommand(created.value.newDoc, { kind: "addDocument", itemId: cardId, documentKind: "note",
+    title: "Application submitted", format: "markdown", content: "Original application evidence" }, data.owner);
+  if (!attached.ok) throw new Error(attached.error.message);
+  data.packet.initial = await ownerSnapshot(attached.value.newDoc, data.owner, data.packet);
+  const attachment = Object.values(attached.value.newDoc.entities).find(entity => entity.kind === "document")!;
+  Automerge.free(document); Automerge.free(created.value.newDoc); Automerge.free(attached.value.newDoc);
+  data.packet.transport = capturedRuntimeTransport();
+  let replica = await AutomationReplica.activate(data.packet, data.automation);
+  const date = new Date(Date.now() + 1000).toISOString();
+  const text = `Caspar Health invites you to ${kind} for Senior Backend Engineer.`;
+  const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: date, rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
+    message: { messageId: `<${kind}@example.test>`, inReplyTo: null, references: [], from: "hr@example.test", to: "owner@example.test",
+      subject: "Caspar Health — Senior Backend Engineer", text, date, urls: [], confirmation: false, attachments: [] } };
+  const label = kind === "rejection" ? "rejected" : kind;
+  const decision = { event: kind, distributions: { application_event: { type: "choice", choice: label, confidence: 1,
+    probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(value => [value, value === label ? 1 : 0])) } }, model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };
+  const stub = (env as WorkerEnv).AUTOMATION.getByName(`explicit-transition-${crypto.randomUUID()}`);
+  await runInDurableObject(stub, async (_instance, ctx) => {
+    const coordinator = new ExecutionCoordinator(ctx, { INTEGRATIONS_JSON: "[]", EVENT_STORAGE_SECRET: reviewStorageSecret,
+      AI: { run: async () => { throw new Error("Retained classification must be reused"); } } });
+    Reflect.set(coordinator, "refreshReplica", async () => replica);
+    ctx.storage.sql.exec("INSERT INTO automation_registration(singleton,owner_id,workspace_id,integration_id) VALUES(1,'owner',?,?)", data.packet.workspaceId, ctx.id.name!);
+    const id = "P".repeat(43);
+    const input = { integrationId: ctx.id.name!, sourceEventId: id, idempotencyKey: await blindHash(new TextEncoder().encode(text)), event,
+      classification: { status: "review", reason: "Retained classification", source: { type: "email", receivedAt: date, messageId: event.message.messageId }, decision } };
+    await coordinator.enqueueItemCommand(input);
+    await coordinator.alarm();
+    const columnId = kind === "interview" ? data.packet.bindings.columns.interview : data.packet.bindings.columns.rejected;
+    expect(coordinator.getItemCommandResult(id, ctx.id.name!)).toMatchObject({ status: "applied", result: { action: { kind: "moved-application", cardId, columnId } } });
+    expect(replica.candidates().find(candidate => candidate.cardId === cardId)?.columnId).toBe(columnId);
+    const persisted = JSON.parse(replica.serialize());
+    const after = Automerge.load<WorkspaceDocumentV2>(decodeBlindBytes(persisted.rawDocument));
+    expect(after.entities[attachment.id]).toEqual(attachment);
+    Automerge.free(after);
+    replica = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, data.packet.transport);
+    expect(await coordinator.enqueueItemCommand(input)).toMatchObject({ duplicate: true, status: "applied" });
+    expect(replica.appliedForRuntime(id)).toMatchObject({ kind: "move", cardId, columnId });
+    await ctx.storage.deleteAlarm();
+  });
+});
+
 const applicationReceipts = [
   { provider: "company in subject", company: "Example Labs", title: "Software Engineer, Internal Tools",
     subject: "Thank you for your application to Example Labs, Alex!",
@@ -3335,9 +3408,10 @@ it.each(applicationReceipts.flatMap(receipt => [
   for (let index = 0; index < existing; index++) await replica.createLead(`receipt-existing-${index}`,
     { company, role: title, source: { origin: "website" } }, {});
   const text = role ? receiptText + "\n\n" + "Full receipt detail. ".repeat(450).trim() : `Your application has been received. Thank you for your interest in joining ${company}!`;
-  const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: "2026-10-28T12:00:00.000Z", rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
+  const date = new Date(Date.now() + 1000).toISOString();
+  const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: date, rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
     message: { messageId: "<application-receipt@example.test>", inReplyTo: null, references: [], from: "Recruiting <no-reply@example.test>", to: "owner@example.test",
-      subject: role ? subject : `Your application at ${company}`, text, date: "2026-10-28T11:59:00.000Z", urls: [], confirmation: false, attachments: [] } };
+      subject: role ? subject : `Your application at ${company}`, text, date, urls: [], confirmation: false, attachments: [] } };
   const decision = { event: "applied", distributions: { application_event: { type: "choice", choice: "applied", confidence: 1,
     probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(label => [label, label === "applied" ? 1 : 0])) } },
     model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };
@@ -3356,7 +3430,7 @@ it.each(applicationReceipts.flatMap(receipt => [
       if (!applied) expect(outcome).toMatchObject({ result: { reason: "Creating an application receipt requires an approved Applied column" } });
       expect(replica.candidates()).toHaveLength(existing);
     } else {
-      expect(outcome).toMatchObject({ status: "applied", result: { action: { kind: existing ? "noted-application" : "created-lead" } } });
+      expect(outcome).toMatchObject({ status: "applied", result: { action: { kind: existing ? "moved-application" : "created-lead" } } });
       expect(replica.candidates()).toHaveLength(1);
       const card = replica.candidates()[0]!;
       if (!existing) {

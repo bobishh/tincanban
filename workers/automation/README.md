@@ -89,13 +89,14 @@ are one signed CRDT change. The source comes from extracted URL content, indepen
 of display labels; missing/oversized evidence is recorded as unavailable without
 invented original fields. Existing v1 approvals are preserved until explicit owner
 upgrade, and v1 cannot append sources. Ordinary moves still accept unchanged
-source metadata children.
+source metadata and unchanged leaf document children. Nested job cards still block automated moves; document edits remain outside the automation grant.
 
 Matching uses admitted original records when present, including exact retained
 URLs. It does not refetch or overwrite the original, use refresh text as historical
-evidence, or match editable card/thread fields. Missing/conflicting evidence needs
-review. Source IDs and workflow are checked again after sync. Pre-source v1 cards
-retain their URL lookup during migration.
+evidence, or trust editable thread references. Without an available original, explicit
+company and role in the current, unquoted email may identify exactly one card.
+A bare editable URL, company alone, conflicting originals or multiple matches
+requires review. Source IDs and workflow are checked again after sync.
 
 The coordinator implements private owner-signed retained-mail binding and explicit
 bound retry. The proof covers exact routing and definition IDs, original event,
@@ -257,7 +258,9 @@ the original email date is missing or stale, or the next status is not authorize
 These stops preserve the current card instead of reporting a completed move.
 Thread references and exact vacancy URLs take precedence. Otherwise the Worker
 reads the saved vacancy URL and matches the email against its original company
-and role. Card titles and Role fields cannot authorize a match. Company labels
+and role. If no original posting is available, explicit company and role in the
+current email may identify a unique legacy card; a mutable URL alone cannot.
+Company labels
 and company tokens in URLs narrow the page lookup; up to eight distinct pages
 are fetched with the existing HTTPS, redirect, timeout and size checks. Missing,
 unavailable or ambiguous sources stay in review with an explicit reason. This

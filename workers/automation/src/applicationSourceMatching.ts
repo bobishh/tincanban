@@ -3,7 +3,7 @@ import { correlateApplication, type ApplicationCandidate, type CorrelationResult
 
 export type SourceBackedApplicationCandidate = ApplicationCandidate & { sources: ApplicationSourceData[] };
 
-/** Match retained email against immutable original posting evidence only. */
+/** Prefer immutable originals; exact company and role in current mail can identify a legacy card. */
 export function correlateApplicationSources(mail: ForwardedMail,
   candidates: SourceBackedApplicationCandidate[]): CorrelationResult {
   const prepared = candidates.map(candidate => prepareCandidate(candidate));
@@ -30,10 +30,6 @@ export function correlateApplicationSources(mail: ForwardedMail,
   if (atsMatches.length === 1) return { kind: "matched", cardId: atsMatches[0]!.cardId, method: "ats-id" };
   if (atsMatches.length > 1) return review("ATS identifier matches multiple applications", atsMatches.map(value => value.cardId));
 
-  if (prepared.some(value => value.unknownEvidence || value.availableOriginals.length === 0)) {
-    return review("Original posting evidence is missing or unavailable; choose an application", prepared.map(value => value.cardId));
-  }
-
   const sourced: ApplicationCandidate[] = prepared.flatMap(value => value.availableOriginals.map(source => {
     const observation = source.observation;
     if (observation.status !== "available") throw new Error("Application original evidence changed during matching");
@@ -44,6 +40,23 @@ export function correlateApplicationSources(mail: ForwardedMail,
   if (contextResult.kind === "matched" && prepared.find(value => value.cardId === contextResult.cardId)?.conflictingOriginals) {
     return review("Application has conflicting original posting records", [contextResult.cardId]);
   }
+  const currentText = mail.text.split(/\n(?:On .{0,200}wrote:|Am .{0,200}schrieb[^:]*:|>)/i)[0]!;
+  const legacy = candidates.filter(candidate => {
+    const evidence = prepared.find(value => value.cardId === candidate.cardId)!;
+    return !evidence.unknownEvidence && !evidence.conflictingOriginals && evidence.availableOriginals.length === 0;
+  });
+  const explicit = correlateApplication({ ...mail, text: currentText, messageId: null, inReplyTo: null, references: [], urls: [] }, legacy);
+  const matches = [contextResult, explicit].flatMap(result => result.kind === "matched" ? [result.cardId]
+    : result.reason === "Company and role context matches multiple applications" ? result.candidates ?? [] : []);
+  if (new Set(matches).size > 1) return review("Company and role context matches multiple applications", matches);
+  if (contextResult.kind === "matched") return contextResult;
+  if (explicit.kind === "matched" && explicit.method === "company-role") return explicit;
+  if (explicit.kind === "review" && explicit.reason === "Company and role context matches multiple applications") return explicit;
+
+  if (prepared.some(value => value.unknownEvidence || value.availableOriginals.length === 0)) {
+    return review("Original posting evidence is missing or unavailable; choose an application", prepared.map(value => value.cardId));
+  }
+
   return contextResult;
 }
 

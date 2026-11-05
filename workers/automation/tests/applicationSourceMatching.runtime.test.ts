@@ -59,13 +59,11 @@ describe("source-backed application matching", () => {
     expect(result).toEqual({ kind: "matched", cardId: "card-1", method: "company-role" });
   });
 
-  it("Given a legacy candidate without retained original evidence, When mail mentions its editable URL or labels, Then require explicit review", () => {
-    const result = correlateApplicationSources(mail({ text: "Editable display company rejected Editable display title.",
-      urls: ["https://display.example.test/wrong-role"] }), [
-      candidate("legacy-card", []),
-    ]);
-    expect(result).toEqual({ kind: "review", reason: "Original posting evidence is missing or unavailable; choose an application",
-      candidates: ["legacy-card"] });
+  it("Given a legacy card When current mail explicitly names company and role Then match only those facts and keep URL-only mail in review", () => {
+    const legacy = candidate("legacy-card", []);
+    expect(correlateApplicationSources(mail({ text: "Editable display company rejected Editable display title." }), [legacy]))
+      .toEqual({ kind: "matched", cardId: "legacy-card", method: "company-role" });
+    expect(correlateApplicationSources(mail({ urls: [legacy.jobUrl] }), [legacy])).toMatchObject({ kind: "review" });
   });
 
   it("Given a retained application thread reference, When source-backed matching runs, Then the exact thread takes precedence over editable labels and posting context", () => {
@@ -155,12 +153,13 @@ describe("source-backed application matching", () => {
     expect(result).toMatchObject({ kind: "review", candidates: ["card-1", "card-2"] });
   });
 
-  it("Given a known role match and another application missing original evidence, When mail arrives, Then do not exclude the unknown candidate", () => {
-    const result = correlateApplicationSources(mail({ text: "Nacre Light rejected my Principal Systems Engineer application." }), [
-      candidate("card-1", [source("card-1", "Nacre Light", "Principal Systems Engineer")]),
-      candidate("card-2", [source("card-2", "", "", { phase: "legacy" })]),
-    ]);
-    expect(result).toMatchObject({ kind: "review", candidates: ["card-1", "card-2"] });
+  it("Given a known role and another legacy application When current mail uniquely names a role Then unrelated missing evidence does not block it and duplicate identities remain in review", () => {
+    const message = mail({ text: "Nacre Light rejected my Principal Systems Engineer application." });
+    const original = candidate("card-1", [source("card-1", "Nacre Light", "Principal Systems Engineer")]);
+    const other = candidate("card-2", [source("card-2", "", "", { phase: "legacy" })]);
+    expect(correlateApplicationSources(message, [original, other])).toEqual({ kind: "matched", cardId: "card-1", method: "company-role" });
+    expect(correlateApplicationSources(message, [original, { ...other, company: "Nacre Light", role: "Principal Systems Engineer" }]))
+      .toMatchObject({ kind: "review", candidates: ["card-1", "card-2"] });
   });
 
   it("Given duplicate concurrent copies of the same original, When role context matches, Then deduplicate them semantically", () => {

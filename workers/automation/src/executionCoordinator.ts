@@ -1513,9 +1513,12 @@ export class ExecutionCoordinator {
           return { kind: "created-lead", cardId: created.cardId, columnId,
             message: created.duplicate ? "Application was already recorded" : "Application created in Applied from email confirmation" };
         }
-        const note = await this.recordEmailNote(eventId, event, result, replica, boundCandidate?.cardId);
+        return applicationMovePlan;
+      }
+      if (applicationMovePlan?.kind === "note") {
+        const note = await this.recordEmailNote(eventId, event, result, replica, applicationMovePlan.candidate.cardId);
         return note?.kind === "noted-application" ? { ...note,
-          ...(binding ? { bindingId: binding.proof.signed.payload.bindingId } : {}) } : applicationMovePlan;
+          ...(binding ? { bindingId: binding.proof.signed.payload.bindingId } : {}) } : note;
       }
       if (applicationMovePlan?.kind !== "move") return null;
       const { candidate, columnId } = applicationMovePlan;
@@ -1526,6 +1529,9 @@ export class ExecutionCoordinator {
       if (!candidate.sources && current?.jobUrl !== candidate.jobUrl) {
         return { kind: "review", reason: "Vacancy URL changed while processing this email" };
       }
+      const noteId = await sha256Base64Url(new TextEncoder().encode(`application-move-note:${eventId}`));
+      const note = await replica.appendEmailNote(noteId, candidate.cardId, event.message);
+      if ("review" in note) return { kind: "review", reason: note.review };
       const moved = await replica.moveCard(eventId, candidate.cardId, columnId,
         { columnId: candidate.columnId, ...(candidate.workflow ? { changedAt: candidate.workflow.changedAt } : {}) });
       await replica.sync();
