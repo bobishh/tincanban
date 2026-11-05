@@ -51,6 +51,16 @@ function sourceWithReferences(cardId: string, company: string, title: string, re
 }
 
 describe("source-backed application matching", () => {
+  it("Given a linked reply naming its company and quoting the original application role When matching Then use that thread identity and preserve ambiguity checks", () => {
+    const application = candidate("reedsy", [], { company: "Reedsy", role: "Senior Ruby Engineer" });
+    const reply = mail({ subject: "Re: Thanks for applying to Reedsy!", references: ["<receipt@example.test>"],
+      text: "We decided to proceed with other candidates.\n\nOn Monday Recruiting wrote:\n> Thank you for applying for Senior Ruby Engineer - Remote Europe at Reedsy." });
+    expect(correlateApplicationSources(reply, [application])).toEqual({ kind: "matched", cardId: "reedsy", method: "company-role" });
+    expect(correlateApplicationSources({ ...reply, references: [] }, [application])).toMatchObject({ kind: "review" });
+    expect(correlateApplicationSources({ ...reply, subject: "Other company update" }, [application])).toMatchObject({ kind: "review" });
+    expect(correlateApplicationSources(reply, [application, { ...application, cardId: "duplicate" }])).toMatchObject({ kind: "review" });
+  });
+
   it("Given incorrect editable labels and no page fetch, When mail names the original role, Then match from retained posting evidence", () => {
     const result = correlateApplicationSources(mail({ text: "Nacre Light will not proceed with Principal Systems Engineer.",
       references: ["<wrong-thread@example.test>"], urls: ["https://display.example.test/wrong-role"] }), [

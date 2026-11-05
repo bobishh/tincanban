@@ -95,7 +95,9 @@ Matching uses admitted original records when present, including exact retained
 URLs. It does not refetch or overwrite the original, use refresh text as historical
 evidence, or trust editable thread references. Without an available original, explicit
 company and role in the current, unquoted email may identify exactly one card.
-A bare editable URL, company alone, conflicting originals or multiple matches
+A linked reply may use the role quoted from its application history when the current
+message identifies that company. An unlinked quote, a bare editable URL, company
+alone, conflicting originals or multiple matches
 requires review. Source IDs and workflow are checked again after sync.
 
 The coordinator implements private owner-signed retained-mail binding and explicit

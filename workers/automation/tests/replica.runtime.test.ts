@@ -3353,10 +3353,13 @@ it.each(["interview", "rejection"] as const)("Given an explicit %s for an Applie
   data.packet.transport = capturedRuntimeTransport();
   let replica = await AutomationReplica.activate(data.packet, data.automation);
   const date = new Date(Date.now() + 1000).toISOString();
-  const text = `Caspar Health invites you to ${kind} for Senior Backend Engineer.`;
+  const text = kind === "rejection"
+    ? "We decided to proceed with other candidates.\n\nOn Monday Recruiting wrote:\n> Thank you for applying for Senior Backend Engineer at Caspar Health."
+    : "Caspar Health invites you to interview for Senior Backend Engineer.";
   const event: Extract<AutomationEvent, { source: "email" }> = { source: "email", receivedAt: date, rawMime: encodeBlindBytes(new TextEncoder().encode(text)),
-    message: { messageId: `<${kind}@example.test>`, inReplyTo: null, references: [], from: "hr@example.test", to: "owner@example.test",
-      subject: "Caspar Health — Senior Backend Engineer", text, date, urls: [], confirmation: false, attachments: [] } };
+    message: { messageId: `<${kind}@example.test>`, inReplyTo: kind === "rejection" ? "<receipt@example.test>" : null,
+      references: kind === "rejection" ? ["<receipt@example.test>"] : [], from: "hr@example.test", to: "owner@example.test",
+      subject: kind === "rejection" ? "Re: Thanks for applying to Caspar Health!" : "Caspar Health — Senior Backend Engineer", text, date, urls: [], confirmation: false, attachments: [] } };
   const label = kind === "rejection" ? "rejected" : kind;
   const decision = { event: kind, distributions: { application_event: { type: "choice", choice: label, confidence: 1,
     probabilities: Object.fromEntries(["new_opportunity", "applied", "interview", "rejected", "offer", "follow_up", "unrelated", "uncertain"].map(value => [value, value === label ? 1 : 0])) } }, model: CLEF_MODEL, policyVersion: APPLICATION_EVENT_POLICY_VERSION };

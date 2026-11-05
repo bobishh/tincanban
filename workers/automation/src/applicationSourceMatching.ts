@@ -45,7 +45,17 @@ export function correlateApplicationSources(mail: ForwardedMail,
     const evidence = prepared.find(value => value.cardId === candidate.cardId)!;
     return !evidence.unknownEvidence && !evidence.conflictingOriginals && evidence.availableOriginals.length === 0;
   });
-  const explicit = correlateApplication({ ...mail, text: currentText, messageId: null, inReplyTo: null, references: [], urls: [] }, legacy);
+  const currentMail = { ...mail, text: currentText, messageId: null, inReplyTo: null, references: [], urls: [] };
+  let explicit = correlateApplication(currentMail, legacy);
+  if (explicit.kind === "review" && explicit.reason === "Company context does not identify a role" &&
+      (mail.inReplyTo || mail.references.length > 0)) {
+    const currentContext = normalizePhrase(`${mail.subject}\n${currentText}`);
+    const replyCandidates = legacy.filter(candidate => {
+      const company = normalizePhrase(candidate.company);
+      return company.length >= 3 && currentContext.includes(company);
+    });
+    explicit = correlateApplication({ ...currentMail, text: mail.text }, replyCandidates);
+  }
   const matches = [contextResult, explicit].flatMap(result => result.kind === "matched" ? [result.cardId]
     : result.reason === "Company and role context matches multiple applications" ? result.candidates ?? [] : []);
   if (new Set(matches).size > 1) return review("Company and role context matches multiple applications", matches);

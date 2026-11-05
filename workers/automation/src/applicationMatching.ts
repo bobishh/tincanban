@@ -1,7 +1,7 @@
 import type { ApplicationCandidate, CorrelationResult, ForwardedMail } from "./email.ts";
 import type { JobPageFetcher } from "./extraction.ts";
 
-/** Only retained application sources can authorize a mail-driven move; missing originals require review. */
+/** Match retained posting evidence or explicit legacy email identity; ambiguous evidence requires review. */
 export async function correlateApplicationFromJobPages(mail: ForwardedMail, candidates: ApplicationCandidate[],
   _fetcher: JobPageFetcher = fetch): Promise<CorrelationResult> {
   return import("./applicationSourceMatching.ts").then(({ correlateApplicationSources }) =>
