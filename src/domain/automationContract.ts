@@ -4,8 +4,7 @@ import configuredTypes from "../../workers/automation/automation-types.json" wit
 const identifier = z.string().min(1).max(256)
 type ParameterField = { valueType: string; options?: string[]; multiple?: boolean; required?: boolean; min?: number; max?: number }
 type ConfiguredType = { type: string; version: number; title: string; description: string; permissions: string[]; defaults: Record<string, unknown>; parameterFields: Record<string, ParameterField> }
-const templates = [{ automation: { types: configuredTypes as ConfiguredType[] } }]
-export const automationTypes = Object.freeze(templates.flatMap(template => template.automation?.types ?? []).map(type => Object.freeze({ ...type,
+export const automationTypes = Object.freeze((configuredTypes as ConfiguredType[]).map(type => Object.freeze({ ...type,
   permissions: Object.freeze([...type.permissions]), parameters: z.strictObject(Object.fromEntries(Object.entries(type.parameterFields).map(([key, field]) => [key, parameterSchema(field)]))),
 })))
 

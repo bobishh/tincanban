@@ -25,7 +25,7 @@ export function planBoundApplicationMove(mail: ForwardedMail, candidate: Automat
   const changedTime = candidate.workflow ? Date.parse(candidate.workflow.changedAt) : Number.NaN;
   if (!Number.isFinite(messageTime)) return { kind: "review", reason: "Email has no valid original date" };
   if (!Number.isFinite(changedTime)) return { kind: "review", reason: "Application has no dated workflow to compare with this email" };
-  if (messageTime < changedTime) return { kind: "review", reason: "Email is older than the latest application status" };
+  if (messageTime < changedTime) return { kind: "note", candidate };
   const canAdvance = candidate.columnId === columns.lead && [columns.applied, columns.interview, columns.rejected].includes(columnId) ||
     candidate.columnId === columns.applied && [columns.interview, columns.rejected].includes(columnId) ||
     candidate.columnId === columns.interview && columnId === columns.rejected;

@@ -16,7 +16,7 @@ test("Given an explicitly bound application, when the original rejection names a
 
 test("Given explicit application binding, when mail is stale or status would reverse, then preserve the ordinary workflow guards", () => {
   assert.equal(planBoundApplicationMove({ ...mail, date: null }, candidate, columns, "rejection").kind, "review");
-  assert.equal(planBoundApplicationMove({ ...mail, date: "2026-10-12T00:00:00Z" }, candidate, columns, "rejection").kind, "review");
+  assert.equal(planBoundApplicationMove({ ...mail, date: "2026-10-12T00:00:00Z" }, candidate, columns, "rejection").kind, "note");
   assert.equal(planBoundApplicationMove(mail, { ...candidate, columnId: "rejected", workflow: { ...candidate.workflow, columnId: "rejected" } }, columns, "interview").kind, "review");
 });
 

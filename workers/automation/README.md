@@ -254,8 +254,10 @@ Email forwarding shows its private route and activation/confirmation status.
 Retained message subjects and processing reasons are available through the signed
 API, not a Settings message list.
 A clear classification can still need review when vacancy-page matching fails,
-the original email date is missing or stale, or the next status is not authorized.
+the original email date is missing, or the next status is not authorized.
 These stops preserve the current card instead of reporting a completed move.
+An older email matched to a single application is saved in notes without changing
+its newer stage; this is explicitly reported as a note rather than a move.
 Thread references and exact vacancy URLs take precedence. Otherwise the Worker
 reads the saved vacancy URL and matches the email against its original company
 and role. If no original posting is available, explicit company and role in the
