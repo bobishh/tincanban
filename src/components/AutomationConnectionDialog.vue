@@ -106,7 +106,7 @@ onMounted(load)
 </script>
 
 <template>
-  <DialogWindow window-id="automation-connection" :workspace-id="workspaceId" title="Connect automation" :busy="pending" @close="close">
+  <DialogWindow window-id="automation-connection" :workspace-id="workspaceId" title="Authorize automation" :busy="pending" @close="close">
     <section class="dialog dialog-window-content automation-connection ui-stack">
       <p v-if="loading" role="status">Loading connection…</p>
       <template v-else-if="resolved">
@@ -123,7 +123,7 @@ onMounted(load)
           </div>
           <div v-if="description" class="automation-access ui-stack">
             <p><strong>Read:</strong> Entire workspace, including its documents.</p>
-            <p><strong>Write:</strong> Create and update job cards in {{ description.columns.join(', ') }}.</p>
+            <p><strong>Write:</strong> Create and update job cards in {{ description.columns.join(', ') }}; send summaries on your behalf in workspace chat, marked Automation.</p>
             <p><strong>Fields:</strong> {{ description.fields.join(', ') }}.</p>
             <p class="dialog-copy">Access lasts 30 days. Existing cards stay in place.</p>
           </div>
@@ -137,7 +137,7 @@ onMounted(load)
       <div class="dialog-actions">
         <button class="button button-quiet" type="button" :disabled="pending || !request" @click="decline">Decline</button>
         <button v-if="!resolved && !loading" class="button button-quiet" type="button" @click="load">Retry</button>
-        <button v-if="ownerMatches" class="button" type="button" :disabled="!canApprove" @click="approve">{{ pending ? 'Connecting…' : 'Connect workflow' }}</button>
+        <button v-if="ownerMatches" class="button" type="button" :disabled="!canApprove" @click="approve">{{ pending ? 'Authorizing…' : 'Authorize automation' }}</button>
       </div>
     </section>
   </DialogWindow>

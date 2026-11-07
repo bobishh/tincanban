@@ -5,6 +5,7 @@ import { meshTrace } from "../sync/meshTrace"
 import { bootstrapIdentity } from "../domain/identity"
 import { messageOrderKey, type ChatSnapshot } from "./store"
 import { resolveDisplayNamesWithIdentity } from "./names"
+import { messageAuthor } from "./messageAuthor"
 import { readLocal, writeLocal } from "../localDb"
 import {
   ensureChatProfile,
@@ -101,9 +102,9 @@ function createChatViews(
   })
   const messages = computed(() => [...snapshot.value.messages, ...pending.value].map((message) => ({
     ...message,
-    name: names.value[message.personId] ?? (message.personId === personId.value
+    name: messageAuthor(message, snapshot.value.profiles, names.value[message.personId] ?? (message.personId === personId.value
       ? identityName.value
-      : `Participant · ${message.personId.slice(0, 6)}`),
+      : `Participant · ${message.personId.slice(0, 6)}`)),
   })))
   const unread = computed(() => snapshot.value.messages.filter((message) =>
     message.personId !== personId.value && (!cursor.value || messageOrderKey(message) > cursor.value)).length)

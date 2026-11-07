@@ -19,7 +19,7 @@ describe("workspace policy", () => {
     ["owner", capabilities],
     ["editor", ["workspace.rename", "content.write", "chat.write", "chat.profile"]],
     ["visitor", ["chat.profile"]],
-    ["automation", []],
+    ["automation", ["chat.write"]],
   ] as const)("gives %s the declared capabilities", (role, allowed) => {
     for (const capability of capabilities) {
       expect(canWorkspace(role as WorkspaceRole, capability)).toBe(allowed.includes(capability as never))

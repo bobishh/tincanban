@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { createWorkspaceDoc } from "../test/boardFixture"
-import { workspaceBlobDescriptor, workspaceChatRoomId } from "./workspaceMetadata"
+import { workspaceBlobDescriptor } from "./workspaceMetadata"
+import { workspaceChatRoomId } from "../domain/workspaceChatRoom"
 
 describe("workspace metadata", () => {
   it("uses current owner and board identity for chat room", () => {

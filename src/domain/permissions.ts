@@ -30,7 +30,7 @@ const roleCapabilities: Record<WorkspaceRole, ReadonlySet<WorkspaceCapability>> 
   ]),
   editor: new Set<WorkspaceCapability>(["workspace.rename", "content.write", "chat.write", "chat.profile"]),
   visitor: new Set<WorkspaceCapability>(["chat.profile"]),
-  automation: new Set<WorkspaceCapability>(),
+  automation: new Set<WorkspaceCapability>(["chat.write"]),
 }
 
 const capabilityErrors: Record<WorkspaceCapability, string> = {

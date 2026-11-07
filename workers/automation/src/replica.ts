@@ -1,4 +1,6 @@
 import { emptyEmployeeProfile, type EmployeeProfile } from "./jobPriority";
+import { vacancyUrl } from "./vacancyIdentity";
+import { workspaceChatRoomId } from "../../../src/domain/workspaceChatRoom";
 import * as Automerge from "@automerge/automerge/slim";
 import type { Context } from "@opentelemetry/api";
 import automergeWasm from "@automerge/automerge/automerge.wasm";
@@ -158,11 +160,12 @@ export type AutomationCandidate = {
   jobUrl?: string;
   columnId: string;
   workflow?: { columnId: string; changedAt: string };
+  archived?: boolean;
   messageIds?: string[];
   sources?: ApplicationSourceData[];
 };
 
-type AppliedEvent = ({ kind: "lead"; cardId: string } | { kind: "move"; cardId: string; columnId: string }
+type AppliedEvent = ({ kind: "lead"; cardId: string; existing?: boolean } | { kind: "move"; cardId: string; columnId: string }
   | { kind: "note"; cardId: string }) & { changeHash?: string; messageIds?: string[] };
 type PendingUpload = { hash: string; object: BlindObject; requestId?: string; observedSequence?: number; bytes?: number; revision?: string; identity?: string };
 type ActiveHistoryUsage = { baselineId: string | null; admittedChanges: number; encodedBytes: number };
@@ -725,15 +728,26 @@ export class AutomationReplica {
       const cardId = await deterministicCardId(eventId);
       const previous = Object.hasOwn(this.applied, eventId) ? this.applied[eventId] : undefined;
       if (previous) {
-        if (previous.kind !== "lead" || previous.cardId !== cardId) throw new Error("Automation event was already applied differently");
-        return { cardId, duplicate: true };
+        if (previous.kind !== "lead") throw new Error("Automation event was already applied differently");
+        return { cardId: previous.cardId, duplicate: true };
+      }
+      const posting = vacancyUrl(normalized.jobUrl);
+      const existing = posting && this.candidates(true).find(candidate =>
+        vacancyUrl(candidate.jobUrl) === posting || candidate.sources?.some(source => vacancyUrl(source.observation.jobUrl) === posting));
+      if (existing) {
+        const previousApplied = this.applied;
+        this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
+        this.applied[eventId] = { kind: "lead", cardId: existing.cardId, existing: true };
+        try { await this.persistState(); }
+        catch (error) { this.applied = previousApplied; throw error; }
+        return { cardId: existing.cardId, duplicate: true };
       }
       const document = this.admittedDocument();
       try {
         if (isItem(document.entities[cardId])) {
           const previousApplied = this.applied;
           this.applied = Object.assign(Object.create(null) as Record<string, AppliedEvent>, previousApplied);
-          this.applied[eventId] = { kind: "lead", cardId, ...(normalized.messageIds ? { messageIds: [...normalized.messageIds] } : {}) };
+          this.applied[eventId] = { kind: "lead", cardId, existing: true, ...(normalized.messageIds ? { messageIds: [...normalized.messageIds] } : {}) };
           try { await this.persistState(); }
           catch (error) { this.applied = previousApplied; delete this.applied[eventId]; throw error; }
           return { cardId, duplicate: true };
@@ -884,7 +898,7 @@ export class AutomationReplica {
     });
   }
 
-  candidates(): AutomationCandidate[] {
+  candidates(includeArchived = false): AutomationCandidate[] {
     this.assertActive();
     const document = this.admittedDocument();
     try {
@@ -899,17 +913,62 @@ export class AutomationReplica {
         sources.set(data.cardId, [...(sources.get(data.cardId) ?? []), data]);
       }
       return Object.values(document.entities).filter((entity): entity is Extract<WorkspaceDocumentV2["entities"][string], { body: string }> =>
-        isItem(entity) && !entity.archivedAt && belongsToBoard(document, entity.id, this.bindings.boardId))
+        isItem(entity) && (includeArchived || !entity.archivedAt) && belongsToBoard(document, entity.id, this.bindings.boardId))
         .map(item => ({ cardId: item.id, title: item.title, company: stringValue(item.values[this.bindings.fieldIds.company]),
           role: stringValue(item.values[this.bindings.fieldIds.role]),
           ...(this.bindings.fieldIds.jobUrl && stringValue(item.values[this.bindings.fieldIds.jobUrl])
             ? { jobUrl: stringValue(item.values[this.bindings.fieldIds.jobUrl]) } : {}),
           ...(messageIds.has(item.id) ? { messageIds: [...messageIds.get(item.id)!] } : {}),
           columnId: workflowColumnId(document.entities, item.id) ?? item.placement.parentId ?? "",
+          ...(includeArchived ? { archived: Boolean(item.archivedAt) } : {}),
           ...(itemWorkflow(item) ? { workflow: itemWorkflow(item) } : {}),
           ...(this.grant.payload.automation!.version === 2 || sources.has(item.id) ? { sources: sources.get(item.id) ?? [] } : {}),
         }));
     } finally { Automerge.free(document); }
+  }
+
+  discoveryContext() {
+    this.assertActive();
+    return { version: 1, workspaceId: this.workspaceId, boardId: this.bindings.boardId,
+      ownerPersonId: this.authority.currentOwner.personId, profile: this.employeeProfileForRuntime(),
+      applications: this.candidates(true).map(({ sources, ...candidate }) => ({ ...candidate,
+        sources: sources?.map(source => ({ recordId: source.recordId, atsId: source.atsId,
+          jobUrl: source.observation.jobUrl,
+          ...(source.observation.status === "available" ? { company: source.observation.company, title: source.observation.title } : {}) })) })),
+      columns: this.bindingsForRuntime() };
+  }
+
+  postSummary(key: string, text: string): Promise<{ messageId: string }> {
+    return this.enqueue(async () => {
+      this.assertActive(); this.assertPersistence();
+      await this.revalidate(); this.assertExecuting();
+      const document = this.admittedDocument();
+      let room: string;
+      try { room = workspaceChatRoomId(document); }
+      finally { Automerge.free(document); }
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(key) || !text.trim() || [...text].length > 8_000) throw new Error("Invalid run summary");
+      const messageId = `${this.profile.device.deviceId}:summary-${await sha256Base64Url(new TextEncoder().encode(key))}`;
+      const previous = this.chat;
+      const existing = previous?.messages.find(value => (value as { signed?: { payload?: { id?: string } } })?.signed?.payload?.id === messageId);
+      if (existing) {
+        if ((existing as { signed: { payload: { text: string } } }).signed.payload.text !== text) throw new Error("Summary identity already has different content");
+        return { messageId };
+      }
+      if ((previous?.messages.length ?? 0) >= 2_000) throw new Error("Chat summary history has reached its message limit");
+      const context = await this.executionSigningContext("chat-message", { workspaceId: room });
+      const evidence = signingEvidence(context);
+      const signed = await signWithContext(context, { kind: "chat-message" as const, version: 1 as const,
+        workspaceId: room, personId: this.profile.identity.personId, deviceId: this.profile.device.deviceId,
+        id: messageId, createdAt: new Date().toISOString(), text, revision: 0 });
+      const record = { signed, publicKey: evidence.identity.publicKey, certificates: evidence.certificates,
+        authority: { publicKey: this.authority.currentOwner.publicKey, certificates: this.authority.currentOwner.certificates,
+          grant: this.grant } };
+      const chat = previous ?? { version: 1 as const, messages: [], profiles: [], typing: [] };
+      this.replaceEvidence(this.rawDocument, this.authorizations, this.authority, { ...chat, messages: [...chat.messages, record] });
+      try { await this.persistState(); }
+      catch (error) { this.replaceEvidence(this.rawDocument, this.authorizations, this.authority, previous); throw error; }
+      return { messageId };
+    });
   }
 
   employeeProfileForRuntime(): EmployeeProfile {

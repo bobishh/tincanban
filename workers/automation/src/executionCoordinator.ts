@@ -1190,6 +1190,7 @@ export class ExecutionCoordinator {
               cardId: action.cardId,
               ...(typeof action.columnId === "string" ? { columnId: action.columnId } : {}),
               ...(typeof action.message === "string" ? { message: action.message } : {}),
+              ...(action.existing === true ? { existing: true } : {}),
               ...(typeof action.bindingId === "string" ? { bindingId: action.bindingId } : {}),
               ...(typeof action.changeHash === "string" ? { changeHash: action.changeHash } : {}),
             },
@@ -1417,7 +1418,7 @@ export class ExecutionCoordinator {
 
   private async applyScopedDecision(eventId: string, event: AutomationEvent, result: AutomationPipelineResult,
     emailCandidates: AutomationCandidate[] | undefined, replica: AutomationReplica | null, binding?: ApplicationBindingRecord): Promise<{
-    kind: "created-lead" | "moved-application" | "noted-application"; cardId: string; columnId?: string; message: string; bindingId?: string; changeHash?: string;
+    kind: "created-lead" | "moved-application" | "noted-application"; cardId: string; columnId?: string; message: string; bindingId?: string; changeHash?: string; existing?: boolean;
   } | { kind: "review"; reason: string } | null> {
     const recorded = replica?.appliedForRuntime(eventId);
     if (recorded && replica) {
@@ -1427,7 +1428,8 @@ export class ExecutionCoordinator {
       await replica.sync();
       if (replica.controlForRuntime().state !== "active" || !replica.allowsSource(event.source)) return null;
       return { kind: recorded.kind === "lead" ? "created-lead" : recorded.kind === "note" ? "noted-application" : "moved-application", cardId: recorded.cardId,
-        ...(recorded.kind === "move" ? { columnId: recorded.columnId } : {}), message: "Previously recorded application change uploaded",
+        ...(recorded.kind === "move" ? { columnId: recorded.columnId } : {}),
+        ...(recorded.kind === "lead" && (recorded.existing || !recorded.changeHash) ? { existing: true } : {}), message: "Previously recorded application change uploaded",
         ...(binding ? { bindingId: binding.proof.signed.payload.bindingId, changeHash: recorded.changeHash } : {}) };
     }
     const leadDecision = event.source === "website" && result.decision && "relevance" in result.decision ? result.decision : result.opportunity;
@@ -1468,7 +1470,9 @@ export class ExecutionCoordinator {
         source: { origin: "website", page: result.extraction },
       }, leadDecision);
       await replica.sync();
-      return { kind: "created-lead", cardId: created.cardId, message: created.duplicate ? "Lead was already applied" : "Lead created in the authorized Lead column" };
+      return { kind: "created-lead", cardId: created.cardId,
+        ...(replica.appliedForRuntime(eventId)?.kind === "lead" && created.duplicate && !replica.appliedForRuntime(eventId)?.changeHash ? { existing: true } : {}),
+        message: created.duplicate ? "Existing application retained; stage unchanged" : "Lead created in the authorized Lead column" };
     }
 
     if (event.source === "email" && isLeadProposal && leadDecision && result.extraction) {

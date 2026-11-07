@@ -1357,6 +1357,50 @@ it("Given a v1 automation and owner-captured original, when processing a rejecti
   expect(JSON.parse(replica.serialize()).grant.payload.automation.version).toBe(1);
 });
 
+it("Given an existing application When another run rediscovers its posting Then reuse its card without changing its stage", async () => {
+  const data = await typedFixture(undefined, true, 2);
+  const replica = await AutomationReplica.activate(data.packet, data.automation);
+  const lead = { company: "Example", role: "Backend Engineer", jobUrl: "https://careers.example.test/jobs/42?utm_source=first",
+    source: { origin: "website" as const } };
+  const original = await replica.createLead("discovery-first", lead, {});
+  const candidate = replica.candidates().find(value => value.cardId === original.cardId)!;
+  await replica.moveCard("application-advanced", original.cardId, data.packet.bindings.columns.interview,
+    { columnId: candidate.columnId, ...(candidate.workflow ? { changedAt: candidate.workflow.changedAt } : {}) });
+  expect(await replica.createLead("discovery-again", { ...lead, jobUrl: "https://careers.example.test/jobs/42?utm_source=second#apply" }, {}))
+    .toEqual({ cardId: original.cardId, duplicate: true });
+  expect(replica.candidates().find(value => value.cardId === original.cardId)?.columnId).toBe(data.packet.bindings.columns.interview);
+  const other = await replica.createLead("different-role", { ...lead, jobUrl: "https://careers.example.test/jobs/43" }, {});
+  expect(other.duplicate).toBe(false);
+  expect(replica.candidates()).toHaveLength(2);
+});
+
+it("Given an active intake participant When publishing a summary Then retain one ordinary signed chat message across restore", async () => {
+  const data = await typedFixture(undefined, true, 2);
+  const uploads: BlindObject[] = [];
+  const transport: ReplicaTransport = { ...capturedRuntimeTransport(), upload: async (access, object, requestId) => {
+    uploads.push(structuredClone(object));
+    const receipt = await signedReceipt(access, object, requestId);
+    if (uploads.length === 1) throw new Error("Receipt response lost");
+    return receipt;
+  } };
+  const replica = await AutomationReplica.activate({ ...data.packet, transport }, data.automation);
+  const first = await replica.postSummary("run-1", "Found one Lead");
+  await expect(replica.sync()).rejects.toThrow("Receipt response lost");
+  const restored = await AutomationReplica.restore(replica.serialize(), data.automation, async () => {}, transport);
+  await restored.sync();
+  expect(await restored.postSummary("run-1", "Found one Lead")).toEqual(first);
+  const snapshot = JSON.parse(restored.serialize());
+  expect(snapshot.chat.messages).toHaveLength(1);
+  expect(uploads).toHaveLength(2);
+  expect(uploads[1]).toEqual(uploads[0]);
+  const delivered = JSON.parse(new TextDecoder().decode(await decryptBlindObject(uploads[1]!, data.packet.blind.scopeId, 1, data.key)));
+  expect(delivered.chat.messages).toHaveLength(1);
+  const { verifyChatRecord } = await import("../../../src/chat/records");
+  const room = `${data.owner.identity.personId}:${data.packet.bindings.boardId}`;
+  await expect(verifyChatRecord(snapshot.chat.messages[0], room, data.owner.identity.personId, data.packet.workspaceId)).resolves.toBeDefined();
+  await expect(restored.postSummary("run-1", "Changed content")).rejects.toThrow(/different/i);
+});
+
 it("Given v2 intake without captured page content, when authoring a lead, then labels do not invent original evidence", async () => {
   const data = await typedFixture(undefined, false, 2);
   const replica = await AutomationReplica.activate(data.packet, data.automation);
