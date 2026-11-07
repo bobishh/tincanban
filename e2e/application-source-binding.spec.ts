@@ -90,8 +90,9 @@ test("Given two same-company original postings and a role-free retained rejectio
   try {
     const firstCard = await submitApplication(fixture, { company, role: "Display Role One", jobUrl,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-ambiguous-one" })
-    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl,
+    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl: `${jobUrl}-two`,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-ambiguous-two" })
+    expect(secondCard).not.toBe(firstCard)
     await syncFromRusty(page)
     await patchCard(page, fixture, firstCard, `${company} — Display Role One`, "Display Role One", fixture.columns.applied)
     await patchCard(page, fixture, secondCard, `${company} — Display Role Two`, "Display Role Two", fixture.columns.applied)
@@ -124,8 +125,9 @@ test("Given two same-company postings and an ambiguous retained rejection, when 
   try {
     const firstCard = await submitApplication(fixture, { company, role: "Display Role One", jobUrl,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-binding-success-one" })
-    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl,
+    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl: `${jobUrl}-two`,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-binding-success-two" })
+    expect(secondCard).not.toBe(firstCard)
     const firstLabel = `${company} — Display Role One`
     const secondLabel = `${company} — Display Role Two`
     await syncFromRusty(page)
@@ -190,8 +192,9 @@ test("Given a saved owner binding, when its automation grant is revoked before r
   try {
     const firstCard = await submitApplication(fixture, { company, role: "Display Role One", jobUrl,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-grant-one" })
-    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl,
+    const secondCard = await submitApplication(fixture, { company, role: "Display Role Two", jobUrl: `${jobUrl}-two`,
       message: `${company} is hiring a ${originalRole}.`, idempotencyKey: "source-grant-two" })
+    expect(secondCard).not.toBe(firstCard)
     await syncFromRusty(page)
     await patchCard(page, fixture, firstCard, `${company} — Display Role One`, "Display Role One", fixture.columns.applied)
     await patchCard(page, fixture, secondCard, `${company} — Display Role Two`, "Display Role Two", fixture.columns.applied)

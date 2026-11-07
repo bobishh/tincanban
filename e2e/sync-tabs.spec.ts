@@ -102,7 +102,7 @@ test("Given a restored board has signed participant access without saved peer de
     const { defaultProofStore } = await import("/src/domain/proofs.ts")
     const { signEnvelope } = await import("/src/domain/identity.ts")
     const { receiveChat } = await import("/src/chat/service.ts")
-    const { workspaceChatRoomId } = await import("/src/app/workspaceMetadata.ts")
+    const { workspaceChatRoomId } = await import("/src/domain/workspaceChatRoom.ts")
     const app = useTincanban(), doc = app.getActiveDoc()!, owner = app.getCurrentProfile()!
     const editor = (await createRecoverableIdentity("better", "Ray")).profile
     const grant = await createWorkspaceGrant(owner, doc.id, editor.identity.personId, "editor")
