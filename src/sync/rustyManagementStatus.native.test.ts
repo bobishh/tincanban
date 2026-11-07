@@ -61,7 +61,7 @@ async function policyFiles(directory: string): Promise<Record<string, string>> {
   const result: Record<string, string> = {}
   const walk = async (path: string, prefix = "") => {
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (entry.name === "status-nonces.json") continue
+      if (/^status-nonces(?:-[A-Za-z0-9_-]{43})?\.json$/u.test(entry.name)) continue
       if (entry.isDirectory()) await walk(resolve(path, entry.name), `${prefix}${entry.name}/`)
       else result[`${prefix}${entry.name}`] = await readFile(resolve(path, entry.name), "base64")
     }

@@ -272,6 +272,9 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
   let wrongOwnerContextClosed = false
   let originalWorkspaceId: string | undefined
   try {
+    // Reconnecting a board does not approve storage for the whole private Identity catalog.
+    // Both owner devices retain the service approval issued before enrollment.
+    if (rusty) await approveRustyForFixture(page, rusty.origin)
     // Enroll this current owner Identity device before creating the board to reconnect.
     // It has the active Identity authority but no local copy of that later board.
     await enrollDevice(page, ownerDevice)

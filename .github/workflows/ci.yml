@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  RUSTY_REVISION: 790fd34984b51752ba81712edca2f0f6df05915d
+  RUSTY_REVISION: ef216652669d6ce29d6abaf632b6cf451251609a
 
 jobs:
   verify:
@@ -387,6 +387,8 @@ jobs:
             browsers: chromium
           - group: identity
             browsers: chromium
+          - group: identity-discovery
+            browsers: chromium
     steps:
       - uses: actions/checkout@v7
         with:
@@ -462,7 +464,14 @@ jobs:
           TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
           IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
           IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
-        run: npx playwright test --config playwright.identity-bootstrap.config.ts --reporter=list
+        run: npx playwright test --config playwright.identity-bootstrap.config.ts --project=identity-bootstrap --reporter=list
+      - name: Verify Identity board discovery over P2P and stored copies
+        if: matrix.group == 'identity-discovery'
+        env:
+          TINCANBAN_RUSTY_BINARY: ${{ runner.temp }}/tincanban-rusty/target/debug/mesh-lighthouse
+          IDENTITY_E2E_ORIGIN: http://127.0.0.1:4175
+          IDENTITY_E2E_PROVIDER_DIR: ${{ github.workspace }}/.ci/identity-provider
+        run: npx playwright test --config playwright.identity-bootstrap.config.ts --project=identity-discovery --reporter=list
       - name: Verify cold Identity catalog discovery with source closed
         if: matrix.group == 'identity'
         env:

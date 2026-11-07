@@ -12,6 +12,10 @@ export default defineConfig({
   outputDir: process.env.IDENTITY_BOOTSTRAP_ARTIFACT_DIR ?? "test-results-identity-bootstrap",
   workers: 1,
   retries: 0,
+  projects: [
+    { name: "identity-bootstrap", testIgnore: "**/identity-phone-board-discovery.spec.ts" },
+    { name: "identity-discovery", testMatch: "**/identity-phone-board-discovery.spec.ts" },
+  ],
   use: { baseURL: `http://127.0.0.1:${port}`, trace: "retain-on-failure" },
   webServer: [
     ...(identityProviderDirectory ? [{
