@@ -4,12 +4,13 @@ import type { BlindReplicaConfig } from "./blindReplication"
 import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 
 const mocks = vi.hoisted(() => ({
-  pending: vi.fn(), create: vi.fn(), resume: vi.fn(), configurations: vi.fn(), conflicts: vi.fn(), persist: vi.fn(),
+  provision: vi.fn(async () => ({})), pending: vi.fn(), create: vi.fn(), resume: vi.fn(), configurations: vi.fn(), conflicts: vi.fn(), persist: vi.fn(),
 }))
 
 vi.mock("./privateReplicaRepository", () => ({ privateReplicaBinding: () => "fixture-binding", readReplicaWriterUpgrade: mocks.pending,
   getPrivateReplicaConfigurations: mocks.configurations, getPrivateReplicaConflictSummaries: mocks.conflicts,
   persistPrivateReplicaProgress: mocks.persist }))
+vi.mock("./provisionIdentityReplicas", () => ({ provisionIdentityReplicas: mocks.provision }))
 vi.mock("./blindReplicaStore", () => ({ createBlindReplica: mocks.create }))
 vi.mock("./workspaceReplicaWriter", () => ({ ensureWorkspaceReplicaWriter: mocks.resume }))
 
@@ -130,4 +131,16 @@ test("Given a forgotten local board, when Rusty connections reload, then omit it
     expect(state.configs.value).toEqual([other])
     expect(state.identityConfigs.value).toEqual([identity])
   } finally { root.mockRestore() }
+})
+
+test("Given only shared board access, when private delivery starts, then provision the participant's own Identity catalog independently of board ownership", async () => {
+  const { provisionPrivateReplicas } = await import("./privateReplicaFactory")
+  const shared = { ...config, boardAccess: { authorization: { payload: { version: 2 } } } } as BlindReplicaConfig
+  const app = { getCurrentProfile: () => ({ identity: { personId: "editor" } }) }
+  const state = { configs: ref([shared]), identityConfigs: ref([]), statuses: ref({}), profileSetupErrors: ref({}) }
+  const guard = vi.fn(), reload = vi.fn(async () => {})
+  await expect(provisionPrivateReplicas(app as never, state, guard, reload)).resolves.toEqual([])
+  expect(mocks.provision).toHaveBeenCalledWith(app, [shared], new Set(), guard, expect.any(Function))
+  expect(reload).toHaveBeenCalledOnce()
+  expect(state.configs.value).toEqual([shared])
 })

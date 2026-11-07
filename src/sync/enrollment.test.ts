@@ -58,7 +58,7 @@ async function fixture(photo?: { avatarData: string | null; changedAt: string },
 beforeEach(() => { vi.restoreAllMocks(); resetIdentityStorageForTest(); resetInvitationStorageForTest() })
 
 describe("device enrollment boundary", () => {
-  it.each([true, false])("Given optional mesh fields and Rusty connection %s, when signing a workspace bootstrap, then the actual JSON wire payload verifies", async withStorage => {
+  it.each(["none", "board", "board-and-identity"])("Given optional mesh fields and Rusty connection %s, when signing a workspace bootstrap, then the actual JSON wire payload verifies", async storageMode => {
     const owner = await bootstrapIdentity("Owner")
     const root = createPersonalRoot(owner, await certHashDefault(owner.certificate))
     const targetKeys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
@@ -88,11 +88,15 @@ describe("device enrollment boundary", () => {
       authorityView, workspace: { id: "ws", title: "Board", reference: {
         workspaceId: "ws", documentId: "ws", grantHash: "genesis", forgotten: false } },
       meshWorkspaces: [{ version: 1, workspaceId: "ws", ownerPersonId: owner.identity.personId,
-        ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], grants: [], storage: withStorage ? [storage] : [], identityStorage: withStorage ? [identityStorage] : [],
+        ownerPublicKey: owner.identity.publicKey, optionalMeshField: undefined }], grants: [], storage: storageMode !== "none" ? [storage] : [], identityStorage: storageMode === "board-and-identity" ? [identityStorage] : [],
       snapshot: new TextEncoder().encode("[]") })
     const wire = JSON.parse(new TextDecoder().decode(bytes)) as Parameters<typeof verifyEnvelope>[0]
     expect(await verifyEnvelope(wire, owner.device.publicKey)).toBe(true)
     expect(JSON.stringify(wire)).not.toContain("optionalMeshField")
+    const recipient = { ...owner, certificate, device: { ...owner.device, deviceId: targetDeviceId, publicKey: targetPublicKey } }
+    const accepted = await preflightSamePersonWorkspaceBootstrap(bytes, invite, recipient, authorityView)
+    expect(accepted.storage).toHaveLength(storageMode === "none" ? 0 : 1)
+    expect(accepted.identityStorage).toHaveLength(storageMode === "board-and-identity" ? 1 : 0)
   })
 
   it.each([true, false])("Given a crash after local access CAS and Rusty connection %s, when the same approved bootstrap retries after reload, then retain profile and local workspace and finish mesh delivery", async withStorage => {

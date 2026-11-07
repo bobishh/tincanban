@@ -1,6 +1,7 @@
 import type { LocalProfile } from "../domain/identity"
 import { discoverBlindKeeper } from "./blindClient"
 import { ensureIdentityReplicaConnection } from "./identityReplicaConnection"
+import { readIdentityRustyServicePin } from "./identityRustyServiceCatalog"
 import { assertReplicaCredentialsUnfrozen } from "./replicaCredentialFreeze"
 
 /** Bind profile setup to an already pinned connection, without forwarding any board credentials. */
@@ -9,6 +10,10 @@ export async function provisionIdentityReplica(access: { origin: string; service
   const pin = { origin: access.origin, servicePublicKey: access.servicePublicKey }
   ensureCurrent()
   await assertReplicaCredentialsUnfrozen(profile.identity.personId, pin)
+  ensureCurrent()
+  const approved = await readIdentityRustyServicePin(profile.identity.personId, pin.origin, profile)
+  if (!approved) return
+  if (approved.servicePublicKey !== pin.servicePublicKey) throw new Error("Rusty service is not approved by this Identity")
   ensureCurrent()
   const service = await discoverBlindKeeper(pin.origin)
   ensureCurrent()

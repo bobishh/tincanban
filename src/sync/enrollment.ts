@@ -90,7 +90,7 @@ type SamePersonWorkspaceBootstrapInput = {
 /** Sign one selected workspace bootstrap for a device already present in Identity authority. */
 export async function createSamePersonWorkspaceBootstrap(input: SamePersonWorkspaceBootstrapInput) {
   const { invite, profile, recipientDeviceId } = input
-  assertSamePersonBootstrapOwnerWorkspace(input)
+  assertSamePersonBootstrapWorkspace(input)
   assertSamePersonBootstrapStoragePairing(input)
   if (input.meshWorkspaces.length !== 1 || input.grants.length > 1 || !(input.snapshot instanceof Uint8Array)) {
     throw new Error("Invalid same-person workspace bootstrap")
@@ -121,7 +121,7 @@ export async function createSamePersonWorkspaceBootstrap(input: SamePersonWorksp
   return bytes
 }
 
-function assertSamePersonBootstrapOwnerWorkspace(input: SamePersonWorkspaceBootstrapInput) {
+function assertSamePersonBootstrapWorkspace(input: SamePersonWorkspaceBootstrapInput) {
   if (input.invite.issuerPersonId !== input.profile.identity.personId ||
       input.authorityView.personId !== input.profile.identity.personId ||
       input.workspace.id !== input.workspace.reference.workspaceId || input.workspace.reference.forgotten) {
@@ -136,7 +136,7 @@ function assertSamePersonBootstrapStoragePairing(input: SamePersonWorkspaceBoots
     config.purpose === "identity" && input.storage.some(workspaceConfig => workspaceConfig.origin === config.origin &&
       workspaceConfig.servicePublicKey === config.servicePublicKey && workspaceConfig.scopeId !== config.scopeId))
   if (input.storage.some(config => config.workspaceId !== input.workspace.id) ||
-      workspaceOrigins.size !== input.storage.length || input.identityStorage.length !== workspaceOrigins.size ||
+      workspaceOrigins.size !== input.storage.length ||
       identityOrigins.size !== input.identityStorage.length || !identityMatchesWorkspace) {
     throw new Error("Invalid same-person workspace bootstrap")
   }
@@ -231,7 +231,7 @@ async function parseSamePersonWorkspaceStorage(payload: WorkspaceBootstrapPayloa
     if (config.purpose !== "identity") throw new Error("Identity profile Rusty access binding is invalid")
     return config
   })
-  if (identityStorage.length !== storage.length || identityStorage.some(config => config.purpose !== "identity" || config.removalPending ||
+  if (identityStorage.some(config => config.purpose !== "identity" || config.removalPending ||
       !storage.some(workspaceConfig => workspaceConfig.origin === config.origin && workspaceConfig.servicePublicKey === config.servicePublicKey &&
         workspaceConfig.scopeId !== config.scopeId)) ||
       new Set(identityStorage.map(config => config.origin)).size !== identityStorage.length) {

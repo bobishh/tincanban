@@ -109,6 +109,8 @@ async function joinAsEditor(owner: Page, peer: Page): Promise<void> {
   const host = owner.getByRole("dialog", { name: "Device sync" })
   await host.getByRole("button", { name: "Add someone", exact: true }).click()
   await host.getByRole("button", { name: "Generate link", exact: true }).click()
+  try { await expect(host.getByLabel("Pairing link")).toBeVisible({ timeout: 30_000 }) }
+  catch (cause) { throw new Error(`Board invitation was not created: ${await host.innerText()}`, { cause }) }
   await peer.goto(await host.getByLabel("Pairing link").inputValue())
   const joining = peer.getByRole("dialog", { name: "Device sync" })
   await joining.getByRole("button", { name: "Accept and join", exact: true }).click()
@@ -654,9 +656,11 @@ async function retainedBoardAccess(page: Page, workspaceId: string) {
   }, workspaceId)
 }
 
-test("Given an approved phone and an owner board with no Rusty copy, when sign-in loads its private catalog, then recover the original board through P2P and retain it after reload", async ({ page: desktop, context, browser, baseURL }) => {
+for (const role of ["owner", "editor"] as const) test(`Given an approved phone and an ${role} board with no Rusty copy, when sign-in loads its private catalog, then recover the original board through P2P and retain its role after reload`, async ({ page: desktop, context, browser, baseURL }) => {
   test.setTimeout(240_000)
   const appOrigin = new URL(baseURL!).origin
+  const boardOwnerContext = await browser.newContext()
+  const boardOwner = await boardOwnerContext.newPage()
   const portal = await context.newPage()
   const phoneContext = await browser.newContext()
   const phone = await phoneContext.newPage()
@@ -674,14 +678,29 @@ test("Given an approved phone and an owner board with no Rusty copy, when sign-i
     await enrollPhoneManager(portal, phonePortal, personId)
     // Connect only the starter. The later board has no Rusty connection or stored copy.
     await connectRusty(desktop, rusty.origin)
-    await createJobSearchWorkspace(desktop, "P2P only board")
-    const workspaceId = await desktop.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
-    await desktop.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Add lead to Lead", exact: true }).click()
-    const item = desktop.getByRole("dialog", { name: "Add item" })
+    const source = role === "editor" ? boardOwner : desktop
+    if (role === "editor") {
+      const boardOwnerPortal = await boardOwnerContext.newPage()
+      const ownerPersonId = await createOwnerIdentity(boardOwnerPortal)
+      await boardOwner.goto(baseURL!)
+      await expect(boardOwner.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+      await approveApplicationDevice(boardOwner, appOrigin, ownerPersonId)
+    }
+    await createJobSearchWorkspace(source, "P2P only board")
+    const boardOwnerPersonId = await source.evaluate(async () => (await import("/src/state.ts")).useTincanban().getCurrentProfile()!.identity.personId)
+    const workspaceId = await source.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    await source.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Add lead to Lead", exact: true }).click()
+    const item = source.getByRole("dialog", { name: "Add item" })
     await item.getByLabel("Company *").fill("Retained only by source")
     await item.getByLabel("Role *").fill("P2P recovery")
     await item.getByRole("button", { name: "Create item", exact: true }).click()
-    await expect(desktop.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible()
+    await expect(source.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible()
+    if (role === "editor") {
+      await joinAsEditor(boardOwner, desktop)
+      await expect(desktop.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible()
+      expect(await retainedBoardAccess(desktop, workspaceId)).toEqual({ workspaceId, ownerPersonId: boardOwnerPersonId, role })
+      await boardOwner.close()
+    }
     await expect.poll(() => desktop.evaluate(async id => {
       const profile = (await import("/src/domain/identity.ts")).bootstrapIdentity()
       const configs = await (await import("/src/sync/privateReplicaRepository.ts")).getReplicaConfigurations((await profile).identity.personId)
@@ -724,7 +743,7 @@ test("Given an approved phone and an owner board with no Rusty copy, when sign-i
     await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 90_000 })
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
     // Recovery publishes before connection cleanup; verify durable access instead of a transient trace event.
-    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: personId, role: "owner" })
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: boardOwnerPersonId, role })
     expect(await phone.evaluate(async id => {
       const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
       return (await (await import("/src/sync/privateReplicaRepository.ts")).getReplicaConfigurations(profile.identity.personId))
@@ -741,10 +760,74 @@ test("Given an approved phone and an owner board with no Rusty copy, when sign-i
     await phone.reload()
     await expect(phone.getByRole("button", { name: /Open Retained only by source/u })).toBeVisible({ timeout: 30_000 })
     expect(await phone.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
-    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: personId, role: "owner" })
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId: boardOwnerPersonId, role })
   } finally {
     console.log("P2P recovery diagnostics", diagnostics)
-    await Promise.allSettled([phoneContext.close(), rusty.close()])
+    await Promise.allSettled([boardOwnerContext.close(), phoneContext.close(), rusty.close()])
   }
 })
 
+
+test("Given an Identity with only an editor board and an approved Rusty service, when all board peers close and a fresh device signs in, then restore the shared board and editor role from its private catalog and Rusty", async ({ page: editor, context, browser, baseURL }) => {
+  test.setTimeout(240_000)
+  const appOrigin = new URL(baseURL!).origin
+  const rusty = await startIdentityRustyService(`${appOrigin},${identityOrigin}`)
+  const ownerContext = await browser.newContext(), phoneContext = await browser.newContext()
+  const owner = await ownerContext.newPage(), ownerPortal = await ownerContext.newPage()
+  const editorPortal = await context.newPage(), phonePortal = await phoneContext.newPage(), phone = await phoneContext.newPage()
+  try {
+    const personId = await createOwnerIdentity(editorPortal)
+    await editorPortal.getByRole("tab", { name: "Storage", exact: true }).click()
+    await editorPortal.getByLabel("Rusty service origin", { exact: true }).fill(rusty.origin)
+    await editorPortal.getByLabel("Connect this Identity to Rusty. Share its encrypted document and scoped access with approved Identity devices. Do not send my recovery key or board data.", { exact: true }).check()
+    await editorPortal.getByRole("button", { name: "Connect to Rusty", exact: true }).click()
+    await expect(editorPortal.getByRole("tabpanel").getByText(rusty.origin, { exact: true })).toBeVisible({ timeout: 30_000 })
+    await editor.goto(baseURL!)
+    await expect(editor.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(editor, appOrigin, personId)
+    await enrollPhoneManager(editorPortal, phonePortal, personId)
+    const ownerPersonId = await createOwnerIdentity(ownerPortal)
+    await owner.goto(baseURL!)
+    await expect(owner.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(owner, appOrigin, ownerPersonId)
+    await createJobSearchWorkspace(owner, "Shared stored board")
+    await owner.getByRole("region", { name: "Lead", exact: true }).getByRole("button", { name: "Add lead to Lead", exact: true }).click()
+    const create = owner.getByRole("dialog", { name: "Add item" })
+    await create.getByLabel("Company *").fill("Recovered without peers")
+    await create.getByLabel("Role *").fill("Editor access")
+    await create.getByRole("button", { name: "Create item", exact: true }).click()
+    await owner.getByRole("button", { name: "Close detail", exact: true }).click()
+    await connectRusty(owner, rusty.origin)
+    const workspaceId = await owner.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
+    await joinAsEditor(owner, editor)
+    await expect(editor.getByRole("button", { name: /Open Recovered without peers/u })).toBeVisible()
+    await editor.evaluate(async workspaceId => {
+      const app = (await import("/src/state.ts")).useTincanban()
+      for (const workspace of [...app.availableWorkspaces.value]) {
+        if (workspace.id !== workspaceId) await app.removeWorkspaceCopyAsync(workspace.id)
+      }
+    }, workspaceId)
+    await expect.poll(() => editor.evaluate(async () => {
+      const profile = await (await import("/src/domain/identity.ts")).bootstrapIdentity()
+      const { getIdentityReplicaConfigurations, getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      return { catalogs: (await getIdentityReplicaConfigurations(profile.identity.personId)).length,
+        shared: (await getReplicaConfigurations(profile.identity.personId)).filter(config => config.boardAccess).length }
+    }), { timeout: 30_000 }).toEqual({ catalogs: 1, shared: 1 })
+    await editor.getByRole("button", { name: "Sync", exact: true }).click()
+    const storage = editor.getByRole("region", { name: "Rusty", exact: true })
+    const syncNow = storage.getByRole("button", { name: "Sync now", exact: true })
+    await syncNow.click()
+    await expect(syncNow).toBeEnabled({ timeout: 30_000 })
+    await expect(storage.getByText("Synced", { exact: true })).toBeVisible({ timeout: 30_000 })
+    expect(await retainedBoardAccess(editor, workspaceId)).toEqual({ workspaceId, ownerPersonId, role: "editor" })
+    await Promise.all([owner.close(), editor.close()])
+    await phone.goto(baseURL!)
+    await expect(phone.getByRole("button", { name: "Open workspaces", exact: true })).toBeEnabled({ timeout: 30_000 })
+    await approveApplicationDevice(phone, appOrigin, personId)
+    await expect(phone.getByRole("button", { name: /Open Recovered without peers/u })).toBeVisible({ timeout: 60_000 })
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId, role: "editor" })
+    await phone.reload()
+    await expect(phone.getByRole("button", { name: /Open Recovered without peers/u })).toBeVisible({ timeout: 30_000 })
+    expect(await retainedBoardAccess(phone, workspaceId)).toEqual({ workspaceId, ownerPersonId, role: "editor" })
+  } finally { await Promise.allSettled([ownerContext.close(), phoneContext.close(), rusty.close()]) }
+})

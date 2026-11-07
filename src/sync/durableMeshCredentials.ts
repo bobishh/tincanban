@@ -288,14 +288,31 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
     }))
   }
 
+  /** Prepare a current participant's route without creating or widening its workspace grant. */
+  async prepareWorkspaceTransfer(workspaceId: string, endpoint?: string): Promise<void> {
+    const profile = await this.options.getProfile()
+    const credential = await this.store.getWorkspaceCredential(workspaceId)
+    if (!credential || credential.ownerPersonId === profile.identity.personId) {
+      await workspaceOwnerSigningContext(profile, workspaceId, "workspace-transfer", {},
+        async () => await this.store.getWorkspaceAuthority(workspaceId) ?? credential)
+      if (endpoint) await this.ensureOwnerWorkspaces([workspaceId], endpoint, profile)
+      else await this.prepareOwnerWorkspaceTransfer(workspaceId)
+      return
+    }
+    if (!await this.credentialBelongsToProfile(credential, profile)) throw new Error("Workspace access is unavailable")
+    await this.acquireInstance()
+    endpoint ??= await this.workspaceTransferEndpoint()
+    const certificates = uniqueCertificates(profile, await defaultProofStore.listCertificates())
+    await this.refreshOwnBundle(credential, profile, endpoint, certificates)
+    await this.notify()
+  }
+
   /** An owner copy must listen even before any other device has supplied a route. */
   async prepareOwnerWorkspaceTransfer(workspaceId: string): Promise<string> {
     await this.addOwnerWorkspace(workspaceId)
-    if (this.stopped) await this.resumeAll(await this.startInstanceNode())
-    await this.waitUntilListening()
-    if (!this.node) throw new Error("Owner workspace transport is unavailable")
-    await this.ensureOwnerWorkspaces([workspaceId], this.node.endpointId, await this.options.getProfile())
-    return this.node.endpointId
+    const endpoint = await this.workspaceTransferEndpoint()
+    await this.ensureOwnerWorkspaces([workspaceId], endpoint, await this.options.getProfile())
+    return endpoint
   }
 
   protected async encodeOwnerWorkspaceOffer(workspaceId: string) {

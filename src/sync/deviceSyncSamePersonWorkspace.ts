@@ -43,9 +43,6 @@ export async function approveSamePersonWorkspace(context: EnrollmentContext, run
   const workspaceId = selectActiveWorkspace(context, context.availableWorkspaces.map(item => item.id))
   const workspace = context.availableWorkspaces.find(item => item.id === workspaceId)
   if (!workspace || !context.durableMesh) throw new Error("Selected workspace is unavailable for device sync")
-  if (await context.workspaceOwner?.(workspaceId) !== profile.identity.personId) {
-    throw new Error("Only the current workspace owner can add this Identity device")
-  }
   await serveApprovedIdentityWorkspace({ profile, workspace, mesh: context.durableMesh,
     store: context.meshWorkspaceStore ?? context.workspaceStore!, endpoint: node.endpointId,
     getProfile: context.getProfile, isCurrent: () => isCurrent(context, run), stream, connection, invite, guest })
@@ -82,16 +79,13 @@ export async function serveApprovedIdentityWorkspace(input: WorkspaceTransferSes
   const identityStorage = (await getIdentityReplicaConfigurations(profile.identity.personId)).filter(config =>
     storage.some(workspaceConfig => workspaceConfig.origin === config.origin &&
       workspaceConfig.servicePublicKey === config.servicePublicKey))
-  if (identityStorage.length !== new Set(storage.map(config => config.origin)).size) {
-    throw new Error("Connect the selected Rusty service to Identity profile sync before adding this device")
-  }
   const assertStorageUnfrozen = async () => {
     for (const config of [...storage, ...identityStorage]) {
       await assertReplicaCredentialsUnfrozen(profile.identity.personId, config)
     }
   }
   await assertStorageUnfrozen()
-  await mesh.ensureOwnerWorkspaces([workspaceId], endpoint ?? await mesh.prepareOwnerWorkspaceTransfer(workspaceId), profile)
+  await mesh.prepareWorkspaceTransfer(workspaceId, endpoint)
   const grant = await mesh.enrollmentGrant(workspaceId, profile)
   const grants = grant ? [grant] : []
   ensureCurrent()

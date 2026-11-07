@@ -376,7 +376,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
 
         <!-- Distinct Secondary Action: Add my device / Sync all -->
         <section class="sync-section">
-          <p class="sync-section-copy">Your own device only. Uses your identity and Owner access to workspaces you own.</p>
+          <p class="sync-section-copy">Your own device only. Uses your Identity and existing workspace access.</p>
           <button
             class="sync-section-action"
             type="button"

@@ -1780,3 +1780,18 @@ describe("durable node supervision", () => {
     } finally { stop.abort() }
   }, 500)
 })
+
+it("Given a shared board with lost local transport credentials, when preparing same-person transfer, then preserve its current owner and refuse to create owner credentials", async () => {
+  resetIdentityStorageForTest()
+  const profile = await bootstrapIdentity("Editor missing route")
+  const mesh = new DurableMesh({ transport: {} as never, workspaceStore: {} as never,
+    workspace: {} as never, getProfile: async () => profile,
+    store: { getWorkspaceCredential: async () => null, getWorkspaceAuthority: async () => ({
+      workspaceId: "shared", ownerPersonId: "another-owner", ownerPublicKey: "another-key" }),
+    } as never })
+  const createOwner = vi.spyOn(mesh, "ensureOwnerWorkspaces").mockResolvedValue()
+  try {
+    await expect(mesh.prepareWorkspaceTransfer("shared", "existing-endpoint")).rejects.toThrow(/owner authority|access/i)
+    expect(createOwner).not.toHaveBeenCalled()
+  } finally { await mesh.dispose() }
+})

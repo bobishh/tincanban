@@ -261,3 +261,49 @@ it.each([false, true])("Given inactive native board documents and a pending peer
     expect(live()).toHaveLength(0)
   } finally { for (const doc of live()) Automerge.free(doc) }
 })
+
+it("Given a retained shared-board reference and peer address while Rusty catalog is offline, when loading after sign-in, then recover the known board through P2P and keep catalog refresh retryable", async () => {
+  const state = app()
+  const read = state.readWorkspaceDoc.getMockImplementation()!
+  state.readWorkspaceDoc.mockRejectedValue(new Error("No local copy"))
+  f.identityPull.mockRejectedValue(new Error("Rusty catalog offline"))
+  const recover = vi.fn(async (_ids: string[], options?: { routesOnly?: boolean }) => {
+    if (!options?.routesOnly) state.readWorkspaceDoc.mockImplementation(read)
+  })
+  await expect(loadIdentityBoards(state as never, "/", recover)).rejects.toThrow("Rusty catalog offline")
+  expect(recover).toHaveBeenLastCalledWith(["job-search"])
+  expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+})
+
+it("Given an unavailable catalog and only the untouched starter retained, when peer recovery cannot supply known boards, then do not report that starter as a restored selection", async () => {
+  const state = app()
+  const empty = Automerge.from<WorkspaceDocumentV2>(createWorkspaceDoc("guest-default", "Untitled", "bo", "blank"))
+  state.availableWorkspaces.value = [{ id: "guest-default" }]
+  state.readWorkspaceDoc.mockImplementation(async id => {
+    if (id !== "guest-default") throw new Error("No local copy")
+    return empty as never
+  })
+  f.identityPull.mockRejectedValue(new Error("Rusty catalog offline"))
+  try {
+    await expect(loadIdentityBoards(state as never, "/", async () => {})).rejects.toThrow(/waiting for an available peer/)
+    expect(f.signIn.mock.calls.filter(([phase]) => phase === "selection")).toEqual([])
+    expect(state.switchWorkspace).not.toHaveBeenCalled()
+    expect(state.createWorkspaceAsync).not.toHaveBeenCalled()
+  } finally { Automerge.free(empty) }
+})
+
+it("Given a stored board arrives while another board's P2P recovery stays pending, when its Rusty pull completes, then open the available board before waiting for that peer", async () => {
+  const state = app()
+  state.availableWorkspaces.value = []
+  f.workspacePull.mockImplementationOnce(async () => { state.availableWorkspaces.value = [{ id: "job-search" }]; return true })
+  let release!: () => void
+  const recover = vi.fn(async (_ids: string[], options?: { routesOnly?: boolean }) => {
+    if (!options?.routesOnly) await new Promise<void>(resolve => { release = resolve })
+  })
+  const loading = loadIdentityBoards(state as never, "/", recover)
+  try {
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledTimes(2))
+    expect(state.switchWorkspace).toHaveBeenCalledWith("job-search")
+  } finally { release(); await loading }
+})

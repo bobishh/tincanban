@@ -82,7 +82,7 @@ function useAppUiState() {
 
 function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: ReturnType<typeof useAppUiState>) {
   const peerHistorySource = createLazyWorkspacePeerHistorySource({ getProfile: () => tincanban.getCurrentProfile(),
-    readWorkspaceDoc: id => tincanban.readWorkspaceDoc(id) })
+    withWorkspaceDoc: tincanban.withWorkspaceDoc })
   configureChat(
     id => tincanban.withWorkspaceDoc(id, doc => doc.ownerPersonId),
     id => tincanban.withWorkspaceDoc(id, workspaceChatRoomId),

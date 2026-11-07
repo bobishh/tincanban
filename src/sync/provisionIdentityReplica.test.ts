@@ -26,3 +26,12 @@ it("Given profile provisioning shares a frozen Rusty origin, when its background
   expect(errors[access.origin]).toMatch(/transition|frozen/i)
   expect(fetch).not.toHaveBeenCalled()
 })
+
+it("Given shared board storage on a service not approved by this Identity, when provisioning the private catalog, then skip optional backup without an error or private upload", async () => {
+  const profile = await bootstrapIdentity("Editor")
+  const access = { origin: "https://unapproved.example", servicePublicKey: toBase64Url(new Uint8Array(32).fill(7)) }
+  const fetch = vi.fn(async () => { throw new Error("Unapproved service must not be contacted") })
+  vi.stubGlobal("fetch", fetch)
+  await expect(provisionIdentityReplica(access, profile, () => {})).resolves.toBeUndefined()
+  expect(fetch).not.toHaveBeenCalled()
+})

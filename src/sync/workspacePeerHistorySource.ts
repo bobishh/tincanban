@@ -15,16 +15,19 @@ import type { StoredReceivedHistoryBaseline } from "../storageJournal"
 import type { PeerHistoryDocumentRequest } from "./peerHistoryTransport"
 import type { PeerHistoryBaselineDescriptor } from "./workspaceSet"
 
-type Inputs = { getProfile(): LocalProfile | null | undefined; readWorkspaceDoc?(id: string): Promise<WorkspaceDocumentV2> }
+type Inputs = {
+  getProfile(): LocalProfile | null | undefined
+  withWorkspaceDoc?<T>(id: string, read: (document: WorkspaceDocumentV2) => T | Promise<T>): Promise<T>
+}
 
 function recoveryScopeFetcher(config: BlindReplicaConfig, profile: LocalProfile,
   input: Inputs, guard: () => void) {
   return createRustyIdentityProfileScopeFetcher({ access: config, profile, ensureCurrent: async () => {
     guard()
     if (config.boardAccess) {
-      if (!input.readWorkspaceDoc) throw new Error("Participant workspace access cannot be revalidated")
+      if (!input.withWorkspaceDoc) throw new Error("Participant workspace access cannot be revalidated")
       await assertParticipantStorageAccess({ getCurrentProfile: () => input.getProfile() ?? null,
-        readWorkspaceDoc: input.readWorkspaceDoc }, config)
+        withWorkspaceDoc: input.withWorkspaceDoc }, config)
     }
     guard()
   } })
