@@ -44,7 +44,7 @@ export type ReactionOutput = {
   version: 1;
   status: "completed" | "pending" | "failed";
   result?: Record<string, unknown>;
-  commands: Array<{ commandId: string; status: string; changeHash?: string; storageReceipt?: unknown }>;
+  commands: Array<{ commandId: string; status: string; changeHash?: string; storageReceipt?: unknown; cardId?: string }>;
   error?: string;
 };
 
@@ -100,6 +100,10 @@ export async function runReaction(request: ReactionRequest & { source: string },
         if (result.status === "applied" && (typeof result.changeHash !== "string" || result.storageReceipt === undefined)) {
           throw new Error("Participant applied result is missing its verified storage receipt");
         }
+        if (result.status === "existing") {
+          if (typeof result.cardId !== "string" || !result.cardId) throw new Error("Participant existing result has no admitted card");
+          record.cardId = result.cardId;
+        }
         record.status = result.status === "review" ? "failed" : result.status;
         if (result.status === "review") commandFailure = "review_required";
         if (result.changeHash) record.changeHash = result.changeHash;
@@ -147,21 +151,25 @@ export async function runReaction(request: ReactionRequest & { source: string },
   if (result !== undefined && (result === null || typeof result !== "object" || Array.isArray(result))) {
     throw new TypeError("Reaction result must be a JSON object");
   }
-  if (participant.flushPendingCommands && commands.some(command => command.status !== "failed" &&
-    (command.status !== "applied" || !command.changeHash || command.storageReceipt === undefined))) {
+  if (participant.flushPendingCommands && commands.some(command => command.status !== "failed" && !commandCompleted(command))) {
     try { await participant.flushPendingCommands(); } catch { /* Durable queue remains available for the next retry. */ }
   }
   for (const command of commands) {
-    if (command.status === "applied" && command.changeHash && command.storageReceipt !== undefined) continue;
+    if (commandCompleted(command)) continue;
     try { await api.getItemCommandResult(command.commandId); } catch { /* Preserve pending journal identity for a retry. */ }
   }
-  const pending = commands.some(command => command.status !== "applied" || !command.changeHash || command.storageReceipt === undefined);
+  const pending = commands.some(command => !commandCompleted(command));
   const failed = commands.some(command => command.status === "failed");
   const output: ReactionOutput = { version: 1, status: failed ? "failed" : pending ? "pending" : "completed", commands,
     ...(result === undefined ? {} : { result: result as Record<string, unknown> }),
     ...(commandFailure ? { error: commandFailure } : {}) };
   assertBoundedJson(output, "Reaction output");
   return output;
+}
+
+function commandCompleted(command: ReactionOutput["commands"][number]): boolean {
+  return command.status === "existing" ? Boolean(command.cardId)
+    : command.status === "applied" && Boolean(command.changeHash) && command.storageReceipt !== undefined;
 }
 
 export function createReactionAi(): DecisionAi {

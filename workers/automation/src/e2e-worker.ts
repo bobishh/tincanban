@@ -61,7 +61,7 @@ export class AutomationCoordinator extends ProductionCoordinator {
         const value = JSON.parse(configured) as { status: number; html?: string }
         return new Response(value.html ?? "", { status: value.status, headers: { "content-type": "text/html" } })
       }
-      if (url === "https://jobs.example.test/nacre/systems") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Principal Systems Engineer","description":"Build and operate distributed systems.","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>', { headers: { "content-type": "text/html" } });
+      if (["https://jobs.example.test/nacre/systems", "https://jobs.example.test/nacre/systems-two"].includes(url)) return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Principal Systems Engineer","description":"Build and operate distributed systems.","hiringOrganization":{"name":"Nacre Light Integration GmbH"}}</script>', { headers: { "content-type": "text/html" } });
       if (url === "https://jobs.example.test/upvest/product") return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Product Engineer (f/m/d)","hiringOrganization":{"name":"Upvest"}}</script>', { headers: { "content-type": "text/html" } });
       return fetch(input, init);
     };

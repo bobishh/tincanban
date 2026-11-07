@@ -57,6 +57,18 @@ test("Given a reaction that submits a participant command, when run twice, then 
   assert.equal(second.status, "completed");
 });
 
+test("Given an admitted existing card, when discovery deduplicates without a write, then complete without inventing a mutation receipt", async () => {
+  const participant = stubParticipant({
+    async enqueueItemCommand() { return { status: "pending" }; },
+    async getItemCommandResult() { return { status: "existing", cardId: "retained-card" }; },
+  });
+  const source = `export default async (_input, participant) => participant.enqueueItemCommand({})`;
+  const result = await runReaction({ ...input, source, sourceDigest: createHash("sha256").update(source).digest("hex") }, participant);
+  assert.equal(result.status, "completed");
+  assert.equal(result.commands[0]?.status, "existing");
+  assert.equal(result.commands[0]?.storageReceipt, undefined);
+});
+
 test("Given an enqueued command without its durable receipt, when the reaction returns, then result stays pending", async () => {
   const participant = stubParticipant({
     async enqueueItemCommand() { return { commandId: "command-1", status: "pending" }; },

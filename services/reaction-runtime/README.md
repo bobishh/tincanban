@@ -61,6 +61,21 @@ Build and verify with `node services/reaction-runtime/build.mjs`, then
 `node --test services/reaction-runtime/dist/test/*.test.mjs
 services/reaction-runtime/architecture.test.mjs`.
 
+Scheduled discovery in Reflux reads fresh admitted applications through the same
+participant, including archived cards. Posting identity normalizes tracking and
+official ATS posting/application URL variants. Rediscovery retains the existing
+card and stage; a different opening at the same company can create another Lead.
+An existing-card outcome is distinct from a new mutation and does not invent a
+storage receipt.
+
+Authorized participants can publish ordinary signed messages in workspace chat.
+The client attributes them to the owner of their signed grant as **Name
+(Automation)** while retaining the executor's signature and identity. The existing
+**Authorize automation** flow shows chat publication alongside approved card
+operations. Message IDs stay stable across retries; Reflux confirms delivery only
+after native replica synchronization completes. Telegram retains its existing bot
+identity.
+
 The enforcing CONNECT proxy permits HTTPS only to the bound Rusty origins and
 `api.cloudflare.com`, rejecting private addresses. Reflux starts the engine on a
 per-run internal network, mounts only readonly source/secrets/host, drops Linux

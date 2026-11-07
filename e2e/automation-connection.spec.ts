@@ -28,7 +28,7 @@ test("Given an existing owned board, when a Reflux connection lookup fails then 
     workflow_slug: "job-search-automation", intent_id: id, owner_person_id: before.owner, expires_at: expires,
     handoff_code: "a".repeat(43), return_to: returnTo }
   await page.goto(`/automation/connect#request=${Buffer.from(JSON.stringify(request)).toString("base64url")}`)
-  const approval = page.getByRole("dialog", { name: "Connect automation", exact: true })
+  const approval = page.getByRole("dialog", { name: "Authorize automation", exact: true })
   await expect(approval.getByRole("alert")).toContainText("Connection temporarily unavailable")
   await approval.getByRole("button", { name: "Retry", exact: true }).click()
   await expect(approval).toContainText("Job search automation")

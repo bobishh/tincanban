@@ -129,6 +129,10 @@ export function createParticipant(integrationId: string, epoch: number, storage:
         async getItemCommandResult(commandId) {
           const result = coordinator.getItemCommandResult(commandId, integrationId);
           if (!result || result.status !== "applied") return result as never;
+          const action = (result.result as { action?: { existing?: boolean; cardId?: unknown } } | undefined)?.action;
+          if (action?.existing === true && typeof action.cardId === "string") {
+            return { ...result, status: "existing", cardId: action.cardId };
+          }
           const receipt = storage.sql.exec<{ change_hash: string; receipt_json: string }>(
             "SELECT change_hash, receipt_json FROM participant_command_receipts WHERE event_id = ?", commandId,
           ).toArray()[0];

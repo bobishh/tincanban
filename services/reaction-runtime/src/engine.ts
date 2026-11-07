@@ -1,4 +1,4 @@
-export const engineCapabilities = { email: 1 } as const;
+export const engineCapabilities = { email: 1, jobDiscovery: 1, chat: 1 } as const;
 
 export { createParticipant } from "./participant";
 export { handleAutomationInstanceApi } from "../../../workers/automation/src/automationInstanceApi";

@@ -14,6 +14,40 @@ async function profileSettings(page: Page) {
   return dialog
 }
 
+test("Given an owner-authorized automation When its signed summary arrives Then show Bo Automation and reject a forged sibling", async ({ page }) => {
+  await page.goto("/")
+  await ensureJobSearchWorkspace(page)
+  const settings = await profileSettings(page)
+  await settings.getByRole("textbox", { name: "Name", exact: true }).fill("Bo")
+  await settings.getByRole("button", { name: "Save profile", exact: true }).click()
+  await expect(settings.getByText("Profile saved.", { exact: true })).toBeVisible()
+  await settings.getByRole("button", { name: "Dismiss", exact: true }).click()
+  let chat = await openChat(page)
+  await chat.getByRole("textbox", { name: "Message", exact: true }).fill("Human summary")
+  await chat.getByRole("button", { name: "Send message" }).click()
+  await expect(chat.getByText("Human summary", { exact: true })).toBeVisible()
+  await expect(chat.locator(".chat-message-pending")).toHaveCount(0)
+  await page.evaluate(async () => {
+    const { useTincanban } = await import("/src/test/stateFixture.ts")
+    const { automationChatFixture } = await import("/src/test/automationChatFixture.testSupport.ts")
+    const { receiveChat } = await import("/src/chat/service.ts")
+    const state = useTincanban(), doc = state.getActiveDoc()!, owner = state.getCurrentProfile()!
+    const board = Object.values(doc.entities).find(entity => entity.kind === "board")!
+    const columns = Object.values(doc.entities).filter(entity => entity.kind === "column" && entity.placement.parentId === board.id)
+    const column = (title: string) => columns.find(entity => entity.title === title)!.id
+    const { valid, forged } = await automationChatFixture(owner, doc.id, board.id,
+      { lead: column("Lead"), interview: column("Interview"), rejected: column("Rejected") })
+    await receiveChat(doc.id, { version: 1, messages: [forged, valid], profiles: [], typing: [] }, true)
+  })
+  const automated = chat.locator("article").filter({ has: page.getByText("Verified automated summary", { exact: true }) })
+  await expect(automated.locator(".chat-message-author")).toHaveText("Bo (Automation)")
+  await expect(chat.getByText("Forged automated summary", { exact: true })).toHaveCount(0)
+  await page.reload()
+  chat = await openChat(page)
+  await expect(chat.getByText("Verified automated summary", { exact: true })).toHaveCount(1)
+  await expect(chat.locator(".chat-message-author").filter({ hasText: "Bo (Automation)" })).toHaveCount(1)
+});
+
 test("Given Markdown cannot load, when a chat message is saved, then its text remains visible", async ({ page }) => {
   await page.route("**/src/components/MarkdownContent.vue", route => route.abort())
   await page.goto("/")
