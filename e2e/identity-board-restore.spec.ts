@@ -233,7 +233,9 @@ test(`Given remotely saved boards and the source device closed${coldProfile ? " 
       await expect(fresh.locator('.notice-overlay').filter({ hasText: /signed in/i })).toHaveCount(0)
       await fresh.getByRole("button", { name: "Menu", exact: true }).click()
       await fresh.getByRole("button", { name: "Workspaces", exact: true }).click()
-      await expect(fresh.getByRole("dialog", { name: "Workspaces", exact: true })).toContainText("1 board is not saved on this device")
+      // The available board opens before recovery of the remaining offline peer settles.
+      await expect(fresh.getByRole("dialog", { name: "Workspaces", exact: true }))
+        .toContainText("1 board is not saved on this device", { timeout: 30_000 })
       await fresh.getByRole("dialog", { name: "Workspaces", exact: true }).getByRole("button", { name: "Close", exact: true }).click()
       await fresh.evaluate(async () => (await import("/src/sync/telemetry.ts")).retryTelemetry())
       await expect.poll(() => selectedKinds).toContain("saved")

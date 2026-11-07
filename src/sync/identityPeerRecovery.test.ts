@@ -10,11 +10,12 @@ import { IdentityPeerRecovery } from "./identityPeerRecovery"
 import type { DurableMesh } from "./durableMesh"
 import type { SyncNode } from "./transport"
 import type { WorkspaceSetStore } from "./workspaceSet"
-vi.mock("./privateReplicaRepository", () => ({ getIdentityReplicaConfigurations: async () => [{ purpose: "identity" }] }))
+
 beforeEach(() => resetIdentityStorageForTest())
 
 async function recoveryFixture(dial = vi.fn(async () => { throw new Error("Peer offline") }),
-  read: (id: string) => Promise<Uint8Array> = async () => { throw new Error("Board is not retained") }) {
+  read: (id: string) => Promise<Uint8Array> = async () => { throw new Error("Board is not retained") },
+  options: Partial<ConstructorParameters<typeof IdentityPeerRecovery>[0]> = {}) {
   const profile = await bootstrapIdentity()
   const root = createPersonalRoot(profile, await certHashDefault(profile.certificate))
   registerWorkspaceInRoot(root, "board", "board", "genesis")
@@ -26,10 +27,11 @@ async function recoveryFixture(dial = vi.fn(async () => { throw new Error("Peer 
   const node = { endpointId: "local", dial,
     accept: async () => ({ accept: () => new Promise<undefined>(resolve => { finishAccept = resolve }),
       close: async () => { finishAccept(undefined) } }), close: vi.fn(async () => {}) } as unknown as SyncNode
-  const recovery = new IdentityPeerRecovery({ transport: { start: async () => node },
+  const start = vi.fn(async () => node)
+  const recovery = new IdentityPeerRecovery({ transport: { start },
     store: { read } as unknown as WorkspaceSetStore, mesh: {} as DurableMesh,
-    getProfile: async () => profile, ownedWorkspaces: async () => [], changed: vi.fn() })
-  return { profile, root, invite, dial, recovery }
+    getProfile: async () => profile, workspaces: () => [], changed: vi.fn(), ...options })
+  return { profile, root, invite, dial, recovery, start }
 }
 
 it("Given the current document is already retained, when board loading recovers peers, then it does not dial a same-person history transfer", async () => {
@@ -86,5 +88,47 @@ it("Given peer recovery is already in flight, when another recovery request join
   try {
     await Promise.all([first, second])
     expect(dial).toHaveBeenCalledOnce()
+  } finally { await recovery.close() }
+})
+
+it("Given an imported editor board and a saved peer address without Rusty, when recovering its missing copy, then attempt the peer and retain the shared catalog reference", async () => {
+  const { root, dial, recovery } = await recoveryFixture()
+  registerWorkspaceInRoot(root, "board", "board", "import")
+  await defaultStorage.savePersonalRoot(root)
+  try {
+    await recovery.recover(["board"])
+    expect(dial).toHaveBeenCalledWith("remote")
+    expect((await defaultStorage.loadPersonalRoot())?.workspaces.board).toEqual(root.workspaces.board)
+  } finally { await recovery.close() }
+})
+
+it("Given an unpaired local Identity, when background recovery starts, then keep optional transport unloaded while explicit recovery can still reach a saved peer without Rusty", async () => {
+  const { start, dial, recovery } = await recoveryFixture()
+  try {
+    await recovery.start()
+    expect(start).not.toHaveBeenCalled()
+    await recovery.recover(["board"])
+    expect(start).toHaveBeenCalledOnce()
+    expect(dial).toHaveBeenCalledWith("remote")
+  } finally { await recovery.close() }
+})
+
+it("Given owner, editor, visitor, unreadable and inaccessible boards, when publishing recovery sources, then advertise every accessible copy without letting one unreadable board block the others", async () => {
+  let personId = ""
+  const { profile, recovery } = await recoveryFixture(undefined, undefined, {
+    workspaces: () => ["own", "editor", "visitor", "broken", "denied"].map(id => ({ id, title: id })),
+    workspaceOwner: async id => {
+      if (id === "broken") throw new Error("Local copy unavailable")
+      return id === "own" ? personId : "another-owner"
+    },
+    mesh: { enrollmentGrant: async (id: string) => ["editor", "visitor"].includes(id) ? { payload: { role: id } } : undefined } as unknown as DurableMesh,
+  })
+  personId = profile.identity.personId
+  try {
+    await recovery.recover([])
+    const sources = await readIdentityPeerRecovery(personId)
+    expect(sources.filter(source => source.invite.issuerEndpoint === "local").map(source => source.workspaceId).sort())
+      .toEqual(["editor", "own", "visitor"])
+    expect(sources.some(source => source.workspaceId === "board" && source.invite.issuerEndpoint === "remote")).toBe(true)
   } finally { await recovery.close() }
 })

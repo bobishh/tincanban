@@ -3,8 +3,8 @@ import { createDeviceEnrollmentInvite, createPairingSecret, decodePairingFrame, 
 import { meshNetworkConnection } from "@meta-uber/mesh-transport"
 import { captureIdentityProfile, canonicalizeJson, type LocalProfile } from "../domain/identity"
 import { defaultStorage } from "../storage"
+import { readIdentityAuthorityView } from "./identityAuthorityStore"
 import { meshIngressBudgetProfile } from "../iroh"
-import { getIdentityReplicaConfigurations } from "./privateReplicaRepository"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { readIdentityPeerRecovery, saveIdentityPeerRecovery, type IdentityPeerRecoverySource } from "./identityPeerRecoveryCatalog"
 import { readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
@@ -22,7 +22,8 @@ type Options = {
   store: WorkspaceSetStore
   mesh: DurableMesh
   getProfile(): Promise<LocalProfile>
-  ownedWorkspaces(): Promise<{ id: string; title: string }[]>
+  workspaces(): { id: string; title: string }[]
+  workspaceOwner?(id: string): Promise<string | undefined>
   changed(): Promise<void>
 }
 
@@ -42,18 +43,26 @@ export class IdentityPeerRecovery {
 
   constructor(private readonly options: Options) {}
 
-  start(): Promise<void> {
-    return this.starting ??= this.startNow().finally(() => { this.starting = undefined })
+  start(forRecovery = false): Promise<void> {
+    if (this.starting) {
+      return forRecovery ? this.starting.then(() => this.node ? undefined : this.start(true)) : this.starting
+    }
+    return this.starting = this.startNow(forRecovery).finally(() => { this.starting = undefined })
   }
 
-  private async startNow() {
+  private async startNow(forRecovery: boolean) {
     const initialGeneration = this.generation
     const profile = captureIdentityProfile(await this.options.getProfile())
     if (initialGeneration !== this.generation) return
     if (this.profile && this.sameProfile(profile) && this.node) { await this.publishSources(); return }
     await this.close()
     const generation = ++this.generation
-    if (!(await getIdentityReplicaConfigurations(profile.identity.personId)).some(config => !config.removalPending) || generation !== this.generation) return
+    // An unpaired local Identity has no recovery recipient and needs no transport.
+    if (!forRecovery) {
+      const authority = await readIdentityAuthorityView(profile.identity.personId)
+      if (!authority?.certificates.some(certificate => certificate.payload.deviceId !== profile.device.deviceId)) return
+    }
+    if (generation !== this.generation) return
     const node = await startPersistentNode(this.options.transport, undefined, `identity-recovery-${crypto.randomUUID()}`)
     if (generation !== this.generation) { await node.close("Identity recovery superseded"); return }
     this.profile = profile
@@ -79,13 +88,29 @@ export class IdentityPeerRecovery {
     return this.generation === generation && this.profile === profile && !!this.node
   }
 
+  private async accessibleWorkspaces(profile: LocalProfile) {
+    const accessible = []
+    for (const workspace of this.options.workspaces()) {
+      try {
+        if (await this.options.workspaceOwner?.(workspace.id) === profile.identity.personId ||
+            await this.options.mesh.enrollmentGrant(workspace.id, profile)) accessible.push(workspace)
+      } catch (error) {
+        meshTrace("identity.peer-recovery.source.unavailable", { workspaceId: workspace.id,
+          reason: error instanceof Error ? error.message : String(error) }, "warn")
+      }
+    }
+    return accessible
+  }
+
   private async publishSources() {
-    if (!this.node || !this.profile) return
-    const owned = await this.options.ownedWorkspaces()
-    const now = Date.now()
+    const node = this.node
     const profile = this.profile
-    const endpoint = this.node.endpointId
-    const next = owned.map(workspace => this.sources.find(source => source.workspaceId === workspace.id &&
+    if (!node || !profile) return
+    const accessible = await this.accessibleWorkspaces(profile)
+    if (this.node !== node || this.profile !== profile) return
+    const now = Date.now()
+    const endpoint = node.endpointId
+    const next = accessible.map(workspace => this.sources.find(source => source.workspaceId === workspace.id &&
       Date.parse(source.invite.expiresAt) > now + 5 * 60_000) ?? { workspaceId: workspace.id,
       invite: createDeviceEnrollmentInvite(endpoint, createPairingSecret(), profile) })
     if (canonicalizeJson(next) === canonicalizeJson(this.sources)) return
@@ -106,7 +131,7 @@ export class IdentityPeerRecovery {
   }
 
   async recover(workspaceIds: string[], options: { routesOnly?: boolean } = {}): Promise<void> {
-    await this.start()
+    await this.start(true)
     if (options.routesOnly) return this.recoverNow(workspaceIds, true)
     if (this.pending) await this.pending
     else this.retryAt.clear()
@@ -177,8 +202,8 @@ export class IdentityPeerRecovery {
         if (header.type !== "enroll-request" || !source) throw new Error("Unknown Identity recovery invitation")
         const guest = await readEnrollmentRequest(decodePairingFrame(frame, "enroll-request", source.invite.secret), source.invite)
         if (!guest.identityAuthorityView) throw new Error("Recovery requires an already approved Identity device")
-        const workspace = (await this.options.ownedWorkspaces()).find(workspace => workspace.id === source.workspaceId)
-        if (!workspace) throw new Error("Source no longer owns this workspace")
+        const workspace = (await this.accessibleWorkspaces(profile)).find(workspace => workspace.id === source.workspaceId)
+        if (!workspace) throw new Error("Source no longer has access to this workspace")
         await serveApprovedIdentityWorkspace({ profile, workspace, mesh: this.options.mesh, store: this.options.store,
           stream, connection: peer, invite: source.invite, guest, getProfile: this.options.getProfile,
           isCurrent: () => this.current(generation, profile) && active() })

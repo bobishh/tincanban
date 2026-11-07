@@ -1,4 +1,3 @@
-import { ownedWorkspaceIds } from "./deviceManagementActions"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { meshTrace } from "./meshTrace"
 import type { IdentityPeerRecovery } from "./identityPeerRecovery"
@@ -47,11 +46,7 @@ export function lazyIdentityPeerRecovery(context: () => Context, initialize: () 
     if (!store || !mesh) return
     const input: ConstructorParameters<typeof IdentityPeerRecovery>[0] = { transport: current.transport, store, mesh,
       getProfile: () => context().getProfile(), changed: async () => { await context().identityChanged?.() },
-      ownedWorkspaces: async () => {
-        const live = context(), profile = await live.getProfile()
-        const ids = new Set(await ownedWorkspaceIds(live.availableWorkspaces, live.workspaceOwner, profile.identity.personId))
-        return live.availableWorkspaces.filter(workspace => ids.has(workspace.id))
-      } }
+      workspaces: () => context().availableWorkspaces, workspaceOwner: current.workspaceOwner }
 
     const { IdentityPeerRecovery } = await import("./identityPeerRecovery")
     if (!disposed) recovery = new IdentityPeerRecovery(input)

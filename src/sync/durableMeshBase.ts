@@ -306,6 +306,14 @@ export abstract class DurableMeshBase {
     return startPersistentNode(this.options.transport, this.store, this.instanceId)
   }
 
+  protected async workspaceTransferEndpoint(): Promise<string> {
+    await this.start()
+    if (this.stopped) await this.resumeAll(await this.startInstanceNode())
+    await this.waitUntilListening()
+    if (!this.node) throw new Error("Workspace transport is unavailable")
+    return this.node.endpointId
+  }
+
   protected refreshWorkspaceGossip(workspaceId: string): Promise<void> { return this.gossip.refresh(workspaceId) }
   protected async rebuildWorkspaceGossip(workspaceId: string): Promise<void> { await this.gossip.rebuild(workspaceId) }
   protected async receiveWorkspaceGossipPacket(workspaceId: string, endpoint: string, packet: Uint8Array): Promise<void> {

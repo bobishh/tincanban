@@ -45,18 +45,27 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
       }
     }
   }
-  if (!delivery.catalogLoaded) await stage("catalog", async () => {
-    for (const config of await getIdentityReplicaConfigurations(profile.identity.personId)) {
+  let catalogFailure: { cause: unknown } | undefined
+  if (!delivery.catalogLoaded) {
+    try {
+      await stage("catalog", async () => {
+        for (const config of await getIdentityReplicaConfigurations(profile.identity.personId)) {
+          guard()
+          if (!await createIdentityReplica(config, profile, guard, { includeRecoveryEvidence: false }).pull()) {
+            throw new IdentityBoardLoadPending("Your board catalog is still loading. Retry loading boards.")
+          }
+        }
+        await app.refreshIdentity()
+        guard()
+        await connectAdoptedIdentityBoards(app, guard)
+        await delivery.catalogReceived?.()
+      })
+    } catch (cause) {
       guard()
-      if (!await createIdentityReplica(config, profile, guard, { includeRecoveryEvidence: false }).pull()) {
-        throw new IdentityBoardLoadPending("Your board catalog is still loading. Retry loading boards.")
-      }
+      if (!recoverPeers) throw cause
+      catalogFailure = { cause }
     }
-    await app.refreshIdentity()
-    guard()
-    await connectAdoptedIdentityBoards(app, guard)
-    await delivery.catalogReceived?.()
-  })
+  }
   await stage("boards", async () => {
     const root = await defaultStorage.loadPersonalRoot()
     if (!root || root.identity.personId !== profile.identity.personId) throw new Error("Your board catalog is unavailable")
@@ -80,16 +89,19 @@ export async function loadIdentityBoards(app: App, returnPath = "/", recoverPeer
     guard()
     let missing: string[] = []
     if (recoverPeers) {
+      await refreshAvailableWorkspaces()
+      await restoreBoardSelection(app, returnPath, false, initialSelection, guard, true)
       await recoverPeers([...ids])
       guard()
       missing = await missingWorkspaceIds(app, [...ids], guard)
     }
     await refreshAvailableWorkspaces()
-    await restoreBoardSelection(app, returnPath, ids.size === 0, initialSelection, guard)
+    if (!catalogFailure || ids.size) await restoreBoardSelection(app, returnPath, !catalogFailure && ids.size === 0, initialSelection, guard, !!catalogFailure)
     if (missing.length) {
       throw new IdentityBoardLoadPending(`${missing.length} ${missing.length === 1 ? "board is" : "boards are"} not saved on this device; waiting for an available peer or stored copy.`, storageFailure)
     }
   })
+  if (catalogFailure) throw catalogFailure.cause
 }
 
 async function missingWorkspaceIds(app: App, ids: string[], guard: () => void): Promise<string[]> {

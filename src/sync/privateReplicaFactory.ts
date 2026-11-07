@@ -22,7 +22,7 @@ type State = { configs: Ref<BlindReplicaConfig[]>; identityConfigs: Ref<Identity
 
 export async function provisionPrivateReplicas(app: ReturnType<typeof useTincanban>, state: State,
   guard: () => void, reload: () => Promise<void>): Promise<string[]> {
-  const configurations = state.configs.value.filter(config => !config.removalPending && !config.boardAccess)
+  const configurations = state.configs.value.filter(config => !config.removalPending)
   const migrations: string[] = []
   guard()
   const errors = configurations.length ? await provisionIdentityReplicas(app, configurations,
