@@ -39,6 +39,8 @@ const workspaceCoreModules = new Set([
   "storageDeltaAccess.ts",
   "storageHistoryAccess.ts",
   "storageTransactionAccess.ts",
+  "storageTransactionClaims.ts",
+  "storageCommitSupport.ts",
   "storage.ts",
 ])
 
