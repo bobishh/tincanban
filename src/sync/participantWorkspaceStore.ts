@@ -30,10 +30,13 @@ export function participantWorkspaceSession(store: WorkspaceSetStore,
   const maintenance = createWorkspaceRustyAccessMaintenance({ prepare: workspace.prepareRustyAccess,
     publish: () => live.publish(), failed: cause => {
       const failures = cause instanceof AggregateError ? cause.errors : [cause]
-      for (const failure of failures) meshTrace("rusty.access.pending", {
-        workspaceId: context.workspaceId, peerId: context.deviceId,
-        reason: failure instanceof Error ? failure.message : String(failure), error: failure,
-      }, "warn")
+      for (const failure of failures) {
+        const cause: unknown = failure instanceof Error && failure.cause instanceof Error ? failure.cause : failure
+        meshTrace("rusty.access.preparation.failed", {
+          workspaceId: context.workspaceId, peerId: context.deviceId,
+          reason: cause instanceof Error ? cause.message : String(cause),
+        }, "warn", cause)
+      }
     } })
   void live.done.then(() => maintenance.stop(), () => maintenance.stop())
   return { session: { ...live, close: async () => { maintenance.stop(); await live.close() } },
