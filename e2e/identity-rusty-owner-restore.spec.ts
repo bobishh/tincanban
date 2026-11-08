@@ -113,7 +113,7 @@ async function approveBoAppDevice(page: Page, appOrigin: string, personId: strin
   await expect(page.getByRole("dialog", { name: "Identity profile", exact: true })).toBeHidden({ timeout: 30_000 })
 }
 
-test("Given Bo closed the old owner device, when a newly approved Bo app device restores from Rusty, then it keeps the board and Ray's editor membership", async ({ page, browser, baseURL }) => {
+test("Given the old owner device is closed, when a newly approved owner device restores from Rusty, then it keeps existing editor membership and grants another editor storage access", async ({ page, browser, baseURL }) => {
   test.skip(!identityOrigin, "Set IDENTITY_E2E_ORIGIN to an isolated Identity portal")
   test.setTimeout(240_000)
   const ownerContext = page.context()
@@ -125,6 +125,7 @@ test("Given Bo closed the old owner device, when a newly approved Bo app device 
   let managerContext: BrowserContext | undefined
   let managerPage: Page | undefined
   let newOwnerContext: BrowserContext | undefined
+  let laterEditorContext: BrowserContext | undefined
 
   try {
     await rayContext.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
@@ -291,8 +292,50 @@ test("Given Bo closed the old owner device, when a newly approved Bo app device 
       .toBeVisible({ timeout: 45_000 })
     expect(await newOwner.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id))
       .toBe(workspaceId)
+
+    laterEditorContext = await browser.newContext()
+    const laterEditor = await laterEditorContext.newPage()
+    await newOwner.getByRole("button", { name: "Sync", exact: true }).click()
+    const recoveredHost = newOwner.getByRole("dialog", { name: "Device sync" })
+    await recoveredHost.getByRole("button", { name: "Add someone", exact: true }).click()
+    await recoveredHost.getByRole("button", { name: "Generate link", exact: true }).click()
+    await laterEditor.goto(await recoveredHost.getByLabel("Pairing link").inputValue())
+    const laterSync = laterEditor.getByRole("dialog", { name: "Device sync" })
+    await laterSync.getByRole("button", { name: "Accept and join", exact: true }).click()
+    await recoveredHost.getByLabel("Participant role").selectOption("editor")
+    await recoveredHost.getByRole("button", { name: "Approve access", exact: true }).click()
+    await expect(laterSync.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
+    await expect.poll(() => readStoredBoardAccess(laterEditor, workspaceId), { timeout: 30_000 })
+      .toMatchObject({ version: 2, mode: "write" })
+    const proof = await laterEditor.evaluate(async id => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const config = (await getReplicaConfigurations((await bootstrapIdentity()).identity.personId))
+        .find(value => value.workspaceId === id)!
+      const access = config.boardAccess!
+      const scope = access.authorization.payload.scopeAuthority as {
+        genesis: { payload: { creator: { certificates: Array<{ payload: { deviceId: string } }> } } }
+      }
+      return { membershipSigner: access.authorization.payload.workspaceGrant!.signerKeyId,
+        genesisDevices: scope.genesis.payload.creator.certificates.map(certificate => certificate.payload.deviceId),
+        deliveredDevices: access.certificates.map(certificate => certificate.payload.deviceId) }
+    }, workspaceId)
+    expect(proof.membershipSigner).toBe(restoredOwner.deviceId)
+    expect(proof.genesisDevices).not.toContain(restoredOwner.deviceId)
+    expect(proof.deliveredDevices).toContain(restoredOwner.deviceId)
+    if (await laterSync.isVisible()) await laterSync.getByRole("button", { name: "Close", exact: true }).first().click()
+    await laterEditor.getByRole("button", { name: "Sync", exact: true }).click()
+    await expect(laterSync.getByRole("region", { name: "Rusty", exact: true })
+      .locator(".rusty-connection").first().getByText("Synced", { exact: true }))
+      .toBeVisible({ timeout: 45_000 })
+    for (const context of [newOwnerContext, rayContext]) await context.unroute(objectPath)
+    await ray.getByRole("button", { name: "Sync", exact: true }).click()
+    const retainedStorage = raySync.getByRole("region", { name: "Rusty", exact: true })
+    await retainedStorage.getByRole("button", { name: "Sync now", exact: true }).click()
+    await expect(retainedStorage.locator(".rusty-connection").first().getByText("Synced", { exact: true }))
+      .toBeVisible({ timeout: 45_000 })
   } finally {
-    await Promise.allSettled([ownerContext.close(), managerContext?.close(), rayContext.close(), newOwnerContext?.close()])
+    await Promise.allSettled([ownerContext.close(), managerContext?.close(), rayContext.close(), newOwnerContext?.close(), laterEditorContext?.close()])
     await rusty.close()
   }
 })

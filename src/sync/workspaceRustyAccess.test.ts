@@ -177,6 +177,27 @@ test("Given an unchanged editor grant signed by another active Bo app device, wh
     } }))
 })
 
+test("Given membership and storage are signed by later devices of the same owner, when genesis predates both devices, then transfer their verified chains without rewriting genesis", async () => {
+  const { owner, current, formerApp, authority, recipient, grant } = await formerOwnerAppGrantFixture()
+  const original = authority.scopeAuthoritySnapshot
+  const genesis = await signEnvelope(owner.privateKeys.devicePrivateKey, { ...original.genesis.payload,
+    creator: { ...original.genesis.payload.creator, certificates: [owner.certificate] } }, owner.device.deviceId)
+  const legacy = { ...authority, scopeAuthoritySnapshot: { ...original, genesis } }
+  const access = await createBoardStorageAccess(current, config, grant, recipient.identity.publicKey,
+    async () => legacy, async () => {})
+  const selected = selectBoardStorageAccess(access, config.writeToken, "editor")!
+  await receiveBoardStorageAccess(recipient.identity.personId, "board", legacy, "editor", [selected], async () => {}, recipient.identity.publicKey)
+  expect((await getReplicaConfigurations(recipient.identity.personId))[0]?.boardAccess?.mode).toBe("write")
+  expect(access.certificates.map(certificate => certificate.payload.deviceId)).toEqual(expect.arrayContaining([
+    formerApp.device.deviceId, current.device.deviceId,
+  ]))
+  expect(legacy.scopeAuthoritySnapshot.genesis).toEqual(genesis)
+  const incomplete = structuredClone(selected)
+  incomplete.boardAccess!.certificates = access.certificates.filter(certificate => certificate.payload.deviceId !== formerApp.device.deviceId)
+  await expect(receiveBoardStorageAccess(recipient.identity.personId, "board", legacy, "editor", [incomplete], async () => {}, recipient.identity.publicKey))
+    .rejects.toThrow(/signer|certificate|scope controller/i)
+})
+
 test("Given a revoked former Bo device, when its old workspace grant is presented, then refuse reattestation before Rusty registration", async () => {
   const { owner, current, formerApp, authority, certificates, root, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
   const evidence = await verifyIdentityDeviceAuthority(owner.identity, { certificates, revocations: [] })

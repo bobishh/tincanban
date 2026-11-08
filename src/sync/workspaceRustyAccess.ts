@@ -19,7 +19,7 @@ import { rustySignerCertificateChain } from "./rustySignerCertificates"
 import { registerRustyResourcePrincipalGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 import { fetchBlind } from "./rustyHttp"
-import { authorizeIdentityDataDevice } from "@meta-uber/mesh-identity"
+import { authorizeIdentityDataDevice, identityDeviceCertificateChain } from "@meta-uber/mesh-identity"
 
 type Guard = () => Promise<void>
 type Role = "owner" | "editor" | "visitor"
@@ -102,7 +102,9 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
     signAuthorization: payload => signWithContext(principalContext, payload),
   })
   const principalGrant = registered.principalGrant
-  const certificates = await rustySignerCertificateChain(profile)
+  const chains = [...await rustySignerCertificateChain(profile), ...await identityDeviceCertificateChain(profile.identity,
+    { certificates: authorityView.certificates, revocations: authorityView.revocations }, grant.signerKeyId)]
+  const certificates = [...new Map(chains.map(certificate => [canonicalizeJson(certificate), certificate])).values()]
   await ensureCurrent()
   return { mode: "write", authorization, certificates, principalGrant }
 }
@@ -146,7 +148,7 @@ export async function verifyBoardStorageAccess(config: BlindReplicaConfig, works
   assertCompleteBoardAuthorization(payload)
   const state = meshRustRuntime().state
   assertCurrentScopeAuthority(payload, workspaceId, authority, state)
-  const grantIssuer = await findScopeControllerSigner(payload.workspaceGrant!, payload.scopeAuthority)
+  const grantIssuer = await findScopeControllerSigner(payload.workspaceGrant!, payload.scopeAuthority, access.certificates)
   await assertWorkspaceGrantBinding(config, workspaceId, role, payload, grantIssuer, subjectPersonId, subjectPublicKey)
   await assertPrincipalGrantBinding(config, workspaceId, record, principalGrant, payload)
   assertBoardAccessConnection(config, workspaceId, role, access.mode, record.payload)
