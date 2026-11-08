@@ -51,6 +51,7 @@ export async function readStoredBoardAccess(page: Page, workspaceId: string) {
       scopeId: config?.scopeId ?? null,
       version: access?.authorization.payload.version ?? null,
       subjectPersonId: access?.authorization.payload.subjectPersonId ?? null,
+      grantId: access?.authorization.payload.grantId ?? null,
       mode: access?.mode ?? null,
     }
   }, workspaceId)

@@ -19,6 +19,7 @@ import { rustySignerCertificateChain } from "./rustySignerCertificates"
 import { registerRustyResourcePrincipalGrant } from "@meta-uber/mesh-replication/rusty-principal-grant"
 import { requireIdentityAuthorityView } from "./identityAuthorityStore"
 import { fetchBlind } from "./rustyHttp"
+import { readWorkspaceParticipantGrant } from "./workspaceParticipants"
 import { authorizeIdentityDataDevice, identityDeviceCertificateChain } from "@meta-uber/mesh-identity"
 
 type Guard = () => Promise<void>
@@ -46,6 +47,10 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
     const latest = await requireIdentityAuthorityView(profile.identity.personId)
     if (canonicalizeJson(latest) !== authorityFingerprint) {
       throw new Error("Identity authority changed while sharing Rusty storage; retry with current authority")
+    }
+    const currentGrant = await readWorkspaceParticipantGrant(config.workspaceId, grant.payload.personId, grant)
+    if (canonicalizeJson(currentGrant ?? null) !== canonicalizeJson(grant)) {
+      throw new Error("Workspace membership changed while preparing Rusty access")
     }
   }
   const readCurrentAuthority = async () => {
@@ -100,6 +105,17 @@ export async function createBoardStorageAccess(profile: LocalProfile, config: Bl
         controllerPublicKey: validated.controller.publicKey, controlEpoch: validated.controlEpoch, snapshot }
     },
     signAuthorization: payload => signWithContext(principalContext, payload),
+    signRevocation: async payload => {
+      await ensureCurrent()
+      if (payload.subjectPersonId !== subjectPersonId) throw new Error("Rusty replacement changed its subject")
+      if (payload.grantId === grant.payload.grantId || payload.policyEpoch >= (grant.payload.accessEpoch ?? 1)) {
+        throw new Error("Rusty replacement can revoke only an older membership")
+      }
+      const revocationContext = await workspaceOwnerSigningContext(profile, config.workspaceId,
+        "rusty-resource-principal-revocation", { origin: config.origin, storageScopeId: config.scopeId,
+          subjectPersonId, grantId: payload.grantId, policyEpoch: payload.policyEpoch }, readCurrentAuthority)
+      return signWithContext(revocationContext, payload)
+    },
   })
   const principalGrant = registered.principalGrant
   const chains = [...await rustySignerCertificateChain(profile), ...await identityDeviceCertificateChain(profile.identity,

@@ -177,6 +177,20 @@ test("Given an unchanged editor grant signed by another active Bo app device, wh
     } }))
 })
 
+test("Given a newer editor membership, when retiring the previous Rusty principal, then bind the exact older grant and abort if membership changes", async () => {
+  const { current, authority, recipient, grant, registerGrant } = await formerOwnerAppGrantFixture()
+  await createBoardStorageAccess(current, config, grant, recipient.identity.publicKey, async () => authority, async () => {})
+  const sign = registerGrant.mock.lastCall![0].signRevocation!
+  const payload = { kind: "rusty-resource-principal-revocation" as const, version: 1 as const,
+    serviceId: await publicKeyId(config.servicePublicKey), origin: config.origin, storageScopeId: config.scopeId,
+    workspaceId: "board", subjectPersonId: recipient.identity.personId, grantId: "previous-grant", policyEpoch: 2, requestHash: token(8) }
+  expect((await sign(payload)).payload).toEqual(payload)
+  await expect(sign({ ...payload, policyEpoch: grant.payload.accessEpoch! })).rejects.toThrow(/older/)
+  await expect(sign({ ...payload, subjectPersonId: "another-person" })).rejects.toThrow(/subject/)
+  vi.mocked(workspaceParticipants.readWorkspaceParticipantGrant).mockResolvedValue(undefined)
+  await expect(sign(payload)).rejects.toThrow(/membership changed/i)
+})
+
 test("Given membership and storage are signed by later devices of the same owner, when genesis predates both devices, then transfer their verified chains without rewriting genesis", async () => {
   const { owner, current, formerApp, authority, recipient, grant } = await formerOwnerAppGrantFixture()
   const original = authority.scopeAuthoritySnapshot
