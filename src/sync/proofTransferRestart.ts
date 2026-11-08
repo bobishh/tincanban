@@ -5,6 +5,7 @@ import { meshTrace } from "./meshTrace"
 function requiresRestart(error: unknown): boolean {
   const message = error instanceof Error ? error.message : error
   return message === "Authorization authority changed; restart document sync" ||
+    message === "Direct peer authorization changed during history transfer" ||
     message === "Authorization records changed; restart document sync" ||
     message === "Authorization record identity mode changed; restart document sync" ||
     message === "No document awaiting authorization pages"

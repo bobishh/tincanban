@@ -266,6 +266,7 @@ describe("incremental workspace control plane", () => {
   it.each([
     ["Authorization records changed; restart document sync", true],
     ["Authorization authority changed; restart document sync", true],
+    ["Direct peer authorization changed during history transfer", true],
     ["No document awaiting authorization pages", true],
     ["Invalid authorization signature", false],
   ])("Given proof transfer fails with %s, then session restart is %s", async (message, restart) => {
