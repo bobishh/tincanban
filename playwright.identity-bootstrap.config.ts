@@ -31,6 +31,7 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         VITE_IDENTITY_ORIGIN: identityOrigin ?? "",
+        VITE_PUBLIC_BOARD_ORIGIN: "",
         VITE_SYNC_TELEMETRY_URL: "https://telemetry.invalid",
         VITE_SYNC_TELEMETRY_PROJECT: "tincanban",
         VITE_SYNC_TELEMETRY_BROWSER_KEY: "public-browser-fixture-key-0123456789",

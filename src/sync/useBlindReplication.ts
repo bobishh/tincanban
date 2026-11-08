@@ -105,11 +105,12 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       identity: () => identity, epoch: () => session, disposed: () => disposed, reload, syncNow: () => syncNow(true),
     }, automaticHistoryCompactions)
   const { revoke, compactWorkspaceHistory, exportAutomationAccess } = actions
-  const stop = watch(profileBinding, async () => {
+  // SDK approval refresh can replace the active profile without changing its credentials.
+  const stop = watch([profileBinding, () => tincanban.getCurrentProfile()], async ([binding], previous) => {
     const owner = tincanban.ready.value ? personId() : ""
     const epoch = ++session
     identity = owner
-    clearReplicationSessionState(state)
+    if (!binding || binding !== previous?.[0]) clearReplicationSessionState(state)
     deviceAccess.reset()
     runtime.clear()
     if (!owner) return

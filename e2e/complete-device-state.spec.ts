@@ -128,6 +128,7 @@ test("Given an enrolled device without Rusty, when its peer connects and synchro
     await phone.goto(baseURL!)
     await phone.getByRole("button", { name: "Menu", exact: true }).click()
     await phone.getByRole("button", { name: "Sync", exact: true }).click()
+    await expect(phone.getByRole("dialog").getByText("Devices connected", { exact: true })).toBeVisible({ timeout: 30_000 })
     await expect.poll(() => phone.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
       const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")

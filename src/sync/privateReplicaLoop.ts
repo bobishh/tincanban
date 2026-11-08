@@ -27,9 +27,9 @@ export function createPrivateReplicaRuntime(app: ReturnType<typeof useTincanban>
       profile.certificate.signature]) : ""
   }
   function captureSession(workspaceId?: string, owner = session.identity(), epoch = session.epoch()) {
-    const profile = profileBinding()
+    const profile = app.getCurrentProfile(), binding = profileBinding()
     return () => {
-      if (!owner || !current(owner, epoch) || profileBinding() !== profile ||
+      if (!owner || !current(owner, epoch) || app.getCurrentProfile() !== profile || profileBinding() !== binding ||
           (workspaceId !== undefined && app.activeWorkspace.id !== workspaceId)) throw new Error("Identity changed or workspace switched. Retry.")
     }
   }

@@ -4,8 +4,16 @@ import { RustyResponseError } from "@meta-uber/mesh-replication/rusty-replica"
 import { recordReplicaHealth } from "./replicaHealthRun"
 import { replicaKey, replicaStatus, type ReplicaHealth } from "./replicationHealth"
 import type { BlindReplicaConfig } from "./blindReplication"
+import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 
 const config = { origin: "https://rusty.example", scopeId: "scope", workspaceId: "board" } as BlindReplicaConfig
+
+test("Given a local replica failure, when sync pauses, then retain its cause in bounded diagnostics", async () => {
+  clearMeshTrace()
+  await recordReplicaHealth(config, ref({}), async () => { throw new Error("Local replica admission failed") }, () => true)
+  expect(meshTraceSnapshot()).toContainEqual(expect.objectContaining({ event: "replication.device.scope.failed",
+    reason: "Local replica admission failed", workspaceId: "board" }))
+})
 
 test("Given legacy participant access, when owner reissue is pending, then stop claiming storage sync and resume after fresh access arrives", async () => {
   const { ParticipantStorageAccessPendingError } = await import("./replicationErrors")

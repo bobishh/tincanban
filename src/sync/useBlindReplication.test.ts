@@ -1,7 +1,7 @@
 import type * as ManagementClient from "./rustyManagementClient"
 import type * as ConflictWorkflow from "./replicaCredentialConflictWorkflow"
 import { afterEach, expect, it, vi } from "vitest"
-import { ref, shallowRef } from "vue"
+import { nextTick, ref, shallowRef } from "vue"
 import type * as Vue from "vue"
 import type * as RustyAttachmentDelivery from "./rustyAttachmentDelivery"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
@@ -529,6 +529,45 @@ it("Given a paused credential conflict, when the owner resumes recovery, then bi
   expect(() => guard()).not.toThrow()
   f.activeWorkspace.id = "another-workspace"
   expect(() => guard()).toThrow(/identity changed or workspace switched/i)
+})
+
+it("Given refreshed Identity retains the same credentials, when its active profile instance changes during sync, then rebuild the replica and invalidate its old session", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  let release!: () => void
+  runtime.identitySync.mockImplementationOnce(() => new Promise<boolean>(resolve => { release = () => resolve(true) }))
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.identitySync).toHaveBeenCalled())
+  const old = runtime.calls[0]!
+  const retained = [...controller.identityConfigs.value]
+  const refreshed = { ...f.profile }
+  f.current.value = refreshed
+  f.version.value += 1
+  try {
+    expect(() => old.guard()).toThrow("Identity changed")
+    await nextTick()
+    expect(controller.identityConfigs.value).toEqual(retained)
+  }
+  finally { release() }
+  await vi.waitFor(() => expect(runtime.calls).toHaveLength(2))
+  await controller.syncNow()
+  expect(runtime.calls[1]!.profile).toBe(refreshed)
+  expect(runtime.calls[1]!.config).toEqual(old.config)
+  expect(controller.statuses.value[replicaKey(f.identity)]?.phase).toBe("synced")
+  expect(controller.deviceSyncIssues.value).toEqual({})
+})
+
+it("Given an unchanged active Identity, when a board revision advances, then retain its cached replica session", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.calls).toHaveLength(1))
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  const old = runtime.calls[0]!
+  f.version.value += 1
+  await controller.syncNow()
+  expect(runtime.calls).toHaveLength(1)
+  expect(() => old.guard()).not.toThrow()
 })
 
 it("Given the same person's active device changes during sync, then the old replica cannot continue under the replacement device", async () => {

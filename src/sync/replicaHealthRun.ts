@@ -3,6 +3,7 @@ import type { Ref } from "vue"
 import type { PrivateReplicaConfig } from "./blindReplication"
 import { replicaKey, type ReplicaHealth } from "./replicationHealth"
 import { traceDiagnosticOperation } from "./telemetry"
+import { meshTrace } from "./meshTrace"
 
 export async function syncReplicaConnections(configs: PrivateReplicaConfig[], isCurrent: () => boolean,
   run: (config: PrivateReplicaConfig) => Promise<string | undefined>, label: string): Promise<string[]> {
@@ -48,6 +49,8 @@ function recordReplicaFailure(config: PrivateReplicaConfig, statuses: Ref<Record
     statuses.value = { ...statuses.value, [key]: { phase: "error", lastSyncedAt, ...failure } }
     return failure.error
   }
+  meshTrace("replication.device.scope.failed", { workspaceId: "workspaceId" in config ? config.workspaceId : "",
+    reason: cause instanceof Error ? cause.message : String(cause) }, "warn", cause)
   statuses.value = { ...statuses.value, [key]: { phase: "paused", lastSyncedAt } }
   if (deviceIssues) deviceIssues.value = { ...deviceIssues.value,
     [key]: deviceSyncIssue(config) }
