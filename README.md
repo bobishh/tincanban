@@ -100,6 +100,15 @@ not wait for Rusty access registration; unavailable storage retries independentl
 Legacy participant storage settings stay pending until the owner supplies current
 signed access, preserving local edits in the meantime.
 
+Access issuance counts verified grants retained in signed history, saved credentials,
+and participant records as well as the local proof store. To replace conflicting
+grants with the same current role, the owner selects the participant in **Sync**
+and chooses **Refresh access**. This issues a newer grant with the existing editor
+or visitor role; it preserves history and local content. Conflicting current roles,
+revoked membership and departed participants cannot be renewed this way. Rusty
+access follows the new grant through signed revocation of its previous principal;
+direct peer delivery continues independently.
+
 Identity supplies its approved Rusty services during sign-in. The optional
 `VITE_PUBLIC_BOARD_ORIGIN` hint remains supported for older Identity profiles
 that have not approved their catalog service yet and for reading original public

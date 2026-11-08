@@ -2,7 +2,7 @@ import { beforeEach, expect, test, vi } from "vitest"
 import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identity"
 import { createRecoverableIdentity } from "@meta-uber/mesh-identity"
 import { createWorkspaceGrant, createWorkspaceRevocation, createWorkspaceDeparture } from "./meshRecords"
-import { readWorkspaceParticipantGrant, readWorkspaceParticipants } from "./workspaceParticipants"
+import { readWorkspaceParticipantGrant, readWorkspaceParticipants, readWorkspaceParticipantRenewal } from "./workspaceParticipants"
 import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import type * as AuthorizationModule from "./changeAuthorization"
 import type { WorkspaceAuthorityRecord } from "./peerStore"
@@ -95,4 +95,21 @@ test.each(["invalid", "missing"])("Given %s workspace authority, when storage re
   expect(await readWorkspaceParticipantGrant("board", editor.identity.personId)).toBeUndefined()
   expect(meshTraceSnapshot()).toContainEqual(expect.objectContaining({ event: "workspace.participant-grant.unavailable",
     reason: `${state}-authority`, grantCount: 0 }))
+})
+
+test.each(["editor", "visitor"] as const)("Given conflicting %s grants, when an owner requests renewal, then retain only the common current role", async role => {
+  const { owner, editor } = await fixture()
+  stored.grants = [await createWorkspaceGrant(owner, "board", editor.identity.personId, role, 2),
+    await createWorkspaceGrant(owner, "board", editor.identity.personId, role, 2)]
+  expect(await readWorkspaceParticipantRenewal("board", editor.identity.personId)).toEqual({ role, accessEpoch: 2 })
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId)).toBeUndefined()
+})
+
+test("Given conflicting roles or revoked access, when renewing membership, then require an explicit new access decision", async () => {
+  const { owner, editor } = await fixture()
+  stored.grants.push(await createWorkspaceGrant(owner, "board", editor.identity.personId, "visitor"))
+  expect(await readWorkspaceParticipantRenewal("board", editor.identity.personId)).toBeUndefined()
+  stored.grants = [stored.grants[0]!]
+  stored.authority!.catalog = { revocations: [await createWorkspaceRevocation(owner, "board", editor.identity.personId, 2, ["head"])] }
+  expect(await readWorkspaceParticipantRenewal("board", editor.identity.personId)).toBeUndefined()
 })

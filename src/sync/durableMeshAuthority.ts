@@ -19,7 +19,7 @@ import { runKeeperRevocationActions } from "./keeperRevocationActions"
 import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
-import { persistVerifiedPeerBundle } from "./durableMeshPeerAdmission"
+import { persistVerifiedPeerBundle, persistWorkspaceParticipantGrant, renewWorkspaceParticipantAccess } from "./durableMeshPeerAdmission"
 import { confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
   ownershipTransfersWithPending, persistScopeAuthoritySnapshot, planOwnershipMerge, preflightScopeAuthoritySnapshot, publishConfirmedToSessions,
   type OwnershipMergePlan, type OwnershipTransferState } from "./durableMeshOwnershipScope"
@@ -346,6 +346,18 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     await this.reclassifyWorkspaceAuthority(workspaceId)
     await this.publishAll()
   }
+  async renewPersonAccess(workspaceId: string, personId: string): Promise<void> {
+    await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async authorityContext => {
+      await renewWorkspaceParticipantAccess(workspaceId, personId, await this.options.getProfile(), {
+        store: this.store, getProfile: () => this.options.getProfile(), authorityContext,
+        trace: (phase, detail, operation) => this.traceSlowPhase(phase, workspaceId, detail, operation),
+      })
+      await this.refreshSuccessionPolicy(workspaceId, authorityContext)
+      await this.notify()
+    })
+    await this.reclassifyWorkspaceAuthority(workspaceId)
+    await this.publishAll()
+  }
   private async promotePersonLocked(workspaceId: string, personId: string, authorityContext: WorkspaceAuthorityMutationContext): Promise<void> {
     const profile = await this.options.getProfile()
     const credential = await this.store.getWorkspaceCredential(workspaceId)
@@ -366,12 +378,10 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
       }
       if (action === "persistGrant") {
         if (!grant) throw new Error("Promotion grant was not created")
-        await authorityContext.write(() => defaultProofStore.putGrant(grant!.payload.grantId, grant!))
-        await authorityContext.write(() => this.store.putWorkspaceCredential(credential!))
-        for (const peer of peers) {
-          const bundle = { ...peer.advertisement as WorkspaceMemberBundle, grant, ownerPublicKey: credential!.ownerPublicKey, ownerCertificates: credential!.ownerCertificates as DeviceCertificate[] }
-          await this.putVerifiedBundleLocked(credential!, bundle, undefined, authorityContext)
-        }
+        await persistWorkspaceParticipantGrant(credential, peers, grant, {
+          store: this.store, getProfile: () => this.options.getProfile(), authorityContext,
+          trace: (phase, detail, operation) => this.traceSlowPhase(phase, workspaceId, detail, operation),
+        })
       }
       if (action === "refreshSuccessionPolicy") await this.refreshSuccessionPolicy(workspaceId, authorityContext)
       if (action === "notify") await this.notify()

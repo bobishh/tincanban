@@ -7,8 +7,48 @@ import { defaultProofStore } from "../domain/proofs"
 import { readWorkspaceSigningAuthority, authorityValidationFingerprint } from "./changeAuthorization"
 import { records } from "./workspaceChangeProofStore"
 import { verifyWorkspaceGrant, type WorkspaceAuthority } from "./meshRecords"
+import type { PeerStore } from "./peerStore"
+import type { WorkspaceMemberBundle } from "./meshRecords"
 
 export type WorkspaceParticipant = { personId: string; role: Exclude<WorkspaceRole, "automation"> }
+
+/** Renewal preserves a verified role; differing current roles require a new owner decision. */
+export async function readWorkspaceParticipantRenewal(workspaceId: string, personId: string): Promise<{
+  role: "editor" | "visitor"; accessEpoch: number
+} | undefined> {
+  const state = await readVerifiedWorkspaceGrants(workspaceId)
+  if ("reason" in state || state.authority.ownerPersonId === personId) return undefined
+  const entries = state.grants.filter(entry => entry.personId === personId)
+  const accessEpoch = entries.reduce((maximum, entry) => Math.max(maximum, entry.grant.payload.accessEpoch ?? 1), 0)
+  const roles = new Set(entries.filter(entry => (entry.grant.payload.accessEpoch ?? 1) === accessEpoch).map(entry => entry.role))
+  const role = [...roles][0]
+  return roles.size === 1 && (role === "editor" || role === "visitor") ? { role, accessEpoch } : undefined
+}
+
+/** Issuance observes all retained, signed generations, including restored history and obsolete access. */
+async function readRetainedWorkspaceGrants(workspaceId: string,
+  authority: VerifiedWorkspaceGrantState["authority"], candidates: WorkspaceGrant[] = []): Promise<WorkspaceGrant[]> {
+  const owners = workspaceOwners(authority)
+  const grants = [...await participantGrants(workspaceId, authority.localGrant), ...candidates]
+  const unique = new Map<string, WorkspaceGrant>()
+  for (const grant of grants) if (grant?.payload?.workspaceId === workspaceId) unique.set(canonicalizeJson(grant), grant)
+  const verified: WorkspaceGrant[] = []
+  for (const grant of unique.values()) if (await verifiedGrantRole(grant, workspaceId, owners)) verified.push(grant)
+  return verified
+}
+
+/** The SDK owns epoch arithmetic; this module supplies every retained source of signed membership. */
+export async function nextWorkspaceAccessEpoch(workspaceId: string, store: PeerStore): Promise<number> {
+  const credential = await store.getWorkspaceCredential(workspaceId)
+  const peers = await store.listPeers(workspaceId)
+  const candidates = peers.flatMap(peer => {
+    const grant = (peer.advertisement as WorkspaceMemberBundle | undefined)?.grant
+    return grant ? [grant] : []
+  })
+  const issued = credential ? await readRetainedWorkspaceGrants(workspaceId, credential, candidates)
+    : await defaultProofStore.listGrants(workspaceId)
+  return meshRustRuntime().state.nextAccessEpoch(credential ?? null, issued)
+}
 
 /** Return the latest verified active grant, admitting a verified peer grant only as candidate evidence. */
 export async function readWorkspaceParticipantGrant(workspaceId: string, personId: string,
@@ -82,8 +122,8 @@ async function verifyActiveGrant(grant: WorkspaceGrant | undefined, workspaceId:
   if (grant.payload.workspaceId !== workspaceId || role === "automation" ||
     meshRustRuntime().state.isGrantRevoked(authority, personId, grant) ||
     meshRustRuntime().state.hasLeftWorkspace(authority, personId, grant)) return undefined
-  const verifiedRole = await verifiedMemberRole(grant, workspaceId, owners)
-  return verifiedRole ? { grant, personId, role: verifiedRole } : undefined
+  const verifiedRole = await verifiedGrantRole(grant, workspaceId, owners)
+  return verifiedRole && verifiedRole !== "automation" ? { grant, personId, role: verifiedRole } : undefined
 }
 
 function latestActiveGrant(entries: VerifiedGrant[]): VerifiedGrant | undefined {
@@ -97,13 +137,12 @@ function latestActiveGrant(entries: VerifiedGrant[]): VerifiedGrant | undefined 
   return entries[0]
 }
 
-async function verifiedMemberRole(grant: WorkspaceGrant, workspaceId: string,
-  owners: WorkspaceAuthority[]): Promise<WorkspaceParticipant["role"] | undefined> {
+async function verifiedGrantRole(grant: WorkspaceGrant, workspaceId: string,
+  owners: WorkspaceAuthority[]): Promise<WorkspaceRole | undefined> {
   for (const owner of owners) {
     try {
       const role = await verifyWorkspaceGrant(grant, { workspaceId, personId: grant.payload.personId,
         ownerPersonId: owner.personId, ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates })
-      if (role === "automation") return undefined
       return role === "owner" ? "editor" : role
     } catch { /* Historical owner evidence cannot authorize a forged grant. */ }
   }

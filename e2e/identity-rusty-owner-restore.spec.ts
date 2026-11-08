@@ -346,6 +346,38 @@ test("Given the old owner device is closed, when a newly approved owner device r
     await retainedStorage.getByRole("button", { name: "Sync now", exact: true }).click()
     await expect(retainedStorage.locator(".rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 45_000 })
+
+    // A restored owner can replace ambiguous same-role membership without changing that role.
+    const retainedAccess = await readStoredBoardAccess(ray, workspaceId)
+    const forkEpoch = await newOwner.evaluate(async ({ id, personId }) => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { defaultProofStore, createWorkspaceGrant } = await import("/src/domain/proofs.ts")
+      const { workspaceOwnerSigningContext } = await import("/src/sync/workspaceOwnerSigning.ts")
+      const { readWorkspaceParticipantGrant } = await import("/src/sync/workspaceParticipants.ts")
+      const profile = await bootstrapIdentity()
+      const prior = (await defaultProofStore.listGrants(id)).filter(grant => grant.payload.personId === personId)
+        .sort((a, b) => (b.payload.accessEpoch ?? 1) - (a.payload.accessEpoch ?? 1))[0]!
+      const accessEpoch = prior.payload.accessEpoch ?? 1
+      const context = await workspaceOwnerSigningContext(profile, id, "workspace-grant", { personId, role: "editor", accessEpoch })
+      const fork = await createWorkspaceGrant(profile, id, personId, "editor", accessEpoch, context)
+      await defaultProofStore.putGrant(fork.payload.grantId, fork)
+      if (await readWorkspaceParticipantGrant(id, personId)) throw new Error("Conflicting membership was accepted")
+      return accessEpoch
+    }, { id: workspaceId, personId: editorPersonId })
+    await recoveredHost.getByRole("list", { name: "Mesh members" }).locator(`button[data-person-id="${editorPersonId}"]`).click()
+    await recoveredHost.getByRole("button", { name: "Refresh access", exact: true }).click()
+    await expect.poll(() => readStoredBoardAccess(ray, workspaceId), { timeout: 45_000 })
+      .toMatchObject({ mode: "write", grantId: expect.not.stringMatching(retainedAccess.grantId!) })
+    await expect(ray.getByLabel("Workspace role: editor")).toBeVisible()
+    const renewedEpoch = await ray.evaluate(async id => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      return (await getReplicaConfigurations((await bootstrapIdentity()).identity.personId))
+        .find(config => config.workspaceId === id)?.boardAccess?.authorization.payload.policyEpoch
+    }, workspaceId)
+    expect(renewedEpoch).toBeGreaterThan(forkEpoch)
+    await expect(retainedStorage.locator(".rusty-connection").first().getByText("Synced", { exact: true }))
+      .toBeVisible({ timeout: 45_000 })
   } finally {
     await Promise.allSettled([ownerContext.close(), managerContext?.close(), rayContext.close(), newOwnerContext?.close(), laterEditorContext?.close()])
     await rusty.close()

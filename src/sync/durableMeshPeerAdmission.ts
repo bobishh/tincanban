@@ -1,12 +1,15 @@
-import { canonicalizeJson } from "../domain/identity"
+import { canonicalizeJson, type LocalProfile } from "../domain/identity"
 import type { DeviceCertificate, WorkspaceGrant } from "../domain/model"
-import { defaultProofStore } from "../domain/proofs"
+import { defaultProofStore, createWorkspaceGrant } from "../domain/proofs"
 import { adaptVerifiedWorkspaceAdvertisement } from "@meta-uber/mesh-replication/protocol"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { isDeviceRevoked, isGrantRevoked, ownerAuthorities } from "./durableMeshBase"
 import { verifyWorkspaceMemberBundle, type WorkspaceMemberBundle } from "./meshRecords"
-import { type PeerStore, type WorkspaceMeshCredential } from "./peerStore"
+import { type PeerStore, type WorkspaceMeshCredential, type WorkspacePeerRecord } from "./peerStore"
 import { defaultStorage, isWorkspaceAuthorityMutation, type WorkspaceAuthorityMutationContext } from "../storage"
+import { readWorkspaceParticipantRenewal, nextWorkspaceAccessEpoch } from "./workspaceParticipants"
+import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
+import { uniqueCertificates } from "./durableMeshBase"
 
 type PeerAdmissionTrace = <T>(phase: string, detail: Record<string, unknown>, operation: () => T | Promise<T>) => Promise<T>
 type PeerAdmissionContext = {
@@ -28,6 +31,37 @@ function assertPeerAdmissionContext(workspaceId: string, context: PeerAdmissionC
   if (!isWorkspaceAuthorityMutation(context.authorityContext, workspaceId, defaultStorage)) {
     throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
   }
+}
+
+/** One fenced participant update carries the new signed grant to every retained device. */
+export async function persistWorkspaceParticipantGrant(credential: WorkspaceMeshCredential, peers: WorkspacePeerRecord[],
+  grant: WorkspaceGrant, context: PeerAdmissionContext): Promise<void> {
+  assertPeerAdmissionContext(credential.workspaceId, context)
+  await context.authorityContext.write(() => defaultProofStore.putGrant(grant.payload.grantId, grant))
+  await context.authorityContext.write(() => context.store.putWorkspaceCredential(credential))
+  for (const peer of peers) {
+    const raw = { ...peer.advertisement as WorkspaceMemberBundle, grant,
+      ownerPublicKey: credential.ownerPublicKey, ownerCertificates: credential.ownerCertificates as DeviceCertificate[] }
+    await persistVerifiedPeerBundle({ credential, raw, context })
+  }
+}
+
+/** An explicit owner command replaces ambiguous same-role grants, never deciding between different roles. */
+export async function renewWorkspaceParticipantAccess(workspaceId: string, personId: string, profile: LocalProfile,
+  context: PeerAdmissionContext): Promise<void> {
+  assertPeerAdmissionContext(workspaceId, context)
+  const credential = await context.store.getWorkspaceCredential(workspaceId)
+  const membership = await readWorkspaceParticipantRenewal(workspaceId, personId)
+  const peers = (await context.store.listPeers(workspaceId)).filter(peer => peer.personId === personId && !peer.revokedAt && peer.advertisement)
+  if (!credential || !membership || !peers.length) throw new Error("A verified current participant role is required to refresh access")
+  credential.ownerCertificates = uniqueCertificates(profile, [...credential.ownerCertificates as DeviceCertificate[], ...await defaultProofStore.listCertificates()])
+  const accessEpoch = await nextWorkspaceAccessEpoch(workspaceId, context.store)
+  if (accessEpoch <= membership.accessEpoch) throw new Error("Workspace access history changed; retry required")
+  const signing = await workspaceOwnerSigningContext(profile, workspaceId, "workspace-grant",
+    { personId, role: membership.role, accessEpoch }, async () =>
+      await context.store.getWorkspaceAuthority(workspaceId) ?? await context.store.getWorkspaceCredential(workspaceId))
+  const grant = await createWorkspaceGrant(profile, workspaceId, personId, membership.role, accessEpoch, signing)
+  await persistWorkspaceParticipantGrant(credential, peers, grant, context)
 }
 
 async function verifyPeerBundle(credential: WorkspaceMeshCredential, raw: WorkspaceMemberBundle, previous: Awaited<ReturnType<PeerStore["getPeer"]>>,

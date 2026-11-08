@@ -1,7 +1,7 @@
 import { expect, test } from "./support/coverage"
 import { ensureJobSearchWorkspace } from "./support/workspaces"
 
-test("owner promotes a visitor, then removes only their device through an explicit scope confirmation", async ({ page, browser }, testInfo) => {
+test("owner refreshes visitor access without promotion, then promotes and removes only their device through an explicit scope confirmation", async ({ page, browser }, testInfo) => {
   test.setTimeout(90000)
   const transportErrors: string[] = []
   const recordTransportError = (error: Error) => { if (/closure invoked.*dropped/.test(error.message)) transportErrors.push(error.message) }
@@ -27,6 +27,20 @@ test("owner promotes a visitor, then removes only their device through an explic
   await expect(guest.getByLabel("Workspace role: visitor")).toBeVisible()
   await page.getByRole("button", { name: "Sync", exact: true }).click()
   await host.getByRole("list", { name: "Mesh members" }).getByRole("button").filter({ hasText: "visitor" }).click()
+  const readGuestAccessEpoch = () => guest.evaluate(async () => {
+    const { useTincanban } = await import("/src/state.ts")
+    const { peerStore } = await import("/src/sync/peerStore.ts")
+    const credential = await peerStore.getWorkspaceCredential(useTincanban().activeWorkspace.id)
+    return (credential?.localGrant as { payload: { accessEpoch?: number } } | undefined)?.payload.accessEpoch ?? 0
+  })
+  const previousVisitorEpoch = await readGuestAccessEpoch()
+  await host.getByRole("button", { name: "Refresh access", exact: true }).click()
+  await expect.poll(readGuestAccessEpoch, { timeout: 20_000 }).toBeGreaterThan(previousVisitorEpoch)
+  await guest.reload()
+  await expect(guest.getByLabel("Workspace role: visitor")).toBeVisible()
+  await guest.getByRole("button", { name: "Sync", exact: true }).click()
+  await expect(guestDialog.getByRole("button", { name: "Refresh access", exact: true })).toHaveCount(0)
+  await guestDialog.getByRole("button", { name: "Close", exact: true }).first().click()
   await host.getByRole("button", { name: "Make editor", exact: true }).click()
   await expect(guest.getByLabel("Workspace role: editor")).toBeVisible({ timeout: 20000 })
   await guest.reload()

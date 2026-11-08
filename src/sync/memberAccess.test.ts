@@ -7,6 +7,8 @@ import * as Automerge from "@automerge/automerge/slim"
 import { initializeAutomerge } from "../crdt"
 import { bootstrapIdentity, clearInMemoryProfileForReloadTest, renewDeviceIdentity, resetIdentityStorageForTest, signEnvelope } from "../domain/identity"
 import { createWorkspaceGrant } from "../domain/proofs"
+import * as workspaceChangeProofStore from "./workspaceChangeProofStore"
+import * as workspaceParticipants from "./workspaceParticipants"
 import { createWorkspaceDeparture, verifyWorkspaceDeparture, createPeerAdvertisement, createWorkspaceDeviceRevocation, verifyWorkspaceDeviceRevocation,
   type WorkspaceDeparture, type WorkspaceDeviceRevocation } from "./meshRecords"
 import { DurableMesh } from "./durableMesh"
@@ -82,6 +84,64 @@ async function fixture() {
 }
 
 describe("member access", () => {
+  it("Given a restored signed history grant absent from the proof store, when issuing access, then advance beyond that retained generation", async () => {
+    const f = await fixture()
+    const grant = await createWorkspaceGrant(f.owner, "board", f.visitor.identity.personId, "visitor", 7)
+    const history = vi.spyOn(workspaceChangeProofStore, "records").mockResolvedValue([{
+      signed: await signEnvelope(f.visitor.privateKeys.devicePrivateKey, { kind: "workspace-changes", version: 1, workspaceId: "board",
+        hashes: [], personId: f.visitor.identity.personId, deviceId: f.visitor.device.deviceId }, f.visitor.device.deviceId),
+      publicKey: f.visitor.device.publicKey, certificates: [f.visitor.certificate], grant,
+      ownerPublicKey: f.owner.identity.publicKey, ownerCertificates: [f.owner.certificate],
+    }])
+    try {
+      expect(await f.mesh.nextAccessEpoch("board")).toBe(8)
+      grant.payload.accessEpoch = 99
+      expect(await f.mesh.nextAccessEpoch("board")).toBe(2)
+    }
+    finally { history.mockRestore(); await f.mesh.dispose() }
+  })
+  it.each(["editor", "visitor"] as const)("Given current %s access, when its owner refreshes it, then persist a newer signed grant with the same role", async role => {
+    const f = await fixture()
+    const membership = vi.spyOn(workspaceParticipants, "readWorkspaceParticipantRenewal").mockResolvedValue({ role, accessEpoch: 1 })
+    try {
+      await f.mesh.renewPersonAccess("board", f.visitor.identity.personId)
+      expect(peerGrantRole(f.peer())).toBe(role)
+      expect((f.peer().advertisement as WorkspaceMemberBundle).grant!.payload.accessEpoch).toBe(2)
+      await meshHooks(f.mesh).putVerifiedBundle(f.credential(), f.bundle)
+      expect(peerGrantRole(f.peer())).toBe(role)
+    } finally { membership.mockRestore(); await f.mesh.dispose() }
+  })
+  it("Given no verified current role, when refreshing access, then fail without changing the participant", async () => {
+    const f = await fixture()
+    const membership = vi.spyOn(workspaceParticipants, "readWorkspaceParticipantRenewal").mockResolvedValue(undefined)
+    try {
+      await expect(f.mesh.renewPersonAccess("board", f.visitor.identity.personId)).rejects.toThrow("verified current participant role")
+      expect(f.peer().advertisement).toEqual(f.bundle)
+    } finally { membership.mockRestore(); await f.mesh.dispose() }
+  })
+  it("Given renewal commits before publication fails, when the owner retries, then preserve the role and advance beyond the committed grant", async () => {
+    const f = await fixture()
+    const membership = vi.spyOn(workspaceParticipants, "readWorkspaceParticipantRenewal")
+      .mockResolvedValueOnce({ role: "visitor", accessEpoch: 1 }).mockResolvedValue({ role: "visitor", accessEpoch: 2 })
+    const publication = vi.mocked((f.mesh as unknown as { publishAll: () => Promise<void> }).publishAll)
+      .mockRejectedValueOnce(new Error("Publication interrupted"))
+    try {
+      await expect(f.mesh.renewPersonAccess("board", f.visitor.identity.personId)).rejects.toThrow("Publication interrupted")
+      expect((f.peer().advertisement as WorkspaceMemberBundle).grant!.payload).toMatchObject({ role: "visitor", accessEpoch: 2 })
+      await f.mesh.renewPersonAccess("board", f.visitor.identity.personId)
+      expect((f.peer().advertisement as WorkspaceMemberBundle).grant!.payload).toMatchObject({ role: "visitor", accessEpoch: 3 })
+      expect(publication).toHaveBeenCalledTimes(2)
+    } finally { membership.mockRestore(); await f.mesh.dispose() }
+  })
+  it("Given another owner, when the former owner refreshes access, then reject the signing operation", async () => {
+    const f = await fixture()
+    const membership = vi.spyOn(workspaceParticipants, "readWorkspaceParticipantRenewal").mockResolvedValue({ role: "visitor", accessEpoch: 1 })
+    await f.store.putWorkspaceCredential({ ...f.credential(), ownerPersonId: f.visitor.identity.personId, ownerPublicKey: f.visitor.identity.publicKey })
+    try {
+      await expect(f.mesh.renewPersonAccess("board", f.visitor.identity.personId)).rejects.toThrow("Current workspace owner authority is unavailable")
+      expect(f.peer().advertisement).toEqual(f.bundle)
+    } finally { membership.mockRestore(); await f.mesh.dispose() }
+  })
   it("promotes a visitor with a signed owner grant and preserves promotion on a stale announcement", async () => {
     const f = await fixture()
     await f.mesh.promotePerson("board", f.visitor.identity.personId)

@@ -40,6 +40,7 @@ defineProps<{
   voteForWorkspaceSuccessor: Mesh["voteForWorkspaceSuccessor"]
   claimWorkspaceSuccession: Mesh["claimWorkspaceSuccession"]
   promoteWorkspacePeer: Mesh["promoteWorkspacePeer"]
+  renewWorkspacePeerAccess: Mesh["renewWorkspacePeerAccess"]
 }>()
 
 const emit = defineEmits<{
@@ -93,6 +94,7 @@ const emit = defineEmits<{
     @vote-successor="voteForWorkspaceSuccessor"
     @claim-succession="claimWorkspaceSuccession"
     @promote-peer="promoteWorkspacePeer"
+    @renew-peer-access="renewWorkspacePeerAccess"
     @request-enrollment="sync.requestEnrollment"
     :enrollment-sign-in-available="Boolean(identityPortalOrigin)" @sign-in-for-enrollment="beginEnrollmentSignIn"
     :enrollment-device-name="sync.enrollmentDeviceName.value"

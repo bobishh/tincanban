@@ -116,6 +116,7 @@ export function useAppMesh(context: MeshContext) {
     try { await action() }
     catch (error) { peerAccessError.value = error instanceof Error ? error.message : message }
   }
+  const renewWorkspacePeerAccess = (personId: string) => meshAction(() => sync.renewPeerAccess(personId), "Could not refresh member access")()
   const promoteWorkspacePeer = (personId: string) => meshAction(() => sync.promotePeer(personId), "Could not promote member")()
   async function leaveWorkspaceMesh(keepCopy = true) {
     if (leavingMesh.value) return
@@ -138,7 +139,7 @@ export function useAppMesh(context: MeshContext) {
     catch (error) { peerAccessError.value = error instanceof Error ? error.message : "Could not revoke access" }
     finally { revokingPeer.value = "" }
   }
-  return { promoteWorkspacePeer, devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, onlineWorkspaceDevices, revokingPeer, peerAccessError, meshMembers, activeSuccession, canClaimSuccession, transferringOwnership, leavingMesh, transferWorkspaceOwnership, leaveWorkspaceMesh, setWorkspaceSuccessor, voteForWorkspaceSuccessor, claimWorkspaceSuccession, revokeWorkspacePeer }
+  return { renewWorkspacePeerAccess, promoteWorkspacePeer, devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, onlineWorkspaceDevices, revokingPeer, peerAccessError, meshMembers, activeSuccession, canClaimSuccession, transferringOwnership, leavingMesh, transferWorkspaceOwnership, leaveWorkspaceMesh, setWorkspaceSuccessor, voteForWorkspaceSuccessor, claimWorkspaceSuccession, revokeWorkspacePeer }
 }
 
 function createMeshMember(personId: string, peers: ReturnType<typeof useDeviceSync>["meshPeers"]["value"], selfId: string, sync: ReturnType<typeof useDeviceSync>, chat: ReturnType<typeof useWorkspaceChat>, ownerId: string, currentRole: WorkspaceRole, reconnecting: boolean, retainedRole: "owner" | "editor" | "visitor") {

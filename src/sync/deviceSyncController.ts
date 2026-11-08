@@ -526,6 +526,7 @@ export class DeviceSyncController {
       ...createPeerHistoryReadActions({ durableMesh: () => this.durableMesh, durableMeshPromise: () => this.durableMeshPromise,
         directPeerSessions: () => new Set([...this.directPeerSessions.values(), ...(this.liveSession ? [this.liveSession] : [])]) }),
       ...deviceManagementActions(() => this.ensureDurableMesh(), this.availableWorkspaces, this.state.ownershipRevision),
+      renewPeerAccess: (personId: string) => this.withActiveWorkspace((id, mesh) => mesh.renewPersonAccess(id, personId), true),
       promotePeer: (personId: string) => this.withActiveWorkspace((id, mesh) => mesh.promotePerson(id, personId), true),
       shutdown: () => this.shutdown(), revokePeer: (personId: string) => this.revokePeer(personId),
       removeKeeper: (personId: string, discovery?: KeeperDiscovery, knownServiceDeviceIds?: string[]) =>

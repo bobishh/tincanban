@@ -80,6 +80,7 @@ const emit = defineEmits<{
   (e: "transferOwnership", personId: string): void
   (e: "leaveMesh", keepCopy: boolean): void
   (e: "promotePeer", personId: string): void
+  (e: "renewPeerAccess", personId: string): void
   (e: "revokePerson", personId: string): void
   (e: "setSuccessor", personId: string | null): void
   (e: "voteSuccessor", personId: string): void
@@ -242,6 +243,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <button
             v-for="member in peopleMembers"
             :key="member.personId"
+            :data-person-id="member.personId"
             class="mesh-member"
             :class="{ 'is-selected': selectedMemberId === member.personId }"
             type="button"
@@ -293,6 +295,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
           <OwnershipRecoveryPanel :members="peopleMembers" :selected-person-id="selectedMemberId" :has-mesh="hasMesh" :succession="succession"
             :current-role="currentRole" :current-person-id="currentPersonId" :can-manage-mesh="canManageMesh" :can-claim-succession="canClaimSuccession"
             @set-successor="emit('setSuccessor', $event)" @vote-successor="emit('voteSuccessor', $event)" @claim-succession="emit('claimSuccession')" />
+          <button v-if="canManageMesh && (selectedMember.role === 'editor' || selectedMember.role === 'visitor')" class="button" type="button" @click="emit('renewPeerAccess', selectedMember.personId)">Refresh access</button>
           <button v-if="canManageMesh && selectedMember.role === 'visitor'" class="button" type="button" @click="emit('promotePeer', selectedMember.personId)">Make editor</button>
           <p v-if="canManageMesh && selectedMember.role !== 'owner' && !selectedMember.online" class="dialog-copy">This member must be online before ownership can move.</p>
           <p v-else-if="canManageMesh && selectedMember.role !== 'owner'" class="dialog-copy">They become owner. You keep editor access.</p>

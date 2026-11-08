@@ -24,6 +24,7 @@ import { offerOwnerWorkspaces, ownerWorkspaceOfferSchema } from "./durableMeshOw
 import { captureWorkspaceRouteEnvelopes, readIdentityWorkspaceRouteRecovery, restoreIdentityWorkspaceRoutes } from "./identityWorkspaceRouteRecovery"
 export { ownerKeeperOfferPolicy } from "./durableMeshOwnerOfferPolicy"
 import { z } from "zod"
+import { nextWorkspaceAccessEpoch } from "./workspaceParticipants"
 
 export type KeeperGrantScopeProof = { workspaceId: string; document: string; authorizationBundle: unknown; grant: WorkspaceGrant }
 export type InvitationInstallOptions = { mode?: "identity-recovery" }
@@ -529,9 +530,7 @@ export abstract class DurableMeshCredentials extends DurableMeshBase {
   }
 
   async nextAccessEpoch(workspaceId: string): Promise<number> {
-    const credential = await this.store.getWorkspaceCredential(workspaceId)
-    const issued = await defaultProofStore.listGrants(workspaceId)
-    return meshRustRuntime().state.nextAccessEpoch(credential ?? null, issued)
+    return nextWorkspaceAccessEpoch(workspaceId, this.store)
   }
 
   async exportWorkspace(workspaceId: string): Promise<MeshExport> {
