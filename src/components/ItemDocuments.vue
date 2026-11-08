@@ -223,7 +223,7 @@ onBeforeUnmount(closePreview)
         <span class="detail-label">Attached documents</span>
         <h3>{{ visibleDocuments.length ? `${visibleDocuments.length} attached` : "Nothing attached" }}</h3>
       </div>
-      <button class="button button-small" type="button" :disabled="readOnly" @click="formOpen = !formOpen">
+      <button v-if="!readOnly" class="button button-small" type="button" @click="formOpen = !formOpen">
         + File
       </button>
     </div>

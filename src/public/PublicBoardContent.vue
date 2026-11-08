@@ -118,7 +118,7 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
 </script>
 
 <template>
-  <TincanbanPageLayout>
+  <TincanbanPageLayout class="public-board">
     <template #header>
       <div class="brand"><span class="brand-presence"><span class="brand-mark is-empty" title="Read-only board"><svg viewBox="0 0 64 80" role="img" aria-label="Read-only board"><use href="/logo.svg?v=4#can-logo" /></svg></span></span><div><TincanbanHeading :label="workspaceLabel" /></div></div>
       <div class="top-actions"><button class="button button-quiet" type="button" aria-label="Workspace chat" @click="conversation = { targetId: view.board.id }">Chat</button></div>
@@ -130,7 +130,7 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
     <BoardSurface :columns="visibleColumns" :items-for-column="itemsForColumn" :column-color="id => view.columns.find(column => column.id === id)?.color" :column-status="columnStatus" :is-column-collapsed="isCollapsed" :has-filters="hasFilters" :entity-name="entityName" :board-title="view.board.title" :card-presentation="cardPresentation" @toggle-column="toggle" @open="open" @select="open" @discuss="openDiscussion">
       <template #empty><div v-if="hasFilters && !visibleColumns.length" class="board-empty">Try another search or clear filters to see all cards.</div></template>
     </BoardSurface>
-    <ItemDocuments :documents="boardDocuments" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" />
+    <ItemDocuments v-if="boardDocuments.length" :documents="boardDocuments" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" />
 
     <ItemDetailDialog v-if="selected" :workspace-id="scope" :item="selected" :columns="view.columns" :card-stage-buttons="cardStageButtons(view.board, view.columns)" :read-only="true" :move-to-column="noOpMove" :narrative="selectedNarrative" :narrative-field-id="notesFieldId" :subitems="selectedSubitems" :fields="view.fields" :documents="selectedDocuments" :save-document="noOpSaveDocument" :update-document="noOpUpdateDocument" :quick-note="''" @close="selectedId = null">
       <template #documents><ItemDocuments :documents="selectedDocuments" :workspace-id="scope" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" /></template>
@@ -138,3 +138,8 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
     <WorkspaceChat v-if="conversation" :key="chatWindowId" :read-only="true" :workspace-id="scope" :workspace-scope="scope" :window-id="chatWindowId" :title="conversation.rootId ? 'Discussion' : conversation.targetId === view.board.id ? 'Board discussion' : 'Discussion'" :field-titles="discussions.fieldTitles" :reference-choices="discussions.referenceChoices" :all-messages="discussions.allMessages" :messages="chatMessages" :member-avatars="discussions.memberAvatars" :target-id="conversation.messageId" :workspace-title="view.board.title" :current-person-id="''" :sending="false" :error="''" :loading="false" :connected="false" :typing-people="[]" @close="conversation = null" @reference="openReference" @thread="openMessageThread" />
   </TincanbanPageLayout>
 </template>
+
+<style scoped>
+/* Estimated offscreen heights change column geometry during the first scroll. */
+.public-board :deep(.card-stack > .lead-card) { content-visibility: visible; contain-intrinsic-size: none; }
+</style>

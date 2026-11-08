@@ -45,6 +45,7 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible()
   await expect(page.locator('.topbar .brand-name')).toHaveText("TINCANBAN")
   await expect(page.getByRole("img", { name: "Read-only board", exact: true })).toBeVisible()
+  await expect(page.locator('.shell > .documents-section')).toHaveCount(0)
   await expect(page.locator('.board .column .lead-card')).toHaveCount(1)
   const doing = page.getByRole("region", { name: "Doing", exact: true })
   const backlog = page.getByRole("region", { name: "Backlog", exact: true })
@@ -68,6 +69,7 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   await expect(cardDialog.getByText("Nested card", { exact: true })).toBeVisible()
   await expect(cardDialog.getByText("Public body")).toBeVisible()
   await expect(cardDialog.getByText("Attached documents", { exact: true })).toBeVisible()
+  await expect(cardDialog.getByRole("button", { name: "+ File", exact: true })).toHaveCount(0)
   await expect(cardDialog.getByRole("group", { name: "Handout", exact: true }).getByRole("button", { name: "Preview", exact: true })).toBeVisible()
   await closeCard.click()
   await page.getByRole("button", { name: /Open discussion for Public card/ }).click()
@@ -100,6 +102,43 @@ for (const width of [390, 1440]) test(`Given an anonymous reader at ${width}px, 
   expect(result.idb).toEqual([])
   expect(result.probe).toEqual({ workers: 0, wasm: 0, idbOpen: 0 })
   expect(getWasmRequests()).toBe(0)
+})
+
+test("Given a public board with attached files, When a visitor opens it, Then board files remain readable without attachment controls", async ({ page }) => {
+  const projection = { ...snapshot, files: [{ ...snapshot.files[0], parentId: boardId }] }
+  await page.route(api, route => route.fulfill({ json: { boardId, revision: 3, projection } }))
+  await page.route(`${api}/files/3/${fileHash}`, route => route.fulfill({ body: "public!", headers: { "content-type": "text/plain" } }))
+  await page.goto(publicPath)
+  const documents = page.locator('.shell > .documents-section')
+  await expect(documents.getByRole("group", { name: "Handout", exact: true })).toBeVisible()
+  await expect(documents.getByRole("link", { name: "Download Handout", exact: true })).toHaveAttribute("href", `${api}/files/3/${fileHash}`)
+  await expect(documents.getByRole("button", { name: "+ File", exact: true })).toHaveCount(0)
+  await documents.getByRole("button", { name: "Preview", exact: true }).click()
+  await expect(page.getByRole("dialog", { name: "Document preview", exact: true })).toContainText("public!")
+})
+
+for (const width of [390, 1440]) test(`Given a public board with offscreen cards at ${width}px, When scrolling through it, Then board height and card positions remain stable`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 })
+  const cards = Array.from({ length: 90 }, (_, index) => ({ ...snapshot.cards[0], id: `card-${index}`,
+    title: `Public card ${index}`, columnId: index < 45 ? "column-a" : "column-b", rank: `${index}/1`,
+    body: "A published card with a readable summary. ".repeat(1 + index % 4) }))
+  await page.route(api, route => route.fulfill({ json: { boardId, revision: 3, projection: { ...snapshot, cards, discussions: [], files: [] } } }))
+  await page.goto(publicPath)
+  await expect(page.getByRole("button", { name: "Open Public card 0", exact: true })).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+  const board = page.locator('.board')
+  const initial = await board.boundingBox()
+  expect(initial).not.toBeNull()
+  const firstCard = page.getByRole("button", { name: "Open Public card 0", exact: true })
+  const initialCard = await firstCard.boundingBox()
+  for (const progress of [0.25, 0.5, 0.75, 1, 0]) {
+    await page.evaluate(async progress => {
+      window.scrollTo(0, progress * (document.documentElement.scrollHeight - innerHeight))
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    }, progress)
+    expect(Math.abs((await board.boundingBox())!.height - initial!.height)).toBeLessThan(1)
+  }
+  expect(await firstCard.boundingBox()).toEqual(initialCard)
 })
 
 test("Given a public route, When the service is pending, unavailable, or returns invalid data, Then errors are retryable without private startup", async ({ page }) => {
