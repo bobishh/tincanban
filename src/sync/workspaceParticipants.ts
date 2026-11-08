@@ -1,5 +1,6 @@
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { canonicalizeJson } from "../domain/identity"
+import { meshTrace } from "./meshTrace"
 import type { WorkspaceGrant, DeviceCertificate } from "../domain/model"
 import type { WorkspaceRole } from "../domain/permissions"
 import { defaultProofStore } from "../domain/proofs"
@@ -13,14 +14,25 @@ export type WorkspaceParticipant = { personId: string; role: Exclude<WorkspaceRo
 export async function readWorkspaceParticipantGrant(workspaceId: string, personId: string,
   candidate?: WorkspaceGrant): Promise<WorkspaceGrant | undefined> {
   const state = await readVerifiedWorkspaceGrants(workspaceId, candidate)
-  if (!state) return undefined
-  return latestActiveGrant(state.grants.filter(entry => entry.personId === personId))?.grant
+  const entries = "grants" in state ? state.grants.filter(entry => entry.personId === personId) : []
+  const selected = latestActiveGrant(entries)?.grant
+  if (!selected) {
+    const epoch = entries.reduce((maximum, entry) => Math.max(maximum, entry.grant.payload.accessEpoch ?? 1), 0)
+    const latest = entries.filter(entry => (entry.grant.payload.accessEpoch ?? 1) === epoch)
+    meshTrace("workspace.participant-grant.unavailable", { workspaceId, peerId: personId,
+      reason: "reason" in state ? state.reason : latest.length ? "conflicting-grants" : "no-active-grant",
+      epoch, grantCount: new Set(latest.map(entry => canonicalizeJson(entry.grant))).size,
+      grantIds: [...new Set(latest.map(entry => entry.grant.payload.grantId))].slice(0, 8),
+      candidateEpoch: candidate?.payload?.accessEpoch ?? null, candidateRole: candidate?.payload?.role ?? null,
+    }, "warn")
+  }
+  return selected
 }
 
 /** Membership survives transport loss; the SDK still verifies every retained grant. */
 export async function readWorkspaceParticipants(workspaceId: string): Promise<WorkspaceParticipant[]> {
   const state = await readVerifiedWorkspaceGrants(workspaceId)
-  if (!state) return []
+  if ("reason" in state) return []
   const participants = new Map<string, WorkspaceParticipant>([
     [state.authority.ownerPersonId, { personId: state.authority.ownerPersonId, role: "owner" }],
   ])
@@ -36,9 +48,13 @@ export async function readWorkspaceParticipants(workspaceId: string): Promise<Wo
 type VerifiedGrant = { grant: WorkspaceGrant; personId: string; role: WorkspaceParticipant["role"] }
 type VerifiedWorkspaceGrantState = { authority: NonNullable<Awaited<ReturnType<typeof readWorkspaceSigningAuthority>>["authority"]>; grants: VerifiedGrant[] }
 
-async function readVerifiedWorkspaceGrants(workspaceId: string, candidate?: WorkspaceGrant): Promise<VerifiedWorkspaceGrantState | undefined> {
+async function readVerifiedWorkspaceGrants(workspaceId: string, candidate?: WorkspaceGrant): Promise<VerifiedWorkspaceGrantState | {
+  reason: "invalid-authority" | "missing-authority" | "changed-authority"
+}> {
   const { authority, invalid } = await readWorkspaceSigningAuthority(workspaceId)
-  if (!authority || invalid || authority.workspaceId !== workspaceId) return undefined
+  if (!authority || invalid || authority.workspaceId !== workspaceId) {
+    return { reason: invalid ? "invalid-authority" : "missing-authority" }
+  }
   const owners = workspaceOwners(authority)
   const grants = await participantGrants(workspaceId, authority.localGrant, candidate)
   const verified: VerifiedGrant[] = []
@@ -47,7 +63,9 @@ async function readVerifiedWorkspaceGrants(workspaceId: string, candidate?: Work
     if (entry) verified.push(entry)
   }
   const current = await readWorkspaceSigningAuthority(workspaceId)
-  if (current.invalid || authorityValidationFingerprint(current.authority) !== authorityValidationFingerprint(authority)) return undefined
+  if (current.invalid || authorityValidationFingerprint(current.authority) !== authorityValidationFingerprint(authority)) {
+    return { reason: "changed-authority" }
+  }
   return { authority, grants: verified }
 }
 

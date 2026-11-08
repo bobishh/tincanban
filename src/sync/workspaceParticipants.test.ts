@@ -3,6 +3,7 @@ import { bootstrapIdentity, resetIdentityStorageForTest } from "../domain/identi
 import { createRecoverableIdentity } from "@meta-uber/mesh-identity"
 import { createWorkspaceGrant, createWorkspaceRevocation, createWorkspaceDeparture } from "./meshRecords"
 import { readWorkspaceParticipantGrant, readWorkspaceParticipants } from "./workspaceParticipants"
+import { clearMeshTrace, meshTraceSnapshot } from "./meshTrace"
 import type * as AuthorizationModule from "./changeAuthorization"
 import type { WorkspaceAuthorityRecord } from "./peerStore"
 import type { WorkspaceGrant } from "../domain/model"
@@ -12,7 +13,7 @@ vi.mock("./changeAuthorization", async original => ({ ...await original<typeof A
 vi.mock("../domain/proofs", async original => ({ ...await original<Record<string, unknown>>(),
   defaultProofStore: { listGrants: async () => stored.grants } }))
 vi.mock("./workspaceChangeProofStore", () => ({ records: async () => stored.history }))
-beforeEach(() => { resetIdentityStorageForTest(); stored.invalid = false; stored.grants = []; stored.history = []; stored.authority = null })
+beforeEach(() => { clearMeshTrace(); resetIdentityStorageForTest(); stored.invalid = false; stored.grants = []; stored.history = []; stored.authority = null })
 async function fixture() {
   const owner = await bootstrapIdentity("Owner")
   const editor = (await createRecoverableIdentity("better", "Editor")).profile
@@ -76,4 +77,22 @@ test("Given the candidate membership grant is revoked, when resolving access, th
   const candidate = stored.grants.find(grant => grant.payload.personId === editor.identity.personId)!
   stored.authority!.catalog = { revocations: [await createWorkspaceRevocation(owner, "board", editor.identity.personId, 2, ["history-head"])] }
   expect(await readWorkspaceParticipantGrant("board", editor.identity.personId, candidate)).toBeUndefined()
+})
+
+test("Given conflicting active grants at one epoch, when storage resolves membership, then fail closed with a bounded diagnostic instead of silently omitting access", async () => {
+  const { owner, editor } = await fixture()
+  stored.grants.push(await createWorkspaceGrant(owner, "board", editor.identity.personId, "editor"))
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId)).toBeUndefined()
+  expect(meshTraceSnapshot()).toContainEqual(expect.objectContaining({ event: "workspace.participant-grant.unavailable",
+    workspaceId: "board", peerId: editor.identity.personId, reason: "conflicting-grants", epoch: 1, grantCount: 2 }))
+  expect(JSON.stringify(meshTraceSnapshot())).not.toContain('"signature"')
+})
+
+test.each(["invalid", "missing"])("Given %s workspace authority, when storage resolves membership, then report the exact failure without inventing access", async state => {
+  const { editor } = await fixture()
+  if (state === "invalid") stored.invalid = true
+  else stored.authority = null
+  expect(await readWorkspaceParticipantGrant("board", editor.identity.personId)).toBeUndefined()
+  expect(meshTraceSnapshot()).toContainEqual(expect.objectContaining({ event: "workspace.participant-grant.unavailable",
+    reason: `${state}-authority`, grantCount: 0 }))
 })
