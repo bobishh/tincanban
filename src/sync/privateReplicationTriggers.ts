@@ -26,24 +26,39 @@ export function createReplicationFollowUp() {
 
 /** Share one sync trigger policy; typing presence never starts a storage pass. */
 export function startPrivateReplicationTriggers(app: Pick<ReturnType<typeof useTincanban>, "subscribeLocalChanges">,
-  now: Ref<number>, sync: () => Promise<void>) {
+  now: Ref<number>, sync: () => Promise<void>, onResume: () => void = () => {}) {
   const hidden = () => typeof document !== "undefined" && document.hidden
   const healthClock = setInterval(() => { now.value = Date.now() }, 1000)
   let timer = setInterval(() => { void sync() }, replicationPollDelay(hidden()))
+  const resume = () => {
+    now.value = Date.now()
+    onResume()
+    void sync()
+  }
+  const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) resume() }
   const onVisibility = () => {
     clearInterval(timer)
     timer = setInterval(() => { void sync() }, replicationPollDelay(hidden()))
-    void sync()
+    if (hidden()) void sync()
+    else resume()
   }
   if (typeof document !== "undefined" && typeof document.addEventListener === "function") document.addEventListener("visibilitychange", onVisibility)
-  if (typeof window !== "undefined" && typeof window.addEventListener === "function") window.addEventListener("pagehide", onVisibility)
+  if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+    window.addEventListener("pagehide", onVisibility)
+    window.addEventListener("pageshow", onPageShow)
+    window.addEventListener("online", resume)
+  }
   const stopWorkspace = app.subscribeLocalChanges(() => { void sync() })
   const stopChat = subscribeChat(event => { if (event.contentChanged !== false) void sync() })
   return () => {
     clearInterval(timer)
     clearInterval(healthClock)
     if (typeof document !== "undefined" && typeof document.removeEventListener === "function") document.removeEventListener("visibilitychange", onVisibility)
-    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") window.removeEventListener("pagehide", onVisibility)
+    if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+      window.removeEventListener("pagehide", onVisibility)
+      window.removeEventListener("pageshow", onPageShow)
+      window.removeEventListener("online", resume)
+    }
     stopWorkspace()
     stopChat()
   }

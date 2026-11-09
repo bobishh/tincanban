@@ -48,6 +48,30 @@ async function checkpointRefreshFixture() {
   return { open, inventory, upload, store, commits, progress: () => structuredClone(progress) }
 }
 
+test("Given a Rusty object has downloaded, when its workspace admission is still pending, then confirm the read only after durable admission and before upload", async () => {
+  const f = await checkpointRefreshFixture()
+  const admission = Promise.withResolvers<void>()
+  f.store.merge.mockImplementationOnce(() => admission.promise)
+  const read = vi.fn()
+  const pass = f.open().sync(read)
+  try {
+    await vi.waitFor(() => expect(f.store.merge).toHaveBeenCalledOnce())
+    expect(read).not.toHaveBeenCalled()
+  } finally { admission.resolve() }
+  await expect(pass).rejects.toThrow("Original reply lost")
+  expect(read).toHaveBeenCalledExactlyOnceWith({ phase: "checked", checkedAt: expect.any(Number) })
+  expect(read.mock.invocationCallOrder[0]).toBeLessThan(f.upload.mock.invocationCallOrder[0]!)
+})
+
+test("Given a Rusty object cannot be admitted, when a read fails, then report the unavailable check and retain the previous cursor", async () => {
+  const f = await checkpointRefreshFixture()
+  f.store.merge.mockRejectedValueOnce(new Error("Current authority denied checkpoint"))
+  const read = vi.fn()
+  await expect(f.open().sync(read)).rejects.toThrow("Current authority denied checkpoint")
+  expect(f.progress().cursor).toBe(0)
+  expect(read).toHaveBeenCalledExactlyOnceWith({ phase: "unavailable" })
+})
+
 test("Given a reopened outbox rejected by a newer checkpoint, when recovery flushes its snapshot, then admit the checkpoint before retiring that exact request and confirm a merged fresh-key upload", async () => {
   const f = await checkpointRefreshFixture()
   await expect(f.open().push()).rejects.toThrow("Original reply lost")

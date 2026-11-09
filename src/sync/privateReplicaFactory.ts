@@ -9,9 +9,10 @@ import { provisionIdentityReplicas } from "./provisionIdentityReplicas"
 import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 import { defaultStorage } from "../storage"
+import type { BoardReplicaRead } from "./replicationHealth"
 import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 
-type Replica = { binding: string; sync: () => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
+type Replica = { binding: string; sync: (observeRead?: (result: BoardReplicaRead) => void) => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
 type Session = { owner: string; epoch?: number; guard: () => void; reload: () => Promise<void>;
   configs: Ref<BlindReplicaConfig[]>; cache: Map<string, Replica>; attachmentCoverage?: Ref<Record<string, AttachmentCoverageStatus[]>>;
@@ -131,8 +132,8 @@ async function constructPrivateReplica(app: ReturnType<typeof useTincanban>, con
       })
     })
   guard()
-  const result: Replica = { binding, sync: async () => {
-    const synced = await implementation.sync()
+  const result: Replica = { binding, sync: async observeRead => {
+    const synced = await implementation.sync(observeRead)
     if (config.purpose !== "identity" && (config.minimumWriterVersion !== 2 || pendingWriterUpgrade)) session.queueWriterMaintenance?.(config)
     return synced
   } }

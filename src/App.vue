@@ -113,6 +113,15 @@ const showConversationLayer = computed(() => chat.open.value || conversations.cu
   conversations.selection.value || conversations.contextMenu.value || conversations.sourceState.value || conversations.navigationState.value,
 ))
 const { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, canEditItems, canEditBoard, canManageAccess, canRenameWorkspace } = app.collaboration.permissions
+const { boardFreshness } = app.collaboration.device.blindReplication
+const boardCheckTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+const boardFreshnessLabel = computed(() => {
+  const status = boardFreshness.value
+  if (!confirmedRole.value || status.phase === "unknown") return "Freshness unknown"
+  if (status.phase === "checked") return `Rusty checked ${boardCheckTime.format(status.checkedAt)}`
+  return { checking: "Checking Rusty…", "catching-up": "Applying updates…",
+    unavailable: "Rusty check failed", overdue: "Rusty check overdue" }[status.phase]
+})
 const { devicePresence, meshPresence, meshPresenceLabel,
   activeMeshRetryAt, meshMembers, activeSuccession,
   canClaimSuccession, transferringOwnership, leavingMesh, revokingPeer,
@@ -228,6 +237,8 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     <BoardToolbar v-if="boardVisible" v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
       :placeholder="'Search cards'" :inert="!boardVisible || undefined">
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
+      <span class="save-state board-freshness" role="status" aria-label="Board freshness"
+        title="Latest check against this board’s configured Rusty storage.">{{ boardFreshnessLabel }}</span>
     </BoardToolbar>
 
     <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">

@@ -71,6 +71,67 @@ test("Given connected private board storage, when approving inspection from Rust
   } finally { await service.close(); await rusty.close() }
 })
 
+test("Given a phone reopens a cached board, when Rusty is delayed or unreachable, then distinguish the local copy from a verified read", async ({ page, context, baseURL }) => {
+  test.setTimeout(60_000)
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Board freshness")
+  const rusty = await startRustyService({}, baseURL!)
+  let gate = Promise.withResolvers<void>()
+  try {
+    await approveRustyForFixture(page, rusty.origin)
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
+    const panel = page.getByRole("region", { name: "Rusty", exact: true })
+    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+    await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
+    await panel.getByRole("button", { name: "Connect", exact: true }).click()
+    await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
+      .toBeVisible({ timeout: 30_000 })
+    const boardUrl = page.url()
+    const scope = await page.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const configs = await getReplicaConfigurations((await bootstrapIdentity()).identity.personId)
+      const config = configs.find(value => value.purpose !== "identity" && value.origin === origin)
+      if (!config) throw new Error("The board has no Rusty scope")
+      return config.scopeId
+    }, rusty.origin)
+
+    const mobile = await context.newPage()
+    await mobile.setViewportSize({ width: 390, height: 844 })
+    await page.close()
+    let unavailable = false
+    const inventory = new RegExp(`/v2/scopes/${scope}/objects\\?after=`)
+    await mobile.route(inventory, async route => {
+      await gate.promise
+      if (unavailable) await route.fulfill({ status: 503, contentType: "application/json",
+        headers: { "Access-Control-Allow-Origin": baseURL! }, body: "{}" })
+      else await route.continue()
+    })
+    await mobile.goto(boardUrl)
+    const toolbar = mobile.getByRole("region", { name: "tincanban controls" })
+    const freshness = toolbar.getByRole("status", { name: "Board freshness" })
+    const search = toolbar.getByRole("searchbox", { name: "Search cards" })
+    await expect(search).toBeVisible()
+    await expect(freshness).toHaveText("Checking Rusty…")
+    const pendingHeight = (await toolbar.boundingBox())!.height
+    gate.resolve()
+    await expect(freshness).toHaveText(/^Rusty checked \d{2}:\d{2}$/)
+    expect((await toolbar.boundingBox())!.height).toBe(pendingHeight)
+
+    gate = Promise.withResolvers<void>()
+    await mobile.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })))
+    await expect(freshness).toHaveText("Checking Rusty…")
+    unavailable = true
+    gate.resolve()
+    await expect(freshness).toHaveText("Rusty check failed")
+    await expect(search).toBeVisible()
+    expect((await toolbar.boundingBox())!.height).toBe(pendingHeight)
+    unavailable = false
+    await expect(freshness).toHaveText(/^Rusty checked \d{2}:\d{2}$/)
+    await mobile.close()
+  } finally { gate.resolve(); await rusty.close() }
+})
+
 test("Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work", async ({ page, baseURL }, testInfo) => {
   test.setTimeout(90000)
   await page.goto("/")

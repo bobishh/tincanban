@@ -11,6 +11,7 @@ import { openWithReplicaContentKeys } from "./replicaContentKeys"
 import { pushWithCheckpointRefresh, uploadWithCheckpointEvidence } from "./rustyCheckpointRecovery"
 
 import type { BlindReplicaConfig } from "../product-replica"
+import type { BoardReplicaRead } from "./replicationHealth"
 export type { BlindReplicaConfig, IdentityReplicaConfig, PrivateReplicaConfig } from "../product-replica"
 export type PrivateReplicaConflictSummary = { origin: string; scopeId: string; workspaceIds: string[]; identityState: boolean }
 export type BlindReplicaStore = {
@@ -136,13 +137,18 @@ export class BlindReplica {
 
   pull(): Promise<boolean> { return this.schedule(() => this.pullNow()) }
 
-  private async pullNow(): Promise<boolean> {
-    const caughtUp = await this.engine.pull()
+  private async pullNow(observeRead?: (result: BoardReplicaRead) => void): Promise<boolean> {
+    const checkedAt = Date.now()
+    const caughtUp = await this.engine.pull().catch(cause => {
+      observeRead?.({ phase: "unavailable" })
+      throw cause
+    })
     const inventory = this.engine.inventoryStatus()
     if (caughtUp && inventory) {
       this.retainedObjects = inventory.objectCount ?? 0
       this.checkpointSequence = inventory.maxSequence ?? inventory.cursor
     }
+    observeRead?.(caughtUp ? { phase: "checked", checkedAt } : { phase: "catching-up" })
     return caughtUp
   }
 
@@ -152,9 +158,9 @@ export class BlindReplica {
     if (this.config.boardAccess?.mode === "read") throw new Error("Board storage access is read-only")
   }
 
-  private pushNow(): Promise<boolean> {
+  private pushNow(observeRead?: (result: BoardReplicaRead) => void): Promise<boolean> {
     return pushWithCheckpointRefresh({ guard: () => this.ensureCurrent(), read: () => this.readProgress(),
-      commit: (expected, next) => this.persistProgress(expected, next), pull: () => this.pullNow(), push: () => this.engine.push(),
+      commit: (expected, next) => this.persistProgress(expected, next), pull: () => this.pullNow(observeRead), push: () => this.engine.push(),
       restart: () => { this.engine = this.createEngine() },
       diagnostic: phase => this.observe(`mesh.rusty.checkpoint.refresh.${phase}`, { phase: "refresh_checkpoint_generation" }) })
   }
@@ -387,9 +393,9 @@ export class BlindReplica {
     return this.store.operation ? this.store.operation(`rusty.${name}`, run) : run()
   }
 
-  sync(): Promise<boolean> {
+  sync(observeRead?: (result: BoardReplicaRead) => void): Promise<boolean> {
     return this.schedule(async () => {
-      const caughtUp = await this.pullNow()
+      const caughtUp = await this.pullNow(observeRead)
       if (this.config.boardAccess?.mode === "read") return caughtUp
       await this.store.prepareAttachments?.()
       if (caughtUp) {
@@ -397,7 +403,7 @@ export class BlindReplica {
         if (result === "conflict") return false
         if (result === "completed") return true
       }
-      const uploaded = await this.pushNow()
+      const uploaded = await this.pushNow(observeRead)
       return caughtUp && uploaded
     })
   }

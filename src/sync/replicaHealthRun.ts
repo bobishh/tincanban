@@ -1,12 +1,13 @@
 import { isRustyRequestFailure, ReplicaProgressConflictError, ParticipantStorageAccessPendingError } from "./replicationErrors"
-import type { Ref } from "vue"
-import type { PrivateReplicaConfig } from "./blindReplication"
-import { replicaKey, type ReplicaHealth } from "./replicationHealth"
+import { computed, shallowReactive, type Ref } from "vue"
+import type { BlindReplicaConfig, PrivateReplicaConfig } from "./blindReplication"
+import { replicaConfirmationLifetime, replicaKey, type BoardFreshness, type BoardReplicaRead, type ReplicaHealth } from "./replicationHealth"
 import { traceDiagnosticOperation } from "./telemetry"
 import { meshTrace } from "./meshTrace"
+import { privateReplicaBinding } from "./privateReplicaBinding"
 
-export async function syncReplicaConnections(configs: PrivateReplicaConfig[], isCurrent: () => boolean,
-  run: (config: PrivateReplicaConfig) => Promise<string | undefined>, label: string): Promise<string[]> {
+export async function syncReplicaConnections<Config extends PrivateReplicaConfig>(configs: Config[], isCurrent: () => boolean,
+  run: (config: Config) => Promise<string | undefined>, label: string): Promise<string[]> {
   const failures: string[] = []
   for (const config of configs) {
     if (!isCurrent()) break
@@ -72,4 +73,53 @@ function connectionFailure(cause: Error): Pick<ReplicaHealth, "error" | "errorKi
 
 function deviceSyncIssue(config: PrivateReplicaConfig): string {
   return `${config.purpose === "identity" ? "Profile" : "Board"} sync paused on this device. Your saved changes are retained. Retry sync.`
+}
+
+type Observation = { binding: string; result: BoardReplicaRead }
+
+/** A board check covers only the Rusty copies configured for that board in this session. */
+export function createBoardFreshness(configs: Readonly<Ref<BlindReplicaConfig[]>>, now: Readonly<Ref<number>>,
+  owner: () => string, workspaceId: () => string) {
+  const reads = shallowReactive(new Map<string, Observation>())
+  let generation = 0
+  const status = computed<BoardFreshness>(() => {
+    const sources = configs.value.filter(config => config.workspaceId === workspaceId() && !config.removalPending)
+    if (!sources.length) return { phase: "unknown" }
+    const results = sources.map(config => {
+      const observed = reads.get(replicaKey(config))
+      return observed?.binding === privateReplicaBinding(owner(), config) ? observed.result : undefined
+    })
+    if (results.some(result => result?.phase === "unavailable")) return { phase: "unavailable" }
+    if (results.some(result => result?.phase === "catching-up")) return { phase: "catching-up" }
+    let checkedAt = Infinity
+    for (const result of results) {
+      if (result?.phase !== "checked") return { phase: "checking" }
+      checkedAt = Math.min(checkedAt, result.checkedAt)
+    }
+    if (now.value - checkedAt > replicaConfirmationLifetime) return { phase: "overdue" }
+    return { phase: "checked", checkedAt }
+  })
+  return {
+    status,
+    reset() {
+      generation++
+      reads.clear()
+    },
+    async check<T>(config: BlindReplicaConfig, isCurrent: () => boolean,
+      sync: (observe: (result: BoardReplicaRead) => void) => Promise<T>): Promise<T> {
+      const startedIn = generation
+      const binding = privateReplicaBinding(owner(), config)
+      let observed = false
+      const observe = (result: BoardReplicaRead) => {
+        observed = true
+        if (startedIn !== generation || !isCurrent()) return
+        reads.set(replicaKey(config), { binding, result })
+      }
+      try { return await sync(observe) }
+      catch (cause) {
+        if (!observed) observe({ phase: "unavailable" })
+        throw cause
+      }
+    },
+  }
 }

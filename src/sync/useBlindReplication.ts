@@ -3,10 +3,12 @@ import { createReplicationState,clearReplicationSessionState,reportDeviceSyncPro
 import { createPrivateReplicationActions } from "./privateReplicationActions"
 import { createPrivateReplicaUserActions } from "./privateReplicaUserActions"
 import { createReplicationFollowUp, startPrivateReplicationTriggers } from "./privateReplicationTriggers"
-import { onBeforeUnmount,watch } from "vue"
+import { computed,onBeforeUnmount,shallowRef,watch } from "vue"
 import type { useTincanban } from "../state"
 import { subscribeIdentityDevicePreferences } from "./identityDevicePreferenceEvents"
 import { createPrivateReplicaRuntime } from "./privateReplicaLoop"
+import type { createBoardFreshness } from "./replicaHealthRun"
+import type { BoardFreshness } from "./replicationHealth"
 import { defaultStorage } from "../storage"
 import { requiresRustyPermissionMigration } from "./rustyPermissionMigration"
 import { HISTORY_ACTIVE_BYTE_LIMIT,HISTORY_ACTIVE_CHANGE_LIMIT } from "../storageJournalRecords"
@@ -20,6 +22,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, error, notice, historyNotices } = state
   let identity = "", session = 0, disposed = false
   let running: Promise<void> | undefined, automaticCompaction: Promise<void> | undefined
+  const freshness = shallowRef<ReturnType<typeof createBoardFreshness>>()
   const followUp = createReplicationFollowUp()
   const automaticHistoryCompactions = new Set<string>()
   const runtime = createPrivateReplicaRuntime(tincanban, { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, statuses, deviceSyncIssues, attachmentCoverage }, {
@@ -63,8 +66,9 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     const owner = identity, epoch = session
     const isCurrent = () => !disposed && identity === owner && session === epoch
     const run = async () => {
-      const { syncReplicaConnections, recordReplicaHealth } = await import("./replicaHealthRun")
+      const { syncReplicaConnections, recordReplicaHealth, createBoardFreshness } = await import("./replicaHealthRun")
       if (!isCurrent()) return
+      const boardChecks = freshness.value ??= createBoardFreshness(configs, now, () => identity, () => tincanban.activeWorkspace.id)
       if (!configs.value.length && !identityConfigs.value.length) await reload(owner, epoch)
       const failures = await runtime.provision(owner, epoch)
       failures.push(...await syncReplicaConnections([...identityConfigs.value], isCurrent, config =>
@@ -82,13 +86,10 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       // A personal snapshot may introduce a workspace connection. Use it in this same pass.
       await reload(owner, epoch)
       failures.push(...await syncReplicaConnections([...configs.value], isCurrent, config =>
-        recordReplicaHealth(config, statuses, async () => {
-          if (config.purpose === "identity") throw new Error("Workspace scope required")
-          return config.removalPending ? revoke(config) : (await replica(config)).sync()
-        }, isCurrent, deviceSyncIssues), "Board"))
+        recordReplicaHealth(config, statuses, () => config.removalPending ? revoke(config)
+          : boardChecks.check(config, isCurrent, async observeRead => (await replica(config)).sync(observeRead)), isCurrent, deviceSyncIssues), "Board"))
       if (!isCurrent()) return
       void runtime.runWriterMaintenance(owner, epoch)
-      if (!isCurrent()) return
       if (failures.length) error.value = failures.join("; ")
       else if (!Object.keys(deviceSyncIssues.value).length) notice.value = "Configured encrypted replicas synchronized."
     }
@@ -110,6 +111,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
     const owner = tincanban.ready.value ? personId() : ""
     const epoch = ++session
     identity = owner
+    freshness.value?.reset()
     if (!binding || binding !== previous?.[0]) clearReplicationSessionState(state)
     deviceAccess.reset()
     runtime.clear()
@@ -121,7 +123,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
       await syncNow()
     } catch (cause) { if (identity === owner && session === epoch && !disposed) reportDeviceSyncProblem(state, cause) }
   }, { immediate: true })
-  const stopTriggers = startPrivateReplicationTriggers(tincanban, now, syncNow)
+  const stopTriggers = startPrivateReplicationTriggers(tincanban, now, syncNow, () => freshness.value?.reset())
   const stopPreferences = subscribeIdentityDevicePreferences(owner => {
     if (owner !== identity || disposed) return
     const epoch = session
@@ -133,7 +135,7 @@ export function useBlindReplication(tincanban: ReturnType<typeof useTincanban>) 
   })
   onBeforeUnmount(() => { disposed = true; stop(); stopTriggers(); stopPreferences() })
   return { configs, identityConfigs, preferenceConflicts, profileSetupErrors, profilePermissionUpdates, registeredDevices,
-    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, now, busy, actionBusy, error, notice, historyNotices,
+    pendingDeviceRevocations, revokedDeviceAccess, currentDeviceId, pendingRustyOperations, statuses, deviceSyncIssues, attachmentCoverage, boardFreshness: computed<BoardFreshness>(() => freshness.value?.status.value ?? { phase: "unknown" }), now, busy, actionBusy, error, notice, historyNotices,
     ...protect(actions), exportAutomationAccess, syncNow: requestSyncNow, fetchAttachment }
 }
 
