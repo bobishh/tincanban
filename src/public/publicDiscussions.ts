@@ -44,7 +44,6 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
     const prior = cardDiscussions.get(itemId)
     cardDiscussions.set(itemId, { count: (prior?.count ?? 0) + 1, messageId: message.id })
   }
-  const boardWindow = () => ({ id: `board:${projection.board.id}`, targetId: projection.board.id, rootId: null as string | null })
   const cardWindow = (itemId: string) => itemById.has(itemId) ? ({ id: `card:${itemId}`, targetId: itemId, rootId: null as string | null }) : null
   const threadWindow = (messageId: string) => {
     const message = projection.discussions.find(candidate => candidate.id === messageId)
@@ -53,13 +52,12 @@ export function publicDiscussionView(projection: PublicBoardProjection) {
   }
   function messages(window: { targetId: string; rootId: string | null }): PublicChatMessage[] {
     if (window.rootId) return allMessages.filter(message => message.id === window.rootId || message.context.replyTo === window.rootId)
-    if (window.targetId === projection.board.id) return allMessages
     return allMessages.filter(message => message.context.references.some(anchor => anchor.itemId === window.targetId))
   }
   function referenceCard(anchor: Anchor): string | null {
     return anchor.workspaceScope === scope && anchor.boardId === projection.board.id && itemById.has(anchor.itemId) ? anchor.itemId : null
   }
-  return { scope, allMessages, memberAvatars, fieldTitles, referenceChoices, cardDiscussions, boardWindow, cardWindow, threadWindow, messages, referenceCard }
+  return { scope, allMessages, memberAvatars, fieldTitles, referenceChoices, cardDiscussions, cardWindow, threadWindow, messages, referenceCard }
 }
 
 export function publicItemDocuments(projection: PublicBoardProjection, itemId: string) {

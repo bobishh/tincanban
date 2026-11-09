@@ -34,7 +34,7 @@ describe("published visitor discussions", () => {
     const thread = view.threadWindow("reply")!
     expect(thread).toMatchObject({ id: "conversation:root", rootId: "root", targetId: "reply", context: { replyTo: "root", conversationRootId: "root" } })
     expect(view.messages(thread).map(message => message.id)).toEqual(["root", "reply"])
-    expect(view.messages(view.boardWindow()).map(message => message.id)).toEqual(["root", "reply", "board-note"])
+    expect(view.messages({ targetId: "board", rootId: null })).toEqual([])
   })
 
   it("Given missing or external discussion references, When resolving navigation, Then expose no unavailable card or invented thread", () => {

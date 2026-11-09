@@ -95,7 +95,11 @@ const chatMessages = computed(() => {
   if (active.messageId) return discussions.value.allMessages.filter(message => message.id === active.messageId)
   return discussions.value.messages({ targetId: active.targetId, rootId: null })
 })
-const chatWindowId = computed(() => conversation.value?.rootId ? `conversation:${conversation.value.rootId}` : `public:${conversation.value?.targetId ?? "board"}`)
+const chatWindowId = computed(() => {
+  const active = conversation.value
+  if (!active) return undefined
+  return active.rootId ? `conversation:${active.rootId}` : `public:${active.targetId}`
+})
 const boardDocuments = computed(() => publicItemDocuments(props.projection, view.value.board.id))
 const selectedDocuments = computed(() => selected.value ? publicItemDocuments(props.projection, selected.value.id) : [])
 const selectedSubitems = computed(() => selected.value ? view.value.items.filter(item => item.placement.parentId === selected.value?.id) : [])
@@ -121,7 +125,6 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
   <TincanbanPageLayout class="public-board">
     <template #header>
       <div class="brand"><span class="brand-presence"><span class="brand-mark is-empty" title="Read-only board"><svg viewBox="0 0 64 80" role="img" aria-label="Read-only board"><use href="/logo.svg?v=4#can-logo" /></svg></span></span><div><TincanbanHeading :label="workspaceLabel" /></div></div>
-      <div class="top-actions"><button class="button button-quiet" type="button" aria-label="Workspace chat" @click="conversation = { targetId: view.board.id }">Chat</button></div>
     </template>
     <BoardToolbar v-model:search="search" v-model:filters="filters" :columns="view.columns" :fields="view.fields" placeholder="Search cards">
       <span class="save-state">{{ hasFilters ? `${visibleItems} of ${totalItems}` : totalItems }} cards</span>
@@ -135,7 +138,7 @@ function openReference(anchor: Parameters<typeof discussions.value.referenceCard
     <ItemDetailDialog v-if="selected" :workspace-id="scope" :item="selected" :columns="view.columns" :card-stage-buttons="cardStageButtons(view.board, view.columns)" :read-only="true" :move-to-column="noOpMove" :narrative="selectedNarrative" :narrative-field-id="notesFieldId" :subitems="selectedSubitems" :fields="view.fields" :documents="selectedDocuments" :save-document="noOpSaveDocument" :update-document="noOpUpdateDocument" :quick-note="''" @close="selectedId = null">
       <template #documents><ItemDocuments :documents="selectedDocuments" :workspace-id="scope" :read-only="true" :read-file="readPublicFile" :download-url="documentUrl" :save="noOpSaveDocument" :update="noOpUpdateDocument" /></template>
     </ItemDetailDialog>
-    <WorkspaceChat v-if="conversation" :key="chatWindowId" :read-only="true" :workspace-id="scope" :workspace-scope="scope" :window-id="chatWindowId" :title="conversation.rootId ? 'Discussion' : conversation.targetId === view.board.id ? 'Board discussion' : 'Discussion'" :field-titles="discussions.fieldTitles" :reference-choices="discussions.referenceChoices" :all-messages="discussions.allMessages" :messages="chatMessages" :member-avatars="discussions.memberAvatars" :target-id="conversation.messageId" :workspace-title="view.board.title" :current-person-id="''" :sending="false" :error="''" :loading="false" :connected="false" :typing-people="[]" @close="conversation = null" @reference="openReference" @thread="openMessageThread" />
+    <WorkspaceChat v-if="conversation" :key="chatWindowId" :read-only="true" :workspace-id="scope" :workspace-scope="scope" :window-id="chatWindowId" title="Discussion" :field-titles="discussions.fieldTitles" :reference-choices="discussions.referenceChoices" :all-messages="discussions.allMessages" :messages="chatMessages" :member-avatars="discussions.memberAvatars" :target-id="conversation.messageId" :workspace-title="view.board.title" :current-person-id="''" :sending="false" :error="''" :loading="false" :connected="false" :typing-people="[]" @close="conversation = null" @reference="openReference" @thread="openMessageThread" />
   </TincanbanPageLayout>
 </template>
 
