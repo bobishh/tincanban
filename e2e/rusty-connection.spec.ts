@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext } from "@playwright/test"
+import { expect, test, type BrowserContext, type Page, type Request } from "@playwright/test"
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { spawn, type ChildProcess } from "node:child_process"
 import { tmpdir } from "node:os"
@@ -7,6 +7,18 @@ import { expectFaviconColor } from "./support/favicon"
 import { addJobSearchLead, createJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
+
+async function connectFixtureBoard(page: Page, origin: string) {
+  await approveRustyForFixture(page, origin)
+  await page.getByRole("button", { name: "Sync", exact: true }).click()
+  const panel = page.getByRole("region", { name: "Rusty", exact: true })
+  await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
+  await panel.getByLabel("Address", { exact: true }).fill(origin)
+  await panel.getByRole("button", { name: "Connect", exact: true }).click()
+  await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
+    .toBeVisible({ timeout: 30_000 })
+  await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+}
 
 test("Given connected private board storage, when approving inspection from Rusty, then show its checked status without credentials and retain an actionable access failure", async ({ page, context, baseURL }, info) => {
   test.setTimeout(90_000)
@@ -82,15 +94,7 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
   const download = Promise.withResolvers<void>()
   let mobileContext: BrowserContext | undefined
   try {
-    await approveRustyForFixture(page, rusty.origin)
-    await page.getByRole("button", { name: "Sync", exact: true }).click()
-    const panel = page.getByRole("region", { name: "Rusty", exact: true })
-    await panel.getByRole("button", { name: "Add Rusty", exact: true }).click()
-    await panel.getByLabel("Address", { exact: true }).fill(rusty.origin)
-    await panel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
-      .toBeVisible({ timeout: 30_000 })
-    await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+    await connectFixtureBoard(page, rusty.origin)
     const boardUrl = page.url()
     const scope = await page.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
@@ -154,6 +158,50 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
   } finally {
     gate.resolve()
     download.resolve()
+    await mobileContext?.close()
+    await rusty.close()
+  }
+})
+
+test("Given an authorized cached board, when the personal inventory stalls, then reopening still applies its new card before that request completes", async ({ page, context, browser, baseURL }) => {
+  test.setTimeout(75_000)
+  await context.routeWebSocket("**/*", socket => socket.close())
+  await page.goto("/")
+  await createJobSearchWorkspace(page, "Priority board")
+  const rusty = await startRustyService({}, baseURL!)
+  const releaseProfile = Promise.withResolvers<void>()
+  let mobileContext: BrowserContext | undefined
+  try {
+    await connectFixtureBoard(page, rusty.origin)
+    const boardUrl = page.url()
+    const profileScope = await page.evaluate(async origin => {
+      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
+      const { getPrivateReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
+      const configs = await getPrivateReplicaConfigurations((await bootstrapIdentity()).identity.personId)
+      return configs.find(config => config.purpose === "identity" && config.origin === origin)?.scopeId
+    }, rusty.origin)
+    expect(profileScope).toBeTruthy()
+
+    const storageState = await context.storageState({ indexedDB: true })
+    await addJobSearchLead(page, "Priority update")
+    mobileContext = await browser.newContext({ storageState, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    await mobileContext.routeWebSocket("**/*", socket => socket.close())
+    const mobile = await mobileContext.newPage()
+    let pendingProfile: Request | undefined
+    await mobile.route(url => url.origin === rusty.origin && url.pathname === `/v2/scopes/${profileScope}/objects`, async route => {
+      if (route.request().method() === "GET") {
+        pendingProfile ??= route.request()
+        await releaseProfile.promise
+      }
+      await route.continue()
+    })
+    await mobile.goto(boardUrl)
+    await expect.poll(() => Boolean(pendingProfile), { timeout: 10_000 }).toBe(true)
+    await expect(mobile.getByRole("button", { name: "Open Priority update — Engineer", exact: true })).toBeVisible({ timeout: 8_000 })
+    await expect(mobile.getByRole("status", { name: "Board freshness" })).toHaveText(/^Rusty checked /)
+    expect(pendingProfile?.failure()).toBeNull()
+  } finally {
+    releaseProfile.resolve()
     await mobileContext?.close()
     await rusty.close()
   }

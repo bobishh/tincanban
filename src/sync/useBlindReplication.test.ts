@@ -1,7 +1,7 @@
 import type * as ManagementClient from "./rustyManagementClient"
 import type * as ConflictWorkflow from "./replicaCredentialConflictWorkflow"
 import { afterEach, expect, it, vi } from "vitest"
-import { nextTick, ref, shallowRef } from "vue"
+import { nextTick, reactive, ref, shallowRef } from "vue"
 import type * as Vue from "vue"
 import type * as RustyAttachmentDelivery from "./rustyAttachmentDelivery"
 import type { BlobDescriptor } from "@meta-uber/mesh-blob"
@@ -22,7 +22,7 @@ const runtime = vi.hoisted(() => ({
   replicaOperations: [] as string[],
   identitySync: vi.fn(async () => true),
   identityInitialPush: vi.fn(async () => true),
-  workspaceSync: vi.fn(async () => true),
+  workspaceSync: vi.fn<(config: BlindReplicaConfig) => Promise<boolean>>().mockResolvedValue(true),
   maintenance: vi.fn<(app: unknown, config: BlindReplicaConfig, guard: () => void, reload: () => Promise<void>) => Promise<void>>().mockResolvedValue(undefined),
   provision: vi.fn(),
   migrate: vi.fn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
@@ -60,8 +60,8 @@ vi.mock("./identityReplicaStore", () => ({ createIdentityReplica: (config: Ident
 } }))
 vi.mock("./blindReplicaStore", () => ({ createBlindReplica: (config: BlindReplicaConfig, _app: unknown, guard: () => void) => {
   runtime.calls.push({ purpose: "workspace", config: structuredClone({ ...config }), guard })
-  return { sync: async () => { runtime.replicaOperations.push("workspace-sync"); guard();
-    const result = await runtime.workspaceSync(); guard(); return result } }
+  return {     sync: async () => { runtime.replicaOperations.push("workspace-sync"); guard();
+    const result = await runtime.workspaceSync(config); guard(); return result } }
 } }))
 vi.mock("./provisionIdentityReplica", () => ({ provisionIdentityReplica: runtime.provision }))
 vi.mock("./rustyDeviceAccess", () => ({ migrateRustyDeviceAccess: (...args: unknown[]) => runtime.migrate(...args) }))
@@ -95,12 +95,31 @@ it("Given background Rusty sync is pending, when an owner requests recovery, the
     const requested = controller.recoverCredentialConflict(f.workspace.origin, f.workspace.scopeId, f.workspace.workspaceId)
     expect(controller.actionBusy.value).toBe(true)
     expect(runtime.recoverConflict).not.toHaveBeenCalled()
-    for (const changed of f.localChanges) changed()
+    void controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: true })
     release()
     await requested
     expect(runtime.recoverConflict).toHaveBeenCalledOnce()
     expect(controller.actionBusy.value).toBe(false)
   } finally { release?.() }
+})
+
+it("Given a manual Rusty action is waiting for an active pass, when the board changes and the action fails, then retry the board without waiting for polling", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  const active = Promise.withResolvers<boolean>()
+  runtime.workspaceSync.mockReturnValueOnce(active.promise)
+  runtime.recoverConflict.mockRejectedValueOnce(new Error("Recovery failed"))
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledOnce())
+    const recovery = expect(controller.recoverCredentialConflict(f.workspace.origin, f.workspace.scopeId, f.workspace.workspaceId))
+      .rejects.toThrow("Recovery failed")
+    expect(controller.actionBusy.value).toBe(true)
+    void controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: true })
+    active.resolve(true)
+    await recovery
+    await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledTimes(2), { timeout: 500 })
+  } finally { active.resolve(true) }
 })
 
 it("Given an identity sync captured the prior profile revision, when the owner requests Sync now during that pass, then wait for a fresh upload of the current revision", async () => {
@@ -148,23 +167,17 @@ it.each(["workspace", "identity"] as const)("Given recovery is queued behind syn
   } finally { release?.() }
 })
 
-it("Given an idle Rusty connection, when only typing presence changes, then skip storage sync but retain durable and legacy chat triggers", async () => {
+it("Given an idle Rusty connection, when that board is selected and then its content changes, then each intent reads that board once", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)
   const controller = f.start()
   await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
   await controller.syncNow()
   const passes = runtime.workspaceSync.mock.calls.length
-  const change = { workspaceId: f.workspace.workspaceId, added: [], remote: false, history: false }
-  for (const listener of runtime.chatListeners) listener({ ...change, contentChanged: false })
-  await new Promise(resolve => setTimeout(resolve, 20))
-  expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes)
-  for (const listener of runtime.chatListeners) listener({ ...change, contentChanged: true })
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes + 1))
-  await controller.syncNow()
-  const afterDurable = runtime.workspaceSync.mock.calls.length
-  for (const listener of runtime.chatListeners) listener(change)
-  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalledTimes(afterDurable + 1))
+  await controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: false })
+  expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes + 1)
+  await controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: true })
+  expect(runtime.workspaceSync).toHaveBeenCalledTimes(passes + 2)
 })
 
 afterEach(() => {
@@ -200,7 +213,7 @@ async function fixture() {
   const current = shallowRef(profile)
   const version = ref(0)
   const localChanges: Array<() => void> = []
-  const activeWorkspace = { id: workspace.workspaceId }
+  const activeWorkspace = reactive({ id: workspace.workspaceId })
   const app = {
     ready: ref(true), docVersion: version, getCurrentProfile: () => current.value,
     activeWorkspace,
@@ -358,6 +371,60 @@ it("Given Rusty rejects board removal, when revocation fails, then retain pendin
   expect(controller.identityConfigs.value[0]?.scopeId).toBe(f.identity.scopeId)
 })
 
+it("Given personal inventory never resolves, when an installed board is already configured, then that board sync still finishes", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.identity)
+  await setReplicaPreference(f.personId, f.workspace)
+  runtime.identitySync.mockImplementation(() => new Promise<boolean>(() => {}))
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(controller.statuses.value[replicaKey(f.workspace)]?.phase).toBe("synced"))
+})
+
+it("Given one installed board connection is held, when the active board has another connection, then that connection still syncs", async () => {
+  const f = await fixture()
+  const other: BlindReplicaConfig = { ...f.workspace, scopeId: `held-${crypto.randomUUID()}` }
+  await setReplicaPreference(f.personId, other)
+  await setReplicaPreference(f.personId, f.workspace)
+  const started: string[] = []
+  let release!: () => void
+  runtime.workspaceSync.mockImplementation((config: BlindReplicaConfig) => {
+    started.push(config.scopeId)
+    if (started.length === 1) return new Promise<boolean>(resolve => { release = () => resolve(true) })
+    return Promise.resolve(true)
+  })
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(started.length).toBeGreaterThanOrEqual(2))
+    const finished = started[1] === f.workspace.scopeId ? f.workspace : other
+    await vi.waitFor(() => expect(controller.statuses.value[replicaKey(finished)]?.phase).toBe("synced"))
+    expect(release).toBeTypeOf("function")
+  } finally { release?.() }
+})
+
+it("Given two background board requests are held, when selecting a board queued behind them, then its read starts before either request returns", async () => {
+  const f = await fixture()
+  await setReplicaPreference(f.personId, f.workspace)
+  for (const workspaceId of ["workspace-b", "workspace-c", "workspace-d"])
+    await setReplicaPreference(f.personId, { ...f.workspace, workspaceId, scopeId: `scope-${workspaceId}` })
+  const other = (await getReplicaConfigurations(f.personId)).filter(config => config.workspaceId !== f.workspace.workspaceId)
+  const target = other[2]!
+  const release = Promise.withResolvers<boolean>()
+  const started = new Set<string>()
+  runtime.workspaceSync.mockImplementation(config => {
+    started.add(config.workspaceId)
+    return config.workspaceId === f.workspace.workspaceId || config.workspaceId === target.workspaceId
+      ? Promise.resolve(true) : release.promise
+  })
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(other.slice(0, 2).every(config => started.has(config.workspaceId))).toBe(true))
+    expect(started.has(target.workspaceId)).toBe(false)
+    void controller.syncWorkspace({ workspaceId: target.workspaceId, changed: false })
+    await vi.waitFor(() => expect(controller.statuses.value[replicaKey(target)]?.phase).toBe("synced"))
+  } finally { release.resolve(true) }
+})
+
 it("Given only a personal Rusty connection, when the app starts, then its normal loop synchronizes identity without needing a board config", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.identity)
@@ -378,8 +445,9 @@ it("Given an existing board Rusty connection lacks private delivery, when the no
   await vi.waitFor(() => expect(runtime.identitySync).toHaveBeenCalled())
   await controller.syncNow()
   expect(runtime.provision).toHaveBeenCalledTimes(1)
-  expect(runtime.calls.map(call => call.purpose)).toEqual(["identity", "identity", "workspace"])
+  expect(runtime.calls.map(call => call.purpose)).toEqual(["workspace", "identity", "identity"])
   expect(runtime.identityInitialPushes[0]).toMatchObject(f.identity)
+  expect(runtime.replicaOperations.indexOf("workspace-sync")).toBeLessThan(runtime.replicaOperations.indexOf("identity-sync"))
   expect(runtime.replicaOperations.indexOf("identity-initial-push")).toBeLessThan(runtime.replicaOperations.indexOf("identity-sync"))
 })
 
@@ -612,6 +680,74 @@ it("Given local settings fail before replica construction, when the device retri
   expect(controller!.deviceSyncIssues.value).toEqual({})
 })
 
+async function stalledBoardPass(activeId: string, stalledId: string) {
+  const calls: string[] = []
+  const stalled = Promise.withResolvers<boolean>()
+  const activeReads: Array<PromiseWithResolvers<boolean>> = []
+  runtime.workspaceSync.mockImplementation(config => {
+    calls.push(config.workspaceId)
+    if (config.workspaceId === stalledId) return stalled.promise
+    const gate = Promise.withResolvers<boolean>()
+    activeReads.push(gate)
+    return gate.promise
+  })
+  return { calls, stalled, activeReads, activeCount: () => calls.filter(id => id === activeId).length,
+    stalledCount: () => calls.filter(id => id === stalledId).length }
+}
+
+it("Given one board is in flight and another board is stalled, when the in-flight board is only selected, then that binding is not read again", async () => {
+  const f = await fixture()
+  const stalledId = "workspace-stalled"
+  await setReplicaPreference(f.personId, f.workspace)
+  await setReplicaPreference(f.personId, { ...f.workspace, workspaceId: stalledId, scopeId: `scope-${stalledId}` })
+  const pass = await stalledBoardPass(f.workspace.workspaceId, stalledId)
+  const controller = f.start()
+  try {
+    await vi.waitFor(() => expect(pass.activeCount()).toBe(1))
+    await vi.waitFor(() => expect(pass.stalledCount()).toBe(1))
+    void controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: false })
+    pass.activeReads[0]!.resolve(true)
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(pass.activeCount()).toBe(1)
+    expect(pass.stalledCount()).toBe(1)
+  } finally { pass.stalled.resolve(true); for (const gate of pass.activeReads) gate.resolve(true) }
+})
+
+it("Given one board is in flight and another board is stalled, when that board changes during the read and during its follow-up, then both reads happen before the stalled board returns", async () => {
+  const f = await fixture()
+  const stalledId = "workspace-stalled"
+  await setReplicaPreference(f.personId, f.workspace)
+  await setReplicaPreference(f.personId, { ...f.workspace, workspaceId: stalledId, scopeId: `scope-${stalledId}` })
+  const pass = await stalledBoardPass(f.workspace.workspaceId, stalledId)
+  const controller = f.start()
+  const activeId = f.workspace.workspaceId
+  try {
+    await vi.waitFor(() => expect(pass.activeCount()).toBe(1))
+    await vi.waitFor(() => expect(pass.stalledCount()).toBe(1))
+    void controller.syncWorkspace({ workspaceId: activeId, changed: true })
+    pass.activeReads[0]!.resolve(true)
+    await vi.waitFor(() => expect(pass.activeCount()).toBe(2))
+    expect(pass.stalledCount()).toBe(1)
+    void controller.syncWorkspace({ workspaceId: activeId, changed: true })
+    pass.activeReads[1]!.resolve(true)
+    await vi.waitFor(() => expect(pass.activeCount()).toBe(3))
+    expect(pass.stalledCount()).toBe(1)
+  } finally { pass.stalled.resolve(true); for (const gate of pass.activeReads) gate.resolve(true) }
+})
+
+it("Given other installed boards are idle, when one board's content changes, then Rusty reads that board without polling the others", async () => {
+  const f = await fixture()
+  const otherId = "workspace-other"
+  await setReplicaPreference(f.personId, f.workspace)
+  await setReplicaPreference(f.personId, { ...f.workspace, workspaceId: otherId, scopeId: `scope-${otherId}` })
+  const controller = f.start()
+  await vi.waitFor(() => expect(runtime.workspaceSync).toHaveBeenCalled())
+  await vi.waitFor(() => expect(controller.busy.value).toBe(false))
+  runtime.workspaceSync.mockClear()
+  await controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: true })
+  expect(runtime.workspaceSync.mock.calls.map(call => call[0]?.workspaceId)).toEqual([f.workspace.workspaceId])
+})
+
 it("Given a replica pass is already running, when the local board changes, then another pass starts as soon as the current one finishes", async () => {
   const f = await fixture()
   await setReplicaPreference(f.personId, f.workspace)
@@ -621,7 +757,7 @@ it("Given a replica pass is already running, when the local board changes, then 
   try {
     await vi.waitFor(() => expect(release).toBeTypeOf("function"))
     const passes = runtime.workspaceSync.mock.calls.length
-    for (const listener of f.localChanges) listener()
+    void controller.syncWorkspace({ workspaceId: f.workspace.workspaceId, changed: true })
     release()
     await vi.waitFor(() => expect(runtime.workspaceSync.mock.calls.length).toBeGreaterThan(passes))
     expect(controller.busy.value).toBe(false)

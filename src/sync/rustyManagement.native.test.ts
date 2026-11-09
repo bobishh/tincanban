@@ -31,6 +31,7 @@ import { applyIdentityDeviceTransfer, createIdentityDeviceTransfer, readIdentity
 import { exportIdentityDeviceExtensions } from "./identityDeviceExtensions"
 import * as identityTransfer from "./identityDeviceTransfer"
 import { createChatRecordFixture as createChatRecord } from "../chat/records.testSupport"
+import * as chatService from "../chat/service"
 import { readIdentityProfileQueue } from "./identityProfileProjectionQueue"
 import { identityProfileProjectionKey } from "./identityProfileProjectionState"
 import { saveIdentityPhoto } from "../app/identityPhoto"
@@ -60,7 +61,7 @@ import type { HistoryPreparedObject } from "@meta-uber/mesh-replication/history-
 import { createDeviceAuthorizationRequest, createIdentityAuthorityView, createRecoverableIdentity, createDeviceRevocation,
   emptyIdentityProfileState, issueDeviceAuthorization, verifyDeviceCertificateChain, verifyEnvelope, verifyIdentityDeviceAuthority } from "@meta-uber/mesh-identity"
 import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
-import { ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
+import { createRustyIdentityProfileScopeFetcher, ensureRustyIdentityAuthorityPublished, ensureRustyWorkspaceScopeAuthority } from "./rustyIdentityTransport"
 import { initializePersonalRootCatalog } from "../statePersonalRoot"
 import { peerStore } from "./peerStore"
 import { createWorkspaceHistoryPreparation } from "./historyPreparationRepository"
@@ -94,7 +95,7 @@ function initializeNativeAutomerge(): Promise<void> {
     .then(bytes => Automerge.initializeWasm(new Uint8Array(bytes)))
 }
 
-test("Given actual Rusty and an SDK authority snapshot missing serde defaults, When its authority is published and read again, Then Rust accepts the SDK hash, returns a receipt-only reply, and no-op read performs no PUT", async () => {
+test("Given actual Rusty and an SDK authority snapshot missing serde defaults, when the owner reads a settled scope, then Rusty accepts the SDK hash and needs only one Identity status read", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory())
   vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   resetIdentityStorageForTest()
@@ -119,10 +120,15 @@ test("Given actual Rusty and an SDK authority snapshot missing serde defaults, W
     if (!full?.genesis) throw new Error("Workspace genesis authority was not persisted")
     const incomplete = { genesis: full.genesis }
     let authorityPuts = 0
+    const dataRequests: string[] = []
+    let updateIdentityOnScopeRead: (() => Promise<unknown>) | undefined
     const fetcher: typeof fetch = async (input, init) => {
       const url = new URL(String(input))
+      dataRequests.push(`${init?.method ?? "GET"} ${url.pathname}`)
       if (init?.method === "PUT" && url.pathname === `/v2/scopes/${scopeId}/authority`) authorityPuts += 1
-      return fetch(input, init)
+      const response = await fetch(input, init)
+      if (url.pathname === `/v2/scopes/${scopeId}/authority/status`) await updateIdentityOnScopeRead?.()
+      return response
     }
     const connection = { ...access, workspaceId }
     const first = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
@@ -132,6 +138,32 @@ test("Given actual Rusty and an SDK authority snapshot missing serde defaults, W
     const second = await ensureRustyWorkspaceScopeAuthority(profile, connection, incomplete, () => {}, fetcher)
     expect(second.receipt).toBeUndefined()
     expect(authorityPuts).toBe(1)
+    dataRequests.length = 0
+    const scopeFetch = createRustyIdentityProfileScopeFetcher({ profile, access: connection, fetcher,
+      workspace: { workspaceId, scopeAuthority: async () => full } })
+    await expect(inventoryBlindObjects(connection, 0, scopeFetch)).resolves.toMatchObject({ objects: [], cursor: 0 })
+    expect(dataRequests).toEqual([
+      `GET /v2/identity/authority/${profile.identity.personId}/status`,
+      `GET /v2/scopes/${scopeId}/authority/status`,
+      `GET /v2/scopes/${scopeId}/objects`,
+    ])
+
+    const keys = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])
+    const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", keys.publicKey))
+    const deviceId = await blindHash(publicKey)
+    const delegated = await createDelegatedCertificate(profile.privateKeys.devicePrivateKey, profile.device.deviceId,
+      profile.identity.personId, deviceId, toBase64Url(publicKey), await certHashDefault(profile.certificate))
+    const certificates = [profile.certificate, delegated]
+    const profileState = emptyIdentityProfileState(profile.identity.personId)
+    const authority = await verifyIdentityDeviceAuthority(profile.identity, { certificates, revocations: [] })
+    const revocation = await createDeviceRevocation(profile, authority, deviceId, profileState)
+    const changedAuthority = await createIdentityAuthorityView(profile.identity, { certificates, revocations: [revocation] }, profileState)
+    updateIdentityOnScopeRead = () => mergeIdentityAuthorityView(changedAuthority)
+    dataRequests.length = 0
+    await expect(inventoryBlindObjects(connection, 0, scopeFetch)).rejects.toThrow("Rusty Identity authority changed while signing")
+    expect(dataRequests).not.toContain(`GET /v2/scopes/${scopeId}/objects`)
+    updateIdentityOnScopeRead = undefined
+    await expect(inventoryBlindObjects(connection, 0, scopeFetch)).resolves.toMatchObject({ objects: [], cursor: 0 })
     Automerge.free(doc)
   } finally {
     await stopRusty(service.child)
@@ -941,11 +973,12 @@ test("Given a Native-derived original-history catalogue, when data and locator c
   }
 }, 30_000)
 
-test("Given an admitted file and a private Rusty connection, when ordinary replication runs, then background upload confirms discoverable coverage before the source is needed again", async () => {
+test("Given Rusty has the current board but its attachment was unavailable, when the replica reopens with the attachment bytes, then ordinary replication confirms discoverable coverage", async () => {
   vi.stubGlobal("indexedDB", new IDBFactory())
   vi.stubGlobal("IDBKeyRange", IDBKeyRange)
   const profile = await bootstrapIdentity("Automatic attachment owner")
   const service = await startRusty(profile)
+  const receiveChat = vi.spyOn(chatService, "receiveChat").mockResolvedValue(undefined)
   let workspace: Automerge.Doc<WorkspaceDocumentV2> | undefined
   try {
     await initializeNativeAutomerge()
@@ -959,9 +992,9 @@ test("Given an admitted file and a private Rusty connection, when ordinary repli
       file: { type: "blob", sha256: descriptor.blobId.slice(7), byteLength: descriptor.size, mimeType: descriptor.mediaType, fileName: descriptor.name } }
     workspace = Automerge.from(seed)
     const document = workspace
-    await recordGenesisAuthority(document, profile)
-    const reference = await storeAttachment(new File([bytes], descriptor.name, { type: descriptor.mediaType }))
-    expect(blobDescriptor(reference)).toEqual(descriptor)
+    const authorizations = await recordGenesisAuthority(document, profile)
+    await defaultStorage.withWorkspaceTransaction(document.id, transaction =>
+      transaction.commitWorkspace(document, Automerge.save(document), authorizations))
     const access = { origin: service.origin, servicePublicKey: discovery.servicePublicKey, scopeId: `auto-${crypto.randomUUID()}`,
       readToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), writeToken: toBase64Url(crypto.getRandomValues(new Uint8Array(32))), policyRevision: 0 }
     access.policyRevision = await approveRustyScope(access, profile, false, { minimumWriterVersion: 2 })
@@ -977,8 +1010,22 @@ test("Given an admitted file and a private Rusty connection, when ordinary repli
       readWorkspaceBytes: async () => Automerge.save(document), mergeAuthorizedWorkspace: async () => {},
       causalReviewError: { value: undefined } }
     let states: AttachmentCoverageStatus[] = []
-    const replica = createBlindReplica(selected, app as never, () => {}, async () => {}, next => { states = next })
-    await replica.sync()
+    const openReplica = () => createBlindReplica(selected, app as never, () => {}, async () => {}, next => { states = next })
+    const initial = openReplica()
+    await initial.sync()
+    await vi.waitFor(() => expect(states[0]?.phase).toBe("missing-source"))
+    await initial.pull()
+    await initial.sync()
+    await initial.pull()
+    const progress = await getPrivateReplicaProgress(profile.identity.personId, selected)
+    expect(progress.uploadedRevision).toEqual(expect.any(String))
+    expect((await inventoryBlindObjects(access, progress.cursor)).objects).toEqual([])
+    const before = await defaultStorage.readWorkspaceRevision(document.id)
+    const reference = await storeAttachment(new File([bytes], descriptor.name, { type: descriptor.mediaType }))
+    expect(blobDescriptor(reference)).toEqual(descriptor)
+    expect(await defaultStorage.readWorkspaceRevision(document.id)).toBe(before)
+
+    await openReplica().sync()
     await vi.waitFor(() => expect(states[0]).toMatchObject({ phase: "complete", label: "Complete on Rusty" }), { timeout: 10_000 })
     const inventory = await inventoryBlindObjects(access, 0)
     const latest = inventory.objects.at(-1)!
@@ -990,6 +1037,7 @@ test("Given an admitted file and a private Rusty connection, when ordinary repli
     expect(await fetchRustyAttachment(app as never, document.id, descriptor, () => {}, sourceUnavailable)).toEqual(bytes)
     expect(sourceUnavailable).not.toHaveBeenCalled()
   } finally {
+    receiveChat.mockRestore()
     await stopRusty(service.child)
     if (workspace) Automerge.free(workspace)
     await rm(service.stateDirectory, { recursive: true, force: true })

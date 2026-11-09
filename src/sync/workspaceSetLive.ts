@@ -70,10 +70,7 @@ async function confirmHeartbeat(connection: SyncConnection, secret: string): Pro
     const frame = await Promise.race([
       stream.read(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new SyncNetworkError("Mesh heartbeat timed out")),
-          MESH_HEARTBEAT_TIMEOUT_MS,
-        )
+        timer = setTimeout(() => reject(new SyncNetworkError("Mesh heartbeat timed out")), MESH_HEARTBEAT_TIMEOUT_MS)
       }),
     ])
     protocol.verifyHeartbeatAck(frame)
@@ -257,49 +254,63 @@ type AutomergeScopeContext = {
   rejectionState: { last: string | undefined }
 }
 
-async function persistBackgroundScopeDocument(context: AutomergeScopeContext, candidate: Uint8Array, proof: unknown): Promise<void> {
-  const { workspaceId, remoteDeviceId, store, peerHistory, peerHistoryGuard } = context
+type LiveAdmission = { phase: "committed" | "merge" } | { phase: "recover"; cause: unknown }
+
+export async function persistBackgroundScopeDocument(context: AutomergeScopeContext, candidate: Uint8Array, proof: unknown): Promise<void> {
+  const { workspaceId, remoteDeviceId, store, peerHistoryGuard } = context
   await validateBackgroundScopeDocument(workspaceId, candidate)
   try {
-    if (store.validate && store.receiveHistoryBaseline && store.activateHistoryBaseline) {
-      try {
-        await store.validate(workspaceId, candidate, proof)
-        await peerHistoryGuard()
-      } catch (validationError) {
-        await peerHistoryGuard()
-        const descriptor = await peerHistory.readBaseline(workspaceId)
-        await peerHistoryGuard()
-        if (!descriptor) throw validationError
-        const baselineDocument = await peerHistory.readDocument(descriptor, workspaceId)
-        await peerHistoryGuard()
-        const basis = await store.receiveHistoryBaseline(workspaceId, candidate, proof, descriptor, peerHistory, baselineDocument)
-        let activated = false
-        try {
-          await peerHistoryGuard()
-          await store.validate(workspaceId, candidate, proof, basis)
-          await peerHistoryGuard()
-          await store.activateHistoryBaseline(workspaceId, basis)
-          activated = true
-        } catch (error) {
-          freeUnactivatedBasis(basis, activated)
-          throw error
-        }
-        await peerHistoryGuard()
-        await store.merge(workspaceId, candidate, proof, basis)
-        return
-      }
-    }
-    await measureScopePhase("store.persist-document", workspaceId, remoteDeviceId,
-      () => store.merge(workspaceId, candidate, proof), candidate.byteLength)
+    const admitted = await admitLiveScopeDocument(context, candidate, proof)
+    if (admitted.phase === "recover") await recoverSignedCompactHistory(context, candidate, proof, admitted.cause)
+    else if (admitted.phase === "merge") await measureScopePhase("store.persist-document", workspaceId, remoteDeviceId,
+      () => store.merge(workspaceId, candidate, proof, undefined, peerHistoryGuard), candidate.byteLength)
   } catch (error) {
     await clearProofPages(workspaceId).catch(() => {})
     throw error
   }
 }
 
+async function admitLiveScopeDocument(context: AutomergeScopeContext, candidate: Uint8Array, proof: unknown): Promise<LiveAdmission> {
+  const { workspaceId, store, peerHistoryGuard } = context
+  if (store.commitReceivedWorkspace && store.validate && store.receiveHistoryBaseline && store.activateHistoryBaseline) {
+    await peerHistoryGuard()
+    const committed = await store.commitReceivedWorkspace(workspaceId, candidate, proof, undefined, peerHistoryGuard)
+    return committed.phase === "unadmitted" ? { phase: "recover", cause: committed.cause } : { phase: "committed" }
+  }
+  if (store.validate && store.receiveHistoryBaseline && store.activateHistoryBaseline) {
+    try { await store.validate(workspaceId, candidate, proof) }
+    catch (cause) { return { phase: "recover", cause } }
+    await peerHistoryGuard()
+  }
+  return { phase: "merge" }
+}
+
+async function recoverSignedCompactHistory(context: AutomergeScopeContext, candidate: Uint8Array, proof: unknown, cause: unknown) {
+  const { workspaceId, store, peerHistory, peerHistoryGuard } = context
+  const { validate, receiveHistoryBaseline, activateHistoryBaseline } = store
+  if (!validate || !receiveHistoryBaseline || !activateHistoryBaseline) throw cause
+  await peerHistoryGuard()
+  const descriptor = await peerHistory.readBaseline(workspaceId)
+  await peerHistoryGuard()
+  if (!descriptor) throw cause
+  const baselineDocument = await peerHistory.readDocument(descriptor, workspaceId)
+  await peerHistoryGuard()
+  const basis = await receiveHistoryBaseline(workspaceId, candidate, proof, descriptor, peerHistory, baselineDocument)
+  let activated = false
+  try {
+    await peerHistoryGuard()
+    await validate(workspaceId, candidate, proof, basis)
+    await peerHistoryGuard()
+    await activateHistoryBaseline(workspaceId, basis)
+    activated = true
+  } catch (error) { freeUnactivatedBasis(basis, activated); throw error }
+  await peerHistoryGuard()
+  await store.merge(workspaceId, candidate, proof, basis, peerHistoryGuard)
+}
+
 function createLiveAutomergeScope(context: AutomergeScopeContext) {
   const { connection, secret, store, workspaceId, localDeviceId, remoteDeviceId,
-    historyReplica, peerHistory, options, onDocumentRejected, rejectionState } = context
+    historyReplica, peerHistory, peerHistoryGuard, options, onDocumentRejected, rejectionState } = context
   const scope = new BrowserMeshScopeSync(createBackgroundMeshScope(workspaceId, secret), {
     readDocument: () => measureScopePhase("store.read-document", workspaceId, remoteDeviceId,
       () => store.read(workspaceId)),
@@ -310,8 +321,9 @@ function createLiveAutomergeScope(context: AutomergeScopeContext) {
     readMesh: store.readMesh ? () => measureScopePhase("store.read-mesh", workspaceId, remoteDeviceId,
       () => store.readMesh!(workspaceId)) : undefined,
     persistDocument: (candidate, proof) => persistBackgroundScopeDocument(context, candidate, proof),
-    onDocumentAccepted: count => {
+    onDocumentAccepted: (count, peerHeads) => {
       if (count > 0 && rejectionState.last) { rejectionState.last = undefined; onDocumentRejected?.(null) }
+      if (peerHeads) void store.observePeerFrontier?.(workspaceId, remoteDeviceId, peerHeads, peerHistoryGuard).catch(() => undefined)
     },
     mergeDurableBatch: bytes => measureScopePhase("store.merge-durable-batch", workspaceId, remoteDeviceId,
       async () => {
@@ -321,7 +333,7 @@ function createLiveAutomergeScope(context: AutomergeScopeContext) {
     mergeAuthorization: async authorization => {
       const bytes = await store.read(workspaceId)
       await measureScopePhase("store.merge-authorization", workspaceId, remoteDeviceId,
-        () => store.merge(workspaceId, bytes, authorization), bytes.byteLength)
+        () => store.merge(workspaceId, bytes, authorization, undefined, peerHistoryGuard), bytes.byteLength)
     },
     mergeChat: store.mergeChat ? chat => measureScopePhase("store.merge-chat", workspaceId, remoteDeviceId,
       () => store.mergeChat!(workspaceId, chat, false, remoteDeviceId)) : undefined,

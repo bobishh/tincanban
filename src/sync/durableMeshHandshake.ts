@@ -114,13 +114,7 @@ export abstract class DurableMeshHandshake extends DurableMeshAuthority {
   }
 
   private subscribeWorkspaceUpdates() {
-    const stopPreferences = subscribeIdentityDevicePreferences(() => { void this.publishAll() })
-    const scoped = this.options.workspace.subscribeWorkspace
-    const stopWorkspace = scoped ? scoped(workspaceId => {
-      if (workspaceId) void this.publishWorkspace(workspaceId)
-      else void this.publishAll()
-    }) : this.options.workspace.subscribe?.(() => { void this.publishAll() })
-    return () => { stopPreferences(); stopWorkspace?.() }
+    return subscribeIdentityDevicePreferences(() => { void this.publishAll() })
   }
 
   protected rustAuthenticatedSessions(): RustMeshAuthenticatedSessions {

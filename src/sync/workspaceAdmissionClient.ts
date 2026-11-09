@@ -5,13 +5,17 @@ import type { WorkspaceAccessInput } from "./workspaceAccessInput"
 import type { WorkspaceRole } from "../domain/permissions"
 
 type PolicyResult = WorkspaceAdmissionResult | WorkspaceRole
-type PendingJob = { resolve(result: PolicyResult): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
+type PolicyJob = { request: WorkspaceAdmissionRequest; resolve(result: PolicyResult): void; reject(error: Error): void;
+  timer: ReturnType<typeof setTimeout> }
 let worker: Worker | undefined
 let workerReady: Promise<void> | undefined
 let resolveWorkerReady: (() => void) | undefined
 let rejectReady: ((error: Error) => void) | undefined
 let nextId = 0
-const pending = new Map<number, PendingJob>()
+const waiting: PolicyJob[] = []
+let active: PolicyJob | undefined
+let readForegroundWorkspace: (() => string) | undefined
+let promotions = 0
 const admissionDeadlineMs = 60_000
 const workerReadinessDeadlineMs = 15_000
 let onlineWarmupInstalled = false
@@ -27,8 +31,9 @@ function failWorker(target: Worker, error: Error) {
   worker = undefined
   workerReady = undefined
   resolveWorkerReady = undefined
-  for (const job of pending.values()) { clearTimeout(job.timer); job.reject(error) }
-  pending.clear()
+  if (active) { rejectJob(active, error); active = undefined }
+  for (const job of waiting.splice(0)) rejectJob(job, error)
+  promotions = 0
 }
 
 function admissionWorker(): Worker {
@@ -49,13 +54,14 @@ function admissionWorker(): Worker {
       } else failWorker(target, new Error(response.error))
       return
     }
-    const job = pending.get(response.id)
-    if (!job) return
+    if (!active || active.request.id !== response.id) return
     if ("error" in response && response.fatal) { failWorker(target, new Error(response.error)); return }
-    pending.delete(response.id)
+    const job = active
+    active = undefined
     clearTimeout(job.timer)
     if ("error" in response) job.reject(new Error(response.error))
     else job.resolve("role" in response ? response.role : response.result)
+    dispatchNext(target)
   }
   target.onerror = event => { event.preventDefault(); failWorker(target, new Error(`Workspace admission worker failed: ${event.message}`)) }
   target.onmessageerror = () => failWorker(target, new Error("Workspace admission worker response could not be decoded"))
@@ -67,6 +73,43 @@ function admissionWorker(): Worker {
   // Prewarming has no waiter yet; keep a rejected readiness promise handled.
   void workerReady.catch(() => {})
   return worker
+}
+
+/** Prioritize the selected board when the shared worker can take another job. */
+export function prioritizeWorkspaceAdmission(readWorkspaceId: () => string) {
+  readForegroundWorkspace = readWorkspaceId
+  return () => { if (readForegroundWorkspace === readWorkspaceId) readForegroundWorkspace = undefined }
+}
+
+function nextJob(): PolicyJob {
+  const foregroundWorkspace = readForegroundWorkspace?.()
+  // Leave room for background work while the foreground keeps submitting checks.
+  const preferred = foregroundWorkspace && promotions < 2 ? waiting.findIndex(({ request }) =>
+    (request.kind === "access" ? request.input.snapshot.workspaceId : request.input.workspaceId) === foregroundWorkspace) : -1
+  const index = Math.max(0, preferred)
+  promotions = index > 0 ? promotions + 1 : 0
+  return waiting.splice(index, 1)[0]!
+}
+
+function dispatchNext(target: Worker) {
+  while (!active && waiting.length) {
+    const job = nextJob()
+    const { request } = job
+    try {
+      const buffers = (request.kind === "access" ? [request.input.snapshot.document.buffer]
+        : [request.input.remote.buffer, ...(request.input.local ? [request.input.local.buffer] : [])]) as ArrayBuffer[]
+      active = job
+      target.postMessage(request, buffers)
+    } catch (error) {
+      active = undefined
+      rejectJob(job, error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+}
+
+function rejectJob(job: PolicyJob, error: Error) {
+  clearTimeout(job.timer)
+  job.reject(error)
 }
 
 export async function warmWorkspaceAdmissionWorker(): Promise<void> {
@@ -113,21 +156,13 @@ async function runPolicyRequest(input: WorkspaceAdmissionInput | WorkspaceAccess
   await warmWorkspaceAdmissionWorker()
   return new Promise<PolicyResult>((resolve, reject) => {
     const id = ++nextId
-    try {
-      const target = worker
-      if (!target) throw new Error("Workspace admission worker is unavailable")
-      const timer = setTimeout(() => failWorker(target, new Error("Workspace admission worker timed out")), admissionDeadlineMs)
-      pending.set(id, { resolve, reject, timer })
-      const request: WorkspaceAdmissionRequest = kind === "access"
-        ? { id, kind, input: input as WorkspaceAccessInput, diagnosticsEnabled }
-        : { id, input: input as WorkspaceAdmissionInput }
-      const buffers = (request.kind === "access" ? [request.input.snapshot.document.buffer]
-        : [request.input.remote.buffer, ...(request.input.local ? [request.input.local.buffer] : [])]) as ArrayBuffer[]
-      target.postMessage(request, buffers)
-    } catch (cause) {
-      const job = pending.get(id)
-      if (job) { clearTimeout(job.timer); pending.delete(id) }
-      reject(cause instanceof Error ? cause : new Error(String(cause)))
-    }
+    const target = worker
+    if (!target) { reject(new Error("Workspace admission worker is unavailable")); return }
+    const request: WorkspaceAdmissionRequest = kind === "access"
+      ? { id, kind, input: input as WorkspaceAccessInput, diagnosticsEnabled }
+      : { id, input: input as WorkspaceAdmissionInput }
+    const timer = setTimeout(() => failWorker(target, new Error("Workspace admission worker timed out")), admissionDeadlineMs)
+    waiting.push({ request, resolve, reject, timer })
+    dispatchNext(target)
   })
 }

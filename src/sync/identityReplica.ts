@@ -28,7 +28,7 @@ const encoder = new TextEncoder()
 export class IdentityReplica {
   private engine: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
   private readonly restartEngine: () => void
-  private readonly maintainSnapshots: () => Promise<boolean>
+  private readonly maintainSnapshots: () => Promise<boolean | undefined>
   private checkpointPending?: BlindCheckpointRequest
   private checkpointVerification?: ReplicaEngine<Uint8Array, BlindObject, BlindReceipt>
   private operations: Promise<unknown> = Promise.resolve()
@@ -85,7 +85,7 @@ export class IdentityReplica {
       return inventory.maxSequence ?? inventory.cursor
     }
     this.maintainSnapshots = async () => {
-      if (!store.prepareCheckpoint || !transport.checkpoint) return true
+      if (!store.prepareCheckpoint || !transport.checkpoint) return undefined
       if (!await this.engine.pull()) return false
       const inventory = this.engine.inventoryStatus()!
       if (this.checkpointPending && this.checkpointPending.authorization.payload.expiresAt <= Date.now()) {
@@ -132,7 +132,11 @@ export class IdentityReplica {
   push(): Promise<boolean> { return this.run(() => this.pushNow()) }
   drainPending(): Promise<boolean> { return this.run(() => this.engine.drainPending()) }
   sync(): Promise<boolean> { return this.run(async () => {
-    if (!await this.maintainSnapshots()) return false
+    const caughtUp = await this.maintainSnapshots()
+    if (caughtUp === false) return false
+    // Maintenance has already pulled. Keep the engine's normal sync path for
+    // an uncertain upload, which must finish before the next content pass.
+    if (caughtUp && !(await this.store.repository.read()).pending) return this.pushNow()
     return this.pushNow(() => this.engine.sync())
   }) }
 }

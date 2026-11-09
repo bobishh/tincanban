@@ -116,6 +116,47 @@ it("Given Rusty retained an encrypted identity package, when its source closes, 
   expect(JSON.stringify(f.objects)).not.toContain("avatarData")
 })
 
+it("Given an unchanged identity replica with checkpoint maintenance, when syncing, then reuse the maintenance inventory for the pass", async () => {
+  const f = await fixture()
+  const store = f.store("phone")
+  const inventory = vi.fn(f.transport.inventory)
+  const download = vi.fn(f.transport.download)
+  const prepareCheckpoint = vi.fn(async () => { throw new Error("Unexpected checkpoint preparation") })
+  const checkpoint = vi.fn(async () => { throw new Error("Unexpected checkpoint") })
+  const replica = new IdentityReplica(f.config, "phone", { ...store, prepareCheckpoint }, { ...f.transport, inventory, download, checkpoint })
+  await replica.push()
+  await replica.pull()
+  inventory.mockClear()
+  download.mockClear()
+  store.capture.mockClear()
+
+  await expect(replica.sync()).resolves.toBe(true)
+  expect(inventory).toHaveBeenCalledOnce()
+  expect(download).not.toHaveBeenCalled()
+  expect(store.capture).not.toHaveBeenCalled()
+  expect(f.attempts).toHaveLength(1)
+})
+
+it("Given a lost Identity upload reply, when syncing with checkpoint maintenance, then retry the saved request and defer fresh content", async () => {
+  const f = await fixture()
+  const store = f.store("phone")
+  const inventory = vi.fn(f.transport.inventory)
+  const prepareCheckpoint = async () => { throw new Error("Unexpected checkpoint preparation") }
+  const checkpoint = async () => { throw new Error("Unexpected checkpoint") }
+  const replica = new IdentityReplica(f.config, "phone", { ...store, prepareCheckpoint }, { ...f.transport, inventory, checkpoint })
+  f.loseReply()
+  await expect(replica.push()).rejects.toThrow("reply lost")
+  expect(store.progress().pending).toBeDefined()
+  store.capture.mockClear()
+
+  await expect(replica.sync()).resolves.toBe(false)
+  expect(inventory).toHaveBeenCalledOnce()
+  expect(store.progress().pending).toBeUndefined()
+  expect(f.attempts).toHaveLength(2)
+  expect(f.attempts[1]).toEqual(f.attempts[0])
+  expect(store.capture).not.toHaveBeenCalled()
+})
+
 it.each([0, 8])("Given eight Identity snapshots including one corrupt object and saved cursor %i, when maintenance cannot admit every state, then preserve every stored object without preparing a checkpoint", async cursor => {
   const f = await fixture()
   for (let index = 0; index < 8; index++) {

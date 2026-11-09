@@ -62,6 +62,28 @@ test("Given paired browsers, when a lead changes, then the peer receives the dur
     await addLead(page, "Gossip production path")
 
     await expect(guest.getByRole("button", { name: "Open Gossip production path — Engineer" })).toBeVisible({ timeout: 30_000 })
+    await test.step("Retry the same peer update after a failed durable write", async () => {
+      await guest.evaluate(async () => {
+        const { setStorageFailureHookForTest } = await import("/src/storage.ts")
+        const { clearMeshTrace } = await import("/src/sync/meshTrace.ts")
+        clearMeshTrace()
+        setStorageFailureHookForTest(true)
+      })
+      const delivered = guest.getByRole("button", { name: "Open Durable retry — Engineer", exact: true })
+      try {
+        await addLead(page, "Durable retry")
+        await expect.poll(() => guest.evaluate(async () => {
+          const { meshTraceSnapshot } = await import("/src/sync/meshTrace.ts")
+          return meshTraceSnapshot().some(event => event.event === "workspace.frame.rejected" &&
+            String(event.reason ?? "").includes("Storage failure"))
+        }), { timeout: 20_000 }).toBe(true)
+        await expect(delivered).toHaveCount(0)
+      } finally {
+        await guest.evaluate(async () => (await import("/src/storage.ts")).setStorageFailureHookForTest(false))
+      }
+      await expect(delivered).toBeVisible({ timeout: 30_000 })
+      await expect(delivered).toHaveCount(1)
+    })
   } finally { await context.close() }
 })
 

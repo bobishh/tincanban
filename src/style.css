@@ -1,6 +1,13 @@
 
 .toolbar-meta { display: grid; gap: var(--space-2); justify-items: end; }
-.board-freshness { min-inline-size: 24ch; text-align: end; font-variant-numeric: tabular-nums; }
+.board-freshness {
+  display: grid;
+  grid-template-rows: repeat(2, 1.3em);
+  inline-size: 27ch;
+  max-inline-size: 100%;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
 .board-address-unavailable, .board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
 .board-address-unavailable h1 { margin: 0 0 var(--space-2); }
 .board-address-unavailable p { margin: 0 0 var(--space-4); }

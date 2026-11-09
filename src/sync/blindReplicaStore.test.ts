@@ -5,9 +5,13 @@ import type { BlindReplicaConfig } from "./blindReplication"
 import { decodeBlindBytes, encryptBlindObject, type BlindObject } from "@meta-uber/mesh-replication/rusty-replica"
 import { setReplicaPreference, getReplicaConfigurations } from "./privateReplicaRepository"
 import type { AttachmentLocator } from "../product-replica"
+import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
+import { meshTraceSnapshot } from "./meshTrace"
 
 const captured = vi.hoisted(() => ({ stores: [] as Array<{ config: unknown; store: Record<string, unknown> }> }))
-const background = vi.hoisted(() => ({ run: vi.fn(async () => {}) }))
+const background = vi.hoisted(() => ({
+  run: vi.fn<(report: (states: AttachmentCoverageStatus[]) => void) => Promise<void>>(async () => {}),
+}))
 
 vi.mock("./blindReplication", () => ({
   BlindReplica: class {
@@ -16,7 +20,10 @@ vi.mock("./blindReplication", () => ({
 }))
 vi.mock("./blindSnapshotRevision", () => ({ createBlindSnapshotRevision: () => async () => "snapshot-revision" }))
 vi.mock("./blindCheckpointAdmission", () => ({ checkpointHooks: () => ({}) }))
-vi.mock("./workspaceAttachmentReplicaStore", () => ({ createWorkspaceAttachmentReplication: () => ({ run: background.run }) }))
+vi.mock("./workspaceAttachmentReplicaStore", () => ({
+  createWorkspaceAttachmentReplication: (_app: unknown, _config: unknown, _guard: unknown, _flush: unknown,
+    report: (states: AttachmentCoverageStatus[]) => void) => ({ run: () => background.run(report) }),
+}))
 
 import { createBlindReplica } from "./blindReplicaStore"
 
@@ -95,6 +102,25 @@ it("Given a slow attachment upload, when snapshot preparation schedules it, then
   await schedule()
   expect(background.run).toHaveBeenCalledOnce()
   release()
+})
+
+it("Given a reopened replica, when board metadata is already current, then check attachments until a local pass has confirmed them", async () => {
+  const owner = crypto.randomUUID()
+  createBlindReplica(makeConfig(), makeTincanban(owner), () => {}, async () => {})
+  const store = captured.stores[0]!.store
+  const pending = store.attachmentRetryPending as () => Promise<boolean>
+  const prepare = store.prepareAttachments as () => Promise<void>
+  await expect(pending()).resolves.toBe(true)
+
+  const failure = new Error("Could not read attachment work")
+  background.run.mockImplementationOnce(async report => { report([]); throw failure })
+    .mockImplementationOnce(async report => { report([]) })
+  await prepare()
+  await vi.waitFor(() => expect(meshTraceSnapshot().some(event => event.event === "mesh.rusty.attachments.failed")).toBe(true))
+  await expect(pending()).resolves.toBe(true)
+  await prepare()
+  await vi.waitFor(async () => expect(await pending()).toBe(false))
+  expect(background.run).toHaveBeenCalledTimes(2)
 })
 
 it("Given an application replica, when an upload is prepared and the factory is recreated, then private repository retains the exact pending ciphertext and request ID", async () => {

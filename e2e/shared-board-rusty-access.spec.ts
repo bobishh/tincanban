@@ -1,4 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test"
+import { readStoredBoardAccess } from "./support/identityRustyFixture"
 import { startIdentityRustyService } from "./support/rustyService"
 
 const identityOrigin = process.env.IDENTITY_E2E_ORIGIN
@@ -82,11 +83,11 @@ test("Given three distinct identities and owner-configured Rusty, when owner clo
   let rustyStopped = false
   const editorContext = await browser.newContext(), visitorContext = await browser.newContext()
   try {
-    await page.getByRole("button", { name: "Sync", exact: true }).click()
     const editor = await editorContext.newPage(), visitor = await visitorContext.newPage()
     const editorId = await createSignedInIdentity(editorContext, editor, "Rusty Board Editor")
     const visitorId = await createSignedInIdentity(visitorContext, visitor, "Rusty Board Visitor")
     expect(new Set([ownerId, editorId, visitorId]).size).toBe(3)
+    await page.getByRole("button", { name: "Sync", exact: true }).click()
     const storage = page.getByRole("region", { name: "Rusty", exact: true })
     const appOrigin = new URL(page.url()).origin
     await storage.getByRole("button", { name: "Add Rusty", exact: true }).click()
@@ -106,6 +107,56 @@ test("Given three distinct identities and owner-configured Rusty, when owner clo
       .toBeVisible({ timeout: 30_000 })
     await page.getByRole("button", { name: "Sync", exact: true }).click()
     await join(page, visitor, "visitor")
+    await test.step("Peer delivery confirms the board while the Rusty check is pending", async () => {
+      await visitor.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
+      await visitor.setViewportSize({ width: 390, height: 844 })
+      const freshness = visitor.getByRole("status", { name: "Board freshness" })
+      await expect(freshness).toContainText(/Rusty checked \d{2}:\d{2}/, { timeout: 25_000 })
+      const controls = visitor.getByRole("region", { name: "tincanban controls" })
+      const search = controls.getByRole("searchbox", { name: "Search cards" })
+      const confirmedLayout = { search: await search.boundingBox(), freshness: await freshness.boundingBox() }
+      expect(confirmedLayout.freshness).not.toBeNull()
+      expect(confirmedLayout.search).not.toBeNull()
+      const { scopeId } = await readStoredBoardAccess(visitor, workspaceId)
+      expect(scopeId).toBeTruthy()
+      const objects = `/v2/scopes/${scopeId}/objects`
+      const releaseInventory = Promise.withResolvers<void>()
+      let inventoryRequested = false
+      const inventoryUrl = (url: URL) => url.origin === rusty.origin && url.pathname === objects
+      await visitor.route(inventoryUrl, async route => {
+        if (route.request().method() === "GET") {
+          inventoryRequested = true
+          await releaseInventory.promise
+        }
+        await route.continue()
+      })
+      try {
+        await visitor.evaluate(() => window.dispatchEvent(new Event("online")))
+        await expect.poll(() => inventoryRequested, { timeout: 10_000 }).toBe(true)
+        await expect(freshness).toContainText("Checking Rusty")
+        expect({ search: await search.boundingBox(), freshness: await freshness.boundingBox() }).toEqual(confirmedLayout)
+        await page.evaluate(async () => {
+          const app = (await import("/src/test/stateFixture.ts")).useTincanban()
+          await app.executeCommandAsync({ kind: "createItem", parentId: app.genericColumns.value[0]!.id, title: "Peer delivered first" })
+        })
+        const item = visitor.getByRole("button", { name: "Open Peer delivered first", exact: true })
+        await expect(item).toBeVisible({ timeout: 12_000 })
+        await expect(freshness).toContainText(/Peer checked \d{2}:\d{2}/)
+        await expect(freshness).toContainText("Checking Rusty")
+        const downloaded = visitor.waitForResponse(response => {
+          const url = new URL(response.url())
+          return response.ok() && response.request().method() === "GET" && url.origin === rusty.origin && url.pathname.startsWith(`${objects}/`)
+        })
+        releaseInventory.resolve()
+        await downloaded
+        await expect(freshness).toContainText(/Rusty checked \d{2}:\d{2}/, { timeout: 15_000 })
+        expect({ search: await search.boundingBox(), freshness: await freshness.boundingBox() }).toEqual(confirmedLayout)
+        await expect(item).toHaveCount(1)
+      } finally {
+        releaseInventory.resolve()
+        await visitor.unroute(inventoryUrl)
+      }
+    })
     const states = await Promise.all([editorContext.storageState({ indexedDB: true }), visitorContext.storageState({ indexedDB: true })])
     const boardURL = editor.url()
     await page.close()
@@ -127,6 +178,9 @@ test("Given three distinct identities and owner-configured Rusty, when owner clo
       })
       await expect(reader!.getByRole("button", { name: "Open Owner asleep, Rusty delivered", exact: true }))
         .toBeVisible({ timeout: 35_000 })
+      const freshness = reader!.getByRole("status", { name: "Board freshness" })
+      await expect(freshness).toContainText(/Rusty checked \d{2}:\d{2}/)
+      await expect(freshness).not.toContainText("Peer checked")
       await reader!.getByRole("button", { name: "Sync", exact: true }).click()
       await expect(reader!.getByRole("region", { name: "Rusty", exact: true }).getByText("Synced", { exact: true })).toBeVisible()
       expect(readerWrites).toEqual([])

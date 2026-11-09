@@ -297,7 +297,7 @@ describe("incremental workspace control plane", () => {
     const authorization = [{ hash: "history", signature: "s".repeat(300_000) }]
     const bytes = Automerge.save(Automerge.from({ id: "workspace" }))
     const sender = liveAutomergeWorkspaceSync({
-      openStream: async () => ({ send: async frame => { sent.push(frame) }, closeSend: async () => {}, read: vi.fn() }),
+      openStream: async () => ({ send: async frame => { sent.push(frame) }, closeSend: async () => {}, read: async () => new Uint8Array() }),
       acceptStream: () => new Promise(() => {}), close: vi.fn(async () => {}),
     }, "secret", { read: async () => bytes, merge: vi.fn(), activate: vi.fn(), readAuthorization: async () => authorization },
     "workspace", "a", "b")
@@ -317,7 +317,7 @@ describe("incremental workspace control plane", () => {
         : new Promise(() => {}),
     }, "secret", { read: async () => bytes, merge, activate: vi.fn() },
     "workspace", "b", "a")
-    await vi.waitFor(() => expect(merge).toHaveBeenCalledExactlyOnceWith("workspace", bytes, authorization))
+    await vi.waitFor(() => expect(merge).toHaveBeenCalledExactlyOnceWith("workspace", bytes, authorization, undefined, expect.any(Function)))
     await sender.close()
     await receiver.close()
   })
@@ -344,7 +344,7 @@ describe("incremental workspace control plane", () => {
       read: async () => bytes, merge, activate: vi.fn(),
     }, "workspace", "local", "remote")
 
-    await vi.waitFor(() => expect(merge).toHaveBeenCalledWith("workspace", bytes, authorization))
+    await vi.waitFor(() => expect(merge).toHaveBeenCalledWith("workspace", bytes, authorization, undefined, expect.any(Function)))
     await session.close()
   })
 

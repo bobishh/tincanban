@@ -1,3 +1,4 @@
+import type { IncomingAuthorizationBundle, WorkspaceWriteAuthorityEvidence } from "../product-replica"
 import type { WorkspaceAuthorityRecord, WorkspaceMeshCredential } from "./peerStore"
 
 /**
@@ -66,6 +67,26 @@ export function normalizeCertificateSets<T>(value: T): T {
 
 export function canonicalAuthorityJson(value: unknown): string {
   return canonicalJson(normalizeCertificateSets(value))
+}
+
+/** Absent departures are an empty set. A non-array is rejected rather than treated as none. */
+export function normalizeAuthorityDepartures(authority: WorkspaceWriteAuthorityEvidence): WorkspaceWriteAuthorityEvidence {
+  const departures = (authority as { departures?: unknown }).departures
+  if (departures === undefined) return { ...authority, departures: [] }
+  if (!Array.isArray(departures)) throw new Error("Invalid workspace authority departures")
+  return authority
+}
+
+/** Packet authority uses admission normalization. A mismatch or malformed packet is not a reuse. */
+export function packetMatchingVerifiedAuthority(authorization: unknown, verified: WorkspaceWriteAuthorityEvidence): unknown[] | undefined {
+  try {
+    const bundle = authorization as IncomingAuthorizationBundle
+    if (!bundle || ![1, 2].includes(bundle.version) || !bundle.authority ||
+      (bundle.version === 1 ? !Array.isArray(bundle.records) : !Array.isArray(bundle.pages))) return
+    const packet = normalizeCertificateSets(normalizeAuthorityDepartures(bundle.authority))
+    if (canonicalAuthorityJson(packet) !== canonicalAuthorityJson(verified)) return
+    return bundle.version === 1 ? bundle.records : bundle.pages.flat()
+  } catch { return }
 }
 
 function canonicalJson(value: unknown): string {

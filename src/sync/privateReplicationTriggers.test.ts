@@ -2,9 +2,6 @@ import { expect, test, vi } from "vitest"
 import { ref } from "vue"
 import { createReplicationFollowUp, hiddenReplicationPollMs, replicationPollDelay, startPrivateReplicationTriggers, visibleReplicationPollMs } from "./privateReplicationTriggers"
 
-const chat = vi.hoisted(() => ({ stop: vi.fn() }))
-vi.mock("../chat/service", () => ({ subscribeChat: () => chat.stop }))
-
 test("Given a visible document, when the fallback poll is chosen, then it is shorter than the hidden fallback", () => {
   expect(replicationPollDelay(false)).toBe(visibleReplicationPollMs)
   expect(replicationPollDelay(true)).toBe(hiddenReplicationPollMs)
@@ -32,9 +29,9 @@ test("Given live replication triggers, when visibility changes and the page hide
     removeEventListener: documentEvents.removeEventListener.bind(documentEvents) }
   vi.stubGlobal("document", document)
   vi.stubGlobal("window", windowEvents)
-  const sync = vi.fn(async () => {}), stopWorkspace = vi.fn()
+  const sync = vi.fn(async () => {})
   const now = ref(0)
-  const stop = startPrivateReplicationTriggers({ subscribeLocalChanges: () => stopWorkspace }, now, sync)
+  const stop = startPrivateReplicationTriggers(now, sync)
   try {
     await vi.advanceTimersByTimeAsync(2_000)
     expect(sync).toHaveBeenCalledTimes(1)
@@ -52,7 +49,5 @@ test("Given live replication triggers, when visibility changes and the page hide
     windowEvents.dispatchEvent(new Event("pagehide"))
     await vi.advanceTimersByTimeAsync(30_000)
     expect(sync).toHaveBeenCalledTimes(4)
-    expect(stopWorkspace).toHaveBeenCalledOnce()
-    expect(chat.stop).toHaveBeenCalledOnce()
   } finally { stop(); vi.useRealTimers(); vi.unstubAllGlobals() }
 })

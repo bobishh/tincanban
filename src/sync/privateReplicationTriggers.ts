@@ -1,6 +1,4 @@
 import type { Ref } from "vue"
-import type { useTincanban } from "../state"
-import { subscribeChat } from "../chat/service"
 
 export const visibleReplicationPollMs = 2_000
 export const hiddenReplicationPollMs = 15_000
@@ -24,9 +22,8 @@ export function createReplicationFollowUp() {
   }
 }
 
-/** Share one sync trigger policy; typing presence never starts a storage pass. */
-export function startPrivateReplicationTriggers(app: Pick<ReturnType<typeof useTincanban>, "subscribeLocalChanges">,
-  now: Ref<number>, sync: () => Promise<void>, onResume: () => void = () => {}) {
+/** Periodic discovery and resume stay independent of one board's local change. */
+export function startPrivateReplicationTriggers(now: Ref<number>, sync: () => Promise<void>, onResume: () => void = () => {}) {
   const hidden = () => typeof document !== "undefined" && document.hidden
   const healthClock = setInterval(() => { now.value = Date.now() }, 1000)
   let timer = setInterval(() => { void sync() }, replicationPollDelay(hidden()))
@@ -48,8 +45,6 @@ export function startPrivateReplicationTriggers(app: Pick<ReturnType<typeof useT
     window.addEventListener("pageshow", onPageShow)
     window.addEventListener("online", resume)
   }
-  const stopWorkspace = app.subscribeLocalChanges(() => { void sync() })
-  const stopChat = subscribeChat(event => { if (event.contentChanged !== false) void sync() })
   return () => {
     clearInterval(timer)
     clearInterval(healthClock)
@@ -59,7 +54,5 @@ export function startPrivateReplicationTriggers(app: Pick<ReturnType<typeof useT
       window.removeEventListener("pageshow", onPageShow)
       window.removeEventListener("online", resume)
     }
-    stopWorkspace()
-    stopChat()
   }
 }

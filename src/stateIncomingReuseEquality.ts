@@ -1,12 +1,13 @@
 /** Compare JSON payloads without serializing or hashing historical proof arrays. */
 import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult } from "./product-replica"
+export type VerifiedIncomingAdmission = Pick<WorkspaceAdmissionResult, "decisions" | "admittedHashes" | "verifiedAuthorizations">
 export function equalIncomingPacket(left: { bytes: Uint8Array; authorization: unknown }, right: { bytes: Uint8Array; authorization: unknown }) {
   return right.bytes.buffer instanceof ArrayBuffer && left.bytes.length === right.bytes.length &&
     left.bytes.every((byte, index) => byte === right.bytes[index]) && equalJson(left.authorization, right.authorization)
 }
 
 /** Unknown hashes or discarded proof variants must be checked again when local history grows. */
-export function fullyVerifiedIncomingInput(raw: unknown, admission: WorkspaceAdmissionResult) {
+export function fullyVerifiedIncomingInput(raw: unknown, admission: VerifiedIncomingAdmission) {
   if (!admission.decisions || admission.decisions.some(decision => decision.status.type !== "admitted")) return false
   const bundle = raw as IncomingAuthorizationBundle
   const records = bundle.version === 1 ? bundle.records : bundle.pages.flat()
@@ -14,8 +15,13 @@ export function fullyVerifiedIncomingInput(raw: unknown, admission: WorkspaceAdm
   return records.every(record => {
     const proof = record as { signed: { payload: { hashes: string[] } } }
     return proof.signed.payload.hashes.every(hash => admitted.has(hash)) &&
-      admission.verifiedAuthorizations.some(verified => equalJson({ ...(record as object), grant: (record as { grant?: unknown }).grant ?? null }, verified))
+      admission.verifiedAuthorizations.some(verified => equalJson(withNormalizedGrant(record), withNormalizedGrant(verified)))
   })
+}
+
+function withNormalizedGrant(record: unknown) {
+  const proof = record as { grant?: unknown }
+  return { ...proof, grant: proof.grant ?? null }
 }
 
 function equalJson(left: unknown, right: unknown, signed = false, key = ""): boolean {

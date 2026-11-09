@@ -4,8 +4,7 @@ import type { LocalProfile } from "./domain/identity"
 import type * as Automerge from "@automerge/automerge/slim"
 import { localWorkspaceAdmissionAuthority } from "./sync/changeAuthorization"
 import { admissionPolicy } from "./sync/workspaceAdmissionCheckpoint"
-import { equalIncomingPacket, fullyVerifiedIncomingInput } from "./stateIncomingReuseEquality"
-import type { WorkspaceAdmissionResult } from "./product-replica/workspaceAdmission"
+import { equalIncomingPacket, fullyVerifiedIncomingInput, type VerifiedIncomingAdmission } from "./stateIncomingReuseEquality"
 import { recentIncomingPackets, type IncomingPacket, type IncomingPacketEntry } from "./stateIncomingPacketCache"
 
 type Context = Awaited<ReturnType<typeof localWorkspaceAdmissionAuthority>>
@@ -38,7 +37,8 @@ export function copyIncomingPacket(bytes: Uint8Array, authorization: unknown): I
 }
 
 export async function rememberIncomingPacket(packet: IncomingPacket, doc: Automerge.Doc<WorkspaceDocumentV2>, storage: WorkspaceStorage,
-  credentialFingerprint: string, profile?: LocalProfile, admission?: WorkspaceAdmissionResult, baselineId?: string | null) {
+  credentialFingerprint: string, profile?: LocalProfile, admission?: VerifiedIncomingAdmission, baselineId?: string | null,
+  boundRevision?: string) {
   let context: Context
   // Lack of binding disables reuse; it cannot turn a durable success into an error.
   try {
@@ -46,8 +46,9 @@ export async function rememberIncomingPacket(packet: IncomingPacket, doc: Autome
     if (!admission || !fullyVerifiedIncomingInput(packet.authorization, admission)) return
   } catch { return }
   if (context.credentialFingerprint !== credentialFingerprint) return
-  const revision = await storage.readWorkspaceRevision(doc.id)
-  if (!revision || (await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== context.fingerprint) return
+  const revision = await readBoundPacketRevision(storage, doc.id, baselineId, boundRevision)
+  if (!revision || (await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== context.fingerprint ||
+    await storage.readWorkspaceRevision(doc.id) !== revision) return
   let weight: number
   try { weight = packet.bytes.byteLength + JSON.stringify(packet.authorization).length * 2 } catch { return }
   if (weight > maximumBytes) return
@@ -56,4 +57,12 @@ export async function rememberIncomingPacket(packet: IncomingPacket, doc: Autome
     authority: context.fingerprint, revision, baselineId: baselineId ?? null, weight })
   while (recentIncomingPackets.size > 8 || [...recentIncomingPackets.values()].reduce((sum, entry) => sum + entry.weight, 0) > maximumBytes)
     recentIncomingPackets.delete(recentIncomingPackets.keys().next().value!)
+}
+
+/** A newer write or basis belongs to a later admission. */
+async function readBoundPacketRevision(storage: WorkspaceStorage, workspaceId: string,
+  baselineId?: string | null, boundRevision?: string) {
+  const revision = await storage.readWorkspaceRevision(workspaceId)
+  if (boundRevision === undefined) return revision
+  if (revision === boundRevision && (await storage.historyProgressForRead(workspaceId)).baselineId === (baselineId ?? null)) return revision
 }

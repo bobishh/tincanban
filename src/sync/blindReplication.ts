@@ -34,6 +34,8 @@ export type BlindReplicaStore = {
   readAttachmentRevision?: (id: string) => Promise<string | undefined>
   readHistoryRevision?: (id: string) => Promise<string | undefined>
   prepareAttachments?: () => Promise<void>
+  /** True when a saved file transfer still needs its retry. Absent means this replica has no file retry queue. */
+  attachmentRetryPending?: () => Promise<boolean>
   /** Owner-signed compact history descriptor; implementations must return only durably covered state. */
   readHistoryBaseline?: (id: string) => Promise<unknown | undefined>
   /** Verify and atomically admit the compact basis before publishing its projection. */
@@ -124,6 +126,26 @@ export class BlindReplica {
   }
 
   private async readProgress() { return this.store.readReplicaProgress ? this.store.readReplicaProgress() : this.memoryProgress }
+
+  /** One empty inventory already ran. Skip snapshot and file preparation only while that durable upload is still current. */
+  private async currentUploadNeedsNoWrite(): Promise<boolean> {
+    const inventory = this.engine.inventoryStatus()
+    if (!inventory || inventory.objects.length > 0 || inventory.hasMore || this.checkpointAvailable()) return false
+    if (await this.store.attachmentRetryPending?.()) return false
+    return this.uploadedRevisionIsCurrent()
+  }
+
+  private async uploadedRevisionIsCurrent(): Promise<boolean> {
+    const progress = await this.readProgress()
+    if (progress.pending || !progress.lastUploaded || !progress.uploadedRevision) return false
+    await this.ensureCurrent()
+    const revision = await this.snapshotRevision()
+    if (!revision || revision !== progress.uploadedRevision || await this.snapshotRevision() !== revision) return false
+    const latest = await this.readProgress()
+    if (latest.pending || latest.uploadedRevision !== progress.uploadedRevision || latest.generation !== progress.generation) return false
+    await this.ensureCurrent()
+    return true
+  }
 
   private async persistProgress(expected: number, next: ReplicaState<BlindObject>) {
     if (this.store.persistReplicaProgress) await this.store.persistReplicaProgress(expected, next)
@@ -407,6 +429,7 @@ export class BlindReplica {
     return this.schedule(async () => {
       const caughtUp = await this.pullNow(observeRead)
       if (this.config.boardAccess?.mode === "read") return caughtUp
+      if (caughtUp && await this.currentUploadNeedsNoWrite()) return true
       await this.store.prepareAttachments?.()
       if (caughtUp) {
         const result = await this.checkpoint()

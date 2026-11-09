@@ -51,6 +51,30 @@ it("Given verified history in a warm worker, When checking access, Then the same
   await expect(access).resolves.toBe("owner")
 })
 
+it("Given one check running and others waiting, When a board is opened, Then its check runs before queued background history", async () => {
+  const client = await import("./workspaceAdmissionClient")
+  let selected = "running"
+  const stopPriority = client.prioritizeWorkspaceAdmission(() => selected)
+  const running = client.runWorkspaceAdmission({ ...input(), workspaceId: "running" })
+  const worker = workers[0]!
+  worker.ready()
+  await vi.waitFor(() => expect(worker.requests).toHaveLength(1))
+  const background = client.runWorkspaceAdmission({ ...input(), workspaceId: "background" })
+  const openBoard = client.runWorkspaceAccess({ snapshot: { workspaceId: "opened", document: new Uint8Array([1]) } })
+  await vi.advanceTimersByTimeAsync(0)
+  expect(worker.requests).toHaveLength(1)
+  selected = "opened"
+  worker.reply({ id: worker.requests[0]!.id, result })
+  await expect(running).resolves.toEqual(result)
+  expect(worker.requests[1]).toMatchObject({ kind: "access", input: { snapshot: { workspaceId: "opened" } } })
+  worker.reply({ id: worker.requests[1]!.id, role: "editor" })
+  await expect(openBoard).resolves.toBe("editor")
+  expect(worker.requests[2]).toMatchObject({ input: { workspaceId: "background" } })
+  worker.reply({ id: worker.requests[2]!.id, result })
+  await expect(background).resolves.toEqual(result)
+  stopPriority()
+})
+
 it("rejects queued history and access checks after initialization failure and starts a fresh worker on retry", async () => {
   const { runWorkspaceAdmission, runWorkspaceAccess } = await import("./workspaceAdmissionClient")
   const first = runWorkspaceAdmission(input())
@@ -69,15 +93,17 @@ it("rejects queued history and access checks after initialization failure and st
   await expect(retry).resolves.toEqual(result)
 })
 
-it("rejects a stalled worker, ignores its late result and leaves a new retry pending until its own result", async () => {
+it("rejects active and queued work on a stalled worker and ignores its late result after retry", async () => {
   const { runWorkspaceAdmission } = await import("./workspaceAdmissionClient")
   const stalled = runWorkspaceAdmission(input())
   workers[0]!.ready()
   await vi.waitFor(() => expect(workers[0]!.requests).toHaveLength(1))
   const rejected = expect(stalled).rejects.toThrow("timed out")
+  const queued = expect(runWorkspaceAdmission({ ...input(), workspaceId: "waiting" })).rejects.toThrow("timed out")
   const old = workers[0]!
   await vi.advanceTimersByTimeAsync(60_000)
-  await rejected
+  await Promise.all([rejected, queued])
+  expect(old.requests).toHaveLength(1)
   expect(old.terminate).toHaveBeenCalledOnce()
   const retry = runWorkspaceAdmission(input())
   let completed = false

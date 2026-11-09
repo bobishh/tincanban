@@ -103,6 +103,28 @@ test("Given locally active policy and a newer signed receipt retained after inte
   expect(mocks.create.mock.calls[0]?.[0]).toEqual(updated)
 })
 
+test("Given a stale full-list completion, when one scope reports progress, then keep other scopes and do not restore a removed credential", async () => {
+  const { resolvePrivateReplica } = await import("./privateReplicaFactory")
+  let report: ((value: BlindReplicaConfig, configurations?: BlindReplicaConfig[]) => Promise<void>) | undefined
+  mocks.create.mockImplementation((_config, _app, _guard, persist) => {
+    report = persist
+    return { sync: vi.fn(async () => true) }
+  })
+  const other = { ...config, workspaceId: "other-board", scopeId: "other-scope" }
+  const removed = { ...config, workspaceId: "removed-board", scopeId: "removed-scope" }
+  const session = { owner: "owner", guard: vi.fn(), configs: ref([config, other]), cache: new Map(), reload: vi.fn(async () => {}) }
+  const app = { getCurrentProfile: () => ({ identity: { personId: "owner" } }) }
+  await resolvePrivateReplica(app as never, config, session as never)
+  expect(report).toBeTypeOf("function")
+  await report!({ ...config, cursor: 4, lastUploaded: "fresh-hash" }, [{ ...config, cursor: 4, lastUploaded: "fresh-hash" }, removed])
+  expect(session.configs.value.map(item => item.scopeId)).toEqual([config.scopeId, other.scopeId])
+  expect(session.configs.value[0]).toMatchObject({ cursor: 4, lastUploaded: "fresh-hash" })
+  expect(session.configs.value[1]).toEqual(other)
+  session.configs.value = [other]
+  await report!({ ...config, cursor: 9, lastUploaded: "later-hash" }, [{ ...config, cursor: 9, lastUploaded: "later-hash" }, other])
+  expect(session.configs.value).toEqual([other])
+})
+
 test("Given concurrent requests for the same replica, when its adapter loads, then construct one client and share its operation queue", async () => {
   const { resolvePrivateReplica } = await import("./privateReplicaFactory")
   const session = { owner: "owner", guard: vi.fn(), configs: ref([config]), cache: new Map(), reload: vi.fn(async () => {}) }

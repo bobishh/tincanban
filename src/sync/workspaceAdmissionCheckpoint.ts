@@ -27,6 +27,18 @@ export async function createAdmissionCheckpoint(inputHash: string, heads: string
   return { policy: admissionPolicy(), inputHash, projectionHeads: [...heads].sort(), decisionsHash: await jsonHash(decisions) }
 }
 
+/** A repeat may omit stored proofs. An additional proof may change the classification. */
+export function hasOnlyStoredAdmissionProofs(incoming: unknown[], stored: readonly unknown[]): boolean {
+  const verified = new Set(stored.map(proofIdentity))
+  return incoming.every(proof => verified.has(proofIdentity(proof)))
+}
+
+function proofIdentity(record: unknown): string {
+  const value = record as { signed?: unknown; publicKey?: unknown; certificates?: unknown; grant?: unknown }
+  return canonicalizeJson({ signed: value.signed ?? null, publicKey: value.publicKey ?? null,
+    certificates: value.certificates ?? null, grant: value.grant ?? null })
+}
+
 export async function matchesAdmissionCheckpoint(checkpoint: WorkspaceAdmissionCheckpoint | undefined,
   inputHash: string, heads: string[], decisions: unknown): Promise<boolean> {
   return Boolean(checkpoint && checkpoint.policy === admissionPolicy() && checkpoint.inputHash === inputHash &&

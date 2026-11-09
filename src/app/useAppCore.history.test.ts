@@ -2,7 +2,8 @@ import { effectScope } from "vue"
 import { expect, it, vi } from "vitest"
 import type { WorkspaceSetStore } from "../sync/workspaceSet"
 import type * as Authorization from "../sync/changeAuthorization"
-const mocks = vi.hoisted(() => ({ readBaseline: vi.fn(), withDoc: vi.fn(), exportBytes: vi.fn(), exportRoot: vi.fn(), store: undefined as WorkspaceSetStore | undefined }))
+const mocks = vi.hoisted(() => ({ readBaseline: vi.fn(), withDoc: vi.fn(), exportBytes: vi.fn(), exportRoot: vi.fn(),
+  commitReceivedWorkspace: vi.fn(), validateAuthorizedWorkspace: vi.fn(), store: undefined as WorkspaceSetStore | undefined }))
 vi.mock("../sync/changeAuthorization", async original => ({ ...await original<typeof Authorization>(),
   exportAuthorizationBundle: mocks.exportBytes, exportDocumentAuthorizationBundle: mocks.exportRoot,
 }))
@@ -13,13 +14,15 @@ vi.mock("../sync/useDeviceSync", async () => {
   const { ref } = await import("vue")
   return { useDeviceSync: (options: { workspaceStore: WorkspaceSetStore }) => {
     mocks.store = options.workspaceStore
-    return { ownershipRevision: ref(0) }
+    return { ownershipRevision: ref(0), deliverBoard: vi.fn(), deliverUnknownBoard: vi.fn() }
   } }
 })
 vi.mock("../state", async () => {
   const { ref } = await import("vue")
   return { useTincanban: () => ({ ready: ref(false), activeWorkspace: { id: "board" }, docVersion: ref(0),
-    availableWorkspaces: ref([]), getCurrentProfile: () => null, withWorkspaceDoc: mocks.withDoc }) }
+    availableWorkspaces: ref([]), getCurrentProfile: () => null, withWorkspaceDoc: mocks.withDoc,
+    validateAuthorizedWorkspace: mocks.validateAuthorizedWorkspace, commitReceivedWorkspace: mocks.commitReceivedWorkspace,
+    subscribeLocalChanges: () => () => {} }) }
 })
 
 it("Given a known scope during typing publication, when authorization is exported, then read current scoped root metadata without decoding the document again", async () => {
@@ -57,13 +60,29 @@ it("Given a generic byte-only export caller, when no scope ID is supplied, then 
     expect(mocks.exportBytes).toHaveBeenCalledWith(bytes)
   } finally { scope.stop() }
 })
-vi.mock("../chat/service", () => ({ configureChat: vi.fn(), exportChat: vi.fn(), receiveChat: vi.fn(), subscribeChat: vi.fn() }))
+vi.mock("../chat/service", () => ({ configureChat: vi.fn(), exportChat: vi.fn(), receiveChat: vi.fn(), subscribeChat: () => () => {} }))
 vi.mock("../chat/useWorkspaceChat", () => ({ useWorkspaceChat: () => ({}) }))
-vi.mock("../sync/useBlindReplication", () => ({ useBlindReplication: () => ({}) }))
+vi.mock("../sync/useBlindReplication", () => ({ useBlindReplication: () => ({ syncWorkspace: vi.fn(), syncNow: vi.fn(), boardFreshness: { value: { phase: "unknown" } } }) }))
 vi.mock("./useAppMesh", () => ({ useAppMesh: () => ({}) }))
 vi.mock("./useIdentityProfileRecovery", () => ({ useIdentityProfileRecovery: () => ({}) }))
 vi.mock("../attachments", () => ({ configureAttachmentFetcher: vi.fn(), readStoredAttachment: vi.fn(), writeStoredAttachment: vi.fn() }))
 import { useAppCore } from "./useAppCore"
+
+it("Given an ordinary live packet, when the app store receives it, then one admission-and-commit runs and validation stays a separate no-write call", async () => {
+  const scope = effectScope()
+  const bytes = Uint8Array.of(1, 2)
+  const authorization = { version: 1 }
+  mocks.commitReceivedWorkspace.mockResolvedValue({ phase: "committed" })
+  mocks.commitReceivedWorkspace.mockClear()
+  mocks.validateAuthorizedWorkspace.mockClear()
+  try {
+    scope.run(() => useAppCore())
+    const ensureCurrent = async () => {}
+    await mocks.store!.commitReceivedWorkspace!("board", bytes, authorization, undefined, ensureCurrent)
+    expect(mocks.commitReceivedWorkspace).toHaveBeenCalledWith("board", bytes, authorization, undefined, undefined, ensureCurrent)
+    expect(mocks.validateAuthorizedWorkspace).not.toHaveBeenCalled()
+  } finally { scope.stop() }
+})
 
 it("Given two archived generations, when approved enrollment requests the exact predecessor through the app store, then preserve its baseline selector", async () => {
   const scope = effectScope(), ancestorId = "A".repeat(43), ancestor = { baselineId: ancestorId }

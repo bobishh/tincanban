@@ -42,6 +42,16 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
     guardIdentity()
     return progress
   }
+  const readPublishedHistory = async (workspaceId: string) => {
+    guardIdentity()
+    if (workspaceId !== config.workspaceId) throw new Error("History baseline workspace changed during Rusty replication")
+    const repository = await import("./historyBaselinePublicationRepository")
+    guardIdentity()
+    await readReplicaProgress()
+    const publication = await repository.readPublishedHistoryBaseline(workspaceId, config, guardIdentity)
+    guardIdentity()
+    return publication
+  }
   let attachmentIndex: Promise<ReturnType<typeof createWorkspaceAttachmentIndex>> | undefined
   const loadAttachmentIndex = () => attachmentIndex ??= import("./attachmentIndexScope")
     .then(module => module.createWorkspaceAttachmentIndex(owner, config, guardIdentity))
@@ -54,12 +64,21 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
   const readSnapshotRevision = createBlindSnapshotRevision(tincanban)
   let attachments: Promise<WorkspaceAttachmentReplication> | undefined
   let attachmentWork: Promise<void> | undefined
+  let attachmentRetry = true
+  const reportAttachmentCoverage = (states: AttachmentCoverageStatus[]) => {
+    attachmentRetry = states.some(state => state.phase !== "complete")
+    reportAttachments(states)
+  }
   const replica: BlindReplica = new BlindReplica({ ...config }, {
     replicaBinding: privateReplicaBinding(owner, config),
     runExclusive: operation => withPrivateReplicaOperation(owner, config, async () => { guardIdentity(); return operation() }),
     ensureIdentity: guardIdentity,
     readReplicaProgress,
     ensureCurrent: async () => { await readReplicaProgress() },
+    attachmentRetryPending: async () => {
+      guardIdentity()
+      return attachmentWork !== undefined || attachmentRetry
+    },
     prepareAttachments: async () => {
       guardIdentity()
       if (attachmentWork) return
@@ -67,11 +86,12 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
         const runtime = await (attachments ??= import("./workspaceAttachmentReplicaStore").then(module => {
           guardIdentity()
           return module.createWorkspaceAttachmentReplication(tincanban, config, guardIdentity,
-            () => replica.flushCurrentSnapshot(), reportAttachments, scopeFetch)
+            () => replica.flushCurrentSnapshot(), reportAttachmentCoverage, scopeFetch)
         }).catch(cause => { attachments = undefined; throw cause }))
         guardIdentity()
         await runtime.run()
       })().catch(cause => {
+        attachmentRetry = true
         try { guardIdentity() } catch { return }
         meshTrace("mesh.rusty.attachments.failed", { workspaceId: config.workspaceId, entityType: "scope", entityId: config.scopeId,
           errorCode: "attachment_replication_failed", error: cause }, "warn")
@@ -94,26 +114,8 @@ export function createBlindReplica(config: BlindReplicaConfig, tincanban: Return
       await guardAttachmentScope(workspaceId)
       return revision
     },
-    readHistoryBaseline: async workspaceId => {
-      guardIdentity()
-      if (workspaceId !== config.workspaceId) throw new Error("History baseline workspace changed during Rusty replication")
-      const repository = await import("./historyBaselinePublicationRepository")
-      guardIdentity()
-      await readReplicaProgress()
-      const publication = await repository.readPublishedHistoryBaseline(workspaceId, config, guardIdentity)
-      guardIdentity()
-      return publication?.wire
-    },
-    readHistoryRevision: async workspaceId => {
-      guardIdentity()
-      if (workspaceId !== config.workspaceId) throw new Error("History baseline workspace changed during Rusty replication")
-      const repository = await import("./historyBaselinePublicationRepository")
-      guardIdentity()
-      await readReplicaProgress()
-      const publication = await repository.readPublishedHistoryBaseline(workspaceId, config, guardIdentity)
-      guardIdentity()
-      return publication?.baselineId
-    },
+    readHistoryBaseline: async workspaceId => (await readPublishedHistory(workspaceId))?.wire,
+    readHistoryRevision: async workspaceId => (await readPublishedHistory(workspaceId))?.baselineId,
     persistReplicaProgress: async (expected, next) => {
       guardIdentity()
       const configurations = await persistPrivateReplicaState(owner, config, expected, next, guardIdentity)

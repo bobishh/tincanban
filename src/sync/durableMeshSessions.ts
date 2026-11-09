@@ -411,7 +411,7 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     }
   }
 
-  protected async publishAll() {
+  async publishAll() {
     const started = performance.now()
     this.trace("workspace.publish.requested", { workspaceId: "*", source: "all" })
     try {
@@ -424,12 +424,11 @@ export class DurableMeshSessions extends DurableMeshHandshake {
     }
   }
 
-  protected publishWorkspace(workspaceId: string): Promise<void> {
+  publishWorkspace(workspaceId: string, follow = true): Promise<void> {
     this.trace("workspace.publish.requested", { workspaceId: workspaceId, source: "scoped" })
     const active = this.workspacePublishTasks.get(workspaceId)
     if (active) {
-      this.dirtyWorkspacePublishes.add(workspaceId)
-      this.trace("workspace.publish.coalesced", { workspaceId: workspaceId })
+      if (follow) { this.dirtyWorkspacePublishes.add(workspaceId); this.trace("workspace.publish.coalesced", { workspaceId }) }
       return active
     }
     const task = (async () => {

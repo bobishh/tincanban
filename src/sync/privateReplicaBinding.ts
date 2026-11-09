@@ -1,6 +1,17 @@
 import { canonicalizeJson } from "../domain/identity"
 import type { PrivateReplicaConfig } from "./blindReplication"
 
+/** Match installed access while ignoring replica progress. */
+export function privateReplicaConfigurationKey(config: PrivateReplicaConfig): string {
+  const { cursor, lastUploaded, ...credentials } = config
+  void cursor; void lastUploaded
+  return canonicalizeJson(credentials)
+}
+
+export function privateReplicaOperationKey(owner: string, epoch: number | null, config: PrivateReplicaConfig): string {
+  return canonicalizeJson([owner, epoch, privateReplicaConfigurationKey(config)])
+}
+
 /** Stable serialization of the exact private replica credential binding. */
 export function privateReplicaBinding(owner: string, config: PrivateReplicaConfig): string {
   const identity = config.purpose === "identity"

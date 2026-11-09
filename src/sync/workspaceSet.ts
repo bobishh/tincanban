@@ -33,13 +33,20 @@ export type LiveWorkspaceSync = {
 
 export type OwnerWorkspaceOfferFrame = "mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1"
 
+export type ReceivedWorkspaceCommit = { phase: "committed" } | { phase: "unadmitted"; cause: unknown }
+
 export type WorkspaceSetStore = {
   read: (id: string) => Promise<Uint8Array>
   /** Heads from the admitted local document, excluding quarantined causal evidence. */
   readAuthorityHeads?: (id: string) => Promise<string[]>
+  observePeerFrontier?: (id: string, peerId: string, heads: readonly string[], ensureCurrent: () => Promise<void>) => Promise<void>
   reclassify?: (id: string) => Promise<void>
   validate?: (id: string, bytes: Uint8Array, authorization?: unknown, receivedBasis?: WasmVerifiedReceivedHistoryBaseline) => Promise<void>
-  merge: (id: string, bytes: Uint8Array, authorization?: unknown, receivedBasis?: WasmVerifiedReceivedHistoryBaseline) => Promise<void>
+  merge: (id: string, bytes: Uint8Array, authorization?: unknown, receivedBasis?: WasmVerifiedReceivedHistoryBaseline,
+    ensureCurrent?: () => Promise<void>) => Promise<void>
+  /** One admission and commit on the caller's captured durable base. Preparation failure is a phase; later failure throws. */
+  commitReceivedWorkspace?: (id: string, bytes: Uint8Array, authorization?: unknown,
+    receivedBasis?: WasmVerifiedReceivedHistoryBaseline, ensureCurrent?: () => Promise<void>) => Promise<ReceivedWorkspaceCommit>
   /** Public owner-attested descriptor only. Never return private replica preferences or Rusty credentials here. */
   readHistoryBaseline?: (id: string, baselineId?: string) => Promise<unknown | undefined>
   readHistoryBaselineDocument?: (request: PeerHistoryDocumentRequest, remoteDeviceId: string) => Promise<Uint8Array | undefined>

@@ -105,7 +105,7 @@ type MeshTestHooks = {
   acceptConnection: (connection: object) => Promise<void>
   acceptOnInvitationNode: (connection: object, stream: object, frame: Uint8Array) => Promise<void>
   publishAll: () => Promise<void>
-  publishWorkspace: (workspaceId: string) => Promise<void>
+  publishWorkspace: (workspaceId: string, follow?: boolean) => Promise<void>
   broadcastWorkspaceGossip: (workspaceId: string) => Promise<void>
   installSession: (...args: [string, string, string, string, number | undefined, "incoming" | "outgoing", Partial<SyncConnection>,
     boolean?, string?, boolean?, string?, boolean?, ("mesh-owner-workspace-offer" | "mesh-owner-workspace-offer-page-v1")?, boolean?, string?]) => Promise<boolean>
@@ -814,6 +814,27 @@ describe("DurableMesh peer catalog gossip", () => {
     expect(scoped.publish).toHaveBeenCalledTimes(2)
     expect(unrelated.publish).not.toHaveBeenCalled()
     expect(internal.broadcastWorkspaceGossip).toHaveBeenCalledTimes(2)
+    await mesh.dispose()
+  })
+
+  it("Given a scope publish is in flight, when the board is only selected, then the running publish is kept without a second read", async () => {
+    const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+      getProfile: async () => ({} as never),
+      store: { listPeers: async () => [], listWorkspaceCredentials: async () => [], listWorkspaceAuthorities: async () => [] } as never })
+    const internal = meshHooks(mesh)
+    let release!: () => void
+    const firstPublish = new Promise<void>(resolve => { release = resolve })
+    const scoped = { publish: vi.fn().mockImplementationOnce(() => firstPublish).mockResolvedValue(undefined) }
+    internal.sessions.set("scope-a:peer:slot", { workspaceId: "scope-a", deviceId: "peer", session: scoped,
+      evict: vi.fn(async () => {}) })
+    internal.broadcastWorkspaceGossip = vi.fn(async () => {})
+    const publishing = internal.publishWorkspace("scope-a")
+    await vi.waitFor(() => expect(scoped.publish).toHaveBeenCalledOnce())
+    const selected = internal.publishWorkspace("scope-a", false)
+    release()
+    await Promise.all([publishing, selected])
+    expect(scoped.publish).toHaveBeenCalledOnce()
+    expect(internal.broadcastWorkspaceGossip).toHaveBeenCalledOnce()
     await mesh.dispose()
   })
 

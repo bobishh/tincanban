@@ -79,7 +79,10 @@ export class DeviceSyncController {
       getProfile: () => this.getProfile(), ensureDurableMesh: () => this.ensureDurableMesh(), adapter: options.ownerReconnect, nextRun: () => ++this.run, currentRun: () => this.run })
     this.meshWorkspaceStore = this.workspaceStore ? { ...this.workspaceStore } : undefined
     this.identityPeerRecovery = lazyIdentityPeerRecovery(() => this.enrollmentContext(), () => this.ensureDurableMesh())
-    if (typeof window !== "undefined") this.listenForNetworkChanges()
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", this.markNetworkOnline)
+      window.addEventListener("offline", this.markNetworkOffline)
+    }
   }
 
   private async ensureDurableMesh(): Promise<DurableMesh | undefined> {
@@ -125,11 +128,6 @@ export class DeviceSyncController {
   private attachMeshStore() {
     this.meshWorkspaceStore!.readMesh = id => this.durableMesh!.exportWorkspace(id)
     this.meshWorkspaceStore!.mergeMesh = (id, value) => this.durableMesh!.mergeWorkspace(id, value)
-  }
-
-  private listenForNetworkChanges() {
-    window.addEventListener("online", this.markNetworkOnline)
-    window.addEventListener("offline", this.markNetworkOffline)
   }
 
   private async getOwnedWorkspaceIds() {
@@ -187,7 +185,13 @@ export class DeviceSyncController {
     await this.startDurableMesh(adoptedNode)
   }
 
-  private async addOwnerWorkspace(workspaceId: string) { await (await this.ensureDurableMesh())?.addOwnerWorkspace(workspaceId); await this.identityPeerRecovery.start() }
+  /** Absent mesh publishes nothing. A board id stays on that board; a blank id does not publish the others. */
+  private publishInstalled(intent?: { workspaceId: string; changed: boolean }) {
+    const mesh = this.durableMesh
+    if (!mesh || (intent && !intent.workspaceId)) return
+    const task = intent ? mesh.publishWorkspace(intent.workspaceId, intent.changed) : mesh.publishAll()
+    void task.catch(error => { this.state.meshDiagnostic.value = userMessage(error, "Board delivery failed") })
+  }
 
   private async shutdown() {
     this.run += 1
@@ -334,10 +338,6 @@ export class DeviceSyncController {
       identityChanged: this.identityChanged, waitToReconnect: milliseconds => this.waitToReconnect(milliseconds),
       setApprovalResolver: resolve => { this.approveResolve = resolve }, denyPendingApproval: () => this.approveResolve?.(false),
     }
-  }
-
-  private selectSyncAll() {
-    return selectDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh())
   }
 
   private selectSyncWorkspace() {
@@ -510,7 +510,7 @@ export class DeviceSyncController {
       qrCode: state.qrCode, inviteUrl: state.inviteUrl, copyNotice: state.copyNotice, error: state.error, connectionConflictWorkspaceId: state.connectionConflictWorkspaceId, resettingWorkspaceConnection: state.resettingWorkspaceConnection, resetWorkspaceConnection: () => this.resetWorkspaceConnection(), authCode: state.authCode,
       selectedWorkspaceId: state.selectedWorkspaceId, selectedWorkspaceIds: state.selectedWorkspaceIds, invitationWorkspaceTitle: state.invitationWorkspaceTitle,
       invitationWorkspaces: state.invitationWorkspaces, availableWorkspaces: this.availableWorkspaces, open: () => this.open(),
-      selectSyncAll: () => this.selectSyncAll(), selectSyncWorkspace: () => this.selectSyncWorkspace(), generateWorkspaceInvite: () => this.generateWorkspaceInvite(),
+      selectSyncAll: () => selectDeviceEnrollmentLazily(() => this.enrollmentContext(), () => this.ensureDurableMesh()), selectSyncWorkspace: () => this.selectSyncWorkspace(), generateWorkspaceInvite: () => this.generateWorkspaceInvite(),
       startOwnerReconnect: () => this.ownerReconnectFlow.startHost(), approveOwnerReconnect: () => this.ownerReconnectFlow.approve(),
       cancelOwnerReconnect: async () => { await this.ownerReconnectFlow.cancel(); await this.dismiss() },
       provisionKeeperPairing: this.keeperOperations.provision,
@@ -521,8 +521,10 @@ export class DeviceSyncController {
       canReconnectDevice: computed(() => canReconnectDevice(state)), reconnectDevice: () => reconnectWorkspaceDevice({ state,
         stop: () => this.stopLiveSync(), resetMesh: async () => { await (this.durableMesh ?? await this.durableMeshPromise)?.dispose(); this.durableMesh = undefined; this.durableMeshPromise = undefined },
         identityChanged: this.identityChanged, refreshProfile: () => this.getProfile(), join: () => this.acceptWorkspaceJoin() }),
-      joinFromLocation: (raw: string) => isWorkspacePairingLocation(raw, url => { void this.prepareJoin(url) }), startDurableMesh: () => this.startDurableMesh(), recoverIdentityWorkspaces: (ids: string[], options?: { routesOnly?: boolean }) => this.identityPeerRecovery.recover(ids, options), stopLiveSync: () => this.stopLiveSync(), addOwnerWorkspace: (id: string) => this.addOwnerWorkspace(id),
+      joinFromLocation: (raw: string) => isWorkspacePairingLocation(raw, url => { void this.prepareJoin(url) }), startDurableMesh: () => this.startDurableMesh(), recoverIdentityWorkspaces: (ids: string[], options?: { routesOnly?: boolean }) => this.identityPeerRecovery.recover(ids, options), stopLiveSync: () => this.stopLiveSync(), addOwnerWorkspace: async (id: string) => { await (await this.ensureDurableMesh())?.addOwnerWorkspace(id); await this.identityPeerRecovery.start() },
       fetchBlob: async (workspaceId: string, descriptor: BlobDescriptor) => (await this.ensureDurableMesh())?.fetchBlob(workspaceId, descriptor),
+      deliverBoard: (intent: { workspaceId: string; changed: boolean }) => this.publishInstalled(intent),
+      deliverUnknownBoard: () => this.publishInstalled(),
       ...createPeerHistoryReadActions({ durableMesh: () => this.durableMesh, durableMeshPromise: () => this.durableMeshPromise,
         directPeerSessions: () => new Set([...this.directPeerSessions.values(), ...(this.liveSession ? [this.liveSession] : [])]) }),
       ...deviceManagementActions(() => this.ensureDurableMesh(), this.availableWorkspaces, this.state.ownershipRevision),

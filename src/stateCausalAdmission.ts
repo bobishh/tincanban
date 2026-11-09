@@ -90,7 +90,7 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
           meshTrace("workspace.commit.phase", { workspaceId, phase: commitPhase,
             elapsedMs: Math.round(performance.now() - startedAt) })
         }))
-      const documentChanged = !sameHeads(projection!, loaded.doc)
+      const documentChanged = !sameWorkspaceHeads(projection!, loaded.doc)
       returnedProjection = true
       return { doc: projection!, changed: documentChanged || result.proofChanged || result.causalChanged }
     } finally {
@@ -110,6 +110,6 @@ export async function reclassifyStoredWorkspace(workspaceId: string, storage = d
   })
 }
 
-function sameHeads(left: Automerge.Doc<WorkspaceDocumentV2>, right: Automerge.Doc<WorkspaceDocumentV2>): boolean {
+export function sameWorkspaceHeads(left: Automerge.Doc<WorkspaceDocumentV2>, right: Automerge.Doc<WorkspaceDocumentV2>): boolean {
   return Automerge.getHeads(left).sort().join() === Automerge.getHeads(right).sort().join()
 }

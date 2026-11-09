@@ -6,17 +6,6 @@ import { traceDiagnosticOperation } from "./telemetry"
 import { meshTrace } from "./meshTrace"
 import { privateReplicaBinding } from "./privateReplicaBinding"
 
-export async function syncReplicaConnections<Config extends PrivateReplicaConfig>(configs: Config[], isCurrent: () => boolean,
-  run: (config: Config) => Promise<string | undefined>, label: string): Promise<string[]> {
-  const failures: string[] = []
-  for (const config of configs) {
-    if (!isCurrent()) break
-    const message = await run(config)
-    if (message) failures.push(`${label} (${new URL(config.origin).host}): ${message}`)
-  }
-  return failures
-}
-
 export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses: Ref<Record<string, ReplicaHealth>>,
   operation: () => Promise<boolean | void>, isCurrent: () => boolean,
   deviceIssues?: Ref<Record<string, string>>): Promise<string | undefined> {

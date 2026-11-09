@@ -73,23 +73,12 @@ export function createRustyIdentityScopeFetcher(options: RustyIdentityScopeFetch
   return async (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
     await options.ensureCurrent?.()
     const request = await prepareScopeRequest(input, init, origin, access)
-    if (options.workspace) {
-      if (options.principal) {
-        await verifyRegisteredPrincipalScope(options, access, origin)
-      } else {
-        if (!options.profile) throw new Error("Workspace Rusty authority signer is unavailable")
-        const snapshot = await options.workspace.scopeAuthority()
-        if (!options.workspace.authorityIsReadOnly?.()) {
-          await ensureRustyWorkspaceScopeAuthority(options.profile, { ...access, workspaceId: options.workspace.workspaceId },
-            snapshot, options.ensureCurrent, options.fetcher)
-        }
-      }
-    }
+    const ownerAuthority = await prepareWorkspaceScopeAuthority(options, access, origin)
     const principal = options.principal
     if (principal && !principal.actions.includes(request.action)) throw new Error("Rusty principal grant does not permit this action")
-    const view = await options.authorityView()
     const proof = await createRustyIdentityRequestProof({
-      origin, servicePublicKey: access.servicePublicKey, identity: cloneJsonData(options.identity), view,
+      origin, servicePublicKey: access.servicePublicKey, identity: cloneJsonData(options.identity),
+      view: ownerAuthority ?? await options.authorityView(),
       deviceId: options.deviceId, devicePublicKey: options.devicePublicKey, scopeId: access.scopeId, token: request.token,
       method: request.method, url: request.url, bodyBytes: request.body, action: request.action,
       grantId: principal?.grantId ?? null, policyEpoch: principal?.policyEpoch ?? access.policyRevision,
@@ -100,6 +89,22 @@ export function createRustyIdentityScopeFetcher(options: RustyIdentityScopeFetch
     request.headers.set("X-Rusty-Identity-Proof", proof.headerValue)
     return fetcher(proof.url, { ...init, method: request.method, headers: request.headers } as RustyRequestInit)
   }
+}
+
+async function prepareWorkspaceScopeAuthority(options: RustyIdentityScopeFetcherOptions, access: BlindAccess,
+  origin: string): Promise<VerifiedIdentityAuthorityView | undefined> {
+  const { workspace, profile, principal } = options
+  if (!workspace) return
+  if (principal) {
+    await verifyRegisteredPrincipalScope(options, access, origin)
+    return
+  }
+  if (!profile) throw new Error("Workspace Rusty authority signer is unavailable")
+  const snapshot = await workspace.scopeAuthority()
+  if (workspace.authorityIsReadOnly?.()) return
+  const verified = await ensureRustyOwnerScopeAuthority(profile, { ...access, workspaceId: workspace.workspaceId },
+    snapshot, options.ensureCurrent, options.fetcher)
+  return verified.identityAuthority
 }
 
 async function verifyRegisteredPrincipalScope(options: RustyIdentityScopeFetcherOptions, access: BlindAccess, origin: string): Promise<void> {
@@ -218,10 +223,10 @@ export function createRustyIdentityProfileScopeFetcher(options: RustyIdentityPro
   }
   const sign = async (payload: RustyIdentityRequestProofPayload) => {
     const view = await readIdentityAuthorityView(profile.identity.personId)
-    if (!view) throw new Error("Rusty Identity authority view is unavailable for signing")
+    if (view?.viewDigest !== payload.viewDigest) throw new Error("Rusty Identity authority changed while signing")
     return await signForRusty(profile, view, payload, options.ensureCurrent)
   }
-  return createRustyIdentityScopeFetcher({ ...options, access, identity: profile.identity,
+  return createRustyIdentityScopeFetcher({ ...options, profile, access, identity: profile.identity,
     deviceId: profile.device.deviceId, devicePublicKey: profile.device.publicKey,
     principal, workspace,
     authorityView: currentAuthorityView, signAuthorization: sign })
@@ -269,6 +274,13 @@ export async function ensureRustyPersonIdentityScope(options: EnsureRustyPersonS
 export async function ensureRustyWorkspaceScopeAuthority(profile: LocalProfile,
   access: BlindAccess & { workspaceId: string }, snapshot: unknown,
   ensureCurrent?: () => void | Promise<void>, fetcher?: (url: string, init: RustyRequestInit) => Promise<Response>): Promise<RustyWorkspaceScopeAuthority> {
+  return (await ensureRustyOwnerScopeAuthority(profile, access, snapshot, ensureCurrent, fetcher)).scopeAuthority
+}
+
+async function ensureRustyOwnerScopeAuthority(profile: LocalProfile,
+  access: BlindAccess & { workspaceId: string }, snapshot: unknown,
+  ensureCurrent?: () => void | Promise<void>, fetcher?: (url: string, init: RustyRequestInit) => Promise<Response>
+): Promise<{ scopeAuthority: RustyWorkspaceScopeAuthority; identityAuthority: VerifiedIdentityAuthorityView }> {
   const validateSnapshot = (value: unknown): RustyWorkspaceScopeAuthority => {
     const checked = meshRustRuntime().state.validateScopeAuthority(value, Date.now()) as {
       scopeId: string; controller: { personId: string; publicKey: string }; controlEpoch: number
@@ -292,7 +304,7 @@ export async function ensureRustyWorkspaceScopeAuthority(profile: LocalProfile,
     await mergeRustyIdentityServiceEnforcement(access.origin, published.receipt.payload.serviceId, published.receipt.payload.enforcement)
   }
   await ensureCurrent?.()
-  return { ...published.scopeAuthority, ...(published.receipt ? { receipt: published.receipt } : {}) }
+  return { identityAuthority: view, scopeAuthority: { ...published.scopeAuthority, ...(published.receipt ? { receipt: published.receipt } : {}) } }
 }
 
 /** Read the accepted Rusty scope ledger without creating or updating workspace authority. */

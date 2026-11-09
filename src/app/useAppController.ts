@@ -74,7 +74,7 @@ function appCollaboration(core: ReturnType<typeof useAppCore>) {
     revokeWorkspacePeer, promoteWorkspacePeer, renewWorkspacePeerAccess,
   } = core
   return {
-    device: { sync, chat, blindReplication: core.blindReplication, profileRecovery: core.profileRecovery },
+    device: { sync, chat, blindReplication: core.blindReplication, boardFreshness: core.boardFreshness, profileRecovery: core.profileRecovery },
     permissions: { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, keeperOwnedWorkspaces, currentWorkspaceOwnerId, canEditItems, canEditBoard, canManageAccess, canImportWorkspace, canRenameWorkspace },
     mesh: {
       devicePresence, meshPresence, meshPresenceLabel, activeMeshRetryAt, meshMembers,
@@ -87,13 +87,21 @@ function appCollaboration(core: ReturnType<typeof useAppCore>) {
 }
 
 function useAppLifecycle(core: ReturnType<typeof useAppCore>, board: ReturnType<typeof useAppBoard>, actions: ReturnType<typeof useAppActions>) {
+  let unmounted = false
+  let stopAdmissionPriority: (() => void) | undefined
+  async function prepareAdmission() {
+    const { prioritizeWorkspaceAdmission, warmWorkspaceAdmissionWorker } = await import("../sync/workspaceAdmissionClient")
+    if (unmounted) return
+    stopAdmissionPriority = prioritizeWorkspaceAdmission(() => core.tincanban.activeWorkspace.id)
+    if (navigator.onLine) await warmWorkspaceAdmissionWorker()
+  }
   onMounted(async () => {
     const startup = await runAppStartup({
       loadRuntime: async diagnosticContext => {
         const { initializePolicyBrowserRuntime } = await import("../iroh")
         await diagnoseStartupStep("policy-wasm", initializePolicyBrowserRuntime, {}, diagnosticContext)
-        if (navigator.onLine) await diagnoseStartupStep("admission-worker-init", async () =>
-          (await import("../sync/workspaceAdmissionClient")).warmWorkspaceAdmissionWorker(), {}, diagnosticContext).catch(() => {})
+        if (navigator.onLine) await diagnoseStartupStep("admission-worker-init", prepareAdmission, {}, diagnosticContext).catch(() => {})
+        else void prepareAdmission().catch(() => {})
       },
       prepareLocalState: diagnosticContext => prepareLocalState(undefined, diagnosticContext),
       openPairing: () => core.sync.joinFromLocation(window.location.href),
@@ -121,6 +129,8 @@ function useAppLifecycle(core: ReturnType<typeof useAppCore>, board: ReturnType<
   watchWorkspaceReset(core)
   watchVisibleColumns(core, board)
   onBeforeUnmount(() => {
+    unmounted = true
+    stopAdmissionPriority?.()
     void core.sync.shutdown()
     board.destroyBoardDrag()
     board.clearHighlightTimer()

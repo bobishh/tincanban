@@ -8,18 +8,17 @@ import { type WorkspaceAuthority, type WorkspaceDeviceRevocation, type Workspace
   type WorkspaceSuccessionClaim } from "./meshRecords"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
 import { mergeAuthorizationRecords, putRecords, records, type WorkspaceChangeAuthorization } from "./workspaceChangeProofStore"
-import { rememberWorkspaceAdmission, reusedWorkspaceAdmission } from "./workspaceAdmissionReuse"
 import { assertLearnedIdentityDeviceActive } from "../domain/identityAuthority"
 import { receivedHistoryBasisIdentity } from "../product-replica/receivedHistoryBasisIdentity"
 import type { IncomingAuthorizationBundle, WorkspaceAdmissionResult, WorkspaceWriteAuthorityEvidence } from "../product-replica"
-import { readWorkspaceSnapshot } from "../storageJournal"
+import { readWorkspaceSnapshot, type StoredCausalEvidence } from "../storageJournal"
 import { defaultStorage } from "../storage"
 import { meshTrace } from "./meshTrace"
-import { admissionInputHash, createAdmissionCheckpoint, matchesAdmissionCheckpoint, type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
-import type { StoredCausalEvidence } from "../storageJournal"
+import { admissionInputHash, createAdmissionCheckpoint, hasOnlyStoredAdmissionProofs, matchesAdmissionCheckpoint,
+  type WorkspaceAdmissionCheckpoint } from "./workspaceAdmissionCheckpoint"
 
 import type { WorkspaceRole } from "../domain/permissions"
-import { canonicalAuthorityJson, normalizeCertificateSets } from "./authorityFingerprint"
+import { canonicalAuthorityJson, normalizeAuthorityDepartures, normalizeCertificateSets } from "./authorityFingerprint"
 import type { WorkspaceSigningContextFactory } from "./workspaceSigning"
 import type { WasmVerifiedReceivedHistoryBaseline } from "@meta-uber/mesh-transport/wasm"
 export type { WorkspaceSigningContextFactory } from "./workspaceSigning"
@@ -393,13 +392,6 @@ function authorizationBundle(raw: unknown): IncomingAuthorizationBundle {
   return bundle
 }
 
-function normalizeAuthorityDepartures(authority: WorkspaceWriteAuthorityEvidence): WorkspaceWriteAuthorityEvidence {
-  const departures = (authority as { departures?: unknown }).departures
-  if (departures === undefined) return { ...authority, departures: [] }
-  if (!Array.isArray(departures)) throw new Error("Invalid workspace authority departures")
-  return authority
-}
-
 export async function validateIncomingChanges(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown): Promise<void> {
   await validateIncomingChangeAuthorizations(local, remote, raw)
 }
@@ -415,17 +407,20 @@ export async function validateIncomingChangeAuthorizations(local: Automerge.Doc<
 export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<WorkspaceDocumentV2> | undefined,
   remote: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown, priorEvidenceRecords: Authorization[] = [],
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<WorkspaceAdmissionResult & { rawBytes: Uint8Array; credentialFingerprint: string; admissionCheckpoint?: WorkspaceAdmissionCheckpoint }> {
-  const { credential, frozenCredential, knownAuthority, combinedBundle, context } = await workspaceAdmissionContext(local ?? remote, raw,
-    priorEvidenceRecords, Boolean(local), undefined, receivedBasis)
+  const [{ rememberWorkspaceAdmission, reusedWorkspaceAdmission }, { credential, frozenCredential, knownAuthority, combinedBundle, context }] =
+    await Promise.all([import("./workspaceAdmissionReuse"),
+      workspaceAdmissionContext(local ?? remote, raw, priorEvidenceRecords, Boolean(local), undefined, receivedBasis)])
   const learnedIdentityAuthorities = await guardNewChangesAgainstLearnedIdentityRevocations(local, remote, combinedBundle.records as Authorization[])
   const startedAt = performance.now()
   meshTrace("workspace.admission.started", { workspaceId: remote.id, epoch: credential?.epoch ?? null })
-  const { bytes: rawBytes, heads } = rawAdmissionSnapshot(local, remote)
-  // Causal admission uses signed change-time authority, not receiver wall time.
-  const reuseKey = canonicalizeJson({ heads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis), learnedIdentityAuthorities })
+  // Heads identify the exact documents. A repeated check can skip building their raw union.
+  const sourceHeads = { remote: Automerge.getHeads(remote).sort(), local: local && local !== remote ? Automerge.getHeads(local).sort() : null }
+  const reuseKey = canonicalizeJson({ sourceHeads, ...context, receivedBasis: receivedHistoryBasisIdentity(receivedBasis), learnedIdentityAuthorities })
   const reused = reusedWorkspaceAdmission(remote.id, reuseKey)
-  const plan = reused ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
-    ...(receivedBasis ? { receivedBasis } : {}), local: undefined, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
+  const rawBytes = reused?.rawBytes ?? rawAdmissionSnapshot(local, remote)
+  // Causal admission uses signed change-time authority, not receiver wall time.
+  const plan = reused?.result ?? await (await import("./workspaceAdmissionClient")).runWorkspaceAdmission({ workspaceId: remote.id,
+    receivedBasis, remote: rawBytes.slice(), authorization: combinedBundle, knownAuthority, now: Date.now(),
   })
   if (reused) meshTrace("workspace.admission.reused", { workspaceId: remote.id, elapsedMs: Math.round(performance.now() - startedAt) })
   else if (plan.profile) meshTrace("workspace.admission.profile", { workspaceId: remote.id, ...plan.profile })
@@ -434,7 +429,7 @@ export async function evaluateIncomingWorkspaceAdmission(local: Automerge.Doc<Wo
   const currentCredential = await incomingCredential(remote.id)
   traceAdmissionAuthority(remote.id, credential, currentCredential, frozenCredential, startedAt, plan)
   await assertLearnedIdentityAuthoritiesUnchanged(learnedIdentityAuthorities)
-  if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan)
+  if (!reused) rememberWorkspaceAdmission(remote.id, reuseKey, plan, rawBytes)
   return { ...structuredClone(plan), rawBytes, credentialFingerprint: frozenCredential, admissionCheckpoint, authorizationEvidence: structuredClone(plan.verifiedAuthorizations) }
 }
 
@@ -443,16 +438,46 @@ async function incomingAdmissionCheckpoint(bytes: Uint8Array, context: unknown, 
     ? createAdmissionCheckpoint(await admissionInputHash(bytes, context), plan.authorizedHeads, plan.decisions) : undefined
 }
 
+/**
+ * The incoming document is the frontier already committed for this board.
+ * Heads are read from the loaded documents. The checkpoint, not the packet,
+ * supplies the admitted classification. A new proof, a different frontier,
+ * or a stale checkpoint falls back to full raw admission.
+ */
+export async function durableAdmittedFrontierCredential(local: Automerge.Doc<WorkspaceDocumentV2>,
+  remote: Automerge.Doc<WorkspaceDocumentV2>, authorization: unknown, evidence: StoredCausalEvidence | null | undefined,
+  receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<string | undefined> {
+  const checkpoint = evidence?.admissionCheckpoint
+  const miss = (reason: string) => {
+    meshTrace("workspace.admission.frontier-miss", { workspaceId: local.id, reason })
+    return undefined
+  }
+  if (!evidence || !checkpoint || checkpoint.incremental || !evidence.authorizationEvidence)
+    return miss(checkpoint?.incremental ? "incremental-checkpoint" : "missing-checkpoint")
+  const localHeads = Automerge.getHeads(local).sort().join()
+  if (localHeads !== Automerge.getHeads(remote).sort().join()) return miss("remote-frontier-differs")
+  if (localHeads !== checkpoint.projectionHeads.join()) return miss("checkpoint-frontier-differs")
+  const bundle = authorizationBundle(authorization)
+  if (!hasOnlyStoredAdmissionProofs(bundle.version === 1 ? bundle.records : bundle.pages.flat(), evidence.authorizationEvidence))
+    return miss("new-packet-proof")
+  return await currentStoredAdmissionCredential(local, evidence, authorization, undefined, receivedBasis) ?? miss("checkpoint-context-differs")
+}
+
 /** Reuse only a locally committed projection, never an incoming snapshot's marker. */
 export async function storedWorkspaceAdmissionIsCurrent(doc: Automerge.Doc<WorkspaceDocumentV2>,
   evidence: StoredCausalEvidence, authorization: unknown, savedRecords?: Authorization[],
   receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<boolean> {
-  if (!evidence.admissionCheckpoint || evidence.admissionCheckpoint.incremental) return false
+  return (await currentStoredAdmissionCredential(doc, evidence, authorization, savedRecords, receivedBasis)) !== undefined
+}
+
+async function currentStoredAdmissionCredential(doc: Automerge.Doc<WorkspaceDocumentV2>, evidence: StoredCausalEvidence,
+  authorization: unknown, savedRecords?: Authorization[], receivedBasis?: WasmVerifiedReceivedHistoryBaseline): Promise<string | undefined> {
+  if (!evidence.admissionCheckpoint || evidence.admissionCheckpoint.incremental) return
   const { context, frozenCredential } = await workspaceAdmissionContext(doc, authorization,
     (evidence.authorizationEvidence ?? []) as Authorization[], true, savedRecords, receivedBasis)
   const matches = await matchesAdmissionCheckpoint(evidence.admissionCheckpoint,
     await admissionInputHash(evidence.bytes, context), Automerge.getHeads(doc), evidence.decisions)
-  return matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential
+  if (matches && authorityValidationFingerprint(await incomingCredential(doc.id)) === frozenCredential) return frozenCredential
 }
 
 async function workspaceAdmissionContext(doc: Automerge.Doc<WorkspaceDocumentV2>, raw: unknown,
@@ -510,9 +535,9 @@ async function assertLearnedIdentityAuthoritiesUnchanged(
 }
 
 function rawAdmissionSnapshot(local: Automerge.Doc<WorkspaceDocumentV2> | undefined, remote: Automerge.Doc<WorkspaceDocumentV2>) {
-  if (!local || local === remote) return { bytes: Automerge.save(remote), heads: Automerge.getHeads(remote).sort() }
+  if (!local || local === remote) return Automerge.save(remote)
   const merged = Automerge.merge(Automerge.clone(local), remote)
-  try { return { bytes: Automerge.save(merged), heads: Automerge.getHeads(merged).sort() } }
+  try { return Automerge.save(merged) }
   finally { Automerge.free(merged) }
 }
 

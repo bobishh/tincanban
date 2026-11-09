@@ -107,20 +107,25 @@ const {
   selectedItemHistory, editingItem, candidateParentsForMove, archivedHistoryLoading, archivedHistoryError,
   archivedHistoryNotice, archivedHistoryHasMore, loadEarlierItemHistory,
 } = app.board
-const { sync, chat } = app.collaboration.device
+const { sync, chat, boardFreshness } = app.collaboration.device
 const generateWorkspaceInviteWithIdentity = createWorkspaceInviteAction({ gate: identityPortalFlow.gate, getWorkspaceId: () => activeWorkspace.id, sync })
 const showConversationLayer = computed(() => chat.open.value || conversations.currentDiscussions.value.length > 0 || Boolean(
   conversations.selection.value || conversations.contextMenu.value || conversations.sourceState.value || conversations.navigationState.value,
 ))
 const { confirmedRole, currentRole, workspaceAccessErrors, workspaceRoleStatus, canEditItems, canEditBoard, canManageAccess, canRenameWorkspace } = app.collaboration.permissions
-const { boardFreshness } = app.collaboration.device.blindReplication
 const boardCheckTime = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
-const boardFreshnessLabel = computed(() => {
-  const status = boardFreshness.value
-  if (!confirmedRole.value || status.phase === "unknown") return "Freshness unknown"
-  if (status.phase === "checked") return `Rusty checked ${boardCheckTime.format(status.checkedAt)}`
-  return { checking: "Checking Rusty…", "catching-up": "Applying updates…",
-    unavailable: "Rusty check failed", overdue: "Rusty check overdue" }[status.phase]
+const boardFreshnessLabels = computed(() => {
+  if (!confirmedRole.value) return []
+  const { peer, rusty } = boardFreshness.value
+  const labels: string[] = []
+  if (peer.phase === "checked") labels.push(`Peer checked ${boardCheckTime.format(peer.checkedAt)}`)
+  else if (peer.phase !== "unknown") labels.push({ checking: "Checking peer…", "catching-up": "Applying peer updates…",
+    unavailable: "Peer unavailable", overdue: "Peer check overdue" }[peer.phase])
+  if (rusty.phase === "checked") labels.push(`Rusty checked ${boardCheckTime.format(rusty.checkedAt)}`)
+  else if (rusty.phase !== "unknown") labels.push({ checking: "Checking Rusty…",
+    "catching-up": labels.length ? "Applying Rusty updates…" : "Applying updates…",
+    unavailable: "Rusty check failed", overdue: "Rusty check overdue" }[rusty.phase])
+  return labels
 })
 const { devicePresence, meshPresence, meshPresenceLabel,
   activeMeshRetryAt, meshMembers, activeSuccession,
@@ -238,7 +243,10 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :placeholder="'Search cards'" :inert="!boardVisible || undefined">
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
       <span class="save-state board-freshness" role="status" aria-label="Board freshness"
-        title="Latest check against this board’s configured Rusty storage.">{{ boardFreshnessLabel }}</span>
+        title="Latest confirmed check for each board source.">
+        <span v-for="label in boardFreshnessLabels" :key="label">{{ label }}</span>
+        <span v-if="!boardFreshnessLabels.length">Freshness unknown</span>
+      </span>
     </BoardToolbar>
 
     <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">

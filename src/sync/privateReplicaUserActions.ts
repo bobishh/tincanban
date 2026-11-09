@@ -1,11 +1,11 @@
 import { ref } from "vue"
 import type { createPrivateReplicationActions } from "./privateReplicationActions"
 
-/** Reserve one user request without disabling controls for background I/O. */
+/** Reserve one user request without disabling controls for background I/O. Drain follows every settlement, including failure. */
 export function createPrivateReplicaUserActions(waitForBackground: () => Promise<unknown>, captureSession: () => () => void,
-  syncNow: () => Promise<void>, afterSync: () => void) {
+  syncNow: () => Promise<void>, afterSync: () => void, onActionSettled: () => void) {
   const busy = ref(false)
-  function manual<Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>) {
+  function manual<Args extends unknown[], Result>(operation: (...args: Args) => Promise<Result>, drain = true) {
     return async (...args: Args): Promise<Result> => {
       if (busy.value) throw new Error("Another Rusty action is already pending")
       const guard = captureSession()
@@ -15,7 +15,10 @@ export function createPrivateReplicaUserActions(waitForBackground: () => Promise
         await waitForBackground()
         guard()
         return await operation(...args)
-      } finally { busy.value = false }
+      } finally {
+        busy.value = false
+        if (drain) onActionSettled()
+      }
     }
   }
   function protect(actions: ReturnType<typeof createPrivateReplicationActions>) {
@@ -27,6 +30,6 @@ export function createPrivateReplicaUserActions(waitForBackground: () => Promise
       remove: manual(actions.remove),
     }
   }
-  const runSyncNow = manual(syncNow)
-  return { busy, protect, syncNow: () => runSyncNow().then(result => { afterSync(); return result }) }
+  const runSyncNow = manual(syncNow, false)
+  return { busy, protect, syncNow: () => runSyncNow().then(result => { afterSync(); return result }).finally(onActionSettled) }
 }

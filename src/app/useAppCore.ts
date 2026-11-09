@@ -1,4 +1,4 @@
-import { computed, ref, watch } from "vue"
+import { computed, onScopeDispose, ref, watch } from "vue"
 import { workspaceRole, effectiveWorkspaceOwner, exportAuthorizationBundle, exportDocumentAuthorizationBundle } from "../sync/changeAuthorization"
 import { canWorkspace, type WorkspaceRole } from "../domain/permissions"
 import { bootstrapIdentity } from "../domain/identity"
@@ -12,6 +12,7 @@ import { useWorkspaceChat } from "../chat/useWorkspaceChat"
 import { defaultBoardFilters, type BoardFilters } from "../filters"
 import { useBlindReplication } from "../sync/useBlindReplication"
 import { useDeviceSync } from "../sync/useDeviceSync"
+import { createPeerBoardChecks } from "../sync/peerBoardFreshness"
 import { meshTrace } from "../sync/meshTrace"
 import { useAppMesh } from "./useAppMesh"
 import { configureAttachmentFetcher, readStoredAttachment, writeStoredAttachment } from "../attachments"
@@ -19,6 +20,7 @@ import { workspaceBlobDescriptor } from "./workspaceMetadata"
 import { workspaceChatRoomId } from "../domain/workspaceChatRoom"
 import { useIdentityProfileRecovery } from "./useIdentityProfileRecovery"
 import { createLazyWorkspacePeerHistorySource } from "../sync/workspacePeerHistorySourceLoader"
+import { deliverIndependent, startSharedBoardDelivery } from "./boardDelivery"
 
 type ArchiveUndo = { workspaceId: string; itemId: string; title: string }
 
@@ -92,6 +94,7 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
   const chatOwnerId = computed(() => { void tincanban.docVersion.value; return tincanban.getActiveDoc()?.ownerPersonId ?? "" })
   const identityName = computed(() => { void tincanban.docVersion.value; return tincanban.getCurrentProfile()?.identity.displayName ?? "" })
   const chat = useWorkspaceChat(chatWorkspaceId, chatOwnerId, identityName)
+  const peerChecks = createPeerBoardChecks()
   const sync = useDeviceSync({
     displayName: () => identityName.value,
     identityChanged: tincanban.refreshIdentity,
@@ -103,17 +106,19 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
     },
     workspace: {
       subscribe: listener => subscribeWorkspaceAndChat(tincanban.subscribeLocalChanges, listener),
-      subscribeWorkspace: listener => subscribeWorkspaceAndChatScoped(tincanban.subscribeLocalChanges, listener),
     },
     workspaceStore: {
       read: id => timedWorkspaceStoreStage("read", id, () => tincanban.readWorkspaceBytes(id)),
       readAuthorityHeads: id => timedWorkspaceStoreStage("authority-heads", id, () => tincanban.readWorkspaceHeads(id)),
+      observePeerFrontier: peerChecks.observe,
       reclassify: id => timedWorkspaceStoreStage("reclassify", id, () => tincanban.reclassifyWorkspace(id)),
       validate: (id, bytes, authorization, receivedBasis) => timedWorkspaceStoreStage("validate", id, async () => {
         await tincanban.validateAuthorizedWorkspace(id, bytes, authorization, undefined, receivedBasis)
       }),
-      merge: (id, bytes, authorization, receivedBasis) => timedWorkspaceStoreStage("merge", id, () =>
-        tincanban.mergeAuthorizedWorkspace(id, bytes, authorization, undefined, receivedBasis)),
+      merge: (id, bytes, authorization, receivedBasis, ensureCurrent) => timedWorkspaceStoreStage("merge", id, () =>
+        tincanban.mergeAuthorizedWorkspace(id, bytes, authorization, undefined, receivedBasis, ensureCurrent)),
+      commitReceivedWorkspace: (id, bytes, authorization, receivedBasis, ensureCurrent) => timedWorkspaceStoreStage("commit-received", id, () =>
+        tincanban.commitReceivedWorkspace(id, bytes, authorization, undefined, receivedBasis, ensureCurrent)),
       receiveHistoryBaseline: async (id, workspaceBytes, authorization, descriptor, reader, baselineDocument) => {
         const profile = tincanban.getCurrentProfile()
         if (!profile) throw new Error("Identity unavailable during peer history receive")
@@ -161,26 +166,44 @@ function useAppCollaboration(tincanban: ReturnType<typeof useTincanban>, ui: Ret
   })
   const policy = useWorkspacePolicy(tincanban, ui, sync)
   const blindReplication = useBlindReplication(tincanban)
+  const reportDelivery = (cause: unknown) => {
+    meshTrace("board.delivery.failed", { reason: cause instanceof Error ? cause.message : "Board delivery failed" }, "warn")
+  }
+  const stopBoardDelivery = startSharedBoardDelivery({
+    subscribeLocalChanges: tincanban.subscribeLocalChanges,
+    activeWorkspaceId: () => tincanban.activeWorkspace.id,
+    deliver: intent => deliverIndependent([
+      () => sync.deliverBoard(intent),
+      () => blindReplication.syncWorkspace(intent),
+    ], reportDelivery),
+    deliverUnknown: () => deliverIndependent([
+      () => sync.deliverUnknownBoard(),
+      () => blindReplication.syncNow(),
+    ], reportDelivery),
+  })
+  onScopeDispose(stopBoardDelivery)
+  watch([sync.ownershipRevision, () => {
+    void tincanban.docVersion.value
+    const profile = tincanban.getCurrentProfile()
+    return profile ? `${profile.identity.personId}/${profile.device.deviceId}/${profile.certificate.signature}` : ""
+  }], peerChecks.reset, { flush: "sync" })
+  const boardFreshness = computed(() => {
+    const peers = sync.meshPeers.value.filter(peer => peer.deviceId !== sync.localDeviceId.value)
+    return { rusty: blindReplication.boardFreshness.value,
+      peer: peerChecks.status(tincanban.activeWorkspace.id, sync.networkOnline.value === false
+        ? peers.map(peer => ({ ...peer, online: false })) : peers, blindReplication.now.value) }
+  })
   configureAttachmentFetcher(descriptor => {
     const workspaceId = tincanban.activeWorkspace.id
     return blindReplication.fetchAttachment(workspaceId, descriptor, current => sync.fetchBlob(workspaceId, current))
   })
   const mesh = useAppMesh({ removeWorkspaceCopy: tincanban.removeWorkspaceCopyAsync, activeWorkspace: tincanban.activeWorkspace, chat, sync, blindReplication, ...policy })
-  return { chat, sync, blindReplication, profileRecovery, ...policy, ...mesh }
+  return { chat, sync, blindReplication, boardFreshness, profileRecovery, ...policy, ...mesh }
 }
 
 function subscribeWorkspaceAndChat(subscribeLocalChanges: ReturnType<typeof useTincanban>["subscribeLocalChanges"], listener: () => void) {
   const stopWorkspace = subscribeLocalChanges(listener)
   const stopChat = subscribeChat(listener)
-  return () => { stopWorkspace(); stopChat() }
-}
-
-function subscribeWorkspaceAndChatScoped(
-  subscribeLocalChanges: ReturnType<typeof useTincanban>["subscribeLocalChanges"],
-  listener: (workspaceId?: string) => void,
-) {
-  const stopWorkspace = subscribeLocalChanges(listener)
-  const stopChat = subscribeChat(event => listener(event.workspaceId))
   return () => { stopWorkspace(); stopChat() }
 }
 

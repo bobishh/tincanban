@@ -11,6 +11,8 @@ import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 import { defaultStorage } from "../storage"
 import type { BoardReplicaRead } from "./replicationHealth"
 import { ParticipantStorageAccessPendingError } from "./replicationErrors"
+import { privateReplicaConfigurationKey, privateReplicaOperationKey } from "./privateReplicaBinding"
+import type * as BlindReplicaStore from "./blindReplicaStore"
 
 type Replica = { binding: string; sync: (observeRead?: (result: BoardReplicaRead) => void) => Promise<boolean | void>; pull?: () => Promise<boolean>; flushCurrentSnapshot?: () => Promise<void>;
   checkpointHistoryBaseline?: BlindReplica["checkpointHistoryBaseline"] }
@@ -76,15 +78,26 @@ function requiresWriterRecovery(config: PrivateReplicaConfig, upgrade: ReplicaWr
 
 /** Share construction so concurrent callers use one replica operation queue. */
 const constructing = new WeakMap<Session["cache"], Map<string, Promise<Replica>>>()
+let blindReplicaStore: Promise<typeof BlindReplicaStore> | undefined
+const loadBlindReplicaStore = () => blindReplicaStore ??= import("./blindReplicaStore")
+
+function applyPersistedReplicaProgress(configs: Ref<BlindReplicaConfig[]>, value: BlindReplicaConfig) {
+  const credential = privateReplicaConfigurationKey(value)
+  const index = configs.value.findIndex(config => privateReplicaConfigurationKey(config) === credential)
+  if (index < 0) return
+  const current = configs.value[index]!
+  if (current.cursor === value.cursor && current.lastUploaded === value.lastUploaded) return
+  const next = configs.value.slice()
+  next[index] = { ...current, cursor: value.cursor, lastUploaded: value.lastUploaded }
+  configs.value = next
+}
 
 export function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   session.guard()
   if (config.purpose !== "identity" && config.boardAccess?.authorization.payload.version === 1) {
     return Promise.reject(new ParticipantStorageAccessPendingError("Waiting for board storage access"))
   }
-  const { cursor, lastUploaded, ...credentials } = config
-  void cursor; void lastUploaded
-  const key = canonicalizeJson([session.owner, session.epoch ?? null, credentials])
+  const key = privateReplicaOperationKey(session.owner, session.epoch ?? null, config)
   let pending = constructing.get(session.cache)
   if (!pending) { pending = new Map(); constructing.set(session.cache, pending) }
   const existing = pending.get(key)
@@ -107,9 +120,7 @@ async function constructPrivateReplica(app: ReturnType<typeof useTincanban>, con
     guard()
   }
   const key = replicaKey(config)
-  const { cursor, lastUploaded, ...credentials } = config
-  void cursor; void lastUploaded
-  const binding = canonicalizeJson(credentials)
+  const binding = privateReplicaConfigurationKey(config)
   const cached = cache.get(key)
   if (cached?.binding === binding) return cached
   if (session.attachmentCoverage) session.attachmentCoverage.value = { ...session.attachmentCoverage.value, [key]: [] }
@@ -120,12 +131,14 @@ async function constructPrivateReplica(app: ReturnType<typeof useTincanban>, con
       if (!profile) throw new Error("Identity unavailable during private replication")
       return module.createIdentityReplica(config, profile, guard)
     })
-    : await import("./blindReplicaStore").then(module => {
+    : await loadBlindReplicaStore().then(module => {
       guard()
       return module.createBlindReplica(config, app, guard, async (value, configurations) => {
         guard()
-        const next = configurations ?? await persistPrivateReplicaProgress(owner, value, guard)
-        guard(); configs.value = next
+        if (!configurations) await persistPrivateReplicaProgress(owner, value, guard)
+        guard()
+        // One scope's completion carries an old full list. Patch only that scope's cursor.
+        applyPersistedReplicaProgress(configs, value)
       }, states => {
         guard()
         if (session.attachmentCoverage) session.attachmentCoverage.value = { ...session.attachmentCoverage.value, [key]: states }

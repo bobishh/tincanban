@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url"
 
 // Co-locate the existing eager workspace graph without pulling in lazy dependencies.
 const workspaceCoreModules = new Set([
-  "sync/workspaceAdmissionReuse.ts",
   "sync/workspaceAdmissionCheckpoint.ts",
   "sync/changeAuthorization.ts",
   "domain/workspaceMigration.ts",

@@ -293,8 +293,22 @@ export async function refreshAvailableWorkspaces(
   }
 }
 
-export function notifyLocalChanges(workspaceId?: string): void {
+function notifyLocalChanges(workspaceId?: string): void {
   for (const listener of stateRuntime.localChangeListeners) listener(workspaceId);
+}
+
+export async function publishCommittedWorkspace(
+  id: string,
+  doc: Automerge.Doc<WorkspaceDocumentV2>,
+  storage: WorkspaceStorage,
+): Promise<void> {
+  if (stateRuntime.activeDoc?.id === id) {
+    updateReactiveState(doc);
+    await refreshCausalReview(storage, id);
+  }
+  await refreshAvailableWorkspaces(storage);
+  stateRuntime.storageChannel?.postMessage({ type: "workspace-persisted", workspaceId: id });
+  notifyLocalChanges(id);
 }
 
 async function loadInitialWorkspace(

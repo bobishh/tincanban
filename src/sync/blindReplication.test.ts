@@ -237,6 +237,50 @@ test("Given a durably uploaded snapshot and unchanged document, proof, authority
   } finally { digest.mockRestore() }
 })
 
+test("Given a current upload revision and an empty inventory, when sync repeats, then inventory runs once without attachment preparation or a document read, and a pending outbox or checkpoint still prepares", async () => {
+  const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
+  let progress = emptyReplicaState<BlindObject>("current-upload")
+  const read = vi.fn(async () => new Uint8Array([1]))
+  const prepareAttachments = vi.fn(async () => {})
+  const inventory = vi.fn(async (_access: BlindAccess, cursor: number) => ({ objects: [], cursor, hasMore: false, objectCount: 0 }))
+  const transport: NonNullable<ConstructorParameters<typeof BlindReplica>[2]> = {
+    inventory, download: async () => { throw new Error("Unexpected download") },
+    upload: async (access, object, requestId) => signedReceipt(access, object, requestId),
+  }
+  const store = {
+    replicaBinding: "current-upload", read, prepareAttachments, readSnapshotRevision: async () => "rev-1",
+    authorization: async () => ({ signed: true }), readChat: async () => null, merge: async () => {}, mergeChat: async () => {},
+    persist: async () => {}, ensureCurrent: async () => {},
+    readReplicaProgress: async () => structuredClone(progress),
+    persistReplicaProgress: async (expected: number, next: ReplicaState<BlindObject>) => {
+      if (progress.generation !== expected) throw new Error("Replica progress changed during persistence")
+      progress = structuredClone(next)
+    },
+    prepareCheckpoint: undefined as ((bytes: Uint8Array, object: BlindObject, expectedSequence: number) => Promise<BlindCheckpointRequest | undefined>) | undefined,
+    checkpointAllowed: undefined as ((request?: BlindCheckpointRequest) => Promise<boolean>) | undefined,
+    attachmentRetryPending: async () => false,
+  }
+  const replica = new BlindReplica(config, store, transport)
+  await replica.sync()
+  prepareAttachments.mockClear(); read.mockClear(); inventory.mockClear()
+  await replica.sync()
+  expect(inventory).toHaveBeenCalledOnce()
+  expect(prepareAttachments).not.toHaveBeenCalled()
+  expect(read).not.toHaveBeenCalled()
+  progress = { ...progress, pending: { requestId: "pending-upload", observedSequence: progress.cursor, hash: progress.lastUploaded,
+    bytes: 1, object: {} as BlindObject } }
+  await replica.sync().catch(cause => expect(cause).toBeInstanceOf(Error))
+  expect(prepareAttachments).toHaveBeenCalled()
+  progress = { ...progress, pending: undefined }
+  prepareAttachments.mockClear()
+  inventory.mockImplementation(async (_access, cursor) => ({ objects: [], cursor, hasMore: false, objectCount: 8 }))
+  store.prepareCheckpoint = async () => undefined
+  store.checkpointAllowed = async () => false
+  transport.checkpoint = async () => { throw new Error("Checkpoint is not part of this pass") }
+  await replica.sync().catch(cause => expect(cause).toBeInstanceOf(Error))
+  expect(prepareAttachments).toHaveBeenCalled()
+})
+
 test("Given an already stored snapshot, when a periodic pass has no changes, diagnostics connect board and storage scope without another upload", async () => {
   const config: BlindReplicaConfig = { origin: "http://localhost:8080", scopeId: "opaque", servicePublicKey: signer.publicKey, readToken: "read", writeToken: "write", policyRevision: 1, keyEpoch: 1, contentKey: encodeBlindBytes(crypto.getRandomValues(new Uint8Array(32))), workspaceId: "board", cursor: 0, lastUploaded: "" }
   const events: Array<{ event: string; detail: Record<string, unknown> }> = []
