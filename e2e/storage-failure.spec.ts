@@ -16,6 +16,6 @@ test("Given storage failure, when an item is saved, then failure stays visible a
   await form.getByRole("button", { name: "Save item" }).click()
 
   await expect(form.getByRole("alert")).toContainText(/Storage failure|Save failed/i)
-  await expect(page.locator(".save-state")).toHaveText("Not saved")
+  await expect(page.getByLabel("Workspace presence")).toHaveText("Not saved")
   await expect(page.getByRole("button", { name: "Open Unsaved item" })).toHaveCount(0)
 })
