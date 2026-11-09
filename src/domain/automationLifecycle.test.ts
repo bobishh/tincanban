@@ -9,6 +9,7 @@ import { createWorkspaceDoc } from "../test/boardFixture"
 import { assertWorkspaceTransition } from "./permissions"
 import { validateWorkspaceDoc } from "./validation"
 import { hasEntityKind, type WorkspaceDocumentV2 } from "./model"
+import { getChildren } from "./ancestry"
 import type { Command } from "./commandTypes"
 
 beforeAll(async () => {
@@ -78,6 +79,31 @@ it("Given an automation control record, when editor, visitor or Worker changes i
   }
   const erased = Automerge.change(Automerge.clone(paused), draft => { delete draft.entities[id] })
   expect(() => assertWorkspaceTransition("owner", paused, erased, "owner")).toThrow(/tombstone/i)
+})
+
+it.each(["move", "create"] as const)("Given an automation and columns with tied ranks, when the owner requests a column %s, then only columns are reordered", operation => {
+  const { created, id } = fixture()
+  const template = Object.values(Automerge.toJS(created).entities).find(entity => hasEntityKind(entity, "column"))!
+  const boardId = template.placement.parentId!
+  const first = "00-first-column"
+  const anchor = "zz-anchor-column"
+  const before = Automerge.change(created, draft => {
+    for (const columnId of [first, anchor]) {
+      draft.entities[columnId] = { ...template, id: columnId, placement: { parentId: boardId, rank: "0/1" } }
+    }
+  })
+  const moving = template.id
+  const title = "New column beside automation"
+  const after = change(before, operation === "move"
+    ? { kind: "moveEntity", entityId: moving, parentId: boardId, beforeId: anchor }
+    : { kind: "createColumn", boardId, title, beforeId: anchor })
+  expect(() => assertWorkspaceTransition("owner", before, after, "owner")).not.toThrow()
+  const columns = getChildren(after.entities, boardId).filter(entity => hasEntityKind(entity, "column"))
+  const anchorIndex = columns.findIndex(column => column.id === anchor)
+  expect(columns[anchorIndex - 1]).toMatchObject(operation === "move" ? { id: moving } : { title })
+  expect(after.entities[id]).toEqual(before.entities[id])
+  expect(getChildren(after.entities, boardId).filter(entity => !hasEntityKind(entity, "column")))
+    .toEqual(getChildren(before.entities, boardId).filter(entity => !hasEntityKind(entity, "column")))
 })
 
 it("Given an existing instance or unrelated board scope, when creating an automation, then collision and invalid bindings are rejected", () => {

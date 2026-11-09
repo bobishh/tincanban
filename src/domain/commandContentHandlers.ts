@@ -5,7 +5,7 @@ import { compareRanks, calculateRankBetween } from "./ancestry"
 import { patchFieldDefinition } from "./fields"
 import { err } from "./commandTypes"
 import type { CommandByKind, CommandContext, CommandHandler } from "./commandHandlerTypes"
-import { applyRenumbering, computeInsertionRank } from "./commandSupport"
+import { applyRenumbering, computeColumnInsertionRank, computeInsertionRank } from "./commandSupport"
 import { isArchiveColumn } from "./archive"
 import { cardStageButtons } from "./cardStageButtons"
 
@@ -18,7 +18,7 @@ export const createColumn: CommandHandler<"createColumn"> = (doc, command, conte
     : Object.values(doc.entities).some(entity => hasEntityKind(entity, "column") && !entity.archivedAt && entity.placement.parentId === command.boardId && isArchiveColumn(entity))
   if (command.archive && hasArchiveColumn) return err("invalid_input", "Only one archive column is allowed", "archive")
   const id = crypto.randomUUID()
-  const insertion = computeInsertionRank(doc.entities, command.boardId, command.beforeId)
+  const insertion = computeColumnInsertionRank(doc.entities, command.boardId, command.beforeId)
   const existingColumns = Object.values(doc.entities).filter((entity): entity is Column => hasEntityKind(entity, "column") && entity.placement.parentId === command.boardId && !entity.archivedAt).sort((a, b) => compareRanks(a.placement.rank, b.placement.rank))
   const buttons = cardStageButtons(board, existingColumns)
   return { ok: true, value: { changedEntityIds: [id, command.boardId], apply: draft => {

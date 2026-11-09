@@ -10,7 +10,7 @@ import { seedBoard } from "./seeds"
 import { err } from "./commandTypes"
 import { entitySchema } from "./entitySchemas"
 import type { CommandByKind, CommandContext, CommandHandler, PreparedCommand } from "./commandHandlerTypes"
-import { applyRenumbering, computeInsertionRank, findRootBoardId } from "./commandSupport"
+import { applyRenumbering, computeColumnInsertionRank, computeInsertionRank, findRootBoardId } from "./commandSupport"
 
 export const createWorkspace: CommandHandler<"createWorkspace"> = () => err("invalid_input", "createWorkspace cannot be executed on an existing workspace document")
 
@@ -183,7 +183,9 @@ function moveEntityResult(doc: Automerge.Doc<WorkspaceDocumentV2>, command: Comm
   if (!entity) return err("not_found", `Entity ${command.entityId} not found`)
   const valid = validateMove(doc, entity, command)
   if (!valid.ok) return valid
-  const insertion = computeInsertionRank(doc.entities, command.parentId, command.beforeId)
+  const insertion = hasEntityKind(entity, "column")
+    ? computeColumnInsertionRank(doc.entities, command.parentId, command.beforeId)
+    : computeInsertionRank(doc.entities, command.parentId, command.beforeId)
   const descendantItemIds = isItemShell(entity) ? itemDescendantIds(doc.entities, entity.id) : []
   return { ok: true, value: { changedEntityIds: [command.entityId, ...descendantItemIds.filter(id => id !== command.entityId)], apply: draft => moveEntityInDraft(draft, command, insertion, context.nowIso, restore, descendantItemIds) } }
 }

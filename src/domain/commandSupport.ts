@@ -19,7 +19,14 @@ export function findRootBoardId(entities: Record<string, WorkspaceEntity>, entit
 }
 
 export function computeInsertionRank(entities: Record<string, WorkspaceEntity>, parentId: string | null, beforeId?: string | null): { rank: string; renumbered?: Record<string, string> } {
-  const siblings = getChildren(entities, parentId).filter(entity => entity.kind !== "application_source")
+  return insertionRank(getChildren(entities, parentId).filter(entity => entity.kind !== "application_source"), beforeId)
+}
+
+export function computeColumnInsertionRank(entities: Record<string, WorkspaceEntity>, boardId: string, beforeId?: string | null) {
+  return insertionRank(getChildren(entities, boardId).filter(entity => hasEntityKind(entity, "column")), beforeId)
+}
+
+function insertionRank(siblings: WorkspaceEntity[], beforeId?: string | null): { rank: string; renumbered?: Record<string, string> } {
   if (!siblings.length) return { rank: "0/1" }
   if (!beforeId) return { rank: calculateRankBetween(siblings.at(-1)?.placement.rank ?? null, null) }
   const targetIndex = siblings.findIndex(sibling => sibling.id === beforeId)
