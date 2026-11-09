@@ -1,10 +1,10 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type BrowserContext } from "@playwright/test"
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { spawn, type ChildProcess } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { expectFaviconColor } from "./support/favicon"
-import { createJobSearchWorkspace } from "./support/workspaces"
+import { addJobSearchLead, createJobSearchWorkspace } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 import { approveRustyForFixture } from "./support/identityRustyFixture"
 
@@ -71,12 +71,16 @@ test("Given connected private board storage, when approving inspection from Rust
   } finally { await service.close(); await rusty.close() }
 })
 
-test("Given a phone reopens a cached board, when Rusty is delayed or unreachable, then distinguish the local copy from a verified read", async ({ page, context, baseURL }) => {
+test("Given a phone reopens a cached board, when Rusty is delayed or unreachable, then distinguish the local copy from a verified read", async ({ page, context, browser, baseURL }) => {
   test.setTimeout(60_000)
+  await context.routeWebSocket("**/*", socket => socket.close())
   await page.goto("/")
   await createJobSearchWorkspace(page, "Board freshness")
+  await addJobSearchLead(page, "Freshness fixture")
   const rusty = await startRustyService({}, baseURL!)
   let gate = Promise.withResolvers<void>()
+  const download = Promise.withResolvers<void>()
+  let mobileContext: BrowserContext | undefined
   try {
     await approveRustyForFixture(page, rusty.origin)
     await page.getByRole("button", { name: "Sync", exact: true }).click()
@@ -86,6 +90,7 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
     await panel.getByRole("button", { name: "Connect", exact: true }).click()
     await expect(panel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
       .toBeVisible({ timeout: 30_000 })
+    await page.getByRole("dialog", { name: "Device sync" }).getByRole("button", { name: "Close", exact: true }).click()
     const boardUrl = page.url()
     const scope = await page.evaluate(async origin => {
       const { bootstrapIdentity } = await import("/src/domain/identity.ts")
@@ -96,9 +101,10 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
       return config.scopeId
     }, rusty.origin)
 
-    const mobile = await context.newPage()
-    await mobile.setViewportSize({ width: 390, height: 844 })
-    await page.close()
+    mobileContext = await browser.newContext({ storageState: await context.storageState({ indexedDB: true }),
+      viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+    await mobileContext.routeWebSocket("**/*", socket => socket.close())
+    const mobile = await mobileContext.newPage()
     let unavailable = false
     const inventory = new RegExp(`/v2/scopes/${scope}/objects\\?after=`)
     await mobile.route(inventory, async route => {
@@ -128,8 +134,29 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
     expect((await toolbar.boundingBox())!.height).toBe(pendingHeight)
     unavailable = false
     await expect(freshness).toHaveText(/^Rusty checked \d{2}:\d{2}$/)
-    await mobile.close()
-  } finally { gate.resolve(); await rusty.close() }
+    await mobile.route(url => url.origin === rusty.origin && url.pathname.startsWith(`/v2/scopes/${scope}/objects/`), async route => {
+      if (route.request().method() === "GET") await download.promise
+      await route.continue()
+    })
+    const card = "Open Freshness fixture — Engineer"
+    const note = "The new note is present only after admission"
+    await page.getByRole("button", { name: card, exact: true }).click()
+    const sourceDetail = page.getByRole("dialog", { name: "Item overview" })
+    await sourceDetail.locator("summary").filter({ hasText: /^Quick note$/ }).click()
+    await sourceDetail.getByRole("textbox", { name: "Quick note", exact: true }).fill(note)
+    await sourceDetail.getByRole("button", { name: "Add note", exact: true }).click()
+    await expect(freshness).toHaveText("Applying updates…", { timeout: 10_000 })
+    expect((await toolbar.boundingBox())!.height).toBe(pendingHeight)
+    download.resolve()
+    await expect(freshness).toHaveText(/^Rusty checked \d{2}:\d{2}$/)
+    await mobile.getByRole("button", { name: card, exact: true }).click()
+    await expect(mobile.getByRole("dialog", { name: "Item overview" }).getByText(note, { exact: true })).toBeVisible()
+  } finally {
+    gate.resolve()
+    download.resolve()
+    await mobileContext?.close()
+    await rusty.close()
+  }
 })
 
 test("Given an owned board, address-only Rusty connects once and removal waits for server revocation without losing local work", async ({ page, baseURL }, testInfo) => {

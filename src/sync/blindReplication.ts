@@ -76,6 +76,7 @@ export class BlindReplica {
   private freshUpload = false
   private pendingSnapshot?: Snapshot
   private uploadedSnapshot?: Snapshot
+  private onFirstDownload?: () => void
   private operations: Promise<unknown> = Promise.resolve()
   constructor(private readonly config: BlindReplicaConfig, private readonly store: BlindReplicaStore,
     private readonly transport: Transport = { inventory: inventoryBlindObjects, download: downloadBlindObject, upload: uploadBlindObject,
@@ -93,7 +94,14 @@ export class BlindReplica {
       content: { revision: () => this.snapshotRevision(), capture: () => this.phase("snapshot", () => this.captureSnapshot()),
         seal: plaintext => this.phase("encrypt", () => encryptBlindObject(config.scopeId, config.keyEpoch, decodeBlindBytes(config.contentKey), plaintext)) },
       transport: { inventory: cursor => this.phase("inventory", () => transport.inventory({ ...config }, cursor)),
-        download: id => this.phase("download", () => transport.download({ ...config }, id)), upload: (object, requestId, observedSequence) => this.upload(object, requestId, observedSequence) },
+        download: id => {
+          // The engine has validated the inventory before requesting its first unapplied object.
+          const notify = this.onFirstDownload
+          this.onFirstDownload = undefined
+          notify?.()
+          return this.phase("download", () => transport.download({ ...config }, id))
+        },
+        upload: (object, requestId, observedSequence) => this.upload(object, requestId, observedSequence) },
       admit: object => this.receiveSnapshot(object),
       verifyReceipt: (receipt, object, requestId) => verifyBlindReceipt(receipt, config, object, requestId),
       guard: () => this.ensureCurrent(),
@@ -139,17 +147,19 @@ export class BlindReplica {
 
   private async pullNow(observeRead?: (result: BoardReplicaRead) => void): Promise<boolean> {
     const checkedAt = Date.now()
+    this.onFirstDownload = observeRead && (() => observeRead({ phase: "catching-up" }))
     const caughtUp = await this.engine.pull().catch(cause => {
       observeRead?.({ phase: "unavailable" })
       throw cause
-    })
+    }).finally(() => { this.onFirstDownload = undefined })
+    if (!caughtUp) return false
     const inventory = this.engine.inventoryStatus()
-    if (caughtUp && inventory) {
+    if (inventory) {
       this.retainedObjects = inventory.objectCount ?? 0
       this.checkpointSequence = inventory.maxSequence ?? inventory.cursor
     }
-    observeRead?.(caughtUp ? { phase: "checked", checkedAt } : { phase: "catching-up" })
-    return caughtUp
+    observeRead?.({ phase: "checked", checkedAt })
+    return true
   }
 
   push(): Promise<void> { return this.schedule(async () => { await this.store.prepareAttachments?.(); await this.pushNow() }) }
