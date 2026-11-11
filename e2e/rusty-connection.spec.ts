@@ -83,7 +83,7 @@ test("Given connected private board storage, when approving inspection from Rust
   } finally { await service.close(); await rusty.close() }
 })
 
-test("Given a phone reopens a cached board, when Rusty is delayed or unreachable, then distinguish the local copy from a verified read", async ({ page, context, browser, baseURL }) => {
+test("Given a phone reopens a cached board, when Rusty is delayed or unreachable, then keep freshness checks in Sync and the board usable", async ({ page, context, browser, baseURL }) => {
   test.setTimeout(60_000)
   await context.routeWebSocket("**/*", socket => socket.close())
   await page.goto("/")
@@ -119,9 +119,13 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
     })
     await mobile.goto(boardUrl)
     const toolbar = mobile.getByRole("region", { name: "tincanban controls" })
-    const freshness = toolbar.getByRole("status", { name: "Board freshness" })
+    await expect(toolbar.getByRole("status", { name: "Board freshness" })).toHaveCount(0)
     const search = toolbar.getByRole("searchbox", { name: "Search cards" })
     await expect(search).toBeVisible()
+    await mobile.getByRole("button", { name: "Menu", exact: true }).click()
+    await mobile.getByRole("button", { name: "Sync", exact: true }).click()
+    const dialog = mobile.getByRole("dialog", { name: "Device sync" })
+    const freshness = dialog.getByRole("status", { name: "Board freshness" })
     await expect(freshness).toHaveText("Checking Rusty…")
     const pendingHeight = (await toolbar.boundingBox())!.height
     gate.resolve()
@@ -153,6 +157,8 @@ test("Given a phone reopens a cached board, when Rusty is delayed or unreachable
     expect((await toolbar.boundingBox())!.height).toBe(pendingHeight)
     download.resolve()
     await expect(freshness).toHaveText(/^Rusty checked \d{2}:\d{2}$/)
+    await dialog.getByRole("button", { name: "Close", exact: true }).click()
+    await expect(mobile.getByRole("status", { name: "Board freshness" })).toHaveCount(0)
     await mobile.getByRole("button", { name: card, exact: true }).click()
     await expect(mobile.getByRole("dialog", { name: "Item overview" }).getByText(note, { exact: true })).toBeVisible()
   } finally {
@@ -198,7 +204,9 @@ test("Given an authorized cached board, when the personal inventory stalls, then
     await mobile.goto(boardUrl)
     await expect.poll(() => Boolean(pendingProfile), { timeout: 10_000 }).toBe(true)
     await expect(mobile.getByRole("button", { name: "Open Priority update — Engineer", exact: true })).toBeVisible({ timeout: 8_000 })
-    await expect(mobile.getByRole("status", { name: "Board freshness" })).toHaveText(/^Rusty checked /)
+    await mobile.getByRole("button", { name: "Menu", exact: true }).click()
+    await mobile.getByRole("button", { name: "Sync", exact: true }).click()
+    await expect(mobile.getByRole("dialog", { name: "Device sync" }).getByRole("status", { name: "Board freshness" })).toHaveText(/^Rusty checked /)
     expect(pendingProfile?.failure()).toBeNull()
   } finally {
     releaseProfile.resolve()

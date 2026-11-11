@@ -105,5 +105,7 @@ const emit = defineEmits<{
     @copy="sync.copyInvite"
     @dismiss="sync.dismiss"
     @stop="sync.stopLiveSync"
-  />
+  >
+    <template #board-freshness><slot name="board-freshness" /></template>
+  </component>
 </template>

@@ -3,9 +3,6 @@
 .board-freshness {
   display: grid;
   grid-template-rows: repeat(2, 1.3em);
-  inline-size: 27ch;
-  max-inline-size: 100%;
-  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 .board-address-unavailable, .board-address-progress { max-width: 38rem; margin: 10vh auto; padding: var(--space-5); text-align: center; }
@@ -224,7 +221,6 @@
 
 @media (max-width: 768px) {
   .toolbar-meta { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
-  .board-freshness { flex-basis: 100%; text-align: start; }
 }
 
 @media (max-width: 768px) {

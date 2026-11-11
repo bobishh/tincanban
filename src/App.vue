@@ -242,11 +242,6 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     <BoardToolbar v-if="boardVisible" v-model:search="search" v-model:filters="filters" :columns="genericColumns" :fields="boardFields"
       :placeholder="'Search cards'" :inert="!boardVisible || undefined">
       <SaveState :state="saveState" :settled-label="workspacePresenceSummary" aria-label="Workspace presence" />
-      <span class="save-state board-freshness" role="status" aria-label="Board freshness"
-        title="Latest confirmed check for each board source.">
-        <span v-for="label in boardFreshnessLabels" :key="label">{{ label }}</span>
-        <span v-if="!boardFreshnessLabels.length">Freshness unknown</span>
-      </span>
     </BoardToolbar>
 
     <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
@@ -494,7 +489,15 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
     />
 
     </template>
-    <WorkspaceSyncMount v-if="sync.isOpen.value" :dialog="SyncDialog" :sync="sync" :chat="chat" :workspace-id="activeWorkspace.id" :member-avatars="memberAvatars" :revoking-peer="revokingPeer" :blind-replication="app.collaboration.device.blindReplication" :my-device-removal="myDeviceRemoval" :mesh-members="meshMembers" :current-role="currentRole" :succession="activeSuccession" :can-claim-succession="canClaimSuccession" :can-manage-access="canManageAccess" :transferring-ownership="transferringOwnership" :leaving-mesh="leavingMesh" :peer-access-error="peerAccessError" :device-presence="devicePresence" :mesh-presence="meshPresence" :active-mesh-retry-at="activeMeshRetryAt" :identity-portal-origin="identityPortalOrigin ?? ''" :add-my-device="identityOwnerActions.addMyDevice" :generate-workspace-invite="generateWorkspaceInviteWithIdentity" :begin-enrollment-sign-in="beginEnrollmentSignIn" :revoke-workspace-peer="revokeWorkspacePeer" :transfer-workspace-ownership="transferWorkspaceOwnership" :leave-workspace-mesh="leaveWorkspaceMesh" :set-workspace-successor="setWorkspaceSuccessor" :vote-for-workspace-successor="voteForWorkspaceSuccessor" :claim-workspace-succession="claimWorkspaceSuccession" :promote-workspace-peer="promoteWorkspacePeer" :renew-workspace-peer-access="renewWorkspacePeerAccess" @update-selected-workspace-ids="sync.selectedWorkspaceIds.value = $event" @update-selected-workspace-id="sync.selectedWorkspaceId.value = $event" />
+    <WorkspaceSyncMount v-if="sync.isOpen.value" :dialog="SyncDialog" :sync="sync" :chat="chat" :workspace-id="activeWorkspace.id" :member-avatars="memberAvatars" :revoking-peer="revokingPeer" :blind-replication="app.collaboration.device.blindReplication" :my-device-removal="myDeviceRemoval" :mesh-members="meshMembers" :current-role="currentRole" :succession="activeSuccession" :can-claim-succession="canClaimSuccession" :can-manage-access="canManageAccess" :transferring-ownership="transferringOwnership" :leaving-mesh="leavingMesh" :peer-access-error="peerAccessError" :device-presence="devicePresence" :mesh-presence="meshPresence" :active-mesh-retry-at="activeMeshRetryAt" :identity-portal-origin="identityPortalOrigin ?? ''" :add-my-device="identityOwnerActions.addMyDevice" :generate-workspace-invite="generateWorkspaceInviteWithIdentity" :begin-enrollment-sign-in="beginEnrollmentSignIn" :revoke-workspace-peer="revokeWorkspacePeer" :transfer-workspace-ownership="transferWorkspaceOwnership" :leave-workspace-mesh="leaveWorkspaceMesh" :set-workspace-successor="setWorkspaceSuccessor" :vote-for-workspace-successor="voteForWorkspaceSuccessor" :claim-workspace-succession="claimWorkspaceSuccession" :promote-workspace-peer="promoteWorkspacePeer" :renew-workspace-peer-access="renewWorkspacePeerAccess" @update-selected-workspace-ids="sync.selectedWorkspaceIds.value = $event" @update-selected-workspace-id="sync.selectedWorkspaceId.value = $event">
+      <template #board-freshness>
+        <span class="save-state board-freshness" role="status" aria-label="Board freshness"
+          title="Latest confirmed check for each board source.">
+          <span v-for="label in boardFreshnessLabels" :key="label">{{ label }}</span>
+          <span v-if="!boardFreshnessLabels.length">Freshness unknown</span>
+        </span>
+      </template>
+    </WorkspaceSyncMount>
 
   </TincanbanPageLayout>
   <BuildFooter :inert="identityBoardsBlocked || undefined" />

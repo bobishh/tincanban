@@ -10,8 +10,7 @@ import DeviceRemovalControl from "./DeviceRemovalControl.vue"
 import MyDeviceRemovalControl from "./MyDeviceRemovalControl.vue"
 import OwnerReconnectDialog from "./OwnerReconnectDialog.vue"
 import DialogWindow from "./DialogWindow.vue"
-import type { useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
-import { myDeviceRemovalComplete } from "../app/useMyDeviceRemoval"
+import { myDeviceRemovalComplete, type useMyDeviceRemoval } from "../app/useMyDeviceRemoval"
 import { syncDialogConnectionStatus } from "./syncDialogConnectionStatus"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { SyncStep, SuccessionView, OwnerReconnectReview } from "../app/syncTypes"
@@ -206,6 +205,7 @@ function deviceConnectionLabel(device: { deviceId: string; online: boolean; reco
     <template #header><h2 class="sync-window-title">{{ title }}</h2></template>
     <section class="dialog dialog-window-content sync-dialog">
       <DeviceSyncProblems v-if="blindReplication" :controller="blindReplication" />
+      <slot v-if="step === 'members' || step === 'chooser'" name="board-freshness" />
 
       <OwnerReconnectDialog v-if="step.startsWith('owner-reconnect-')" :step="step" :invite-url="inviteUrl"
         :qr-code="qrCode" :copy-notice="copyNotice" :error="error" :review="ownerReconnectReview ?? null"
