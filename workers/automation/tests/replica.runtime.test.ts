@@ -2180,7 +2180,11 @@ async function fixture(subjectPersonId?: string, applied = false) {
   return { owner, automation, packet, key, persisted };
 }
 
-it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s existing vacancies, When forwarded mail is processed, Then create one Applied card and deduplicate delivery", async existing => {
+it.each([
+  { existing: 0, hasPosting: true },
+  { existing: 9, hasPosting: true },
+  { existing: 1, hasPosting: false },
+])("Given a confirmed application, $existing existing vacancies and posting URL=$hasPosting, When forwarded mail is processed, Then create one Applied card and deduplicate delivery", async ({ existing, hasPosting }) => {
   const id = `receipt-${crypto.randomUUID()}`;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(id);
   const identitySecret = "test-only-identity-secret-at-least-thirty-two-bytes";
@@ -2201,7 +2205,12 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
     AI: receiptAi, INTEGRATIONS_JSON: JSON.stringify([{ id, workspaceId: data.packet.workspaceId,
       scope: { version: 1, ...data.packet.bindings, expiresAt: "2099-01-01T00:00:00.000Z" },
       emailAddress: "intake@example.test", allowedForwarders: ["owner@example.test"] }]) } as unknown as WorkerEnv;
-  const mime = `From: noreply@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <new-application@example.test>\r\nSubject: Application received\r\nContent-Type: text/plain\r\n\r\nWe received your application for Senior Engineer at Example GmbH. https://jobs.example.test/42`;
+  const role = hasPosting ? "Senior Engineer" : "Senior Full Stack Engineer | Experimentation - Product Analytics | Germany | Remote";
+  const subject = hasPosting ? "Application received" : "Thank you for applying to Example GmbH";
+  const text = hasPosting
+    ? `We received your application for ${role} at Example GmbH. https://jobs.example.test/42`
+    : `Thank you for your interest in Example GmbH! We wanted to let you know we received your application for ${role}, and are delighted that you would consider joining our team!`;
+  const mime = `From: noreply@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <new-application@example.test>\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${text}`;
   const deliver = () => worker.email({ from: "owner@example.test", to: "intake@example.test", rawSize: mime.length,
     raw: new Response(mime).body!, setReject: (reason: string) => { throw new Error(reason); } } as ForwardableEmailMessage, testEnv);
   const eventId = await blindHash(new TextEncoder().encode(`${id}:email:<new-application@example.test>`));
@@ -2210,7 +2219,10 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
   await deliver();
   await runInDurableObject(stub, async (instance, ctx) => {
     setExecutionFixture(instance, "env", testEnv);
-    setExecutionFixture(instance, "jobPageFetcher", () => async () => new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } }));
+    setExecutionFixture(instance, "jobPageFetcher", () => async () => {
+      if (!hasPosting) throw new Error("No vacancy page is available");
+      return new Response('<script type="application/ld+json">{"@type":"JobPosting","title":"Senior Engineer","hiringOrganization":{"name":"Example GmbH"},"description":"Build software"}</script>', { headers: { "content-type": "text/html" } });
+    });
     await instance.alarm();
     expect((await instance.getEvent(eventId))).toMatchObject({ status: "applied", result: { action: { columnId: data.packet.bindings.columns.applied } } });
     await ctx.storage.deleteAlarm();
@@ -2221,7 +2233,7 @@ it.each([0, 9])("Given a new confirmed application, signed Applied scope and %s 
   const cards = Object.values(storedDocument.entities).filter(isItem);
   expect(cards).toHaveLength(existing + 1);
   expect(cards.find(card => card.placement.parentId === data.packet.bindings.columns.applied)).toMatchObject({
-    placement: { parentId: data.packet.bindings.columns.applied }, values: { [data.packet.bindings.fieldIds.role]: "Senior Engineer" } });
+    placement: { parentId: data.packet.bindings.columns.applied }, values: { [data.packet.bindings.fieldIds.role]: role } });
   Automerge.free(storedDocument);
   await runInDurableObject(stub, async (_instance, ctx) => { await ctx.storage.deleteAlarm(); });
 });

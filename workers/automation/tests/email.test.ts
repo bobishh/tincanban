@@ -2,6 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { correlateApplication, emailApplicationIdentity, gmailForwardingConfirmationUrl, parseForwardedMail } from '../src/email.ts';
 
+test('Given a receipt without a posting link, when the title follows a direct acknowledgement, then extract the full title and reject conflicts', () => {
+  const subject = 'Thank you for applying to Example Labs';
+  const role = 'Senior Full Stack Engineer | Experimentation - Product Analytics | Germany | Remote';
+  const text = `Thank you for your interest in Example Labs! We wanted to let you know we received your application for ${role}, and are delighted that you would consider joining our team!`;
+  assert.deepEqual(emailApplicationIdentity({ subject, text }), { company: 'Example Labs', role });
+  assert.equal(emailApplicationIdentity({ subject, text: `${text}\nRole: Other Role` }), null);
+  assert.equal(emailApplicationIdentity({ subject, text: 'We received your application for this position.' }), null);
+});
+
 test('Given application receipts without vacancy URLs, when reading explicit company and role spans, then retain only an unambiguous identity', () => {
   assert.deepEqual(emailApplicationIdentity({ subject: 'Thank you for your application to Example Labs, Alex!',
     text: 'Thanks you for your application to the Software Engineer,\nInternal Tools position. We appreciate your interest in joining Example Labs!' }),

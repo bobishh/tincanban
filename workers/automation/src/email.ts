@@ -39,7 +39,7 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
   const add = (values: Map<string, string>, value: string) => {
     const label = value.replace(/\s+/g, ' ').trim().replace(/^["“”']+|["“”']+$/g, '');
     const normalized = normalizePhrase(label);
-    if (values === roles && /^(?:a|an|the|this|that|your|position|role|vacancy)$/.test(normalized)) return;
+    if (values === roles && /^(?:(?:a|an|the|this|that|your)(?: (?:position|role|vacancy))?|position|role|vacancy)$/.test(normalized)) return;
     if (values === companies && /^(?:our|your|the)\b.*\bteam$/.test(normalized)) return;
     if (label.length >= 2 && label.length <= 200) values.set(normalized, label);
   };
@@ -63,6 +63,11 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
     add(roles, match[1]); add(companies, match[2]);
   }
   const folded = text.replace(/\s+/g, ' ');
+  for (const match of folded.matchAll(/\breceived your application for (?:the )?(.{2,200}?)(?=,?\s+and\s+(?:are|will|look forward)\b|[.!?](?:\s|$)|$)/gi)) {
+    const title = match[1].trim();
+    // The existing company-and-role pattern handles receipts with an explicit employer suffix.
+    if (!/\b(?:at|with)\s/i.test(title)) add(roles, title);
+  }
   for (const match of text.matchAll(/(?:position|role|job title):[ \t]*(.{2,200}?)(?=\s+(?:We (?:will|have|are)|You (?:will|can)|Thank you|Our team|Sincerely)\b|[.!;\n]|$)/gi)) add(roles, match[1]);
   for (const match of folded.matchAll(/(?:application (?:to|for)|applying for) (?:the )?(.{2,200}?) (?:position|role|vacancy)\b/gi)) add(roles, match[1]);
   if (companies.size !== 1 || roles.size !== 1) return null;
