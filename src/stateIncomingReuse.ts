@@ -47,14 +47,19 @@ export async function rememberIncomingPacket(packet: IncomingPacket, doc: Autome
   } catch { return }
   if (context.credentialFingerprint !== credentialFingerprint) return
   const revision = await readBoundPacketRevision(storage, doc.id, baselineId, boundRevision)
+  const frontier = await storage.readDeltaFrontier(doc.id)
+  const policy = admissionPolicy()
   if (!revision || (await localWorkspaceAdmissionAuthority(doc, profile)).fingerprint !== context.fingerprint ||
     await storage.readWorkspaceRevision(doc.id) !== revision) return
   let weight: number
   try { weight = packet.bytes.byteLength + JSON.stringify(packet.authorization).length * 2 } catch { return }
   if (weight > maximumBytes) return
+  // An unchanged reread can happen after the delta basis was installed.
+  // Bind this fully admitted packet to the same durable generation before caching it.
+  const generation = currentPacketGeneration(frontier, doc.id, policy, context.fingerprint)
   recentIncomingPackets.delete(doc.id)
-  recentIncomingPackets.set(doc.id, { ...packet, root: { id: doc.id, ownerPersonId: doc.ownerPersonId }, policy: admissionPolicy(),
-    authority: context.fingerprint, revision, baselineId: baselineId ?? null, weight })
+  recentIncomingPackets.set(doc.id, { ...packet, root: { id: doc.id, ownerPersonId: doc.ownerPersonId }, policy,
+    authority: context.fingerprint, revision, generation, baselineId: baselineId ?? null, weight })
   while (recentIncomingPackets.size > 8 || [...recentIncomingPackets.values()].reduce((sum, entry) => sum + entry.weight, 0) > maximumBytes)
     recentIncomingPackets.delete(recentIncomingPackets.keys().next().value!)
 }
@@ -65,4 +70,10 @@ async function readBoundPacketRevision(storage: WorkspaceStorage, workspaceId: s
   const revision = await storage.readWorkspaceRevision(workspaceId)
   if (boundRevision === undefined) return revision
   if (revision === boundRevision && (await storage.historyProgressForRead(workspaceId)).baselineId === (baselineId ?? null)) return revision
+}
+
+function currentPacketGeneration(frontier: Awaited<ReturnType<WorkspaceStorage["readDeltaFrontier"]>>,
+  workspaceId: string, policy: string, authority: string): string | undefined {
+  return frontier?.workspaceId === workspaceId && !frontier.invalidated && frontier.policy === policy &&
+    frontier.authorityFingerprint === authority ? frontier.generation : undefined
 }
