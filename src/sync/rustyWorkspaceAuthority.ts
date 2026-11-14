@@ -6,6 +6,7 @@ import type { WorkspaceWriteAuthorityEvidence, IncomingAuthorizationBundle } fro
 import { defaultStorage } from "../storage"
 import { peerStore, type WorkspaceAuthorityRecord } from "./peerStore"
 import type { BlindReplicaConfig } from "./blindReplication"
+import { recoverScopeAuthority } from "./durableMeshOwnershipScope"
 import { readRustyOwnerWorkspaceScopeAuthority } from "./rustyIdentityTransport"
 
 type ScopeView = { scopeId: string; creator: WorkspaceWriteAuthorityEvidence["genesisOwner"];
@@ -16,22 +17,10 @@ export async function ensureOwnedRustyWorkspaceAuthority(config: BlindReplicaCon
   ensureCurrent: () => void): Promise<WorkspaceAuthorityRecord | undefined> {
   if (config.boardAccess) return
   const existing = await peerStore.getWorkspaceAuthority(config.workspaceId)
-  if (existing) return existing
+  if (existing?.scopeAuthoritySnapshot) return existing
   const accepted = await readRustyOwnerWorkspaceScopeAuthority(profile, config, ensureCurrent)
-  const view = meshRustRuntime().state.validateScopeAuthority(accepted.snapshot, Date.now()) as ScopeView
-  const history = [view.creator, ...((accepted.snapshot as {
-    controlTransfers?: Array<{ payload: { toController: ScopeView["controller"] } }>
-  }).controlTransfers ?? []).map(record => record.payload.toController)]
-  const record: WorkspaceAuthorityRecord = { version: 1, workspaceId: config.workspaceId,
-    genesisOwnerPersonId: view.creator.personId, ownerPersonId: view.controller.personId,
-    ownerPublicKey: view.controller.publicKey, ownerCertificates: view.controller.certificates,
-    ownerHistory: history.filter(owner => owner.personId !== view.controller.personId), epoch: view.controlEpoch,
-    updatedAt: new Date().toISOString(), catalog: {},
-    scopeAuthoritySnapshot: accepted.snapshot as WorkspaceAuthorityRecord["scopeAuthoritySnapshot"] }
   ensureCurrent()
-  await defaultStorage.withWorkspaceAuthorityMutation(config.workspaceId,
-    context => context.write(() => { ensureCurrent(); return peerStore.putWorkspaceAuthority(record) }))
-  return record
+  return recoverScopeAuthority(peerStore, config.workspaceId, [accepted.snapshot], ensureCurrent)
 }
 
 /** Call after full signed document/history admission; retain its verified workspace proof projection for future writes. */

@@ -20,11 +20,13 @@ import { nextKeeperRevocationEpoch } from "./keeperGrantEpoch"
 import { workspaceOwnerSigningContext } from "./workspaceOwnerSigning"
 import { meshRecordSigning } from "./meshRecordSigning"
 import { persistVerifiedPeerBundle, persistWorkspaceParticipantGrant, renewWorkspaceParticipantAccess } from "./durableMeshPeerAdmission"
-import { confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
+import { recoverScopeAuthority, confirmedOwnershipSnapshot, createOwnershipProposal, mergeSuccessionState as mergeSuccessionStateInScope,
   ownershipTransfersWithPending, persistScopeAuthoritySnapshot, planOwnershipMerge, preflightScopeAuthoritySnapshot, publishConfirmedToSessions,
   type OwnershipMergePlan, type OwnershipTransferState } from "./durableMeshOwnershipScope"
 export abstract class DurableMeshAuthority extends DurableMeshCredentials {
   private readonly authorityClassifications = new WorkspaceAuthorityClassification()
+  async recoverWorkspaceAuthority(workspaceId: string, snapshots: unknown[]): Promise<void> { await recoverScopeAuthority(this.store, workspaceId, snapshots) }
+
   async mergeWorkspace(workspaceId: string, raw: unknown): Promise<void> {
     const value = await this.traceSlowPhase("catalog.validate", workspaceId, {},
       () => meshRustRuntime().state.validateMeshCatalog(raw, Date.now()) as MeshExport)
@@ -178,7 +180,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     const persist = () => this.store.putWorkspaceCredential({ ...credential, updatedAt: new Date().toISOString(),
       catalog: { ...meshCatalog(credential), successionPolicy: policy, successionVotes: [] } })
     if (authorityContext) {
-      if (!isWorkspaceAuthorityMutation(authorityContext, workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+      if (!isWorkspaceAuthorityMutation(authorityContext, workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context changed or belongs to another workspace")
       await authorityContext.write(persist)
     }
     else await defaultStorage.withWorkspaceAuthorityMutation(workspaceId, context => context.write(persist))
@@ -252,7 +254,7 @@ export abstract class DurableMeshAuthority extends DurableMeshCredentials {
     }
     if (changed) {
       if (authorityContext) {
-        if (!isWorkspaceAuthorityMutation(authorityContext, credential.workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+        if (!isWorkspaceAuthorityMutation(authorityContext, credential.workspaceId, defaultStorage)) throw new Error("Workspace authority mutation context changed or belongs to another workspace")
         await authorityContext.write(persist)
       }
       else await defaultStorage.withWorkspaceAuthorityMutation(credential.workspaceId, context => context.write(persist))

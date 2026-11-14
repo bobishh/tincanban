@@ -84,7 +84,7 @@ function assertStoredProfile(profileRaw: string | null, profile: LocalProfile): 
   const stored = profileRaw ? JSON.parse(profileRaw) as LocalProfile : undefined
   if (!stored || stored.identity?.personId !== profile.identity.personId || stored.identity.publicKey !== profile.identity.publicKey ||
       stored.device?.deviceId !== profile.device.deviceId || stored.device.publicKey !== profile.device.publicKey ||
-      canonicalizeJson(stored.certificate) !== canonicalizeJson(profile.certificate)) throw new Error("Board connection signing identity is stale")
+      canonicalizeJson(stored.certificate) !== canonicalizeJson(profile.certificate)) throw new Error("Board connection signing identity changed")
 }
 
 function hasRemovedOrigin(wire: Awaited<ReturnType<typeof exportPrivateReplicaState>>, origin: string, scopeId?: string): boolean {

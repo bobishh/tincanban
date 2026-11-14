@@ -274,6 +274,7 @@ test("Given an obsolete local route hint for a public board, when private access
   await page.route(api, route => route.fulfill({ json: { boardId, revision: 1, projection: snapshot } }))
   await page.goto(`/boards/${boardId}`)
   await expect(page.getByRole("heading", { name: "Published board" })).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator(".startup-screen")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Edit board", exact: true })).toHaveCount(0)
 })
 

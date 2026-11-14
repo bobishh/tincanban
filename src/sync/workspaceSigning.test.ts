@@ -123,7 +123,7 @@ it("Given unchanged verified public delivery inputs, when polling again, then re
     expect(scans).toBe(2)
     expect(sign).toHaveBeenCalledOnce()
     await replaceStoredDeviceKey()
-    await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/stale|signing key/i)
+    await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/changed|signing key/i)
     credential.mockResolvedValue({ ...authority, ownerPublicKey: "changed-owner-key", transportSecret: "test-secret" })
     await expect(buildPublicBoardDeliveryPolicy(profile, doc.id, "board-a", 1, () => {}, undefined, cache)).rejects.toThrow(/owner authority/i)
     expect(sign).toHaveBeenCalledOnce()
@@ -266,7 +266,7 @@ it("Given a live history-read guard, when validating again, then reuse its exact
     // One current input plus the existing post-policy race check; no duplicate initial role read.
     expect(reads).toHaveBeenCalledTimes(2)
     fingerprint.mockReturnValueOnce("changed-authority")
-    await expect(signing.requireCurrent()).rejects.toThrow(/authority is stale/i)
+    await expect(signing.requireCurrent()).rejects.toThrow(/authority changed/i)
     const authority = await peerStore.getWorkspaceAuthority(doc.id)
     if (!authority) throw new Error("Expected stored workspace authority")
     const revocation = await createWorkspaceDeviceRevocation(profile, doc.id, profile.identity.personId,

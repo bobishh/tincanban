@@ -44,11 +44,7 @@ async function peerRecord(envelope: MeshWorkspaceEnvelope, bundle: WorkspaceMemb
 }
 
 function mergedPeerBundles(records: WorkspacePeerRecord[]): WorkspaceMemberBundle[] {
-  return records.flatMap(record => {
-    const instances = record.instances?.filter(instance => instance.advertisement) ?? []
-    if (instances.length) return instances.map(instance => instance.advertisement as WorkspaceMemberBundle)
-    return record.advertisement ? [record.advertisement as WorkspaceMemberBundle] : []
-  })
+  return records.flatMap(record => meshRustRuntime().state.recoveryPeerAdvertisements(record, Date.now()) as WorkspaceMemberBundle[])
 }
 
 async function compactEnvelopePeers(envelope: MeshWorkspaceEnvelope): Promise<MeshWorkspaceEnvelope> {
@@ -259,7 +255,7 @@ export async function exportIdentityWorkspaceRouteRecovery(personId: string, wor
 
 /** Admit one pending envelope through DurableMesh; pending state remains portable for retry and later devices. */
 type WorkspaceRouteRestore = {
-  mesh: Pick<DurableMesh, "enrollmentGrant" | "validateInvitation" | "receiveInvitation"> &
+  mesh: Pick<DurableMesh, "enrollmentGrant" | "validateInvitation" | "receiveInvitation" | "recoverWorkspaceAuthority"> &
     Partial<Pick<DurableMesh, "probeWorkspaceConnection">>
   envelopes: MeshWorkspaceEnvelope[]
   profile: LocalProfile
@@ -309,12 +305,15 @@ async function restoreWorkspaceRoutes(input: WorkspaceRouteRestore, workspaceId:
   candidates: MeshWorkspaceEnvelope[]): Promise<void> {
   if (!candidates.length) return
   const existing = await input.readCredential(workspaceId)
-  const compatible = compatibleRoutes(existing, candidates)
   const admitted: Awaited<ReturnType<typeof validateRecoveryEnvelope>>[] = []
-  for (const envelope of compatible) {
+  for (const envelope of candidates) {
     try { admitted.push(await validateRecoveryEnvelope(input, workspaceId, envelope)) }
     catch { /* Invalid authority variants remain pending, but cannot block a valid one. */ }
   }
+  await input.mesh.recoverWorkspaceAuthority(workspaceId,
+    admitted.flatMap(item => item.envelope.scopeAuthoritySnapshot ? [item.envelope.scopeAuthoritySnapshot] : []))
+  const compatible = new Set(compatibleRoutes(existing, admitted.map(item => item.envelope)))
+  const selected = admitted.filter(item => compatible.has(item.envelope))
   if (!existing && new Set(admitted.map(item => item.envelope.transportSecret)).size > 1) {
     const authorities = new Set(admitted.map(({ envelope }) => canonicalizeJson([
       envelope.ownerPersonId, envelope.ownerPublicKey, envelope.scopeAuthoritySnapshot ?? null,
@@ -327,7 +326,7 @@ async function restoreWorkspaceRoutes(input: WorkspaceRouteRestore, workspaceId:
     }
     throw new WorkspaceConnectionConflict(workspaceId)
   }
-  const groups = groupRecoveryRoutes(admitted)
+  const groups = groupRecoveryRoutes(selected)
   if (groups.size === 0) throw new Error("No saved workspace route has verifiable active authority")
   if (groups.size !== 1) throw new Error("Multiple saved workspace authorities remain pending explicit resolution")
   for (const item of groups.values().next().value ?? []) {

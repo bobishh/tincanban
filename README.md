@@ -86,15 +86,19 @@ resumed request with every catalogued board retained finishes locally. Missing
 copies and their retry control appear in **Workspaces**, without covering an
 available board. When saved connections contain different transport keys, the
 app probes verified peer routes before selecting a connection; failed probes do
-not replace local credentials or board history. A fresh device still needs a
-verified board copy before this handshake can check its workspace authority.
+not replace local credentials or board history. Signed workspace authority is restored independently of transport-key selection.
+A connection conflict cannot prevent Rusty from recovering the existing board.
+An incomplete local authority record also does not suppress retrieval of Rusty’s
+signed ledger. The peer handshake still requires a verified board copy.
 
 Private Identity recovery state also retains signed workspace contacts and the
 workspace transport credential. A restored device checks that evidence against
 workspace authority before reconnecting to participants. A saved address is a
 bootstrap contact, not proof that a device is online. The optional contact component
 uses bounded compression while retaining support for earlier JSON snapshots;
-decompressed data still passes the same signature and authority checks.
+decompressed data still passes the same signature and authority checks. Recovery
+contacts retain every live lease and the two most recent expired or legacy
+addresses per device; old browser instances do not accumulate indefinitely.
 Direct peer delivery does
 not wait for Rusty access registration; unavailable storage retries independently.
 Legacy participant storage settings stay pending until the owner supplies current

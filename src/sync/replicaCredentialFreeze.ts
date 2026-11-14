@@ -18,7 +18,7 @@ function assertFreezeProfile(raw: string | null, profile: LocalProfile) {
   const stored = raw ? JSON.parse(raw) as LocalProfile : undefined
   if (!stored || stored.identity?.personId !== profile.identity.personId || stored.identity.publicKey !== profile.identity.publicKey ||
       stored.device?.deviceId !== profile.device.deviceId || stored.device.publicKey !== profile.device.publicKey ||
-      canonicalizeJson(stored.certificate) !== canonicalizeJson(profile.certificate)) throw new Error("Credential transition signing profile is stale")
+      canonicalizeJson(stored.certificate) !== canonicalizeJson(profile.certificate)) throw new Error("Credential transition signing profile changed")
 }
 
 /** Freeze every known scope before person-wide revocation. Existing queues and original credentials remain intact. */

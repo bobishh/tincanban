@@ -89,7 +89,7 @@ function assertSameIntegrationCacheWrite(currentDetails: KeeperDetails, nextDeta
   const currentRevision = currentDetails.revision
   const nextRevision = nextDetails.revision
   if (Number.isSafeInteger(currentRevision) && Number.isSafeInteger(nextRevision) && nextRevision! < currentRevision!) {
-    throw new Error("Stale keeper cache write cannot replace a newer integration revision.")
+    throw new Error("An earlier keeper cache write cannot replace a newer integration revision.")
   }
   if (currentDetails.removalPending && !nextDetails.removalPending
     && (!Number.isSafeInteger(currentRevision) || !Number.isSafeInteger(nextRevision) || nextRevision! <= currentRevision!)) {
@@ -149,7 +149,7 @@ export async function saveKeeperIntegrationReference(reference: KeeperIntegratio
 }
 
 function assertKeeperReferenceWriteIsCurrent(current: KeeperIntegrationReference, next: KeeperIntegrationReference) {
-  if (next.revision < current.revision) throw new Error("Stale keeper receipt cannot replace newer integration state.")
+  if (next.revision < current.revision) throw new Error("An earlier keeper receipt cannot replace newer integration state.")
   if (next.revision > current.revision) return
   assertSameRevisionCompatible(current, next)
 }

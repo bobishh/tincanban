@@ -11,7 +11,8 @@ import { publishConfirmedWorkspace, workspaceSet } from "./workspaceSet"
 import type { WorkspaceOwnershipTransfer, WorkspaceRevocation, WorkspaceSuccessionClaim, WorkspaceSuccessionPolicy,
   WorkspaceSuccessionVote, WorkspaceMemberBundle, verifyWorkspaceMemberBundle } from "./meshRecords"
 import { createWorkspaceOwnershipTransfer } from "./meshRecords"
-import type { PeerStore, WorkspaceMeshCredential, WorkspacePeerRecord } from "./peerStore"
+import { defaultStorage } from "../storage"
+import type { WorkspaceAuthorityRecord, PeerStore, WorkspaceMeshCredential, WorkspacePeerRecord } from "./peerStore"
 import { meshCatalog, ownerAuthorities, ownershipTransfers, revocations, revokedPersonIds, successionClaims, successionPolicy,
   successionVotes, type MeshExport, type ScopeAuthoritySnapshot } from "./durableMeshBase"
 import type { SessionEntry } from "./durableMeshBase"
@@ -287,4 +288,18 @@ export async function publishConfirmedToSessions(sessions: SessionEntry[], secre
   const receipts = await Promise.allSettled(sessions.map(session => publishConfirmedWorkspace(session.connection, secret, snapshot, timeoutMs)))
   await Promise.all(sessions.flatMap((session, index) => receipts[index]?.status === "rejected" ? [session.evict(message)] : []))
   return receipts.some(receipt => receipt.status === "fulfilled")
+}
+
+export async function recoverScopeAuthority(store: PeerStore, workspaceId: string, snapshots: unknown[],
+  ensureCurrent: () => void = () => {}): Promise<WorkspaceAuthorityRecord | undefined> {
+  return defaultStorage.withWorkspaceAuthorityMutation(workspaceId, async context => {
+    const current = await store.getWorkspaceAuthority(workspaceId)
+    const authority = meshRustRuntime().state.planWorkspaceAuthorityRecovery({ workspaceId, current, snapshots,
+      updatedAt: current?.updatedAt ?? new Date().toISOString() }, Date.now()) as WorkspaceAuthorityRecord | null
+    ensureCurrent()
+    if (authority && canonicalizeJson(authority) !== canonicalizeJson(current)) {
+      await context.write(() => { ensureCurrent(); return store.putWorkspaceAuthority(authority) })
+    }
+    return authority ?? current ?? undefined
+  })
 }

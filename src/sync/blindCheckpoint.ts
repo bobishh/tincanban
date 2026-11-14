@@ -79,7 +79,7 @@ export async function submitBlindCheckpoint(access: BlindAccess, request: BlindC
   if (request.managementCapability) {
     const cap = await verifyRustyManagementCapability(request.managementCapability, binding, { personId: request.identity.personId,
       deviceId: request.deviceId, resourceKind: "scope", resourceId: access.scopeId, operation: "snapshot.checkpoint", minimumRevision: 1 })
-    if (request.authorization.payload.managementRevision !== cap.revision) throw new Error("Checkpoint management revision is stale")
+    if (request.authorization.payload.managementRevision !== cap.revision) throw new Error("Checkpoint management revision changed")
   }
   const receipt = await readBlindJson<BlindCheckpointReceipt>(await fetcher(`${blindOrigin(access.origin)}/v2/scopes/${access.scopeId}/checkpoint`, {
     method: "POST", signal: AbortSignal.timeout(30000), headers: { ...blindProducerHeaders(access), Authorization: `Bearer ${access.writeToken}`, "Content-Type": "application/json" },

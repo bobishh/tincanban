@@ -103,7 +103,7 @@ function resetAddField() {
       <div class="schema-aging-fields ui-grid">
         <label><span>Watch after days</span><input :value="modelValue.cardAgingPolicy?.thresholds.watch ?? 7" min="1" type="number" @input="updateAgingThreshold('watch', $event)" /></label>
         <label><span>Aged after days</span><input :value="modelValue.cardAgingPolicy?.thresholds.aged ?? 14" min="1" type="number" @input="updateAgingThreshold('aged', $event)" /></label>
-        <label><span>Stale after days</span><input :value="modelValue.cardAgingPolicy?.thresholds.overdue ?? 30" min="1" type="number" @input="updateAgingThreshold('overdue', $event)" /></label>
+        <label><span>Overdue after days</span><input :value="modelValue.cardAgingPolicy?.thresholds.overdue ?? 30" min="1" type="number" @input="updateAgingThreshold('overdue', $event)" /></label>
       </div>
     </section>
 

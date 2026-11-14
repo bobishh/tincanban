@@ -168,7 +168,7 @@ it("Given saved identity evidence is malformed or differs from the signer, then 
   altered.certificate.payload.canEnrollDevices = !altered.certificate.payload.canEnrollDevices
   for (const raw of ["malformed", "{}", JSON.stringify(altered)]) {
     await writeLocal(profileKey, raw)
-    await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow(/identity.*(read|stale)/i)
+    await expect(ensureIdentityReplicaConnection(service, profile, () => {})).rejects.toThrow(/identity.*(read|changed)/i)
     expect(await readLocal(await identityReplicaSetupKey(profile.identity.personId, service.origin))).toBeNull()
   }
   expect(remote.status).not.toHaveBeenCalled()

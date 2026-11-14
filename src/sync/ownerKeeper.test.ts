@@ -114,7 +114,7 @@ describe("identity-scoped owner-keeper policy", () => {
 
     await expect(saveOwnerKeeper(owner, { personId: keeper, role: "editor", details: {
       ...current, revision: 2, boardIds: ["old-board"],
-    } })).rejects.toThrow("Stale keeper cache write")
+    } })).rejects.toThrow("An earlier keeper cache write")
     await removeOwnerKeeper(owner, keeper, { integrationId: "integration", throughRevision: 2 })
 
     await expect(ownerKeepers(owner)).resolves.toEqual([{ personId: keeper, role: "editor", details: current }])

@@ -317,7 +317,7 @@ async function computeRecoveryAdmission(input: WorkspaceHistoryRecoveryAdmission
     genesisPersonId: basis ? authorization.authority.genesisOwner.personId : document.ownerPersonId,
     remoteOwnerPersonId: document.ownerPersonId }) as WorkspaceWriteAuthorityEvidence
   if (known && (authority.currentEpoch < known.currentEpoch || authority.genesisOwner.personId !== known.genesisOwner.personId ||
-    authority.genesisOwner.publicKey !== known.genesisOwner.publicKey)) throw new Error("Recovery cannot replace current workspace authority with stale control")
+    authority.genesisOwner.publicKey !== known.genesisOwner.publicKey)) throw new Error("Recovery cannot replace current workspace authority with earlier control")
   const admission = computeWorkspaceAdmission({ workspaceId: input.workspaceId, remote: raw,
     authorization: { ...authorization, authority }, knownAuthority: known, receivedBasis: basis, now: Date.now() }, WasmStateCore as never)
   input.ensureCurrent()

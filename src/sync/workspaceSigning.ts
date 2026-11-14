@@ -29,7 +29,7 @@ export async function workspaceSigningContext<Document extends SigningDocument>(
   const revision = await currentAuthority()
   const requireCurrent = async () => {
     const latest = await currentAuthority()
-    if (latest !== revision) throw new Error("Workspace signing authority is stale")
+    if (latest !== revision) throw new Error("Workspace signing authority changed")
     return latest
   }
   const binding = { [scopeField]: doc.id }

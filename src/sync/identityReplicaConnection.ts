@@ -25,7 +25,7 @@ function assertStoredProfile(raw: string | null, expected: LocalProfile) {
   try { stored = raw ? JSON.parse(raw) as LocalProfile : undefined } catch { throw new Error("Saved identity cannot be read; restore it before profile setup") }
   if (!stored || stored.identity?.personId !== expected.identity.personId || stored.identity.publicKey !== expected.identity.publicKey ||
     stored.device?.deviceId !== expected.device.deviceId || stored.device.publicKey !== expected.device.publicKey ||
-    canonicalizeJson(stored.certificate ?? null) !== canonicalizeJson(expected.certificate)) throw new Error("Private scope signing identity is stale")
+    canonicalizeJson(stored.certificate ?? null) !== canonicalizeJson(expected.certificate)) throw new Error("Private scope signing identity changed")
 }
 export async function identityReplicaSetupKey(personId: string, origin: string) {
   return `tincanban.identity-replica-setup.v1.${personId}.${await blindHash(encoder.encode(blindOrigin(origin)))}`

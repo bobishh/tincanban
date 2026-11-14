@@ -36,7 +36,7 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
   await assertDurableIdentityProfile(snapshot)
   const authority = options.currentAuthority ? await options.currentAuthority() : ""
   if (options.expectedAuthority !== undefined && authority !== options.expectedAuthority) {
-    throw new Error("Signing context authority is stale")
+    throw new Error("Signing authority changed; prepare the operation again")
   }
   const certificates = options.certificates ?? await defaultProofStore.listCertificates()
   const learnedAuthorityDigest = await assertLearnedIdentityDeviceActive(snapshot.identity.personId, snapshot.device.deviceId)
@@ -61,21 +61,21 @@ export async function resolveLocalSigningContext(profile: LocalProfile, purpose:
 }
 
 async function assertDurableIdentityProfile(expected: LocalProfile): Promise<void> {
-  const stale = () => new Error("Stale identity profile or signing key: reload before signing")
+  const changedIdentity = () => new Error("Saved identity or signing key changed; reopen this board")
   const deviceKey = await encodedPrivateKey(expected.privateKeys.devicePrivateKey)
   const identityKey = expected.privateKeys.identityPrivateKey ? await encodedPrivateKey(expected.privateKeys.identityPrivateKey) : undefined
   let raw: string | null
-  try { raw = await readLocal("tincanban.local_profile.v1") } catch { throw stale() }
-  if (!raw) throw stale()
+  try { raw = await readLocal("tincanban.local_profile.v1") } catch { throw changedIdentity() }
+  if (!raw) throw changedIdentity()
 
   let stored: unknown
-  try { stored = JSON.parse(raw) as unknown } catch { throw stale() }
-  if (!isDurableProfile(stored)) throw stale()
+  try { stored = JSON.parse(raw) as unknown } catch { throw changedIdentity() }
+  if (!isDurableProfile(stored)) throw changedIdentity()
   if (stored.identity.personId !== expected.identity.personId || stored.identity.publicKey !== expected.identity.publicKey ||
       stored.device.deviceId !== expected.device.deviceId || stored.device.publicKey !== expected.device.publicKey ||
       stored.certificate.signature !== expected.certificate.signature ||
       canonicalizeJson(stored.certificate) !== canonicalizeJson(expected.certificate) ||
-      stored.privateKeys.devicePrivateKeyPkcs8 !== deviceKey || stored.privateKeys.identityPrivateKeyPkcs8 !== identityKey) throw stale()
+      stored.privateKeys.devicePrivateKeyPkcs8 !== deviceKey || stored.privateKeys.identityPrivateKeyPkcs8 !== identityKey) throw changedIdentity()
 }
 
 /** Local profiles already persist exportable PKCS8 keys. Cache by immutable CryptoKey, never by mutable profile metadata. */

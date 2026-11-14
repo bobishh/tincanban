@@ -184,7 +184,7 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
 <template>
   <ReleaseUpgradeNotice />
   <Transition name="startup-cover" @before-enter="showEnteringElement" @before-leave="hideLeavingElement">
-    <StartupStatus v-if="startupCoverVisible" expanded :message="startupMessage" :view-only="false" :error="null" />
+    <StartupStatus v-if="startupCoverVisible && !boardAddress.publicReadable.value" expanded :message="startupMessage" :view-only="false" :error="null" />
   </Transition>
   <div v-if="boardAddress.publicFallback.value" v-show="boardAddress.publicReadable.value">
     <PublicBoardApp v-bind="boardAddress.publicFallback.value" @availability="boardAddress.setPublicAvailability" />

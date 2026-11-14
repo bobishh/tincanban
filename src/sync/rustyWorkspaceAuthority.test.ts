@@ -1,4 +1,5 @@
-import { beforeAll, expect, it, vi } from "vitest"
+import "fake-indexeddb/auto"
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest"
 import { readFile } from "node:fs/promises"
 import * as Automerge from "@automerge/automerge/slim"
 import { meshRustRuntime } from "@meta-uber/mesh-replication/runtime"
@@ -6,9 +7,35 @@ import { defaultStorage } from "../storage"
 import { createWorkspaceDoc } from "../test/boardFixture"
 import { peerStore, type WorkspaceAuthorityRecord } from "./peerStore"
 import type { BlindReplicaConfig } from "./blindReplication"
-import { rememberAdmittedRustyWorkspaceAuthority } from "./rustyWorkspaceAuthority"
+import { ensureOwnedRustyWorkspaceAuthority, rememberAdmittedRustyWorkspaceAuthority } from "./rustyWorkspaceAuthority"
+import { bootstrapIdentity, signEnvelope } from "../domain/identity"
+import * as rustyTransport from "./rustyIdentityTransport"
 
 beforeAll(async () => { await Automerge.initializeWasm(await readFile("node_modules/@automerge/automerge/dist/automerge.wasm")) })
+beforeEach(() => vi.stubGlobal("navigator", { ...navigator, locks: { request: async (_name: string, options: unknown, callback?: () => Promise<unknown>) =>
+  typeof options === "function" ? (options as () => Promise<unknown>)() : callback?.() } }))
+afterEach(() => vi.unstubAllGlobals())
+
+it("Given a retained owner record without signed scope evidence, when restoring from Rusty, then fetch and verify authority instead of treating the incomplete record as ready", async () => {
+  const profile = await bootstrapIdentity("Owner")
+  const workspaceId = crypto.randomUUID()
+  const genesis = await signEnvelope(profile.privateKeys.devicePrivateKey!, { kind: "scope-genesis", version: 1,
+    scopeId: workspaceId, creator: { personId: profile.identity.personId, publicKey: profile.identity.publicKey,
+      certificates: [profile.certificate] }, controlEpoch: 1 }, profile.device.deviceId)
+  const snapshot = { genesis, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] }
+  await peerStore.putWorkspaceAuthority({ version: 1, workspaceId, ownerPersonId: profile.identity.personId,
+    ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], epoch: 1,
+    updatedAt: new Date().toISOString(), catalog: { revocations: [] } })
+  const fetch = vi.spyOn(rustyTransport, "readRustyOwnerWorkspaceScopeAuthority").mockResolvedValue({ snapshot } as never)
+  try {
+    const restored = await ensureOwnedRustyWorkspaceAuthority({ workspaceId } as BlindReplicaConfig, profile, () => {})
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(restored?.scopeAuthoritySnapshot?.genesis).toEqual(genesis)
+    expect((await peerStore.getWorkspaceAuthority(workspaceId))?.scopeAuthoritySnapshot?.genesis).toEqual(genesis)
+    await ensureOwnedRustyWorkspaceAuthority({ workspaceId } as BlindReplicaConfig, profile, () => {})
+    expect(fetch).toHaveBeenCalledOnce()
+  } finally { fetch.mockRestore() }
+})
 
 it("Given verified Rusty rights already saved, when admitted history is reread, then recovery revision stays stable and changed rights still invalidate it", async () => {
   const workspaceId = crypto.randomUUID(), owner = { personId: "owner", publicKey: "key", certificates: [] }

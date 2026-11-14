@@ -160,7 +160,7 @@ async function assertCurrent(context: VerifiedSigningContext, value: Internal) {
   const current = await value.current()
   assertTime()
   if (current.personId !== context.personId || current.deviceId !== context.deviceId || current.authorityRevision !== value.revision) {
-    throw new Error("Signing context identity or authority is stale")
+    throw new Error("Signing identity or authority changed; prepare the operation again")
   }
 }
 

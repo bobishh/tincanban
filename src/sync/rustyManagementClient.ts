@@ -25,7 +25,7 @@ async function assertMutationAuthorityCurrent(binding: ManagementBinding, profil
     repository.read(binding), binding.resourceKind === "person" ? Promise.resolve(undefined) : repository.read(parentBinding),
   ])
   if (!matchesAuthority(current?.capability, capability) || !matchesAuthority(parent?.capability, parentCapability)) {
-    throw new Error("Rusty management authority is stale")
+    throw new Error("Rusty management authority changed")
   }
   if (retrying && !matchesPendingIntent(current?.pending, capability, parentCapability)) {
     throw new Error("Pending Rusty management request was superseded; owner review required")
@@ -54,7 +54,7 @@ export function rustyManagementAuthorityRevision(binding: ManagementBinding,
   return async () => {
     const saved = await repo(profile).read(binding)
     if (saved?.pending || canonicalizeJson(saved?.capability ?? null) !== canonicalizeJson(capability ?? null)) {
-      throw new Error("Rusty management authority is stale or pending")
+      throw new Error("Rusty management authority changed or is awaiting confirmation")
     }
     if (capability) await verifyRustyManagementCapability(capability, binding, { personId: profile.identity.personId,
       deviceId: profile.device.deviceId, resourceKind: binding.resourceKind, resourceId: binding.resourceId, operation,
@@ -99,7 +99,7 @@ async function assertDevice(profile: LocalProfile, guard: ManagementClientGuard)
   await guard.ensureCurrent?.()
   const current = await bootstrapIdentity()
   if (current.identity.personId !== profile.identity.personId || current.device.deviceId !== profile.device.deviceId ||
-    current.certificate.signature !== profile.certificate.signature) throw new Error("Rusty management signing identity is stale")
+    current.certificate.signature !== profile.certificate.signature) throw new Error("Rusty management signing identity changed")
   await guard.ensureCurrent?.()
 }
 

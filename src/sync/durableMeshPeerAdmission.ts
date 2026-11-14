@@ -29,7 +29,7 @@ function peerAuthorizationChanged(previous: Awaited<ReturnType<PeerStore["getPee
 
 function assertPeerAdmissionContext(workspaceId: string, context: PeerAdmissionContext): void {
   if (!isWorkspaceAuthorityMutation(context.authorityContext, workspaceId, defaultStorage)) {
-    throw new Error("Workspace authority mutation context is stale or belongs to another workspace")
+    throw new Error("Workspace authority mutation context changed or belongs to another workspace")
   }
 }
 

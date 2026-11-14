@@ -25,10 +25,53 @@ beforeEach(async () => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
+it("Given a missing board copy and conflicting transport keys, when recovering its signed authority, then unblock stored-copy recovery without replacing the connection", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const workspaceId = "authority-independent-of-transport"
+  const genesis = await signEnvelope(owner.privateKeys.devicePrivateKey!, { kind: "scope-genesis", version: 1,
+    scopeId: workspaceId, creator: { personId: owner.identity.personId, publicKey: owner.identity.publicKey,
+      certificates: [owner.certificate] }, controlEpoch: 1 }, owner.device.deviceId)
+  const snapshot = { genesis, grants: [], grantIssuers: [], revocations: [], controlTransfers: [] }
+  const credential = { version: 1 as const, workspaceId, ownerPersonId: owner.identity.personId,
+    ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "local-connection",
+    epoch: 1, updatedAt: new Date().toISOString() }
+  await peerStore.putWorkspaceCredential(credential)
+  const mesh = new DurableMesh({ transport: {} as never, workspace: {} as never, workspaceStore: {} as never,
+    getProfile: async () => owner, store: peerStore })
+  try {
+    await expect(restoreIdentityWorkspaceRoutes({ mesh, envelopes: [{ ...credential,
+      transportSecret: "saved-connection", peers: [], scopeAuthoritySnapshot: snapshot }], workspaceIds: [workspaceId],
+      profile: owner, readCredential: id => peerStore.getWorkspaceCredential(id) })).rejects.toThrow(/different|conflict/i)
+    expect((await peerStore.getWorkspaceAuthority(workspaceId))?.scopeAuthoritySnapshot?.genesis).toEqual(genesis)
+    expect(await peerStore.getWorkspaceCredential(workspaceId)).toEqual(credential)
+    const { defaultStorage } = await import("../storage")
+    const revision = await defaultStorage.readWorkspaceRevision(workspaceId)
+    await mesh.recoverWorkspaceAuthority(workspaceId, [snapshot])
+    expect(await defaultStorage.readWorkspaceRevision(workspaceId)).toBe(revision)
+  } finally { await mesh.dispose() }
+})
+
 async function decodedRoutes(component: IdentityDeviceComponent) {
   return readIdentityWorkspaceRouteRecoveryComponent({ personId: component.value.personId as string,
     components: { workspaceRouteRecovery: component } })
 }
+
+it("Given many expired browser instances for one device, when exporting recovery contacts, then keep recent fallback contacts without growing the identity catalog forever", async () => {
+  const owner = await bootstrapIdentity("Owner")
+  const workspaceId = "bounded-recovery-contacts"
+  const peers = await Promise.all(Array.from({ length: 8 }, (_, index) => createPeerAdvertisement(owner,
+    workspaceId, `endpoint-${index}`, { certificates: [owner.certificate], ownerPublicKey: owner.identity.publicKey,
+      ownerCertificates: [owner.certificate], instanceId: `instance-${index}`, routeSequence: 1,
+      issuedAt: new Date(Date.now() - (10 - index) * 60_000).toISOString(),
+      expiresAt: new Date(Date.now() - (9 - index) * 60_000).toISOString() })))
+  const component = await identityWorkspaceRouteRecoveryComponent({ personId: owner.identity.personId, envelopes: [{
+    version: 1, workspaceId, ownerPersonId: owner.identity.personId, ownerPublicKey: owner.identity.publicKey,
+    ownerCertificates: [owner.certificate], transportSecret: "retained-secret", epoch: 1, peers,
+  }] })
+  const restored = (await decodedRoutes(component)).envelopes[0]!
+  expect(restored.transportSecret).toBe("retained-secret")
+  expect(restored.peers.map(peer => peer.advertisement.payload.endpoint).sort()).toEqual(["endpoint-6", "endpoint-7"])
+})
 
 it("Given an older uncompressed component, when reading after upgrade, then retain its original connection", async () => {
   const owner = await bootstrapIdentity("Owner")
@@ -253,7 +296,7 @@ it("Given a workspace revocation and a newer compatible scope ledger, when resto
   }
 
   const receiveInvitation = vi.fn(async () => {})
-  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(), receiveInvitation } as never
+  const mesh = { enrollmentGrant: async () => undefined, recoverWorkspaceAuthority: async () => {}, validateInvitation: async () => new Map(), receiveInvitation } as never
   await restoreIdentityWorkspaceRoutes({ mesh, envelopes: recovered as never[], workspaceIds: [workspaceId], profile: owner,
     readCredential: async () => null })
   expect(receiveInvitation).toHaveBeenCalledTimes(2)
@@ -281,7 +324,7 @@ it.each(["same-secret", "another-secret"])("Given signed snapshots with incompat
   const envelopes = ((await decodedRoutes(component)) as { envelopes: Array<unknown> }).envelopes
   expect(envelopes).toHaveLength(2)
   const probeWorkspaceConnection = vi.fn(async () => true)
-  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(), receiveInvitation: async () => {}, probeWorkspaceConnection } as never
+  const mesh = { enrollmentGrant: async () => undefined, recoverWorkspaceAuthority: async () => {}, validateInvitation: async () => new Map(), receiveInvitation: async () => {}, probeWorkspaceConnection } as never
   await expect(restoreIdentityWorkspaceRoutes({ mesh, envelopes: envelopes as never[], workspaceIds: [workspaceId], profile: owner,
     readCredential: async () => null })).rejects.toThrow(/multiple saved workspace authorities/i)
   expect(probeWorkspaceConnection).not.toHaveBeenCalled()
@@ -316,7 +359,7 @@ it("Given an existing workspace credential with another transport secret, when r
     epoch: 4, peers: [], revocations: [] }
   const validateInvitation = vi.fn(async () => new Map())
   const receiveInvitation = vi.fn(async () => {})
-  const mesh = { enrollmentGrant: async () => undefined, validateInvitation, receiveInvitation } as never
+  const mesh = { enrollmentGrant: async () => undefined, recoverWorkspaceAuthority: async () => {}, validateInvitation, receiveInvitation } as never
   const currentCredential = { version: 1 as const, workspaceId, ownerPersonId: profile.identity.personId,
     ownerPublicKey: profile.identity.publicKey, ownerCertificates: [profile.certificate], transportSecret: "current-secret",
     epoch: 4, updatedAt: now }
@@ -324,7 +367,7 @@ it("Given an existing workspace credential with another transport secret, when r
   await expect(restoreIdentityWorkspaceRoutes({ mesh, envelopes: [envelope], workspaceIds: [workspaceId], profile,
     readCredential: async () => currentCredential })).rejects.toThrow(/different transport secret/i)
 
-  expect(validateInvitation).not.toHaveBeenCalled()
+  expect(validateInvitation).toHaveBeenCalledOnce()
   expect(receiveInvitation).not.toHaveBeenCalled()
 })
 
@@ -337,7 +380,7 @@ it.each([false, true])("Given two verified connection keys and a reachable secon
   const second = { ...first, transportSecret: "second-key" }
   const probeWorkspaceConnection = vi.fn(async (envelope: typeof first) => reachable && envelope.transportSecret === second.transportSecret)
   const receiveInvitation = vi.fn(async () => {})
-  const mesh = { enrollmentGrant: async () => undefined, validateInvitation: async () => new Map(),
+  const mesh = { enrollmentGrant: async () => undefined, recoverWorkspaceAuthority: async () => {}, validateInvitation: async () => new Map(),
     probeWorkspaceConnection, receiveInvitation } as never
   const loading = restoreIdentityWorkspaceRoutes({ mesh, envelopes: [first, second], workspaceIds: [workspaceId], profile,
     readCredential: async () => null })
@@ -442,7 +485,7 @@ it("Given two verifiable saved connection keys, when restoring sharing without a
   const envelope = { version: 1 as const, workspaceId, ownerPersonId: owner.identity.personId,
     ownerPublicKey: owner.identity.publicKey, ownerCertificates: [owner.certificate], transportSecret: "first-key", epoch: 1, peers: [] }
   const receiveInvitation = vi.fn()
-  await expect(restoreIdentityWorkspaceRoutes({ mesh: { enrollmentGrant: async () => undefined,
+  await expect(restoreIdentityWorkspaceRoutes({ mesh: { enrollmentGrant: async () => undefined, recoverWorkspaceAuthority: async () => {},
     validateInvitation: async () => new Map(), receiveInvitation } as never,
     envelopes: [envelope, { ...envelope, transportSecret: "second-key" }], workspaceIds: [workspaceId], profile: owner,
     readCredential: async () => null })).rejects.toThrow("Saved connections for this board use different keys")

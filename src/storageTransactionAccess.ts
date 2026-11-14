@@ -111,7 +111,7 @@ export abstract class StorageTransactionAccess extends StorageHistoryAccess {
     const assertCurrent = () => this.assertTransactionCurrent(state)
     const assertLive = () => {
       assertCurrent()
-      if (state.used) throw new Error("Workspace transaction context is missing, stale, or already used")
+      if (state.used) throw new Error("Workspace transaction context is missing, superseded, or already used")
     }
     const context: WorkspaceTransactionContext = {
       workspaceId: state.workspaceId,

@@ -34,7 +34,7 @@ it("Given a different private key, when resolving the local producer, then rejec
 it("Given identity changes after preparation, when signing, then reject the old local context", async () => {
   const context = await resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" })
   resetIdentityStorageForTest(); await bootstrapIdentity("Replacement")
-  await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/stale|identity/)
+  await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/changed|identity/)
 })
 
 it("Given another tab replaces the durable profile while this tab keeps its SDK cache, when resolving a signer, then reject the stale profile", async () => {
@@ -54,7 +54,7 @@ it("Given another tab replaces the durable profile while this tab keeps its SDK 
   await writeLocal("tincanban.local_profile.v1", replacement)
 
   await expect(resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" }))
-    .rejects.toThrow(/stale identity/i)
+    .rejects.toThrow(/saved identity.*changed/i)
 })
 
 it("Given durable identity storage is absent or malformed, when resolving a signer, then fail closed without replacing it", async () => {
@@ -63,13 +63,13 @@ it("Given durable identity storage is absent or malformed, when resolving a sign
 
   await deleteLocal("tincanban.local_profile.v1")
   await expect(resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" }))
-    .rejects.toThrow(/stale identity/i)
+    .rejects.toThrow(/saved identity.*changed/i)
   expect(await readLocal("tincanban.local_profile.v1")).toBeNull()
 
   const malformed = "{malformed profile"
   await writeLocal("tincanban.local_profile.v1", malformed)
   await expect(resolveLocalSigningContext(profile, "owner-request", { scopeId: "scope" }))
-    .rejects.toThrow(/stale identity/i)
+    .rejects.toThrow(/saved identity.*changed/i)
   expect(await readLocal("tincanban.local_profile.v1")).toBe(malformed)
 
   await writeLocal("tincanban.local_profile.v1", original)
@@ -97,7 +97,7 @@ it.each(["devicePrivateKeyPkcs8", "identityPrivateKeyPkcs8"])(
     stored.privateKeys[field] = toBase64Url(new Uint8Array(await crypto.subtle.exportKey("pkcs8", replacement.privateKey)))
     const changed = JSON.stringify(stored)
     await writeLocal("tincanban.local_profile.v1", changed)
-    await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/stale|key/i)
+    await expect(signWithContext(context, { kind: "owner-request", scopeId: "scope" })).rejects.toThrow(/changed|key/i)
     expect(await readLocal("tincanban.local_profile.v1")).toBe(changed)
   },
 )
