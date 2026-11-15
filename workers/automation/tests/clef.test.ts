@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { classifyOpportunity, classifyApplicationEvent, readApplicationEventClassification } from '../src/clef.ts';
+import { classifyOpportunity, classifyApplicationEvent, readApplicationEventClassification, readOpportunityClassification } from '../src/clef.ts';
 
 const roleProbabilities = { backend: 1, frontend: 0, fullstack: 0, platform_devops: 0, data_ai: 0, mobile: 0, engineering_management: 0, other_unknown: 0 };
 const seniorityProbabilities = { intern_junior: 0, middle: 0, senior: 1, staff_principal: 0, lead_manager: 0, unknown: 0 };
@@ -55,11 +55,13 @@ test('Given a confident rejection, when classifying, then returns a rejection an
 });
 
 test('Given employee_profile, when Clef assesses intake, then compares stack and work and returns shared weighted priority', async () => {
-  const profile = { stack: 'Rust, TypeScript', work_profile: 'Principal distributed systems engineer' };
+  const profile = { stack: 'Rust, TypeScript', work_profile: 'Principal distributed systems engineer. Prefer asynchronous work. Regular evenings are a poor fit.' };
   const result = await classifyOpportunity({ run: async (_model, input) => {
-    const request = input as { state: { employee_profile: unknown }; questions: Record<string, unknown> };
+    const request = input as { state: { employee_profile: unknown }; questions: Record<string, { instructions: string }> };
     assert.deepEqual(request.state.employee_profile, profile);
     assert.ok(request.questions.company_stability);
+    assert.match(request.questions.work_fit!.instructions, /Compare explicit working conditions/);
+    assert.match(request.questions.work_fit!.instructions, /Generic hiring language and absent details do not change/);
     return { answers: {
       job_opportunity: { type: 'choice', choice: 'yes', confidence: 1, probabilities: { yes: 1, no: 0, uncertain: 0 } },
       role_type: { type: 'choice', choice: 'backend', confidence: 1, probabilities: roleProbabilities },
@@ -72,6 +74,9 @@ test('Given employee_profile, when Clef assesses intake, then compares stack and
   assert.equal(result.priority.score, 10);
   assert.equal(result.priority.optionId, 'p0');
   assert.deepEqual(result.assessment.employee_profile, profile);
+  assert.equal(result.policyVersion, 'lead-clef-v3');
+  const retained = { ...result, policyVersion: 'lead-clef-v2' };
+  assert.deepEqual(readOpportunityClassification(retained, undefined, profile), retained);
 });
 
 test('Given uncertain fit evidence and no employee profile, when assessing, then uncertainty contributes no points', async () => {

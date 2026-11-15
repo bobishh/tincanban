@@ -163,12 +163,19 @@ classifications are evidence, never a serialized authorization flag.
 
 ## Job priority
 
-Opportunity policy `lead-clef-v2` asks Clef for company recognition, company
+Opportunity policy `lead-clef-v3` asks Clef for company recognition, company
 stability, stack match and work profile match alongside relevance, role and
 seniority. The owner-configured board `employee_profile` is read from the admitted
 replica after synchronization and passed as structured context. Intake cannot
 supply or override this profile. Company evaluations require supplied evidence;
 no current financial facts are invented from a company name.
+
+Edit the profile in **Settings → settings.json** under
+`board.settings.employee_profile`. Set `stack` to relevant experience and
+`work_profile` to the desired role and working conditions. The work fit
+assessment takes explicit practices into account only where the profile describes
+a preference. Missing details and generic hiring language leave responsibility
+fit intact. Previously retained v2 decisions remain readable.
 
 Each assessment choice retains its probability map. A winner below 0.7 or a
 margin below 0.2 becomes unknown; unknown earns no points. Strong/partial/weak
