@@ -2,7 +2,6 @@
 import { ref, watchEffect } from "vue"
 
 const props = defineProps<{ board: HTMLElement | null }>()
-const headerHeight = ref(0)
 const limit = ref(0)
 const position = ref(0)
 const thumbWidth = ref("100%")
@@ -10,11 +9,9 @@ const thumbWidth = ref("100%")
 watchEffect(onCleanup => {
   const { board } = props
   if (!board) return
-  const header = board.closest("main")?.querySelector(":scope > header")
   const track = () => { position.value = Math.round(board.scrollLeft) }
   const measure = () => {
     const { clientWidth, scrollWidth } = board
-    headerHeight.value = header?.getBoundingClientRect().height ?? 0
     limit.value = scrollWidth - clientWidth
     thumbWidth.value = scrollWidth ? `${clientWidth / scrollWidth * 100}%` : "100%"
     track()
@@ -23,7 +20,6 @@ watchEffect(onCleanup => {
   const observeWidths = () => {
     size.disconnect()
     size.observe(board)
-    if (header) size.observe(header)
     for (const child of board.children) size.observe(child)
     measure()
   }
@@ -56,7 +52,7 @@ function scrollWithShift(event: WheelEvent) {
 </script>
 
 <template>
-  <div class="board-scrollbar" :style="{ top: `${headerHeight}px` }">
+  <div class="board-scrollbar">
     <input v-show="limit > 0" class="board-scrollbar-input" type="range" min="0" :max="limit" :value="position"
       :style="{ '--thumb-width': thumbWidth }" aria-label="Scroll board horizontally" @input="scrollFromSlider" />
   </div>
@@ -68,9 +64,12 @@ function scrollWithShift(event: WheelEvent) {
 @media (min-width: 769px) {
   /* Clip page overflow without creating an ancestor scroll container. */
   :global(body:has(.board-scrollbar)) { overflow-x: clip; }
+  /* Keep the page header in its original scroll flow. */
+  :global(.shell:has(.board-scrollbar) > .topbar) { position: relative; }
 
   .board-scrollbar {
     position: sticky;
+    top: 0;
     z-index: 4;
     display: block;
     height: var(--section-gap);

@@ -25,8 +25,8 @@ test("Given a wide board, when scrolling the page, then the top scrollbar still 
     scrollbar.boundingBox(),
     page.locator(".topbar").boundingBox(),
   ])
-  expect(track!.y).toBeGreaterThanOrEqual(header!.y + header!.height)
-  expect(track!.y).toBeLessThan(120)
+  expect(header!.y + header!.height).toBeLessThan(0)
+  expect(track!.y).toBeCloseTo(0, 1)
 
   await page.mouse.move(track!.x + 5, track!.y + track!.height / 2)
   await page.mouse.down()
