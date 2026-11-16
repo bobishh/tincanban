@@ -10,8 +10,8 @@ jar=${META_MESH_TLC_JAR:-"$work/tla2tools.jar"}
 java=${JAVA_HOME:+"$JAVA_HOME/bin/"}java
 
 if [ -z "${META_MESH_TLC_JAR:-}" ]; then
-  curl -fL --retry 3 -H 'Accept: application/octet-stream' -H 'X-GitHub-Api-Version: 2022-11-28' \
-    -o "$jar" "$TOOLS_ASSET_URL"
+  curl -fL --retry 3 -o "$jar" \
+    "https://github.com/tlaplus/tlaplus/releases/download/v$TOOLS_VERSION/tla2tools.jar"
 fi
 if command -v sha256sum >/dev/null 2>&1; then
   actual=$(sha256sum "$jar" | awk '{print $1}')
