@@ -3,8 +3,6 @@ import { computed, defineAsyncComponent, ref, type Component } from "vue"
 import BoardColumns from "./BoardColumns.vue"
 import BoardItemCard from "./BoardItemCard.vue"
 
-defineOptions({ inheritAttrs: false })
-
 type CardPresentation = {
   notes: string
   searchQuery?: string
@@ -46,14 +44,18 @@ const emit = defineEmits<{
 }>()
 const BoardHorizontalScroll = defineAsyncComponent<Component>(() => import("./BoardHorizontalScroll.vue"))
 const boardElement = ref<HTMLElement | null>(null)
-const boardClasses = computed(() => ({ "board-filtered": props.hasFilters, "board-single-column": props.columns.length === 1 }))
+const boardClasses = computed(() => ({
+  "board-editing": props.isEditingBoard,
+  "board-filtered": props.hasFilters,
+  "board-single-column": props.columns.length === 1,
+}))
 </script>
 
 <template>
   <div class="board-surface">
     <BoardHorizontalScroll v-if="boardElement" :board="boardElement" />
     <section :ref="element => { boardElement = element as HTMLElement | null; onElement?.(boardElement) }"
-      v-bind="$attrs" class="board" :class="boardClasses" role="region" :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
+      class="board" :class="boardClasses" role="region" :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
       <BoardColumns :visible-columns="columns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
         :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard"
         :moved-column-id="movedColumnId" @toggle-column="emit('toggleColumn', $event)" @edit-column="emit('editColumn', $event)">

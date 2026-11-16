@@ -363,7 +363,6 @@ function saveProfile(draft: { name?: string; avatarData?: string | null; revisio
       :has-filters="hasFilters" :entity-name="entityName" :board-title="activeWorkspace.title"
       :can-edit-items="canEditItems" :is-editing-board="isEditingBoard" :moved-column-id="movedColumnId"
       :card-presentation="boardCardPresentation" :on-element="setBoardElement"
-      :class="{ 'board-editing': isEditingBoard, 'board-bin-open': visibleColumns.some(column => isArchiveColumn(column) && !isColumnCollapsed(column)) }"
       @toggle-column="toggleColumnCollapse" @edit-column="editingColumn = $event" @scroll="trackBoardScroll"
       @open="openCard" @select="openBoardItem" @discuss="conversations.openCardDiscussion" @task-toggle="toggleCardTask">
       <template #before-item="{ column, item, index }">
