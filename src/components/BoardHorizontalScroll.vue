@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watchEffect } from "vue"
 
-const props = defineProps<{ board: HTMLElement }>()
+const props = defineProps<{ board: HTMLElement | null }>()
 const headerHeight = ref(0)
 const limit = ref(0)
 const position = ref(0)
@@ -9,6 +9,7 @@ const thumbWidth = ref("100%")
 
 watchEffect(onCleanup => {
   const { board } = props
+  if (!board) return
   const header = board.closest("main")?.querySelector(":scope > header")
   const track = () => { position.value = Math.round(board.scrollLeft) }
   const measure = () => {
@@ -40,12 +41,12 @@ watchEffect(onCleanup => {
 })
 
 function scrollFromSlider(event: Event) {
-  props.board.scrollTo({ left: (event.target as HTMLInputElement).valueAsNumber, behavior: "instant" })
+  props.board?.scrollTo({ left: (event.target as HTMLInputElement).valueAsNumber, behavior: "instant" })
 }
 
 function scrollWithShift(event: WheelEvent) {
   if (!event.shiftKey || event.ctrlKey || event.deltaX || !event.deltaY || !event.cancelable) return
-  const board = props.board
+  const board = event.currentTarget as HTMLElement
   const start = board.scrollLeft
   const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
     : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? board.clientWidth : 1

@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="ItemType extends import('../domain/entitySchemas').Item, ColumnType extends { id: string; title: string; collapsible?: boolean; archive?: true; items: ItemType[] }">
-import { computed, defineAsyncComponent, ref, type Component } from "vue"
+import { defineAsyncComponent, ref, type Component } from "vue"
 import BoardColumns from "./BoardColumns.vue"
 import BoardItemCard from "./BoardItemCard.vue"
 
@@ -17,7 +17,7 @@ type CardPresentation = {
   ageLabel?: string
 }
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   columns: ColumnType[]
   itemsForColumn: (column: ColumnType) => ItemType[]
   columnColor: (id: string) => string | undefined
@@ -44,18 +44,14 @@ const emit = defineEmits<{
 }>()
 const BoardHorizontalScroll = defineAsyncComponent<Component>(() => import("./BoardHorizontalScroll.vue"))
 const boardElement = ref<HTMLElement | null>(null)
-const boardClasses = computed(() => ({
-  "board-editing": props.isEditingBoard,
-  "board-filtered": props.hasFilters,
-  "board-single-column": props.columns.length === 1,
-}))
 </script>
 
 <template>
-  <div class="board-surface">
-    <BoardHorizontalScroll v-if="boardElement" :board="boardElement" />
+  <div>
+    <BoardHorizontalScroll :board="boardElement" />
     <section :ref="element => { boardElement = element as HTMLElement | null; onElement?.(boardElement) }"
-      class="board" :class="boardClasses" role="region" :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
+      class="board" :class="{ 'board-editing': isEditingBoard, 'board-filtered': hasFilters, 'board-single-column': columns.length === 1 }"
+      :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
       <BoardColumns :visible-columns="columns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
         :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard"
         :moved-column-id="movedColumnId" @toggle-column="emit('toggleColumn', $event)" @edit-column="emit('editColumn', $event)">
