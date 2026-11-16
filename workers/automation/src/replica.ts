@@ -1406,10 +1406,17 @@ export class AutomationReplica {
     finally { Automerge.free(mergedDocument); }
     const previous = { authority: this.authority, authorizations: this.authorizations, rawDocument: this.rawDocument,
       chat: this.chat, attachments: this.attachments, history: this.history, basis: this.historyBasis, historyUsage: this.historyUsage };
+    const nextAuthorizations = switching ? admission.verifiedAuthorizations
+      : mergeAuthorizationRecords(this.authorizations, admission.verifiedAuthorizations);
+    // The retained inputs must match what admission evaluated, including the
+    // known authority. Dropped proofs or a changed basis require a fresh plan.
+    const reusableAdmission = !switching && bundle.version === 1 &&
+      canonicalizeJson(normalizeWireAuthorizations(nextAuthorizations)) ===
+        canonicalizeJson(normalizeWireAuthorizations(bundle.records as WorkspaceChangeAuthorization[])) &&
+      canonicalizeJson(authority) === canonicalizeJson(previous.authority);
     this.history = nextHistory; this.historyBasis = nextBasis;
     this.historyUsage = nextHistoryUsage;
-    this.replaceEvidence(encodeBlindBytes(merged), switching ? admission.verifiedAuthorizations : mergeAuthorizationRecords(this.authorizations, admission.verifiedAuthorizations),
-      authority, nextChat, nextAttachments);
+    this.replaceEvidence(encodeBlindBytes(merged), nextAuthorizations, authority, nextChat, nextAttachments);
     try { await this.persistState(); }
     catch (error) {
       this.history = previous.history; this.historyBasis = previous.basis;
@@ -1419,6 +1426,8 @@ export class AutomationReplica {
       throw error;
     }
     if (switching) previous.basis?.free();
+    if (reusableAdmission) this.admissionCache = { rawDocument: this.rawDocument, authorizations: this.authorizations,
+      authority: this.authority, result: admission };
     return { hash: await blindHash(new TextEncoder().encode(canonicalizeJson(snapshot))) };
   }
 

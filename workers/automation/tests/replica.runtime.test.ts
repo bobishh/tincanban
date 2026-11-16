@@ -2509,9 +2509,13 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
       };
       const saved: string[] = [];
       const receiver = await AutomationReplica.restore(active.serialize(), data.automation, async value => { saved.push(value); }, transport);
-      await receiver.sync();
-      expect(receiver.candidates()).toContainEqual(expect.objectContaining({ company: "Delta owner", role: "Engineer" }));
-      expect(JSON.parse(saved.at(-1)!).blind.cursor).toBe(1);
+      const admit = vi.spyOn(WasmStateCore, "evaluateCausalAdmission");
+      try {
+        await receiver.sync();
+        expect(receiver.candidates()).toContainEqual(expect.objectContaining({ company: "Delta owner", role: "Engineer" }));
+        expect(JSON.parse(saved.at(-1)!).blind.cursor).toBe(1);
+        expect(admit).toHaveBeenCalledTimes(1);
+      } finally { admit.mockRestore(); }
     } finally { Automerge.free(added.value.newDoc); }
   });
 
