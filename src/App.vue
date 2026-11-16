@@ -11,7 +11,6 @@ import DialogWindow from "./components/DialogWindow.vue"
 import TincanbanPageLayout from "./components/TincanbanPageLayout.vue"
 import TincanbanHeading from "./components/TincanbanHeading.vue"
 import BrandCan from "./components/BrandCan.vue"
-import BoardDragOverlay from "./components/BoardDragOverlay.vue"
 import BoardSurface from "./components/BoardSurface.vue"
 import BoardToolbar from "./components/BoardToolbar.vue"
 import { useObjectConversations } from "./app/useObjectConversations"
@@ -41,6 +40,7 @@ import { CausalChangeReview, ColumnDialog, IdentitySettingsPanel, ItemDetailDial
 import WorkspaceSyncMount from "./components/WorkspaceSyncMount.vue"
 
 const app = useAppController()
+const BoardDragOverlay = defineAsyncComponent<Component>(() => import("./components/BoardDragOverlay.vue"))
 const AutomationConnectionDialog = defineAsyncComponent<Component>(() => import("./components/AutomationConnectionDialog.vue") as Promise<{ default: Component }>)
 const RustyStatusDialog = defineAsyncComponent<Component>(() => import("./components/RustyStatusDialog.vue"))
 const showRustyStatus = ref(new URLSearchParams(window.location.hash.slice(1)).has("rusty-status"))
