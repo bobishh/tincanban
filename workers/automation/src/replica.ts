@@ -281,7 +281,8 @@ export class AutomationReplica {
   private deviceAccessCache = new Map<string, { raw: string; authority: WorkspaceWriteAuthorityEvidence;
     grant: WorkspaceGrant | undefined; checkedAt: number; role: ReturnType<typeof WasmStateCore.decideWorkspaceAccess> }>();
   private admissionCache?: { rawDocument: string; authorizations: WorkspaceChangeAuthorization[];
-    authority: WorkspaceWriteAuthorityEvidence; result: WorkspaceAdmissionResult };
+    authority: WorkspaceWriteAuthorityEvidence; result: WorkspaceAdmissionResult;
+    control?: { state: AutomationDesiredState; heads: string[] } };
 
   private constructor(
     private readonly profile: LocalProfile,
@@ -1130,20 +1131,25 @@ export class AutomationReplica {
 
   controlForRuntime(): { state: AutomationDesiredState; heads: string[] } {
     if (!this.definition) return { state: "active", heads: [] };
-    const definition = this.definitionForRuntime()!;
-    const document = this.admittedDocument();
-    try {
-      const entity = document.entities[automationEntityId(definition.id)];
-      if (!hasEntityKind(entity, "automation") || entity.executor.personId !== this.profile.identity.personId ||
-        canonicalizeJson(parseAutomationDefinition(JSON.parse(entity.definition))) !== canonicalizeJson(definition) ||
-        entity.placement.parentId !== this.bindings.boardId) throw new Error("Automation CRDT definition does not match its signed activation");
-      const approval = parseAutomationApproval(entity.approval);
-      if (canonicalizeJson(approval.definition) !== canonicalizeJson(this.definition) || canonicalizeJson(approval.grant) !== canonicalizeJson(this.grant)) {
-        throw new Error("Automation CRDT approval differs from its activated grant");
-      }
-      const control = automationLifecycle(entity);
-      return this.tombstoned ? { ...control, state: "deleted" } : control;
-    } finally { Automerge.free(document); }
+    this.assertActive();
+    let control = this.cachedAdmission()?.control;
+    if (!control) {
+      const definition = this.definitionForRuntime()!;
+      const document = this.admittedDocument();
+      try {
+        const entity = document.entities[automationEntityId(definition.id)];
+        if (!hasEntityKind(entity, "automation") || entity.executor.personId !== this.profile.identity.personId ||
+          canonicalizeJson(parseAutomationDefinition(JSON.parse(entity.definition))) !== canonicalizeJson(definition) ||
+          entity.placement.parentId !== this.bindings.boardId) throw new Error("Automation CRDT definition does not match its signed activation");
+        const approval = parseAutomationApproval(entity.approval);
+        if (canonicalizeJson(approval.definition) !== canonicalizeJson(this.definition) || canonicalizeJson(approval.grant) !== canonicalizeJson(this.grant)) {
+          throw new Error("Automation CRDT approval differs from its activated grant");
+        }
+        control = automationLifecycle(entity);
+        this.admissionCache!.control = control;
+      } finally { Automerge.free(document); }
+    }
+    return { state: this.tombstoned ? "deleted" : control.state, heads: [...control.heads] };
   }
 
   observationForRuntime(origin: string, nonce: string) {
@@ -1334,6 +1340,14 @@ export class AutomationReplica {
     const plaintext = await openWithReplicaContentKeys(this.blind, object.keyEpoch,
       key => decryptBlindObject(object, this.blind.scopeId, object.keyEpoch, decodeBlindBytes(key)));
     if (plaintext.length > maximumSnapshotBytes) throw new Error("Encrypted automation snapshot exceeds the size limit");
+    if (!managementGuard && this.progress.uploadedRevision === this.contentRevision) {
+      const hash = await blindHash(plaintext);
+      if (hash === this.progress.lastUploaded) {
+        // This exact authenticated snapshot is already admitted. The engine still persists its cursor.
+        this.uploadedSnapshot = this.wireSnapshot();
+        return { hash };
+      }
+    }
     const snapshot = await readWorkspaceReplicaSnapshot<IncomingAuthorizationBundle, OpaqueChatBatch | null>(plaintext,
       this.workspaceId, async () => decodeBlindBytes(this.rawDocument));
     const revision = this.contentRevision;
@@ -1434,11 +1448,16 @@ export class AutomationReplica {
     return this.admission();
   }
 
+  private cachedAdmission() {
+    const cached = this.admissionCache;
+    if (cached?.rawDocument === this.rawDocument && cached.authorizations === this.authorizations && cached.authority === this.authority) return cached;
+  }
+
   private admission(document?: Automerge.Doc<WorkspaceDocumentV2>): WorkspaceAdmissionResult {
     // Historical admission ignores receiver time. Live grant expiry is checked
     // separately; every document, proof or authority change invalidates this cache.
-    const cached = this.admissionCache;
-    if (cached?.rawDocument === this.rawDocument && cached.authorizations === this.authorizations && cached.authority === this.authority) return cached.result;
+    const cached = this.cachedAdmission();
+    if (cached) return cached.result;
     const input = { workspaceId: this.workspaceId,
       authorization: { version: 1, records: this.authorizations, authority: this.authority },
       knownAuthority: this.authority, receivedBasis: this.historyBasis, now: Date.now() } as const;

@@ -151,12 +151,16 @@ export async function runReaction(request: ReactionRequest & { source: string },
   if (result !== undefined && (result === null || typeof result !== "object" || Array.isArray(result))) {
     throw new TypeError("Reaction result must be a JSON object");
   }
+  const readCommandResults = async () => {
+    for (const command of commands) {
+      if (commandCompleted(command)) continue;
+      try { await api.getItemCommandResult(command.commandId); } catch { /* Preserve pending journal identity for a retry. */ }
+    }
+  };
+  await readCommandResults();
   if (participant.flushPendingCommands && commands.some(command => command.status !== "failed" && !commandCompleted(command))) {
     try { await participant.flushPendingCommands(); } catch { /* Durable queue remains available for the next retry. */ }
-  }
-  for (const command of commands) {
-    if (commandCompleted(command)) continue;
-    try { await api.getItemCommandResult(command.commandId); } catch { /* Preserve pending journal identity for a retry. */ }
+    await readCommandResults();
   }
   const pending = commands.some(command => !commandCompleted(command));
   const failed = commands.some(command => command.status === "failed");

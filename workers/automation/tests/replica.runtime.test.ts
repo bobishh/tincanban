@@ -2008,17 +2008,21 @@ it("Given a newly authored and admitted Lead, when its controls and candidates a
   } finally { admission.mockRestore(); vi.useRealTimers(); }
 });
 
-it("Given already verified workspace evidence, when controls are read repeatedly with no CPU budget for revalidation, then observations remain available but expired grants fail", async () => {
+it("Given already verified workspace evidence, when controls are checked repeatedly, then reuse the admitted control and still reject expired grants", async () => {
   const data = await typedFixture();
   const replica = await AutomationReplica.activate(data.packet, data.automation);
   const admission = vi.spyOn(WasmStateCore, "evaluateCausalAdmission").mockImplementation(() => { throw new Error("Admission CPU budget exhausted"); });
+  const open = vi.spyOn(replica as unknown as { admittedDocument(): Automerge.Doc<WorkspaceDocumentV2> }, "admittedDocument");
   try {
-    expect(replica.controlForRuntime().state).toBe("active");
+    const control = replica.controlForRuntime();
+    expect(control.state).toBe("active");
+    expect(replica.controlForRuntime()).toEqual(control);
+    expect(open).not.toHaveBeenCalled();
     expect(replica.observationForRuntime("https://automation.example.test", "unchanged-evidence").state).toBe("active");
     vi.useFakeTimers();
     vi.setSystemTime(data.packet.grant.payload.automation!.expiresAt + 1);
     expect(() => replica.controlForRuntime()).toThrow(/expired/);
-  } finally { admission.mockRestore(); vi.useRealTimers(); }
+  } finally { open.mockRestore(); admission.mockRestore(); vi.useRealTimers(); }
 });
 
 it("Given a signed workspace with over 312k text operations, when automation activates, restores and creates a lead, then its controls remain admitted within the policy memory budget", async () => {
@@ -2986,7 +2990,7 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
     if (changed) expect(uploads[1]).not.toBe(await blindObjectId(legacyObject));
   });
 
-  it("Given an unchanged durable snapshot, when Rusty echoes uploaded objects across polls and Worker restarts, then only one ciphertext is stored", async () => {
+  it("Given an unchanged durable snapshot, when Rusty echoes the uploaded object after a restart, then persist only the cursor", async () => {
     const { automation, packet, persisted } = await fixture();
     const objects: Awaited<ReturnType<typeof encryptBlindObject>>[] = [];
     const transport: ReplicaTransport = {
@@ -3005,14 +3009,18 @@ describe("AutomationReplica in workerd with the compiled Rust policy", () => {
     expect(objects).toHaveLength(1);
     const initialState = JSON.parse(replica.serialize());
     for (let poll = 0; poll < 4; poll++) {
+      replica = await AutomationReplica.restore(persisted.at(-1)!, automation, async value => { persisted.push(value); }, transport);
+      const before = persisted.length;
       await replica.sync();
       const after = JSON.parse(replica.serialize());
       expect(objects, `Unchanged poll ${poll} must not re-encrypt`).toHaveLength(1);
+      expect(after.blind.cursor).toBe(1);
+      expect(after.replication.contentRevision).toBe(initialState.replication.contentRevision);
+      expect(persisted.length - before).toBe(poll === 0 ? 1 : 0);
       expect(after.rawDocument).toBe(initialState.rawDocument);
       expect(after.chat).toEqual(initialState.chat);
       expect(after.authorizations.map((record: { signed: unknown }) => record.signed))
         .toEqual(initialState.authorizations.map((record: { signed: unknown }) => record.signed));
-      replica = await AutomationReplica.restore(persisted.at(-1)!, automation, async value => { persisted.push(value); }, transport);
     }
     await replica.createLead("changed-after-polls", { company: "Acme", role: "Engineer" }, {});
     await replica.sync();

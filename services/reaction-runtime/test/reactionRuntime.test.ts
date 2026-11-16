@@ -103,6 +103,7 @@ test("Given a fast CLI reaction with a queued command, when it is about to exit,
 test("Given a Rusty write whose command response is lost, when the same run resumes, then it reconciles the original command receipt", async () => {
   let stored = false;
   let storedId = "";
+  let drains = 0;
   const participant = stubParticipant({
     async enqueueItemCommand(commandId) {
       storedId = commandId;
@@ -113,12 +114,30 @@ test("Given a Rusty write whose command response is lost, when the same run resu
       assert.equal(commandId, storedId);
       return stored ? { status: "applied", changeHash: "change-1", storageReceipt: { requestId: "receipt-1" } } : null;
     },
+    async flushPendingCommands() { drains += 1; },
   });
   const source = `export default async (_input, participant) => participant.enqueueItemCommand({ event: { id: "stable" } })`;
   const result = await runReaction({ ...input, source, sourceDigest: createHash("sha256").update(source).digest("hex") }, participant);
   assert.equal(result.status, "completed");
   assert.equal(result.commands[0]?.commandId, storedId);
   assert.equal(result.commands[0]?.storageReceipt && typeof result.commands[0]?.storageReceipt, "object");
+  assert.equal(drains, 0);
+});
+
+test("Given a previously applied command, when its receipt is retained, then a replay returns without synchronizing the board", async () => {
+  let drains = 0;
+  const storageReceipt = { requestId: "retained-receipt" };
+  const participant = stubParticipant({
+    async enqueueItemCommand() { return { status: "applied" }; },
+    async getItemCommandResult() { return { status: "applied", changeHash: "retained-change", storageReceipt }; },
+    async flushPendingCommands() { drains += 1; },
+  });
+  const source = `export default async (_input, participant) => participant.enqueueItemCommand({ event: { id: "applied-replay" } })`;
+  const result = await runReaction({ ...input, source, sourceDigest: createHash("sha256").update(source).digest("hex") }, participant);
+  assert.equal(result.status, "completed");
+  assert.equal(result.commands[0]?.changeHash, "retained-change");
+  assert.deepEqual(result.commands[0]?.storageReceipt, storageReceipt);
+  assert.equal(drains, 0);
 });
 
 test("Given oversized JSON or an unsupported port capability, when invoked, then reaction fails before execution", async () => {
