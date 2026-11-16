@@ -1,7 +1,9 @@
 <script setup lang="ts" generic="ItemType extends import('../domain/entitySchemas').Item, ColumnType extends { id: string; title: string; collapsible?: boolean; archive?: true; items: ItemType[] }">
-import { computed, ref } from "vue"
+import { computed, defineAsyncComponent, ref, type Component } from "vue"
 import BoardColumns from "./BoardColumns.vue"
 import BoardItemCard from "./BoardItemCard.vue"
+
+defineOptions({ inheritAttrs: false })
 
 type CardPresentation = {
   notes: string
@@ -42,23 +44,28 @@ const emit = defineEmits<{
   taskToggle: [item: ItemType, markdown: string]
   scroll: [event: Event]
 }>()
+const BoardHorizontalScroll = defineAsyncComponent<Component>(() => import("./BoardHorizontalScroll.vue"))
 const boardElement = ref<HTMLElement | null>(null)
 const boardClasses = computed(() => ({ "board-filtered": props.hasFilters, "board-single-column": props.columns.length === 1 }))
 </script>
 
 <template>
-  <section :ref="element => { boardElement = element as HTMLElement | null; onElement?.(boardElement) }" class="board" :class="boardClasses" role="region" :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
-    <BoardColumns :visible-columns="columns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
-      :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard"
-      :moved-column-id="movedColumnId" @toggle-column="emit('toggleColumn', $event)" @edit-column="emit('editColumn', $event)">
-      <template #before-item="slotProps"><slot name="before-item" v-bind="slotProps" /></template>
-      <template #card="{ item, column }">
-        <BoardItemCard :item="item" :can-edit-items="canEditItems" :has-filters="hasFilters" v-bind="cardPresentation(item, column)"
-          @open="(value, event) => emit('open', value as ItemType, event)" @select="emit('select', $event as ItemType)"
-          @discuss="emit('discuss', $event)" @task-toggle="(value, markdown) => emit('taskToggle', value as ItemType, markdown)" />
-      </template>
-      <template #add-item="slotProps"><slot name="add-item" v-bind="slotProps" /></template>
-    </BoardColumns>
-    <slot name="empty" />
-  </section>
+  <div class="board-surface">
+    <BoardHorizontalScroll v-if="boardElement" :board="boardElement" />
+    <section :ref="element => { boardElement = element as HTMLElement | null; onElement?.(boardElement) }"
+      v-bind="$attrs" class="board" :class="boardClasses" role="region" :aria-label="boardTitle ?? 'Board'" @scroll="emit('scroll', $event)">
+      <BoardColumns :visible-columns="columns" :items-for-column="itemsForColumn" :column-color="columnColor" :column-status="columnStatus"
+        :is-column-collapsed="isColumnCollapsed" :has-filters="hasFilters" :entity-name="entityName" :is-editing-board="isEditingBoard"
+        :moved-column-id="movedColumnId" @toggle-column="emit('toggleColumn', $event)" @edit-column="emit('editColumn', $event)">
+        <template #before-item="slotProps"><slot name="before-item" v-bind="slotProps" /></template>
+        <template #card="{ item, column }">
+          <BoardItemCard :item="item" :can-edit-items="canEditItems" :has-filters="hasFilters" v-bind="cardPresentation(item, column)"
+            @open="(value, event) => emit('open', value as ItemType, event)" @select="emit('select', $event as ItemType)"
+            @discuss="emit('discuss', $event)" @task-toggle="(value, markdown) => emit('taskToggle', value as ItemType, markdown)" />
+        </template>
+        <template #add-item="slotProps"><slot name="add-item" v-bind="slotProps" /></template>
+      </BoardColumns>
+      <slot name="empty" />
+    </section>
+  </div>
 </template>
