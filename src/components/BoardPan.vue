@@ -64,6 +64,7 @@ watchEffect(onCleanup => {
   board.addEventListener("pointercancel", end, { signal })
   board.addEventListener("lostpointercapture", end, { signal })
   board.addEventListener("wheel", scrollWithShift, { passive: false, signal })
+  board.addEventListener("keydown", scrollWithArrows, { signal })
   window.addEventListener("blur", stop, { signal })
   onCleanup(() => {
     listeners.abort()
@@ -73,6 +74,15 @@ watchEffect(onCleanup => {
     board.removeAttribute("data-board-pannable")
   })
 })
+
+function scrollWithArrows(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.target !== event.currentTarget || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+  const board = event.currentTarget as HTMLElement
+  if (board.scrollWidth <= board.clientWidth) return
+  board.scrollLeft += event.key === "ArrowLeft" ? -40 : 40
+  event.preventDefault()
+}
 
 function scrollWithShift(event: WheelEvent) {
   if (!event.shiftKey || event.ctrlKey || event.deltaX || !event.deltaY || !event.cancelable) return

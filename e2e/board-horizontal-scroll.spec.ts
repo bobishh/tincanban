@@ -65,6 +65,7 @@ test("Given a wide board, when dragging headers and empty space, then the board 
   await board.getByRole("button", { name: /Open Review with/ }).click()
   await board.evaluate(el => { el.scrollLeft = 0 })
   await expect.poll(scrollLeft).toBe(0)
+  await header.scrollIntoViewIfNeeded()
   const wheelBounds = (await header.boundingBox())!
   await page.mouse.move(400, wheelBounds.y + wheelBounds.height / 2)
   await page.keyboard.down("Shift")
