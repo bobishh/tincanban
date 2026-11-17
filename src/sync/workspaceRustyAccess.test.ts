@@ -23,6 +23,8 @@ import { mergeIdentityAuthorityView } from "./identityAuthorityStore"
 import type { WorkspaceGrant } from "../domain/model"
 import * as workspaceParticipants from "./workspaceParticipants"
 import * as identityAuthorityStore from "./identityAuthorityStore"
+import { writeLocal } from "../localDb"
+import { changeReplicaPreference, emptyPrivateReplicaState } from "./privateReplicaPreferences"
 
 const token = (byte: number) => Buffer.alloc(32, byte).toString("base64url")
 const config: BlindReplicaConfig = { origin: "https://rusty.example", scopeId: token(1), workspaceId: "board",
@@ -156,6 +158,21 @@ test("Given different identities, when editor and visitor receive owner-attested
   expect(reader.writeToken).toBe("")
   expect(parseReplicaConfig(JSON.stringify(reader)).boardAccess?.mode).toBe("read")
   expect(selectBoardStorageAccess(access, "", "editor")).toBeUndefined()
+})
+
+test("Given an inactive storage connection, when an editor receives a current grant for the same board, then connect with the new grant", async () => {
+  const { authority, access, recipient } = await fixture()
+  const personId = recipient.identity.personId
+  const editor = selectBoardStorageAccess(access, config.writeToken, "editor")!
+  const obsolete = { ...editor, boardAccess: structuredClone(editor.boardAccess!) }
+  obsolete.boardAccess.authorization.payload.version = 1
+  delete obsolete.boardAccess.principalGrant
+  const stored = changeReplicaPreference(emptyPrivateReplicaState(personId, "fixture"), obsolete)
+  await writeLocal(privateReplicaRepository.privateReplicaStateStorageKey(personId), JSON.stringify(stored))
+  expect(await getReplicaConfigurations(personId)).toEqual([])
+
+  await receiveBoardStorageAccess(personId, config.workspaceId, authority, "editor", [editor], async () => {}, recipient.identity.publicKey)
+  expect(await getReplicaConfigurations(personId)).toMatchObject([{ boardAccess: editor.boardAccess }])
 })
 
 test("Given an unchanged editor grant signed by another active Bo app device, when current Bo reattests Rusty, then preserve the grant and sign storage access with the current device", async () => {

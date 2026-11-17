@@ -56,6 +56,33 @@ const unsafeKeyChanges: Array<[string, UnsafeKeyChange]> = [
   ["changes a retained key", (value, _firstKey, otherKey) => ({ ...value, historicalContentKeys: { "1": otherKey } })],
 ]
 
+it("Given an obsolete participant credential alongside current settings, when loading replicas, then keep the obsolete record inactive and leave the other connections intact", async () => {
+  const owner = crypto.randomUUID()
+  const key = `tincanban.private-replica-state.v2.${owner}`
+  const obsolete: BlindReplicaConfig = {
+    ...config, scopeId: "obsolete-scope", workspaceId: "obsolete-board",
+    boardAccess: { mode: "write", certificates: [], authorization: {
+      signerKeyId: "fixture-owner", signature: token, payload: {
+        kind: "workspace-rusty-access", version: 1, workspaceId: "obsolete-board", ownerPersonId: "fixture-owner",
+        connection: { ...config, scopeId: "obsolete-scope", workspaceId: "obsolete-board" }, writeTokenHash: token,
+      },
+    } },
+  }
+  const initial = changeReplicaPreference(emptyPrivateReplicaState(owner, "fixture"), obsolete)
+  const stored = changeReplicaPreference(changeReplicaPreference(initial, config), identityConfig(owner))
+  const raw = JSON.stringify(stored)
+  await local.writeLocal(key, raw)
+
+  expect((await getReplicaConfigurations(owner)).map(replica => replica.workspaceId)).toEqual([config.workspaceId])
+  expect(await getIdentityReplicaConfigurations(owner)).toMatchObject([{ personId: owner }])
+  expect(await local.readLocal(key)).toBe(raw)
+  await setReplicaPreference(owner, { ...config, policyRevision: 2 })
+  expect(await getReplicaConfigurations(owner)).toMatchObject([{ workspaceId: config.workspaceId, policyRevision: 2 }])
+  expect(await exportPrivateReplicaState(owner)).toMatchObject({ entries: expect.arrayContaining([
+    expect.objectContaining({ scopeId: obsolete.scopeId }),
+  ]) })
+})
+
 it("Given an uncertain encrypted upload, when local credentials rotate, then refuse migration and preserve exact outbox bytes", async () => {
   const owner = crypto.randomUUID()
   await setReplicaPreference(owner, config)

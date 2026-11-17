@@ -288,10 +288,23 @@ export function replicaPreferenceConflicts(state: PrivateReplicaState): Array<{ 
     .map(({ origin, scopeId }) => ({ origin, scopeId }))
 }
 
+function isRetiredParticipantConfig(config: PrivateReplicaConfig): boolean {
+  return config.purpose === "workspace" && config.boardAccess?.authorization.payload.version === 1
+}
+
+export function canReplaceRetiredParticipantConfig(entry: Entry, incoming: PrivateReplicaConfig): boolean {
+  if (incoming.purpose !== "workspace" || incoming.boardAccess?.authorization.payload.version !== 2) return false
+  const previous = selectedConfig(entry)
+  return Boolean(previous?.purpose === "workspace" && isRetiredParticipantConfig(previous) && !previous.removalPending &&
+    previous.workspaceId === incoming.workspaceId && previous.servicePublicKey === incoming.servicePublicKey &&
+    previous.policyRevision <= incoming.policyRevision &&
+    (previous.minimumWriterVersion === undefined || incoming.minimumWriterVersion === previous.minimumWriterVersion))
+}
+
 export function effectivePrivateReplicaConfigs(state: PrivateReplicaState): PrivateReplicaConfig[] {
   return state.entries.flatMap(entry => {
     const config = selectedConfig(entry)
-    if (!config) return []
+    if (!config || isRetiredParticipantConfig(config)) return []
     const preferenceRevision = entryRevision(entry)
     const progress = state.progress[entryKey(entry)]
     return [{ ...copy(config), preferenceRevision, ...(progress?.revision === preferenceRevision

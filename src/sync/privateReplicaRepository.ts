@@ -16,7 +16,7 @@ import { parseReplicaCredentialConflictFreeze,type ReplicaCredentialConflictFree
 import { assertRetainsReplicaContentKeys } from "./replicaContentKeys"
 import { verifyBlindReceipt,type BlindReceipt } from "./blindClient"
 import {
-changeReplicaPreference,effectiveIdentityReplicaConfigs,effectivePrivateReplicaConfigs,effectiveReplicaConfigs,mergePrivateReplicaState,
+canReplaceRetiredParticipantConfig,changeReplicaPreference,effectiveIdentityReplicaConfigs,effectivePrivateReplicaConfigs,effectiveReplicaConfigs,mergePrivateReplicaState,
 parsePrivateReplicaWire,portableReplicaState,replicaPreferenceConflicts,updateReplicaProgress,
 emptyPrivateReplicaState,type PrivateReplicaState,type PrivateReplicaWire,type ReplicaWriterUpgrade
 } from "./privateReplicaPreferences"
@@ -203,7 +203,10 @@ export async function setReplicaPreference(owner: string, config: PrivateReplica
     if (expectedBinding !== undefined) {
       const selected = effectivePrivateReplicaConfigs(state).find(value => scopeKey(value) === scopeKey(checked))
       if ((selected ? privateReplicaBinding(owner, selected) : null) !== expectedBinding) throw new ReplicaProgressConflictError()
-      if (!selected && state.entries.some(entry => scopeKey(entry) === scopeKey(checked))) return state
+      if (!selected) {
+        const entry = state.entries.find(value => scopeKey(value) === scopeKey(checked))
+        if (entry && !canReplaceRetiredParticipantConfig(entry, checked)) return state
+      }
     }
     assertNoWriterUpgrade(state, checked)
     return reconcileReplicaProgress(state, changeReplicaPreference(state, checked, removed))

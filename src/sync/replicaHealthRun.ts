@@ -1,4 +1,4 @@
-import { isRustyRequestFailure, ReplicaProgressConflictError, ParticipantStorageAccessPendingError } from "./replicationErrors"
+import { isRustyRequestFailure, ReplicaProgressConflictError } from "./replicationErrors"
 import { computed, shallowReactive, type Ref } from "vue"
 import type { BlindReplicaConfig, PrivateReplicaConfig } from "./blindReplication"
 import { replicaConfirmationLifetime, replicaKey, type BoardFreshness, type BoardReplicaRead, type ReplicaHealth } from "./replicationHealth"
@@ -30,10 +30,6 @@ export async function recordReplicaHealth(config: PrivateReplicaConfig, statuses
 function recordReplicaFailure(config: PrivateReplicaConfig, statuses: Ref<Record<string, ReplicaHealth>>,
   cause: unknown, lastSyncedAt: number | undefined, deviceIssues?: Ref<Record<string, string>>): string | undefined {
   const key = replicaKey(config)
-  if (cause instanceof ParticipantStorageAccessPendingError) {
-    statuses.value = { ...statuses.value, [key]: { phase: "access-pending" } }
-    return
-  }
   if (isRustyRequestFailure(cause)) {
     const failure = connectionFailure(cause)
     statuses.value = { ...statuses.value, [key]: { phase: "error", lastSyncedAt, ...failure } }

@@ -45,7 +45,12 @@ async function fixture() {
     grant: await createWorkspaceGrant(profile, workspaceId, sourcePersonId, "editor"),
     workspaceAuthority: { version: 1, records: [], authority: { genesisOwner: owner, currentOwner: owner,
       genesisEpoch: 1, currentEpoch: 1, ownershipTransfers: [], successionClaims: [], revocations: [], deviceRevocations: [], departures: [] } },
-    scopeAuthoritySnapshot, meshEnvelope: { version: 1, workspaceId, ownerPersonId: owner.personId,
+    scopeAuthoritySnapshot, ownerStorageProof: {
+      authorization: await signEnvelope(profile.privateKeys.devicePrivateKey, {
+        kind: "workspace-rusty-access" as const, version: 2 as const,
+      }, profile.device.deviceId),
+      certificates: [profile.certificate],
+    }, meshEnvelope: { version: 1, workspaceId, ownerPersonId: owner.personId,
       ownerPublicKey: owner.publicKey, ownerCertificates: owner.certificates, transportSecret: token, epoch: 1,
       peers: [], scopeAuthoritySnapshot }, replicaConfig: { purpose: "workspace", origin: "https://rusty.example", workspaceId,
       scopeId: token, servicePublicKey: token, readToken: token, writeToken: token, keyEpoch: 1,
@@ -96,6 +101,15 @@ test("Given a verified board copy without Rusty, when its current owner reconnec
   const { input, control } = await fixture()
   control.failActivation = false
   delete (input.verified as Partial<VerifiedOwnerReconnectWorkspace>).replicaConfig
+  await expect(persistVerifiedOwnerReconnect(input)).resolves.toBeUndefined()
+  expect(state.order).toEqual(["mesh-validate", "validate", "receive", "authority", "mesh-install", "catalog", "activate"])
+})
+
+test("Given a verified reconnect carrying obsolete storage access, when the owner accepts, then restore the board without installing that connection", async () => {
+  const { input, control } = await fixture()
+  control.failActivation = false
+  input.verified.ownerStorageProof!.authorization.payload.version = 1
+
   await expect(persistVerifiedOwnerReconnect(input)).resolves.toBeUndefined()
   expect(state.order).toEqual(["mesh-validate", "validate", "receive", "authority", "mesh-install", "catalog", "activate"])
 })

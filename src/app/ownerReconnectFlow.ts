@@ -4,14 +4,12 @@ import type { OwnerReconnectAuthenticatedPeer, OwnerReconnectHistoryReader, Owne
   VerifiedOwnerReconnectWorkspace } from "@meta-uber/mesh-workspace"
 import type { WorkspaceGrant, WorkspaceDocumentV2 } from "../domain/model"
 import type { LocalProfile } from "../domain/identity"
-import { canonicalizeJson, fromBase64Url, sha256Base64Url, verifyEnvelope } from "../domain/identity"
-import { parseBoardStorageAccess } from "../domain/boardStorageAccess"
+import { canonicalizeJson, fromBase64Url } from "../domain/identity"
 import { workspaceRole, exportAuthorizationBundle } from "../sync/changeAuthorization"
 import { getReplicaConfigurations, setReplicaPreference } from "../sync/privateReplicaRepository"
 import { assertReplicaCredentialsUnfrozen } from "../sync/replicaCredentialFreeze"
 import { parseReplicaConfig } from "../sync/blindReplicaConfig"
 import { verifyBoardStorageAccess } from "../sync/workspaceRustyAccess"
-import { verifyDeviceChain } from "../sync/meshRecords"
 import { peerStore } from "../sync/peerStore"
 import { workspaceSet, type PeerHistoryObjectReader, type WorkspaceSetStore } from "../sync/workspaceSet"
 import { capturePeerHistoryBaselineDescriptor } from "../sync/workspaceSetHistory"
@@ -29,6 +27,7 @@ type OwnerReconnectReceipt = { version: 1; invitationId: string; workspaceId: st
 
 async function prepareOwnerReplicaConfig(profile: LocalProfile, workspaceId: string,
   verified: VerifiedOwnerReconnectWorkspace) {
+  if (!verified.replicaConfig || verified.ownerStorageProof?.authorization.payload.version !== 2) return
   const incoming = parseReplicaConfig(JSON.stringify({ ...verified.replicaConfig, purpose: "workspace", cursor: 0, lastUploaded: "" }))
   if (incoming.workspaceId !== workspaceId || incoming.boardAccess) throw new Error("Verified owner storage configuration is invalid")
   const current = await getReplicaConfigurations(profile.identity.personId)
@@ -75,7 +74,6 @@ type ParticipantBoard = {
   role: Awaited<ReturnType<typeof workspaceRole>>
 }
 type ParticipantStorage = Pick<OwnerReconnectSourceState, "grant" | "replicaConfig" | "ownerStorageProof" | "scopeAuthoritySnapshot">
-type ParticipantBoardAuthorization = Pick<ParticipantBoard, "authority" | "role">
 
 export function verifiedOwnerReconnectTitle(workspace: unknown): string {
   if (!workspace || typeof workspace !== "object" || Array.isArray(workspace)) throw new Error("Verified board snapshot is malformed")
@@ -176,11 +174,12 @@ async function readParticipantStorage(input: Parameters<typeof readOwnerReconnec
     assertGrantMatchesBoard(board.authority.ownerPersonId, grant, board.credential, input.workspaceId)
     return { grant, scopeAuthoritySnapshot: board.authority.scopeAuthoritySnapshot }
   }
-  if (!config.boardAccess) throw new Error("Owner storage access is unavailable on this participant copy")
-  const boardAccess = parseBoardStorageAccess(config.boardAccess)
-  await verifyReconnectStorageAccess(config, boardAccess, board, role, input)
+  const { boardAccess } = config
+  if (!boardAccess) throw new Error("Owner storage access is unavailable on this participant copy")
+  await verifyBoardStorageAccess(config, input.workspaceId, board.authority, role,
+    input.profile.identity.personId, input.profile.identity.publicKey)
   const access = boardAccess.authorization.payload
-  const grant = requireSourceGrant(access.workspaceGrant ?? board.credential.localGrant, input.workspaceId, input.profile.identity.personId)
+  const grant = requireSourceGrant(access.workspaceGrant, input.workspaceId, input.profile.identity.personId)
   assertGrantMatchesBoard(access.ownerPersonId, grant, board.credential, input.workspaceId)
   if (!config.writeToken) throw new Error("This read-only copy does not contain the owner storage configuration needed to reconnect")
   const replicaConfig = parseReplicaConfig(JSON.stringify({
@@ -207,73 +206,10 @@ function assertParticipantRole(role: ParticipantBoard["role"]): asserts role is 
   if (role !== "editor" && role !== "visitor") throw new Error("Connect an owner device from a participant copy")
 }
 
-async function verifyReconnectStorageAccess(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number],
-  access: ReturnType<typeof parseBoardStorageAccess>, board: ParticipantBoard, role: "editor" | "visitor",
-  input: Parameters<typeof readOwnerReconnectSource>[0]): Promise<void> {
-  if (access.authorization.payload.version === 1) {
-    await verifyRetainedOwnerStorage(config, access, board, input.workspaceId)
-    return
-  }
-  await verifyBoardStorageAccess(config, input.workspaceId, board.authority, role,
-    input.profile.identity.personId, input.profile.identity.publicKey)
-}
-
 function assertGrantMatchesBoard(ownerPersonId: string, grant: WorkspaceGrant,
   credential: ParticipantBoard["credential"], workspaceId: string): void {
   if (ownerPersonId !== credential.ownerPersonId || canonicalizeJson(grant) !== canonicalizeJson(credential.localGrant) ||
       grant.payload.workspaceId !== workspaceId) throw new Error("Current participant access does not match the signed board grant")
-}
-
-export async function verifyRetainedOwnerStorage(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number],
-  access: ReturnType<typeof parseBoardStorageAccess>, board: ParticipantBoardAuthorization, workspaceId: string): Promise<void> {
-  const record = access.authorization
-  const payload = record.payload
-  const owner = board.authority
-  const scopeSnapshot = owner.scopeAuthoritySnapshot
-  assertRetainedStorageFields(config, access, owner, workspaceId, scopeSnapshot)
-  const state = meshRustRuntime().state
-  const scope = state.validateScopeAuthority(scopeSnapshot, Date.now()) as {
-    scopeId: string; controller: { personId: string; publicKey: string }
-  }
-  assertRetainedScopeConnection(config, payload.connection, scope, owner, workspaceId)
-  const signerKey = await verifyDeviceChain({ personId: owner.ownerPersonId, publicKey: owner.ownerPublicKey,
-    deviceId: record.signerKeyId, certificates: access.certificates })
-  await verifyRetainedSignature(config, record, payload, signerKey, owner, state)
-}
-
-function assertRetainedStorageFields(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number],
-  access: ReturnType<typeof parseBoardStorageAccess>, owner: ParticipantBoard["authority"], workspaceId: string,
-  scopeSnapshot: unknown): asserts scopeSnapshot {
-  const payload = access.authorization.payload
-  if (payload.version === 1 && access.mode === "write" && config.workspaceId === workspaceId &&
-      payload.workspaceId === workspaceId && payload.ownerPersonId === owner.ownerPersonId && config.writeToken &&
-      scopeSnapshot) return
-  throw new Error("Retained owner storage connection is incomplete")
-}
-
-function assertRetainedScopeConnection(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number],
-  connection: unknown, scope: { scopeId: string; controller: { personId: string; publicKey: string } },
-  owner: ParticipantBoard["authority"], workspaceId: string): void {
-  if (scope.scopeId !== workspaceId || scope.controller.personId !== owner.ownerPersonId ||
-      scope.controller.publicKey !== owner.ownerPublicKey || canonicalizeJson(storageConnection(config)) !== canonicalizeJson(connection)) {
-    throw new Error("Retained owner storage connection differs from current Rusty authority")
-  }
-}
-
-async function verifyRetainedSignature(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number],
-  record: ReturnType<typeof parseBoardStorageAccess>["authorization"], payload: typeof record.payload,
-  signerKey: string, owner: ParticipantBoard["authority"], state: ReturnType<typeof meshRustRuntime>["state"]): Promise<void> {
-  if (state.isDeviceRevoked(owner, owner.ownerPersonId, record.signerKeyId) ||
-      !await verifyEnvelope(record, signerKey) ||
-      await sha256Base64Url(new TextEncoder().encode(config.writeToken)) !== payload.writeTokenHash) {
-    throw new Error("Retained owner storage signature or token binding is invalid")
-  }
-}
-
-function storageConnection(config: Awaited<ReturnType<typeof getReplicaConfigurations>>[number]) {
-  const values = parseReplicaConfig(JSON.stringify(config))
-  return Object.fromEntries(Object.entries(values).filter(([key]) =>
-    !["boardAccess", "writeToken", "cursor", "lastUploaded", "preferenceRevision", "removalPending"].includes(key)))
 }
 
 function createHistorySource(input: Parameters<typeof readOwnerReconnectSource>[0]): OwnerReconnectSourceState["history"] {
@@ -337,7 +273,7 @@ export async function persistVerifiedOwnerReconnect(input: {
     if (entry.id !== workspaceId || typeof entry.bytes !== "string") throw new Error("Verified board snapshot is malformed")
     await input.mesh.validateInvitation([verified.meshEnvelope], [workspaceId], profile, [])
     await input.ensureCurrent()
-    const storage = verified.replicaConfig ? await prepareOwnerReplicaConfig(profile, workspaceId, verified) : undefined
+    const storage = await prepareOwnerReplicaConfig(profile, workspaceId, verified)
     const snapshot = meshRustRuntime().state.encodeWorkspaceSet([entry])
     const replica = workspaceSet(store, [{ id: workspaceId }])
     const history = workspaceHistoryReader(input.history)

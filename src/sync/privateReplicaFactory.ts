@@ -10,7 +10,6 @@ import type { AttachmentCoverageStatus } from "./attachmentReplicationTypes"
 import type { ReplicaWriterUpgrade } from "./privateReplicaPreferences"
 import { defaultStorage } from "../storage"
 import type { BoardReplicaRead } from "./replicationHealth"
-import { ParticipantStorageAccessPendingError } from "./replicationErrors"
 import { privateReplicaConfigurationKey, privateReplicaOperationKey } from "./privateReplicaBinding"
 import type * as BlindReplicaStore from "./blindReplicaStore"
 
@@ -94,9 +93,6 @@ function applyPersistedReplicaProgress(configs: Ref<BlindReplicaConfig[]>, value
 
 export function resolvePrivateReplica(app: ReturnType<typeof useTincanban>, config: PrivateReplicaConfig, session: Session): Promise<Replica> {
   session.guard()
-  if (config.purpose !== "identity" && config.boardAccess?.authorization.payload.version === 1) {
-    return Promise.reject(new ParticipantStorageAccessPendingError("Waiting for board storage access"))
-  }
   const key = privateReplicaOperationKey(session.owner, session.epoch ?? null, config)
   let pending = constructing.get(session.cache)
   if (!pending) { pending = new Map(); constructing.set(session.cache, pending) }

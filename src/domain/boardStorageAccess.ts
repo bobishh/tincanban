@@ -27,8 +27,15 @@ export type BoardStorageAccess = {
   principalGrant?: RustyResourcePrincipalGrant
 }
 
-/** Structural parsing only; the current board authority verifies signatures before use. */
+/** Parse current access before the board authority verifies its signatures. */
 export function parseBoardStorageAccess(value: unknown): BoardStorageAccess {
+  const access = parseStoredBoardStorageAccess(value)
+  if (access.authorization.payload.version !== 2) throw new Error("Unsupported participant storage access")
+  return access
+}
+
+/** Preserve retired records in the preference journal without activating them. */
+export function parseStoredBoardStorageAccess(value: unknown): BoardStorageAccess {
   if (!value || typeof value !== "object" || JSON.stringify(value).length > 32_768) throw new Error("Invalid board storage access")
   const access = value as BoardStorageAccess
   if (!["read", "write"].includes(access.mode) || !Array.isArray(access.certificates) || access.certificates.length > 64) {
