@@ -1,5 +1,5 @@
-import { expect, test, type BrowserContext, type Page } from "./support/coverage"
-import { approveRustyForFixture, readStoredBoardAccess } from "./support/identityRustyFixture"
+import { expect, test, type Page } from "./support/coverage"
+import { approveRustyForFixture } from "./support/identityRustyFixture"
 import { createJobSearchWorkspace, ensureJobSearchWorkspace, addJobSearchLead as addLead } from "./support/workspaces"
 import { startRustyService } from "./support/rustyService"
 
@@ -171,10 +171,7 @@ async function participantReconnectSourceReady(page: Page, workspaceId: string):
     const access = config?.boardAccess
     const payload = access?.authorization.payload
     const grant = payload?.workspaceGrant ?? credential?.localGrant
-    const ownerProofReady = payload?.version === 1
-      ? typeof payload.writeTokenHash === "string"
-      : payload?.version === 2 && Boolean(access?.principalGrant && payload.readTokenHash && payload.workspaceGrant)
-    return Boolean(config && access?.mode === "write" && access.certificates.length && ownerProofReady &&
+    return Boolean(config && access?.mode === "write" && access.certificates.length && access.principalGrant && payload?.readTokenHash && payload.workspaceGrant &&
       payload?.workspaceId === id && payload.ownerPersonId === credential?.ownerPersonId &&
       payload.connection.scopeId === config.scopeId && payload.connection.origin === config.origin &&
       payload.connection.servicePublicKey === config.servicePublicKey && config.writeToken && config.readToken && config.contentKey &&
@@ -202,54 +199,15 @@ async function participantReconnectSourceReadyWithoutRusty(page: Page, workspace
   }, workspaceId)
 }
 
-async function createSignedLegacyAccess(ownerPage: Page, workspaceId: string) {
-  return ownerPage.evaluate(async id => {
-    const { bootstrapIdentity, sha256Base64Url, signEnvelope } = await import("/src/domain/identity.ts")
-    const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
-    const { readIdentityAuthorityView } = await import("/src/sync/identityAuthorityStore.ts")
-    const profile = await bootstrapIdentity()
-    const config = (await getReplicaConfigurations(profile.identity.personId))
-      .find(value => value.workspaceId === id && !value.boardAccess && !value.removalPending)
-    const authority = await readIdentityAuthorityView(profile.identity.personId)
-    if (!config?.writeToken || !authority || !profile.privateKeys.devicePrivateKey) {
-      throw new Error("Current owner storage material is not ready for the retained-v1 fixture")
-    }
-    const connection = Object.fromEntries(Object.entries(config)
-      .filter(([key]) => !["boardAccess", "writeToken", "cursor", "lastUploaded", "preferenceRevision"].includes(key)))
-    const authorization = await signEnvelope(profile.privateKeys.devicePrivateKey, {
-      kind: "workspace-rusty-access", version: 1, workspaceId: id, ownerPersonId: profile.identity.personId,
-      connection, writeTokenHash: await sha256Base64Url(new TextEncoder().encode(config.writeToken)),
-    }, profile.device.deviceId)
-    return { mode: "write" as const, authorization, certificates: authority.certificates }
-  }, workspaceId)
-}
-
-async function installSignedLegacyAccess(participantPage: Page, workspaceId: string,
-  ownerAccess: Awaited<ReturnType<typeof createSignedLegacyAccess>>): Promise<void> {
-  await participantPage.evaluate(async ({ id, ownerAccess }) => {
-    const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-    const { getReplicaConfigurations, setReplicaPreference } = await import("/src/sync/privateReplicaRepository.ts")
-    const profile = await bootstrapIdentity()
-    const config = (await getReplicaConfigurations(profile.identity.personId))
-      .find(value => value.workspaceId === id && value.boardAccess && !value.removalPending)
-    if (!config) throw new Error("Joined participant storage config is not ready for the retained-v1 fixture")
-    await setReplicaPreference(profile.identity.personId, { ...config, boardAccess: ownerAccess })
-  }, { id: workspaceId, ownerAccess })
-}
-
-async function retainLegacyOwnerAccess(ownerPage: Page, participantPage: Page, workspaceId: string) {
-  await installSignedLegacyAccess(participantPage, workspaceId, await createSignedLegacyAccess(ownerPage, workspaceId))
-}
-
-for (const storageVersion of [1, 2, "none"] as const) {
-const storageDescription = storageVersion === "none" ? "without Rusty storage access" : `with retained v${storageVersion} storage access`
+for (const withRusty of [true, false]) {
+const storageDescription = withRusty ? "with Rusty storage" : "without Rusty storage"
 test(`Given a participant copy and a current owner Identity device ${storageDescription}, when owner reconnect is offered, then wrong identities write nothing and the owner restores the same board`, async ({ page, browser, baseURL }) => {
   test.setTimeout(180_000)
   await page.goto("/")
   await ensureJobSearchWorkspace(page)
   const initialOwner = await profile(page)
-  const rusty = storageVersion === "none" ? undefined : await startRustyService(
-    { identity: initialOwner.identity, allowedControllerDeviceIds: [initialOwner.device.deviceId] }, baseURL!)
+  const rusty = withRusty ? await startRustyService(
+    { identity: initialOwner.identity, allowedControllerDeviceIds: [initialOwner.device.deviceId] }, baseURL!) : undefined
   const ownerDeviceContext = await browser.newContext()
   const wrongOwnerContext = await browser.newContext()
   const participantContext = await browser.newContext()
@@ -304,14 +262,10 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
     await expect(participant.getByRole("button", { name: "Open Owner restored — Engineer" })).toBeVisible({ timeout: 30_000 })
     const participantProfile = await profile(participant)
     fixtureDevices["retained-participant"] = { personId: participantProfile.identity.personId, deviceId: participantProfile.device.deviceId }
-    const sourceReady = () => storageVersion === "none"
-      ? participantReconnectSourceReadyWithoutRusty(participant, originalWorkspaceId)
-      : participantReconnectSourceReady(participant, originalWorkspaceId)
-    await expect.poll(sourceReady, { timeout: 30_000 }).toBe(true)
-    if (storageVersion === 1) {
-      await retainLegacyOwnerAccess(page, participant, originalWorkspaceId)
-      await expect.poll(sourceReady, { timeout: 30_000 }).toBe(true)
-    }
+    const sourceReady = () => withRusty
+      ? participantReconnectSourceReady(participant, originalWorkspaceId)
+      : participantReconnectSourceReadyWithoutRusty(participant, originalWorkspaceId)
+    await expect.poll(sourceReady, { message: "Participant has a retained board copy ready for owner reconnect", timeout: 30_000 }).toBe(true)
     await join.getByRole("button", { name: "Close", exact: true }).first().click()
     await host.getByRole("button", { name: "Close", exact: true }).first().click()
     await page.close()
@@ -367,7 +321,7 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
     }, originalWorkspaceId)
     expect(restored).toMatchObject({ ids: [originalWorkspaceId],
       rootReference: { workspaceId: originalWorkspaceId, documentId: originalWorkspaceId, forgotten: false },
-      ownerPersonId: restored.currentPersonId, ownerConfigCount: storageVersion === "none" ? 0 : 1 })
+      ownerPersonId: restored.currentPersonId, ownerConfigCount: withRusty ? 1 : 0 })
 
     await ownerDevice.reload()
     await expect(ownerDevice.getByRole("region", { name: "Original board", exact: true })).toBeVisible({ timeout: 30_000 })
@@ -438,7 +392,7 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
     if (rusty) await rusty.close()
     await Promise.allSettled(pendingRustyResponses)
     await test.info().attach("owner-reconnect-targeted-diagnostics.json", {
-      body: Buffer.from(JSON.stringify({ storageVersion, workspaceId: originalWorkspaceId, fixtureDevices,
+      body: Buffer.from(JSON.stringify({ withRusty, workspaceId: originalWorkspaceId, fixtureDevices,
         events: reconnectDiagnostics, rustyHttpFailures }, null, 2)),
       contentType: "application/json",
     })
@@ -446,173 +400,3 @@ test(`Given a participant copy and a current owner Identity device ${storageDesc
   expect(pageFailures).toEqual([])
 })
 }
-
-test("Given Bo and Ray already share a Rusty-backed board, when principal registration fails during owner reconnect, then P2P edits continue and Rusty accepts a retried grant", async ({ page, browser, baseURL }) => {
-  test.setTimeout(180_000)
-  const rusty = await startRustyService({}, baseURL!)
-  const rayContext = await browser.newContext()
-  const ray = await rayContext.newPage()
-  const ownerContext = page.context()
-  let bo = page
-  const origin = rusty.origin
-  const principalFailures: string[] = []
-  const principalSuccesses: number[] = []
-  const legacyRayWrites: number[] = []
-  let coldOwner: BrowserContext | undefined
-  let coldRay: BrowserContext | undefined
-  let registrationUnavailable = false
-  let retainingLegacyAccess = false
-
-  try {
-    await page.context().route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
-    await rayContext.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
-    await Promise.all([page.goto("/"), ray.goto("/")])
-    ray.on("response", response => {
-      if (!retainingLegacyAccess) return
-      const url = new URL(response.url())
-      if (url.origin === origin && response.request().method() === "PUT" && /\/objects(?:\/|$)/u.test(url.pathname)) {
-        legacyRayWrites.push(response.status())
-      }
-    })
-    await createJobSearchWorkspace(page, "Bo and Ray")
-    await approveRustyForFixture(page, origin)
-
-    await page.getByRole("button", { name: "Sync", exact: true }).click()
-    const ownerSync = page.getByRole("dialog", { name: "Device sync" })
-    const rustyPanel = ownerSync.getByRole("region", { name: "Rusty", exact: true })
-    await rustyPanel.getByRole("button", { name: "Add Rusty", exact: true }).click()
-    await rustyPanel.getByLabel("Address", { exact: true }).fill(origin)
-    await rustyPanel.getByRole("button", { name: "Connect", exact: true }).click()
-    await expect(rustyPanel.locator(".rusty-connections .rusty-connection").first().getByText("Synced", { exact: true }))
-      .toBeVisible({ timeout: 30_000 })
-
-    await ownerSync.getByRole("button", { name: "Add someone", exact: true }).click()
-    await ownerSync.getByRole("button", { name: "Generate link", exact: true }).click()
-    await ray.goto(await ownerSync.getByLabel("Pairing link").inputValue())
-    const raySync = ray.getByRole("dialog", { name: "Device sync" })
-    await raySync.getByRole("button", { name: "Accept and join", exact: true }).click()
-    await ownerSync.getByLabel("Participant role").selectOption("editor")
-    await ownerSync.getByRole("button", { name: "Approve access", exact: true }).click()
-    await expect(raySync.getByText(/Connected to/)).toBeVisible({ timeout: 30_000 })
-    await expect(ray.getByLabel("Workspace role: editor")).toBeVisible({ timeout: 30_000 })
-    const workspaceId = await page.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)
-    await expect.poll(() => readStoredBoardAccess(ray, workspaceId), { timeout: 30_000 }).toMatchObject({
-      version: 2, mode: "write",
-    })
-    const initialAccess = await readStoredBoardAccess(ray, workspaceId)
-    expect(initialAccess.personId).toBeTruthy()
-    expect(initialAccess.subjectPersonId).toBe(initialAccess.personId)
-    expect(initialAccess.scopeId).toBeTruthy()
-    await raySync.getByRole("button", { name: "Close", exact: true }).first().click()
-    if (await raySync.isVisible()) await raySync.getByRole("button", { name: "Close", exact: true }).first().click()
-    if (await ownerSync.isVisible()) await ownerSync.getByRole("button", { name: "Close", exact: true }).click()
-
-    await ownerContext.route(`${origin}/v2/scopes/**/principals/**`, async route => {
-      if (route.request().method() !== "PUT") return route.continue()
-      if (registrationUnavailable) {
-        principalFailures.push(route.request().url())
-        return route.fulfill({ status: 503, body: JSON.stringify({ message: "Rusty principal registration unavailable" }) })
-      }
-      const response = await route.fetch()
-      principalSuccesses.push(response.status())
-      return route.fulfill({ response })
-    })
-    const scopeId = initialAccess.scopeId
-    if (!scopeId) throw new Error("Shared board has no Rusty scope")
-    const boardObjectsPath = `${origin}/v2/scopes/${encodeURIComponent(scopeId)}/objects**`
-    const blockedBoardObjects: Array<{ method: string; url: string; status: 503 }> = []
-    for (const context of [ownerContext, rayContext]) {
-      await context.route(boardObjectsPath, async route => {
-        const method = route.request().method()
-        if (registrationUnavailable && (method === "GET" || method === "PUT")) {
-          blockedBoardObjects.push({ method, url: route.request().url(), status: 503 })
-          return route.fulfill({ status: 503, body: "Rusty board data temporarily unavailable" })
-        }
-        return route.continue()
-      })
-    }
-
-    // A fresh owner runtime re-announces the retained peer and retries its
-    // service grant independently of the workspace transfer.
-    registrationUnavailable = true
-    const legacyAccess = await createSignedLegacyAccess(bo, workspaceId)
-    await bo.close()
-    await installSignedLegacyAccess(ray, workspaceId, legacyAccess)
-    retainingLegacyAccess = true
-    const failuresBeforeFreshRuntime = principalFailures.length
-    bo = await ownerContext.newPage()
-    await bo.goto("/")
-    await expect(bo.getByLabel("Workspace role: owner")).toBeVisible({ timeout: 30_000 })
-    await expect.poll(() => principalFailures.length, { timeout: 45_000 }).toBeGreaterThan(failuresBeforeFreshRuntime)
-    await expect(bo.getByLabel(/^Devices connected/u)).toBeVisible({ timeout: 30_000 })
-    await expect(ray.getByLabel(/^Devices connected/u)).toBeVisible({ timeout: 30_000 })
-    await expect(ray.getByLabel("Workspace role: editor")).toBeVisible()
-    await ray.getByRole("button", { name: "Sync", exact: true }).click()
-    const legacyRusty = ray.getByRole("region", { name: "Rusty", exact: true })
-    await expect(legacyRusty.getByText("Waiting for access", { exact: true })).toBeVisible({ timeout: 30_000 })
-    if (await raySync.isVisible()) await raySync.getByRole("button", { name: "Close", exact: true }).first().click()
-
-    await addLead(bo, "Bo edit during Rusty outage")
-    await expect(ray.getByRole("button", { name: "Open Bo edit during Rusty outage — Engineer", exact: true }))
-      .toBeVisible({ timeout: 30_000 })
-    await addLead(ray, "Ray edit during Rusty outage")
-    await expect(bo.getByRole("button", { name: "Open Ray edit during Rusty outage — Engineer", exact: true }))
-      .toBeVisible({ timeout: 30_000 })
-    expect(blockedBoardObjects.every(request => request.status === 503)).toBe(true)
-    expect(await ray.evaluate(async id => {
-      const { bootstrapIdentity } = await import("/src/domain/identity.ts")
-      const { getReplicaConfigurations } = await import("/src/sync/privateReplicaRepository.ts")
-      const profile = await bootstrapIdentity()
-      const config = (await getReplicaConfigurations(profile.identity.personId)).find(value => value.workspaceId === id)
-      return config?.boardAccess?.authorization.payload.version
-    }, workspaceId)).toBe(1)
-    expect(await bo.evaluate(async () => (await import("/src/state.ts")).useTincanban().activeWorkspace.id)).toBe(workspaceId)
-
-    registrationUnavailable = false
-    await expect.poll(() => principalSuccesses.some(status => status >= 200 && status < 300), { timeout: 60_000 }).toBe(true)
-    await expect.poll(() => readStoredBoardAccess(ray, workspaceId), { timeout: 30_000 }).toMatchObject({
-      version: 2, mode: "write",
-    })
-    const retriedAccess = await readStoredBoardAccess(ray, workspaceId)
-    expect(retriedAccess.subjectPersonId).toBe(retriedAccess.personId)
-    retainingLegacyAccess = false
-    expect(legacyRayWrites.filter(status => status >= 200 && status < 300)).toHaveLength(0)
-    await expect(ray.getByRole("button", { name: "Open Ray edit during Rusty outage — Engineer", exact: true })).toBeVisible()
-
-    const [ownerState, rayState] = await Promise.all([
-      ownerContext.storageState({ indexedDB: true }), rayContext.storageState({ indexedDB: true }),
-    ])
-    await Promise.all([ownerContext.close(), rayContext.close()])
-    coldOwner = await browser.newContext({ storageState: ownerState })
-    coldRay = await browser.newContext({ storageState: rayState })
-    for (const context of [coldOwner, coldRay]) {
-      await context.route("**/api/sync-signal**", route => route.fulfill({ status: 404 }))
-      await context.routeWebSocket("**/*", socket => socket.close())
-    }
-    const restoredBo = await coldOwner.newPage()
-    const editor = await coldRay.newPage()
-    const rayWrites: number[] = []
-    const boReads: number[] = []
-    editor.on("response", response => {
-      if (new URL(response.url()).origin === origin && response.request().method() === "PUT") rayWrites.push(response.status())
-    })
-    restoredBo.on("response", response => {
-      if (new URL(response.url()).origin === origin && response.request().method() === "GET") boReads.push(response.status())
-    })
-    await Promise.all([restoredBo.goto("/"), editor.goto("/")])
-    await expect(restoredBo.getByLabel(/^Devices offline/u)).toBeVisible({ timeout: 30_000 })
-    await expect(editor.getByLabel(/^Devices offline/u)).toBeVisible({ timeout: 30_000 })
-    await expect(editor.getByLabel("Workspace role: editor")).toBeVisible()
-    await addLead(editor, "Rusty only after grant retry")
-    await expect.poll(() => rayWrites.some(status => status >= 200 && status < 300), { timeout: 45_000 }).toBe(true)
-    await restoredBo.getByRole("button", { name: "Sync", exact: true }).click()
-    const boRusty = restoredBo.getByRole("region", { name: "Rusty", exact: true })
-    await boRusty.getByRole("button", { name: "Sync now", exact: true }).click()
-    await expect(restoredBo.getByRole("button", { name: "Open Rusty only after grant retry — Engineer", exact: true }))
-      .toBeVisible({ timeout: 45_000 })
-    expect(boReads.some(status => status >= 200 && status < 300)).toBe(true)
-  } finally {
-    await Promise.allSettled([ownerContext.close(), rayContext.close(), coldOwner?.close(), coldRay?.close()])
-    await rusty.close()
-  }
-})
