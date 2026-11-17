@@ -59,7 +59,7 @@ export function emailApplicationIdentity(mail: Pick<ForwardedMail, 'subject' | '
   for (const match of context.matchAll(/Bewerbung als\s+([^!\n]+?)\s+bei\s+([^!\n]+?)(?:[!\n]|$)/gi)) {
     add(roles, match[1]); add(companies, match[2]);
   }
-  for (const match of context.matchAll(/(?:application|applying) for (?:the )?([^!\n]+?) (?:position )?(?:at|with) ([^,!\n.]+)(?:[,.!]|$)/gi)) {
+  for (const match of context.matchAll(/(?:application|applying) for (?:the )?([^!\n]+?) (?:(?:position|role|vacancy) )?(?:at|with) ([^,!\n.]+)(?:[,.!]|$)/gi)) {
     add(roles, match[1]); add(companies, match[2]);
   }
   const folded = text.replace(/\s+/g, ' ');

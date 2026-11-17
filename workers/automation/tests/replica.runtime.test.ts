@@ -2185,10 +2185,11 @@ async function fixture(subjectPersonId?: string, applied = false) {
 }
 
 it.each([
-  { existing: 0, hasPosting: true },
-  { existing: 9, hasPosting: true },
-  { existing: 1, hasPosting: false },
-])("Given a confirmed application, $existing existing vacancies and posting URL=$hasPosting, When forwarded mail is processed, Then create one Applied card and deduplicate delivery", async ({ existing, hasPosting }) => {
+  { existing: 0, hasPosting: true, atsReceipt: false },
+  { existing: 9, hasPosting: true, atsReceipt: false },
+  { existing: 1, hasPosting: false, atsReceipt: false },
+  { existing: 1, hasPosting: false, atsReceipt: true },
+])("Given a confirmed application, $existing existing vacancies with posting URL=$hasPosting and ATS template=$atsReceipt, When forwarded mail is processed, Then create one Applied card and deduplicate delivery", async ({ existing, hasPosting, atsReceipt }) => {
   const id = `receipt-${crypto.randomUUID()}`;
   const stub = (env as WorkerEnv).AUTOMATION.getByName(id);
   const identitySecret = "test-only-identity-secret-at-least-thirty-two-bytes";
@@ -2209,9 +2210,13 @@ it.each([
     AI: receiptAi, INTEGRATIONS_JSON: JSON.stringify([{ id, workspaceId: data.packet.workspaceId,
       scope: { version: 1, ...data.packet.bindings, expiresAt: "2099-01-01T00:00:00.000Z" },
       emailAddress: "intake@example.test", allowedForwarders: ["owner@example.test"] }]) } as unknown as WorkerEnv;
-  const role = hasPosting ? "Senior Engineer" : "Senior Full Stack Engineer | Experimentation - Product Analytics | Germany | Remote";
-  const subject = hasPosting ? "Application received" : "Thank you for applying to Example GmbH";
-  const text = hasPosting
+  const role = atsReceipt ? "Senior Full-Stack Engineer – AI-Driven Development (m/f/d)"
+    : hasPosting ? "Senior Engineer" : "Senior Full Stack Engineer | Experimentation - Product Analytics | Germany | Remote";
+  const subject = atsReceipt ? "Your application has landed with us"
+    : hasPosting ? "Application received" : "Thank you for applying to Example GmbH";
+  const text = atsReceipt
+    ? `Thank you for applying for the ${role} role at Example GmbH. We have received your application and are glad you are interested in joining us.`
+    : hasPosting
     ? `We received your application for ${role} at Example GmbH. https://jobs.example.test/42`
     : `Thank you for your interest in Example GmbH! We wanted to let you know we received your application for ${role}, and are delighted that you would consider joining our team!`;
   const mime = `From: noreply@example.test\r\nTo: owner@example.test\r\nDate: ${new Date().toUTCString()}\r\nMessage-ID: <new-application@example.test>\r\nSubject: ${subject}\r\nContent-Type: text/plain\r\n\r\n${text}`;
