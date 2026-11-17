@@ -1,6 +1,6 @@
 import { expect, test } from "./support/coverage"
 
-test("Given a wide board, when scrolling the page, then the top scrollbar still moves the columns", async ({ page }) => {
+test("Given a wide board, when dragging headers and empty space, then the board pans and its controls still work", async ({ page }) => {
   await page.setViewportSize({ width: 960, height: 420 })
   await page.goto("/")
   await page.getByRole("button", { name: "Open workspaces" }).click()
@@ -11,46 +11,69 @@ test("Given a wide board, when scrolling the page, then the top scrollbar still 
   await page.getByRole("button", { name: "Edit board" }).click()
   for (const title of ["Review", "Later"]) {
     await page.getByRole("textbox", { name: "New column" }).fill(title)
+    if (title === "Review") await page.getByLabel("Allow this column to collapse").check()
     await page.getByRole("button", { name: "+ Add column" }).click()
     await expect(page.getByRole("region", { name: title, exact: true })).toBeVisible()
   }
   await page.getByRole("button", { name: "Done", exact: true }).click()
 
   const board = page.getByRole("region", { name: "Wide board", exact: true })
-  const scrollbar = page.getByRole("slider", { name: "Scroll board horizontally" })
-  await expect(scrollbar).toBeVisible()
-  await scrollbar.press("Home")
-  await page.evaluate(() => window.scrollTo(0, 300))
-  const [track, header] = await Promise.all([
-    scrollbar.boundingBox(),
-    page.locator(".topbar").boundingBox(),
-  ])
-  expect(header!.y + header!.height).toBeLessThan(0)
-  expect(track!.y).toBeCloseTo(0, 1)
-
-  await page.mouse.move(track!.x + 5, track!.y + track!.height / 2)
+  await expect(page.getByRole("slider", { name: "Scroll board horizontally" })).toHaveCount(0)
+  const scrollLeft = () => board.evaluate(el => el.scrollLeft)
+  const header = board.getByRole("region", { name: "Doing", exact: true }).locator(".column-header")
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await board.evaluate(el => { el.scrollLeft = 0 })
+  await expect.poll(scrollLeft).toBe(0)
+  await expect(header).toHaveCSS("cursor", "grab")
+  const bounds = (await header.boundingBox())!
+  const x = bounds.x + bounds.width / 2
+  const y = bounds.y + bounds.height / 2
+  await page.mouse.move(x, y)
   await page.mouse.down()
-  await page.mouse.move(track!.x + track!.width - 5, track!.y + track!.height / 2, { steps: 8 })
+  await expect(board).toHaveCSS("cursor", "grabbing")
+  await page.mouse.move(x - 130, y, { steps: 6 })
   await page.mouse.up()
-  await expect.poll(() => board.evaluate(el => el.scrollWidth - el.clientWidth - el.scrollLeft)).toBeLessThan(2)
+  await expect.poll(scrollLeft).toBeGreaterThan(100)
+  await expect(board).toHaveCSS("cursor", "grab")
 
-  await scrollbar.press("Home")
-  await expect.poll(() => board.evaluate(el => el.scrollLeft)).toBe(0)
-  await page.mouse.move(400, 200)
+  const column = (await board.getByRole("region", { name: "Doing", exact: true }).boundingBox())!
+  const gap = { x: column.x + column.width + 6, y: column.y + 75 }
+  await page.mouse.move(gap.x, gap.y)
+  expect(await page.evaluate(({ x, y }) => getComputedStyle(document.elementFromPoint(x, y)!).cursor, gap)).toBe("grab")
+  await page.mouse.down()
+  await page.mouse.move(gap.x + 150, gap.y, { steps: 6 })
+  await page.mouse.up()
+  await expect.poll(scrollLeft).toBe(0)
+
+  const empty = board.getByRole("region", { name: "Doing", exact: true }).locator(".empty-column")
+  await expect(empty).toHaveCSS("cursor", "grab")
+  const emptyBounds = (await empty.boundingBox())!
+  const emptyX = emptyBounds.x + emptyBounds.width / 2
+  const emptyY = emptyBounds.y + emptyBounds.height / 2
+  await page.mouse.move(emptyX, emptyY)
+  await page.mouse.down()
+  await page.mouse.move(emptyX - 100, emptyY)
+  await page.mouse.up()
+  await expect.poll(scrollLeft).toBeGreaterThan(75)
+  await board.press("ArrowRight")
+  await expect.poll(scrollLeft).toBeGreaterThan(100)
+
+  await board.getByRole("button", { name: "Collapse Review", exact: true }).click()
+  await expect(board.getByRole("button", { name: /Open Review with/ })).toBeVisible()
+  await board.getByRole("button", { name: /Open Review with/ }).click()
+  await board.evaluate(el => { el.scrollLeft = 0 })
+  await expect.poll(scrollLeft).toBe(0)
+  await page.mouse.move(400, y)
   await page.keyboard.down("Shift")
   await page.mouse.wheel(0, 180)
   await page.keyboard.up("Shift")
-  await expect.poll(() => board.evaluate(el => el.scrollLeft)).toBeGreaterThan(100)
-  await expect.poll(() => scrollbar.inputValue()).not.toBe("0")
+  await expect.poll(scrollLeft).toBeGreaterThan(100)
 
-  const topGap = () => board.evaluate(el => el.getBoundingClientRect().top - el.parentElement!.getBoundingClientRect().top)
-  const originalGap = await topGap()
   await page.getByRole("searchbox", { name: "Search cards" }).fill("no card matches this")
   await expect(page.getByText("No matching cards", { exact: true })).toBeVisible()
-  await expect(scrollbar).toBeHidden()
-  expect(await topGap()).toBeCloseTo(originalGap, 1)
+  await expect(board).not.toHaveCSS("cursor", "grab")
   await expect(board).toContainText("Try another search")
   await page.getByRole("button", { name: "Clear search and filters" }).click()
-  await expect(scrollbar).toBeVisible()
-  await expect(scrollbar).toHaveValue("0")
+  await expect(board).toHaveCSS("cursor", "grab")
+  await expect.poll(scrollLeft).toBe(0)
 })
